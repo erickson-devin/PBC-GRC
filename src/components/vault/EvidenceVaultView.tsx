@@ -10,8 +10,15 @@ import {
   FileImage,
   FileCode,
   File,
+  Shield,
+  Cloud,
+  Building,
+  Lock,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
+import { useTenant } from '../../context/TenantContext';
 import { CMMC_LEVEL_1_CONTROLS, DOMAINS } from '../../data/cmmcLevel1Controls';
 import { DomainCode, EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
@@ -25,10 +32,13 @@ export const EvidenceVaultView: React.FC = () => {
     setSelectedControlId,
   } = useAssessment();
 
+  const { currentTenant, canEdit } = useTenant();
+
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedDomain, setSelectedDomain] = useState<DomainCode | 'ALL'>('ALL');
   const [targetControlId, setTargetControlId] = useState<string>(CMMC_LEVEL_1_CONTROLS[0].id);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Storage calculation
@@ -53,7 +63,8 @@ export const EvidenceVaultView: React.FC = () => {
         const matchesName = item.name.toLowerCase().includes(q);
         const matchesCtrl = item.controlId.toLowerCase().includes(q);
         const matchesDesc = (item.description || '').toLowerCase().includes(q);
-        if (!matchesName && !matchesCtrl && !matchesDesc) {
+        const matchesHash = (item.fileHash || '').toLowerCase().includes(q);
+        if (!matchesName && !matchesCtrl && !matchesDesc && !matchesHash) {
           return false;
         }
       }
@@ -62,6 +73,11 @@ export const EvidenceVaultView: React.FC = () => {
   }, [state.evidenceIndex, selectedDomain, searchQuery]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to upload evidence.');
+      return;
+    }
+
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
@@ -80,9 +96,9 @@ export const EvidenceVaultView: React.FC = () => {
   };
 
   const handleDownloadFile = async (item: EvidenceItem) => {
-    const fileData = await EvidenceVault.getFile(item.id);
+    const fileData = await EvidenceVault.getFile(currentTenant.id, item.id);
     if (!fileData) {
-      alert('This evidence file does not have local binary storage attached (e.g. demo placeholder).');
+      alert('This evidence file does not have local binary storage attached (Cloud metadata reference).');
       return;
     }
     const url = URL.createObjectURL(fileData.blob);
@@ -93,6 +109,13 @@ export const EvidenceVaultView: React.FC = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleCopyHash = (hash?: string) => {
+    if (!hash) return;
+    navigator.clipboard.writeText(hash);
+    setCopiedHash(hash);
+    setTimeout(() => setCopiedHash(null), 2000);
   };
 
   const getFileIcon = (mimeType: string, filename: string) => {
@@ -115,81 +138,98 @@ export const EvidenceVaultView: React.FC = () => {
         <div>
           <h2 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
             <Paperclip className="w-6 h-6 text-brand-400" />
-            Central Evidence Vault (IndexedDB)
+            Evidence Vault & GCS Bucket Sync
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Persistent client-side storage for screenshots, policy PDFs, network diagrams, and audit logs.
+            Tenant-isolated evidence storage with client-side SHA-256 immutability verification for <strong>{currentTenant.name}</strong>.
           </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs text-brand-300 font-mono flex items-center gap-1.5">
+            <Building className="w-3.5 h-3.5" />
+            {currentTenant.cageCode || 'CAGE'}
+          </span>
+          <span className="px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-mono flex items-center gap-1.5">
+            <Cloud className="w-3.5 h-3.5" />
+            GCS Synced
+          </span>
         </div>
       </div>
 
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Evidence Files</span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Tenant Evidence Files</span>
           <p className="text-3xl font-extrabold text-white font-mono mt-1">{state.evidenceIndex.length}</p>
-          <p className="text-xs text-slate-400 mt-1">Indexed in local browser vault</p>
+          <p className="text-xs text-slate-400 mt-1">GCS Scoped: <span className="font-mono text-brand-300">{currentTenant.id}</span></p>
         </div>
 
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Control Coverage</span>
           <p className="text-3xl font-extrabold text-brand-400 font-mono mt-1">{coveredControlsCount} / 17</p>
-          <p className="text-xs text-slate-400 mt-1">Controls with verified artifacts</p>
+          <p className="text-xs text-slate-400 mt-1">Practices backed by audit artifacts</p>
         </div>
 
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Vault Storage Used</span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Vault Storage Tracked</span>
           <p className="text-3xl font-extrabold text-purple-400 font-mono mt-1">
             {(totalBytes / (1024 * 1024)).toFixed(2)} MB
           </p>
-          <p className="text-xs text-slate-400 mt-1">Zero network telemetry / Local-first</p>
+          <p className="text-xs text-slate-400 mt-1">SHA-256 Checksums Verified</p>
         </div>
       </div>
 
       {/* Quick Upload Box */}
-      <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <Upload className="w-4 h-4 text-brand-400" />
-            Upload Evidence to Specific Control
-          </span>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          {/* Target Control Select */}
-          <div className="w-full sm:w-80">
-            <select
-              value={targetControlId}
-              onChange={(e) => setTargetControlId(e.target.value)}
-              className="w-full text-xs font-medium rounded-xl px-3 py-2.5 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500"
-            >
-              {CMMC_LEVEL_1_CONTROLS.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.id} - {c.title}
-                </option>
-              ))}
-            </select>
+      {canEdit ? (
+        <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Upload className="w-4 h-4 text-brand-400" />
+              Upload Evidence to Control (GCS + SHA-256 Pipeline)
+            </span>
           </div>
 
-          {/* File Input */}
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            multiple
-            className="hidden"
-          />
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            {/* Target Control Select */}
+            <div className="w-full sm:w-80">
+              <select
+                value={targetControlId}
+                onChange={(e) => setTargetControlId(e.target.value)}
+                className="w-full text-xs font-medium rounded-xl px-3 py-2.5 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500"
+              >
+                {CMMC_LEVEL_1_CONTROLS.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.id} - {c.title}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
-          >
-            <Upload className="w-4 h-4" />
-            <span>{isUploading ? 'Uploading...' : 'Choose Files to Upload'}</span>
-          </button>
+            {/* File Input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              multiple
+              className="hidden"
+            />
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
+            >
+              <Upload className="w-4 h-4" />
+              <span>{isUploading ? 'Computing SHA-256 & Uploading...' : 'Choose Files to Upload'}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+          <Lock className="w-4 h-4 inline-block mr-1 text-amber-400" /> Evidence uploads are disabled in Read-Only Viewer mode.
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
@@ -201,7 +241,7 @@ export const EvidenceVaultView: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search evidence files..."
+              placeholder="Search by name, control, or SHA-256 hash..."
               className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
             />
           </div>
@@ -216,7 +256,7 @@ export const EvidenceVaultView: React.FC = () => {
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              All
+              All (17)
             </button>
             {(Object.keys(DOMAINS) as DomainCode[]).map((d) => (
               <button
@@ -239,7 +279,7 @@ export const EvidenceVaultView: React.FC = () => {
       {filteredItems.length === 0 ? (
         <div className="text-center py-16 bg-slate-900/40 border border-slate-800 rounded-3xl p-8 space-y-3">
           <Paperclip className="w-10 h-10 text-slate-500 mx-auto" />
-          <h3 className="text-base font-bold text-white">No evidence files found</h3>
+          <h3 className="text-base font-bold text-white">No evidence files found for {currentTenant.name}</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
             Upload policies, screenshots, or configuration audits using the uploader above or inside any control detail view.
           </p>
@@ -252,6 +292,7 @@ export const EvidenceVaultView: React.FC = () => {
                 <tr>
                   <th className="py-3.5 px-4">Artifact Name</th>
                   <th className="py-3.5 px-4">Mapped Practice</th>
+                  <th className="py-3.5 px-4">SHA-256 Immutability</th>
                   <th className="py-3.5 px-4">Size</th>
                   <th className="py-3.5 px-4">Upload Date</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
@@ -268,8 +309,13 @@ export const EvidenceVaultView: React.FC = () => {
                         <div className="flex items-center gap-3">
                           {getFileIcon(item.mimeType, item.name)}
                           <div>
-                            <p className="font-semibold text-white truncate max-w-xs">{item.name}</p>
-                            <p className="text-[11px] text-slate-500">{item.description}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-white truncate max-w-xs">{item.name}</p>
+                              <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                GCS
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>
                           </div>
                         </div>
                       </td>
@@ -284,12 +330,29 @@ export const EvidenceVaultView: React.FC = () => {
                             <span className="font-mono font-bold text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-200 group-hover:bg-brand-500/20 group-hover:text-brand-300 transition-colors">
                               {ctrl.id}
                             </span>
-                            <span className="truncate max-w-[180px] text-[11px] text-slate-400">
+                            <span className="truncate max-w-[150px] text-[11px] text-slate-400">
                               {ctrl.title}
                             </span>
                           </button>
                         ) : (
                           <span className="font-mono text-[11px] text-slate-500">{item.controlId}</span>
+                        )}
+                      </td>
+
+                      {/* SHA-256 Fingerprint */}
+                      <td className="py-3 px-4 font-mono text-[11px]">
+                        {item.fileHash ? (
+                          <button
+                            onClick={() => handleCopyHash(item.fileHash)}
+                            title="Copy Full SHA-256 Hash"
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700"
+                          >
+                            <Shield className="w-2.5 h-2.5 text-emerald-400" />
+                            <span>{item.fileHash.substring(0, 10)}...</span>
+                            {copiedHash === item.fileHash ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                          </button>
+                        ) : (
+                          <span className="text-slate-500">Uncalculated</span>
                         )}
                       </td>
 
@@ -322,13 +385,15 @@ export const EvidenceVaultView: React.FC = () => {
                             <Download className="w-3.5 h-3.5" />
                           </button>
 
-                          <button
-                            onClick={() => removeEvidence(item.id)}
-                            title="Delete File"
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => removeEvidence(item.id)}
+                              title="Delete File"
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

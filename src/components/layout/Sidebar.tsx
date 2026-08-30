@@ -5,13 +5,16 @@ import {
   FileText,
   Paperclip,
   BookOpen,
-  Server,
   Layers,
+  Cloud,
+  Building,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
+import { useTenant } from '../../context/TenantContext';
 
 export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, metrics, state } = useAssessment();
+  const { currentTenant, setIsGcpArchitectureModalOpen } = useTenant();
 
   const navItems: { id: NavigationTab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: string | number; badgeColor?: string }[] = [
     {
@@ -84,22 +87,46 @@ export const Sidebar: React.FC = () => {
           </nav>
         </div>
 
-        {/* Quick System Context Card */}
-        <div className="hidden md:block p-3.5 rounded-xl bg-slate-850 border border-slate-800/80 space-y-2.5">
+        {/* GCP Cloud Infrastructure Navigation Card */}
+        <div className="hidden md:block">
+          <button
+            onClick={() => setIsGcpArchitectureModalOpen(true)}
+            className="w-full p-3 rounded-2xl bg-gradient-to-br from-slate-900 to-brand-950/40 border border-brand-500/20 hover:border-brand-500/40 text-left transition-all group"
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-brand-300 flex items-center gap-1.5">
+                <Cloud className="w-3.5 h-3.5 text-brand-400" />
+                GCP Backend
+              </span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                Active
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 font-semibold group-hover:text-white transition-colors">
+              Cloud SQL & GCS Storage
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              PostgreSQL RLS & SHA-256 vault
+            </p>
+          </button>
+        </div>
+
+        {/* Active Client Organization Context Card */}
+        <div className="hidden md:block p-3.5 rounded-2xl bg-slate-850 border border-slate-800/80 space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold uppercase text-slate-400 flex items-center gap-1.5">
-              <Server className="w-3.5 h-3.5 text-brand-400" />
-              Target Scope
+              <Building className="w-3.5 h-3.5 text-brand-400" />
+              Active Tenant
             </span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-              v{state.sspMetadata.version}
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-brand-300">
+              {currentTenant.cageCode || 'CAGE'}
             </span>
           </div>
 
           <div className="text-xs text-slate-300">
-            <p className="font-medium truncate">{state.sspMetadata.systemName}</p>
-            <p className="text-[11px] text-slate-500 truncate mt-0.5">
-              Owner: {state.sspMetadata.systemOwner.split(',')[0]}
+            <p className="font-bold truncate text-white">{currentTenant.name}</p>
+            <p className="text-[11px] text-slate-400 truncate mt-0.5">
+              {currentTenant.systemName}
             </p>
           </div>
 
@@ -127,7 +154,7 @@ export const Sidebar: React.FC = () => {
           <Layers className="w-3.5 h-3.5 text-slate-400" />
           <span>FAR 52.204-21 Compliant</span>
         </p>
-        <p>Zero POA&Ms Permitted for Level 1</p>
+        <p>17 Controls • Zero POA&Ms Allowed</p>
       </div>
     </aside>
   );

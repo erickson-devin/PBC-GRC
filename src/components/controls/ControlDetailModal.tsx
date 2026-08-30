@@ -16,10 +16,15 @@ import {
   User,
   Info,
   Check,
+  Lock,
+  Cloud,
+  Shield,
+  Copy,
 } from 'lucide-react';
 import { CMMC_LEVEL_1_CONTROLS, DOMAINS } from '../../data/cmmcLevel1Controls';
 import { ControlStatus, EvidenceItem } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
+import { useTenant } from '../../context/TenantContext';
 import { EvidenceVault } from '../../services/evidenceVault';
 
 export const ControlDetailModal: React.FC = () => {
@@ -36,9 +41,13 @@ export const ControlDetailModal: React.FC = () => {
     setPreviewEvidence,
   } = useAssessment();
 
+  const { canEdit, currentTenant } = useTenant();
+
   const [activeTab, setActiveTab] = useState<'narrative' | 'guidance' | 'evidence'>('narrative');
+  const [templateFilter, setTemplateFilter] = useState<'all' | 'm365' | 'gcp' | 'activedirectory' | 'physical'>('all');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [templateAppliedNotice, setTemplateAppliedNotice] = useState<boolean>(false);
+  const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!selectedControlId) return null;
@@ -49,9 +58,10 @@ export const ControlDetailModal: React.FC = () => {
 
   const ctrlState = state.controls[control.id] || {
     id: control.id,
+    tenantId: currentTenant.id,
     status: 'NOT_STARTED',
     implementationNotes: '',
-    responsibleRole: 'IT Lead',
+    responsibleRole: 'IT / Security Lead',
     lastUpdated: new Date().toISOString(),
     tags: [],
   };
@@ -74,6 +84,11 @@ export const ControlDetailModal: React.FC = () => {
 
   // Upload handler
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to upload evidence files.');
+      return;
+    }
+
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
@@ -92,9 +107,9 @@ export const ControlDetailModal: React.FC = () => {
   };
 
   const handleDownloadFile = async (evidence: EvidenceItem) => {
-    const fileData = await EvidenceVault.getFile(evidence.id);
+    const fileData = await EvidenceVault.getFile(currentTenant.id, evidence.id);
     if (!fileData) {
-      alert('This evidence file does not have local binary storage attached.');
+      alert('This evidence file does not have local binary storage attached (Cloud metadata reference only).');
       return;
     }
     const url = URL.createObjectURL(fileData.blob);
@@ -108,6 +123,11 @@ export const ControlDetailModal: React.FC = () => {
   };
 
   const handleApplyTemplate = (narrative: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify narratives.');
+      return;
+    }
+
     if (ctrlState.implementationNotes.trim().length > 0) {
       if (!window.confirm('Applying this template will replace your current implementation narrative. Proceed?')) {
         return;
@@ -118,9 +138,21 @@ export const ControlDetailModal: React.FC = () => {
     setTimeout(() => setTemplateAppliedNotice(false), 3000);
   };
 
+  const handleCopyHash = (hash?: string) => {
+    if (!hash) return;
+    navigator.clipboard.writeText(hash);
+    setCopiedHash(hash);
+    setTimeout(() => setCopiedHash(null), 2000);
+  };
+
+  const filteredTemplates = control.starterTemplates.filter(t => {
+    if (templateFilter === 'all') return true;
+    return t.category === templateFilter;
+  });
+
   return (
-    <div className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleIn">
+    <div className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         
         {/* Top Header */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
@@ -188,18 +220,19 @@ export const ControlDetailModal: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800 shrink-0 self-start md:self-auto">
             {(
               [
-                { id: 'NOT_STARTED', label: 'Not Started', color: 'text-slate-400', active: 'bg-slate-800 text-white' },
-                { id: 'IN_PROGRESS', label: 'In Progress', color: 'text-amber-400', active: 'bg-amber-500/20 text-amber-300 border border-amber-500/40' },
-                { id: 'MET', label: 'Met', color: 'text-emerald-400', active: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' },
-                { id: 'NOT_MET', label: 'Not Met', color: 'text-rose-400', active: 'bg-rose-500/20 text-rose-300 border border-rose-500/40' },
-              ] as { id: ControlStatus; label: string; color: string; active: string }[]
+                { id: 'NOT_STARTED', label: 'Not Started', active: 'bg-slate-800 text-white' },
+                { id: 'IN_PROGRESS', label: 'In Progress', active: 'bg-amber-500/20 text-amber-300 border border-amber-500/40' },
+                { id: 'MET', label: 'Met', active: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' },
+                { id: 'NOT_MET', label: 'Not Met', active: 'bg-rose-500/20 text-rose-300 border border-rose-500/40' },
+              ] as { id: ControlStatus; label: string; active: string }[]
             ).map((s) => {
               const isSelected = ctrlState.status === s.id;
               return (
                 <button
                   key={s.id}
                   onClick={() => updateControlStatus(control.id, s.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  disabled={!canEdit}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-60 ${
                     isSelected ? s.active : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -258,7 +291,7 @@ export const ControlDetailModal: React.FC = () => {
               
               {/* Starter Templates Picker */}
               <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <span className="text-xs font-bold uppercase tracking-wider text-brand-400 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5" />
                     Pre-Built Starter Templates
@@ -268,18 +301,38 @@ export const ControlDetailModal: React.FC = () => {
                       <Check className="w-3.5 h-3.5" /> Template Inserted!
                     </span>
                   )}
+                  
+                  {/* Category Filter Chips */}
+                  <div className="flex items-center gap-1">
+                    {(['all', 'm365', 'gcp', 'activedirectory', 'physical'] as const).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setTemplateFilter(cat)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                          templateFilter === cat ? 'bg-brand-600 text-white' : 'bg-slate-850 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {cat === 'all' ? 'All' : cat === 'm365' ? 'M365' : cat === 'gcp' ? 'GCP' : cat === 'activedirectory' ? 'On-Prem' : 'Physical'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {control.starterTemplates.map((tmpl, idx) => (
+                  {filteredTemplates.map((tmpl, idx) => (
                     <div
                       key={idx}
                       className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-brand-500/50 transition-all flex flex-col justify-between space-y-2 group"
                     >
                       <div>
-                        <h4 className="text-xs font-bold text-white group-hover:text-brand-300">
-                          {tmpl.title}
-                        </h4>
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="text-xs font-bold text-white group-hover:text-brand-300">
+                            {tmpl.title}
+                          </h4>
+                          <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                            {tmpl.category}
+                          </span>
+                        </div>
                         <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
                           {tmpl.description}
                         </p>
@@ -287,13 +340,20 @@ export const ControlDetailModal: React.FC = () => {
 
                       <button
                         onClick={() => handleApplyTemplate(tmpl.narrative)}
-                        className="w-full py-1.5 px-3 rounded-lg bg-brand-600/20 hover:bg-brand-600 text-brand-300 hover:text-white border border-brand-500/30 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+                        disabled={!canEdit}
+                        className="w-full py-1.5 px-3 rounded-lg bg-brand-600/20 hover:bg-brand-600 text-brand-300 hover:text-white border border-brand-500/30 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                       >
                         <Sparkles className="w-3 h-3" />
                         <span>Insert This Template</span>
                       </button>
                     </div>
                   ))}
+
+                  {filteredTemplates.length === 0 && (
+                    <div className="col-span-2 text-center py-4 text-xs text-slate-500">
+                      No starter templates for this category filter.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -302,7 +362,7 @@ export const ControlDetailModal: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                     <FileCheck className="w-3.5 h-3.5 text-brand-400" />
-                    Implementation Narrative (How your organization satisfies this practice)
+                    Implementation Narrative (How {currentTenant.name} satisfies this practice)
                   </label>
                   <span className="text-xs text-slate-500">
                     {ctrlState.implementationNotes.length} characters
@@ -311,10 +371,11 @@ export const ControlDetailModal: React.FC = () => {
 
                 <textarea
                   rows={7}
+                  disabled={!canEdit}
                   value={ctrlState.implementationNotes}
                   onChange={(e) => updateControlNotes(control.id, e.target.value)}
                   placeholder="Detail the specific tools, policies, processes, and configurations your organization uses to satisfy this requirement..."
-                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 focus:border-brand-500 focus:outline-none text-sm text-slate-100 placeholder-slate-500 leading-relaxed font-sans transition-colors resize-y"
+                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 focus:border-brand-500 focus:outline-none text-sm text-slate-100 placeholder-slate-500 leading-relaxed font-sans transition-colors resize-y disabled:opacity-75"
                 />
               </div>
 
@@ -328,10 +389,11 @@ export const ControlDetailModal: React.FC = () => {
                     <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
+                      disabled={!canEdit}
                       value={ctrlState.responsibleRole}
                       onChange={(e) => updateControlRole(control.id, e.target.value)}
                       placeholder="e.g. CISO, IT Administrator, Security Lead"
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 focus:outline-none"
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 focus:outline-none disabled:opacity-75"
                     />
                   </div>
                 </div>
@@ -354,27 +416,33 @@ export const ControlDetailModal: React.FC = () => {
             <div className="space-y-6">
               
               {/* Dropzone Upload */}
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-700 hover:border-brand-500 rounded-3xl p-8 text-center cursor-pointer bg-slate-950/50 hover:bg-slate-950 transition-all group"
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileUpload}
-                  multiple
-                  className="hidden"
-                />
-                <div className="w-12 h-12 rounded-2xl bg-brand-500/15 text-brand-400 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
-                  <Upload className="w-6 h-6" />
+              {canEdit ? (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-700 hover:border-brand-500 rounded-3xl p-8 text-center cursor-pointer bg-slate-950/50 hover:bg-slate-950 transition-all group"
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    multiple
+                    className="hidden"
+                  />
+                  <div className="w-12 h-12 rounded-2xl bg-brand-500/15 text-brand-400 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-white group-hover:text-brand-300 transition-colors">
+                    {isUploading ? 'Computing SHA-256 & Storing in GCS Vault...' : 'Click to Upload Audit Evidence or Drag Files Here'}
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                    Attach screenshots, PDF policies, or configuration exports. Encrypted with SHA-256 hash validation and scoped to active tenant.
+                  </p>
                 </div>
-                <h4 className="text-sm font-bold text-white group-hover:text-brand-300 transition-colors">
-                  {isUploading ? 'Encrypting & Storing in Vault...' : 'Click to Upload Audit Evidence or Drag Files Here'}
-                </h4>
-                <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-                  Attach screenshots, PDF policies, configuration exports, or log exports. Files are securely stored in persistent client-side IndexedDB.
-                </p>
-              </div>
+              ) : (
+                <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 text-center text-xs text-slate-400">
+                  <Lock className="w-4 h-4 inline-block mr-1 text-amber-400" /> Evidence uploads are disabled in Read-Only Viewer mode.
+                </div>
+              )}
 
               {/* Attached Evidence List */}
               <div className="space-y-3">
@@ -388,46 +456,73 @@ export const ControlDetailModal: React.FC = () => {
                     No evidence files attached to this control yet. Upload policies, screenshots, or logs above.
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {controlEvidence.map((item) => (
                       <div
                         key={item.id}
-                        className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 flex items-center justify-between gap-4 transition-colors"
+                        className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 hover:border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-colors"
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-8 h-8 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center shrink-0">
+                        <div className="flex items-start sm:items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-slate-850 text-brand-400 flex items-center justify-center shrink-0 border border-slate-700">
                             <Paperclip className="w-4 h-4" />
                           </div>
                           <div className="min-w-0">
-                            <p className="text-xs font-bold text-white truncate">{item.name}</p>
-                            <p className="text-[11px] text-slate-400 mt-0.5">
-                              {Math.round(item.fileSize / 1024)} KB • Uploaded {item.uploadedAt.split('T')[0]}
-                            </p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-xs font-bold text-white truncate">{item.name}</p>
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                                <Cloud className="w-2.5 h-2.5" /> GCS Synced
+                              </span>
+                            </div>
+                            
+                            {/* Metadata & SHA-256 */}
+                            <div className="flex items-center gap-3 text-[10px] text-slate-400 mt-1 flex-wrap font-mono">
+                              <span>{Math.round(item.fileSize / 1024)} KB</span>
+                              <span>•</span>
+                              <span className="truncate max-w-[200px]" title={item.gcsPath}>
+                                {item.gcsPath || `gs://tenants/${currentTenant.id}/...`}
+                              </span>
+                              {item.fileHash && (
+                                <>
+                                  <span>•</span>
+                                  <button
+                                    onClick={() => handleCopyHash(item.fileHash)}
+                                    title="Copy SHA-256 Hash"
+                                    className="flex items-center gap-1 text-slate-300 hover:text-white bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800"
+                                  >
+                                    <Shield className="w-2.5 h-2.5 text-brand-400" />
+                                    <span>SHA-256: {item.fileHash.substring(0, 8)}...</span>
+                                    {copiedHash === item.fileHash ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
                           <button
                             onClick={() => setPreviewEvidence(item)}
                             title="Preview Evidence"
-                            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleDownloadFile(item)}
                             title="Download File"
-                            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
                           >
                             <Download className="w-4 h-4" />
                           </button>
-                          <button
-                            onClick={() => removeEvidence(item.id)}
-                            title="Delete Evidence"
-                            className="p-2 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => removeEvidence(item.id)}
+                              title="Delete Evidence"
+                              className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -501,7 +596,7 @@ export const ControlDetailModal: React.FC = () => {
         {/* Modal Footer */}
         <div className="px-6 py-4 bg-slate-850 border-t border-slate-800 flex items-center justify-between gap-4 shrink-0">
           <div className="text-xs text-slate-400">
-            Last modified: {new Date(ctrlState.lastUpdated).toLocaleDateString()}
+            Tenant: <strong className="text-white">{currentTenant.name}</strong> • Last updated: {new Date(ctrlState.lastUpdated).toLocaleDateString()}
           </div>
 
           <div className="flex items-center gap-3">

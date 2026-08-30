@@ -14,6 +14,7 @@ export interface DomainInfo {
 export interface StarterTemplate {
   title: string;
   description: string;
+  category: 'm365' | 'activedirectory' | 'physical' | 'gcp';
   narrative: string;
   recommendedEvidence: string[];
 }
@@ -30,30 +31,41 @@ export interface ControlDefinition {
   starterTemplates: StarterTemplate[];
 }
 
+export type EvidenceSyncStatus = 'local_cached' | 'gcs_synced' | 'gcs_signed_url';
+
 export interface EvidenceItem {
   id: string;
+  tenantId: string; // Multi-tenant isolation key
   controlId: string;
   name: string;
   fileSize: number; // in bytes
   mimeType: string;
   uploadedAt: string; // ISO string
   description?: string;
-  hasBlob?: boolean; // stored in IndexedDB
+  hasBlob?: boolean; // stored in IndexedDB vault
+  gcsPath?: string; // e.g. "gs://pbc-grc-evidence-prod/tenants/tenant-1/controls/AC.L1-3.1.1/file_xyz.pdf"
+  fileHash?: string; // SHA-256 hex string for immutability verification
+  syncStatus?: EvidenceSyncStatus;
+  uploadedBy?: string;
 }
 
 export interface ControlState {
   id: string;
+  tenantId?: string; // Multi-tenant isolation key
   status: ControlStatus;
   implementationNotes: string;
   responsibleRole: string;
   lastUpdated: string;
   tags: string[];
+  updatedBy?: string;
 }
 
 export interface SSPMetadata {
+  tenantId?: string; // Multi-tenant isolation key
   systemName: string;
   organizationName: string;
   cageCode: string;
+  samStatus?: string;
   systemOwner: string;
   authorName: string;
   assessmentDate: string;
@@ -61,10 +73,12 @@ export interface SSPMetadata {
   systemEnvironment: string;
   cloudServiceProviders: string;
   version: string;
+  lastUpdated?: string;
 }
 
 export interface AssessmentState {
   version: string;
+  tenantId: string; // Multi-tenant root partition
   sspMetadata: SSPMetadata;
   controls: Record<string, ControlState>;
   evidenceIndex: EvidenceItem[];

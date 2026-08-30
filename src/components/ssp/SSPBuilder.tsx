@@ -8,8 +8,10 @@ import {
   Building,
   Eye,
   Edit3,
+  Lock,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
+import { useTenant } from '../../context/TenantContext';
 import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
 
 export const SSPBuilder: React.FC = () => {
@@ -19,6 +21,8 @@ export const SSPBuilder: React.FC = () => {
     updateSSPMetadata,
     exportAssessmentMarkdown,
   } = useAssessment();
+
+  const { currentTenant, canEdit } = useTenant();
 
   const [viewMode, setViewMode] = useState<'document' | 'form'>('document');
   const [copied, setCopied] = useState<boolean>(false);
@@ -33,9 +37,11 @@ export const SSPBuilder: React.FC = () => {
     let text = `SYSTEM SECURITY PLAN (SSP) - CMMC LEVEL 1 / FAR 52.204-21\n\n`;
     text += `ORGANIZATION: ${meta.organizationName}\n`;
     text += `CAGE CODE: ${meta.cageCode}\n`;
+    text += `SAM.GOV STATUS: ${meta.samStatus || 'Active'}\n`;
     text += `SYSTEM NAME: ${meta.systemName}\n`;
     text += `SYSTEM OWNER: ${meta.systemOwner}\n`;
-    text += `ASSESSMENT DATE: ${meta.assessmentDate}\n\n`;
+    text += `ASSESSMENT DATE: ${meta.assessmentDate}\n`;
+    text += `GCS ENCLAVE: gs://pbc-grc-evidence-vault-us-central1/tenants/${currentTenant.id}/\n\n`;
     text += `SYSTEM BOUNDARY & SCOPE:\n${meta.systemBoundaryScope}\n\n`;
     text += `17 CONTROLS ASSESSMENT MATRIX:\n`;
 
@@ -46,7 +52,7 @@ export const SSPBuilder: React.FC = () => {
       text += `Status: ${cState?.status || 'NOT_STARTED'}\n`;
       text += `Implementation Statement:\n${cState?.implementationNotes || 'No implementation notes provided.'}\n`;
       if (evidence.length > 0) {
-        text += `Evidence Artifacts: ${evidence.map(e => e.name).join(', ')}\n`;
+        text += `Evidence Artifacts: ${evidence.map(e => `${e.name} (SHA-256: ${e.fileHash || 'N/A'})`).join(', ')}\n`;
       }
     }
 
@@ -65,11 +71,16 @@ export const SSPBuilder: React.FC = () => {
               <FileText className="w-5 h-5" />
             </span>
             <div>
-              <h2 className="text-xl font-bold text-white tracking-tight">
-                System Security Plan (SSP) Generator
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-white tracking-tight">
+                  System Security Plan (SSP) Generator
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-slate-800 text-brand-300 border border-slate-700">
+                  {currentTenant.name}
+                </span>
+              </div>
               <p className="text-xs text-slate-400">
-                Audit-ready DoD compliance documentation automatically compiled from your assessment and evidence vault.
+                NIST SP 800-171 / FAR 52.204-21 compliance documentation automatically compiled for all 17 controls.
               </p>
             </div>
           </div>
@@ -138,12 +149,19 @@ export const SSPBuilder: React.FC = () => {
           <div>
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <Building className="w-5 h-5 text-brand-400" />
-              System & Organization Information
+              System & Organization Governance Information
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              These details populate the System Security Plan header, boundary scope narrative, and executive summary.
+              These details populate the System Security Plan header, boundary scope narrative, and executive summary for <strong>{currentTenant.name}</strong>.
             </p>
           </div>
+
+          {!canEdit && (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-center gap-2">
+              <Lock className="w-4 h-4" />
+              <span>You are in Read-Only Viewer mode. Editing metadata is disabled.</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Organization Name */}
@@ -153,9 +171,10 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
+                disabled={!canEdit}
                 value={meta.organizationName}
                 onChange={(e) => updateSSPMetadata({ organizationName: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
                 placeholder="e.g. Apex Defense Solutions, LLC"
               />
             </div>
@@ -167,9 +186,10 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
+                disabled={!canEdit}
                 value={meta.cageCode}
                 onChange={(e) => updateSSPMetadata({ cageCode: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none uppercase"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none uppercase disabled:opacity-70"
                 placeholder="e.g. 9X7B4"
               />
             </div>
@@ -177,13 +197,14 @@ export const SSPBuilder: React.FC = () => {
             {/* System Name */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                System Name / Identification
+                Information System Name
               </label>
               <input
                 type="text"
+                disabled={!canEdit}
                 value={meta.systemName}
                 onChange={(e) => updateSSPMetadata({ systemName: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
                 placeholder="e.g. Corporate Operations Enclave (COE)"
               />
             </div>
@@ -191,13 +212,14 @@ export const SSPBuilder: React.FC = () => {
             {/* System Owner */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                System Owner & Title
+                Designated System Owner & Role
               </label>
               <input
                 type="text"
+                disabled={!canEdit}
                 value={meta.systemOwner}
                 onChange={(e) => updateSSPMetadata({ systemOwner: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
                 placeholder="e.g. Devin Erickson, Chief Information Security Officer"
               />
             </div>
@@ -205,55 +227,74 @@ export const SSPBuilder: React.FC = () => {
             {/* Assessment Date */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Date of Assessment
+                Assessment Baseline Date
               </label>
               <input
                 type="date"
+                disabled={!canEdit}
                 value={meta.assessmentDate}
                 onChange={(e) => updateSSPMetadata({ assessmentDate: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
               />
             </div>
 
-            {/* Version */}
+            {/* Document Version */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Document Version
+                SSP Version
               </label>
               <input
                 type="text"
+                disabled={!canEdit}
                 value={meta.version}
                 onChange={(e) => updateSSPMetadata({ version: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
                 placeholder="e.g. 1.0.0"
               />
             </div>
 
-            {/* System Environment */}
+            {/* Boundary Scope */}
             <div className="md:col-span-2">
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                System Architecture & Environment Type
-              </label>
-              <input
-                type="text"
-                value={meta.systemEnvironment}
-                onChange={(e) => updateSSPMetadata({ systemEnvironment: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
-                placeholder="e.g. Hybrid Cloud: Microsoft 365 Commercial Cloud + Corporate HQ On-Premises Network."
-              />
-            </div>
-
-            {/* System Boundary Scope Narrative */}
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                System Boundary & Scope Description (Critical for Auditor Scope Verification)
+                System Boundary & Scope Description
               </label>
               <textarea
                 rows={4}
+                disabled={!canEdit}
                 value={meta.systemBoundaryScope}
                 onChange={(e) => updateSSPMetadata({ systemBoundaryScope: e.target.value })}
-                className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none leading-relaxed"
-                placeholder="Describe all physical facilities, cloud services, subnets, and workstations that process, store, or transmit Federal Contract Information (FCI)..."
+                className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="Describe the operational boundary, physical facilities, cloud tenants, and components that process, store, or transmit FCI..."
+              />
+            </div>
+
+            {/* Operating Environment */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                System Operating Environment
+              </label>
+              <input
+                type="text"
+                disabled={!canEdit}
+                value={meta.systemEnvironment}
+                onChange={(e) => updateSSPMetadata({ systemEnvironment: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="e.g. Hybrid Cloud: Microsoft 365 + On-Premises HQ"
+              />
+            </div>
+
+            {/* Cloud Service Providers */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Authorized Cloud Service Providers (CSPs)
+              </label>
+              <input
+                type="text"
+                disabled={!canEdit}
+                value={meta.cloudServiceProviders}
+                onChange={(e) => updateSSPMetadata({ cloudServiceProviders: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="e.g. Microsoft 365, Google Cloud Platform, Cloudflare"
               />
             </div>
           </div>
@@ -261,43 +302,41 @@ export const SSPBuilder: React.FC = () => {
           <div className="pt-4 border-t border-slate-800 flex justify-end">
             <button
               onClick={() => setViewMode('document')}
-              className="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-colors flex items-center gap-2"
+              className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-colors"
             >
-              <Eye className="w-4 h-4" />
-              <span>Preview Audit Document</span>
+              View Formatted SSP Document
             </button>
           </div>
         </div>
       )}
 
-      {/* VIEW 2: FORMAL AUDIT DOCUMENT (Optimized for Screen & Print) */}
+      {/* VIEW 2: FORMAL PRINTABLE AUDIT DOCUMENT */}
       {viewMode === 'document' && (
-        <div className="ssp-document-container bg-white text-slate-900 rounded-3xl p-8 sm:p-12 shadow-2xl border border-slate-200 space-y-8 max-w-5xl mx-auto">
+        <div className="ssp-print-document bg-white text-slate-900 rounded-3xl p-6 sm:p-12 shadow-2xl border border-slate-200 font-sans space-y-8 max-w-5xl mx-auto">
           
-          {/* Official Document Header */}
-          <div className="border-b-2 border-slate-900 pb-6 space-y-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-mono font-bold tracking-widest text-slate-500 uppercase">
-                  DoD Compliance Documentation
-                </span>
-                <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mt-1">
-                  SYSTEM SECURITY PLAN (SSP)
-                </h1>
-                <p className="text-sm font-semibold text-brand-700">
-                  CMMC Level 1 Self-Assessment & FAR 52.204-21 Compliance Specification
-                </p>
-              </div>
-
-              <div className="text-right shrink-0 bg-slate-100 p-3.5 rounded-xl border border-slate-300">
-                <p className="text-xs text-slate-600 font-medium">Document Status</p>
-                <p className="text-sm font-bold text-slate-900">
-                  {metrics.isSprsReady ? 'SPRS READY (100% MET)' : 'IN PROGRESS'}
-                </p>
-                <p className="text-[11px] font-mono text-slate-500 mt-0.5">
-                  Assessment: {meta.assessmentDate}
-                </p>
-              </div>
+          {/* Document Header & Cover Banner */}
+          <div className="border-b-2 border-slate-900 pb-6 space-y-2">
+            <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
+              <span>SECURITY CLASSIFICATION: UNCLASSIFIED // FCI ONLY</span>
+              <span>VERSION {meta.version}</span>
+            </div>
+            
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-950 tracking-tight">
+              SYSTEM SECURITY PLAN (SSP)
+            </h1>
+            <p className="text-sm font-semibold text-slate-700">
+              Basic Safeguarding of Covered Contractor Information Systems
+            </p>
+            <div className="flex items-center gap-2 pt-1 flex-wrap">
+              <span className="text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-300">
+                FAR 52.204-21
+              </span>
+              <span className="text-xs font-bold px-2 py-0.5 bg-brand-50 text-brand-800 rounded border border-brand-200">
+                CMMC 2.0 Level 1 (17 Controls)
+              </span>
+              <span className="text-xs font-bold px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded border border-emerald-200">
+                NIST SP 800-171 Baseline
+              </span>
             </div>
           </div>
 
@@ -374,7 +413,7 @@ export const SSPBuilder: React.FC = () => {
           {/* Section 4: 17 CMMC Level 1 Practices Evaluation Matrix */}
           <div className="space-y-4 print-page-break">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg border-l-4 border-brand-600">
-              4. FAR 52.204-21 / CMMC Level 1 Practices Evaluation Matrix
+              4. FAR 52.204-21 / CMMC Level 1 Practices Evaluation Matrix (17 Controls)
             </h2>
 
             <div className="space-y-4">
@@ -433,20 +472,24 @@ export const SSPBuilder: React.FC = () => {
                       </p>
                     </div>
 
-                    {/* Evidence References */}
-                    <div className="flex items-center gap-2 flex-wrap text-[11px] pt-1">
+                    {/* Evidence References with SHA-256 and GCS Path */}
+                    <div className="flex items-start gap-2 flex-wrap text-[11px] pt-1">
                       <span className="font-semibold text-slate-600">Attached Evidence Artifacts:</span>
                       {evidenceList.length === 0 ? (
                         <span className="text-slate-400 italic">None attached</span>
                       ) : (
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                        <div className="flex flex-col gap-1 w-full mt-1">
                           {evidenceList.map((e) => (
-                            <span
+                            <div
                               key={e.id}
-                              className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded font-mono text-[10px]"
+                              className="px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-800 rounded-lg font-mono text-[10px] flex items-center justify-between flex-wrap gap-2"
                             >
-                              {e.name}
-                            </span>
+                              <span className="font-bold">{e.name}</span>
+                              <span className="text-slate-500">GCS: {e.gcsPath || 'Local Vault'}</span>
+                              {e.fileHash && (
+                                <span className="text-emerald-700 font-semibold">SHA-256: {e.fileHash.substring(0, 16)}...</span>
+                              )}
+                            </div>
                           ))}
                         </div>
                       )}
@@ -464,7 +507,7 @@ export const SSPBuilder: React.FC = () => {
             </h2>
 
             <p className="text-xs text-slate-700 leading-relaxed">
-              I, the undersigned Senior Official / System Owner, hereby certify that the information contained within this System Security Plan (SSP) accurately reflects the security safeguards implemented within <strong>{meta.systemName}</strong> in accordance with FAR 52.204-21 and CMMC Level 1 standards.
+              I, the undersigned Senior Official / System Owner, hereby certify that the information contained within this System Security Plan (SSP) accurately reflects the security safeguards implemented within <strong>{meta.systemName}</strong> for <strong>{meta.organizationName}</strong> in accordance with FAR 52.204-21 and CMMC Level 1 standards.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6">

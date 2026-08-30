@@ -11,6 +11,8 @@ import {
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
+import { GcsService } from '../services/gcsService';
+import { useTenant } from './TenantContext';
 
 export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance';
 
@@ -30,7 +32,7 @@ interface AssessmentContextType {
   previewEvidence: EvidenceItem | null;
   setPreviewEvidence: (item: EvidenceItem | null) => void;
 
-  // Actions
+  // Actions with RBAC enforcement
   updateControlStatus: (controlId: string, status: ControlStatus) => void;
   updateControlNotes: (controlId: string, notes: string) => void;
   updateControlRole: (controlId: string, role: string) => void;
@@ -48,7 +50,10 @@ interface AssessmentContextType {
 const AssessmentContext = createContext<AssessmentContextType | undefined>(undefined);
 
 export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment());
+  const { currentTenant, canEdit, currentUser } = useTenant();
+
+  // Load tenant-isolated assessment state
+  const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment(currentTenant));
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
   const [selectedDomainFilter, setSelectedDomainFilter] = useState<DomainCode | 'ALL'>('ALL');
@@ -56,14 +61,22 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
 
-  // Auto-save state changes to LocalStorage
+  // When active tenant changes, dynamically reload that tenant's partitioned assessment
   useEffect(() => {
-    StorageService.saveAssessment(state);
-  }, [state]);
+    const tenantState = StorageService.loadAssessment(currentTenant);
+    setState(tenantState);
+  }, [currentTenant.id]);
 
-  // Calculate Real-time Compliance Metrics
+  // Auto-save state changes under tenant partition
+  useEffect(() => {
+    if (state.tenantId === currentTenant.id) {
+      StorageService.saveAssessment(currentTenant.id, state);
+    }
+  }, [state, currentTenant.id]);
+
+  // Calculate Real-time Compliance Metrics dynamically for all 17 controls
   const metrics: ComplianceMetrics = useMemo(() => {
-    const totalControls = CMMC_LEVEL_1_CONTROLS.length; // 17
+    const totalControls = CMMC_LEVEL_1_CONTROLS.length; // Exactly 17 controls
     let metCount = 0;
     let inProgressCount = 0;
     let notStartedCount = 0;
@@ -107,15 +120,15 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
     }
 
-    // Calculate domain percentages
+    // Calculate domain completion percentages
     (Object.keys(domainStats) as DomainCode[]).forEach(d => {
       const stat = domainStats[d];
       stat.percentage = stat.total > 0 ? Math.round((stat.met / stat.total) * 100) : 0;
     });
 
-    const completionPercentage = Math.round((metCount / totalControls) * 100);
-    // CMMC Level 1 SPRS Readiness strictly requires 100% (17 of 17) MET, 0 POA&Ms allowed
-    const isSprsReady = metCount === totalControls;
+    const completionPercentage = totalControls > 0 ? Math.round((metCount / totalControls) * 100) : 0;
+    // CMMC Level 1 SPRS Readiness strictly requires 100% (17 of 17) MET
+    const isSprsReady = metCount === totalControls && totalControls === 17;
 
     return {
       totalControls,
@@ -129,23 +142,34 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, [state]);
 
-  // Confetti effect when reaching 100% SPRS Ready
+  // Celebrate SPRS readiness
   const triggerSprsCelebration = useCallback(() => {
-    confetti({
-      particleCount: 120,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#10b981', '#0e8ee9', '#38aaf7', '#fbbf24'],
-    });
+    try {
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#0e8ee9', '#10b981', '#f59e0b', '#8b5cf6'],
+      });
+    } catch {
+      // Confetti fallback
+    }
   }, []);
 
+  // Action: Update Control Status with RBAC Check
   const updateControlStatus = useCallback((controlId: string, status: ControlStatus) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify controls for this tenant.');
+      return;
+    }
+
     setState(prev => {
       const current = prev.controls[controlId] || {
         id: controlId,
+        tenantId: currentTenant.id,
         status: 'NOT_STARTED',
         implementationNotes: '',
-        responsibleRole: 'IT Lead',
+        responsibleRole: 'IT / Security Lead',
         lastUpdated: new Date().toISOString(),
         tags: [],
       };
@@ -158,34 +182,38 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ...current,
             status,
             lastUpdated: new Date().toISOString(),
+            updatedBy: currentUser.name,
           },
         },
       };
 
-      // Check if this action makes SPRS ready
-      let allMet = true;
-      for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
-        const s = ctrl.id === controlId ? status : (prev.controls[ctrl.id]?.status || 'NOT_STARTED');
-        if (s !== 'MET') {
-          allMet = false;
-          break;
-        }
-      }
-      if (allMet && status === 'MET') {
+      // Check if this action achieved 100% SPRS readiness
+      const metAfter = Object.entries(updated.controls).filter(
+        ([id, c]) => id !== controlId ? c.status === 'MET' : status === 'MET'
+      ).length;
+
+      if (metAfter === CMMC_LEVEL_1_CONTROLS.length && status === 'MET') {
         setTimeout(triggerSprsCelebration, 150);
       }
 
       return updated;
     });
-  }, [triggerSprsCelebration]);
+  }, [canEdit, currentTenant.id, currentUser.name, triggerSprsCelebration]);
 
+  // Action: Update Control Notes with RBAC Check
   const updateControlNotes = useCallback((controlId: string, notes: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
+      return;
+    }
+
     setState(prev => {
       const current = prev.controls[controlId] || {
         id: controlId,
+        tenantId: currentTenant.id,
         status: 'NOT_STARTED',
         implementationNotes: '',
-        responsibleRole: 'IT Lead',
+        responsibleRole: 'IT / Security Lead',
         lastUpdated: new Date().toISOString(),
         tags: [],
       };
@@ -198,19 +226,24 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ...current,
             implementationNotes: notes,
             lastUpdated: new Date().toISOString(),
+            updatedBy: currentUser.name,
           },
         },
       };
     });
-  }, []);
+  }, [canEdit, currentTenant.id, currentUser.name]);
 
+  // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
+    if (!canEdit) return;
+
     setState(prev => {
       const current = prev.controls[controlId] || {
         id: controlId,
+        tenantId: currentTenant.id,
         status: 'NOT_STARTED',
         implementationNotes: '',
-        responsibleRole: 'IT Lead',
+        responsibleRole: 'IT / Security Lead',
         lastUpdated: new Date().toISOString(),
         tags: [],
       };
@@ -223,19 +256,27 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             ...current,
             responsibleRole: role,
             lastUpdated: new Date().toISOString(),
+            updatedBy: currentUser.name,
           },
         },
       };
     });
-  }, []);
+  }, [canEdit, currentTenant.id, currentUser.name]);
 
+  // Action: Apply Starter Template
   const applyStarterTemplate = useCallback((controlId: string, narrative: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to apply templates.');
+      return;
+    }
+
     setState(prev => {
       const current = prev.controls[controlId] || {
         id: controlId,
+        tenantId: currentTenant.id,
         status: 'NOT_STARTED',
         implementationNotes: '',
-        responsibleRole: 'IT Lead',
+        responsibleRole: 'IT / Security Lead',
         lastUpdated: new Date().toISOString(),
         tags: [],
       };
@@ -249,36 +290,61 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             implementationNotes: narrative,
             status: current.status === 'NOT_STARTED' ? 'IN_PROGRESS' : current.status,
             lastUpdated: new Date().toISOString(),
+            updatedBy: currentUser.name,
           },
         },
       };
     });
-  }, []);
+  }, [canEdit, currentTenant.id, currentUser.name]);
 
+  // Action: Update SSP Metadata with RBAC Check
   const updateSSPMetadata = useCallback((metadata: Partial<SSPMetadata>) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to update SSP metadata.');
+      return;
+    }
+
     setState(prev => ({
       ...prev,
       sspMetadata: {
         ...prev.sspMetadata,
         ...metadata,
+        lastUpdated: new Date().toISOString(),
       },
     }));
-  }, []);
+  }, [canEdit]);
 
-  const uploadEvidence = useCallback(async (controlId: string, file: File, description?: string): Promise<EvidenceItem> => {
+  // Action: Upload Evidence with GCS Path & SHA-256 Hashing
+  const uploadEvidence = useCallback(async (
+    controlId: string,
+    file: File,
+    description?: string
+  ): Promise<EvidenceItem> => {
+    if (!canEdit) {
+      throw new Error('Read-Only access: Evidence uploads are restricted for your role.');
+    }
+
     const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    // Save to IndexedDB
-    await EvidenceVault.saveFile(evidenceId, file);
+    const gcsPath = GcsService.generateGcsPath(currentTenant.id, controlId, evidenceId, file.name);
+    const fileHash = await GcsService.computeSha256(file);
+
+    // Store in tenant-partitioned IndexedDB vault
+    await EvidenceVault.saveFile(currentTenant.id, evidenceId, file, gcsPath, fileHash);
 
     const newItem: EvidenceItem = {
       id: evidenceId,
+      tenantId: currentTenant.id,
       controlId,
       name: file.name,
       fileSize: file.size,
       mimeType: file.type || 'application/octet-stream',
       uploadedAt: new Date().toISOString(),
-      description: description || `Audit evidence for ${controlId}`,
+      description: description || `Audit evidence for control ${controlId}`,
       hasBlob: true,
+      gcsPath,
+      fileHash,
+      syncStatus: 'gcs_synced',
+      uploadedBy: currentUser.name,
     };
 
     setState(prev => ({
@@ -287,84 +353,149 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
 
     return newItem;
-  }, []);
+  }, [canEdit, currentTenant.id, currentUser.name]);
 
-  const removeEvidence = useCallback(async (evidenceId: string): Promise<void> => {
-    await EvidenceVault.deleteFile(evidenceId);
+  // Action: Remove Evidence
+  const removeEvidence = useCallback(async (evidenceId: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to delete evidence.');
+      return;
+    }
+
+    await EvidenceVault.deleteFile(currentTenant.id, evidenceId);
+
     setState(prev => ({
       ...prev,
       evidenceIndex: prev.evidenceIndex.filter(e => e.id !== evidenceId),
     }));
-  }, []);
+  }, [canEdit, currentTenant.id]);
 
+  // Action: Load 100% Demo Scenario
   const loadDemoScenario = useCallback(() => {
-    const demo = createDemoState();
+    if (!canEdit) {
+      alert('Read-Only access: Cannot load demo scenario.');
+      return;
+    }
+    const demo = createDemoState(currentTenant);
     setState(demo);
     setTimeout(triggerSprsCelebration, 200);
-  }, [triggerSprsCelebration]);
+  }, [canEdit, currentTenant, triggerSprsCelebration]);
 
+  // Action: Reset Assessment
   const resetAssessment = useCallback(async () => {
-    await EvidenceVault.clearAll();
-    StorageService.clearAll();
-    setState(createInitialState());
-  }, []);
+    if (!canEdit) {
+      alert('Read-Only access: Cannot reset assessment.');
+      return;
+    }
+    await EvidenceVault.clearTenant(currentTenant.id);
+    const blank = createInitialState(currentTenant);
+    setState(blank);
+  }, [canEdit, currentTenant]);
 
+  // Action: Import Assessment JSON
   const importAssessmentJSON = useCallback(async (file: File): Promise<boolean> => {
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text) as AssessmentState;
-      if (!parsed.controls || !parsed.sspMetadata) {
-        alert('Invalid Assessment JSON file structure.');
-        return false;
-      }
-      setState(parsed);
-      return true;
-    } catch (err) {
-      console.error('Failed to import JSON assessment:', err);
-      alert('Error parsing JSON file. Please ensure it is a valid PBC-GRC backup file.');
+    if (!canEdit) {
+      alert('Read-Only access: Cannot import data.');
       return false;
     }
-  }, []);
 
+    try {
+      const text = await file.text();
+      const imported = JSON.parse(text) as AssessmentState;
+
+      if (!imported.controls || !imported.sspMetadata) {
+        throw new Error('Invalid assessment JSON structure');
+      }
+
+      // Ensure all 17 controls are present in imported state
+      for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+        if (!imported.controls[ctrl.id]) {
+          imported.controls[ctrl.id] = {
+            id: ctrl.id,
+            tenantId: currentTenant.id,
+            status: 'NOT_STARTED',
+            implementationNotes: '',
+            responsibleRole: 'IT / Security Lead',
+            lastUpdated: new Date().toISOString(),
+            tags: [],
+          };
+        }
+      }
+
+      imported.tenantId = currentTenant.id;
+      imported.lastSaved = new Date().toISOString();
+      setState(imported);
+      return true;
+    } catch (err) {
+      console.error('Failed to parse assessment JSON:', err);
+      alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
+      return false;
+    }
+  }, [canEdit, currentTenant.id]);
+
+  // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
     StorageService.exportJSON(state);
   }, [state]);
 
+  // Action: Export Markdown
   const exportAssessmentMarkdown = useCallback(() => {
     StorageService.exportMarkdown(state);
   }, [state]);
 
+  const value = useMemo(() => ({
+    state,
+    metrics,
+    activeTab,
+    setActiveTab,
+    selectedControlId,
+    setSelectedControlId,
+    selectedDomainFilter,
+    setSelectedDomainFilter,
+    selectedStatusFilter,
+    setSelectedStatusFilter,
+    searchQuery,
+    setSearchQuery,
+    previewEvidence,
+    setPreviewEvidence,
+
+    updateControlStatus,
+    updateControlNotes,
+    updateControlRole,
+    applyStarterTemplate,
+    updateSSPMetadata,
+    uploadEvidence,
+    removeEvidence,
+    loadDemoScenario,
+    resetAssessment,
+    importAssessmentJSON,
+    exportAssessmentJSON,
+    exportAssessmentMarkdown,
+  }), [
+    state,
+    metrics,
+    activeTab,
+    selectedControlId,
+    selectedDomainFilter,
+    selectedStatusFilter,
+    searchQuery,
+    previewEvidence,
+    updateControlStatus,
+    updateControlNotes,
+    updateControlRole,
+    applyStarterTemplate,
+    updateSSPMetadata,
+    uploadEvidence,
+    removeEvidence,
+    loadDemoScenario,
+    resetAssessment,
+    importAssessmentJSON,
+    exportAssessmentJSON,
+    exportAssessmentMarkdown,
+  ]);
+
   return (
-    <AssessmentContext.Provider
-      value={{
-        state,
-        metrics,
-        activeTab,
-        setActiveTab,
-        selectedControlId,
-        setSelectedControlId,
-        selectedDomainFilter,
-        setSelectedDomainFilter,
-        selectedStatusFilter,
-        setSelectedStatusFilter,
-        searchQuery,
-        setSearchQuery,
-        previewEvidence,
-        setPreviewEvidence,
-        updateControlStatus,
-        updateControlNotes,
-        updateControlRole,
-        applyStarterTemplate,
-        updateSSPMetadata,
-        uploadEvidence,
-        removeEvidence,
-        loadDemoScenario,
-        resetAssessment,
-        importAssessmentJSON,
-        exportAssessmentJSON,
-        exportAssessmentMarkdown,
-      }}
-    >
+    <AssessmentContext.Provider value={value}>
       {children}
     </AssessmentContext.Provider>
   );

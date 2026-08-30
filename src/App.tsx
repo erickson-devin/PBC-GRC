@@ -1,4 +1,5 @@
 import React from 'react';
+import { TenantProvider } from './context/TenantContext';
 import { AssessmentProvider, useAssessment } from './context/AssessmentContext';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
@@ -9,6 +10,7 @@ import { EvidenceVaultView } from './components/vault/EvidenceVaultView';
 import { AssessmentGuidanceView } from './components/guidance/AssessmentGuidanceView';
 import { ControlDetailModal } from './components/controls/ControlDetailModal';
 import { EvidencePreviewModal } from './components/common/EvidencePreviewModal';
+import { GcpArchitectureModal } from './components/common/GcpArchitectureModal';
 
 const AppContent: React.FC = () => {
   const { activeTab } = useAssessment();
@@ -36,15 +38,18 @@ const AppContent: React.FC = () => {
       {/* Global Slide-overs and Modals */}
       <ControlDetailModal />
       <EvidencePreviewModal />
+      <GcpArchitectureModal />
     </div>
   );
 };
 
 export const App: React.FC = () => {
   return (
-    <AssessmentProvider>
-      <AppContent />
-    </AssessmentProvider>
+    <TenantProvider>
+      <AssessmentProvider>
+        <AppContent />
+      </AssessmentProvider>
+    </TenantProvider>
   );
 };
 
