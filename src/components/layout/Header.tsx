@@ -9,12 +9,17 @@ import {
   CheckCircle2,
   Lock,
   Cloud,
+  Globe,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { TenantSwitcher } from './TenantSwitcher';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onExitToLanding?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onExitToLanding }) => {
   const {
     metrics,
     loadDemoScenario,
@@ -161,6 +166,18 @@ export const Header: React.FC = () => {
                 className="p-2 text-rose-400/80 hover:text-rose-300 bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-900 rounded-xl transition-colors"
               >
                 <RotateCcw className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Exit to Landing Page */}
+            {onExitToLanding && (
+              <button
+                onClick={onExitToLanding}
+                title="Exit to Public Landing Page"
+                className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors flex items-center gap-1.5 text-xs"
+              >
+                <Globe className="w-4 h-4 text-slate-400" />
+                <span className="hidden xl:inline">Public Site</span>
               </button>
             )}
           </div>
