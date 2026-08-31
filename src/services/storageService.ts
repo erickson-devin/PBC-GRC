@@ -1,7 +1,7 @@
 import { AssessmentState, ControlState, SSPMetadata, EvidenceItem } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
-import { GcsService } from './gcsService';
+import { GcsService, DEFAULT_GCP_CONFIG } from './gcsService';
 
 const STORAGE_KEY_PREFIX = 'pbc_cmmc_assessment_v2_';
 const LEGACY_STORAGE_KEY = 'pbc_cmmc_assessment_v1';
@@ -309,7 +309,7 @@ export const StorageService = {
     md += `**System Owner:** ${meta.systemOwner}\n`;
     md += `**Lead Assessor:** ${meta.authorName}\n`;
     md += `**Assessment Date:** ${meta.assessmentDate}\n`;
-    md += `**Cloud Storage (GCS) Enclave:** \`gs://pbc-grc-evidence-vault-us-central1/tenants/${state.tenantId}/\`\n\n`;
+    md += `**Cloud Storage (GCS) Enclave:** \`gs://${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${state.tenantId}/\`\n\n`;
     md += `## 1. System Scope & Boundary Description\n${meta.systemBoundaryScope}\n\n`;
     md += `## 2. Operating Environment & Cloud Service Providers (CSPs)\n`;
     md += `- **Environment:** ${meta.systemEnvironment}\n`;

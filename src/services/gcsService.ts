@@ -2,12 +2,12 @@ import { GcpServiceConfig } from '../types/tenant';
 import { EvidenceItem } from '../types/cmmc';
 
 export const DEFAULT_GCP_CONFIG: GcpServiceConfig = {
-  projectId: 'pbc-grc-defense-prod',
-  region: 'us-central1',
-  gcsBucketName: 'pbc-grc-evidence-vault-us-central1',
-  cloudSqlInstance: 'pbc-grc-postgres-primary',
-  databaseName: 'cmmc_compliance_db',
-  identityDomain: 'apexdefense.us',
+  projectId: import.meta.env.VITE_GCP_PROJECT_ID || 'grc-tool-507203',
+  region: import.meta.env.VITE_GCP_REGION || 'us-central1',
+  gcsBucketName: import.meta.env.VITE_GCS_BUCKET_NAME || 'pbc-grc-evidence-prod',
+  cloudSqlInstance: import.meta.env.VITE_GCP_CLOUD_SQL_INSTANCE || 'pbc-grc-postgres-primary',
+  databaseName: import.meta.env.VITE_GCP_DATABASE_NAME || 'cmmc_compliance_db',
+  identityDomain: import.meta.env.VITE_GCP_IDENTITY_DOMAIN || 'pitchblackcyber.com',
 };
 
 export const GcsService = {
@@ -60,8 +60,8 @@ export const GcsService = {
     const gcsPath = this.generateGcsPath(tenantId, controlId, fileId, fileName);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min validity
     
-    // In a live GCP Cloud Run environment, this would call `GET /api/gcs/signed-upload-url`
-    const mockSignedUrl = `https://storage.googleapis.com/${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${tenantId}/controls/${controlId}/${fileId}?GoogleAccessId=sa-evidence-signer@${DEFAULT_GCP_CONFIG.projectId}.iam.gserviceaccount.com&Expires=${Math.floor(Date.now() / 1000) + 900}&Signature=GCS_SECURE_TOKEN_EMULATED`;
+    // In live GCP environment, presigned URLs are signed by cmmc-evidence-signer service account
+    const mockSignedUrl = `https://storage.googleapis.com/${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${tenantId}/controls/${controlId}/${fileId}?GoogleAccessId=cmmc-evidence-signer@${DEFAULT_GCP_CONFIG.projectId}.iam.gserviceaccount.com&Expires=${Math.floor(Date.now() / 1000) + 900}&Signature=GCS_SECURE_TOKEN_EMULATED`;
 
     return {
       signedUrl: mockSignedUrl,

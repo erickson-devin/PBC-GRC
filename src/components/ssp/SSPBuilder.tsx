@@ -13,6 +13,7 @@ import {
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
+import { DEFAULT_GCP_CONFIG } from '../../services/gcsService';
 
 export const SSPBuilder: React.FC = () => {
   const {
@@ -41,7 +42,7 @@ export const SSPBuilder: React.FC = () => {
     text += `SYSTEM NAME: ${meta.systemName}\n`;
     text += `SYSTEM OWNER: ${meta.systemOwner}\n`;
     text += `ASSESSMENT DATE: ${meta.assessmentDate}\n`;
-    text += `GCS ENCLAVE: gs://pbc-grc-evidence-vault-us-central1/tenants/${currentTenant.id}/\n\n`;
+    text += `GCS ENCLAVE: gs://${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${currentTenant.id}/\n\n`;
     text += `SYSTEM BOUNDARY & SCOPE:\n${meta.systemBoundaryScope}\n\n`;
     text += `17 CONTROLS ASSESSMENT MATRIX:\n`;
 
