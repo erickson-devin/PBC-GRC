@@ -7,6 +7,7 @@ import {
   Layers,
   Search,
   Cloud,
+  X,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -19,6 +20,8 @@ export const TenantSwitcher: React.FC = () => {
     currentUser,
     switchTenant,
     createTenant,
+    isMspUser,
+    isSandboxMode,
     setIsGcpArchitectureModalOpen,
   } = useTenant();
 
@@ -34,7 +37,7 @@ export const TenantSwitcher: React.FC = () => {
   const [newSamStatus, setNewSamStatus] = useState<SamStatus>('ACTIVE');
   const [newSystemName, setNewSystemName] = useState('');
   const [newSystemOwner, setNewSystemOwner] = useState('');
-  const [newIndustry, setNewIndustry] = useState('Defense Industrial Base');
+  const [newIndustry, setNewIndustry] = useState('Defense Industrial Base (DIB)');
 
   const tenantMenuRef = useRef<HTMLDivElement>(null);
 
@@ -55,11 +58,11 @@ export const TenantSwitcher: React.FC = () => {
 
     createTenant({
       name: newName.trim(),
-      cageCode: newCage.trim().toUpperCase() || 'N/A',
+      cageCode: newCage.trim().toUpperCase() || 'PENDING',
       samStatus: newSamStatus,
       systemName: newSystemName.trim() || `${newName.trim()} Operations Enclave`,
       systemOwner: newSystemOwner.trim() || currentUser.name,
-      industry: newIndustry.trim() || 'Defense Industrial Base',
+      industry: newIndustry.trim() || 'Defense Industrial Base (DIB)',
     });
 
     // Reset & close
@@ -87,6 +90,41 @@ export const TenantSwitcher: React.FC = () => {
     }
   };
 
+  // SINGLE-ORG MODE: Non-MSP live users only see their active company badge (no dropdown or add buttons)
+  if (!isMspUser) {
+    return (
+      <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-800/90 border border-slate-700/80 shadow-md"
+          title="Active Contractor Enclave"
+        >
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white shrink-0 shadow-sm">
+            <Building2 className="w-4 h-4" />
+          </div>
+
+          <div className="hidden sm:block text-left">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white tracking-tight max-w-[140px] md:max-w-[200px] truncate">
+                {currentTenant.name}
+              </span>
+              {currentTenant.cageCode && currentTenant.cageCode !== 'PENDING' && (
+                <span className="text-[10px] font-mono px-1 rounded bg-slate-900/80 text-brand-300 border border-slate-700">
+                  {currentTenant.cageCode}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+              <span>{getSamBadge(currentTenant.samStatus)}</span>
+              <span className="text-slate-500">•</span>
+              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // MSP MODE or SANDBOX DEMO: Interactive Multi-Tenant Switcher
   return (
     <div className="flex items-center gap-2">
       {/* Organization / Tenant Switcher Dropdown */}
@@ -128,7 +166,9 @@ export const TenantSwitcher: React.FC = () => {
                   <Layers className="w-3.5 h-3.5 text-brand-400" />
                   Client Organizations ({tenants.length})
                 </span>
-                <span className="text-[10px] text-slate-500 font-mono">Isolated Data Boundary</span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {isSandboxMode ? 'Sandbox Enclaves' : 'Isolated Data Boundaries'}
+                </span>
               </div>
               
               {/* Search Box */}
@@ -168,7 +208,7 @@ export const TenantSwitcher: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
                         <span className="font-mono text-slate-300 bg-slate-800 px-1 rounded">
-                          CAGE: {t.cageCode}
+                          CAGE: {t.cageCode || 'PENDING'}
                         </span>
                         {getSamBadge(t.samStatus)}
                       </div>
@@ -187,7 +227,7 @@ export const TenantSwitcher: React.FC = () => {
               )}
             </div>
 
-            {/* Create New Tenant Button */}
+            {/* Add Client Organization Button (MSP / Admin only) */}
             <div className="p-2 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between gap-2">
               <button
                 onClick={() => {
@@ -199,14 +239,14 @@ export const TenantSwitcher: React.FC = () => {
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Client Organization</span>
               </button>
-
+              
               <button
                 onClick={() => {
                   setIsGcpArchitectureModalOpen(true);
                   setIsTenantMenuOpen(false);
                 }}
-                title="View Google Cloud SQL & Infrastructure Schema"
-                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+                title="GCP Architecture & Cloud SQL Isolation"
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-700/80 transition-colors"
               >
                 <Cloud className="w-4 h-4 text-brand-400" />
               </button>
@@ -215,115 +255,126 @@ export const TenantSwitcher: React.FC = () => {
         )}
       </div>
 
-      {/* Modal: Create New Tenant Organization */}
+      {/* Modal: Create Client Organization */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl animate-scaleUp">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-brand-400">
-                  <Building2 className="w-5 h-5" />
+                <div className="w-8 h-8 rounded-xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                  <Building2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Add Client Organization</h3>
-                  <p className="text-xs text-slate-400">Create a strictly isolated CMMC compliance tenant</p>
+                  <h3 className="text-sm font-bold text-white">Add New Client Enclave</h3>
+                  <p className="text-[11px] text-slate-400">Create a partitioned multi-tenant boundary for a DoD contractor</p>
                 </div>
               </div>
               <button
                 onClick={() => setIsCreateModalOpen(false)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateSubmit} className="space-y-4 mt-4 text-xs">
+            <form onSubmit={handleCreateSubmit} className="space-y-3.5">
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Company / Organization Name *</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Legal Organization Name <span className="text-rose-400">*</span>
+                </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Titan Aerospace Systems, LLC"
+                  placeholder="e.g. Apex Defense Solutions, LLC"
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">CAGE Code</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    CAGE Code
+                  </label>
                   <input
                     type="text"
-                    maxLength={10}
-                    placeholder="e.g. 6K9B2"
+                    maxLength={5}
+                    placeholder="e.g. 9X7B4"
                     value={newCage}
-                    onChange={e => setNewCage(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono uppercase focus:outline-none focus:border-brand-500"
+                    onChange={e => setNewCage(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 font-mono focus:outline-none focus:border-brand-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">SAM.gov Status</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    SAM.gov Status
+                  </label>
                   <select
                     value={newSamStatus}
                     onChange={e => setNewSamStatus(e.target.value as SamStatus)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-brand-500"
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-brand-500"
                   >
                     <option value="ACTIVE">ACTIVE</option>
                     <option value="PENDING">PENDING</option>
                     <option value="EXPIRED">EXPIRED</option>
-                    <option value="NOT_REGISTERED">NOT_REGISTERED</option>
+                    <option value="NOT_REGISTERED">NOT REGISTERED</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Information System Name</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  System Boundary Name (SSP)
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. Corporate Defense Enclave (CDE)"
+                  placeholder="e.g. Corporate Operations Enclave (COE)"
                   value={newSystemName}
                   onChange={e => setNewSystemName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1">System Owner / CISO</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Jane Doe, CISO"
-                    value={newSystemOwner}
-                    onChange={e => setNewSystemOwner(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-brand-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Industry Sector</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Defense Avionics"
-                    value={newIndustry}
-                    onChange={e => setNewIndustry(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-brand-500"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Designated System Owner
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Cyber Ops Administrator"
+                  value={newSystemOwner}
+                  onChange={e => setNewSystemOwner(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                />
               </div>
 
-              <div className="pt-4 flex items-center justify-end gap-2 border-t border-slate-800">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Defense Industry Sector
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Aerospace Hardware & R&D"
+                  value={newIndustry}
+                  onChange={e => setNewIndustry(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2.5">
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold shadow-lg shadow-brand-500/25 transition-all"
+                  className="px-5 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-500 rounded-xl shadow-lg shadow-brand-500/25 transition-colors"
                 >
-                  Create & Switch Tenant
+                  Provision Client Enclave
                 </button>
               </div>
             </form>
@@ -333,3 +384,5 @@ export const TenantSwitcher: React.FC = () => {
     </div>
   );
 };
+
+export { TenantSwitcher as OrganizationSwitcher };

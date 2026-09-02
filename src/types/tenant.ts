@@ -1,4 +1,4 @@
-export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER';
+export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
 
 export type SamStatus = 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'NOT_REGISTERED';
 
@@ -18,6 +18,7 @@ export interface Tenant {
   isDemo?: boolean;
   isConfigured?: boolean; // false if setup wizard / initial onboarding is needed
   systemBoundaryScope?: string;
+  licenseTier?: 'single-org' | 'msp-assessor';
 }
 
 export interface User {
@@ -32,6 +33,7 @@ export interface User {
   emailVerified?: boolean;
   domain?: string;
   idToken?: string;
+  licenseTier?: 'single-org' | 'msp-assessor';
 }
 
 export interface TenantUserAssignment {

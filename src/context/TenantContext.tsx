@@ -2,11 +2,88 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { Tenant, TenantRole, User, SamStatus, LicenseRequest } from '../types/tenant';
 import { StorageService, createInitialState } from '../services/storageService';
 
-const TENANTS_STORAGE_KEY = 'pbc_tenants_registry_v3';
-const CURRENT_TENANT_ID_KEY = 'pbc_active_tenant_id_v3';
-const CURRENT_USER_KEY = 'pbc_active_user_v3';
-const LICENSE_REQUESTS_STORAGE_KEY = 'pbc_license_requests_v1';
+// Storage Version 4 Keys (Strict separation of Live vs Sandbox)
+const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
+const LIVE_ACTIVE_TENANT_ID_KEY = 'pbc_live_active_tenant_v4';
+const DEMO_TENANTS_STORAGE_KEY = 'pbc_demo_tenants_v4';
+const DEMO_ACTIVE_TENANT_ID_KEY = 'pbc_demo_active_tenant_v4';
+const CURRENT_USER_KEY = 'pbc_active_user_v4';
+const LICENSE_REQUESTS_STORAGE_KEY = 'pbc_license_requests_v4';
 
+// Legacy keys to purge on initialization
+const LEGACY_STORAGE_KEYS = [
+  'pbc_tenants',
+  'pbc_active_tenant',
+  'pbc_tenants_registry_v1',
+  'pbc_tenants_registry_v2',
+  'pbc_tenants_registry_v3',
+  'pbc_active_tenant_id_v3',
+  'pbc_active_user_v3',
+];
+
+/**
+ * Normalized string helper for deduplication
+ * Removes legal entity suffixes (LLC, Inc, Corp, Co) and symbols to compare true entity identity
+ */
+export function normalizeOrgName(name: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/[,.]/g, '')
+    .replace(/\b(llc|inc|corp|corporation|ltd|co|company|technologies|systems|group|enclave)\b/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+/**
+ * Deduplicate tenant lists by unique id, verified domain, or normalized name
+ * Merges duplicate entries and retains the most configured / recent authoritative record
+ */
+export function deduplicateTenants(tenantList: Tenant[]): Tenant[] {
+  const seenIds = new Set<string>();
+  const seenEntities = new Map<string, Tenant>();
+  const result: Tenant[] = [];
+
+  for (const t of tenantList) {
+    if (!t || !t.id) continue;
+    if (seenIds.has(t.id)) continue;
+
+    // Use normalized domain or normalized company name as entity identity
+    const domainKey = t.domain && t.domain.trim() ? t.domain.toLowerCase().trim() : '';
+    const nameKey = normalizeOrgName(t.name);
+    const entityKey = domainKey ? `dom:${domainKey}` : `name:${nameKey}`;
+
+    if (seenEntities.has(entityKey)) {
+      const existing = seenEntities.get(entityKey)!;
+      // Prefer configured over unconfigured, or newer record
+      const preferCurrent =
+        (!existing.isConfigured && t.isConfigured) ||
+        (Boolean(t.isConfigured === existing.isConfigured) &&
+          new Date(t.updatedAt || t.createdAt).getTime() >
+            new Date(existing.updatedAt || existing.createdAt).getTime());
+
+      if (preferCurrent) {
+        const idx = result.findIndex(r => r.id === existing.id);
+        if (idx !== -1) {
+          result[idx] = t;
+          seenEntities.set(entityKey, t);
+          seenIds.add(t.id);
+          seenIds.delete(existing.id);
+        }
+      }
+    } else {
+      seenEntities.set(entityKey, t);
+      seenIds.add(t.id);
+      result.push(t);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Sandbox Demo Tenants (Evaluator testing and unauthenticated /demo test drive)
+ */
 export const SEED_TENANTS: Tenant[] = [
   {
     id: 'tenant-vanguard-01',
@@ -18,7 +95,7 @@ export const SEED_TENANTS: Tenant[] = [
     industry: 'Defense IT & Systems Integration',
     domain: 'vanguard-defense.us',
     createdAt: '2026-01-15T08:00:00.000Z',
-    updatedAt: new Date().toISOString(),
+    updatedAt: '2026-01-15T08:00:00.000Z',
     isDemo: true,
     isConfigured: true,
   },
@@ -32,7 +109,7 @@ export const SEED_TENANTS: Tenant[] = [
     industry: 'Aerospace & Defense Hardware',
     domain: 'apex-aerospace.us',
     createdAt: '2026-02-01T10:30:00.000Z',
-    updatedAt: new Date().toISOString(),
+    updatedAt: '2026-02-01T10:30:00.000Z',
     isDemo: true,
     isConfigured: true,
   },
@@ -46,7 +123,7 @@ export const SEED_TENANTS: Tenant[] = [
     industry: 'Satellite Systems & Propulsion R&D',
     domain: 'orbitaldynamics.com',
     createdAt: '2026-02-20T14:15:00.000Z',
-    updatedAt: new Date().toISOString(),
+    updatedAt: '2026-02-20T14:15:00.000Z',
     isDemo: true,
     isConfigured: true,
   },
@@ -94,6 +171,37 @@ export const PRESET_USERS: User[] = [
   },
 ];
 
+const DEFAULT_BLANK_TENANT: Tenant = {
+  id: 'tenant-live-default-01',
+  name: 'Pitch Black Cyber LLC',
+  cageCode: 'PENDING',
+  samStatus: 'ACTIVE',
+  systemName: 'Corporate IT & Operations Boundary',
+  systemOwner: 'Corporate Security Lead',
+  industry: 'Defense Industrial Base (DIB)',
+  domain: 'pitchblackcyber.com',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  isDemo: false,
+  isConfigured: false,
+};
+
+// Check if current URL route is sandbox demo
+const checkIsSandboxRoute = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const hash = window.location.hash.toLowerCase();
+  const path = window.location.pathname.toLowerCase();
+  const search = window.location.search.toLowerCase();
+  return (
+    hash.startsWith('#demo') ||
+    hash.startsWith('#sandbox') ||
+    path === '/demo' ||
+    path === '/sandbox' ||
+    search.includes('mode=sandbox') ||
+    search.includes('view=demo')
+  );
+};
+
 interface TenantContextType {
   tenants: Tenant[];
   currentTenant: Tenant;
@@ -101,6 +209,8 @@ interface TenantContextType {
   currentRole: TenantRole;
   canEdit: boolean;
   canManageTenant: boolean;
+  isSandboxMode: boolean;
+  isMspUser: boolean;
   needsOnboarding: boolean;
   isOnboardingModalOpen: boolean;
   setIsOnboardingModalOpen: (open: boolean) => void;
@@ -116,6 +226,7 @@ interface TenantContextType {
     domain?: string;
     isDemo?: boolean;
     isConfigured?: boolean;
+    licenseTier?: 'single-org' | 'msp-assessor';
   }) => Tenant;
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
@@ -140,35 +251,95 @@ interface TenantContextType {
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
 export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Load or seed Tenants
-  const [tenants, setTenants] = useState<Tenant[]>(() => {
+  // Mode detection: Sandbox (/demo) vs Live Enclave (/app)
+  const [isSandboxMode, setIsSandboxMode] = useState<boolean>(() => checkIsSandboxRoute());
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setIsSandboxMode(checkIsSandboxRoute());
+    };
+    window.addEventListener('hashchange', handleLocationChange);
+    window.addEventListener('popstate', handleLocationChange);
+    return () => {
+      window.removeEventListener('hashchange', handleLocationChange);
+      window.removeEventListener('popstate', handleLocationChange);
+    };
+  }, []);
+
+  // 1. LIVE TENANTS: Strictly non-demo organizations created or assigned to real users
+  const [liveTenants, setLiveTenants] = useState<Tenant[]>(() => {
     try {
-      const saved = localStorage.getItem(TENANTS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Tenant[];
+      // Check v4 key
+      const savedLive = localStorage.getItem(LIVE_TENANTS_STORAGE_KEY);
+      if (savedLive) {
+        const parsed = JSON.parse(savedLive) as Tenant[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Merge seed demo tenants if missing
-          const existingIds = new Set(parsed.map(t => t.id));
-          const missingSeeds = SEED_TENANTS.filter(st => !existingIds.has(st.id));
-          return [...parsed, ...missingSeeds];
+          // Filter out any mock demo tenants that may have been saved
+          const clean = parsed.filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id));
+          if (clean.length > 0) {
+            return deduplicateTenants(clean);
+          }
+        }
+      }
+
+      // Migration: migrate any non-demo tenants from legacy storage
+      const legacySaved = localStorage.getItem('pbc_tenants_registry_v3');
+      if (legacySaved) {
+        const parsed = JSON.parse(legacySaved) as Tenant[];
+        if (Array.isArray(parsed)) {
+          const nonDemo = parsed.filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id));
+          const deduplicated = deduplicateTenants(nonDemo);
+          if (deduplicated.length > 0) {
+            return deduplicated;
+          }
         }
       }
     } catch (err) {
-      console.error('Error loading tenants from storage:', err);
+      console.error('Error initializing live tenants:', err);
+    } finally {
+      // Purge legacy storage keys
+      LEGACY_STORAGE_KEYS.forEach(k => {
+        try { localStorage.removeItem(k); } catch {}
+      });
+    }
+
+    return [DEFAULT_BLANK_TENANT];
+  });
+
+  // 2. DEMO TENANTS: Strictly sample demo organizations for testing
+  const [demoTenants, setDemoTenants] = useState<Tenant[]>(() => {
+    try {
+      const savedDemo = localStorage.getItem(DEMO_TENANTS_STORAGE_KEY);
+      if (savedDemo) {
+        const parsed = JSON.parse(savedDemo) as Tenant[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return deduplicateTenants(parsed);
+        }
+      }
+    } catch {
+      // fallback
     }
     return SEED_TENANTS;
   });
 
-  // Active Tenant ID
-  const [currentTenantId, setCurrentTenantId] = useState<string>(() => {
-    const saved = localStorage.getItem(CURRENT_TENANT_ID_KEY);
-    if (saved && tenants.some(t => t.id === saved)) {
+  // Active Tenant IDs per mode
+  const [liveActiveTenantId, setLiveActiveTenantId] = useState<string>(() => {
+    const saved = localStorage.getItem(LIVE_ACTIVE_TENANT_ID_KEY);
+    if (saved && liveTenants.some(t => t.id === saved)) {
       return saved;
     }
-    return tenants[0]?.id || SEED_TENANTS[0].id;
+    return liveTenants[0]?.id || DEFAULT_BLANK_TENANT.id;
   });
 
-  // Active User
+  const [demoActiveTenantId, setDemoActiveTenantId] = useState<string>(() => {
+    const saved = localStorage.getItem(DEMO_ACTIVE_TENANT_ID_KEY);
+    if (saved && demoTenants.some(t => t.id === saved)) {
+      return saved;
+    }
+    return demoTenants[0]?.id || SEED_TENANTS[0].id;
+  });
+
+  // Active User Profile
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
       const saved = localStorage.getItem(CURRENT_USER_KEY);
@@ -181,15 +352,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return PRESET_USERS[0];
   });
 
-  // Inbound License Requests (Sales onboarding pipeline)
+  // Inbound License Requests
   const [licenseRequests, setLicenseRequests] = useState<LicenseRequest[]>(() => {
     try {
       const saved = localStorage.getItem(LICENSE_REQUESTS_STORAGE_KEY);
       if (saved) {
         return JSON.parse(saved) as LicenseRequest[];
       }
-    } catch (e) {
-      console.error('Error loading license requests:', e);
+    } catch {
+      // ignore
     }
     return [];
   });
@@ -197,67 +368,110 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isGcpArchitectureModalOpen, setIsGcpArchitectureModalOpen] = useState<boolean>(false);
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
 
-  // Sync tenants to localStorage
+  // Sync storage
   useEffect(() => {
-    localStorage.setItem(TENANTS_STORAGE_KEY, JSON.stringify(tenants));
-  }, [tenants]);
+    localStorage.setItem(LIVE_TENANTS_STORAGE_KEY, JSON.stringify(deduplicateTenants(liveTenants)));
+  }, [liveTenants]);
 
-  // Sync active tenant ID
   useEffect(() => {
-    localStorage.setItem(CURRENT_TENANT_ID_KEY, currentTenantId);
-  }, [currentTenantId]);
+    localStorage.setItem(LIVE_ACTIVE_TENANT_ID_KEY, liveActiveTenantId);
+  }, [liveActiveTenantId]);
 
-  // Sync active user
+  useEffect(() => {
+    localStorage.setItem(DEMO_TENANTS_STORAGE_KEY, JSON.stringify(deduplicateTenants(demoTenants)));
+  }, [demoTenants]);
+
+  useEffect(() => {
+    localStorage.setItem(DEMO_ACTIVE_TENANT_ID_KEY, demoActiveTenantId);
+  }, [demoActiveTenantId]);
+
   useEffect(() => {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
   }, [currentUser]);
 
-  // Sync license requests
   useEffect(() => {
     localStorage.setItem(LICENSE_REQUESTS_STORAGE_KEY, JSON.stringify(licenseRequests));
   }, [licenseRequests]);
 
-  // Resolve current active tenant object
+  // Current active tenant list based strictly on mode
+  const tenants = useMemo(() => {
+    if (isSandboxMode) {
+      return demoTenants;
+    }
+    // LIVE MODE: Render ONLY real, non-demo organizations!
+    return liveTenants;
+  }, [isSandboxMode, demoTenants, liveTenants]);
+
+  // Current active tenant entity
   const currentTenant = useMemo(() => {
-    return tenants.find(t => t.id === currentTenantId) || tenants[0] || SEED_TENANTS[0];
-  }, [tenants, currentTenantId]);
+    if (isSandboxMode) {
+      return demoTenants.find(t => t.id === demoActiveTenantId) || demoTenants[0] || SEED_TENANTS[0];
+    }
+    return liveTenants.find(t => t.id === liveActiveTenantId) || liveTenants[0] || DEFAULT_BLANK_TENANT;
+  }, [isSandboxMode, demoTenants, demoActiveTenantId, liveTenants, liveActiveTenantId]);
 
-  // Determine if active tenant requires onboarding wizard
+  // Determine if active user holds an MSP role or has multi-tenant management rights
+  const isMspUser = useMemo(() => {
+    if (isSandboxMode) {
+      // In sandbox mode, allow prospective customers to test drive switching between client enclaves
+      return true;
+    }
+    // In live mode, only allow if user has explicit MSP_ADMIN role or MSP license tier
+    const roleInCurrent = currentUser.roles?.[currentTenant.id];
+    const hasMspRole =
+      roleInCurrent === 'MSP_ADMIN' ||
+      Object.values(currentUser.roles || {}).includes('MSP_ADMIN');
+    const isMspTier =
+      currentUser.licenseTier === 'msp-assessor' ||
+      currentTenant.licenseTier === 'msp-assessor';
+
+    return Boolean(hasMspRole || isMspTier || liveTenants.length > 1);
+  }, [isSandboxMode, currentUser, currentTenant, liveTenants.length]);
+
+  // Check if active tenant requires initial setup wizard
   const needsOnboarding = useMemo(() => {
-    return !currentTenant.isDemo && currentTenant.isConfigured === false;
-  }, [currentTenant.isDemo, currentTenant.isConfigured]);
+    if (isSandboxMode) return false;
+    return currentTenant.isConfigured === false;
+  }, [isSandboxMode, currentTenant.isConfigured]);
 
-  // Automatically trigger onboarding modal if active tenant requires setup
+  // Automatically trigger onboarding modal if active live tenant requires setup
   useEffect(() => {
-    if (needsOnboarding) {
+    if (!isSandboxMode && needsOnboarding) {
       setIsOnboardingModalOpen(true);
     }
-  }, [needsOnboarding]);
+  }, [isSandboxMode, needsOnboarding]);
 
-  // Resolve current user's role in the active tenant
+  // Current role in active tenant
   const currentRole: TenantRole = useMemo(() => {
     if (currentUser.roles && currentUser.roles[currentTenant.id]) {
       return currentUser.roles[currentTenant.id];
     }
-    // Default fallback
     return 'TENANT_OWNER';
   }, [currentUser.roles, currentTenant.id]);
 
-  // Role-based permissions
   const canEdit = useMemo(() => {
-    return currentRole === 'TENANT_OWNER' || currentRole === 'ASSESSOR';
+    return currentRole === 'TENANT_OWNER' || currentRole === 'ASSESSOR' || currentRole === 'MSP_ADMIN';
   }, [currentRole]);
 
   const canManageTenant = useMemo(() => {
-    return currentRole === 'TENANT_OWNER';
+    return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';
   }, [currentRole]);
 
   const switchTenant = useCallback((tenantId: string) => {
-    if (tenants.some(t => t.id === tenantId)) {
-      setCurrentTenantId(tenantId);
+    if (isSandboxMode) {
+      if (demoTenants.some(t => t.id === tenantId)) {
+        setDemoActiveTenantId(tenantId);
+      }
+    } else {
+      if (liveTenants.some(t => t.id === tenantId)) {
+        setLiveActiveTenantId(tenantId);
+      }
     }
-  }, [tenants]);
+  }, [isSandboxMode, demoTenants, liveTenants]);
 
+  /**
+   * Create a new organization with strict deduplication
+   */
   const createTenant = useCallback((data: {
     name: string;
     cageCode: string;
@@ -268,9 +482,58 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     domain?: string;
     isDemo?: boolean;
     isConfigured?: boolean;
+    licenseTier?: 'single-org' | 'msp-assessor';
   }): Tenant => {
+    const normName = normalizeOrgName(data.name);
+
+    if (isSandboxMode) {
+      const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
+      const newTenantId = `tenant-demo-${slug}-${Date.now().toString(36).substring(2, 6)}`;
+      const newDemoTenant: Tenant = {
+        id: newTenantId,
+        name: data.name.trim(),
+        cageCode: data.cageCode.trim().toUpperCase() || 'PENDING',
+        samStatus: data.samStatus || 'ACTIVE',
+        systemName: data.systemName.trim() || `${data.name} Operations Boundary`,
+        systemOwner: data.systemOwner.trim(),
+        industry: data.industry || 'Defense Industrial Base (DIB)',
+        domain: data.domain,
+        isDemo: true,
+        isConfigured: data.isConfigured ?? true,
+        licenseTier: data.licenseTier,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      setDemoTenants(prev => deduplicateTenants([...prev, newDemoTenant]));
+      setDemoActiveTenantId(newTenantId);
+      return newDemoTenant;
+    }
+
+    // Live mode deduplication check
+    const existing = liveTenants.find(t =>
+      (data.domain && t.domain && t.domain.toLowerCase().trim() === data.domain.toLowerCase().trim()) ||
+      normalizeOrgName(t.name) === normName
+    );
+
+    if (existing) {
+      // Update existing rather than creating duplicate
+      setLiveTenants(prev => prev.map(t => (t.id === existing.id ? {
+        ...t,
+        name: data.name.trim(),
+        cageCode: data.cageCode.trim().toUpperCase() || t.cageCode,
+        samStatus: data.samStatus || t.samStatus,
+        systemName: data.systemName.trim() || t.systemName,
+        systemOwner: data.systemOwner.trim() || t.systemOwner,
+        industry: data.industry || t.industry,
+        updatedAt: new Date().toISOString(),
+      } : t)));
+      setLiveActiveTenantId(existing.id);
+      return existing;
+    }
+
     const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-    const newTenantId = `tenant-${slug}-${Math.random().toString(36).substring(2, 6)}`;
+    const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 6)}`;
     const newTenant: Tenant = {
       id: newTenantId,
       name: data.name.trim(),
@@ -280,14 +543,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       systemOwner: data.systemOwner.trim(),
       industry: data.industry || 'Defense Industrial Base (DIB)',
       domain: data.domain,
-      isDemo: data.isDemo ?? false,
+      isDemo: false,
       isConfigured: data.isConfigured ?? true,
+      licenseTier: data.licenseTier,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    setTenants(prev => [...prev, newTenant]);
-    
+    setLiveTenants(prev => deduplicateTenants([...prev, newTenant]));
+    setLiveActiveTenantId(newTenantId);
+
     // Assign creator as TENANT_OWNER
     setCurrentUser(prevUser => ({
       ...prevUser,
@@ -297,17 +562,39 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       },
     }));
 
-    setCurrentTenantId(newTenantId);
     return newTenant;
-  }, []);
+  }, [isSandboxMode, liveTenants]);
 
   /**
-   * Initializes a brand-new blank tenant state for a first-time authenticated contractor
+   * Initializes a brand-new blank tenant state for an authenticated contractor
+   * Performs deduplication check by domain and normalized company name
    */
   const initializeBlankTenant = useCallback((email: string, domain?: string, orgName?: string): Tenant => {
     const parts = email.toLowerCase().trim().split('@');
-    const domainPrefix = domain ? domain.split('.')[0] : (parts[1] ? parts[1].split('.')[0] : 'contractor');
-    const formattedTitle = orgName || (domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' Enclave');
+    const emailDomain = domain || (parts[1] ?? 'pitchblackcyber.com');
+    const domainPrefix = emailDomain.split('.')[0];
+    const formattedTitle = orgName || (domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' LLC');
+    const normName = normalizeOrgName(formattedTitle);
+
+    // 1. DEDUPLICATION CHECK: Check if an existing live tenant matches by domain or normalized name
+    const existing = liveTenants.find(t =>
+      (t.domain && t.domain.toLowerCase().trim() === emailDomain.toLowerCase().trim()) ||
+      normalizeOrgName(t.name) === normName
+    );
+
+    if (existing) {
+      setLiveActiveTenantId(existing.id);
+      setCurrentUser(prevUser => ({
+        ...prevUser,
+        roles: {
+          ...prevUser.roles,
+          [existing.id]: prevUser.roles[existing.id] || 'TENANT_OWNER',
+        },
+      }));
+      return existing;
+    }
+
+    // 2. If no duplicate exists, create new blank tenant
     const slug = domainPrefix.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
     const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 7)}`;
 
@@ -319,9 +606,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       systemName: `${formattedTitle} Operations Boundary`,
       systemOwner: email,
       industry: 'Defense Industrial Base (DIB)',
-      domain: domain || (parts[1] ?? undefined),
+      domain: emailDomain,
       isDemo: false,
-      isConfigured: false, // Flag that triggers the 2-step setup wizard
+      isConfigured: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -330,8 +617,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const blankState = createInitialState(newTenant);
     StorageService.saveAssessment(newTenantId, blankState);
 
-    // Register tenant
-    setTenants(prev => [...prev, newTenant]);
+    // Register into liveTenants
+    setLiveTenants(prev => deduplicateTenants([...prev.filter(t => t.id !== DEFAULT_BLANK_TENANT.id), newTenant]));
+    setLiveActiveTenantId(newTenantId);
 
     // Assign authenticated user as TENANT_OWNER
     setCurrentUser(prevUser => ({
@@ -342,10 +630,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       },
     }));
 
-    setCurrentTenantId(newTenantId);
     setIsOnboardingModalOpen(true);
     return newTenant;
-  }, []);
+  }, [liveTenants]);
 
   /**
    * Complete 2-step onboarding wizard and finalize tenant configuration
@@ -358,23 +645,26 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     systemOwner: string;
     systemBoundaryScope?: string;
   }) => {
-    setTenants(prev => prev.map(t => {
-      if (t.id === tenantId) {
-        return {
-          ...t,
-          name: data.organizationName.trim(),
-          cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
-          samStatus: data.samStatus || 'ACTIVE',
-          systemName: data.systemName.trim(),
-          systemOwner: data.systemOwner.trim(),
-          systemBoundaryScope: data.systemBoundaryScope?.trim(),
-          isConfigured: true,
-          isDemo: false,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      return t;
-    }));
+    setLiveTenants(prev => {
+      const updated = prev.map(t => {
+        if (t.id === tenantId) {
+          return {
+            ...t,
+            name: data.organizationName.trim(),
+            cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
+            samStatus: data.samStatus || 'ACTIVE',
+            systemName: data.systemName.trim(),
+            systemOwner: data.systemOwner.trim(),
+            systemBoundaryScope: data.systemBoundaryScope?.trim(),
+            isConfigured: true,
+            isDemo: false,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return t;
+      });
+      return deduplicateTenants(updated);
+    });
 
     // Update existing assessment's SSP metadata in storage
     const currentAssessment = StorageService.loadAssessment({
@@ -407,31 +697,29 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   const updateTenant = useCallback((tenantId: string, updates: Partial<Tenant>) => {
-    setTenants(prev => prev.map(t => {
-      if (t.id === tenantId) {
-        return {
-          ...t,
-          ...updates,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      return t;
-    }));
-  }, []);
+    if (isSandboxMode) {
+      setDemoTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
+    } else {
+      setLiveTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
+    }
+  }, [isSandboxMode]);
 
   const deleteTenant = useCallback((tenantId: string) => {
-    setTenants(prev => {
-      if (prev.length <= 1) {
-        alert('Cannot delete the only remaining tenant organization.');
-        return prev;
-      }
-      const filtered = prev.filter(t => t.id !== tenantId);
-      if (currentTenantId === tenantId) {
-        setCurrentTenantId(filtered[0].id);
-      }
-      return filtered;
-    });
-  }, [currentTenantId]);
+    const list = isSandboxMode ? demoTenants : liveTenants;
+    if (list.length <= 1) {
+      alert('Cannot delete the only remaining organization in this enclave.');
+      return;
+    }
+    if (isSandboxMode) {
+      const filtered = demoTenants.filter(t => t.id !== tenantId);
+      setDemoTenants(filtered);
+      if (demoActiveTenantId === tenantId) setDemoActiveTenantId(filtered[0].id);
+    } else {
+      const filtered = liveTenants.filter(t => t.id !== tenantId);
+      setLiveTenants(filtered);
+      if (liveActiveTenantId === tenantId) setLiveActiveTenantId(filtered[0].id);
+    }
+  }, [isSandboxMode, demoTenants, demoActiveTenantId, liveTenants, liveActiveTenantId]);
 
   const switchUserRole = useCallback((role: TenantRole) => {
     setCurrentUser(prev => ({
@@ -445,16 +733,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const switchUser = useCallback((user: User) => {
     setCurrentUser(user);
-    // If the selected user has roles, set active tenant to one they have access to
-    const accessibleTenants = Object.keys(user.roles);
-    if (accessibleTenants.length > 0 && !accessibleTenants.includes(currentTenantId)) {
-      setCurrentTenantId(accessibleTenants[0]);
+    const accessibleTenants = Object.keys(user.roles || {});
+    if (accessibleTenants.length > 0) {
+      const targetId = accessibleTenants[0];
+      if (isSandboxMode) {
+        setDemoActiveTenantId(targetId);
+      } else {
+        setLiveActiveTenantId(targetId);
+      }
     }
-  }, [currentTenantId]);
+  }, [isSandboxMode]);
 
   /**
-   * Domain-based auto-tenant matching
-   * Analyzes the email domain against existing tenants or initializes a blank company enclave
+   * Domain-based auto-tenant matching with deduplication
    */
   const resolveTenantForEmail = useCallback((email: string): { tenant: Tenant; role: TenantRole } => {
     const parts = email.toLowerCase().trim().split('@');
@@ -462,56 +753,67 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return { tenant: currentTenant, role: currentRole };
     }
 
-    const domain = parts[1]; // e.g. "apexdefense.us"
-    const domainPrefix = domain.split('.')[0]; // e.g. "apexdefense"
+    const domain = parts[1]; // e.g. "pitchblackcyber.com"
+    const domainPrefix = domain.split('.')[0]; // e.g. "pitchblackcyber"
+    const normalizedPrefix = normalizeOrgName(domainPrefix);
 
-    // 1. Check if email matches preset user
-    const preset = PRESET_USERS.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (preset) {
-      const tenantIds = Object.keys(preset.roles);
-      const targetTenant = tenants.find(t => tenantIds.includes(t.id)) || tenants[0];
-      const role = preset.roles[targetTenant.id] || 'TENANT_OWNER';
-      return { tenant: targetTenant, role };
+    // 1. In sandbox mode, check preset demo users
+    if (isSandboxMode) {
+      const preset = PRESET_USERS.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (preset) {
+        const tenantIds = Object.keys(preset.roles);
+        const targetTenant = demoTenants.find(t => tenantIds.includes(t.id)) || demoTenants[0];
+        const role = preset.roles[targetTenant.id] || 'TENANT_OWNER';
+        return { tenant: targetTenant, role };
+      }
     }
 
-    // 2. Direct domain match against existing tenants
-    const matchedByDomain = tenants.find(t => 
-      t.domain?.toLowerCase() === domain ||
-      t.name.toLowerCase().includes(domainPrefix) ||
-      domain.includes(t.name.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    // 2. LIVE MODE DEDUPLICATION: Match existing live tenants by domain or normalized name
+    const matchedLive = liveTenants.find(t =>
+      (t.domain && t.domain.toLowerCase() === domain) ||
+      normalizeOrgName(t.name) === normalizedPrefix ||
+      t.name.toLowerCase().includes(domainPrefix)
     );
 
-    if (matchedByDomain) {
+    if (matchedLive) {
       const isAssessorDomain = domain.includes('audit') || domain.includes('c3pao') || domain.includes('assessor');
       const role: TenantRole = isAssessorDomain ? 'ASSESSOR' : 'TENANT_OWNER';
-      return { tenant: matchedByDomain, role };
+      setLiveActiveTenantId(matchedLive.id);
+      return { tenant: matchedLive, role };
     }
 
-    // 3. Initialize blank tenant enclave for first-time defense contractor domain
-    const formattedTitle = domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' Defense Systems, Inc.';
+    // 3. Initialize single blank tenant enclave for first-time defense contractor domain
+    const formattedTitle = domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' LLC';
     const newBlankTenant = initializeBlankTenant(email, domain, formattedTitle);
 
     return { tenant: newBlankTenant, role: 'TENANT_OWNER' };
-  }, [tenants, currentTenant, currentRole, initializeBlankTenant]);
+  }, [isSandboxMode, demoTenants, liveTenants, currentTenant, currentRole, initializeBlankTenant]);
 
   /**
-   * Synchronize authenticated Firebase / Entra ID user with Tenant state
+   * Synchronize authenticated user with Tenant state
    */
   const syncAuthUser = useCallback((user: User, preferredTenantId?: string) => {
     setCurrentUser(user);
-    if (preferredTenantId && tenants.some(t => t.id === preferredTenantId)) {
-      setCurrentTenantId(preferredTenantId);
+    const targetList = isSandboxMode ? demoTenants : liveTenants;
+    if (preferredTenantId && targetList.some(t => t.id === preferredTenantId)) {
+      if (isSandboxMode) {
+        setDemoActiveTenantId(preferredTenantId);
+      } else {
+        setLiveActiveTenantId(preferredTenantId);
+      }
     } else {
       const userTenantIds = Object.keys(user.roles || {});
-      if (userTenantIds.length > 0 && !userTenantIds.includes(currentTenantId)) {
-        setCurrentTenantId(userTenantIds[0]);
+      const matched = userTenantIds.find(id => targetList.some(t => t.id === id));
+      if (matched) {
+        if (isSandboxMode) {
+          setDemoActiveTenantId(matched);
+        } else {
+          setLiveActiveTenantId(matched);
+        }
       }
     }
-  }, [tenants, currentTenantId]);
+  }, [isSandboxMode, demoTenants, liveTenants]);
 
-  /**
-   * Submit new License Request & Sales Call scheduling
-   */
   const submitLicenseRequest = useCallback(async (
     requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>
   ): Promise<LicenseRequest> => {
@@ -533,6 +835,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
+    isSandboxMode,
+    isMspUser,
     needsOnboarding,
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
@@ -557,6 +861,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
+    isSandboxMode,
+    isMspUser,
     needsOnboarding,
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
