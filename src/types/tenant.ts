@@ -16,6 +16,8 @@ export interface Tenant {
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
   isDemo?: boolean;
+  isConfigured?: boolean; // false if setup wizard / initial onboarding is needed
+  systemBoundaryScope?: string;
 }
 
 export interface User {

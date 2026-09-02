@@ -22,18 +22,19 @@ export function createInitialControlsState(tenantId?: string): Record<string, Co
 }
 
 export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
+  const isDemo = Boolean(tenant.isDemo);
   return {
     tenantId: tenant.id,
-    systemName: tenant.systemName || 'Defense Contracting Information Network (DCIN)',
-    organizationName: tenant.name,
-    cageCode: tenant.cageCode,
-    samStatus: tenant.samStatus,
-    systemOwner: tenant.systemOwner || 'Alex Mercer, CMMC CCA',
+    systemName: tenant.systemName || (isDemo ? 'Defense Contracting Information Network (DCIN)' : ''),
+    organizationName: tenant.name || '',
+    cageCode: tenant.cageCode || (isDemo ? '8K3R1' : ''),
+    samStatus: tenant.samStatus || (isDemo ? 'ACTIVE' : 'NOT_REGISTERED'),
+    systemOwner: tenant.systemOwner || (isDemo ? 'Alex Mercer, CMMC CCA' : ''),
     authorName: 'Compliance & Audit Assessment Team',
     assessmentDate: new Date().toISOString().split('T')[0],
-    systemBoundaryScope: `The boundary for ${tenant.name} includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints (Windows 11 Enterprise laptops), internal facility network (VLAN 10), and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI).`,
-    systemEnvironment: 'Hybrid Cloud: SaaS / Cloud Identity + Corporate Facility On-Premises Network.',
-    cloudServiceProviders: 'Microsoft 365, Google Cloud Platform (Cloud Storage / Cloud SQL), Cloudflare (DNS/DDoS).',
+    systemBoundaryScope: tenant.systemBoundaryScope || (isDemo ? `The boundary for ${tenant.name} includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints (Windows 11 Enterprise laptops), internal facility network (VLAN 10), and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI).` : ''),
+    systemEnvironment: isDemo ? 'Hybrid Cloud: SaaS / Cloud Identity + Corporate Facility On-Premises Network.' : '',
+    cloudServiceProviders: isDemo ? 'Microsoft 365, Google Cloud Platform (Cloud Storage / Cloud SQL), Cloudflare (DNS/DDoS).' : '',
     version: '1.0.0',
     lastUpdated: new Date().toISOString(),
   };

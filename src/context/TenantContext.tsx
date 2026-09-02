@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { Tenant, TenantRole, User, SamStatus, LicenseRequest } from '../types/tenant';
+import { StorageService, createInitialState } from '../services/storageService';
 
 const TENANTS_STORAGE_KEY = 'pbc_tenants_registry_v3';
 const CURRENT_TENANT_ID_KEY = 'pbc_active_tenant_id_v3';
@@ -19,6 +20,7 @@ export const SEED_TENANTS: Tenant[] = [
     createdAt: '2026-01-15T08:00:00.000Z',
     updatedAt: new Date().toISOString(),
     isDemo: true,
+    isConfigured: true,
   },
   {
     id: 'tenant-apex-02',
@@ -32,6 +34,7 @@ export const SEED_TENANTS: Tenant[] = [
     createdAt: '2026-02-01T10:30:00.000Z',
     updatedAt: new Date().toISOString(),
     isDemo: true,
+    isConfigured: true,
   },
   {
     id: 'tenant-orbital-03',
@@ -45,6 +48,7 @@ export const SEED_TENANTS: Tenant[] = [
     createdAt: '2026-02-20T14:15:00.000Z',
     updatedAt: new Date().toISOString(),
     isDemo: true,
+    isConfigured: true,
   },
 ];
 
@@ -97,6 +101,9 @@ interface TenantContextType {
   currentRole: TenantRole;
   canEdit: boolean;
   canManageTenant: boolean;
+  needsOnboarding: boolean;
+  isOnboardingModalOpen: boolean;
+  setIsOnboardingModalOpen: (open: boolean) => void;
   licenseRequests: LicenseRequest[];
   switchTenant: (tenantId: string) => void;
   createTenant: (tenantData: {
@@ -107,7 +114,18 @@ interface TenantContextType {
     systemOwner: string;
     industry: string;
     domain?: string;
+    isDemo?: boolean;
+    isConfigured?: boolean;
   }) => Tenant;
+  initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
+  completeTenantOnboarding: (tenantId: string, data: {
+    organizationName: string;
+    cageCode?: string;
+    samStatus?: SamStatus;
+    systemName: string;
+    systemOwner: string;
+    systemBoundaryScope?: string;
+  }) => void;
   updateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
   deleteTenant: (tenantId: string) => void;
   switchUserRole: (role: TenantRole) => void;
@@ -129,7 +147,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (saved) {
         const parsed = JSON.parse(saved) as Tenant[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          // Merge seed demo tenants if missing
+          const existingIds = new Set(parsed.map(t => t.id));
+          const missingSeeds = SEED_TENANTS.filter(st => !existingIds.has(st.id));
+          return [...parsed, ...missingSeeds];
         }
       }
     } catch (err) {
@@ -174,37 +195,62 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
 
   const [isGcpArchitectureModalOpen, setIsGcpArchitectureModalOpen] = useState<boolean>(false);
+  const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
 
   // Sync tenants to localStorage
   useEffect(() => {
     localStorage.setItem(TENANTS_STORAGE_KEY, JSON.stringify(tenants));
   }, [tenants]);
 
-  // Sync active tenant id to localStorage
+  // Sync active tenant ID
   useEffect(() => {
     localStorage.setItem(CURRENT_TENANT_ID_KEY, currentTenantId);
   }, [currentTenantId]);
 
-  // Sync current user to localStorage
+  // Sync active user
   useEffect(() => {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
   }, [currentUser]);
 
-  // Sync license requests to localStorage
+  // Sync license requests
   useEffect(() => {
     localStorage.setItem(LICENSE_REQUESTS_STORAGE_KEY, JSON.stringify(licenseRequests));
   }, [licenseRequests]);
 
+  // Resolve current active tenant object
   const currentTenant = useMemo(() => {
     return tenants.find(t => t.id === currentTenantId) || tenants[0] || SEED_TENANTS[0];
   }, [tenants, currentTenantId]);
 
-  const currentRole: TenantRole = useMemo(() => {
-    return currentUser.roles[currentTenant.id] || 'TENANT_OWNER';
-  }, [currentUser, currentTenant.id]);
+  // Determine if active tenant requires onboarding wizard
+  const needsOnboarding = useMemo(() => {
+    return !currentTenant.isDemo && currentTenant.isConfigured === false;
+  }, [currentTenant.isDemo, currentTenant.isConfigured]);
 
-  const canEdit = currentRole === 'TENANT_OWNER' || currentRole === 'ASSESSOR';
-  const canManageTenant = currentRole === 'TENANT_OWNER';
+  // Automatically trigger onboarding modal if active tenant requires setup
+  useEffect(() => {
+    if (needsOnboarding) {
+      setIsOnboardingModalOpen(true);
+    }
+  }, [needsOnboarding]);
+
+  // Resolve current user's role in the active tenant
+  const currentRole: TenantRole = useMemo(() => {
+    if (currentUser.roles && currentUser.roles[currentTenant.id]) {
+      return currentUser.roles[currentTenant.id];
+    }
+    // Default fallback
+    return 'TENANT_OWNER';
+  }, [currentUser.roles, currentTenant.id]);
+
+  // Role-based permissions
+  const canEdit = useMemo(() => {
+    return currentRole === 'TENANT_OWNER' || currentRole === 'ASSESSOR';
+  }, [currentRole]);
+
+  const canManageTenant = useMemo(() => {
+    return currentRole === 'TENANT_OWNER';
+  }, [currentRole]);
 
   const switchTenant = useCallback((tenantId: string) => {
     if (tenants.some(t => t.id === tenantId)) {
@@ -220,6 +266,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     systemOwner: string;
     industry: string;
     domain?: string;
+    isDemo?: boolean;
+    isConfigured?: boolean;
   }): Tenant => {
     const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
     const newTenantId = `tenant-${slug}-${Math.random().toString(36).substring(2, 6)}`;
@@ -232,6 +280,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       systemOwner: data.systemOwner.trim(),
       industry: data.industry || 'Defense Industrial Base (DIB)',
       domain: data.domain,
+      isDemo: data.isDemo ?? false,
+      isConfigured: data.isConfigured ?? true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -249,6 +299,111 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setCurrentTenantId(newTenantId);
     return newTenant;
+  }, []);
+
+  /**
+   * Initializes a brand-new blank tenant state for a first-time authenticated contractor
+   */
+  const initializeBlankTenant = useCallback((email: string, domain?: string, orgName?: string): Tenant => {
+    const parts = email.toLowerCase().trim().split('@');
+    const domainPrefix = domain ? domain.split('.')[0] : (parts[1] ? parts[1].split('.')[0] : 'contractor');
+    const formattedTitle = orgName || (domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' Enclave');
+    const slug = domainPrefix.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
+    const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 7)}`;
+
+    const newTenant: Tenant = {
+      id: newTenantId,
+      name: formattedTitle,
+      cageCode: '',
+      samStatus: 'NOT_REGISTERED',
+      systemName: `${formattedTitle} Operations Boundary`,
+      systemOwner: email,
+      industry: 'Defense Industrial Base (DIB)',
+      domain: domain || (parts[1] ?? undefined),
+      isDemo: false,
+      isConfigured: false, // Flag that triggers the 2-step setup wizard
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Explicitly initialize 100% blank assessment state in localStorage
+    const blankState = createInitialState(newTenant);
+    StorageService.saveAssessment(newTenantId, blankState);
+
+    // Register tenant
+    setTenants(prev => [...prev, newTenant]);
+
+    // Assign authenticated user as TENANT_OWNER
+    setCurrentUser(prevUser => ({
+      ...prevUser,
+      roles: {
+        ...prevUser.roles,
+        [newTenantId]: 'TENANT_OWNER',
+      },
+    }));
+
+    setCurrentTenantId(newTenantId);
+    setIsOnboardingModalOpen(true);
+    return newTenant;
+  }, []);
+
+  /**
+   * Complete 2-step onboarding wizard and finalize tenant configuration
+   */
+  const completeTenantOnboarding = useCallback((tenantId: string, data: {
+    organizationName: string;
+    cageCode?: string;
+    samStatus?: SamStatus;
+    systemName: string;
+    systemOwner: string;
+    systemBoundaryScope?: string;
+  }) => {
+    setTenants(prev => prev.map(t => {
+      if (t.id === tenantId) {
+        return {
+          ...t,
+          name: data.organizationName.trim(),
+          cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
+          samStatus: data.samStatus || 'ACTIVE',
+          systemName: data.systemName.trim(),
+          systemOwner: data.systemOwner.trim(),
+          systemBoundaryScope: data.systemBoundaryScope?.trim(),
+          isConfigured: true,
+          isDemo: false,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return t;
+    }));
+
+    // Update existing assessment's SSP metadata in storage
+    const currentAssessment = StorageService.loadAssessment({
+      id: tenantId,
+      name: data.organizationName,
+      cageCode: data.cageCode || '',
+      samStatus: data.samStatus || 'ACTIVE',
+      systemName: data.systemName,
+      systemOwner: data.systemOwner,
+      industry: 'Defense Industrial Base (DIB)',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDemo: false,
+      isConfigured: true,
+    });
+
+    currentAssessment.sspMetadata = {
+      ...currentAssessment.sspMetadata,
+      organizationName: data.organizationName.trim(),
+      cageCode: (data.cageCode || '').trim().toUpperCase(),
+      samStatus: data.samStatus || 'ACTIVE',
+      systemName: data.systemName.trim(),
+      systemOwner: data.systemOwner.trim(),
+      systemBoundaryScope: data.systemBoundaryScope?.trim() || currentAssessment.sspMetadata.systemBoundaryScope,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    StorageService.saveAssessment(tenantId, currentAssessment);
+    setIsOnboardingModalOpen(false);
   }, []);
 
   const updateTenant = useCallback((tenantId: string, updates: Partial<Tenant>) => {
@@ -299,7 +454,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   /**
    * Domain-based auto-tenant matching
-   * Analyzes the email domain against existing tenants or auto-provisions a company enclave
+   * Analyzes the email domain against existing tenants or initializes a blank company enclave
    */
   const resolveTenantForEmail = useCallback((email: string): { tenant: Tenant; role: TenantRole } => {
     const parts = email.toLowerCase().trim().split('@');
@@ -327,26 +482,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
 
     if (matchedByDomain) {
-      // Determine role based on assessor email indicators
       const isAssessorDomain = domain.includes('audit') || domain.includes('c3pao') || domain.includes('assessor');
       const role: TenantRole = isAssessorDomain ? 'ASSESSOR' : 'TENANT_OWNER';
       return { tenant: matchedByDomain, role };
     }
 
-    // 3. Auto-provision a new isolated company enclave for new defense contractor domain
-    const formattedTitle = domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1);
-    const newTenant = createTenant({
-      name: `${formattedTitle} Defense Systems, Inc.`,
-      cageCode: Math.random().toString(36).substring(2, 7).toUpperCase(),
-      samStatus: 'ACTIVE',
-      systemName: `${formattedTitle} Defense Operations Enclave (DOE)`,
-      systemOwner: email,
-      industry: 'Defense Industrial Base (DIB)',
-      domain: domain,
-    });
+    // 3. Initialize blank tenant enclave for first-time defense contractor domain
+    const formattedTitle = domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' Defense Systems, Inc.';
+    const newBlankTenant = initializeBlankTenant(email, domain, formattedTitle);
 
-    return { tenant: newTenant, role: 'TENANT_OWNER' };
-  }, [tenants, currentTenant, currentRole, createTenant]);
+    return { tenant: newBlankTenant, role: 'TENANT_OWNER' };
+  }, [tenants, currentTenant, currentRole, initializeBlankTenant]);
 
   /**
    * Synchronize authenticated Firebase / Entra ID user with Tenant state
@@ -387,9 +533,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
+    needsOnboarding,
+    isOnboardingModalOpen,
+    setIsOnboardingModalOpen,
     licenseRequests,
     switchTenant,
     createTenant,
+    initializeBlankTenant,
+    completeTenantOnboarding,
     updateTenant,
     deleteTenant,
     switchUserRole,
@@ -406,9 +557,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
+    needsOnboarding,
+    isOnboardingModalOpen,
+    setIsOnboardingModalOpen,
     licenseRequests,
     switchTenant,
     createTenant,
+    initializeBlankTenant,
+    completeTenantOnboarding,
     updateTenant,
     deleteTenant,
     switchUserRole,

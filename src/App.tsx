@@ -19,13 +19,20 @@ import { AuthModal } from './components/auth/AuthModal';
 import { LicenseRequestModal } from './components/auth/LicenseRequestModal';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LegalModal, LegalTab } from './components/common/LegalModal';
+import { OnboardingModal } from './components/onboarding/OnboardingModal';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo';
 
 const AppContent: React.FC = () => {
   const { activeTab } = useAssessment();
   const { openLicenseModal } = useAuth();
-  const { currentTenant, switchTenant } = useTenant();
+  const {
+    currentTenant,
+    switchTenant,
+    isOnboardingModalOpen,
+    setIsOnboardingModalOpen,
+    needsOnboarding,
+  } = useTenant();
 
   // Legal Modal State (Privacy Policy & Terms of Service)
   const [legalModalState, setLegalModalState] = useState<{
@@ -94,6 +101,8 @@ const AppContent: React.FC = () => {
       const nextRoute = getRouteFromUrl();
       setCurrentRoute(nextRoute);
       if (nextRoute === 'demo') {
+        // Enforce clean sandbox mode guard
+        setIsOnboardingModalOpen(false);
         // Automatically ensure primary demo tenant is active
         switchTenant('tenant-vanguard-01');
       }
@@ -116,7 +125,7 @@ const AppContent: React.FC = () => {
       window.removeEventListener('hashchange', handleNavigation);
       window.removeEventListener('popstate', handleNavigation);
     };
-  }, [switchTenant, openLegalModal]);
+  }, [switchTenant, openLegalModal, setIsOnboardingModalOpen]);
 
   const navigateToApp = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -127,13 +136,14 @@ const AppContent: React.FC = () => {
   }, []);
 
   const navigateToSandbox = useCallback((tenantId: string = 'tenant-vanguard-01') => {
+    setIsOnboardingModalOpen(false);
     switchTenant(tenantId);
     if (typeof window !== 'undefined') {
       window.location.hash = 'demo';
     }
     setCurrentRoute('demo');
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [switchTenant]);
+  }, [switchTenant, setIsOnboardingModalOpen]);
 
   const navigateToLanding = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -267,6 +277,10 @@ const AppContent: React.FC = () => {
         isOpen={legalModalState.isOpen}
         initialTab={legalModalState.tab}
         onClose={closeLegalModal}
+      />
+      <OnboardingModal
+        isOpen={currentRoute === 'app' && (isOnboardingModalOpen || needsOnboarding)}
+        onClose={() => setIsOnboardingModalOpen(false)}
       />
       <GcpArchitectureModal />
     </>
