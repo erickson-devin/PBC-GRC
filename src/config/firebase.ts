@@ -20,7 +20,7 @@ const hasRealKey = Boolean(rawApiKey && !rawApiKey.includes('ExampleApiKey') && 
 
 const firebaseConfig = {
   apiKey: hasRealKey ? rawApiKey : 'AIzaSyASoVVDgl1wiUY2arQWd8wSnwkZtusv4_g',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'grc.pitchblackcyber.com',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'grc-tool-507203.firebaseapp.com',
   projectId: import.meta.env.VITE_GCP_PROJECT_ID || import.meta.env.VITE_FIREBASE_PROJECT_ID || 'grc-tool-507203',
   storageBucket: import.meta.env.VITE_GCS_BUCKET_NAME || 'grc-tool-507203.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '1024090841200',
