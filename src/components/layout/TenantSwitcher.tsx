@@ -4,35 +4,27 @@ import {
   ChevronDown,
   Plus,
   Check,
-  Shield,
-  User as UserIcon,
-  Lock,
   Layers,
   Search,
   Cloud,
-  CheckCircle2,
 } from 'lucide-react';
-import { useTenant, PRESET_USERS } from '../../context/TenantContext';
+import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
-import { TenantRole, SamStatus } from '../../types/tenant';
+import { SamStatus } from '../../types/tenant';
 
 export const TenantSwitcher: React.FC = () => {
   const {
     tenants,
     currentTenant,
     currentUser,
-    currentRole,
     switchTenant,
     createTenant,
-    switchUserRole,
-    switchUser,
     setIsGcpArchitectureModalOpen,
   } = useTenant();
 
   const { metrics } = useAssessment();
 
   const [isTenantMenuOpen, setIsTenantMenuOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
 
@@ -45,16 +37,12 @@ export const TenantSwitcher: React.FC = () => {
   const [newIndustry, setNewIndustry] = useState('Defense Industrial Base');
 
   const tenantMenuRef = useRef<HTMLDivElement>(null);
-  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (tenantMenuRef.current && !tenantMenuRef.current.contains(event.target as Node)) {
         setIsTenantMenuOpen(false);
-      }
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
-        setIsUserMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -87,29 +75,6 @@ export const TenantSwitcher: React.FC = () => {
     t.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
     t.cageCode.toLowerCase().includes(searchFilter.toLowerCase())
   );
-
-  const getRoleBadge = (role: TenantRole) => {
-    switch (role) {
-      case 'TENANT_OWNER':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-            <Shield className="w-3 h-3" /> Tenant Owner
-          </span>
-        );
-      case 'ASSESSOR':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-            <CheckCircle2 className="w-3 h-3" /> Assessor / MSP
-          </span>
-        );
-      case 'VIEWER':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/20 text-slate-300 border border-slate-500/30">
-            <Lock className="w-3 h-3" /> Read-Only
-          </span>
-        );
-    }
-  };
 
   const getSamBadge = (status: SamStatus) => {
     switch (status) {
@@ -244,108 +209,6 @@ export const TenantSwitcher: React.FC = () => {
                 className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
               >
                 <Cloud className="w-4 h-4 text-brand-400" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* User Session & Role Indicator */}
-      <div className="relative" ref={userMenuRef}>
-        <button
-          onClick={() => setIsUserMenuOpen(prev => !prev)}
-          className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-750 border border-slate-700 transition-all text-left"
-          title="User Profile & RBAC Role Simulation"
-        >
-          <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center text-slate-200">
-            <UserIcon className="w-3.5 h-3.5" />
-          </div>
-          <div className="hidden lg:block text-left">
-            <div className="text-[11px] font-bold text-slate-200 truncate max-w-[100px]">
-              {currentUser.name}
-            </div>
-            <div>{getRoleBadge(currentRole)}</div>
-          </div>
-          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-        </button>
-
-        {/* User / RBAC Dropdown */}
-        {isUserMenuOpen && (
-          <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl z-50 overflow-hidden animate-fadeIn">
-            <div className="p-3 border-b border-slate-800 bg-slate-950/60">
-              <p className="text-xs font-bold text-white">{currentUser.name}</p>
-              <p className="text-[11px] text-slate-400 font-mono truncate">{currentUser.email}</p>
-              <div className="mt-2 flex items-center gap-1.5">
-                <span className="text-[10px] text-slate-500 uppercase font-semibold">Active Role:</span>
-                {getRoleBadge(currentRole)}
-              </div>
-            </div>
-
-            {/* Google Workspace SSO Profile Switcher */}
-            <div className="p-2 border-b border-slate-800 bg-slate-950/30">
-              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-2 block mb-1">
-                Google Workspace SSO Users:
-              </span>
-              <div className="space-y-1">
-                {PRESET_USERS.map(u => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      switchUser(u);
-                      setIsUserMenuOpen(false);
-                    }}
-                    className={`w-full p-1.5 rounded-lg text-left text-xs flex items-center justify-between transition-colors ${
-                      currentUser.id === u.id
-                        ? 'bg-brand-600/20 text-brand-300 border border-brand-500/30'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                    }`}
-                  >
-                    <div className="truncate">
-                      <span className="font-semibold block">{u.name}</span>
-                      <span className="text-[10px] text-slate-500 truncate block">{u.email}</span>
-                    </div>
-                    {currentUser.id === u.id && <Check className="w-3.5 h-3.5 text-brand-400" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Quick Role Switcher */}
-            <div className="p-2 border-b border-slate-800">
-              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-2 block mb-1">
-                Override Role (RBAC):
-              </span>
-              <div className="grid grid-cols-3 gap-1">
-                {(['TENANT_OWNER', 'ASSESSOR', 'VIEWER'] as TenantRole[]).map(role => (
-                  <button
-                    key={role}
-                    onClick={() => {
-                      switchUserRole(role);
-                      setIsUserMenuOpen(false);
-                    }}
-                    className={`px-2 py-1.5 rounded-lg text-[10px] font-bold transition-colors ${
-                      currentRole === role
-                        ? 'bg-brand-600 text-white shadow-sm'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                    }`}
-                  >
-                    {role === 'TENANT_OWNER' ? 'Owner' : role === 'ASSESSOR' ? 'Assessor' : 'Viewer'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* GCP Architecture Link */}
-            <div className="p-2 bg-slate-950/60">
-              <button
-                onClick={() => {
-                  setIsGcpArchitectureModalOpen(true);
-                  setIsUserMenuOpen(false);
-                }}
-                className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-brand-300 bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <Cloud className="w-3.5 h-3.5" />
-                <span>GCP Cloud SQL & GCS Topology</span>
               </button>
             </div>
           </div>

@@ -84,6 +84,17 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             </button>
           </div>
 
+          {/* Existing License Holder Link */}
+          <div className="pt-0.5">
+            <button
+              onClick={onEnterApp}
+              className="text-xs text-slate-400 hover:text-brand-300 font-medium transition-colors inline-flex items-center gap-1"
+            >
+              <span>Existing License Holder? Sign In to Enclave</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+
           {/* Trust Badges Bar */}
           <div className="pt-6 flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-xs font-medium text-slate-300">
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800">
@@ -120,7 +131,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <div className="w-3 h-3 rounded-full bg-amber-500/80" />
                   <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
                   <span className="ml-2 text-xs font-mono text-slate-400">
-                    pbc-grc://enclave/apex-defense-01/assessment
+                    pbc-grc://enclave/vanguard-defense-01/assessment
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -198,10 +209,10 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                     </p>
                   </div>
                   <button
-                    onClick={onEnterApp}
+                    onClick={onExploreSandbox}
                     className="w-full py-2 px-3 rounded-lg bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/30 text-brand-300 hover:text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
                   >
-                    <span>Open Live Assessment Enclave</span>
+                    <span>Test Drive Live Sandbox Enclave</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>

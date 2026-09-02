@@ -221,7 +221,7 @@ export const SSPBuilder: React.FC = () => {
                 value={meta.systemOwner}
                 onChange={(e) => updateSSPMetadata({ systemOwner: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Devin Erickson, Chief Information Security Officer"
+                placeholder="e.g. Alex Mercer, CMMC CCA"
               />
             </div>
 

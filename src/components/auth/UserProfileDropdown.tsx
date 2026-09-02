@@ -1,0 +1,256 @@
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Shield,
+  CheckCircle2,
+  Lock,
+  ChevronDown,
+  Building2,
+  Settings,
+  Key,
+  LogOut,
+  Sparkles,
+} from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { useTenant } from '../../context/TenantContext';
+import { TenantRole } from '../../types/tenant';
+import { AccountSettingsModal } from './AccountSettingsModal';
+import { ApiTokensModal } from './ApiTokensModal';
+
+interface UserProfileDropdownProps {
+  onOpenTenantSwitcher?: () => void;
+}
+
+export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
+  onOpenTenantSwitcher,
+}) => {
+  const { currentUser, logout, openLicenseModal } = useAuth();
+  const { currentTenant, currentRole, switchUserRole } = useTenant();
+
+  const [isOpen, setIsOpen] = useState(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isTokensModalOpen, setIsTokensModalOpen] = useState(false);
+
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const getRoleBadge = (role: TenantRole) => {
+    switch (role) {
+      case 'TENANT_OWNER':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+            <Shield className="w-3 h-3" /> Tenant Owner
+          </span>
+        );
+      case 'ASSESSOR':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+            <CheckCircle2 className="w-3 h-3" /> Assessor / C3PAO
+          </span>
+        );
+      case 'VIEWER':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/20 text-slate-300 border border-slate-500/30">
+            <Lock className="w-3 h-3" /> Read-Only
+          </span>
+        );
+    }
+  };
+
+  const getProviderIcon = () => {
+    if (currentUser.authProvider === 'microsoft.com') {
+      return (
+        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[9px] font-bold text-sky-400 bg-sky-950/60 rounded border border-sky-500/30 px-1" title="Microsoft 365 Entra ID">
+          M
+        </span>
+      );
+    }
+    if (currentUser.authProvider === 'google.com') {
+      return (
+        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[9px] font-bold text-amber-400 bg-amber-950/60 rounded border border-amber-500/30 px-1" title="Google Workspace">
+          G
+        </span>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <>
+      <div className="relative" ref={menuRef}>
+        {/* User Button */}
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-750 border border-slate-700 hover:border-slate-600 transition-all text-left shadow-sm"
+          title="User Profile & Identity Session"
+        >
+          {/* Avatar */}
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0 shadow-sm">
+            {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
+          </div>
+
+          {/* User Email & Role */}
+          <div className="hidden lg:block text-left max-w-[170px]">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white truncate">
+                {currentUser.name}
+              </span>
+              {getProviderIcon()}
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              <span className="truncate max-w-[90px]">{currentTenant.name}</span>
+              <span className="text-slate-600">•</span>
+              <span className="text-brand-300 font-medium">{currentRole === 'TENANT_OWNER' ? 'Owner' : currentRole === 'ASSESSOR' ? 'Assessor' : 'Viewer'}</span>
+            </div>
+          </div>
+
+          <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Dropdown Menu */}
+        {isOpen && (
+          <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl z-50 overflow-hidden animate-fadeIn">
+            {/* Header: User & Tenant Summary */}
+            <div className="p-3.5 border-b border-slate-800 bg-slate-950/70">
+              <p className="text-xs font-bold text-white flex items-center justify-between">
+                <span>{currentUser.name}</span>
+                {getRoleBadge(currentRole)}
+              </p>
+              <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                {currentUser.email}
+              </p>
+              
+              <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                <span className="text-slate-400 flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-brand-400" />
+                  Active Enclave:
+                </span>
+                <span className="font-semibold text-brand-300 truncate max-w-[130px]" title={currentTenant.name}>
+                  {currentTenant.name}
+                </span>
+              </div>
+            </div>
+
+            {/* Core Actions */}
+            <div className="p-1.5 space-y-0.5">
+              {/* Switch Organization */}
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  if (onOpenTenantSwitcher) {
+                    onOpenTenantSwitcher();
+                  }
+                }}
+                className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+              >
+                <Building2 className="w-4 h-4 text-slate-400" />
+                <span>Switch Organization</span>
+              </button>
+
+              {/* Account Settings */}
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsAccountModalOpen(true);
+                }}
+                className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+              >
+                <Settings className="w-4 h-4 text-slate-400" />
+                <span>Account Settings</span>
+              </button>
+
+              {/* API Keys / Tokens */}
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  setIsTokensModalOpen(true);
+                }}
+                className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+              >
+                <Key className="w-4 h-4 text-slate-400" />
+                <span>API Keys / Cloud Tokens</span>
+              </button>
+            </div>
+
+            {/* Quick RBAC Role Simulation */}
+            <div className="p-2 border-t border-slate-800 bg-slate-950/40">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 px-1 block mb-1">
+                Simulate CMMC Role:
+              </span>
+              <div className="grid grid-cols-3 gap-1">
+                {(['TENANT_OWNER', 'ASSESSOR', 'VIEWER'] as TenantRole[]).map(role => (
+                  <button
+                    key={role}
+                    onClick={() => {
+                      switchUserRole(role);
+                      setIsOpen(false);
+                    }}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                      currentRole === role
+                        ? 'bg-brand-600 text-white shadow-sm'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {role === 'TENANT_OWNER' ? 'Owner' : role === 'ASSESSOR' ? 'Assessor' : 'Viewer'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* License Request / Sales Call link */}
+            <div className="p-2 border-t border-slate-800 bg-slate-950/20">
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  openLicenseModal('single-org');
+                }}
+                className="w-full py-1.5 px-2 rounded-lg text-[11px] font-semibold text-brand-300 hover:bg-brand-500/10 flex items-center justify-between transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3 text-brand-400" />
+                  Request License Upgrade
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400">$1,000/yr</span>
+              </button>
+            </div>
+
+            {/* Sign Out */}
+            <div className="p-1.5 border-t border-slate-800 bg-slate-950/80">
+              <button
+                onClick={async () => {
+                  setIsOpen(false);
+                  await logout();
+                }}
+                className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 flex items-center gap-2.5 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out of Enclave</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Account Settings Modal */}
+      <AccountSettingsModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+      />
+
+      {/* API Tokens Modal */}
+      <ApiTokensModal
+        isOpen={isTokensModalOpen}
+        onClose={() => setIsTokensModalOpen(false)}
+      />
+    </>
+  );
+};

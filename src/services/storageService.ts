@@ -3,8 +3,7 @@ import { Tenant } from '../types/tenant';
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
 import { GcsService, DEFAULT_GCP_CONFIG } from './gcsService';
 
-const STORAGE_KEY_PREFIX = 'pbc_cmmc_assessment_v2_';
-const LEGACY_STORAGE_KEY = 'pbc_cmmc_assessment_v1';
+const STORAGE_KEY_PREFIX = 'pbc_cmmc_assessment_v3_';
 
 export function createInitialControlsState(tenantId?: string): Record<string, ControlState> {
   const initial: Record<string, ControlState> = {};
@@ -25,11 +24,11 @@ export function createInitialControlsState(tenantId?: string): Record<string, Co
 export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
   return {
     tenantId: tenant.id,
-    systemName: tenant.systemName || 'Corporate Operations Enclave (COE)',
+    systemName: tenant.systemName || 'Defense Contracting Information Network (DCIN)',
     organizationName: tenant.name,
     cageCode: tenant.cageCode,
     samStatus: tenant.samStatus,
-    systemOwner: tenant.systemOwner || 'Devin Erickson, Chief Information Security Officer',
+    systemOwner: tenant.systemOwner || 'Alex Mercer, CMMC CCA',
     authorName: 'Compliance & Audit Assessment Team',
     assessmentDate: new Date().toISOString().split('T')[0],
     systemBoundaryScope: `The boundary for ${tenant.name} includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints (Windows 11 Enterprise laptops), internal facility network (VLAN 10), and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI).`,
@@ -63,12 +62,12 @@ export function createDemoState(tenant: Tenant): AssessmentState {
     controls[ctrl.id] = {
       id: ctrl.id,
       tenantId: tenant.id,
-      status: 'MET', // 100% SPRS Ready for Company A
+      status: 'MET', // 100% SPRS Ready for Vanguard Defense Systems
       implementationNotes: template ? template.narrative : 'Control requirements fully documented and verified in accordance with CMMC Level 1 standards.',
       responsibleRole: ctrl.domain === 'PE' ? 'Facilities Manager' : 'CISO / IT Director',
       lastUpdated: new Date().toISOString(),
       tags: ['Verified', 'Audit-Ready', 'GCP-Backed'],
-      updatedBy: 'Devin Erickson (Tenant Owner)',
+      updatedBy: 'Alex Mercer, CMMC CCA (Lead Assessor)',
     };
 
     if (template && template.recommendedEvidence) {
@@ -202,51 +201,15 @@ export const StorageService = {
         return parsed;
       }
 
-      // Check legacy v1 key for migration on first load of default tenant
-      if (tenant.id === 'tenant-apex-01') {
-        const legacyData = localStorage.getItem(LEGACY_STORAGE_KEY);
-        if (legacyData) {
-          try {
-            const legacyParsed = JSON.parse(legacyData) as AssessmentState;
-            const migratedState = {
-              ...legacyParsed,
-              version: '2.0.0',
-              tenantId: tenant.id,
-              sspMetadata: {
-                ...legacyParsed.sspMetadata,
-                tenantId: tenant.id,
-                cageCode: legacyParsed.sspMetadata.cageCode || tenant.cageCode,
-                organizationName: legacyParsed.sspMetadata.organizationName || tenant.name,
-              }
-            };
-            // Ensure all 17 controls exist in migrated state
-            for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
-              if (!migratedState.controls[ctrl.id]) {
-                const template = ctrl.starterTemplates[0];
-                migratedState.controls[ctrl.id] = {
-                  id: ctrl.id,
-                  tenantId: tenant.id,
-                  status: 'MET',
-                  implementationNotes: template ? template.narrative : 'Fully implemented.',
-                  responsibleRole: ctrl.domain === 'PE' ? 'Facilities Manager' : 'CISO / IT Director',
-                  lastUpdated: new Date().toISOString(),
-                  tags: ['Migrated', 'Verified'],
-                };
-              }
-            }
-            this.saveAssessment(tenant.id, migratedState);
-            return migratedState;
-          } catch (e) {
-            console.error('Legacy migration failed:', e);
-          }
-        }
-        // If no legacy data, generate initial demo state
+      // Check if this is the primary 100% compliant demo tenant
+      if (tenant.id === 'tenant-vanguard-01' || tenant.id === 'tenant-apex-01') {
         const demoState = createDemoState(tenant);
         this.saveAssessment(tenant.id, demoState);
         return demoState;
       }
 
-      if (tenant.id === 'tenant-vanguard-02') {
+      // Check if this is the in-progress secondary tenant
+      if (tenant.id === 'tenant-apex-02' || tenant.id === 'tenant-vanguard-02') {
         const partialState = createPartialDemoState(tenant);
         this.saveAssessment(tenant.id, partialState);
         return partialState;

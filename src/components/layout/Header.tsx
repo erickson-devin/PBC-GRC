@@ -14,12 +14,15 @@ import {
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { TenantSwitcher } from './TenantSwitcher';
+import { UserProfileDropdown } from '../auth/UserProfileDropdown';
 
 interface HeaderProps {
   onExitToLanding?: () => void;
+  isSandboxMode?: boolean;
+  onRequestLicense?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onExitToLanding }) => {
+export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, onRequestLicense }) => {
   const {
     metrics,
     loadDemoScenario,
@@ -168,6 +171,22 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding }) => {
                 <RotateCcw className="w-4 h-4" />
               </button>
             )}
+
+            {/* Request License Callout in Sandbox Mode */}
+            {isSandboxMode && onRequestLicense && (
+              <button
+                onClick={onRequestLicense}
+                title="Schedule sales onboarding call and configure licensed boundary"
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-brand-500/20 flex items-center gap-1.5 transition-all"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span className="hidden sm:inline">Request Enclave License</span>
+                <span className="sm:hidden">License</span>
+              </button>
+            )}
+
+            {/* User Profile & Identity Dropdown */}
+            <UserProfileDropdown />
 
             {/* Exit to Landing Page */}
             {onExitToLanding && (

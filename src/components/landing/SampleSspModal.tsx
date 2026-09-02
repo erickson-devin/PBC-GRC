@@ -15,15 +15,15 @@ export const SampleSspModal: React.FC<SampleSspModalProps> = ({ isOpen, onClose,
 
   const sampleMarkdown = `# SYSTEM SECURITY PLAN (SSP) - CMMC LEVEL 1 / FAR 52.204-21
 **Document Version:** 1.0.0
-**Organization:** Apex Defense Solutions, LLC
-**CAGE Code:** 9X7B4 | **SAM.gov Status:** Active
-**System Name:** Corporate Operations Enclave (COE)
-**System Owner:** Devin Erickson, Chief Information Security Officer
+**Organization:** Vanguard Defense Systems LLC
+**CAGE Code:** 8K3R1 | **SAM.gov Status:** Active
+**System Name:** Defense Contracting Information Network (DCIN)
+**System Owner:** Alex Mercer, CMMC CCA
 **Assessment Date:** ${new Date().toISOString().split('T')[0]}
-**Cloud Storage (GCS) Enclave:** gs://pbc-grc-evidence-prod/tenants/tenant-apex-01/
+**Cloud Storage (GCS) Enclave:** gs://pbc-grc-evidence-prod/tenants/tenant-vanguard-01/
 
 ## 1. System Scope & Boundary Description
-The boundary for Apex Defense Solutions, LLC includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints (Windows 11 Enterprise laptops), internal facility network (VLAN 10), and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI).
+The boundary for Vanguard Defense Systems LLC includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints (Windows 11 Enterprise laptops), internal facility network (VLAN 10), and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI).
 
 ## 2. Operating Environment & Cloud Service Providers (CSPs)
 - **Environment:** Hybrid Cloud: SaaS / Cloud Identity + Corporate Facility On-Premises Network.
@@ -49,7 +49,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `SAMPLE_CMMC_L1_SSP_Apex_Defense.md`;
+    a.download = `SAMPLE_CMMC_L1_SSP_Vanguard_Defense.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

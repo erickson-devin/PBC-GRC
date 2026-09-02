@@ -9,26 +9,29 @@ import { LandingFooter } from './LandingFooter';
 import { SampleSspModal } from './SampleSspModal';
 import { GcpArchitectureModal } from '../common/GcpArchitectureModal';
 import { useTenant } from '../../context/TenantContext';
+import { useAuth } from '../../context/AuthContext';
 
 interface LandingPageProps {
   onEnterApp: (tenantId?: string) => void;
+  onLaunchSandbox: (tenantId?: string) => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSandbox }) => {
   const { setIsGcpArchitectureModalOpen, switchTenant } = useTenant();
+  const { openLicenseModal, isAuthenticated } = useAuth();
   const [isSampleSspOpen, setIsSampleSspOpen] = useState(false);
 
   const handleLaunchWithTenant = (tenantId?: string) => {
-    if (tenantId) {
-      switchTenant(tenantId);
-    }
-    onEnterApp(tenantId);
+    const target = tenantId || 'tenant-vanguard-01';
+    switchTenant(target);
+    onLaunchSandbox(target);
   };
 
-  const handleScrollToSandbox = () => {
-    const el = document.getElementById('sandbox-demo');
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' });
+  const handleGetStarted = () => {
+    if (isAuthenticated) {
+      onEnterApp();
+    } else {
+      openLicenseModal('single-org');
     }
   };
 
@@ -38,18 +41,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
       <LandingNav 
         onEnterApp={() => onEnterApp()} 
         onOpenGcpModal={() => setIsGcpArchitectureModalOpen(true)} 
+        onLaunchSandbox={() => handleLaunchWithTenant('tenant-vanguard-01')}
       />
 
       {/* 2. Hero Section with Trust Badges & Showcase Card */}
       <HeroSection 
-        onExploreSandbox={handleScrollToSandbox}
+        onExploreSandbox={() => handleLaunchWithTenant('tenant-vanguard-01')}
         onOpenSampleSsp={() => setIsSampleSspOpen(true)}
-        onEnterApp={() => onEnterApp()}
+        onEnterApp={handleGetStarted}
       />
 
       {/* 3. Core Capabilities Bento Grid */}
       <FeatureGrid 
-        onEnterApp={() => onEnterApp()} 
+        onEnterApp={handleGetStarted} 
       />
 
       {/* 4. Interactive Live Sandbox Section (1-Click Test Drive) */}
@@ -57,9 +61,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
         onLaunchFullApp={handleLaunchWithTenant}
       />
 
-      {/* 5. Transparent Pricing & Tier Table */}
+      {/* 5. Transparent Pricing & Tier Table ($1,000 / $1,500/yr) */}
       <PricingSection 
-        onSelectPlan={(_planId) => onEnterApp()} 
+        onSelectPlan={(planId) => openLicenseModal(planId)} 
+        onTestDriveSandbox={() => handleLaunchWithTenant('tenant-vanguard-01')}
       />
 
       {/* 6. Enterprise GCP Architecture & Security */}
@@ -70,7 +75,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
       {/* 7. Footer */}
       <LandingFooter 
         onOpenGcpModal={() => setIsGcpArchitectureModalOpen(true)}
-        onEnterApp={() => onEnterApp()}
+        onEnterApp={handleGetStarted}
       />
 
       {/* Sample SSP Modal */}

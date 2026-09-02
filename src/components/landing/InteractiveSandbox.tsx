@@ -18,27 +18,27 @@ interface InteractiveSandboxProps {
 }
 
 export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunchFullApp }) => {
-  const [selectedScenario, setSelectedScenario] = useState<'apex' | 'vanguard'>('apex');
+  const [selectedScenario, setSelectedScenario] = useState<'vanguard' | 'apex'>('vanguard');
   const [activeSandboxTab, setActiveSandboxTab] = useState<'matrix' | 'ssp' | 'evidence'>('matrix');
 
-  // Scenario 1: Apex Defense (100% Compliant)
-  const isApex = selectedScenario === 'apex';
+  // Scenario 1: Vanguard Defense Systems (100% Compliant)
+  const isVanguard = selectedScenario === 'vanguard';
 
-  const currentOrg = isApex ? {
-    id: 'tenant-apex-01',
-    name: 'Apex Defense Solutions, LLC',
-    cageCode: '9X7B4',
-    systemName: 'Corporate Operations Enclave (COE)',
+  const currentOrg = isVanguard ? {
+    id: 'tenant-vanguard-01',
+    name: 'Vanguard Defense Systems LLC',
+    cageCode: '8K3R1',
+    systemName: 'Defense Contracting Information Network (DCIN)',
     metCount: 17,
     inProgressCount: 0,
     sprsPercentage: 100,
     evidenceCount: 12,
     statusText: '100% Compliant • Audit Ready',
   } : {
-    id: 'tenant-vanguard-02',
-    name: 'Cyber Vanguard Technologies, Inc.',
-    cageCode: '8K3R1',
-    systemName: 'Defense Contracting Information Network (DCIN)',
+    id: 'tenant-apex-02',
+    name: 'Apex Aerospace Enclave',
+    cageCode: '9X7B4',
+    systemName: 'Corporate Operations Enclave (COE)',
     metCount: 10,
     inProgressCount: 7,
     sprsPercentage: 59,
@@ -81,28 +81,28 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                   Active Scenario:
                 </span>
                 <button
-                  onClick={() => setSelectedScenario('apex')}
+                  onClick={() => setSelectedScenario('vanguard')}
                   className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
-                    isApex 
+                    isVanguard 
                       ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25 ring-1 ring-white/20' 
                       : 'bg-slate-850 text-slate-300 hover:bg-slate-800 border border-slate-700/80'
                   }`}
                 >
                   <Building className="w-3.5 h-3.5" />
-                  <span>Apex Defense (100% MET)</span>
+                  <span>Vanguard Defense (100% MET)</span>
                   <span className="px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-200 text-[10px]">17/17</span>
                 </button>
 
                 <button
-                  onClick={() => setSelectedScenario('vanguard')}
+                  onClick={() => setSelectedScenario('apex')}
                   className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all ${
-                    !isApex 
+                    !isVanguard 
                       ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25 ring-1 ring-white/20' 
                       : 'bg-slate-850 text-slate-300 hover:bg-slate-800 border border-slate-700/80'
                   }`}
                 >
                   <Building className="w-3.5 h-3.5" />
-                  <span>Cyber Vanguard (59% MET)</span>
+                  <span>Apex Aerospace (59% MET)</span>
                   <span className="px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-200 text-[10px]">10/17</span>
                 </button>
               </div>
@@ -112,7 +112,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800">
                   <Lock className="w-3.5 h-3.5 text-slate-400" />
                   <span className="text-xs text-slate-300 font-medium">SPRS:</span>
-                  <span className={`text-xs font-extrabold ${isApex ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  <span className={`text-xs font-extrabold ${isVanguard ? 'text-emerald-400' : 'text-amber-400'}`}>
                     {currentOrg.metCount} / 17 ({currentOrg.sprsPercentage}%)
                   </span>
                 </div>
@@ -178,7 +178,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {CMMC_LEVEL_1_CONTROLS.slice(0, 10).map((ctrl, index) => {
-                      const isMet = isApex ? true : index < 6;
+                      const isMet = isVanguard ? true : index < 6;
                       return (
                         <div 
                           key={ctrl.id}
@@ -251,7 +251,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                     <div className="pt-3 border-t border-slate-800">
                       <div className="text-slate-200 font-bold mb-2">CONTROL AC.1.001 - AUTHORIZED ACCESS CONTROL</div>
                       <p className="text-slate-400">
-                        {isApex 
+                        {isVanguard 
                           ? 'All corporate and system access requires individual authenticated accounts configured with least privilege in Microsoft Entra ID. Remote access is governed by conditional access policies with FIDO2 / Duo Security MFA.' 
                           : 'Standard username/password accounts configured. MFA rollout in progress for remote access gateways.'}
                       </p>
