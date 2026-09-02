@@ -84,9 +84,10 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     const handleNavigation = () => {
       const hash = window.location.hash.toLowerCase();
-      if (hash === '#privacy') {
+      const path = window.location.pathname.toLowerCase();
+      if (hash === '#privacy' || path === '/privacy' || path === '/privacy-policy') {
         openLegalModal('privacy');
-      } else if (hash === '#terms') {
+      } else if (hash === '#terms' || path === '/terms' || path === '/terms-of-service') {
         openLegalModal('terms');
       }
 
@@ -98,12 +99,13 @@ const AppContent: React.FC = () => {
       }
     };
 
-    // Initial check for deep-linked legal hash
+    // Initial check for deep-linked legal path or hash
     if (typeof window !== 'undefined') {
       const initialHash = window.location.hash.toLowerCase();
-      if (initialHash === '#privacy') {
+      const initialPath = window.location.pathname.toLowerCase();
+      if (initialHash === '#privacy' || initialPath === '/privacy' || initialPath === '/privacy-policy') {
         openLegalModal('privacy');
-      } else if (initialHash === '#terms') {
+      } else if (initialHash === '#terms' || initialPath === '/terms' || initialPath === '/terms-of-service') {
         openLegalModal('terms');
       }
     }
