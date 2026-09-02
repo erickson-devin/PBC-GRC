@@ -14,7 +14,11 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { PRESET_USERS } from '../../context/TenantContext';
 
-export const AuthModal: React.FC = () => {
+interface AuthModalProps {
+  onOpenLegal?: (tab: 'privacy' | 'terms') => void;
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
   const {
     isAuthModalOpen,
     closeAuthModal,
@@ -385,11 +389,32 @@ export const AuthModal: React.FC = () => {
                     {preset.name.split(' ')[0]}
                   </span>
                   <span className="block text-[9px] text-slate-500 truncate">
-                    {preset.roles['tenant-apex-01'] === 'TENANT_OWNER' ? 'Owner' : 'Assessor'}
+                    {preset.roles['tenant-vanguard-01'] === 'TENANT_OWNER' ? 'Owner' : 'Assessor'}
                   </span>
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Legal Links */}
+          <div className="mt-3 text-center text-[10px] text-slate-500">
+            <span>By proceeding, you agree to our </span>
+            <button
+              type="button"
+              onClick={() => onOpenLegal && onOpenLegal('terms')}
+              className="text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+            >
+              Terms of Service
+            </button>
+            <span> and </span>
+            <button
+              type="button"
+              onClick={() => onOpenLegal && onOpenLegal('privacy')}
+              className="text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+            >
+              Privacy Policy
+            </button>
+            <span>.</span>
           </div>
 
         </div>

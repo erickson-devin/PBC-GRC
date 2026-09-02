@@ -18,6 +18,7 @@ import { LoginPage } from './components/auth/LoginPage';
 import { AuthModal } from './components/auth/AuthModal';
 import { LicenseRequestModal } from './components/auth/LicenseRequestModal';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { LegalModal, LegalTab } from './components/common/LegalModal';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo';
 
@@ -25,6 +26,27 @@ const AppContent: React.FC = () => {
   const { activeTab } = useAssessment();
   const { openLicenseModal } = useAuth();
   const { currentTenant, switchTenant } = useTenant();
+
+  // Legal Modal State (Privacy Policy & Terms of Service)
+  const [legalModalState, setLegalModalState] = useState<{
+    isOpen: boolean;
+    tab: LegalTab;
+  }>({
+    isOpen: false,
+    tab: 'privacy',
+  });
+
+  const openLegalModal = useCallback((tab: LegalTab = 'privacy') => {
+    setLegalModalState({ isOpen: true, tab });
+  }, []);
+
+  const closeLegalModal = useCallback(() => {
+    setLegalModalState(prev => ({ ...prev, isOpen: false }));
+    // If the hash was #privacy or #terms, reset it cleanly
+    if (typeof window !== 'undefined' && (window.location.hash === '#privacy' || window.location.hash === '#terms')) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
 
   const getRouteFromUrl = (): AppRoute => {
     if (typeof window === 'undefined') return 'landing';
@@ -61,6 +83,13 @@ const AppContent: React.FC = () => {
   // Sync route on popstate and hashchange
   useEffect(() => {
     const handleNavigation = () => {
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#privacy') {
+        openLegalModal('privacy');
+      } else if (hash === '#terms') {
+        openLegalModal('terms');
+      }
+
       const nextRoute = getRouteFromUrl();
       setCurrentRoute(nextRoute);
       if (nextRoute === 'demo') {
@@ -69,13 +98,23 @@ const AppContent: React.FC = () => {
       }
     };
 
+    // Initial check for deep-linked legal hash
+    if (typeof window !== 'undefined') {
+      const initialHash = window.location.hash.toLowerCase();
+      if (initialHash === '#privacy') {
+        openLegalModal('privacy');
+      } else if (initialHash === '#terms') {
+        openLegalModal('terms');
+      }
+    }
+
     window.addEventListener('hashchange', handleNavigation);
     window.addEventListener('popstate', handleNavigation);
     return () => {
       window.removeEventListener('hashchange', handleNavigation);
       window.removeEventListener('popstate', handleNavigation);
     };
-  }, [switchTenant]);
+  }, [switchTenant, openLegalModal]);
 
   const navigateToApp = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -117,6 +156,7 @@ const AppContent: React.FC = () => {
         <LoginPage
           onSuccessRedirect={navigateToApp}
           onExitToLanding={navigateToLanding}
+          onOpenLegal={openLegalModal}
         />
       )}
 
@@ -125,6 +165,7 @@ const AppContent: React.FC = () => {
         <LandingPage
           onEnterApp={navigateToApp}
           onLaunchSandbox={navigateToSandbox}
+          onOpenLegal={openLegalModal}
         />
       )}
 
@@ -217,9 +258,14 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       )}
 
-      {/* Global Authentication & Onboarding Modals */}
-      <AuthModal />
-      <LicenseRequestModal />
+      {/* Global Authentication, Onboarding & Legal Modals */}
+      <AuthModal onOpenLegal={openLegalModal} />
+      <LicenseRequestModal onOpenLegal={openLegalModal} />
+      <LegalModal
+        isOpen={legalModalState.isOpen}
+        initialTab={legalModalState.tab}
+        onClose={closeLegalModal}
+      />
       <GcpArchitectureModal />
     </>
   );

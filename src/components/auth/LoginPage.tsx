@@ -10,11 +10,13 @@ import { PRESET_USERS } from '../../context/TenantContext';
 interface LoginPageProps {
   onSuccessRedirect?: (path?: string) => void;
   onExitToLanding?: () => void;
+  onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onSuccessRedirect,
   onExitToLanding,
+  onOpenLegal,
 }) => {
   const {
     isAuthenticated,
@@ -291,8 +293,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       </main>
 
       {/* Footer */}
-      <footer className="px-6 py-4 text-center text-xs text-slate-500 border-t border-slate-900">
-        Pitch Black Cyber LLC • CMMC 2.0 Level 1 / NIST SP 800-171 Compliance Enclave
+      <footer className="px-6 py-4 text-center text-xs text-slate-500 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 max-w-5xl mx-auto w-full">
+        <span>© {new Date().getFullYear()} Pitch Black Cyber LLC • CMMC 2.0 Level 1 Enclave</span>
+        <div className="flex items-center gap-4 text-xs text-slate-400">
+          <button
+            onClick={() => onOpenLegal && onOpenLegal('privacy')}
+            className="hover:text-white transition-colors hover:underline"
+          >
+            Privacy Policy
+          </button>
+          <span>•</span>
+          <button
+            onClick={() => onOpenLegal && onOpenLegal('terms')}
+            className="hover:text-white transition-colors hover:underline"
+          >
+            Terms of Service
+          </button>
+        </div>
       </footer>
     </div>
   );

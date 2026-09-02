@@ -4,9 +4,10 @@ import { ShieldCheck, Mail, ExternalLink, Lock, ArrowUp } from 'lucide-react';
 interface LandingFooterProps {
   onOpenGcpModal: () => void;
   onEnterApp: () => void;
+  onOpenLegal: (tab: 'privacy' | 'terms') => void;
 }
 
-export const LandingFooter: React.FC<LandingFooterProps> = ({ onOpenGcpModal, onEnterApp }) => {
+export const LandingFooter: React.FC<LandingFooterProps> = ({ onOpenGcpModal, onEnterApp, onOpenLegal }) => {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -124,6 +125,24 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onOpenGcpModal, on
               <Lock className="w-3.5 h-3.5" />
               <span>TLS 1.3 & SHA-256 Verified</span>
             </div>
+            <ul className="space-y-1 pt-1 text-xs">
+              <li>
+                <button
+                  onClick={() => onOpenLegal('privacy')}
+                  className="hover:text-white transition-colors text-slate-400 flex items-center gap-1"
+                >
+                  <span>Privacy Policy</span>
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => onOpenLegal('terms')}
+                  className="hover:text-white transition-colors text-slate-400 flex items-center gap-1"
+                >
+                  <span>Terms of Service</span>
+                </button>
+              </li>
+            </ul>
           </div>
 
         </div>
@@ -133,6 +152,22 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onOpenGcpModal, on
           <p className="text-[11px] text-slate-500">
             © {new Date().getFullYear()} Pitch Black Cyber, LLC. All rights reserved. CMMC is a registered trademark of the Cyber AB / DoD.
           </p>
+
+          <div className="flex items-center gap-4 text-xs text-slate-400">
+            <button
+              onClick={() => onOpenLegal('privacy')}
+              className="hover:text-white transition-colors hover:underline"
+            >
+              Privacy Policy
+            </button>
+            <span className="text-slate-700">•</span>
+            <button
+              onClick={() => onOpenLegal('terms')}
+              className="hover:text-white transition-colors hover:underline"
+            >
+              Terms of Service
+            </button>
+          </div>
 
           <button
             onClick={scrollToTop}

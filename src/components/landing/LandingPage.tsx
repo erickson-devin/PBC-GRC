@@ -14,9 +14,10 @@ import { useAuth } from '../../context/AuthContext';
 interface LandingPageProps {
   onEnterApp: (tenantId?: string) => void;
   onLaunchSandbox: (tenantId?: string) => void;
+  onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSandbox }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSandbox, onOpenLegal }) => {
   const { setIsGcpArchitectureModalOpen, switchTenant } = useTenant();
   const { openLicenseModal, isAuthenticated } = useAuth();
   const [isSampleSspOpen, setIsSampleSspOpen] = useState(false);
@@ -76,6 +77,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSa
       <LandingFooter 
         onOpenGcpModal={() => setIsGcpArchitectureModalOpen(true)}
         onEnterApp={handleGetStarted}
+        onOpenLegal={onOpenLegal || (() => {})}
       />
 
       {/* Sample SSP Modal */}

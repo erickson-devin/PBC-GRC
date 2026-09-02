@@ -16,7 +16,11 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 
-export const LicenseRequestModal: React.FC = () => {
+interface LicenseRequestModalProps {
+  onOpenLegal?: (tab: 'privacy' | 'terms') => void;
+}
+
+export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpenLegal }) => {
   const { isLicenseModalOpen, closeLicenseModal, selectedLicensePlan } = useAuth();
   const { submitLicenseRequest } = useTenant();
 
@@ -338,6 +342,27 @@ export const LicenseRequestModal: React.FC = () => {
                       <ArrowRight className="w-3 h-3 text-white" />
                     </span>
                   </button>
+                </div>
+
+                {/* Legal Notice */}
+                <div className="pt-2 text-center text-[10px] text-slate-500">
+                  <span>By scheduling a call, you agree to our </span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenLegal && onOpenLegal('terms')}
+                    className="text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+                  >
+                    Terms of Service
+                  </button>
+                  <span> and </span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenLegal && onOpenLegal('privacy')}
+                    className="text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+                  >
+                    Privacy Policy
+                  </button>
+                  <span>.</span>
                 </div>
               </form>
             </div>
