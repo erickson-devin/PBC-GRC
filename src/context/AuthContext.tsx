@@ -224,13 +224,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAuthModalOpen(false);
     } catch (err: any) {
       console.error('Microsoft login failed:', err);
-      // If user closed popup, or offline dev simulation requested
       if (err.code === 'auth/popup-closed-by-user') {
-        setAuthError('Sign-in cancelled. Please complete sign-in in the popup window.');
-      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/invalid-api-key') {
-        // Fallback to simulated demo profile
-        await handleUserSession('alex.mercer@vanguard-defense.us', 'Alex Mercer, CMMC CCA', 'microsoft.com');
-        setIsAuthModalOpen(false);
+        setAuthError('Sign-in popup was closed before completing authentication.');
+      } else if (err.code === 'auth/popup-blocked') {
+        setAuthError('Pop-up window was blocked by your browser. Please allow pop-ups for this site to sign in with Microsoft.');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setAuthError(`Domain '${typeof window !== 'undefined' ? window.location.hostname : 'grc.pitchblackcyber.com'}' is not authorized in Firebase Console. Add it under Authentication -> Settings -> Authorized Domains.`);
+      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
+        setAuthError('Microsoft provider is not enabled yet in your Firebase Console. Go to Authentication -> Sign-in method and enable Microsoft.');
       } else {
         setAuthError(err.message || 'Microsoft 365 sign-in encountered an error.');
       }
@@ -246,17 +247,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     setAuthError(null);
     try {
-      if (!isFirebaseConfigured) {
-        await new Promise(r => setTimeout(r, 600));
-        await handleUserSession('s.jenkins@defense-audit.org', 'Sarah Jenkins (C3PAO)', 'google.com');
-        setIsAuthModalOpen(false);
+      if (!isFirebaseConfigured || !auth) {
+        setAuthError('Firebase Authentication is not initialized.');
         return;
       }
 
       const result = await signInWithPopup(auth, googleProvider);
       const token = await result.user.getIdToken();
       await handleUserSession(
-        result.user.email || 'auditor@defense.org',
+        result.user.email || 'user@pitchblackcyber.com',
         result.user.displayName,
         'google.com',
         token,
@@ -266,10 +265,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       console.error('Google Workspace login failed:', err);
       if (err.code === 'auth/popup-closed-by-user') {
-        setAuthError('Sign-in cancelled.');
-      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/invalid-api-key') {
-        await handleUserSession('s.jenkins@defense-audit.org', 'Sarah Jenkins (C3PAO)', 'google.com');
-        setIsAuthModalOpen(false);
+        setAuthError('Sign-in popup was closed before completing authentication.');
+      } else if (err.code === 'auth/popup-blocked') {
+        setAuthError('Pop-up window was blocked by your browser. Please allow pop-ups for this site to sign in with Google.');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setAuthError(`Domain '${typeof window !== 'undefined' ? window.location.hostname : 'grc.pitchblackcyber.com'}' is not authorized in Firebase Console. Add it under Authentication -> Settings -> Authorized Domains.`);
+      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
+        setAuthError('Google Sign-In is not enabled yet in your Firebase Console. Go to Authentication -> Sign-in method and enable Google.');
+      } else if (err.code === 'auth/invalid-api-key') {
+        setAuthError('Invalid Firebase API key. Please check your GCP Identity Platform configuration.');
       } else {
         setAuthError(err.message || 'Google Workspace sign-in encountered an error.');
       }
