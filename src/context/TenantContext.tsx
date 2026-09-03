@@ -1,5 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { Tenant, TenantRole, User, SamStatus, LicenseRequest } from '../types/tenant';
+import {
+  Tenant,
+  TenantRole,
+  User,
+  SamStatus,
+  LicenseRequest,
+  TenantInvitation,
+  TeamMember,
+  StripeWebhookPayload,
+  AuthProviderType,
+} from '../types/tenant';
 import { StorageService, createInitialState } from '../services/storageService';
 
 // Storage Version 4 Keys (Strict separation of Live vs Sandbox)
@@ -9,6 +19,8 @@ const DEMO_TENANTS_STORAGE_KEY = 'pbc_demo_tenants_v4';
 const DEMO_ACTIVE_TENANT_ID_KEY = 'pbc_demo_active_tenant_v4';
 const CURRENT_USER_KEY = 'pbc_active_user_v4';
 const LICENSE_REQUESTS_STORAGE_KEY = 'pbc_license_requests_v4';
+const INVITATIONS_STORAGE_KEY = 'pbc_tenant_invitations_v4';
+const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
 
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [
@@ -20,6 +32,41 @@ const LEGACY_STORAGE_KEYS = [
   'pbc_active_tenant_id_v3',
   'pbc_active_user_v3',
 ];
+
+/**
+ * Generate a cryptographically secure token for tenant and staff onboarding invites
+ */
+export function generateCryptoToken(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `pbc_inv_${crypto.randomUUID().replace(/-/g, '')}`;
+  }
+  return `pbc_inv_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
+}
+
+/**
+ * Constructs the canonical invitation acceptance URL
+ */
+export function buildInviteUrl(token: string): string {
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    return `${origin}/accept-invite?token=${encodeURIComponent(token)}`;
+  }
+  return `https://grc.pitchblackcyber.com/accept-invite?token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Super Admin check: Grants clearance to Pitch Black Cyber operators or users with explicit isSuperAdmin: true
+ */
+export function isSuperAdminUser(user?: User | null): boolean {
+  if (!user) return false;
+  if (user.isSuperAdmin === true) return true;
+  const email = (user.email || '').toLowerCase().trim();
+  return (
+    email === 'devin@pitchblackcyber.com' ||
+    email === 'admin@pitchblackcyber.com' ||
+    email.endsWith('@pitchblackcyber.com')
+  );
+}
 
 /**
  * Normalized string helper for deduplication
@@ -169,7 +216,99 @@ export const PRESET_USERS: User[] = [
       'tenant-orbital-03': 'VIEWER',
     },
   },
+  {
+    id: 'user-devin-superadmin',
+    name: 'Devin (Pitch Black Cyber)',
+    email: 'devin@pitchblackcyber.com',
+    organization: 'Pitch Black Cyber LLC (Super Admin)',
+    authProvider: 'google.com',
+    isSuperAdmin: true,
+    roles: {
+      'tenant-vanguard-01': 'TENANT_OWNER',
+      'tenant-apex-02': 'TENANT_OWNER',
+      'tenant-orbital-03': 'TENANT_OWNER',
+    },
+  },
 ];
+
+export const SUPER_ADMIN_PRESET_USER: User = PRESET_USERS[3];
+
+export const SEED_INVITATIONS: TenantInvitation[] = [
+  {
+    id: 'inv-seed-01',
+    token: 'pbc_inv_7f4d1e9a3b8c2d5e0f1a4b7c8d9e2f3a',
+    tenantId: 'tenant-vanguard-01',
+    tenantName: 'Vanguard Defense Systems LLC',
+    email: 'auditor@defense-c3pao.org',
+    role: 'ASSESSOR',
+    invitedBy: 'alex.mercer@vanguard-defense.us',
+    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 12 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'PENDING',
+    type: 'STAFF_INVITE',
+    systemName: 'Defense Contracting Information Network (DCIN)',
+    cageCode: '8K3R1',
+    licenseTier: 'single-org',
+  },
+  {
+    id: 'inv-seed-02',
+    token: 'pbc_inv_9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d',
+    tenantId: 'tenant-apex-02',
+    tenantName: 'Apex Aerospace Enclave',
+    email: 'ciso@apex-aerospace.us',
+    role: 'TENANT_OWNER',
+    invitedBy: 'devin@pitchblackcyber.com',
+    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 13 * 24 * 60 * 60 * 1000).toISOString(),
+    status: 'PENDING',
+    type: 'TENANT_ONBOARDING',
+    systemName: 'Corporate Operations Enclave (COE)',
+    cageCode: '9X7B4',
+    licenseTier: 'single-org',
+  },
+];
+
+export const SEED_TEAM_MEMBERS: Record<string, TeamMember[]> = {
+  'tenant-vanguard-01': [
+    {
+      id: 'mem-alex-01',
+      tenantId: 'tenant-vanguard-01',
+      email: 'alex.mercer@vanguard-defense.us',
+      name: 'Alex Mercer, CMMC CCA',
+      role: 'TENANT_OWNER',
+      status: 'ACTIVE',
+      joinedAt: '2026-01-15T08:00:00.000Z',
+    },
+    {
+      id: 'mem-ops-02',
+      tenantId: 'tenant-vanguard-01',
+      email: 'ops.admin@vanguard-defense.us',
+      name: 'Cyber Ops Administrator',
+      role: 'ASSESSOR',
+      status: 'ACTIVE',
+      joinedAt: '2026-01-16T10:00:00.000Z',
+    },
+    {
+      id: 'mem-vance-03',
+      tenantId: 'tenant-vanguard-01',
+      email: 'm.vance@defense-observer.org',
+      name: 'Morgan Vance (Observer)',
+      role: 'VIEWER',
+      status: 'ACTIVE',
+      joinedAt: '2026-01-20T14:30:00.000Z',
+    },
+    {
+      id: 'mem-auditor-04',
+      tenantId: 'tenant-vanguard-01',
+      email: 'auditor@defense-c3pao.org',
+      name: 'External C3PAO Lead',
+      role: 'ASSESSOR',
+      status: 'PENDING_INVITE',
+      invitedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      invitationToken: 'pbc_inv_7f4d1e9a3b8c2d5e0f1a4b7c8d9e2f3a',
+    },
+  ],
+};
 
 const DEFAULT_BLANK_TENANT: Tenant = {
   id: 'tenant-live-default-01',
@@ -211,10 +350,15 @@ interface TenantContextType {
   canManageTenant: boolean;
   isSandboxMode: boolean;
   isMspUser: boolean;
+  isSuperAdmin: boolean;
   needsOnboarding: boolean;
   isOnboardingModalOpen: boolean;
   setIsOnboardingModalOpen: (open: boolean) => void;
+  isTeamModalOpen: boolean;
+  setIsTeamModalOpen: (open: boolean) => void;
   licenseRequests: LicenseRequest[];
+  invitations: TenantInvitation[];
+  teamMembers: Record<string, TeamMember[]>;
   switchTenant: (tenantId: string) => void;
   createTenant: (tenantData: {
     name: string;
@@ -228,6 +372,32 @@ interface TenantContextType {
     isConfigured?: boolean;
     licenseTier?: 'single-org' | 'msp-assessor';
   }) => Tenant;
+  provisionTenant: (data: {
+    companyName: string;
+    cageCode?: string;
+    systemBoundaryName?: string;
+    licenseTier: 'single-org' | 'msp-assessor';
+    tenantOwnerEmail: string;
+  }) => Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }>;
+  provisionTenantFromWebhook: (
+    payload: StripeWebhookPayload
+  ) => Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }>;
+  claimInviteToken: (
+    token: string,
+    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType }
+  ) => Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }>;
+  inviteStaffMember: (
+    tenantId: string,
+    email: string,
+    role: 'ASSESSOR' | 'VIEWER'
+  ) => Promise<{ invitation: TenantInvitation; inviteUrl: string }>;
+  revokeInvitation: (invitationId: string) => void;
+  resendInvitation: (invitationId: string) => Promise<{ inviteUrl: string }>;
+  updateMemberRole: (tenantId: string, memberId: string, newRole: TenantRole) => void;
+  removeMember: (tenantId: string, memberId: string) => void;
+  getTenantMembers: (tenantId: string) => TeamMember[];
+  getInvitationByToken: (token: string) => TenantInvitation | undefined;
+
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
     organizationName: string;
@@ -365,8 +535,41 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return [];
   });
 
+  // Tenant Invitations
+  const [invitations, setInvitations] = useState<TenantInvitation[]>(() => {
+    try {
+      const saved = localStorage.getItem(INVITATIONS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as TenantInvitation[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error loading invitations:', e);
+    }
+    return SEED_INVITATIONS;
+  });
+
+  // Tenant Team Members
+  const [teamMembers, setTeamMembers] = useState<Record<string, TeamMember[]>>(() => {
+    try {
+      const saved = localStorage.getItem(TEAM_MEMBERS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Record<string, TeamMember[]>;
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error loading team members:', e);
+    }
+    return SEED_TEAM_MEMBERS;
+  });
+
   const [isGcpArchitectureModalOpen, setIsGcpArchitectureModalOpen] = useState<boolean>(false);
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState<boolean>(false);
 
   // Sync storage
   useEffect(() => {
@@ -392,6 +595,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     localStorage.setItem(LICENSE_REQUESTS_STORAGE_KEY, JSON.stringify(licenseRequests));
   }, [licenseRequests]);
+
+  useEffect(() => {
+    localStorage.setItem(INVITATIONS_STORAGE_KEY, JSON.stringify(invitations));
+  }, [invitations]);
+
+  useEffect(() => {
+    localStorage.setItem(TEAM_MEMBERS_STORAGE_KEY, JSON.stringify(teamMembers));
+  }, [teamMembers]);
+
 
   // Current active tenant list based strictly on mode
   const tenants = useMemo(() => {
@@ -427,6 +639,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     return Boolean(hasMspRole || isMspTier || liveTenants.length > 1);
   }, [isSandboxMode, currentUser, currentTenant, liveTenants.length]);
+
+  const isSuperAdmin = useMemo(() => {
+    return isSuperAdminUser(currentUser);
+  }, [currentUser]);
+
 
   // Check if active tenant requires initial setup wizard
   const needsOnboarding = useMemo(() => {
@@ -828,6 +1045,404 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return newRequest;
   }, []);
 
+  /**
+   * Provision a brand-new defense enclave with isolated database boundary and onboarding token
+   */
+  const provisionTenant = useCallback(async (data: {
+    companyName: string;
+    cageCode?: string;
+    systemBoundaryName?: string;
+    licenseTier: 'single-org' | 'msp-assessor';
+    tenantOwnerEmail: string;
+  }): Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }> => {
+    const normName = normalizeOrgName(data.companyName);
+    const slug = (normName || data.companyName.toLowerCase().replace(/[^a-z0-9]/g, '-')).slice(0, 15);
+    const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 6)}`;
+    const emailDomain = data.tenantOwnerEmail.split('@')[1] || 'defense.us';
+
+    const newTenant: Tenant = {
+      id: newTenantId,
+      name: data.companyName.trim(),
+      cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
+      samStatus: 'ACTIVE',
+      systemName: (data.systemBoundaryName || `${data.companyName.trim()} Operations Boundary`).trim(),
+      systemOwner: data.tenantOwnerEmail.trim(),
+      industry: 'Defense Industrial Base (DIB)',
+      domain: emailDomain,
+      isDemo: false,
+      isConfigured: false,
+      licenseTier: data.licenseTier,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Initialize 100% blank assessment state in storage
+    const blankState = createInitialState(newTenant);
+    StorageService.saveAssessment(newTenantId, blankState);
+
+    // Cryptographic token & invitation
+    const token = generateCryptoToken();
+    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    const invitation: TenantInvitation = {
+      id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      token,
+      tenantId: newTenantId,
+      tenantName: newTenant.name,
+      email: data.tenantOwnerEmail.trim().toLowerCase(),
+      role: 'TENANT_OWNER',
+      invitedBy: currentUser.email || 'Pitch Black Cyber Super Admin',
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      status: 'PENDING',
+      type: 'TENANT_ONBOARDING',
+      systemName: newTenant.systemName,
+      cageCode: newTenant.cageCode,
+      licenseTier: data.licenseTier,
+    };
+
+    const ownerMember: TeamMember = {
+      id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      tenantId: newTenantId,
+      email: data.tenantOwnerEmail.trim().toLowerCase(),
+      name: data.tenantOwnerEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      role: 'TENANT_OWNER',
+      status: 'PENDING_INVITE',
+      invitedAt: new Date().toISOString(),
+      invitationToken: token,
+    };
+
+    setLiveTenants(prev => deduplicateTenants([...prev, newTenant]));
+    setInvitations(prev => [invitation, ...prev]);
+    setTeamMembers(prev => ({
+      ...prev,
+      [newTenantId]: [ownerMember],
+    }));
+
+    const inviteUrl = buildInviteUrl(token);
+    return { tenant: newTenant, invitation, inviteUrl };
+  }, [currentUser.email]);
+
+  /**
+   * Webhook handler for Stripe Checkout integration
+   */
+  const provisionTenantFromWebhook = useCallback(async (
+    payload: StripeWebhookPayload
+  ): Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }> => {
+    return await provisionTenant({
+      companyName: payload.companyName,
+      cageCode: payload.cageCode || 'PENDING',
+      systemBoundaryName: payload.systemName,
+      licenseTier: payload.licenseTier,
+      tenantOwnerEmail: payload.customerEmail,
+    });
+  }, [provisionTenant]);
+
+  /**
+   * Claim and bind an invitation token to an authenticated or new user
+   */
+  const claimInviteToken = useCallback(async (
+    token: string,
+    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType }
+  ): Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }> => {
+    const invite = invitations.find(inv => inv.token === token);
+    if (!invite) {
+      return { success: false, error: 'Invitation token was not found or is invalid.' };
+    }
+
+    if (invite.status === 'ACCEPTED') {
+      return { success: false, error: 'This invitation has already been claimed.' };
+    }
+
+    if (invite.status === 'REVOKED') {
+      return { success: false, error: 'This invitation has been revoked by the security administrator.' };
+    }
+
+    if (new Date(invite.expiresAt).getTime() < Date.now()) {
+      return { success: false, error: 'This invitation has expired. Please contact your administrator.' };
+    }
+
+    const now = new Date().toISOString();
+
+    // 1. Mark invitation as ACCEPTED
+    setInvitations(prev =>
+      prev.map(inv =>
+        inv.id === invite.id
+          ? {
+              ...inv,
+              status: 'ACCEPTED' as const,
+              acceptedAt: now,
+              acceptedByUserId: userCredentials.id || userCredentials.email,
+            }
+          : inv
+      )
+    );
+
+    // 2. Find target tenant
+    const targetTenant =
+      liveTenants.find(t => t.id === invite.tenantId) ||
+      demoTenants.find(t => t.id === invite.tenantId) ||
+      DEFAULT_BLANK_TENANT;
+
+    // 3. If initial onboarding, update system owner
+    if (!targetTenant.isConfigured && invite.type === 'TENANT_ONBOARDING') {
+      setLiveTenants(prev =>
+        prev.map(t =>
+          t.id === targetTenant.id
+            ? {
+                ...t,
+                systemOwner: userCredentials.name || userCredentials.email,
+                updatedAt: now,
+              }
+            : t
+        )
+      );
+    }
+
+    // 4. Assign role to user profile
+    const assignedRole = invite.role;
+    setCurrentUser(prevUser => ({
+      ...prevUser,
+      id: userCredentials.id || prevUser.id,
+      name: userCredentials.name || prevUser.name,
+      email: userCredentials.email || prevUser.email,
+      authProvider: userCredentials.authProvider || prevUser.authProvider,
+      roles: {
+        ...prevUser.roles,
+        [invite.tenantId]: assignedRole,
+      },
+    }));
+
+    // 5. Update team members list
+    setTeamMembers(prev => {
+      const currentList = prev[invite.tenantId] || [];
+      const matchIdx = currentList.findIndex(
+        m => m.email.toLowerCase() === userCredentials.email.toLowerCase() || m.invitationToken === token
+      );
+
+      let updatedList: TeamMember[];
+      if (matchIdx >= 0) {
+        updatedList = currentList.map((m, idx) =>
+          idx === matchIdx
+            ? {
+                ...m,
+                name: userCredentials.name || m.name,
+                email: userCredentials.email || m.email,
+                role: assignedRole,
+                status: 'ACTIVE' as const,
+                joinedAt: now,
+              }
+            : m
+        );
+      } else {
+        const newMember: TeamMember = {
+          id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          tenantId: invite.tenantId,
+          email: userCredentials.email.toLowerCase(),
+          name: userCredentials.name,
+          role: assignedRole,
+          status: 'ACTIVE',
+          joinedAt: now,
+        };
+        updatedList = [...currentList, newMember];
+      }
+
+      return {
+        ...prev,
+        [invite.tenantId]: updatedList,
+      };
+    });
+
+    // 6. Set active tenant
+    if (isSandboxMode) {
+      setDemoActiveTenantId(invite.tenantId);
+    } else {
+      setLiveActiveTenantId(invite.tenantId);
+    }
+
+    return { success: true, tenant: targetTenant, role: assignedRole };
+  }, [invitations, liveTenants, demoTenants, isSandboxMode]);
+
+  /**
+   * Invite an assessor or viewer staff member to the specified tenant enclave
+   */
+  const inviteStaffMember = useCallback(async (
+    tenantId: string,
+    email: string,
+    role: 'ASSESSOR' | 'VIEWER'
+  ): Promise<{ invitation: TenantInvitation; inviteUrl: string }> => {
+    const targetTenant =
+      liveTenants.find(t => t.id === tenantId) ||
+      demoTenants.find(t => t.id === tenantId) ||
+      currentTenant;
+
+    const token = generateCryptoToken();
+    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    const invitation: TenantInvitation = {
+      id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      token,
+      tenantId,
+      tenantName: targetTenant.name,
+      email: email.trim().toLowerCase(),
+      role,
+      invitedBy: currentUser.name ? `${currentUser.name} (${currentUser.email})` : currentUser.email,
+      createdAt: new Date().toISOString(),
+      expiresAt,
+      status: 'PENDING',
+      type: 'STAFF_INVITE',
+      systemName: targetTenant.systemName,
+      cageCode: targetTenant.cageCode,
+      licenseTier: targetTenant.licenseTier,
+    };
+
+    const newMember: TeamMember = {
+      id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      tenantId,
+      email: email.trim().toLowerCase(),
+      name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      role,
+      status: 'PENDING_INVITE',
+      invitedAt: new Date().toISOString(),
+      invitationToken: token,
+    };
+
+    setInvitations(prev => [invitation, ...prev]);
+    setTeamMembers(prev => {
+      const currentList = prev[tenantId] || [];
+      const filtered = currentList.filter(m => m.email.toLowerCase() !== email.trim().toLowerCase());
+      return {
+        ...prev,
+        [tenantId]: [...filtered, newMember],
+      };
+    });
+
+    const inviteUrl = buildInviteUrl(token);
+    return { invitation, inviteUrl };
+  }, [liveTenants, demoTenants, currentTenant, currentUser]);
+
+  /**
+   * Revoke an active or pending invitation
+   */
+  const revokeInvitation = useCallback((invitationId: string) => {
+    setInvitations(prev =>
+      prev.map(inv =>
+        inv.id === invitationId
+          ? { ...inv, status: 'REVOKED' as const }
+          : inv
+      )
+    );
+
+    const targetInvite = invitations.find(i => i.id === invitationId);
+    if (targetInvite) {
+      setTeamMembers(prev => {
+        const list = prev[targetInvite.tenantId] || [];
+        return {
+          ...prev,
+          [targetInvite.tenantId]: list.filter(m => m.invitationToken !== targetInvite.token),
+        };
+      });
+    }
+  }, [invitations]);
+
+  /**
+   * Resend / refresh invitation with extended expiration
+   */
+  const resendInvitation = useCallback(async (invitationId: string): Promise<{ inviteUrl: string }> => {
+    let token = '';
+    const now = new Date();
+    const newExpiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    setInvitations(prev =>
+      prev.map(inv => {
+        if (inv.id === invitationId) {
+          token = inv.token;
+          return {
+            ...inv,
+            status: 'PENDING' as const,
+            expiresAt: newExpiresAt,
+          };
+        }
+        return inv;
+      })
+    );
+
+    return { inviteUrl: buildInviteUrl(token) };
+  }, []);
+
+  /**
+   * Update role for an active team member
+   */
+  const updateMemberRole = useCallback((tenantId: string, memberId: string, newRole: TenantRole) => {
+    setTeamMembers(prev => {
+      const list = prev[tenantId] || [];
+      return {
+        ...prev,
+        [tenantId]: list.map(m => (m.id === memberId ? { ...m, role: newRole } : m)),
+      };
+    });
+
+    // If updating current user's role
+    const member = teamMembers[tenantId]?.find(m => m.id === memberId);
+    if (member && member.email.toLowerCase() === currentUser.email.toLowerCase()) {
+      setCurrentUser(prev => ({
+        ...prev,
+        roles: {
+          ...prev.roles,
+          [tenantId]: newRole,
+        },
+      }));
+    }
+  }, [teamMembers, currentUser.email]);
+
+  /**
+   * Remove a member from the organization
+   */
+  const removeMember = useCallback((tenantId: string, memberId: string) => {
+    setTeamMembers(prev => {
+      const list = prev[tenantId] || [];
+      return {
+        ...prev,
+        [tenantId]: list.filter(m => m.id !== memberId),
+      };
+    });
+  }, []);
+
+  /**
+   * Query team members for active or specified tenant
+   */
+  const getTenantMembers = useCallback((tenantId: string): TeamMember[] => {
+    const list = teamMembers[tenantId];
+    if (list && list.length > 0) {
+      return list;
+    }
+
+    const targetTenant = tenants.find(t => t.id === tenantId) || currentTenant;
+    const synthesized: TeamMember[] = [];
+
+    const myRole = currentUser.roles?.[tenantId] || (tenantId === currentTenant.id ? currentRole : undefined);
+    if (myRole) {
+      synthesized.push({
+        id: `mem-${currentUser.id}`,
+        tenantId,
+        email: currentUser.email,
+        name: currentUser.name || 'Enclave Operator',
+        role: myRole,
+        status: 'ACTIVE',
+        joinedAt: targetTenant.createdAt,
+      });
+    }
+
+    return synthesized;
+  }, [teamMembers, tenants, currentTenant, currentUser, currentRole]);
+
+  /**
+   * Lookup invitation by token string
+   */
+  const getInvitationByToken = useCallback((token: string): TenantInvitation | undefined => {
+    return invitations.find(inv => inv.token === token);
+  }, [invitations]);
+
   const value = useMemo(() => ({
     tenants,
     currentTenant,
@@ -837,12 +1452,27 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     canManageTenant,
     isSandboxMode,
     isMspUser,
+    isSuperAdmin,
     needsOnboarding,
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
+    isTeamModalOpen,
+    setIsTeamModalOpen,
     licenseRequests,
+    invitations,
+    teamMembers,
     switchTenant,
     createTenant,
+    provisionTenant,
+    provisionTenantFromWebhook,
+    claimInviteToken,
+    inviteStaffMember,
+    revokeInvitation,
+    resendInvitation,
+    updateMemberRole,
+    removeMember,
+    getTenantMembers,
+    getInvitationByToken,
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
@@ -863,12 +1493,27 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     canManageTenant,
     isSandboxMode,
     isMspUser,
+    isSuperAdmin,
     needsOnboarding,
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
+    isTeamModalOpen,
+    setIsTeamModalOpen,
     licenseRequests,
+    invitations,
+    teamMembers,
     switchTenant,
     createTenant,
+    provisionTenant,
+    provisionTenantFromWebhook,
+    claimInviteToken,
+    inviteStaffMember,
+    revokeInvitation,
+    resendInvitation,
+    updateMemberRole,
+    removeMember,
+    getTenantMembers,
+    getInvitationByToken,
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
@@ -881,6 +1526,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isGcpArchitectureModalOpen,
     setIsGcpArchitectureModalOpen,
   ]);
+
 
   return (
     <TenantContext.Provider value={value}>

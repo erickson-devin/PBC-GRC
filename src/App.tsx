@@ -20,8 +20,11 @@ import { LicenseRequestModal } from './components/auth/LicenseRequestModal';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LegalModal, LegalTab } from './components/common/LegalModal';
 import { OnboardingModal } from './components/onboarding/OnboardingModal';
+import { SuperAdminDashboard } from './components/admin/SuperAdminDashboard';
+import { AcceptInvitePage } from './pages/AcceptInvitePage';
+import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 
-type AppRoute = 'landing' | 'login' | 'app' | 'demo';
+type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
 const AppContent: React.FC = () => {
   const { activeTab } = useAssessment();
@@ -32,6 +35,8 @@ const AppContent: React.FC = () => {
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
     needsOnboarding,
+    isTeamModalOpen,
+    setIsTeamModalOpen,
   } = useTenant();
 
   // Legal Modal State (Privacy Policy & Terms of Service)
@@ -61,6 +66,12 @@ const AppContent: React.FC = () => {
     const hash = window.location.hash.toLowerCase();
     const search = window.location.search.toLowerCase();
 
+    if (path === '/admin' || hash.startsWith('#admin') || search.includes('view=admin')) {
+      return 'admin';
+    }
+    if (path === '/accept-invite' || hash.startsWith('#accept-invite') || search.includes('view=accept-invite')) {
+      return 'accept-invite';
+    }
     if (path === '/login' || hash.startsWith('#login') || search.includes('view=login')) {
       return 'login';
     }
@@ -98,6 +109,10 @@ const AppContent: React.FC = () => {
         openLegalModal('terms');
       }
 
+      if (hash === '#settings/team' || hash === '#team' || path.includes('/settings/team')) {
+        setIsTeamModalOpen(true);
+      }
+
       const nextRoute = getRouteFromUrl();
       setCurrentRoute(nextRoute);
       if (nextRoute === 'demo') {
@@ -107,6 +122,7 @@ const AppContent: React.FC = () => {
         switchTenant('tenant-vanguard-01');
       }
     };
+
 
     // Initial check for deep-linked legal path or hash
     if (typeof window !== 'undefined') {
@@ -270,7 +286,25 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       )}
 
-      {/* Global Authentication, Onboarding & Legal Modals */}
+      {/* 5. Super Admin Tenant Provisioning Dashboard (/admin) */}
+      {currentRoute === 'admin' && (
+        <SuperAdminDashboard
+          onNavigateToApp={navigateToApp}
+          onNavigateToLanding={navigateToLanding}
+          onOpenLegal={openLegalModal}
+        />
+      )}
+
+      {/* 6. Token Acceptance & Onboarding Public Route (/accept-invite) */}
+      {currentRoute === 'accept-invite' && (
+        <AcceptInvitePage
+          onSuccessNavigate={navigateToApp}
+          onExitToLanding={navigateToLanding}
+          onOpenLegal={openLegalModal}
+        />
+      )}
+
+      {/* Global Authentication, Onboarding, Team Management & Legal Modals */}
       <AuthModal onOpenLegal={openLegalModal} />
       <LicenseRequestModal onOpenLegal={openLegalModal} />
       <LegalModal
@@ -281,6 +315,10 @@ const AppContent: React.FC = () => {
       <OnboardingModal
         isOpen={currentRoute === 'app' && (isOnboardingModalOpen || needsOnboarding)}
         onClose={() => setIsOnboardingModalOpen(false)}
+      />
+      <TeamSettingsModal
+        isOpen={isTeamModalOpen}
+        onClose={() => setIsTeamModalOpen(false)}
       />
       <GcpArchitectureModal />
     </>

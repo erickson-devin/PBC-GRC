@@ -9,6 +9,7 @@ import {
   Key,
   LogOut,
   Sparkles,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
@@ -24,7 +25,15 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
   onOpenTenantSwitcher,
 }) => {
   const { currentUser, logout, openLicenseModal } = useAuth();
-  const { currentTenant, currentRole, switchUserRole } = useTenant();
+  const {
+    currentTenant,
+    currentRole,
+    switchUserRole,
+    canManageTenant,
+    setIsTeamModalOpen,
+    isSuperAdmin,
+  } = useTenant();
+
 
   const [isOpen, setIsOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -156,6 +165,36 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                 <span>Switch Organization</span>
               </button>
 
+              {/* Team & Role Permissions (Tenant Owner / Admin) */}
+              {canManageTenant && (
+                <button
+                  onClick={() => {
+                    setIsOpen(false);
+                    setIsTeamModalOpen(true);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-purple-300 hover:text-white hover:bg-purple-950/40 flex items-center gap-2.5 transition-colors"
+                >
+                  <Users className="w-4 h-4 text-purple-400" />
+                  <span>Team & Role Permissions</span>
+                </button>
+              )}
+
+              {/* Super Admin Console (Pitch Black Cyber Operators) */}
+              {isSuperAdmin && (
+                <button
+                  onClick={() => {
+                    setIsOpen(false);
+                    if (typeof window !== 'undefined') {
+                      window.location.hash = 'admin';
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-xl text-left text-xs font-bold text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 flex items-center gap-2.5 transition-colors"
+                >
+                  <Shield className="w-4 h-4 text-amber-400" />
+                  <span>Super Admin Console</span>
+                </button>
+              )}
+
               {/* Account Settings */}
               <button
                 onClick={() => {
@@ -180,6 +219,7 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                 <span>API Keys / Cloud Tokens</span>
               </button>
             </div>
+
 
             {/* Quick RBAC Role Simulation */}
             <div className="p-2 border-t border-slate-800 bg-slate-950/40">

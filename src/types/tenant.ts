@@ -34,6 +34,50 @@ export interface User {
   domain?: string;
   idToken?: string;
   licenseTier?: 'single-org' | 'msp-assessor';
+  isSuperAdmin?: boolean;
+}
+
+export interface TenantInvitation {
+  id: string;
+  token: string;
+  tenantId: string;
+  tenantName: string;
+  email: string;
+  role: TenantRole;
+  invitedBy: string; // Email or name of inviter
+  createdAt: string; // ISO string
+  expiresAt: string; // ISO string
+  status: 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+  acceptedAt?: string;
+  acceptedByUserId?: string;
+  type: 'TENANT_ONBOARDING' | 'STAFF_INVITE';
+  systemName?: string;
+  cageCode?: string;
+  licenseTier?: 'single-org' | 'msp-assessor';
+}
+
+export interface TeamMember {
+  id: string;
+  tenantId: string;
+  email: string;
+  name: string;
+  role: TenantRole;
+  status: 'ACTIVE' | 'PENDING_INVITE';
+  joinedAt?: string;
+  invitedAt?: string;
+  invitationToken?: string;
+  avatarUrl?: string;
+}
+
+export interface StripeWebhookPayload {
+  eventId?: string;
+  eventType?: 'checkout.session.completed' | string;
+  customerEmail: string;
+  companyName: string;
+  cageCode?: string;
+  systemName?: string;
+  licenseTier: 'single-org' | 'msp-assessor';
+  metadata?: Record<string, string>;
 }
 
 export interface TenantUserAssignment {
@@ -67,3 +111,4 @@ export interface LicenseRequest {
   status: 'PENDING_CONTACT' | 'CALL_SCHEDULED' | 'PROVISIONED';
   createdAt: string;
 }
+

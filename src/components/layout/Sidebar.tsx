@@ -8,13 +8,22 @@ import {
   Layers,
   Cloud,
   Building,
+  Users,
+  Shield,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 
 export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, metrics, state } = useAssessment();
-  const { currentTenant, setIsGcpArchitectureModalOpen } = useTenant();
+  const {
+    currentTenant,
+    setIsGcpArchitectureModalOpen,
+    canManageTenant,
+    setIsTeamModalOpen,
+    isSuperAdmin,
+  } = useTenant();
+
 
   const navItems: { id: NavigationTab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: string | number; badgeColor?: string }[] = [
     {
@@ -86,6 +95,47 @@ export const Sidebar: React.FC = () => {
             })}
           </nav>
         </div>
+
+        {/* Enclave Administration & Team RBAC */}
+        {canManageTenant && (
+          <div>
+            <p className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase px-3 mb-2">
+              Enclave Administration
+            </p>
+            <button
+              onClick={() => setIsTeamModalOpen(true)}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs text-purple-300 hover:text-white hover:bg-purple-950/30 border border-purple-500/20 transition-all text-left shadow-sm"
+            >
+              <div className="flex items-center gap-2.5">
+                <Users className="w-4 h-4 text-purple-400" />
+                <span>Team & Role RBAC</span>
+              </div>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                Owner
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* Super Admin Operator Access */}
+        {isSuperAdmin && (
+          <div>
+            <button
+              onClick={() => {
+                if (typeof window !== 'undefined') window.location.hash = 'admin';
+              }}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-xs text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-amber-500/30 transition-all text-left shadow-sm"
+            >
+              <div className="flex items-center gap-2.5">
+                <Shield className="w-4 h-4 text-amber-400" />
+                <span>Super Admin Portal</span>
+              </div>
+              <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                /admin
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* GCP Cloud Infrastructure Navigation Card */}
         <div className="hidden md:block">
