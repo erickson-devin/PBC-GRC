@@ -9,7 +9,6 @@ import {
   User as UserIcon,
   CheckCircle2,
   AlertTriangle,
-  ArrowRight,
   Sparkles,
   Key,
 } from 'lucide-react';
@@ -379,14 +378,14 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
               </div>
 
               {/* Enclave Summary Card (Double-Bezel) */}
-              <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-brand-950/30 border border-brand-500/25 space-y-3">
+              <div className="stitch-card p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-brand-400" />
+                    <Building2 className="w-4 h-4 text-cyan-400" />
                     <span className="text-sm font-bold text-white">{invitation?.tenantName}</span>
                   </div>
                   {invitation?.cageCode && (
-                    <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-brand-300 font-bold border border-slate-700">
+                    <span className="font-mono text-xs px-2.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-bold border border-cyan-500/30">
                       CAGE: {invitation.cageCode}
                     </span>
                   )}
@@ -395,9 +394,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                 <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/80 pt-2.5">
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-500 block">Assigned Role</span>
-                    <span className="font-bold text-brand-300 flex items-center gap-1 mt-0.5">
+                    <span className="font-bold text-cyan-300 flex items-center gap-1 mt-0.5 font-mono text-xs">
                       <Shield className="w-3.5 h-3.5" />
-                      {invitation?.role === 'TENANT_OWNER' ? 'Tenant Owner (Full Admin)' : invitation?.role === 'ASSESSOR' ? 'Assessor (Edit Controls)' : 'Viewer (Auditor)'}
+                      {invitation?.role === 'TENANT_OWNER' ? 'TENANT_OWNER' : invitation?.role === 'ASSESSOR' ? 'ASSESSOR' : 'VIEWER'}
                     </span>
                   </div>
 
@@ -432,9 +431,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                       setActiveAuthTab('sso');
                       setClaimError(null);
                     }}
-                    className={`py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+                    className={`py-2 text-xs font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 ${
                       activeAuthTab === 'sso'
-                        ? 'bg-brand-600 text-white shadow-md'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -448,9 +447,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                       setActiveAuthTab('password');
                       setClaimError(null);
                     }}
-                    className={`py-2 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+                    className={`py-2 text-xs font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 ${
                       activeAuthTab === 'password'
-                        ? 'bg-brand-600 text-white shadow-md'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -471,7 +470,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                       type="button"
                       disabled={isSubmitting}
                       onClick={() => handleSsoClaim('microsoft.com')}
-                      className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-850 text-white font-bold text-xs border border-slate-800 hover:border-slate-700 flex items-center justify-center gap-3 transition-all active:scale-[0.99] disabled:opacity-50"
+                      className="w-full btn-secondary text-xs py-3 justify-center hover:border-cyan-500/50"
                     >
                       <svg className="w-4 h-4" viewBox="0 0 21 21">
                         <path fill="#f25022" d="M1 1h9v9H1z" />
@@ -487,7 +486,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                       type="button"
                       disabled={isSubmitting}
                       onClick={() => handleSsoClaim('google.com')}
-                      className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-850 text-white font-bold text-xs border border-slate-800 hover:border-slate-700 flex items-center justify-center gap-3 transition-all active:scale-[0.99] disabled:opacity-50"
+                      className="w-full btn-secondary text-xs py-3 justify-center hover:border-cyan-500/50"
                     >
                       <svg className="w-4 h-4" viewBox="0 0 24 24">
                         <path
@@ -527,7 +526,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                           value={fullName}
                           onChange={e => setFullName(e.target.value)}
                           placeholder="e.g. Alex Mercer"
-                          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
                         />
                       </div>
                     </div>
@@ -561,7 +560,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                             value={password}
                             onChange={e => setPassword(e.target.value)}
                             placeholder="••••••••••••"
-                            className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-brand-500"
+                            className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
                           />
                         </div>
                       </div>
@@ -579,7 +578,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                             value={confirmPassword}
                             onChange={e => setConfirmPassword(e.target.value)}
                             placeholder="••••••••••••"
-                            className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-brand-500"
+                            className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
                           />
                         </div>
                       </div>
@@ -588,7 +587,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                     <button
                       type="submit"
                       disabled={isSubmitting || !password || password !== confirmPassword}
-                      className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"
+                      className="w-full btn-primary text-xs py-3.5"
                     >
                       {isSubmitting ? (
                         <>
@@ -599,7 +598,6 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                         <>
                           <ShieldCheck className="w-4 h-4" />
                           <span>Claim Enclave & Access Matrix</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
                         </>
                       )}
                     </button>

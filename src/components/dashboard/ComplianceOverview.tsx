@@ -108,7 +108,7 @@ export const ComplianceOverview: React.FC = () => {
           <div className="flex flex-col sm:flex-row lg:flex-col gap-3 w-full sm:w-auto lg:w-64 shrink-0">
             <button
               onClick={() => setActiveTab('ssp')}
-              className="w-full py-3 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm shadow-lg shadow-brand-500/25 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              className="btn-primary w-full py-3 text-sm shadow-lg shadow-cyan-500/25"
             >
               <FileText className="w-4 h-4" />
               <span>Generate Official SSP</span>
@@ -116,7 +116,7 @@ export const ComplianceOverview: React.FC = () => {
 
             <button
               onClick={() => setActiveTab('controls')}
-              className="w-full py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm border border-slate-700 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
+              className="btn-secondary w-full py-3 text-sm"
             >
               <span>Manage Control Matrix (17)</span>
               <ArrowRight className="w-4 h-4" />
@@ -124,9 +124,9 @@ export const ComplianceOverview: React.FC = () => {
 
             <button
               onClick={() => setIsGcpArchitectureModalOpen(true)}
-              className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-brand-300 text-xs font-semibold border border-brand-500/30 flex items-center justify-center gap-2 transition-colors"
+              className="btn-secondary w-full py-2.5 text-xs text-cyan-300 hover:text-white"
             >
-              <Cloud className="w-3.5 h-3.5 text-brand-400" />
+              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
               <span>GCP Cloud SQL & GCS Topology</span>
             </button>
           </div>
@@ -186,7 +186,7 @@ export const ComplianceOverview: React.FC = () => {
       {/* 4 Metric Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Met Count Card */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+        <div className="stitch-card p-5 shadow-lg flex flex-col justify-between hover:border-emerald-500/40">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-xs font-semibold uppercase tracking-wider">Controls Satisfied</span>
             <div className="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
@@ -203,7 +203,7 @@ export const ComplianceOverview: React.FC = () => {
         </div>
 
         {/* In Progress Card */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+        <div className="stitch-card p-5 shadow-lg flex flex-col justify-between hover:border-amber-500/40">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-xs font-semibold uppercase tracking-wider">In Progress</span>
             <div className="w-8 h-8 rounded-lg bg-amber-500/15 text-amber-400 flex items-center justify-center">
@@ -220,10 +220,10 @@ export const ComplianceOverview: React.FC = () => {
         </div>
 
         {/* Not Started Card */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+        <div className="stitch-card p-5 shadow-lg flex flex-col justify-between hover:border-slate-700">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-xs font-semibold uppercase tracking-wider">Not Started</span>
-            <div className="w-8 h-8 rounded-lg bg-slate-700 text-slate-300 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center">
               <HelpCircle className="w-4 h-4" />
             </div>
           </div>
@@ -239,11 +239,11 @@ export const ComplianceOverview: React.FC = () => {
         {/* Evidence Vault Card */}
         <div 
           onClick={() => setActiveTab('vault')}
-          className="bg-slate-900/80 border border-slate-800 hover:border-brand-500/40 rounded-2xl p-5 shadow-lg flex flex-col justify-between cursor-pointer transition-colors group"
+          className="stitch-card p-5 shadow-lg flex flex-col justify-between cursor-pointer hover:border-cyan-500/40 group transition-all"
         >
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-xs font-semibold uppercase tracking-wider">Evidence Artifacts</span>
-            <div className="w-8 h-8 rounded-lg bg-brand-500/15 text-brand-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/15 text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform">
               <Paperclip className="w-4 h-4" />
             </div>
           </div>
@@ -251,7 +251,7 @@ export const ComplianceOverview: React.FC = () => {
             <span className="text-3xl font-extrabold text-white font-mono">{state.evidenceIndex.length}</span>
             <span className="text-xs text-slate-400">GCS Synced</span>
           </div>
-          <p className="text-[11px] text-brand-400 font-medium mt-2 flex items-center gap-1">
+          <p className="text-[11px] text-cyan-400 font-medium mt-2 flex items-center gap-1">
             <span>View Vault</span>
             <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
           </p>

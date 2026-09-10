@@ -170,15 +170,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   switchUser(SUPER_ADMIN_PRESET_USER);
                   setDeveloperOverride(true);
                 }}
-                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                className="w-full btn-primary text-xs py-3"
               >
-                <Shield className="w-4 h-4 text-amber-300" />
+                <Shield className="w-4 h-4 text-cyan-200" />
                 <span>Log In as Super Admin (devin@pitchblackcyber.com)</span>
               </button>
 
               <button
                 onClick={() => setDeveloperOverride(true)}
-                className="w-full py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition-colors"
+                className="w-full btn-secondary text-xs py-2.5"
               >
                 Bypass Guard for Local Evaluation
               </button>
@@ -298,7 +298,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={() => setIsNewTenantModalOpen(true)}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 flex items-center gap-2 transition-all active:scale-[0.98]"
+              className="btn-primary text-xs px-5 py-2.5"
             >
               <Plus className="w-4 h-4" />
               <span>Provision New Tenant</span>
@@ -308,15 +308,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
         {/* KPI Metrics Strip */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1">
+          <div className="stitch-card p-5 space-y-1">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5 text-brand-400" /> Total Enclaves
+              <Building2 className="w-3.5 h-3.5 text-cyan-400" /> Total Enclaves
             </span>
             <p className="text-3xl font-black text-white font-mono mt-1">{tenants.length}</p>
             <p className="text-[11px] text-slate-500">Live & sandbox organizations</p>
           </div>
 
-          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1">
+          <div className="stitch-card p-5 space-y-1">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Active Subscriptions
             </span>
@@ -326,7 +326,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <p className="text-[11px] text-slate-500">{singleOrgCount} Single Org • {mspCount} MSP</p>
           </div>
 
-          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1">
+          <div className="stitch-card p-5 space-y-1">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-amber-400" /> Pending Invites
             </span>
@@ -334,7 +334,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <p className="text-[11px] text-slate-500">Awaiting contractor claim</p>
           </div>
 
-          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1">
+          <div className="stitch-card p-5 space-y-1">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-purple-400" /> Enclave Seats Bound
             </span>
@@ -346,7 +346,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
 
         {/* Section 1: Tenant Enclave Registry */}
-        <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800 space-y-4">
+        <div className="stitch-card p-6 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -383,23 +383,26 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 font-sans">
+              <tbody className="divide-y divide-slate-800/80 font-sans">
                 {filteredTenants.map(t => {
                   const members = teamMembers[t.id] || [];
                   return (
-                    <tr key={t.id} className="hover:bg-slate-850/50 transition-colors">
+                    <tr
+                      key={t.id}
+                      className="even:bg-slate-950/40 odd:bg-slate-900/20 hover:bg-slate-800/60 transition-colors duration-150"
+                    >
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-white text-xs">{t.name}</div>
                         <div className="text-[11px] text-slate-400 truncate max-w-xs">{t.systemName}</div>
                         <div className="text-[10px] font-mono text-slate-500">{t.id}</div>
                       </td>
                       <td className="py-3.5 px-4">
-                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-brand-300 font-bold border border-slate-700/60">
+                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-cyan-950/40 text-cyan-300 font-bold border border-cyan-500/30">
                           {t.cageCode || 'PENDING'}
                         </span>
                         <div className="text-[10px] text-slate-400 mt-1">
                           {t.samStatus === 'ACTIVE' ? (
-                            <span className="text-emerald-400">SAM Active</span>
+                            <span className="text-emerald-400 font-medium">SAM Active</span>
                           ) : (
                             <span className="text-slate-500">SAM {t.samStatus}</span>
                           )}
@@ -407,32 +410,32 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       </td>
                       <td className="py-3.5 px-4">
                         {t.licenseTier === 'msp-assessor' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
                             <Layers className="w-3 h-3" /> MSP Assessor
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wide">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wide">
                             <Shield className="w-3 h-3" /> Single Org ($1k)
                           </span>
                         )}
                         {t.isDemo && (
-                          <span className="ml-1 text-[9px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                          <span className="ml-1 text-[9px] font-mono font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
                             DEMO
                           </span>
                         )}
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="text-slate-200 text-xs truncate max-w-xs">{t.systemOwner || 'Unassigned'}</div>
-                        <div className="text-[10px] text-slate-500">{t.domain || 'N/A'}</div>
+                        <div className="text-slate-200 text-xs font-medium truncate max-w-xs">{t.systemOwner || 'Unassigned'}</div>
+                        <div className="text-[10px] font-mono text-slate-500">{t.domain || 'N/A'}</div>
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-300">
                         {members.length > 0 ? `${members.length} members` : '1 (Owner)'}
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleCopy(t.id, t.id, 'enclave')}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-[11px] transition-colors"
+                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
                             title="Copy Enclave Tenant ID"
                           >
                             {copiedEnclaveId === t.id ? (
@@ -443,7 +446,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           </button>
                           <button
                             onClick={() => handleEnterEnclave(t.id)}
-                            className="px-2.5 py-1.5 rounded-lg bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 hover:text-brand-200 border border-brand-500/30 text-xs font-semibold flex items-center gap-1 transition-colors"
+                            className="btn-primary text-xs px-3 py-1.5"
                           >
                             <span>Launch</span>
                             <ArrowUpRight className="w-3.5 h-3.5" />
@@ -459,7 +462,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
 
         {/* Section 2: Pending & Recent Onboarding Invitations */}
-        <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800 space-y-4">
+        <div className="stitch-card p-6 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -467,7 +470,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 <span>Onboarding & Staff Invitations ({filteredInvitations.length})</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Cryptographically generated tokens awaiting claim via <code className="text-brand-300">/accept-invite</code>
+                Cryptographically generated tokens awaiting claim via <code className="text-cyan-300 font-mono">/accept-invite</code>
               </p>
             </div>
 
@@ -478,7 +481,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 placeholder="Search email, tenant or token..."
                 value={inviteSearch}
                 onChange={e => setInviteSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
               />
             </div>
           </div>
@@ -494,58 +497,65 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 font-sans">
+              <tbody className="divide-y divide-slate-800/80 font-sans">
                 {filteredInvitations.map(inv => {
                   const isExpired = new Date(inv.expiresAt).getTime() < Date.now();
                   const inviteUrl = buildInviteUrl(inv.token);
                   return (
-                    <tr key={inv.id} className="hover:bg-slate-850/50 transition-colors">
+                    <tr
+                      key={inv.id}
+                      className="even:bg-slate-950/40 odd:bg-slate-900/20 hover:bg-slate-800/60 transition-colors duration-150"
+                    >
                       <td className="py-3.5 px-4">
                         <div className="font-mono text-white text-xs font-semibold">{inv.email}</div>
-                        <div className="text-[10px] text-slate-500">Invited by: {inv.invitedBy}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">Invited by: {inv.invitedBy}</div>
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-200 text-xs">{inv.tenantName}</div>
-                        <span className={`inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-bold ${
-                          inv.role === 'TENANT_OWNER'
-                            ? 'bg-purple-500/20 text-purple-300'
-                            : inv.role === 'ASSESSOR'
-                            ? 'bg-blue-500/20 text-blue-300'
-                            : 'bg-slate-700 text-slate-300'
-                        }`}>
-                          {inv.role === 'TENANT_OWNER' ? 'Tenant Owner' : inv.role === 'ASSESSOR' ? 'Assessor' : 'Viewer'}
-                        </span>
+                        {inv.role === 'TENANT_OWNER' ? (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            <Shield className="w-3 h-3" /> Tenant Owner
+                          </span>
+                        ) : inv.role === 'ASSESSOR' ? (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            <CheckCircle2 className="w-3 h-3" /> Assessor
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50">
+                            <Lock className="w-3 h-3" /> Viewer
+                          </span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         {inv.status === 'ACCEPTED' ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-400 font-bold text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                          <span className="inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                             <CheckCircle2 className="w-3 h-3" /> Claimed
                           </span>
                         ) : inv.status === 'REVOKED' ? (
-                          <span className="inline-flex items-center gap-1 text-rose-400 font-bold text-[11px] bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                          <span className="inline-flex items-center gap-1 text-rose-400 font-bold font-mono text-[11px] bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
                             Revoked
                           </span>
                         ) : isExpired ? (
-                          <span className="inline-flex items-center gap-1 text-amber-400 font-bold text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          <span className="inline-flex items-center gap-1 text-amber-400 font-bold font-mono text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                             Expired
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-sky-400 font-bold text-[11px] bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
-                            <Clock className="w-3 h-3" /> Pending Claim
+                          <span className="inline-flex items-center gap-1 text-cyan-300 font-bold font-mono text-[11px] bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
+                            <Clock className="w-3 h-3 text-cyan-400" /> Pending Claim
                           </span>
                         )}
-                        <div className="text-[10px] text-slate-500 mt-1">
+                        <div className="text-[10px] font-mono text-slate-500 mt-1">
                           Expires {new Date(inv.expiresAt).toLocaleDateString()}
                         </div>
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-1.5">
-                          <code className="font-mono text-[11px] text-slate-400 bg-slate-950 px-2 py-1 rounded border border-slate-800 select-all">
+                          <code className="font-mono text-[11px] text-slate-300 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 select-all">
                             {inv.token.slice(0, 16)}...
                           </code>
                           <button
                             onClick={() => handleCopy(inviteUrl, inv.id, 'token')}
-                            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
                             title="Copy full invite link"
                           >
                             {copiedTokenId === inv.id ? (
@@ -566,7 +576,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                                   await handleCopy(res.inviteUrl, inv.id, 'token');
                                   alert(`Invitation renewed for 14 days! New link copied to clipboard.`);
                                 }}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
                                 title="Resend & Extend Expiration"
                               >
                                 <RotateCw className="w-3.5 h-3.5" />
@@ -577,7 +587,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                                     revokeInvitation(inv.id);
                                   }
                                 }}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 transition-colors"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 transition-all"
                                 title="Revoke Token"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -588,7 +598,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                             href={inviteUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white border border-slate-700 transition-colors"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
                             title="Open Acceptance Route in New Tab"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
@@ -604,25 +614,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         </div>
 
         {/* Section 3: Stripe Checkout Webhook Integration Simulator */}
-        <div className="p-6 rounded-3xl bg-slate-900/50 border border-slate-800 space-y-4">
+        <div className="stitch-card p-6 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
-              <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-2.5 py-0.5 rounded-full bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
                 CHECKOUT WEBHOOK PIPELINE
               </span>
               <h2 className="text-base font-bold text-white flex items-center gap-2 mt-1">
-                <Terminal className="w-4 h-4 text-indigo-400" />
+                <Terminal className="w-4 h-4 text-cyan-400" />
                 <span>Stripe Payment Checkout Webhook Integration</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Trigger the headless provisioning pipeline directly via simulated <code className="text-indigo-300">checkout.session.completed</code> event payload.
+                Trigger the headless provisioning pipeline directly via simulated <code className="text-cyan-300 font-mono">checkout.session.completed</code> event payload.
               </p>
             </div>
 
             <button
               onClick={handleSimulateWebhook}
               disabled={isSimulatingWebhook}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 flex items-center gap-2 transition-all active:scale-[0.98] shrink-0"
+              className="btn-secondary text-xs px-4 py-2.5 shrink-0"
             >
               {isSimulatingWebhook ? (
                 <>
@@ -631,7 +641,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 </>
               ) : (
                 <>
-                  <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+                  <FileCode className="w-3.5 h-3.5 text-cyan-400" />
                   <span>Simulate Stripe Webhook Checkout</span>
                 </>
               )}

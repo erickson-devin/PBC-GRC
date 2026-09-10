@@ -84,3 +84,47 @@
 .animate-pulse-subtle {
   animation: pulse-subtle 3s ease-in-out infinite;
 }
+
+/* ==========================================================================
+   Stitch Standard Design System Utilities
+   ========================================================================== */
+
+@layer components {
+  /* Stitch Standard Card */
+  .stitch-card {
+    @apply bg-slate-900/60 border border-slate-800 rounded-xl backdrop-blur-md transition-all duration-200;
+  }
+  .stitch-card-hover {
+    @apply bg-slate-900/60 border border-slate-800 hover:border-cyan-500/40 rounded-xl backdrop-blur-md transition-all duration-200 hover:shadow-lg hover:shadow-cyan-950/20;
+  }
+
+  /* Stitch Primary Button: Electric Cyan / Defense Blue Gradient + Glow */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 hover:from-cyan-400 hover:via-sky-400 hover:to-blue-500 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
+  }
+
+  /* Stitch Secondary Button: Crisp Slate Border */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-xs sm:text-sm text-slate-300 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-700/90 hover:border-slate-600 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Stitch Ghost / Outline Action */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-semibold text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition-all duration-150;
+  }
+
+  /* Stitch Dropzone with dynamic drag indicator */
+  .dropzone-container {
+    @apply relative border-2 border-dashed border-slate-700/80 hover:border-cyan-500/60 rounded-2xl p-6 text-center cursor-pointer bg-slate-950/40 hover:bg-slate-950/70 transition-all duration-200;
+  }
+  .dropzone-container.active-drag,
+  .dropzone-container[data-drag-over="true"] {
+    @apply border-cyan-400 bg-cyan-950/30 ring-2 ring-cyan-500/40 shadow-lg shadow-cyan-500/20 scale-[1.01];
+  }
+
+  /* Micro-animated Close Trigger */
+  .modal-close-trigger {
+    @apply p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all duration-200 hover:rotate-90 active:scale-95;
+  }
+}
+

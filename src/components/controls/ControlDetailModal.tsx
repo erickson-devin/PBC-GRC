@@ -48,6 +48,7 @@ export const ControlDetailModal: React.FC = () => {
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [templateAppliedNotice, setTemplateAppliedNotice] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!selectedControlId) return null;
@@ -106,6 +107,41 @@ export const ControlDetailModal: React.FC = () => {
     }
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!canEdit) return;
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+    if (!canEdit) return;
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        await uploadEvidence(control.id, files[i]);
+      }
+    } catch (err) {
+      console.error('Upload failed:', err);
+      alert('Failed to upload evidence file.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleDownloadFile = async (evidence: EvidenceItem) => {
     const fileData = await EvidenceVault.getFile(currentTenant.id, evidence.id);
     if (!fileData) {
@@ -156,8 +192,8 @@ export const ControlDetailModal: React.FC = () => {
         
         {/* Top Header */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="font-mono font-bold text-sm px-3 py-1 rounded-xl bg-brand-500/20 text-brand-300 border border-brand-500/40">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="font-mono font-bold text-sm tracking-wide px-3 py-1 rounded-xl bg-cyan-950/60 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950/40">
               {control.id}
             </span>
             <span
@@ -170,7 +206,7 @@ export const ControlDetailModal: React.FC = () => {
             >
               {domainInfo.name}
             </span>
-            <span className="hidden sm:inline text-xs font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
+            <span className="hidden sm:inline text-xs font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
               {control.farReference}
             </span>
           </div>
@@ -199,10 +235,11 @@ export const ControlDetailModal: React.FC = () => {
               </button>
             </div>
 
-            {/* Close */}
+            {/* Fluid Close Trigger */}
             <button
               onClick={() => setSelectedControlId(null)}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="modal-close-trigger"
+              title="Close modal"
             >
               <X className="w-5 h-5" />
             </button>
@@ -220,10 +257,10 @@ export const ControlDetailModal: React.FC = () => {
           <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800 shrink-0 self-start md:self-auto">
             {(
               [
-                { id: 'NOT_STARTED', label: 'Not Started', active: 'bg-slate-800 text-white' },
-                { id: 'IN_PROGRESS', label: 'In Progress', active: 'bg-amber-500/20 text-amber-300 border border-amber-500/40' },
-                { id: 'MET', label: 'Met', active: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' },
-                { id: 'NOT_MET', label: 'Not Met', active: 'bg-rose-500/20 text-rose-300 border border-rose-500/40' },
+                { id: 'NOT_STARTED', label: 'Not Started', active: 'bg-slate-800 text-white font-mono' },
+                { id: 'IN_PROGRESS', label: 'In Progress', active: 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono font-bold' },
+                { id: 'MET', label: 'Met', active: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold' },
+                { id: 'NOT_MET', label: 'Not Met', active: 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold' },
               ] as { id: ControlStatus; label: string; active: string }[]
             ).map((s) => {
               const isSelected = ctrlState.status === s.id;
@@ -232,7 +269,7 @@ export const ControlDetailModal: React.FC = () => {
                   key={s.id}
                   onClick={() => updateControlStatus(control.id, s.id)}
                   disabled={!canEdit}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-60 ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 disabled:opacity-60 ${
                     isSelected ? s.active : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -249,7 +286,7 @@ export const ControlDetailModal: React.FC = () => {
             onClick={() => setActiveTab('narrative')}
             className={`py-3 flex items-center gap-2 border-b-2 transition-colors ${
               activeTab === 'narrative'
-                ? 'border-brand-500 text-brand-400'
+                ? 'border-cyan-400 text-cyan-300'
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
@@ -261,7 +298,7 @@ export const ControlDetailModal: React.FC = () => {
             onClick={() => setActiveTab('evidence')}
             className={`py-3 flex items-center gap-2 border-b-2 transition-colors ${
               activeTab === 'evidence'
-                ? 'border-brand-500 text-brand-400'
+                ? 'border-cyan-400 text-cyan-300'
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
@@ -273,7 +310,7 @@ export const ControlDetailModal: React.FC = () => {
             onClick={() => setActiveTab('guidance')}
             className={`py-3 flex items-center gap-2 border-b-2 transition-colors ${
               activeTab === 'guidance'
-                ? 'border-brand-500 text-brand-400'
+                ? 'border-cyan-400 text-cyan-300'
                 : 'border-transparent hover:text-slate-200'
             }`}
           >
@@ -360,11 +397,11 @@ export const ControlDetailModal: React.FC = () => {
               {/* Implementation Statement Editor */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <FileCheck className="w-3.5 h-3.5 text-brand-400" />
+                  <label className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                    <FileCheck className="w-3.5 h-3.5" />
                     Implementation Narrative (How {currentTenant.name} satisfies this practice)
                   </label>
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-slate-500 font-mono">
                     {ctrlState.implementationNotes.length} characters
                   </span>
                 </div>
@@ -375,7 +412,7 @@ export const ControlDetailModal: React.FC = () => {
                   value={ctrlState.implementationNotes}
                   onChange={(e) => updateControlNotes(control.id, e.target.value)}
                   placeholder="Detail the specific tools, policies, processes, and configurations your organization uses to satisfy this requirement..."
-                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 focus:border-brand-500 focus:outline-none text-sm text-slate-100 placeholder-slate-500 leading-relaxed font-sans transition-colors resize-y disabled:opacity-75"
+                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 focus:outline-none text-sm text-slate-100 placeholder-slate-500 leading-relaxed font-sans transition-all duration-200 resize-y disabled:opacity-75"
                 />
               </div>
 
@@ -393,7 +430,7 @@ export const ControlDetailModal: React.FC = () => {
                       value={ctrlState.responsibleRole}
                       onChange={(e) => updateControlRole(control.id, e.target.value)}
                       placeholder="e.g. CISO, IT Administrator, Security Lead"
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-brand-500 focus:outline-none disabled:opacity-75"
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 focus:outline-none disabled:opacity-75"
                     />
                   </div>
                 </div>
@@ -402,7 +439,7 @@ export const ControlDetailModal: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-400 mb-1.5">
                     FAR 52.204-21 Official Clause
                   </label>
-                  <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-brand-300">
+                  <div className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-cyan-300">
                     {control.farReference}
                   </div>
                 </div>
@@ -415,11 +452,20 @@ export const ControlDetailModal: React.FC = () => {
           {activeTab === 'evidence' && (
             <div className="space-y-6">
               
-              {/* Dropzone Upload */}
+              {/* Dropzone Upload with Clear Drop Indicators */}
               {canEdit ? (
                 <div
+                  onDragOver={handleDragOver}
+                  onDragEnter={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-700 hover:border-brand-500 rounded-3xl p-8 text-center cursor-pointer bg-slate-950/50 hover:bg-slate-950 transition-all group"
+                  data-drag-over={isDraggingOver}
+                  className={`dropzone-container p-8 transition-all duration-200 ${
+                    isDraggingOver
+                      ? 'border-cyan-400 bg-cyan-950/40 ring-2 ring-cyan-500/50 shadow-lg shadow-cyan-500/20 scale-[1.01]'
+                      : 'hover:border-cyan-500/50 hover:bg-slate-900/60'
+                  }`}
                 >
                   <input
                     type="file"
@@ -428,11 +474,21 @@ export const ControlDetailModal: React.FC = () => {
                     multiple
                     className="hidden"
                   />
-                  <div className="w-12 h-12 rounded-2xl bg-brand-500/15 text-brand-400 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                  <div
+                    className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3 transition-all ${
+                      isDraggingOver
+                        ? 'bg-cyan-500/30 text-cyan-300 scale-110 animate-bounce'
+                        : 'bg-slate-850 text-cyan-400 border border-slate-700'
+                    }`}
+                  >
                     <Upload className="w-6 h-6" />
                   </div>
-                  <h4 className="text-sm font-bold text-white group-hover:text-brand-300 transition-colors">
-                    {isUploading ? 'Computing SHA-256 & Storing in GCS Vault...' : 'Click to Upload Audit Evidence or Drag Files Here'}
+                  <h4 className="text-sm font-bold text-white transition-colors">
+                    {isUploading
+                      ? 'Computing SHA-256 & Encrypting into GCS Vault...'
+                      : isDraggingOver
+                      ? 'Release to Upload Audit Evidence'
+                      : 'Click to Upload Audit Evidence or Drag Files Here'}
                   </h4>
                   <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
                     Attach screenshots, PDF policies, or configuration exports. Encrypted with SHA-256 hash validation and scoped to active tenant.
@@ -602,14 +658,14 @@ export const ControlDetailModal: React.FC = () => {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSelectedControlId(null)}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors"
+              className="btn-secondary text-xs px-4 py-2"
             >
               Done
             </button>
             <button
               onClick={handleNext}
               disabled={controlIndex === CMMC_LEVEL_1_CONTROLS.length - 1}
-              className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 disabled:opacity-40"
+              className="btn-primary text-xs px-4 py-2"
             >
               <span>Next Practice</span>
               <ChevronRight className="w-3.5 h-3.5" />
