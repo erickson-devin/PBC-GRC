@@ -1,17 +1,23 @@
-# PBC-GRC Cloud Run Deploy & Custom Domain Setup Script
+# PBC-GRC Cloud Run Deploy & Custom Domain Setup Script with Cloud SQL & RLS
 $ErrorActionPreference = "Stop"
 
 $ProjectId = "grc-tool-507203"
 $Region = "us-central1"
 $ServiceName = "pbc-grc-app"
 $Domain = "grc.pitchblackcyber.com"
+$CloudSqlInstance = "grc-tool-507203:us-central1:pbc-grc-postgres-primary"
+$DbName = "cmmc_compliance_db"
+$DbUser = "postgres"
+$GcsBucket = "pbc-grc-evidence-prod"
 
-Write-Host "=== Deploying PBC-GRCP to Google Cloud Run ($ServiceName) ===" -ForegroundColor Cyan
+Write-Host "=== Deploying PBC-GRC Cloud SQL Express Backend to Cloud Run ($ServiceName) ===" -ForegroundColor Cyan
 gcloud run deploy $ServiceName `
     --source . `
     --project=$ProjectId `
     --region=$Region `
-    --allow-unauthenticated
+    --allow-unauthenticated `
+    --add-cloudsql-instances=$CloudSqlInstance `
+    --set-env-vars="DB_HOST=/cloudsql/$CloudSqlInstance,DB_NAME=$DbName,DB_USER=$DbUser,VITE_GCS_BUCKET_NAME=$GcsBucket,VITE_GCP_PROJECT_ID=$ProjectId"
 
 Write-Host "=== Configuring Custom Domain Mapping ($Domain) ===" -ForegroundColor Cyan
 try {

@@ -11,6 +11,8 @@ import {
   AuthProviderType,
 } from '../types/tenant';
 import { StorageService, createInitialState } from '../services/storageService';
+import { ControlState, EvidenceItem } from '../types/cmmc';
+import { ApiClient, UploadUrlResponse } from '../services/apiClient';
 
 // Storage Version 4 Keys (Strict separation of Live vs Sandbox)
 const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
@@ -416,6 +418,21 @@ interface TenantContextType {
   submitLicenseRequest: (requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>) => Promise<LicenseRequest>;
   isGcpArchitectureModalOpen: boolean;
   setIsGcpArchitectureModalOpen: (open: boolean) => void;
+  // Cloud SQL Live Sync Engine
+  liveControls: Record<string, ControlState> | null;
+  liveEvidence: EvidenceItem[] | null;
+  isSyncing: boolean;
+  syncError: string | null;
+  refreshLiveData: (tenantToFetch?: string) => Promise<void>;
+  updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState | null>;
+  createLiveEvidenceUploadUrl: (payload: {
+    controlId: string;
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    fileHash: string;
+    description?: string;
+  }) => Promise<UploadUrlResponse | null>;
 }
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
@@ -643,6 +660,109 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const isSuperAdmin = useMemo(() => {
     return isSuperAdminUser(currentUser);
   }, [currentUser]);
+
+  // ============================================================================
+  // Cloud SQL Express API Live Sync Engine (Row-Level Security Tenant Isolation)
+  // ============================================================================
+  const [liveControls, setLiveControls] = useState<Record<string, ControlState> | null>(null);
+  const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  /**
+   * Pull live control states and evidence artifacts from Cloud SQL /api/v1
+   * Operates with an offline/sandbox fallback mechanism
+   */
+  const refreshLiveData = useCallback(async (tenantToFetch?: string) => {
+    const targetTenantId = tenantToFetch || currentTenant.id;
+
+    // Sandbox / Demo Fallback: Do not make API calls for demo/sandbox tenants
+    if (isSandboxMode || currentTenant.isDemo || targetTenantId.startsWith('tenant-vanguard-') || targetTenantId.startsWith('tenant-apex-')) {
+      setLiveControls(null);
+      setLiveEvidence(null);
+      return;
+    }
+
+    const token = ApiClient.getToken();
+    if (!token) {
+      // Unauthenticated fallback
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+
+    try {
+      const [controlsList, evidenceList] = await Promise.all([
+        ApiClient.getControls(targetTenantId),
+        ApiClient.getEvidence(targetTenantId),
+      ]);
+
+      const controlsMap: Record<string, ControlState> = {};
+      for (const ctrl of controlsList) {
+        controlsMap[ctrl.id] = ctrl;
+      }
+
+      setLiveControls(controlsMap);
+      setLiveEvidence(evidenceList);
+    } catch (err: any) {
+      console.warn('[TenantContext] Live sync fallback to local storage:', err.message);
+      setSyncError(err.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
+
+  // Automatically pull live controls & evidence when tenant changes or user is authenticated
+  useEffect(() => {
+    if (!isSandboxMode && !currentTenant.isDemo && ApiClient.getToken()) {
+      refreshLiveData(currentTenant.id);
+    } else {
+      setLiveControls(null);
+      setLiveEvidence(null);
+    }
+  }, [currentTenant.id, isSandboxMode, currentTenant.isDemo, refreshLiveData]);
+
+  const updateLiveControl = useCallback(async (
+    controlId: string,
+    updates: Partial<ControlState>
+  ): Promise<ControlState | null> => {
+    if (isSandboxMode || currentTenant.isDemo) {
+      return null;
+    }
+    try {
+      const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates);
+      setLiveControls(prev => ({
+        ...prev,
+        [controlId]: updated,
+      }));
+      return updated;
+    } catch (err: any) {
+      console.error('[TenantContext] Failed to update live control:', err);
+      return null;
+    }
+  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
+
+  const createLiveEvidenceUploadUrl = useCallback(async (payload: {
+    controlId: string;
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+    fileHash: string;
+    description?: string;
+  }): Promise<UploadUrlResponse | null> => {
+    if (isSandboxMode || currentTenant.isDemo) {
+      return null;
+    }
+    try {
+      const resp = await ApiClient.requestUploadUrl(currentTenant.id, payload);
+      setLiveEvidence(prev => [resp.evidence, ...(prev || [])]);
+      return resp;
+    } catch (err: any) {
+      console.error('[TenantContext] Failed to request live upload URL:', err);
+      return null;
+    }
+  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
 
 
   // Check if active tenant requires initial setup wizard
@@ -1029,7 +1149,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
     }
-  }, [isSandboxMode, demoTenants, liveTenants]);
+
+    // Automatically trigger live data sync upon authentication for real tenants
+    if (!isSandboxMode && ApiClient.getToken()) {
+      setTimeout(() => refreshLiveData(preferredTenantId), 50);
+    }
+  }, [isSandboxMode, demoTenants, liveTenants, refreshLiveData]);
 
   const submitLicenseRequest = useCallback(async (
     requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>
@@ -1484,6 +1609,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     submitLicenseRequest,
     isGcpArchitectureModalOpen,
     setIsGcpArchitectureModalOpen,
+    liveControls,
+    liveEvidence,
+    isSyncing,
+    syncError,
+    refreshLiveData,
+    updateLiveControl,
+    createLiveEvidenceUploadUrl,
   }), [
     tenants,
     currentTenant,
@@ -1525,6 +1657,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     submitLicenseRequest,
     isGcpArchitectureModalOpen,
     setIsGcpArchitectureModalOpen,
+    liveControls,
+    liveEvidence,
+    isSyncing,
+    syncError,
+    refreshLiveData,
+    updateLiveControl,
+    createLiveEvidenceUploadUrl,
   ]);
 
 

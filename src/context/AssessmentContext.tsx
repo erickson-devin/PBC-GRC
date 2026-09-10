@@ -12,6 +12,7 @@ import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
+import { ApiClient } from '../services/apiClient';
 import { useTenant } from './TenantContext';
 
 export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance';
@@ -50,7 +51,16 @@ interface AssessmentContextType {
 const AssessmentContext = createContext<AssessmentContextType | undefined>(undefined);
 
 export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentTenant, canEdit, currentUser } = useTenant();
+  const {
+    currentTenant,
+    canEdit,
+    currentUser,
+    isSandboxMode,
+    liveControls,
+    liveEvidence,
+    updateLiveControl,
+    createLiveEvidenceUploadUrl,
+  } = useTenant();
 
   // Load tenant-isolated assessment state
   const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment(currentTenant));
@@ -66,6 +76,21 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const tenantState = StorageService.loadAssessment(currentTenant);
     setState(tenantState);
   }, [currentTenant.id]);
+
+  // Synchronize live backend data into assessment state when received from Cloud SQL
+  useEffect(() => {
+    if (liveControls && !isSandboxMode && !currentTenant.isDemo) {
+      setState(prev => ({
+        ...prev,
+        tenantId: currentTenant.id,
+        controls: {
+          ...prev.controls,
+          ...liveControls,
+        },
+        evidenceIndex: liveEvidence ? liveEvidence : prev.evidenceIndex,
+      }));
+    }
+  }, [liveControls, liveEvidence, isSandboxMode, currentTenant.isDemo, currentTenant.id]);
 
   // Auto-save state changes under tenant partition
   useEffect(() => {
@@ -163,6 +188,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
+    // Sync to Cloud SQL for live non-demo tenants
+    if (!isSandboxMode && !currentTenant.isDemo) {
+      updateLiveControl(controlId, { status, updatedBy: currentUser.name });
+    }
+
     setState(prev => {
       const current = prev.controls[controlId] || {
         id: controlId,
@@ -205,6 +235,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
       return;
+    }
+
+    // Sync to Cloud SQL for live non-demo tenants
+    if (!isSandboxMode && !currentTenant.isDemo) {
+      updateLiveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
     }
 
     setState(prev => {
@@ -324,9 +359,41 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       throw new Error('Read-Only access: Evidence uploads are restricted for your role.');
     }
 
+    const fileHash = await GcsService.computeSha256(file);
+
+    // If live tenant, upload via GCS Signed URL and store in Cloud SQL evidence_metadata
+    if (!isSandboxMode && !currentTenant.isDemo) {
+      try {
+        const uploadResp = await createLiveEvidenceUploadUrl({
+          controlId,
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type || 'application/octet-stream',
+          fileHash,
+          description: description || `Audit evidence for control ${controlId}`,
+        });
+
+        if (uploadResp) {
+          // Upload binary to GCS via Signed URL
+          await ApiClient.uploadFileToGcs(uploadResp.uploadUrl, file, file.type);
+          // Save in local IndexedDB vault for client-side preview
+          await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
+
+          setState(prev => ({
+            ...prev,
+            evidenceIndex: [uploadResp.evidence, ...prev.evidenceIndex],
+          }));
+
+          return uploadResp.evidence;
+        }
+      } catch (liveUploadErr) {
+        console.warn('[AssessmentContext] Live upload error, falling back to local vault:', liveUploadErr);
+      }
+    }
+
+    // Local sandbox / offline fallback
     const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const gcsPath = GcsService.generateGcsPath(currentTenant.id, controlId, evidenceId, file.name);
-    const fileHash = await GcsService.computeSha256(file);
 
     // Store in tenant-partitioned IndexedDB vault
     await EvidenceVault.saveFile(currentTenant.id, evidenceId, file, gcsPath, fileHash);
@@ -353,7 +420,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
 
     return newItem;
-  }, [canEdit, currentTenant.id, currentUser.name]);
+  }, [canEdit, currentTenant.id, currentTenant.isDemo, currentUser.name, isSandboxMode, createLiveEvidenceUploadUrl]);
 
   // Action: Remove Evidence
   const removeEvidence = useCallback(async (evidenceId: string) => {
