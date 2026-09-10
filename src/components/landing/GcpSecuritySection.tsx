@@ -4,15 +4,10 @@ import {
   Database, 
   ShieldCheck, 
   Key, 
-  Fingerprint, 
-  ExternalLink
+  Fingerprint
 } from 'lucide-react';
 
-interface GcpSecuritySectionProps {
-  onOpenGcpModal: () => void;
-}
-
-export const GcpSecuritySection: React.FC<GcpSecuritySectionProps> = ({ onOpenGcpModal }) => {
+export const GcpSecuritySection: React.FC = () => {
   const pillars = [
     {
       icon: Database,
@@ -37,7 +32,7 @@ export const GcpSecuritySection: React.FC<GcpSecuritySectionProps> = ({ onOpenGc
   ];
 
   return (
-    <section className="py-24 bg-slate-950/70 border-t border-slate-900 relative">
+    <section id="security" className="py-24 bg-slate-950/70 border-t border-slate-900 relative">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Section Header */}
@@ -71,18 +66,6 @@ export const GcpSecuritySection: React.FC<GcpSecuritySectionProps> = ({ onOpenGc
               </div>
             );
           })}
-        </div>
-
-        {/* Architecture Diagram Callout Button */}
-        <div className="mt-12 text-center">
-          <button
-            onClick={onOpenGcpModal}
-            className="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-brand-300 hover:text-white font-semibold text-xs transition-all shadow-lg hover:border-brand-500/50"
-          >
-            <Cloud className="w-4 h-4 text-brand-400" />
-            <span>Inspect Live GCP Architecture & IAM Flow Diagram</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </button>
         </div>
 
       </div>

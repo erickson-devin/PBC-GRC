@@ -5,16 +5,15 @@ import {
   Layers, 
   FileCheck, 
   CheckCircle2, 
-  ArrowRight,
   Zap,
 } from 'lucide-react';
 
 interface FeatureGridProps {
   onSelectFeature?: (featureId: string) => void;
-  onEnterApp: () => void;
+  onEnterApp?: () => void;
 }
 
-export const FeatureGrid: React.FC<FeatureGridProps> = ({ onEnterApp }) => {
+export const FeatureGrid: React.FC<FeatureGridProps> = () => {
   const features = [
     {
       id: 'controls-engine',
@@ -107,19 +106,12 @@ export const FeatureGrid: React.FC<FeatureGridProps> = ({ onEnterApp }) => {
                     </p>
                   </div>
 
-                  {/* Bottom Highlight Pill & Action */}
+                  {/* Bottom Highlight Pill */}
                   <div className="pt-4 border-t border-slate-900 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-xs font-medium text-emerald-400">
                       <CheckCircle2 className="w-4 h-4 shrink-0" />
                       <span>{feat.highlight}</span>
                     </div>
-                    <button
-                      onClick={onEnterApp}
-                      className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors"
-                      title="Explore in app"
-                    >
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
                   </div>
 
                 </div>

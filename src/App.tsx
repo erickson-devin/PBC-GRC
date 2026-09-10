@@ -12,7 +12,6 @@ import { EvidenceVaultView } from './components/vault/EvidenceVaultView';
 import { AssessmentGuidanceView } from './components/guidance/AssessmentGuidanceView';
 import { ControlDetailModal } from './components/controls/ControlDetailModal';
 import { EvidencePreviewModal } from './components/common/EvidencePreviewModal';
-import { GcpArchitectureModal } from './components/common/GcpArchitectureModal';
 import { LandingPage } from './components/landing/LandingPage';
 import { LoginPage } from './components/auth/LoginPage';
 import { AuthModal } from './components/auth/AuthModal';
@@ -320,7 +319,6 @@ const AppContent: React.FC = () => {
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
       />
-      <GcpArchitectureModal />
     </>
   );
 };

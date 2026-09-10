@@ -6,7 +6,6 @@ import {
   Check,
   Layers,
   Search,
-  Cloud,
   X,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
@@ -22,7 +21,6 @@ export const TenantSwitcher: React.FC = () => {
     createTenant,
     isMspUser,
     isSandboxMode,
-    setIsGcpArchitectureModalOpen,
   } = useTenant();
 
   const { metrics } = useAssessment();
@@ -234,21 +232,10 @@ export const TenantSwitcher: React.FC = () => {
                   setIsCreateModalOpen(true);
                   setIsTenantMenuOpen(false);
                 }}
-                className="flex-1 py-2 px-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-brand-500/20"
+                className="w-full py-2 px-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-brand-500/20"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Client Organization</span>
-              </button>
-              
-              <button
-                onClick={() => {
-                  setIsGcpArchitectureModalOpen(true);
-                  setIsTenantMenuOpen(false);
-                }}
-                title="GCP Architecture & Cloud SQL Isolation"
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-700/80 transition-colors"
-              >
-                <Cloud className="w-4 h-4 text-brand-400" />
               </button>
             </div>
           </div>

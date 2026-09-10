@@ -10,7 +10,7 @@ import {
   ExternalLink,
   Send,
   Layers,
-  FileCode,
+  Receipt,
   Lock,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
@@ -330,14 +330,14 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 </p>
               </div>
 
-              {/* Webhook Notice Pill */}
+              {/* Internal Finance Pipeline Pill */}
               <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
                 <span className="flex items-center gap-1.5">
-                  <FileCode className="w-3.5 h-3.5 text-brand-400" />
-                  Stripe Checkout Webhook Ready:
+                  <Receipt className="w-3.5 h-3.5 text-cyan-400" />
+                  Internal Finance Pipeline:
                 </span>
-                <span className="font-mono text-emerald-400 font-semibold">
-                  provisionTenantFromWebhook()
+                <span className="font-mono text-cyan-300 font-semibold">
+                  Manual License Provisioning
                 </span>
               </div>
 

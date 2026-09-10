@@ -8,7 +8,6 @@ import {
   Sparkles,
   CheckCircle2,
   Lock,
-  Cloud,
   Globe,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -32,7 +31,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
     setActiveTab,
   } = useAssessment();
 
-  const { canEdit, currentTenant, setIsGcpArchitectureModalOpen } = useTenant();
+  const { canEdit, currentTenant } = useTenant();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -112,15 +111,6 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
             )}
           </div>
 
-          {/* GCP Cloud Infrastructure Button */}
-          <button
-            onClick={() => setIsGcpArchitectureModalOpen(true)}
-            title="Google Cloud Platform (GCP) Services & Schema Architecture"
-            className="p-2 text-brand-400 hover:text-brand-300 bg-brand-950/40 hover:bg-brand-950/70 border border-brand-500/30 rounded-xl transition-colors hidden sm:flex items-center gap-1.5 text-xs font-medium"
-          >
-            <Cloud className="w-4 h-4 text-brand-400" />
-            <span className="hidden lg:inline">GCP Backend</span>
-          </button>
 
           {/* Quick Action Buttons */}
           <div className="flex items-center gap-1.5">

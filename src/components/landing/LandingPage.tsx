@@ -7,7 +7,6 @@ import { PricingSection } from './PricingSection';
 import { GcpSecuritySection } from './GcpSecuritySection';
 import { LandingFooter } from './LandingFooter';
 import { SampleSspModal } from './SampleSspModal';
-import { GcpArchitectureModal } from '../common/GcpArchitectureModal';
 import { useTenant } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
 
@@ -18,7 +17,7 @@ interface LandingPageProps {
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSandbox, onOpenLegal }) => {
-  const { setIsGcpArchitectureModalOpen, switchTenant } = useTenant();
+  const { switchTenant } = useTenant();
   const { openLicenseModal, isAuthenticated } = useAuth();
   const [isSampleSspOpen, setIsSampleSspOpen] = useState(false);
 
@@ -41,7 +40,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSa
       {/* 1. Public Sticky/Floating Island Navigation */}
       <LandingNav 
         onEnterApp={() => onEnterApp()} 
-        onOpenGcpModal={() => setIsGcpArchitectureModalOpen(true)} 
         onLaunchSandbox={() => handleLaunchWithTenant('tenant-vanguard-01')}
       />
 
@@ -60,22 +58,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSa
       {/* 4. Interactive Live Sandbox Section (1-Click Test Drive) */}
       <InteractiveSandbox 
         onLaunchFullApp={handleLaunchWithTenant}
+        onRequestLicense={() => openLicenseModal('single-org')}
       />
 
       {/* 5. Transparent Pricing & Tier Table ($1,000 / $1,500/yr) */}
       <PricingSection 
         onSelectPlan={(planId) => openLicenseModal(planId)} 
-        onTestDriveSandbox={() => handleLaunchWithTenant('tenant-vanguard-01')}
       />
 
       {/* 6. Enterprise GCP Architecture & Security */}
-      <GcpSecuritySection 
-        onOpenGcpModal={() => setIsGcpArchitectureModalOpen(true)} 
-      />
+      <GcpSecuritySection />
 
       {/* 7. Footer */}
       <LandingFooter 
-        onOpenGcpModal={() => setIsGcpArchitectureModalOpen(true)}
         onEnterApp={handleGetStarted}
         onOpenLegal={onOpenLegal || (() => {})}
       />
@@ -89,9 +84,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSa
           onEnterApp();
         }}
       />
-
-      {/* Global GCP Architecture Diagram Modal */}
-      <GcpArchitectureModal />
     </div>
   );
 };

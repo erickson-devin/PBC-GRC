@@ -17,17 +17,14 @@ import {
   ArrowRight,
   Sparkles,
   Layers,
-  FileCode,
   Globe,
-  Terminal,
   Clock,
   ArrowUpRight,
-  X,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl, SUPER_ADMIN_PRESET_USER } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
-import { Tenant, TenantInvitation, StripeWebhookPayload } from '../../types/tenant';
 import { NewTenantModal } from './NewTenantModal';
+import { FinanceProvisioningLog } from './FinanceProvisioningLog';
 
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
@@ -49,7 +46,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     switchUser,
     revokeInvitation,
     resendInvitation,
-    provisionTenantFromWebhook,
   } = useTenant();
 
   const { logout } = useAuth();
@@ -60,12 +56,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [inviteSearch, setInviteSearch] = useState('');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [copiedEnclaveId, setCopiedEnclaveId] = useState<string | null>(null);
-  const [isSimulatingWebhook, setIsSimulatingWebhook] = useState(false);
-  const [webhookResult, setWebhookResult] = useState<{
-    tenant: Tenant;
-    invitation: TenantInvitation;
-    inviteUrl: string;
-  } | null>(null);
 
   // Operator bypass for local evaluation/testing if user is not yet logged in as devin
   const [developerOverride, setDeveloperOverride] = useState(false);
@@ -96,33 +86,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     }
   };
 
-  const handleSimulateWebhook = async () => {
-    setIsSimulatingWebhook(true);
-    setWebhookResult(null);
-    try {
-      const demoStripePayload: StripeWebhookPayload = {
-        eventId: `evt_test_${Date.now().toString(36)}`,
-        eventType: 'checkout.session.completed',
-        customerEmail: `ciso-${Date.now().toString(36).slice(0, 4)}@sentinel-defense.us`,
-        companyName: 'Sentinel Defense Systems LLC',
-        cageCode: '4S8W2',
-        systemName: 'Sentinel Defense Operations Boundary',
-        licenseTier: 'single-org',
-        metadata: {
-          stripeCustomerId: `cus_${Date.now()}`,
-          subscriptionTier: 'single-org-annual-1000',
-        },
-      };
 
-      const result = await provisionTenantFromWebhook(demoStripePayload);
-      setWebhookResult(result);
-    } catch (err) {
-      console.error('Webhook simulation failed:', err);
-      alert('Webhook simulation failed. Check browser console.');
-    } finally {
-      setIsSimulatingWebhook(false);
-    }
-  };
 
   // -------------------------------------------------------------------------
   // 1. ROUTE GUARD: Unauthorized Screen
@@ -613,88 +577,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Section 3: Stripe Checkout Webhook Integration Simulator */}
-        <div className="stitch-card p-6 space-y-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-2.5 py-0.5 rounded-full bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
-                CHECKOUT WEBHOOK PIPELINE
-              </span>
-              <h2 className="text-base font-bold text-white flex items-center gap-2 mt-1">
-                <Terminal className="w-4 h-4 text-cyan-400" />
-                <span>Stripe Payment Checkout Webhook Integration</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Trigger the headless provisioning pipeline directly via simulated <code className="text-cyan-300 font-mono">checkout.session.completed</code> event payload.
-              </p>
-            </div>
-
-            <button
-              onClick={handleSimulateWebhook}
-              disabled={isSimulatingWebhook}
-              className="btn-secondary text-xs px-4 py-2.5 shrink-0"
-            >
-              {isSimulatingWebhook ? (
-                <>
-                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Simulating Webhook Event...</span>
-                </>
-              ) : (
-                <>
-                  <FileCode className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Simulate Stripe Webhook Checkout</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Webhook result preview */}
-          {webhookResult && (
-            <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-xs space-y-3 animate-fadeIn">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-indigo-300 font-bold">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Webhook Tenant Provisioned via provisionTenantFromWebhook()</span>
-                </div>
-                <button
-                  onClick={() => setWebhookResult(null)}
-                  className="text-slate-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px] text-slate-300">
-                <div>Enclave: <strong className="text-white">{webhookResult.tenant.name}</strong></div>
-                <div>CAGE: <strong className="text-brand-300">{webhookResult.tenant.cageCode}</strong></div>
-                <div>Owner: <strong className="text-white">{webhookResult.invitation.email}</strong></div>
-              </div>
-
-              <div className="flex items-center gap-2 pt-2 border-t border-indigo-500/20">
-                <input
-                  type="text"
-                  readOnly
-                  value={webhookResult.inviteUrl}
-                  className="w-full px-3 py-1.5 text-xs bg-slate-950 border border-indigo-500/30 rounded-lg text-slate-200 font-mono select-all"
-                />
-                <button
-                  onClick={() => handleCopy(webhookResult.inviteUrl, 'webhook-res', 'token')}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-colors shrink-0"
-                >
-                  {copiedTokenId === 'webhook-res' ? 'Copied' : 'Copy'}
-                </button>
-                <a
-                  href={webhookResult.inviteUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white border border-slate-700 shrink-0"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Section 3: Finance-Driven Manual Provisioning Pipeline & Audit Log */}
+        <FinanceProvisioningLog
+          tenants={tenants}
+          invitations={invitations}
+          onOpenNewTenantModal={() => setIsNewTenantModalOpen(true)}
+          onEnterEnclave={handleEnterEnclave}
+        />
 
       </main>
 

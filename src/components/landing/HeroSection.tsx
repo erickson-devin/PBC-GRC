@@ -209,11 +209,12 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                     </p>
                   </div>
                   <button
-                    onClick={onExploreSandbox}
-                    className="w-full py-2 px-3 rounded-lg bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/30 text-brand-300 hover:text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                    onClick={onOpenSampleSsp}
+                    className="w-full py-2 px-3 rounded-lg bg-slate-850 hover:bg-slate-800 border border-slate-700 text-slate-200 hover:text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors group"
                   >
-                    <span>Test Drive Live Sandbox Enclave</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Preview Sample SSP</span>
+                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                   </button>
                 </div>
 

@@ -1,12 +1,11 @@
 import React from 'react';
-import { Check, Sparkles, ArrowRight, Zap, Shield, Building2 } from 'lucide-react';
+import { Check, Sparkles, ArrowRight, Zap, Shield, Building2, Mail } from 'lucide-react';
 
 interface PricingSectionProps {
   onSelectPlan: (planId: 'single-org' | 'msp-assessor') => void;
-  onTestDriveSandbox?: () => void;
 }
 
-export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan, onTestDriveSandbox }) => {
+export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) => {
   return (
     <section id="pricing" className="py-24 relative overflow-hidden">
       
@@ -84,13 +83,24 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan, on
                 </ul>
               </div>
 
-              <button
-                onClick={() => onSelectPlan('single-org')}
-                className="w-full py-3.5 px-6 rounded-xl bg-slate-900 hover:bg-slate-850 text-white font-semibold text-xs border border-slate-750 hover:border-brand-500/50 transition-all flex items-center justify-center gap-2 shadow-lg group"
-              >
-                <span>Request Enclave License & Schedule Call</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-              </button>
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => onSelectPlan('single-org')}
+                  className="btn-secondary w-full py-3.5 px-6 text-xs font-semibold flex items-center justify-center gap-2 group"
+                >
+                  <span>Contact Sales & Schedule Onboarding</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </button>
+                <div className="text-center">
+                  <a
+                    href="mailto:sales@pitchblackcyber.com?subject=Single%20Enclave%20License%20Inquiry"
+                    className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <Mail className="w-3 h-3 text-cyan-400" />
+                    <span>Direct Invoice / PO: sales@pitchblackcyber.com</span>
+                  </a>
+                </div>
+              </div>
 
             </div>
           </div>
@@ -162,41 +172,30 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan, on
                 </ul>
               </div>
 
-              <button
-                onClick={() => onSelectPlan('msp-assessor')}
-                className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-brand-500 via-brand-600 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-bold text-xs shadow-xl shadow-brand-500/25 ring-1 ring-white/20 transition-all flex items-center justify-center gap-2 active:scale-[0.98] group"
-              >
-                <span>Request MSP License & Schedule Call</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-              </button>
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => onSelectPlan('msp-assessor')}
+                  className="btn-primary w-full py-3.5 px-6 text-xs font-bold flex items-center justify-center gap-2 group"
+                >
+                  <span>Schedule MSP Onboarding Call</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </button>
+                <div className="text-center">
+                  <a
+                    href="mailto:sales@pitchblackcyber.com?subject=MSP%20Multi-Enclave%20License%20Inquiry"
+                    className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <Mail className="w-3 h-3 text-cyan-400" />
+                    <span>Direct Invoice / PO: sales@pitchblackcyber.com</span>
+                  </a>
+                </div>
+              </div>
 
             </div>
           </div>
 
         </div>
 
-        {/* 1-Click Interactive Sandbox Callout Banner */}
-        {onTestDriveSandbox && (
-          <div className="max-w-5xl mx-auto mt-12 p-6 rounded-2xl bg-slate-900/70 border border-slate-800 text-center flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl backdrop-blur-sm">
-            <div className="text-left space-y-1">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-brand-400" />
-                <span className="text-sm font-bold text-white">Want to test drive the enclave before scheduling a call?</span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Directly explore the 100% compliant Vanguard Defense Systems sandbox enclave with zero sign-in required.
-              </p>
-            </div>
-            <button
-              onClick={onTestDriveSandbox}
-              className="px-6 py-3 rounded-xl bg-slate-850 hover:bg-slate-800 text-white border border-slate-700 hover:border-brand-500/50 text-xs font-bold transition-all flex items-center gap-2 shrink-0 shadow-md group"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-brand-400" />
-              <span>Test Drive Enclave Sandbox</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-            </button>
-          </div>
-        )}
 
       </div>
     </section>

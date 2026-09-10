@@ -6,7 +6,6 @@ import {
   Paperclip,
   BookOpen,
   Layers,
-  Cloud,
   Building,
   Users,
   Shield,
@@ -18,7 +17,6 @@ export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, metrics, state } = useAssessment();
   const {
     currentTenant,
-    setIsGcpArchitectureModalOpen,
     canManageTenant,
     setIsTeamModalOpen,
     isSuperAdmin,
@@ -137,29 +135,7 @@ export const Sidebar: React.FC = () => {
           </div>
         )}
 
-        {/* GCP Cloud Infrastructure Navigation Card */}
-        <div className="hidden md:block">
-          <button
-            onClick={() => setIsGcpArchitectureModalOpen(true)}
-            className="w-full p-3 rounded-2xl bg-gradient-to-br from-slate-900 to-brand-950/40 border border-brand-500/20 hover:border-brand-500/40 text-left transition-all group"
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-brand-300 flex items-center gap-1.5">
-                <Cloud className="w-3.5 h-3.5 text-brand-400" />
-                GCP Backend
-              </span>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                Active
-              </span>
-            </div>
-            <p className="text-xs text-slate-300 font-semibold group-hover:text-white transition-colors">
-              Cloud SQL & GCS Storage
-            </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              PostgreSQL RLS & SHA-256 vault
-            </p>
-          </button>
-        </div>
+
 
         {/* Active Client Organization Context Card */}
         <div className="hidden md:block p-3.5 rounded-2xl bg-slate-850 border border-slate-800/80 space-y-2.5">

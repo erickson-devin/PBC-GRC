@@ -9,7 +9,6 @@ import {
   ArrowRight,
   Shield,
   Building2,
-  Cloud,
   Lock,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -18,7 +17,7 @@ import { DomainCards } from './DomainCards';
 
 export const ComplianceOverview: React.FC = () => {
   const { metrics, state, setActiveTab } = useAssessment();
-  const { currentTenant, canEdit, setIsGcpArchitectureModalOpen } = useTenant();
+  const { currentTenant, canEdit } = useTenant();
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -120,14 +119,6 @@ export const ComplianceOverview: React.FC = () => {
             >
               <span>Manage Control Matrix (17)</span>
               <ArrowRight className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={() => setIsGcpArchitectureModalOpen(true)}
-              className="btn-secondary w-full py-2.5 text-xs text-cyan-300 hover:text-white"
-            >
-              <Cloud className="w-3.5 h-3.5 text-cyan-400" />
-              <span>GCP Cloud SQL & GCS Topology</span>
             </button>
           </div>
 

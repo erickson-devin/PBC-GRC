@@ -2,12 +2,11 @@ import React from 'react';
 import { ShieldCheck, Mail, ExternalLink, Lock, ArrowUp } from 'lucide-react';
 
 interface LandingFooterProps {
-  onOpenGcpModal: () => void;
   onEnterApp: () => void;
   onOpenLegal: (tab: 'privacy' | 'terms') => void;
 }
 
-export const LandingFooter: React.FC<LandingFooterProps> = ({ onOpenGcpModal, onEnterApp, onOpenLegal }) => {
+export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpenLegal }) => {
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -52,9 +51,9 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onOpenGcpModal, on
                 <a href="#pricing" className="hover:text-white transition-colors">Licensing & Tiers</a>
               </li>
               <li>
-                <button onClick={onOpenGcpModal} className="hover:text-brand-300 transition-colors text-left">
-                  GCP Architecture & IAM
-                </button>
+                <a href="#security" className="hover:text-white transition-colors">
+                  Security Infrastructure
+                </a>
               </li>
               <li>
                 <button onClick={onEnterApp} className="hover:text-brand-300 transition-colors text-left font-semibold text-brand-400">

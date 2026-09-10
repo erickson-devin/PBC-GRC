@@ -69,16 +69,6 @@ export interface TeamMember {
   avatarUrl?: string;
 }
 
-export interface StripeWebhookPayload {
-  eventId?: string;
-  eventType?: 'checkout.session.completed' | string;
-  customerEmail: string;
-  companyName: string;
-  cageCode?: string;
-  systemName?: string;
-  licenseTier: 'single-org' | 'msp-assessor';
-  metadata?: Record<string, string>;
-}
 
 export interface TenantUserAssignment {
   id: string;

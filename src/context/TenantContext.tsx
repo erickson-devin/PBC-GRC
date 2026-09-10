@@ -7,7 +7,6 @@ import {
   LicenseRequest,
   TenantInvitation,
   TeamMember,
-  StripeWebhookPayload,
   AuthProviderType,
 } from '../types/tenant';
 import { StorageService, createInitialState } from '../services/storageService';
@@ -381,9 +380,6 @@ interface TenantContextType {
     licenseTier: 'single-org' | 'msp-assessor';
     tenantOwnerEmail: string;
   }) => Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }>;
-  provisionTenantFromWebhook: (
-    payload: StripeWebhookPayload
-  ) => Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }>;
   claimInviteToken: (
     token: string,
     userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType }
@@ -416,8 +412,6 @@ interface TenantContextType {
   syncAuthUser: (user: User, preferredTenantId?: string) => void;
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
   submitLicenseRequest: (requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>) => Promise<LicenseRequest>;
-  isGcpArchitectureModalOpen: boolean;
-  setIsGcpArchitectureModalOpen: (open: boolean) => void;
   // Cloud SQL Live Sync Engine
   liveControls: Record<string, ControlState> | null;
   liveEvidence: EvidenceItem[] | null;
@@ -584,7 +578,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return SEED_TEAM_MEMBERS;
   });
 
-  const [isGcpArchitectureModalOpen, setIsGcpArchitectureModalOpen] = useState<boolean>(false);
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
   const [isTeamModalOpen, setIsTeamModalOpen] = useState<boolean>(false);
 
@@ -1248,20 +1241,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return { tenant: newTenant, invitation, inviteUrl };
   }, [currentUser.email]);
 
-  /**
-   * Webhook handler for Stripe Checkout integration
-   */
-  const provisionTenantFromWebhook = useCallback(async (
-    payload: StripeWebhookPayload
-  ): Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }> => {
-    return await provisionTenant({
-      companyName: payload.companyName,
-      cageCode: payload.cageCode || 'PENDING',
-      systemBoundaryName: payload.systemName,
-      licenseTier: payload.licenseTier,
-      tenantOwnerEmail: payload.customerEmail,
-    });
-  }, [provisionTenant]);
 
   /**
    * Claim and bind an invitation token to an authenticated or new user
@@ -1589,7 +1568,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchTenant,
     createTenant,
     provisionTenant,
-    provisionTenantFromWebhook,
     claimInviteToken,
     inviteStaffMember,
     revokeInvitation,
@@ -1607,8 +1585,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncAuthUser,
     resolveTenantForEmail,
     submitLicenseRequest,
-    isGcpArchitectureModalOpen,
-    setIsGcpArchitectureModalOpen,
     liveControls,
     liveEvidence,
     isSyncing,
@@ -1637,7 +1613,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchTenant,
     createTenant,
     provisionTenant,
-    provisionTenantFromWebhook,
     claimInviteToken,
     inviteStaffMember,
     revokeInvitation,
@@ -1655,8 +1630,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncAuthUser,
     resolveTenantForEmail,
     submitLicenseRequest,
-    isGcpArchitectureModalOpen,
-    setIsGcpArchitectureModalOpen,
     liveControls,
     liveEvidence,
     isSyncing,

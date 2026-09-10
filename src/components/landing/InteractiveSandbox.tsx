@@ -9,15 +9,17 @@ import {
   Sparkles, 
   ArrowRight,
   Download,
-  Fingerprint
+  Fingerprint,
+  ExternalLink,
 } from 'lucide-react';
 import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
 
 interface InteractiveSandboxProps {
   onLaunchFullApp: (tenantId?: string) => void;
+  onRequestLicense?: () => void;
 }
 
-export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunchFullApp }) => {
+export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunchFullApp, onRequestLicense }) => {
   const [selectedScenario, setSelectedScenario] = useState<'vanguard' | 'apex'>('vanguard');
   const [activeSandboxTab, setActiveSandboxTab] = useState<'matrix' | 'ssp' | 'evidence'>('matrix');
 
@@ -119,10 +121,11 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
 
                 <button
                   onClick={() => onLaunchFullApp(currentOrg.id)}
-                  className="px-4 py-1.5 rounded-lg bg-brand-500/20 hover:bg-brand-500/30 text-brand-300 hover:text-white border border-brand-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                  title="Open assessment platform in full-screen enclave mode"
                 >
-                  <span>Launch in App</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <span>Open Full Screen</span>
+                  <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
                 </button>
               </div>
 
@@ -302,13 +305,13 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
             <div className="p-4 bg-gradient-to-r from-slate-900 to-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs text-slate-300">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Ready to conduct your organization's CMMC assessment?</span>
+                <span>Ready to conduct your organization's official CMMC assessment?</span>
               </div>
               <button
-                onClick={() => onLaunchFullApp(currentOrg.id)}
-                className="w-full sm:w-auto px-5 py-2 rounded-full bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
+                onClick={onRequestLicense ? onRequestLicense : () => onLaunchFullApp(currentOrg.id)}
+                className="btn-primary w-full sm:w-auto px-5 py-2 text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20"
               >
-                <span>Launch Full Assessment Platform</span>
+                <span>Request Enclave License & Schedule Call</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
