@@ -1,4 +1,5 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
+import { ComplianceFramework, BaselineTier, OverlayParameter } from '../types/framework';
 
 const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
@@ -58,15 +59,28 @@ export const ApiClient = {
 
   /**
    * GET /api/v1/controls
-   * Fetches all 17 CMMC Level 1 controls for the active tenant
+   * Fetches controls for the active tenant dynamically based on framework, baseline, and overlay
    */
-  async getControls(tenantId: string): Promise<ControlState[]> {
+  async getControls(
+    tenantId: string,
+    options?: {
+      framework?: ComplianceFramework;
+      baseline?: BaselineTier;
+      overlay?: OverlayParameter;
+    }
+  ): Promise<ControlState[]> {
     const token = this.getToken();
     if (!token) {
       throw new Error('Not authenticated: ID token not found');
     }
 
-    const res = await fetch(`${API_BASE_URL}/api/v1/controls`, {
+    const query = new URLSearchParams();
+    if (options?.framework) query.set('framework_id', options.framework);
+    if (options?.baseline) query.set('baseline', options.baseline);
+    if (options?.overlay && options.overlay !== 'NONE') query.set('overlay', options.overlay);
+
+    const queryString = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetch(`${API_BASE_URL}/api/v1/controls${queryString}`, {
       method: 'GET',
       headers: this.getHeaders(tenantId),
     });
@@ -78,6 +92,39 @@ export const ApiClient = {
 
     const data = await res.json();
     return data.controls || [];
+  },
+
+  /**
+   * GET /api/v1/controls/frameworks
+   * Fetches all supported compliance framework metadata
+   */
+  async getFrameworks(): Promise<any[]> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/controls/frameworks`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.frameworks || [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * GET /api/v1/controls/mappings
+   * Fetches cross-framework control mappings
+   */
+  async getControlMappings(controlId?: string): Promise<any[]> {
+    try {
+      const url = controlId
+        ? `${API_BASE_URL}/api/v1/controls/mappings?control_id=${encodeURIComponent(controlId)}`
+        : `${API_BASE_URL}/api/v1/controls/mappings`;
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.mappings || [];
+    } catch {
+      return [];
+    }
   },
 
   /**

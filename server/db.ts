@@ -42,6 +42,8 @@ pool.on('error', (err) => {
   console.error('[Cloud SQL Pool Error]:', err.message);
 });
 
+import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data/frameworks/controlMappings';
+
 // In-memory tenant isolation state for fallback when local PostgreSQL is not running
 interface InMemoryControl {
   id: string;
@@ -201,7 +203,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
   // 3. SELECT from evidence_metadata
   if (/SELECT\s+.*FROM\s+evidence_metadata/i.test(normalized)) {
     // Check if looking up single evidence ID (e.g. WHERE id = $1 AND tenant_id = $2 or WHERE id = $1)
-    if (/WHERE\s+.*id\s*=\s*\$1/i.test(normalized)) {
+    if (/\bid\s*=\s*\$1\b/i.test(normalized) && !/\btenant_id\s*=\s*\$1\b/i.test(normalized)) {
       const targetId = params[0];
       const item = memoryEvidence.get(targetId);
       // RLS check: only return if tenant_id matches active tenant!
@@ -229,37 +231,87 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     };
   }
 
-  // 4. INSERT into evidence_metadata
+  // 4. INSERT into evidence_metadata (with Cross-Framework Evidence Inheritance)
   if (/INSERT\s+INTO\s+evidence_metadata/i.test(normalized)) {
-    // params: [id, tenant_id, control_id, file_name, file_size, mime_type, gcs_path, file_hash, sync_status, description, uploaded_by]
     const id = params[0];
     const rowTenantId = params[1];
+    const controlId = params[2];
     // RLS WITH CHECK validation
     if (rowTenantId !== tenantId) {
       throw new Error(`Row-Level Security violation: tenant ${tenantId} cannot write record for tenant ${rowTenantId}`);
     }
 
+    const isInherited = /'inherited'/i.test(normalized);
+    const sync_status = isInherited ? 'inherited' : (params.length > 10 ? params[8] : 'gcs_signed_url');
+    const description = params.length > 10 ? params[9] : params[8] || '';
+    const uploaded_by = params.length > 10 ? params[10] : params[9] || 'Assessor';
+
     const record: InMemoryEvidence = {
       id,
       tenant_id: tenantId,
-      control_id: params[2],
+      control_id: controlId,
       file_name: params[3],
       file_size: params[4],
       mime_type: params[5],
       gcs_path: params[6],
       file_hash: params[7],
-      sync_status: params[8] || 'gcs_signed_url',
-      description: params[9] || '',
-      uploaded_by: params[10] || 'Assessor',
+      sync_status,
+      description,
+      uploaded_by,
       uploaded_at: new Date().toISOString(),
     };
 
     memoryEvidence.set(id, record);
 
+    // Cross-Framework Evidence Inheritance:
+    // Automatically link upload with mapped controls (e.g., AC.L1-3.1.1 -> NIST AC-2 & SOC 2 CC6.1)
+    if (!isInherited && !id.includes('__inh_')) {
+      const mappedControlIds = getEquivalentControlIds(controlId);
+      for (const mappedId of mappedControlIds) {
+        const inhId = `${id}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        if (!memoryEvidence.has(inhId)) {
+          const inhRecord: InMemoryEvidence = {
+            id: inhId,
+            tenant_id: tenantId,
+            control_id: mappedId,
+            file_name: params[3],
+            file_size: params[4],
+            mime_type: params[5],
+            gcs_path: params[6],
+            file_hash: params[7],
+            sync_status: 'inherited',
+            description: `[Inherited from ${controlId}] ${description}`,
+            uploaded_by,
+            uploaded_at: new Date().toISOString(),
+          };
+          memoryEvidence.set(inhId, inhRecord);
+        }
+      }
+    }
+
     return {
       rows: [record],
       command: 'INSERT',
       rowCount: 1,
+      oid: 0,
+      fields: [],
+    };
+  }
+
+  // 5. SELECT from control_mappings
+  if (/SELECT\s+.*FROM\s+control_mappings/i.test(normalized)) {
+    return {
+      rows: CANONICAL_CONTROL_MAPPINGS.map(m => ({
+        id: m.id,
+        source_framework: m.sourceFramework,
+        source_control_id: m.sourceControlId,
+        target_framework: m.targetFramework,
+        target_control_id: m.targetControlId,
+        mapping_type: m.mappingType,
+        notes: m.notes || '',
+      })),
+      command: 'SELECT',
+      rowCount: CANONICAL_CONTROL_MAPPINGS.length,
       oid: 0,
       fields: [],
     };
@@ -321,6 +373,18 @@ export async function initDb(): Promise<void> {
           uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS control_mappings (
+          id VARCHAR(64) PRIMARY KEY,
+          source_framework VARCHAR(64) NOT NULL,
+          source_control_id VARCHAR(64) NOT NULL,
+          target_framework VARCHAR(64) NOT NULL,
+          target_control_id VARCHAR(64) NOT NULL,
+          mapping_type VARCHAR(32) DEFAULT 'EQUIVALENT',
+          notes TEXT DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT unq_source_target_mapping UNIQUE (source_framework, source_control_id, target_framework, target_control_id)
+      );
+
       ALTER TABLE control_assessments ENABLE ROW LEVEL SECURITY;
       ALTER TABLE evidence_metadata ENABLE ROW LEVEL SECURITY;
 
@@ -346,10 +410,22 @@ export async function initDb(): Promise<void> {
       END
       $$;
     `);
-    console.log('[Cloud SQL] Database schema and RLS policies verified.');
+
+    // Seed canonical control mappings if not present
+    for (const m of CANONICAL_CONTROL_MAPPINGS) {
+      await client.query(
+        `INSERT INTO control_mappings (id, source_framework, source_control_id, target_framework, target_control_id, mapping_type, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (source_framework, source_control_id, target_framework, target_control_id) DO NOTHING`,
+        [m.id, m.sourceFramework, m.sourceControlId, m.targetFramework, m.targetControlId, m.mappingType, m.notes || '']
+      );
+    }
+
+    console.log('[Cloud SQL] Database schema, control mappings, and RLS policies verified.');
   } catch (err: any) {
     console.error('[Cloud SQL] Failed to run schema DDL:', err.message);
   } finally {
     client.release();
   }
 }
+

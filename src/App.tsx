@@ -22,6 +22,7 @@ import { OnboardingModal } from './components/onboarding/OnboardingModal';
 import { SuperAdminDashboard } from './components/admin/SuperAdminDashboard';
 import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
+import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
@@ -36,6 +37,8 @@ const AppContent: React.FC = () => {
     needsOnboarding,
     isTeamModalOpen,
     setIsTeamModalOpen,
+    isStigModalOpen,
+    setIsStigModalOpen,
   } = useTenant();
 
   // Legal Modal State (Privacy Policy & Terms of Service)
@@ -318,6 +321,10 @@ const AppContent: React.FC = () => {
       <TeamSettingsModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}
+      />
+      <StigAutomationModal
+        isOpen={isStigModalOpen}
+        onClose={() => setIsStigModalOpen(false)}
       />
     </>
   );

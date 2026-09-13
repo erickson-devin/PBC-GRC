@@ -1,5 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { queryWithTenant } from '../db';
+import {
+  ComplianceFramework,
+  BaselineTier,
+  OverlayParameter,
+} from '../../src/types/framework';
+import {
+  getFrameworkControls,
+  FRAMEWORK_REGISTRY,
+  CANONICAL_CONTROL_MAPPINGS,
+  getCrossFrameworkMappings,
+} from '../../src/data/frameworks';
 
 const router = Router();
 
@@ -41,14 +52,132 @@ function mapRowToControl(row: any) {
 }
 
 /**
+ * Normalize framework, baseline, and overlay parameters from query
+ */
+function normalizeFrameworkParams(query: any): {
+  framework: ComplianceFramework;
+  baseline: BaselineTier;
+  overlay: OverlayParameter;
+} {
+  const rawFramework = (query.framework_id || query.framework || 'CMMC_L1').toString().toUpperCase();
+  const rawBaseline = (query.baseline || '').toString().toUpperCase();
+  const rawOverlay = (query.overlay || '').toString().toUpperCase();
+
+  let framework: ComplianceFramework = 'CMMC_L1';
+  let baseline: BaselineTier = 'LOW_LOW_LOW';
+  let overlay: OverlayParameter = 'NONE';
+
+  // Framework normalization & aliases
+  if (rawFramework === 'CMMC_L2') {
+    framework = 'CMMC_L2';
+  } else if (rawFramework === 'NIST_800_53_REV5' || rawFramework === 'NIST_800_53' || rawFramework === 'NIST_SP_800_53') {
+    framework = 'NIST_800_53_REV5';
+    baseline = rawBaseline === 'LOW_LOW_LOW' || rawBaseline === 'LOW_LOW_MOD' ? (rawBaseline as BaselineTier) : 'MOD_MOD_MOD';
+  } else if (rawFramework === 'NIST_800_53_MOD') {
+    framework = 'NIST_800_53_REV5';
+    baseline = 'MOD_MOD_MOD';
+  } else if (rawFramework === 'NIST_800_53_LOW') {
+    framework = 'NIST_800_53_REV5';
+    baseline = 'LOW_LOW_LOW';
+  } else if (rawFramework === 'SOC_2_TYPE_II' || rawFramework === 'SOC2' || rawFramework === 'SOC_2') {
+    framework = 'SOC_2_TYPE_II';
+  } else if (rawFramework === 'HIPAA_SECURITY' || rawFramework === 'HIPAA') {
+    framework = 'HIPAA_SECURITY';
+  } else {
+    framework = 'CMMC_L1';
+  }
+
+  // Baseline normalization
+  if (rawBaseline === 'MOD_MOD_MOD') baseline = 'MOD_MOD_MOD';
+  else if (rawBaseline === 'LOW_LOW_MOD') baseline = 'LOW_LOW_MOD';
+  else if (rawBaseline === 'LOW_LOW_LOW') baseline = 'LOW_LOW_LOW';
+
+  // Overlay normalization (tactical / non-networked systems)
+  if (rawOverlay === 'NON_NETWORKED' || rawOverlay === 'TACTICAL_NON_NETWORKED' || rawOverlay === 'TACTICAL') {
+    overlay = 'NON_NETWORKED';
+  }
+
+  return { framework, baseline, overlay };
+}
+
+/**
+ * GET /api/v1/controls/frameworks
+ * Returns metadata, supported baselines, and statistics for all available compliance frameworks
+ */
+router.get('/frameworks', (_req: Request, res: Response): void => {
+  res.json({
+    frameworks: Object.values(FRAMEWORK_REGISTRY).map(f => ({
+      id: f.id,
+      name: f.name,
+      shortName: f.shortName,
+      version: f.version,
+      authority: f.authority,
+      description: f.description,
+      totalControls: f.totalControls,
+      defaultBaseline: f.defaultBaseline,
+      supportedBaselines: f.supportedBaselines || [],
+      supportsNonNetworkedOverlay: f.supportsNonNetworkedOverlay,
+      domainCount: Object.keys(f.domains).length,
+    })),
+  });
+});
+
+/**
+ * GET /api/v1/controls/mappings
+ * Returns cross-framework control mappings, optionally filtered by control_id or framework_id
+ */
+router.get('/mappings', (req: Request, res: Response): void => {
+  const { control_id, framework_id } = req.query;
+
+  if (control_id) {
+    const mappings = getCrossFrameworkMappings(control_id.toString());
+    res.json({
+      controlId: control_id,
+      totalCount: mappings.length,
+      mappings,
+    });
+    return;
+  }
+
+  if (framework_id) {
+    const fId = framework_id.toString().toUpperCase();
+    const mappings = CANONICAL_CONTROL_MAPPINGS.filter(
+      m => m.sourceFramework === fId || m.targetFramework === fId
+    );
+    res.json({
+      frameworkId: framework_id,
+      totalCount: mappings.length,
+      mappings,
+    });
+    return;
+  }
+
+  res.json({
+    totalCount: CANONICAL_CONTROL_MAPPINGS.length,
+    mappings: CANONICAL_CONTROL_MAPPINGS,
+  });
+});
+
+/**
  * GET /api/v1/controls
- * Fetches all 17 CMMC Level 1 control statuses for the active user's tenant_id.
- * If controls do not exist yet for this tenant, seeds all 17 controls automatically.
+ * Dynamically queries controls for the specified framework, baseline, and overlay parameters.
+ * Default: CMMC Level 1 (17 controls).
+ * Supports:
+ *   ?framework=CMMC_L2
+ *   ?framework=NIST_800_53_MOD&overlay=NON_NETWORKED
+ *   ?framework=SOC_2_TYPE_II
+ *   ?framework=HIPAA_SECURITY
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
+  const { framework, baseline, overlay } = normalizeFrameworkParams(req.query);
 
   try {
+    // 1. Resolve canonical controls for the requested framework and overlay
+    const frameworkControls = getFrameworkControls(framework, baseline, overlay);
+    const targetControlIds = frameworkControls.map(c => c.id);
+
+    // 2. Query tenant assessment records from Cloud SQL (guarded by RLS)
     const result = await queryWithTenant(
       tenantId,
       'SELECT * FROM control_assessments WHERE tenant_id = $1 ORDER BY control_id ASC',
@@ -60,20 +189,19 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       existingMap.set(row.control_id, row);
     }
 
-    // Ensure all 17 CMMC Level 1 controls exist for this tenant
     const controlsList: any[] = [];
     const missingControls: string[] = [];
 
-    for (const ctrlId of CMMC_L1_CONTROL_IDS) {
-      if (existingMap.has(ctrlId)) {
-        controlsList.push(mapRowToControl(existingMap.get(ctrlId)));
+    for (const ctrl of frameworkControls) {
+      if (existingMap.has(ctrl.id)) {
+        controlsList.push(mapRowToControl(existingMap.get(ctrl.id)));
       } else {
-        missingControls.push(ctrlId);
+        missingControls.push(ctrl.id);
       }
     }
 
-    // Seed any missing controls into PostgreSQL under the tenant's RLS boundary
-    if (missingControls.length > 0) {
+    // 3. For CMMC L1 (or default), seed missing controls into database under tenant RLS boundary
+    if (framework === 'CMMC_L1' && missingControls.length > 0) {
       for (const ctrlId of missingControls) {
         try {
           const insertRes = await queryWithTenant(
@@ -99,7 +227,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
               lastUpdated: new Date().toISOString(),
             });
           }
-        } catch (insertErr) {
+        } catch {
           controlsList.push({
             id: ctrlId,
             tenantId,
@@ -112,13 +240,32 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
           });
         }
       }
+    } else {
+      // For other frameworks, synthesize NOT_STARTED records for controls not yet recorded
+      for (const ctrlId of missingControls) {
+        controlsList.push({
+          id: ctrlId,
+          tenantId,
+          status: 'NOT_STARTED',
+          implementationNotes: '',
+          responsibleRole: 'IT / Security Lead',
+          tags: [],
+          updatedBy: 'System Initializer',
+          lastUpdated: new Date().toISOString(),
+        });
+      }
     }
 
-    // Sort consistently
-    controlsList.sort((a, b) => a.id.localeCompare(b.id));
+    // Consistent sort order matching framework definitions
+    const idOrderMap = new Map<string, number>();
+    targetControlIds.forEach((id, idx) => idOrderMap.set(id, idx));
+    controlsList.sort((a, b) => (idOrderMap.get(a.id) ?? 0) - (idOrderMap.get(b.id) ?? 0));
 
     res.json({
       tenantId,
+      framework,
+      baseline,
+      overlay,
       totalCount: controlsList.length,
       controls: controlsList,
     });

@@ -10,6 +10,9 @@
     "start:server": "tsx server/index.ts",
     "build": "tsc && vite build",
     "test": "tsx tests/tenantIsolation.test.ts",
+    "test:multi": "tsx tests/multiFramework.test.ts",
+    "test:stig": "tsx tests/stigAutomation.test.ts",
+    "test:all": "tsx tests/tenantIsolation.test.ts && tsx tests/multiFramework.test.ts && tsx tests/stigAutomation.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

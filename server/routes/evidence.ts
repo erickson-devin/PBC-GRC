@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { Storage } from '@google-cloud/storage';
 import { queryWithTenant } from '../db';
+import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 
 const router = Router();
 
@@ -107,12 +108,46 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
 
     const savedRecord = mapRowToEvidence(result.rows[0]);
 
+    // Cross-Framework Evidence Inheritance:
+    // Automatically associate upload with mapped controls (e.g. AC.L1-3.1.1 in CMMC -> AC-2 in NIST 800-53 & CC6.1 in SOC 2)
+    try {
+      const mappedControlIds = getEquivalentControlIds(controlId);
+      for (const mappedId of mappedControlIds) {
+        const inhId = `${evidenceId}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const inhDesc = `[Inherited from ${controlId}] ${description || `Audit Evidence for ${controlId}`}`;
+        const inhInsert = `
+          INSERT INTO evidence_metadata (
+            id, tenant_id, control_id, file_name, file_size, mime_type,
+            gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, 'inherited', $9, $10, NOW()
+          )
+          ON CONFLICT (id) DO NOTHING;
+        `;
+        await queryWithTenant(tenantId, inhInsert, [
+          inhId,
+          tenantId,
+          mappedId,
+          fileName,
+          effectiveSize,
+          effectiveMime,
+          gcsUri,
+          fileHash,
+          inhDesc,
+          effectiveUser,
+        ]);
+      }
+    } catch (inhErr: any) {
+      console.warn(`[Evidence API] Cross-framework evidence inheritance notice:`, inhErr.message);
+    }
+
     res.status(201).json({
       message: 'Evidence record created and GCS upload URL generated',
       uploadUrl: signedUploadUrl,
       gcsPath: gcsUri,
       evidenceId,
       evidence: savedRecord,
+      inheritedTo: getEquivalentControlIds(controlId),
     });
   } catch (dbErr: any) {
     console.error(`[Evidence API] Failed to store evidence metadata for tenant ${tenantId}:`, dbErr);
@@ -126,9 +161,11 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
 /**
  * GET /api/v1/evidence
  * Retrieves all evidence artifacts for the active tenant.
+ * Optionally filter by ?control_id= to get direct & inherited evidence for a control.
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
+  const { control_id } = req.query;
 
   try {
     const result = await queryWithTenant(
@@ -137,7 +174,13 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       [tenantId]
     );
 
-    const evidenceList = result.rows.map(mapRowToEvidence);
+    let evidenceList = result.rows.map(mapRowToEvidence);
+
+    if (control_id) {
+      const targetId = control_id.toString().trim().toUpperCase();
+      const mappedIds = new Set([targetId, ...getEquivalentControlIds(targetId).map(id => id.toUpperCase())]);
+      evidenceList = evidenceList.filter(e => mappedIds.has(e.controlId.toUpperCase()));
+    }
 
     res.json({
       tenantId,

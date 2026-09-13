@@ -3,12 +3,13 @@ import confetti from 'canvas-confetti';
 import {
   AssessmentState,
   ControlStatus,
-  DomainCode,
   EvidenceItem,
   SSPMetadata,
   ComplianceMetrics,
 } from '../types/cmmc';
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
+import { FrameworkControlDefinition } from '../types/framework';
+import { getFrameworkControls, getEquivalentControlIds } from '../data/frameworks';
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
@@ -20,12 +21,13 @@ export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidan
 interface AssessmentContextType {
   state: AssessmentState;
   metrics: ComplianceMetrics;
+  frameworkControls: FrameworkControlDefinition[];
   activeTab: NavigationTab;
   setActiveTab: (tab: NavigationTab) => void;
   selectedControlId: string | null;
   setSelectedControlId: (id: string | null) => void;
-  selectedDomainFilter: DomainCode | 'ALL';
-  setSelectedDomainFilter: (domain: DomainCode | 'ALL') => void;
+  selectedDomainFilter: string;
+  setSelectedDomainFilter: (domain: string) => void;
   selectedStatusFilter: ControlStatus | 'ALL';
   setSelectedStatusFilter: (status: ControlStatus | 'ALL') => void;
   searchQuery: string;
@@ -38,6 +40,7 @@ interface AssessmentContextType {
   updateControlNotes: (controlId: string, notes: string) => void;
   updateControlRole: (controlId: string, role: string) => void;
   applyStarterTemplate: (controlId: string, narrative: string) => void;
+  bulkApplyStigNarratives: (narratives: Record<string, string>) => number;
   updateSSPMetadata: (metadata: Partial<SSPMetadata>) => void;
   uploadEvidence: (controlId: string, file: File, description?: string) => Promise<EvidenceItem>;
   removeEvidence: (evidenceId: string) => Promise<void>;
@@ -60,13 +63,25 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     liveEvidence,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
+    activeFramework,
+    activeBaselineTier,
+    activeOverlayFilters,
   } = useTenant();
+
+  // Dynamically resolve controls for the currently selected framework, baseline, and overlay
+  const frameworkControls = useMemo(() => {
+    return getFrameworkControls(
+      activeFramework,
+      activeBaselineTier,
+      activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE'
+    );
+  }, [activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly]);
 
   // Load tenant-isolated assessment state
   const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment(currentTenant));
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
-  const [selectedDomainFilter, setSelectedDomainFilter] = useState<DomainCode | 'ALL'>('ALL');
+  const [selectedDomainFilter, setSelectedDomainFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<ControlStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
@@ -99,15 +114,15 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [state, currentTenant.id]);
 
-  // Calculate Real-time Compliance Metrics dynamically for all 17 controls
+  // Calculate Real-time Compliance Metrics dynamically for active framework controls
   const metrics: ComplianceMetrics = useMemo(() => {
-    const totalControls = CMMC_LEVEL_1_CONTROLS.length; // Exactly 17 controls
+    const totalControls = frameworkControls.length;
     let metCount = 0;
     let inProgressCount = 0;
     let notStartedCount = 0;
     let notMetCount = 0;
 
-    const domainStats: Record<DomainCode, {
+    const domainStats: Record<string, {
       total: number;
       met: number;
       inProgress: number;
@@ -123,10 +138,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       SI: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
     };
 
-    for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+    for (const ctrl of frameworkControls) {
       const cState = state.controls[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
       const dCode = ctrl.domain;
+
+      if (!domainStats[dCode]) {
+        domainStats[dCode] = { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 };
+      }
 
       domainStats[dCode].total += 1;
 
@@ -146,14 +165,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     // Calculate domain completion percentages
-    (Object.keys(domainStats) as DomainCode[]).forEach(d => {
+    Object.keys(domainStats).forEach(d => {
       const stat = domainStats[d];
       stat.percentage = stat.total > 0 ? Math.round((stat.met / stat.total) * 100) : 0;
     });
 
     const completionPercentage = totalControls > 0 ? Math.round((metCount / totalControls) * 100) : 0;
-    // CMMC Level 1 SPRS Readiness strictly requires 100% (17 of 17) MET
-    const isSprsReady = metCount === totalControls && totalControls === 17;
+    const isSprsReady = metCount === totalControls && totalControls > 0;
 
     return {
       totalControls,
@@ -163,9 +181,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       notMetCount,
       completionPercentage,
       isSprsReady,
-      domainStats,
+      domainStats: domainStats as any,
     };
-  }, [state]);
+  }, [frameworkControls, state.controls]);
 
   // Celebrate SPRS readiness
   const triggerSprsCelebration = useCallback(() => {
@@ -332,6 +350,69 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   }, [canEdit, currentTenant.id, currentUser.name]);
 
+  // Action: Bulk Apply STIG Policy Narratives across mapped controls
+  const bulkApplyStigNarratives = useCallback((narratives: Record<string, string>): number => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
+      return 0;
+    }
+
+    const controlIds = Object.keys(narratives);
+    if (controlIds.length === 0) return 0;
+
+    let appliedCount = 0;
+
+    setState(prev => {
+      const nextControls = { ...prev.controls };
+      const timestamp = new Date().toISOString();
+
+      controlIds.forEach(id => {
+        const text = narratives[id];
+        if (!text) return;
+
+        const current = nextControls[id] || {
+          id,
+          tenantId: currentTenant.id,
+          status: 'NOT_STARTED',
+          implementationNotes: '',
+          responsibleRole: 'IT / Security Lead',
+          lastUpdated: timestamp,
+          tags: [],
+        };
+
+        let newNotes = text;
+        if (current.implementationNotes && current.implementationNotes.trim()) {
+          if (!current.implementationNotes.includes(text)) {
+            newNotes = `${current.implementationNotes}\n\n[STIG Baseline Implementation]:\n${text}`;
+          } else {
+            newNotes = current.implementationNotes;
+          }
+        }
+
+        nextControls[id] = {
+          ...current,
+          implementationNotes: newNotes,
+          status: current.status === 'NOT_STARTED' ? 'IN_PROGRESS' : current.status,
+          lastUpdated: timestamp,
+          updatedBy: currentUser.name,
+        };
+
+        if (!isSandboxMode && !currentTenant.isDemo) {
+          updateLiveControl(id, { implementationNotes: newNotes, updatedBy: currentUser.name });
+        }
+
+        appliedCount++;
+      });
+
+      return {
+        ...prev,
+        controls: nextControls,
+      };
+    });
+
+    return appliedCount;
+  }, [canEdit, currentTenant.id, currentTenant.isDemo, isSandboxMode, currentUser.name, updateLiveControl]);
+
   // Action: Update SSP Metadata with RBAC Check
   const updateSSPMetadata = useCallback((metadata: Partial<SSPMetadata>) => {
     if (!canEdit) {
@@ -379,9 +460,28 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           // Save in local IndexedDB vault for client-side preview
           await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
 
+          // Cross-Framework Evidence Inheritance:
+          // Associate upload with mapped controls in local state
+          const mappedControlIds = getEquivalentControlIds(controlId);
+          const inheritedItems: EvidenceItem[] = mappedControlIds.map(mappedId => ({
+            id: `${uploadResp.evidence.id}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+            tenantId: currentTenant.id,
+            controlId: mappedId,
+            name: file.name,
+            fileSize: file.size,
+            mimeType: file.type || 'application/octet-stream',
+            uploadedAt: new Date().toISOString(),
+            description: `[Inherited from ${controlId}] ${description || `Audit evidence for ${controlId}`}`,
+            hasBlob: true,
+            gcsPath: uploadResp.gcsPath,
+            fileHash,
+            syncStatus: 'gcs_synced',
+            uploadedBy: currentUser.name,
+          }));
+
           setState(prev => ({
             ...prev,
-            evidenceIndex: [uploadResp.evidence, ...prev.evidenceIndex],
+            evidenceIndex: [uploadResp.evidence, ...inheritedItems, ...prev.evidenceIndex],
           }));
 
           return uploadResp.evidence;
@@ -414,9 +514,27 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       uploadedBy: currentUser.name,
     };
 
+    // Cross-Framework Evidence Inheritance in local state
+    const mappedControlIds = getEquivalentControlIds(controlId);
+    const inheritedItems: EvidenceItem[] = mappedControlIds.map(mappedId => ({
+      id: `${newItem.id}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      tenantId: currentTenant.id,
+      controlId: mappedId,
+      name: file.name,
+      fileSize: file.size,
+      mimeType: file.type || 'application/octet-stream',
+      uploadedAt: new Date().toISOString(),
+      description: `[Inherited from ${controlId}] ${description || `Audit evidence for ${controlId}`}`,
+      hasBlob: true,
+      gcsPath,
+      fileHash,
+      syncStatus: 'gcs_synced',
+      uploadedBy: currentUser.name,
+    }));
+
     setState(prev => ({
       ...prev,
-      evidenceIndex: [newItem, ...prev.evidenceIndex],
+      evidenceIndex: [newItem, ...inheritedItems, ...prev.evidenceIndex],
     }));
 
     return newItem;
@@ -513,6 +631,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const value = useMemo(() => ({
     state,
     metrics,
+    frameworkControls,
     activeTab,
     setActiveTab,
     selectedControlId,
@@ -530,6 +649,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateControlNotes,
     updateControlRole,
     applyStarterTemplate,
+    bulkApplyStigNarratives,
     updateSSPMetadata,
     uploadEvidence,
     removeEvidence,
@@ -541,6 +661,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }), [
     state,
     metrics,
+    frameworkControls,
     activeTab,
     selectedControlId,
     selectedDomainFilter,
@@ -551,6 +672,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateControlNotes,
     updateControlRole,
     applyStarterTemplate,
+    bulkApplyStigNarratives,
     updateSSPMetadata,
     uploadEvidence,
     removeEvidence,

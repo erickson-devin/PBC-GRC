@@ -9,6 +9,7 @@ import {
   Building,
   Users,
   Shield,
+  Terminal,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -19,6 +20,7 @@ export const Sidebar: React.FC = () => {
     currentTenant,
     canManageTenant,
     setIsTeamModalOpen,
+    setIsStigModalOpen,
     isSuperAdmin,
   } = useTenant();
 
@@ -94,12 +96,26 @@ export const Sidebar: React.FC = () => {
           </nav>
         </div>
 
-        {/* Enclave Administration & Team RBAC */}
-        {canManageTenant && (
-          <div>
-            <p className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase px-3 mb-2">
-              Enclave Administration
-            </p>
+        {/* Enclave Administration & Hardening Baselines */}
+        <div className="space-y-2">
+          <p className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase px-3 mb-1">
+            Enclave Administration
+          </p>
+
+          <button
+            onClick={() => setIsStigModalOpen(true)}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs text-cyan-300 hover:text-white hover:bg-cyan-950/40 border border-cyan-500/30 transition-all text-left shadow-sm group"
+          >
+            <div className="flex items-center gap-2.5">
+              <Terminal className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+              <span>Technical Baselines & STIGs</span>
+            </div>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+              DISA
+            </span>
+          </button>
+
+          {canManageTenant && (
             <button
               onClick={() => setIsTeamModalOpen(true)}
               className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs text-purple-300 hover:text-white hover:bg-purple-950/30 border border-purple-500/20 transition-all text-left shadow-sm"
@@ -112,8 +128,8 @@ export const Sidebar: React.FC = () => {
                 Owner
               </span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Super Admin Operator Access */}
         {isSuperAdmin && (

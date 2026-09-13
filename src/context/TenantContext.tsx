@@ -12,6 +12,12 @@ import {
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { ApiClient, UploadUrlResponse } from '../services/apiClient';
+import {
+  ComplianceFramework,
+  BaselineTier,
+  OverlayFilters,
+  OverlayParameter,
+} from '../types/framework';
 
 // Storage Version 4 Keys (Strict separation of Live vs Sandbox)
 const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
@@ -22,6 +28,9 @@ const CURRENT_USER_KEY = 'pbc_active_user_v4';
 const LICENSE_REQUESTS_STORAGE_KEY = 'pbc_license_requests_v4';
 const INVITATIONS_STORAGE_KEY = 'pbc_tenant_invitations_v4';
 const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
+const ACTIVE_FRAMEWORK_KEY = 'pbc_active_framework_v1';
+const ACTIVE_BASELINE_TIER_KEY = 'pbc_active_baseline_tier_v1';
+const ACTIVE_OVERLAY_FILTERS_KEY = 'pbc_active_overlay_filters_v1';
 
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [
@@ -357,6 +366,8 @@ interface TenantContextType {
   setIsOnboardingModalOpen: (open: boolean) => void;
   isTeamModalOpen: boolean;
   setIsTeamModalOpen: (open: boolean) => void;
+  isStigModalOpen: boolean;
+  setIsStigModalOpen: (open: boolean) => void;
   licenseRequests: LicenseRequest[];
   invitations: TenantInvitation[];
   teamMembers: Record<string, TeamMember[]>;
@@ -417,7 +428,12 @@ interface TenantContextType {
   liveEvidence: EvidenceItem[] | null;
   isSyncing: boolean;
   syncError: string | null;
-  refreshLiveData: (tenantToFetch?: string) => Promise<void>;
+  refreshLiveData: (
+    tenantToFetch?: string,
+    frameworkToFetch?: ComplianceFramework,
+    baselineToFetch?: BaselineTier,
+    overlayToFetch?: OverlayParameter
+  ) => Promise<void>;
   updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState | null>;
   createLiveEvidenceUploadUrl: (payload: {
     controlId: string;
@@ -427,6 +443,14 @@ interface TenantContextType {
     fileHash: string;
     description?: string;
   }) => Promise<UploadUrlResponse | null>;
+  // Multi-Framework & Baseline Architecture
+  activeFramework: ComplianceFramework;
+  setActiveFramework: (framework: ComplianceFramework) => void;
+  activeBaselineTier: BaselineTier;
+  setActiveBaselineTier: (tier: BaselineTier) => void;
+  activeOverlayFilters: OverlayFilters;
+  setActiveOverlayFilters: React.Dispatch<React.SetStateAction<OverlayFilters>>;
+  toggleNonNetworkedOverlay: () => void;
 }
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
@@ -580,6 +604,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
   const [isTeamModalOpen, setIsTeamModalOpen] = useState<boolean>(false);
+  const [isStigModalOpen, setIsStigModalOpen] = useState<boolean>(false);
 
   // Sync storage
   useEffect(() => {
@@ -654,6 +679,73 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return isSuperAdminUser(currentUser);
   }, [currentUser]);
 
+  // Multi-Framework & Baseline State
+  const [activeFramework, setActiveFrameworkState] = useState<ComplianceFramework>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_FRAMEWORK_KEY);
+      if (saved && ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'].includes(saved)) {
+        return saved as ComplianceFramework;
+      }
+    } catch (e) {
+      console.warn('Error loading active framework:', e);
+    }
+    return 'CMMC_L1';
+  });
+
+  const [activeBaselineTier, setActiveBaselineTierState] = useState<BaselineTier>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_BASELINE_TIER_KEY);
+      if (saved && ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD'].includes(saved)) {
+        return saved as BaselineTier;
+      }
+    } catch (e) {
+      console.warn('Error loading active baseline tier:', e);
+    }
+    return 'LOW_LOW_LOW';
+  });
+
+  const [activeOverlayFilters, setActiveOverlayFilters] = useState<OverlayFilters>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_OVERLAY_FILTERS_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Error loading active overlay filters:', e);
+    }
+    return { nonNetworkedOnly: false };
+  });
+
+  const setActiveFramework = useCallback((framework: ComplianceFramework) => {
+    setActiveFrameworkState(framework);
+    try {
+      localStorage.setItem(ACTIVE_FRAMEWORK_KEY, framework);
+    } catch {}
+  }, []);
+
+  const setActiveBaselineTier = useCallback((tier: BaselineTier) => {
+    setActiveBaselineTierState(tier);
+    try {
+      localStorage.setItem(ACTIVE_BASELINE_TIER_KEY, tier);
+    } catch {}
+  }, []);
+
+  const toggleNonNetworkedOverlay = useCallback(() => {
+    setActiveOverlayFilters(prev => {
+      const next = { ...prev, nonNetworkedOnly: !prev.nonNetworkedOnly };
+      try {
+        localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(activeOverlayFilters));
+    } catch {}
+  }, [activeOverlayFilters]);
+
   // ============================================================================
   // Cloud SQL Express API Live Sync Engine (Row-Level Security Tenant Isolation)
   // ============================================================================
@@ -664,9 +756,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   /**
    * Pull live control states and evidence artifacts from Cloud SQL /api/v1
-   * Operates with an offline/sandbox fallback mechanism
+   * Operates with dynamic framework, baseline, and overlay parameters
    */
-  const refreshLiveData = useCallback(async (tenantToFetch?: string) => {
+  const refreshLiveData = useCallback(async (
+    tenantToFetch?: string,
+    frameworkToFetch?: ComplianceFramework,
+    baselineToFetch?: BaselineTier,
+    overlayToFetch?: OverlayParameter
+  ) => {
     const targetTenantId = tenantToFetch || currentTenant.id;
 
     // Sandbox / Demo Fallback: Do not make API calls for demo/sandbox tenants
@@ -685,9 +782,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsSyncing(true);
     setSyncError(null);
 
+    const fw = frameworkToFetch || activeFramework;
+    const bl = baselineToFetch || activeBaselineTier;
+    const ov = overlayToFetch || (activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
+
     try {
       const [controlsList, evidenceList] = await Promise.all([
-        ApiClient.getControls(targetTenantId),
+        ApiClient.getControls(targetTenantId, { framework: fw, baseline: bl, overlay: ov }),
         ApiClient.getEvidence(targetTenantId),
       ]);
 
@@ -704,17 +805,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       setIsSyncing(false);
     }
-  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
+  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly]);
 
-  // Automatically pull live controls & evidence when tenant changes or user is authenticated
+  // Automatically pull live controls & evidence when tenant, framework, or overlay changes
   useEffect(() => {
     if (!isSandboxMode && !currentTenant.isDemo && ApiClient.getToken()) {
-      refreshLiveData(currentTenant.id);
+      refreshLiveData(currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
     } else {
       setLiveControls(null);
       setLiveEvidence(null);
     }
-  }, [currentTenant.id, isSandboxMode, currentTenant.isDemo, refreshLiveData]);
+  }, [currentTenant.id, isSandboxMode, currentTenant.isDemo, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
 
   const updateLiveControl = useCallback(async (
     controlId: string,
@@ -1562,6 +1663,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsOnboardingModalOpen,
     isTeamModalOpen,
     setIsTeamModalOpen,
+    isStigModalOpen,
+    setIsStigModalOpen,
     licenseRequests,
     invitations,
     teamMembers,
@@ -1592,6 +1695,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshLiveData,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
+    activeFramework,
+    setActiveFramework,
+    activeBaselineTier,
+    setActiveBaselineTier,
+    activeOverlayFilters,
+    setActiveOverlayFilters,
+    toggleNonNetworkedOverlay,
   }), [
     tenants,
     currentTenant,
@@ -1607,6 +1717,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsOnboardingModalOpen,
     isTeamModalOpen,
     setIsTeamModalOpen,
+    isStigModalOpen,
+    setIsStigModalOpen,
     licenseRequests,
     invitations,
     teamMembers,
@@ -1637,6 +1749,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshLiveData,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
+    activeFramework,
+    setActiveFramework,
+    activeBaselineTier,
+    setActiveBaselineTier,
+    activeOverlayFilters,
+    setActiveOverlayFilters,
+    toggleNonNetworkedOverlay,
   ]);
 
 
