@@ -351,7 +351,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   New Defense Contractor?
                 </span>
                 <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                  $1,000 / yr flat
+                  From $3,500 / yr
                 </span>
               </div>
               <p className="text-xs text-slate-300">
@@ -359,7 +359,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
               </p>
               <button
                 type="button"
-                onClick={() => openLicenseModal('single-org')}
+                onClick={() => openLicenseModal('DEFENSE_PRO')}
                 className="w-full py-2 px-3 rounded-xl bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/40 text-brand-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
               >
                 <span>Request Enclave License & Sales Call</span>

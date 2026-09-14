@@ -14,7 +14,7 @@ import {
   PlusCircle,
   AlertCircle,
 } from 'lucide-react';
-import { Tenant, TenantInvitation } from '../../types/tenant';
+import { Tenant, TenantInvitation, CommercialLicenseTier, getLicenseTierPrice, normalizeLicenseTier } from '../../types/tenant';
 
 interface FinanceProvisioningLogProps {
   tenants: Tenant[];
@@ -30,7 +30,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
   onEnterEnclave,
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [filterTier, setFilterTier] = useState<'ALL' | 'single-org' | 'msp-assessor'>('ALL');
+  const [filterTier, setFilterTier] = useState<'ALL' | CommercialLicenseTier>('ALL');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACCEPTED' | 'PENDING'>('ALL');
 
   const handleCopy = async (text: string, id: string) => {
@@ -61,7 +61,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
         ? `${window.location.origin}/accept-invite?token=${encodeURIComponent(inviteToken)}`
         : null;
 
-      const annualPrice = licenseTier === 'msp-assessor' ? 1500 : 1000;
+      const annualPrice = getLicenseTierPrice(licenseTier);
 
       return {
         tenantId: tenant.id,
@@ -83,7 +83,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
   // Filtered records
   const filteredRecords = useMemo(() => {
     return records.filter((rec) => {
-      if (filterTier !== 'ALL' && rec.licenseTier !== filterTier) return false;
+      if (filterTier !== 'ALL' && normalizeLicenseTier(rec.licenseTier) !== filterTier) return false;
       if (filterStatus !== 'ALL' && rec.inviteStatus !== filterStatus) return false;
       return true;
     });
@@ -94,10 +94,11 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
     const totalEnclaves = records.length;
     const totalArr = records.reduce((acc, r) => acc + r.annualPrice, 0);
     const pendingClaims = records.filter((r) => r.inviteStatus === 'PENDING').length;
-    const singleOrgCount = records.filter((r) => r.licenseTier === 'single-org').length;
-    const mspCount = records.filter((r) => r.licenseTier === 'msp-assessor').length;
+    const foundationalCount = records.filter((r) => normalizeLicenseTier(r.licenseTier) === 'FOUNDATIONAL').length;
+    const defenseProCount = records.filter((r) => normalizeLicenseTier(r.licenseTier) === 'DEFENSE_PRO').length;
+    const enterpriseCount = records.filter((r) => normalizeLicenseTier(r.licenseTier) === 'ENTERPRISE').length;
 
-    return { totalEnclaves, totalArr, pendingClaims, singleOrgCount, mspCount };
+    return { totalEnclaves, totalArr, pendingClaims, foundationalCount, defenseProCount, enterpriseCount };
   }, [records]);
 
   const formatDate = (isoStr: string) => {
@@ -185,20 +186,28 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
               All ({records.length})
             </button>
             <button
-              onClick={() => setFilterTier('single-org')}
+              onClick={() => setFilterTier('FOUNDATIONAL')}
               className={`px-2.5 py-1 rounded-md transition-colors ${
-                filterTier === 'single-org' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-white'
+                filterTier === 'FOUNDATIONAL' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-white'
               }`}
             >
-              $1,000 Single Org ({stats.singleOrgCount})
+              $3,500 Foundational ({stats.foundationalCount})
             </button>
             <button
-              onClick={() => setFilterTier('msp-assessor')}
+              onClick={() => setFilterTier('DEFENSE_PRO')}
               className={`px-2.5 py-1 rounded-md transition-colors ${
-                filterTier === 'msp-assessor' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-white'
+                filterTier === 'DEFENSE_PRO' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-white'
               }`}
             >
-              $1,500 MSP Assessor ({stats.mspCount})
+              $7,000 Defense Pro ({stats.defenseProCount})
+            </button>
+            <button
+              onClick={() => setFilterTier('ENTERPRISE')}
+              className={`px-2.5 py-1 rounded-md transition-colors ${
+                filterTier === 'ENTERPRISE' ? 'bg-slate-800 text-white font-semibold' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              $14,000 Enterprise ({stats.enterpriseCount})
             </button>
           </div>
         </div>
@@ -291,17 +300,31 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
 
                     {/* License Tier */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      {rec.licenseTier === 'msp-assessor' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono text-[11px] font-semibold">
-                          <CreditCard className="w-3 h-3 text-indigo-400" />
-                          $1,500/yr (MSP Assessor)
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 font-mono text-[11px] font-semibold">
-                          <CreditCard className="w-3 h-3 text-emerald-400" />
-                          $1,000/yr (Single Org)
-                        </span>
-                      )}
+                      {(() => {
+                        const norm = normalizeLicenseTier(rec.licenseTier);
+                        if (norm === 'ENTERPRISE') {
+                          return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-950/60 text-purple-300 border border-purple-500/30 font-mono text-[11px] font-semibold">
+                              <CreditCard className="w-3 h-3 text-purple-400" />
+                              $14,000/yr (Enterprise)
+                            </span>
+                          );
+                        }
+                        if (norm === 'DEFENSE_PRO') {
+                          return (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono text-[11px] font-semibold">
+                              <CreditCard className="w-3 h-3 text-indigo-400" />
+                              $7,000/yr (Defense Pro)
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 font-mono text-[11px] font-semibold">
+                            <CreditCard className="w-3 h-3 text-emerald-400" />
+                            $3,500/yr (Foundational)
+                          </span>
+                        );
+                      })()}
                     </td>
 
                     {/* Provisioned By */}

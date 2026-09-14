@@ -349,6 +349,8 @@ export async function initDb(): Promise<void> {
 
       ALTER TABLE tenants ADD COLUMN IF NOT EXISTS enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}';
       ALTER TABLE tenants ADD COLUMN IF NOT EXISTS primary_framework VARCHAR(64) DEFAULT 'CMMC_L1';
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS license_tier VARCHAR(64) DEFAULT 'FOUNDATIONAL';
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS annual_price NUMERIC DEFAULT 3500;
 
       CREATE TABLE IF NOT EXISTS control_assessments (
           id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -432,5 +434,22 @@ export async function initDb(): Promise<void> {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Commercial license tier pricing defaults & ARR calculation
+ */
+export const DEFAULT_LICENSE_PRICING = {
+  FOUNDATIONAL: 3500,
+  DEFENSE_PRO: 7000,
+  ENTERPRISE: 14000,
+  'single-org': 3500,
+  'msp-assessor': 14000,
+} as const;
+
+export function calculateAnnualPrice(tier: string = 'FOUNDATIONAL'): number {
+  if (tier === 'DEFENSE_PRO') return 7000;
+  if (tier === 'ENTERPRISE' || tier === 'msp-assessor') return 14000;
+  return 3500;
 }
 

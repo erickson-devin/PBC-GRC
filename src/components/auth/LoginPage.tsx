@@ -256,7 +256,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     Need Enclave Licensing?
                   </span>
                   <span className="font-mono text-[10px] text-emerald-400 font-semibold">
-                    From $1,000 / yr
+                    From $3,500 / yr
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400">
@@ -264,7 +264,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </p>
                 <button
                   type="button"
-                  onClick={() => openLicenseModal('single-org')}
+                  onClick={() => openLicenseModal('DEFENSE_PRO')}
                   className="w-full py-2 px-3 rounded-xl bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/40 font-bold text-xs transition-colors"
                 >
                   Request License & Schedule Call

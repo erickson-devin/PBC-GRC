@@ -8,6 +8,7 @@ import {
   TenantInvitation,
   TeamMember,
   AuthProviderType,
+  LicenseTier,
 } from '../types/tenant';
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
@@ -157,6 +158,8 @@ export const SEED_TENANTS: Tenant[] = [
     isConfigured: true,
     primaryFramework: 'CMMC_L1',
     enabledFrameworks: ['CMMC_L1', 'CMMC_L2'],
+    licenseTier: 'FOUNDATIONAL',
+    annualPrice: 3500,
   },
   {
     id: 'tenant-apex-02',
@@ -173,6 +176,8 @@ export const SEED_TENANTS: Tenant[] = [
     isConfigured: true,
     primaryFramework: 'CMMC_L2',
     enabledFrameworks: ['CMMC_L2', 'NIST_800_53_REV5'],
+    licenseTier: 'DEFENSE_PRO',
+    annualPrice: 7000,
   },
   {
     id: 'tenant-orbital-03',
@@ -189,6 +194,8 @@ export const SEED_TENANTS: Tenant[] = [
     isConfigured: true,
     primaryFramework: 'NIST_800_53_REV5',
     enabledFrameworks: ['NIST_800_53_REV5', 'SOC_2_TYPE_II'],
+    licenseTier: 'ENTERPRISE',
+    annualPrice: 14000,
   },
 ];
 
@@ -264,7 +271,7 @@ export const SEED_INVITATIONS: TenantInvitation[] = [
     type: 'STAFF_INVITE',
     systemName: 'Defense Contracting Information Network (DCIN)',
     cageCode: '8K3R1',
-    licenseTier: 'single-org',
+    licenseTier: 'DEFENSE_PRO',
   },
   {
     id: 'inv-seed-02',
@@ -280,7 +287,7 @@ export const SEED_INVITATIONS: TenantInvitation[] = [
     type: 'TENANT_ONBOARDING',
     systemName: 'Corporate Operations Enclave (COE)',
     cageCode: '9X7B4',
-    licenseTier: 'single-org',
+    licenseTier: 'FOUNDATIONAL',
   },
 ];
 
@@ -390,7 +397,7 @@ interface TenantContextType {
     domain?: string;
     isDemo?: boolean;
     isConfigured?: boolean;
-    licenseTier?: 'single-org' | 'msp-assessor';
+    licenseTier?: LicenseTier;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
   }) => Tenant;
@@ -398,7 +405,7 @@ interface TenantContextType {
     companyName: string;
     cageCode?: string;
     systemBoundaryName?: string;
-    licenseTier: 'single-org' | 'msp-assessor';
+    licenseTier: LicenseTier;
     tenantOwnerEmail: string;
     primaryFramework?: ComplianceFramework;
     enabledFrameworks?: ComplianceFramework[];
@@ -708,7 +715,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       Object.values(currentUser.roles || {}).includes('MSP_ADMIN');
     const isMspTier =
       currentUser.licenseTier === 'msp-assessor' ||
-      currentTenant.licenseTier === 'msp-assessor';
+      currentUser.licenseTier === 'ENTERPRISE' ||
+      currentTenant.licenseTier === 'msp-assessor' ||
+      currentTenant.licenseTier === 'ENTERPRISE';
 
     return Boolean(hasMspRole || isMspTier || liveTenants.length > 1);
   }, [isSandboxMode, currentUser, currentTenant, liveTenants.length]);
@@ -963,7 +972,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     domain?: string;
     isDemo?: boolean;
     isConfigured?: boolean;
-    licenseTier?: 'single-org' | 'msp-assessor';
+    licenseTier?: LicenseTier;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
   }): Tenant => {
@@ -1352,7 +1361,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     companyName: string;
     cageCode?: string;
     systemBoundaryName?: string;
-    licenseTier: 'single-org' | 'msp-assessor';
+    licenseTier: LicenseTier;
     tenantOwnerEmail: string;
     primaryFramework?: ComplianceFramework;
     enabledFrameworks?: ComplianceFramework[];

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
-import { AuthProviderType } from '../types/tenant';
+import { AuthProviderType, getLicenseTierBadge } from '../types/tenant';
 
 interface AcceptInvitePageProps {
   onSuccessNavigate?: () => void;
@@ -403,7 +403,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-500 block">License Tier</span>
                     <span className="font-semibold text-slate-200 mt-0.5 block">
-                      {invitation?.licenseTier === 'msp-assessor' ? 'MSP Multi-Tenant' : 'Single Org Defense Enclave'}
+                      {getLicenseTierBadge(invitation?.licenseTier).badge}
                     </span>
                   </div>
                 </div>

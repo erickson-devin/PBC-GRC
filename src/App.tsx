@@ -216,7 +216,7 @@ const AppContent: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={() => openLicenseModal('single-org')}
+                onClick={() => openLicenseModal('DEFENSE_PRO')}
                 className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-brand-500/25 flex items-center gap-1.5 transition-all active:scale-[0.98]"
               >
                 <Sparkles className="w-3 h-3 text-amber-300" />
@@ -236,7 +236,7 @@ const AppContent: React.FC = () => {
           <Header 
             onExitToLanding={navigateToLanding}
             isSandboxMode={true}
-            onRequestLicense={() => openLicenseModal('single-org')}
+            onRequestLicense={() => openLicenseModal('DEFENSE_PRO')}
           />
 
           {/* Main Workspace Layout */}

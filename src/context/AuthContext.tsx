@@ -16,7 +16,7 @@ import {
   signOutFirebase,
   isFirebaseConfigured,
 } from '../config/firebase';
-import { User, AuthProviderType } from '../types/tenant';
+import { User, AuthProviderType, LicenseTier } from '../types/tenant';
 import { useTenant, PRESET_USERS } from './TenantContext';
 
 interface AuthContextType {
@@ -29,7 +29,7 @@ interface AuthContextType {
   isAuthModalOpen: boolean;
   authModalMode: 'signin' | 'magiclink';
   isLicenseModalOpen: boolean;
-  selectedLicensePlan: 'single-org' | 'msp-assessor';
+  selectedLicensePlan: LicenseTier;
   redirectPath: string | null;
   loginWithMicrosoft: () => Promise<void>;
   loginWithGoogle: () => Promise<void>;
@@ -41,7 +41,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   openAuthModal: (mode?: 'signin' | 'magiclink', redirectUrl?: string) => void;
   closeAuthModal: () => void;
-  openLicenseModal: (plan?: 'single-org' | 'msp-assessor') => void;
+  openLicenseModal: (plan?: LicenseTier) => void;
   closeLicenseModal: () => void;
   clearAuthError: () => void;
 }
@@ -84,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'magiclink'>('signin');
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState<boolean>(false);
-  const [selectedLicensePlan, setSelectedLicensePlan] = useState<'single-org' | 'msp-assessor'>('single-org');
+  const [selectedLicensePlan, setSelectedLicensePlan] = useState<LicenseTier>('DEFENSE_PRO');
   const [redirectPath, setRedirectPath] = useState<string | null>(null);
 
   // Sync user and token to storage
@@ -440,7 +440,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
   }, []);
 
-  const openLicenseModal = useCallback((plan: 'single-org' | 'msp-assessor' = 'single-org') => {
+  const openLicenseModal = useCallback((plan: LicenseTier = 'DEFENSE_PRO') => {
     setSelectedLicensePlan(plan);
     setIsLicenseModalOpen(true);
     setIsAuthModalOpen(false);

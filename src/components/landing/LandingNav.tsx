@@ -118,7 +118,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
               </button>
 
               <button
-                onClick={() => openLicenseModal('single-org')}
+                onClick={() => openLicenseModal('DEFENSE_PRO')}
                 className="btn-primary text-xs px-4 py-2 flex items-center gap-1.5 shadow-lg shadow-cyan-500/20"
               >
                 <span>Request License</span>
@@ -189,7 +189,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
                   Sign In to Enclave
                 </button>
                 <button
-                  onClick={() => { setMobileMenuOpen(false); openLicenseModal('single-org'); }}
+                  onClick={() => { setMobileMenuOpen(false); openLicenseModal('DEFENSE_PRO'); }}
                   className="w-full py-3 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
                 >
                   <span>Request License & Sales Call</span>

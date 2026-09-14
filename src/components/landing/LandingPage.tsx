@@ -31,7 +31,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSa
     if (isAuthenticated) {
       onEnterApp();
     } else {
-      openLicenseModal('single-org');
+      openLicenseModal('DEFENSE_PRO');
     }
   };
 
@@ -58,10 +58,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp, onLaunchSa
       {/* 4. Interactive Live Sandbox Section (1-Click Test Drive) */}
       <InteractiveSandbox 
         onLaunchFullApp={handleLaunchWithTenant}
-        onRequestLicense={() => openLicenseModal('single-org')}
+        onRequestLicense={() => openLicenseModal('DEFENSE_PRO')}
       />
 
-      {/* 5. Transparent Pricing & Tier Table ($1,000 / $1,500/yr) */}
+      {/* 5. Enterprise Commercial Pricing & Tier Table ($3,500 / $7,000 / $14,000/yr) */}
       <PricingSection 
         onSelectPlan={(planId) => openLicenseModal(planId)} 
       />

@@ -17,15 +17,19 @@ BY ACCESSING THE SERVICE, EXECUTING AN ORDER FORM, SUBMITTING A LICENSE REQUEST,
 
 ## 2. Subscription Licenses & Tiers
 
-PBC-GRC is licensed on a predictable, flat annual subscription model. Current license tiers include:
+PBC-GRC is licensed on a predictable, flat annual subscription model across three commercial tiers:
 
-### A. Single Organization Enclave ($1,000 / year flat)
-- Grants a single legal defense contracting organization a dedicated, isolated compliance enclave.
-- Includes full access to the 17 CMMC Level 1 / FAR 52.204-21 controls engine, automated NIST SP 800-171 System Security Plan (SSP) generation, SHA-256 evidence vault, and unlimited read-only auditor seats for third-party C3PAO reviews.
+### A. Foundational Enclave ($3,500 / year flat)
+- Target: Small Suppliers & Commercial Organizations (FAR 52.204-21, HIPAA, SOC 2 Type II).
+- Features: 1 Enclave Boundary (Cloud SQL RLS isolation), CMMC Level 1 (17 Controls) or HIPAA/SOC 2, PDF Artifact Exporter, Single-User Owner, Standard Support.
 
-### B. MSP & Defense Assessor Multi-Enclave ($1,500 / year flat)
-- Grants Managed Service Providers (MSPs), Certified CMMC Assessors (CCAs), and defense consultants multi-tenant administrative capabilities.
-- Includes unlimited customer enclave boundaries, multi-tenant enclave switcher, custom organization branding on exported SSP deliverables, and priority solutions architect support.
+### B. Defense Professional ($7,000 / year flat)
+- Target: DoD Prime & Sub-Contractors handling CUI (NIST SP 800-171 / CMMC Level 2).
+- Features: CMMC Level 2 (110 Controls), NIST SP 800-53 Rev 5 (Low/Mod + Tactical Overlays), DISA STIG Library & Ansible/PowerShell Script Generator, Dynamic NIST SP 800-18 SSP & POA&M Compiler, Cross-Framework Evidence Inheritance, 5 User Seats.
+
+### C. Enterprise & Assessor Enclave ($14,000 / year flat)
+- Target: Defense MSPs, Multi-CAGE Enterprise Organizations & C3PAO Assessor Networks.
+- Features: Unlimited Enclaves / Multi-Boundary Management, OpenSCAP Engine & Asset Sensor API Integration, Custom Baseline Overlays, Dedicated Database Isolation, Priority 24/7 Defense Engineering Support.
 
 Annual licenses renew automatically at the end of each twelve (12) month term unless either party provides written notice of non-renewal at least thirty (30) days prior to the expiration of the current term.
 

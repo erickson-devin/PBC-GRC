@@ -15,7 +15,7 @@ import {
   Shield,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
-import { Tenant, TenantInvitation } from '../../types/tenant';
+import { Tenant, TenantInvitation, LicenseTier, getLicenseTierBadge } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 
 interface NewTenantModalProps {
@@ -42,7 +42,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   const [companyName, setCompanyName] = useState('');
   const [cageCode, setCageCode] = useState('');
   const [systemBoundaryName, setSystemBoundaryName] = useState('');
-  const [licenseTier, setLicenseTier] = useState<'single-org' | 'msp-assessor'>('single-org');
+  const [licenseTier, setLicenseTier] = useState<LicenseTier>('DEFENSE_PRO');
   const [tenantOwnerEmail, setTenantOwnerEmail] = useState('');
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>('CMMC_L1');
   const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
@@ -62,7 +62,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
     setCompanyName('');
     setCageCode('');
     setSystemBoundaryName('');
-    setLicenseTier('single-org');
+    setLicenseTier('DEFENSE_PRO');
     setTenantOwnerEmail('');
     setPrimaryFramework('CMMC_L1');
     setEnabledFrameworks(['CMMC_L1']);
@@ -187,7 +187,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
                   <span>License Tier:</span>
                   <span className="font-bold text-amber-300 uppercase">
-                    {createdResult.tenant.licenseTier === 'msp-assessor' ? 'MSP / Assessor (Multi-Enclave)' : 'Single Org ($1,000/yr)'}
+                    {getLicenseTierBadge(createdResult.tenant.licenseTier).badge}
                   </span>
                 </div>
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
@@ -331,11 +331,12 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   </label>
                   <select
                     value={licenseTier}
-                    onChange={e => setLicenseTier(e.target.value as 'single-org' | 'msp-assessor')}
+                    onChange={e => setLicenseTier(e.target.value as LicenseTier)}
                     className="w-full px-3.5 py-2.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-brand-500 transition-colors"
                   >
-                    <option value="single-org">Single Org Defense Enclave ($1,000/yr)</option>
-                    <option value="msp-assessor">MSP / Assessor Multi-Tenant</option>
+                    <option value="FOUNDATIONAL">Foundational Enclave ($3,500/yr)</option>
+                    <option value="DEFENSE_PRO">Defense Professional ($7,000/yr) - Recommended</option>
+                    <option value="ENTERPRISE">Enterprise & Assessor Enclave ($14,000/yr)</option>
                   </select>
                 </div>
               </div>

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
+import { LicenseTier, getLicenseTierBadge } from '../../types/tenant';
 
 interface LicenseRequestModalProps {
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
@@ -28,7 +29,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
   const [workEmail, setWorkEmail] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [cageCode, setCageCode] = useState('');
-  const [plan, setPlan] = useState<'single-org' | 'msp-assessor'>(selectedLicensePlan || 'single-org');
+  const [plan, setPlan] = useState<LicenseTier>(selectedLicensePlan || 'DEFENSE_PRO');
   const [inScopeUsers, setInScopeUsers] = useState('1–15 Users');
   const [targetTimeline, setTargetTimeline] = useState('Within 30 Days (Immediate)');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -114,60 +115,86 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                 </p>
               </div>
 
-              {/* Transparent Pricing Selector Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                {/* Single Enclave Option */}
+              {/* Commercial Pricing Selector Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+                {/* Foundational Enclave Option */}
                 <div
-                  onClick={() => setPlan('single-org')}
-                  className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-                    plan === 'single-org'
-                      ? 'bg-brand-950/40 border-brand-500/80 ring-1 ring-brand-500/50 shadow-lg shadow-brand-500/10'
+                  onClick={() => setPlan('FOUNDATIONAL')}
+                  className={`cursor-pointer p-3.5 rounded-2xl border transition-all ${
+                    plan === 'FOUNDATIONAL' || plan === 'single-org'
+                      ? 'bg-cyan-950/40 border-cyan-500/80 ring-1 ring-cyan-500/50 shadow-lg shadow-cyan-500/10'
                       : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-white">Single Contractor Enclave</span>
-                    {plan === 'single-org' && (
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-white">Foundational</span>
+                    {(plan === 'FOUNDATIONAL' || plan === 'single-org') && (
+                      <span className="w-4 h-4 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center text-[10px] font-black">
+                        ✓
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black text-white font-mono">$3,500</span>
+                    <span className="text-[10px] text-slate-400 font-medium">/ yr</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                    1 boundary, CMMC Level 1 (17 controls) or HIPAA/SOC 2, single owner.
+                  </p>
+                </div>
+
+                {/* Defense Professional Option (Recommended) */}
+                <div
+                  onClick={() => setPlan('DEFENSE_PRO')}
+                  className={`cursor-pointer p-3.5 rounded-2xl border relative transition-all ${
+                    plan === 'DEFENSE_PRO'
+                      ? 'bg-brand-950/50 border-brand-500/90 ring-2 ring-brand-500/60 shadow-lg shadow-brand-500/20'
+                      : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-white flex items-center gap-1">
+                      Defense Pro
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                    </span>
+                    {plan === 'DEFENSE_PRO' && (
                       <span className="w-4 h-4 rounded-full bg-brand-500 text-white flex items-center justify-center text-[10px] font-bold">
                         ✓
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-2xl font-extrabold text-white">$1,000</span>
-                    <span className="text-[11px] text-slate-400 font-medium">/ year flat</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black text-white font-mono">$7,000</span>
+                    <span className="text-[10px] text-slate-400 font-medium">/ yr</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    1 isolated system boundary, 17 controls, automated SSP & unlimited auditor view seats.
+                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                    CMMC Level 2 (110 controls), NIST 800-53, STIG generator, 5 seats.
                   </p>
                 </div>
 
-                {/* MSP / Assessor Multi-Enclave Option */}
+                {/* Enterprise & Assessor Enclave Option */}
                 <div
-                  onClick={() => setPlan('msp-assessor')}
-                  className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-                    plan === 'msp-assessor'
-                      ? 'bg-indigo-950/40 border-indigo-500/80 ring-1 ring-indigo-500/50 shadow-lg shadow-indigo-500/10'
+                  onClick={() => setPlan('ENTERPRISE')}
+                  className={`cursor-pointer p-3.5 rounded-2xl border transition-all ${
+                    plan === 'ENTERPRISE' || plan === 'msp-assessor'
+                      ? 'bg-purple-950/40 border-purple-500/80 ring-1 ring-purple-500/50 shadow-lg shadow-purple-500/10'
                       : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      MSP / Lead Assessor
-                      <Sparkles className="w-3 h-3 text-amber-400" />
-                    </span>
-                    {plan === 'msp-assessor' && (
-                      <span className="w-4 h-4 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-bold">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-white">Enterprise</span>
+                    {(plan === 'ENTERPRISE' || plan === 'msp-assessor') && (
+                      <span className="w-4 h-4 rounded-full bg-purple-500 text-white flex items-center justify-center text-[10px] font-bold">
                         ✓
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-2xl font-extrabold text-white">$1,500</span>
-                    <span className="text-[11px] text-slate-400 font-medium">/ year flat</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-black text-white font-mono">$14,000</span>
+                    <span className="text-[10px] text-slate-400 font-medium">/ yr</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Unlimited client enclaves, multi-tenant portal, C3PAO export & dedicated onboarding.
+                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                    Unlimited enclaves, OpenSCAP sensor API, dedicated DB, 24/7 support.
                   </p>
                 </div>
               </div>
@@ -386,7 +413,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                   <span className="text-slate-400">Requested Plan:</span>
                   <span className="font-bold text-white">
-                    {plan === 'single-org' ? 'Single Contractor Enclave ($1,000/yr)' : 'MSP Multi-Enclave ($1,500/yr)'}
+                    {getLicenseTierBadge(plan).badge}
                   </span>
                 </div>
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">

@@ -16,13 +16,14 @@ import {
   AlertTriangle,
   ArrowRight,
   Sparkles,
-  Layers,
   Globe,
   Clock,
   ArrowUpRight,
+  Award,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl, SUPER_ADMIN_PRESET_USER } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
+import { getLicenseTierPrice, normalizeLicenseTier } from '../../types/tenant';
 import { NewTenantModal } from './NewTenantModal';
 import { FinanceProvisioningLog } from './FinanceProvisioningLog';
 
@@ -177,8 +178,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   );
 
   const pendingInvitesCount = invitations.filter(i => i.status === 'PENDING').length;
-  const singleOrgCount = tenants.filter(t => t.licenseTier !== 'msp-assessor').length;
-  const mspCount = tenants.filter(t => t.licenseTier === 'msp-assessor').length;
+  const foundationalCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'FOUNDATIONAL').length;
+  const defenseProCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'DEFENSE_PRO').length;
+  const enterpriseCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'ENTERPRISE').length;
+  const totalArr = tenants.reduce((acc, t) => acc + getLicenseTierPrice(t.licenseTier), 0);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500 selection:text-white">
@@ -282,12 +285,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
           <div className="stitch-card p-5 space-y-1">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Active Subscriptions
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Active ARR Run-Rate
             </span>
             <p className="text-3xl font-black text-emerald-400 font-mono mt-1">
-              ${singleOrgCount * 1000 + mspCount * 3000}/yr
+              ${totalArr.toLocaleString()}/yr
             </p>
-            <p className="text-[11px] text-slate-500">{singleOrgCount} Single Org • {mspCount} MSP</p>
+            <p className="text-[11px] text-slate-500">
+              {foundationalCount} Foundational • {defenseProCount} Defense Pro • {enterpriseCount} Enterprise
+            </p>
           </div>
 
           <div className="stitch-card p-5 space-y-1">
@@ -377,15 +382,28 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                         </div>
                       </td>
                       <td className="py-3.5 px-4">
-                        {t.licenseTier === 'msp-assessor' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
-                            <Layers className="w-3 h-3" /> MSP Assessor
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wide">
-                            <Shield className="w-3 h-3" /> Single Org ($1k)
-                          </span>
-                        )}
+                        {(() => {
+                          const norm = normalizeLicenseTier(t.licenseTier);
+                          if (norm === 'ENTERPRISE') {
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
+                                <Building2 className="w-3 h-3" /> Enterprise ($14k)
+                              </span>
+                            );
+                          }
+                          if (norm === 'DEFENSE_PRO') {
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wide">
+                                <Award className="w-3 h-3" /> Defense Pro ($7k)
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wide">
+                              <Shield className="w-3 h-3" /> Foundational ($3.5k)
+                            </span>
+                          );
+                        })()}
                         {t.isDemo && (
                           <span className="ml-1 text-[9px] font-mono font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
                             DEMO
