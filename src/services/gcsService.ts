@@ -1,13 +1,23 @@
 import { GcpServiceConfig } from '../types/tenant';
 import { EvidenceItem } from '../types/cmmc';
 
+const getEnv = (key: string, fallback: string = ''): string => {
+  if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
+    return (import.meta as any).env[key];
+  }
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key]!;
+  }
+  return fallback;
+};
+
 export const DEFAULT_GCP_CONFIG: GcpServiceConfig = {
-  projectId: import.meta.env.VITE_GCP_PROJECT_ID || 'grc-tool-507203',
-  region: import.meta.env.VITE_GCP_REGION || 'us-central1',
-  gcsBucketName: import.meta.env.VITE_GCS_BUCKET_NAME || 'pbc-grc-evidence-prod',
-  cloudSqlInstance: import.meta.env.VITE_GCP_CLOUD_SQL_INSTANCE || 'pbc-grc-postgres-primary',
-  databaseName: import.meta.env.VITE_GCP_DATABASE_NAME || 'cmmc_compliance_db',
-  identityDomain: import.meta.env.VITE_GCP_IDENTITY_DOMAIN || 'pitchblackcyber.com',
+  projectId: getEnv('VITE_GCP_PROJECT_ID', 'grc-tool-507203'),
+  region: getEnv('VITE_GCP_REGION', 'us-central1'),
+  gcsBucketName: getEnv('VITE_GCS_BUCKET_NAME', 'pbc-grc-evidence-prod'),
+  cloudSqlInstance: getEnv('VITE_GCP_CLOUD_SQL_INSTANCE', 'pbc-grc-postgres-primary'),
+  databaseName: getEnv('VITE_GCP_DATABASE_NAME', 'cmmc_compliance_db'),
+  identityDomain: getEnv('VITE_GCP_IDENTITY_DOMAIN', 'pitchblackcyber.com'),
 };
 
 export const GcsService = {

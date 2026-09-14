@@ -9,6 +9,7 @@ import {
   Eye,
   Edit3,
   Lock,
+  FileCheck,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -21,6 +22,7 @@ export const SSPBuilder: React.FC = () => {
     metrics,
     updateSSPMetadata,
     exportAssessmentMarkdown,
+    openExportModal,
   } = useAssessment();
 
   const { currentTenant, canEdit } = useTenant();
@@ -114,6 +116,16 @@ export const SSPBuilder: React.FC = () => {
               <span>Edit System Info</span>
             </button>
           </div>
+
+          {/* Official Artifact Package Generator */}
+          <button
+            onClick={() => openExportModal('NIST_SP_800_18_SSP')}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs transition-all flex items-center gap-2 shadow-lg shadow-brand-600/25 hover:scale-[1.02]"
+            title="Open Artifact & Document Generator for official export (PDF/HTML/JSON/POA&M)"
+          >
+            <FileCheck className="w-4 h-4" />
+            <span>Export Official Package</span>
+          </button>
 
           {/* Print / PDF Button */}
           <button

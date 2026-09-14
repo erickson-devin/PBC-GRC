@@ -12,15 +12,25 @@ import {
   Layers,
   Receipt,
   Lock,
+  Shield,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { Tenant, TenantInvitation } from '../../types/tenant';
+import { ComplianceFramework } from '../../types/framework';
 
 interface NewTenantModalProps {
   isOpen: boolean;
   onClose: () => void;
   onTenantCreated?: (tenant: Tenant, invitation: TenantInvitation, inviteUrl: string) => void;
 }
+
+const ALL_FRAMEWORKS: { id: ComplianceFramework; label: string; shortName: string; authority: string }[] = [
+  { id: 'CMMC_L1', label: 'CMMC 2.0 Level 1 (Foundational)', shortName: 'CMMC Level 1', authority: 'FAR 52.204-21 • 17 Controls' },
+  { id: 'CMMC_L2', label: 'CMMC 2.0 Level 2 (Advanced)', shortName: 'CMMC Level 2', authority: 'DFARS 252.204-7012 • 110 Controls' },
+  { id: 'NIST_800_53_REV5', label: 'NIST SP 800-53 Rev 5', shortName: 'NIST SP 800-53', authority: 'Federal Low/Mod Baselines' },
+  { id: 'SOC_2_TYPE_II', label: 'AICPA SOC 2 Type II', shortName: 'SOC 2 Type II', authority: 'Trust Services Criteria (CC1–CC9)' },
+  { id: 'HIPAA_SECURITY', label: 'HIPAA Security Rule', shortName: 'HIPAA Security', authority: '45 CFR Part 164 Subpart C' },
+];
 
 export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   isOpen,
@@ -34,6 +44,8 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   const [systemBoundaryName, setSystemBoundaryName] = useState('');
   const [licenseTier, setLicenseTier] = useState<'single-org' | 'msp-assessor'>('single-org');
   const [tenantOwnerEmail, setTenantOwnerEmail] = useState('');
+  const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>('CMMC_L1');
+  const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -52,6 +64,8 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
     setSystemBoundaryName('');
     setLicenseTier('single-org');
     setTenantOwnerEmail('');
+    setPrimaryFramework('CMMC_L1');
+    setEnabledFrameworks(['CMMC_L1']);
     setCreatedResult(null);
     setCopiedLink(false);
   };
@@ -59,6 +73,22 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   const handleClose = () => {
     handleReset();
     onClose();
+  };
+
+  const handlePrimaryFrameworkChange = (fw: ComplianceFramework) => {
+    setPrimaryFramework(fw);
+    if (!enabledFrameworks.includes(fw)) {
+      setEnabledFrameworks([...enabledFrameworks, fw]);
+    }
+  };
+
+  const handleToggleFramework = (fw: ComplianceFramework) => {
+    if (fw === primaryFramework) return;
+    if (enabledFrameworks.includes(fw)) {
+      setEnabledFrameworks(enabledFrameworks.filter(f => f !== fw));
+    } else {
+      setEnabledFrameworks([...enabledFrameworks, fw]);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -73,6 +103,8 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
         systemBoundaryName: systemBoundaryName.trim() || `${companyName.trim()} Operations Enclave`,
         licenseTier,
         tenantOwnerEmail: tenantOwnerEmail.trim().toLowerCase(),
+        primaryFramework,
+        enabledFrameworks,
       });
 
       setCreatedResult(result);
@@ -157,6 +189,22 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <span className="font-bold text-amber-300 uppercase">
                     {createdResult.tenant.licenseTier === 'msp-assessor' ? 'MSP / Assessor (Multi-Enclave)' : 'Single Org ($1,000/yr)'}
                   </span>
+                </div>
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
+                  <span>Primary Framework:</span>
+                  <span className="font-bold text-brand-300">
+                    {createdResult.tenant.primaryFramework || 'CMMC_L1'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
+                  <span>Enabled Modules:</span>
+                  <div className="flex flex-wrap gap-1 justify-end max-w-[65%]">
+                    {(createdResult.tenant.enabledFrameworks || [createdResult.tenant.primaryFramework || 'CMMC_L1']).map(fw => (
+                      <span key={fw} className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-200 border border-slate-700">
+                        {fw}
+                      </span>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-slate-400 font-medium">
                   <span>Designated Owner:</span>
@@ -306,6 +354,88 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     onChange={e => setSystemBoundaryName(e.target.value)}
                     className="w-full pl-10 pr-3 py-2.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors"
                   />
+                </div>
+              </div>
+
+              {/* Target Framework Scope */}
+              <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800/90 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-brand-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                      Target Framework Scope
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60">
+                    {enabledFrameworks.length} Active Module{enabledFrameworks.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {/* Primary Framework Selector */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                    Primary Baseline Framework <span className="text-rose-400">*</span>
+                  </label>
+                  <select
+                    value={primaryFramework}
+                    onChange={e => handlePrimaryFrameworkChange(e.target.value as ComplianceFramework)}
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-700/80 rounded-xl text-white focus:outline-none focus:border-brand-500 transition-colors"
+                  >
+                    {ALL_FRAMEWORKS.map(fw => (
+                      <option key={fw.id} value={fw.id}>
+                        {fw.label} ({fw.authority})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Default compliance baseline loaded upon enclave activation.
+                  </p>
+                </div>
+
+                {/* Additional Active Frameworks */}
+                <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
+                  <label className="block text-[11px] font-semibold text-slate-400">
+                    Additional Active Enclave Frameworks
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                    {ALL_FRAMEWORKS.map(fw => {
+                      const isPrimary = fw.id === primaryFramework;
+                      const isChecked = enabledFrameworks.includes(fw.id);
+                      return (
+                        <label
+                          key={fw.id}
+                          className={`flex items-start gap-2.5 p-2 rounded-xl border text-xs cursor-pointer transition-all select-none ${
+                            isPrimary
+                              ? 'bg-brand-500/10 border-brand-500/40 text-brand-200'
+                              : isChecked
+                              ? 'bg-slate-800/80 border-slate-600 text-slate-200'
+                              : 'bg-slate-950/50 border-slate-800/80 text-slate-500 hover:border-slate-700'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={isPrimary}
+                            onChange={() => handleToggleFramework(fw.id)}
+                            className="mt-0.5 rounded border-slate-700 text-brand-500 focus:ring-0 focus:ring-offset-0 bg-slate-900 cursor-pointer disabled:cursor-not-allowed"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 font-semibold text-[11px] leading-tight">
+                              <span className="truncate">{fw.shortName}</span>
+                              {isPrimary && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-brand-500/30 text-brand-300 font-mono shrink-0">
+                                  PRIMARY
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {fw.authority}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 

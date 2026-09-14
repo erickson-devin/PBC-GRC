@@ -10,12 +10,13 @@ import {
   Users,
   Shield,
   Terminal,
+  FileCheck,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 
 export const Sidebar: React.FC = () => {
-  const { activeTab, setActiveTab, metrics, state } = useAssessment();
+  const { activeTab, setActiveTab, metrics, state, openExportModal } = useAssessment();
   const {
     currentTenant,
     canManageTenant,
@@ -94,6 +95,25 @@ export const Sidebar: React.FC = () => {
               );
             })}
           </nav>
+        </div>
+
+        {/* Compliance Documentation & Artifact Exporter */}
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase px-3 mb-1">
+            Compliance Documentation
+          </p>
+          <button
+            onClick={() => openExportModal()}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs text-indigo-300 hover:text-white hover:bg-indigo-950/40 border border-indigo-500/30 transition-all text-left shadow-sm group"
+          >
+            <div className="flex items-center gap-2.5">
+              <FileCheck className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
+              <span>Export Compliance Package</span>
+            </div>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              SSP / POA&M
+            </span>
+          </button>
         </div>
 
         {/* Enclave Administration & Hardening Baselines */}

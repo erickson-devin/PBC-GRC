@@ -9,6 +9,7 @@ import {
 } from '../types/cmmc';
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
 import { FrameworkControlDefinition } from '../types/framework';
+import { ReportDocumentType } from '../types/report';
 import { getFrameworkControls, getEquivalentControlIds } from '../data/frameworks';
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
@@ -49,6 +50,12 @@ interface AssessmentContextType {
   importAssessmentJSON: (file: File) => Promise<boolean>;
   exportAssessmentJSON: () => void;
   exportAssessmentMarkdown: () => void;
+
+  // Artifact & Compliance Export Center Modal
+  isExportModalOpen: boolean;
+  setIsExportModalOpen: (open: boolean) => void;
+  exportModalInitialDocType?: ReportDocumentType;
+  openExportModal: (initialDocType?: ReportDocumentType) => void;
 }
 
 const AssessmentContext = createContext<AssessmentContextType | undefined>(undefined);
@@ -85,6 +92,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<ControlStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [exportModalInitialDocType, setExportModalInitialDocType] = useState<ReportDocumentType | undefined>(undefined);
+
+  const openExportModal = useCallback((initialDocType?: ReportDocumentType) => {
+    setExportModalInitialDocType(initialDocType);
+    setIsExportModalOpen(true);
+  }, []);
 
   // When active tenant changes, dynamically reload that tenant's partitioned assessment
   useEffect(() => {
@@ -658,6 +672,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     importAssessmentJSON,
     exportAssessmentJSON,
     exportAssessmentMarkdown,
+
+    isExportModalOpen,
+    setIsExportModalOpen,
+    exportModalInitialDocType,
+    openExportModal,
   }), [
     state,
     metrics,
@@ -681,6 +700,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     importAssessmentJSON,
     exportAssessmentJSON,
     exportAssessmentMarkdown,
+    isExportModalOpen,
+    exportModalInitialDocType,
+    openExportModal,
   ]);
 
   return (

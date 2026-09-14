@@ -155,6 +155,8 @@ export const SEED_TENANTS: Tenant[] = [
     updatedAt: '2026-01-15T08:00:00.000Z',
     isDemo: true,
     isConfigured: true,
+    primaryFramework: 'CMMC_L1',
+    enabledFrameworks: ['CMMC_L1', 'CMMC_L2'],
   },
   {
     id: 'tenant-apex-02',
@@ -169,6 +171,8 @@ export const SEED_TENANTS: Tenant[] = [
     updatedAt: '2026-02-01T10:30:00.000Z',
     isDemo: true,
     isConfigured: true,
+    primaryFramework: 'CMMC_L2',
+    enabledFrameworks: ['CMMC_L2', 'NIST_800_53_REV5'],
   },
   {
     id: 'tenant-orbital-03',
@@ -183,6 +187,8 @@ export const SEED_TENANTS: Tenant[] = [
     updatedAt: '2026-02-20T14:15:00.000Z',
     isDemo: true,
     isConfigured: true,
+    primaryFramework: 'NIST_800_53_REV5',
+    enabledFrameworks: ['NIST_800_53_REV5', 'SOC_2_TYPE_II'],
   },
 ];
 
@@ -320,7 +326,7 @@ export const SEED_TEAM_MEMBERS: Record<string, TeamMember[]> = {
   ],
 };
 
-const DEFAULT_BLANK_TENANT: Tenant = {
+export const DEFAULT_BLANK_TENANT: Tenant = {
   id: 'tenant-live-default-01',
   name: 'Pitch Black Cyber LLC',
   cageCode: 'PENDING',
@@ -333,6 +339,8 @@ const DEFAULT_BLANK_TENANT: Tenant = {
   updatedAt: new Date().toISOString(),
   isDemo: false,
   isConfigured: false,
+  primaryFramework: 'CMMC_L1',
+  enabledFrameworks: ['CMMC_L1'],
 };
 
 // Check if current URL route is sandbox demo
@@ -383,6 +391,8 @@ interface TenantContextType {
     isDemo?: boolean;
     isConfigured?: boolean;
     licenseTier?: 'single-org' | 'msp-assessor';
+    enabledFrameworks?: ComplianceFramework[];
+    primaryFramework?: ComplianceFramework;
   }) => Tenant;
   provisionTenant: (data: {
     companyName: string;
@@ -390,7 +400,14 @@ interface TenantContextType {
     systemBoundaryName?: string;
     licenseTier: 'single-org' | 'msp-assessor';
     tenantOwnerEmail: string;
+    primaryFramework?: ComplianceFramework;
+    enabledFrameworks?: ComplianceFramework[];
   }) => Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }>;
+  updateTenantFrameworkScope: (
+    tenantId: string,
+    enabledFrameworks: ComplianceFramework[],
+    primaryFramework: ComplianceFramework
+  ) => void;
   claimInviteToken: (
     token: string,
     userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType }
@@ -479,8 +496,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (savedLive) {
         const parsed = JSON.parse(savedLive) as Tenant[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out any mock demo tenants that may have been saved
-          const clean = parsed.filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id));
+          const clean = parsed
+            .filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id))
+            .map(t => ({
+              ...t,
+              primaryFramework: t.primaryFramework || 'CMMC_L1',
+              enabledFrameworks: (t.enabledFrameworks && t.enabledFrameworks.length > 0) ? t.enabledFrameworks : [t.primaryFramework || 'CMMC_L1'],
+            }));
           if (clean.length > 0) {
             return deduplicateTenants(clean);
           }
@@ -492,7 +514,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (legacySaved) {
         const parsed = JSON.parse(legacySaved) as Tenant[];
         if (Array.isArray(parsed)) {
-          const nonDemo = parsed.filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id));
+          const nonDemo = parsed
+            .filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id))
+            .map(t => ({
+              ...t,
+              primaryFramework: t.primaryFramework || 'CMMC_L1',
+              enabledFrameworks: (t.enabledFrameworks && t.enabledFrameworks.length > 0) ? t.enabledFrameworks : [t.primaryFramework || 'CMMC_L1'],
+            }));
           const deduplicated = deduplicateTenants(nonDemo);
           if (deduplicated.length > 0) {
             return deduplicated;
@@ -518,7 +546,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (savedDemo) {
         const parsed = JSON.parse(savedDemo) as Tenant[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return deduplicateTenants(parsed);
+          const migrated = parsed.map(t => {
+            const seedMatch = SEED_TENANTS.find(st => st.id === t.id);
+            return {
+              ...t,
+              primaryFramework: t.primaryFramework || seedMatch?.primaryFramework || 'CMMC_L1',
+              enabledFrameworks: (t.enabledFrameworks && t.enabledFrameworks.length > 0)
+                ? t.enabledFrameworks
+                : (seedMatch?.enabledFrameworks || [t.primaryFramework || 'CMMC_L1']),
+            };
+          });
+          return deduplicateTenants(migrated);
         }
       }
     } catch {
@@ -723,6 +761,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {}
   }, []);
 
+  // When active tenant changes, dynamically synchronize active framework with the enclave's enabled framework scope
+  useEffect(() => {
+    const tenantEnabled: ComplianceFramework[] = currentTenant.enabledFrameworks && currentTenant.enabledFrameworks.length > 0
+      ? currentTenant.enabledFrameworks
+      : (currentTenant.primaryFramework ? [currentTenant.primaryFramework] : ['CMMC_L1']);
+    const tenantPrimary: ComplianceFramework = currentTenant.primaryFramework || tenantEnabled[0] || 'CMMC_L1';
+
+    if (!tenantEnabled.includes(activeFramework)) {
+      setActiveFramework(tenantPrimary);
+    }
+  }, [currentTenant.id, currentTenant.primaryFramework, currentTenant.enabledFrameworks, activeFramework, setActiveFramework]);
+
   const setActiveBaselineTier = useCallback((tier: BaselineTier) => {
     setActiveBaselineTierState(tier);
     try {
@@ -914,12 +964,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isDemo?: boolean;
     isConfigured?: boolean;
     licenseTier?: 'single-org' | 'msp-assessor';
+    enabledFrameworks?: ComplianceFramework[];
+    primaryFramework?: ComplianceFramework;
   }): Tenant => {
     const normName = normalizeOrgName(data.name);
 
     if (isSandboxMode) {
       const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
       const newTenantId = `tenant-demo-${slug}-${Date.now().toString(36).substring(2, 6)}`;
+      const primFw = data.primaryFramework || 'CMMC_L1';
+      const enFw = data.enabledFrameworks && data.enabledFrameworks.length > 0 ? data.enabledFrameworks : [primFw];
       const newDemoTenant: Tenant = {
         id: newTenantId,
         name: data.name.trim(),
@@ -932,12 +986,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isDemo: true,
         isConfigured: data.isConfigured ?? true,
         licenseTier: data.licenseTier,
+        primaryFramework: primFw,
+        enabledFrameworks: enFw,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
       setDemoTenants(prev => deduplicateTenants([...prev, newDemoTenant]));
       setDemoActiveTenantId(newTenantId);
+      setActiveFramework(primFw);
       return newDemoTenant;
     }
 
@@ -957,6 +1014,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         systemName: data.systemName.trim() || t.systemName,
         systemOwner: data.systemOwner.trim() || t.systemOwner,
         industry: data.industry || t.industry,
+        primaryFramework: data.primaryFramework || t.primaryFramework || 'CMMC_L1',
+        enabledFrameworks: data.enabledFrameworks || t.enabledFrameworks || ['CMMC_L1'],
         updatedAt: new Date().toISOString(),
       } : t)));
       setLiveActiveTenantId(existing.id);
@@ -965,6 +1024,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
     const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 6)}`;
+    const primFw = data.primaryFramework || 'CMMC_L1';
+    const enFw = data.enabledFrameworks && data.enabledFrameworks.length > 0 ? data.enabledFrameworks : [primFw];
     const newTenant: Tenant = {
       id: newTenantId,
       name: data.name.trim(),
@@ -977,6 +1038,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isDemo: false,
       isConfigured: data.isConfigured ?? true,
       licenseTier: data.licenseTier,
+      primaryFramework: primFw,
+      enabledFrameworks: enFw,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1135,6 +1198,24 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [isSandboxMode]);
 
+  const updateTenantFrameworkScope = useCallback((
+    tenantId: string,
+    enabledFrameworks: ComplianceFramework[],
+    primaryFramework: ComplianceFramework
+  ) => {
+    const validEnabled = enabledFrameworks.length > 0 ? enabledFrameworks : [primaryFramework];
+    const validPrimary = validEnabled.includes(primaryFramework) ? primaryFramework : validEnabled[0];
+
+    updateTenant(tenantId, {
+      enabledFrameworks: validEnabled,
+      primaryFramework: validPrimary,
+    });
+
+    if (currentTenant.id === tenantId) {
+      setActiveFramework(validPrimary);
+    }
+  }, [updateTenant, currentTenant.id, setActiveFramework]);
+
   const deleteTenant = useCallback((tenantId: string) => {
     const list = isSandboxMode ? demoTenants : liveTenants;
     if (list.length <= 1) {
@@ -1273,11 +1354,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     systemBoundaryName?: string;
     licenseTier: 'single-org' | 'msp-assessor';
     tenantOwnerEmail: string;
+    primaryFramework?: ComplianceFramework;
+    enabledFrameworks?: ComplianceFramework[];
   }): Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }> => {
     const normName = normalizeOrgName(data.companyName);
     const slug = (normName || data.companyName.toLowerCase().replace(/[^a-z0-9]/g, '-')).slice(0, 15);
     const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 6)}`;
     const emailDomain = data.tenantOwnerEmail.split('@')[1] || 'defense.us';
+    const primFw = data.primaryFramework || 'CMMC_L1';
+    const enFw = data.enabledFrameworks && data.enabledFrameworks.length > 0 ? data.enabledFrameworks : [primFw];
 
     const newTenant: Tenant = {
       id: newTenantId,
@@ -1291,6 +1376,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isDemo: false,
       isConfigured: false,
       licenseTier: data.licenseTier,
+      primaryFramework: primFw,
+      enabledFrameworks: enFw,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1682,6 +1769,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
+    updateTenantFrameworkScope,
     deleteTenant,
     switchUserRole,
     switchUser,
@@ -1736,6 +1824,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
+    updateTenantFrameworkScope,
     deleteTenant,
     switchUserRole,
     switchUser,

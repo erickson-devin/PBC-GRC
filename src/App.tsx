@@ -23,11 +23,12 @@ import { SuperAdminDashboard } from './components/admin/SuperAdminDashboard';
 import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 import { StigAutomationModal } from './components/stigs/StigAutomationModal';
+import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
 const AppContent: React.FC = () => {
-  const { activeTab } = useAssessment();
+  const { activeTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
   const { openLicenseModal } = useAuth();
   const {
     currentTenant,
@@ -325,6 +326,10 @@ const AppContent: React.FC = () => {
       <StigAutomationModal
         isOpen={isStigModalOpen}
         onClose={() => setIsStigModalOpen(false)}
+      />
+      <ArtifactExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
       />
     </>
   );

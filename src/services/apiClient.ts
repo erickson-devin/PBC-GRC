@@ -2,7 +2,7 @@ import { ControlState, EvidenceItem } from '../types/cmmc';
 import { ComplianceFramework, BaselineTier, OverlayParameter } from '../types/framework';
 
 const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.VITE_API_URL) || '';
 
 export interface UploadUrlResponse {
   message: string;

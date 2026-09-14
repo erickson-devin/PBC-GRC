@@ -12,7 +12,9 @@
     "test": "tsx tests/tenantIsolation.test.ts",
     "test:multi": "tsx tests/multiFramework.test.ts",
     "test:stig": "tsx tests/stigAutomation.test.ts",
-    "test:all": "tsx tests/tenantIsolation.test.ts && tsx tests/multiFramework.test.ts && tsx tests/stigAutomation.test.ts",
+    "test:artifacts": "tsx tests/artifactGenerator.test.ts",
+    "test:scope": "tsx tests/enclaveFrameworkScope.test.ts",
+    "test:all": "tsx tests/tenantIsolation.test.ts && tsx tests/multiFramework.test.ts && tsx tests/stigAutomation.test.ts && tsx tests/artifactGenerator.test.ts && tsx tests/enclaveFrameworkScope.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

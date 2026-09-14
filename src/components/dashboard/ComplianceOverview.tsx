@@ -16,7 +16,7 @@ import { useTenant } from '../../context/TenantContext';
 import { DomainCards } from './DomainCards';
 
 export const ComplianceOverview: React.FC = () => {
-  const { metrics, state, setActiveTab } = useAssessment();
+  const { metrics, state, setActiveTab, openExportModal } = useAssessment();
   const { currentTenant, canEdit } = useTenant();
 
   return (
@@ -106,7 +106,7 @@ export const ComplianceOverview: React.FC = () => {
           {/* Right Action Box */}
           <div className="flex flex-col sm:flex-row lg:flex-col gap-3 w-full sm:w-auto lg:w-64 shrink-0">
             <button
-              onClick={() => setActiveTab('ssp')}
+              onClick={() => openExportModal()}
               className="btn-primary w-full py-3 text-sm shadow-lg shadow-cyan-500/25"
             >
               <FileText className="w-4 h-4" />

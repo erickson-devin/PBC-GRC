@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Lock,
   Globe,
+  FileCheck,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -31,6 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
     exportAssessmentJSON,
     importAssessmentJSON,
     setActiveTab,
+    openExportModal,
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework } = useTenant();
@@ -135,7 +137,18 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
               </button>
             )}
 
-            {/* Export Menu */}
+            {/* Export Audit Package / Compliance Artifacts */}
+            <button
+              onClick={() => openExportModal()}
+              title="Open Compliance Documentation & Artifact Export Center (SSP, POA&M, System Description)"
+              className="px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white shadow-md shadow-brand-600/25 flex items-center gap-1.5 transition-all"
+            >
+              <FileCheck className="w-3.5 h-3.5 text-brand-200" />
+              <span className="hidden sm:inline">Export Audit Package</span>
+              <span className="sm:hidden">Export</span>
+            </button>
+
+            {/* Quick Export JSON Backup */}
             <button
               onClick={exportAssessmentJSON}
               title="Backup current tenant assessment to JSON"

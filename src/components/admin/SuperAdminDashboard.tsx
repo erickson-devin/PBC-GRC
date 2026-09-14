@@ -342,6 +342,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <th className="py-3 px-4">Organization & Boundary</th>
                   <th className="py-3 px-4">CAGE / SAM</th>
                   <th className="py-3 px-4">License Tier</th>
+                  <th className="py-3 px-4">Framework Scope</th>
                   <th className="py-3 px-4">System Owner</th>
                   <th className="py-3 px-4">Seats</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -350,6 +351,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               <tbody className="divide-y divide-slate-800/80 font-sans">
                 {filteredTenants.map(t => {
                   const members = teamMembers[t.id] || [];
+                  const activeFrameworks = t.enabledFrameworks && t.enabledFrameworks.length > 0
+                    ? t.enabledFrameworks
+                    : [t.primaryFramework || 'CMMC_L1'];
                   return (
                     <tr
                       key={t.id}
@@ -387,6 +391,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                             DEMO
                           </span>
                         )}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                              {t.primaryFramework || 'CMMC_L1'}
+                            </span>
+                            <span className="text-[9px] font-mono text-slate-400">PRIMARY</span>
+                          </div>
+                          {activeFrameworks.length > 1 && (
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {activeFrameworks.filter(f => f !== (t.primaryFramework || 'CMMC_L1')).map(fw => (
+                                <span key={fw} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80">
+                                  {fw}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="text-slate-200 text-xs font-medium truncate max-w-xs">{t.systemOwner || 'Unassigned'}</div>

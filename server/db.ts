@@ -341,9 +341,14 @@ export async function initDb(): Promise<void> {
           system_name VARCHAR(255) NOT NULL,
           system_owner VARCHAR(255) NOT NULL,
           industry VARCHAR(128) DEFAULT 'Defense Industrial Base (DIB)',
+          enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}',
+          primary_framework VARCHAR(64) DEFAULT 'CMMC_L1',
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}';
+      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS primary_framework VARCHAR(64) DEFAULT 'CMMC_L1';
 
       CREATE TABLE IF NOT EXISTS control_assessments (
           id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,

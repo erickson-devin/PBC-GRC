@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS tenants (
     system_name VARCHAR(255) NOT NULL,
     system_owner VARCHAR(255) NOT NULL,
     industry VARCHAR(128) DEFAULT 'Defense Industrial Base (DIB)',
+    enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}',
+    primary_framework VARCHAR(64) DEFAULT 'CMMC_L1',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -1,3 +1,5 @@
+import { ComplianceFramework } from './framework';
+
 export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
 
 export type SamStatus = 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'NOT_REGISTERED';
@@ -19,6 +21,8 @@ export interface Tenant {
   isConfigured?: boolean; // false if setup wizard / initial onboarding is needed
   systemBoundaryScope?: string;
   licenseTier?: 'single-org' | 'msp-assessor';
+  enabledFrameworks?: ComplianceFramework[]; // Enclave-scoped enabled frameworks e.g. ['CMMC_L1', 'CMMC_L2']
+  primaryFramework?: ComplianceFramework;   // Default framework to render for this enclave
 }
 
 export interface User {
