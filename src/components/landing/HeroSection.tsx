@@ -10,6 +10,7 @@ import {
   Fingerprint,
   ChevronRight
 } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
 
 interface HeroSectionProps {
   onExploreSandbox: () => void;
@@ -37,11 +38,16 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
         {/* Central Hero Stack */}
         <div className="max-w-4xl mx-auto text-center space-y-6">
           
+          {/* Brand Logo Emblem */}
+          <div className="flex justify-center mb-2">
+            <BrandLogo size="lg" showText={false} />
+          </div>
+
           {/* Eyebrow Pill */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 shadow-lg shadow-black/40 backdrop-blur-md">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
             <span className="text-xs font-semibold text-slate-200 tracking-wide">
-              DoD CMMC 2.0 • Defense Industrial Base Readiness
+              Event Horizon: Singularity • DoD CMMC 2.0 & Defense GRC
             </span>
             <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
           </div>
@@ -131,7 +137,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <div className="w-3 h-3 rounded-full bg-amber-500/80" />
                   <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
                   <span className="ml-2 text-xs font-mono text-slate-400">
-                    pbc-grc://enclave/vanguard-defense-01/assessment
+                    event-horizon://singularity/vanguard-defense-01/assessment
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -140,7 +146,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                     SPRS: 17/17 MET (100%)
                   </span>
                   <span className="hidden sm:inline-block text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
-                    gs://pbc-grc-evidence-prod
+                    gs://singularity-evidence-prod
                   </span>
                 </div>
               </div>

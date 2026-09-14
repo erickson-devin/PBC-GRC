@@ -16,8 +16,9 @@ import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
 import { ApiClient } from '../services/apiClient';
 import { useTenant } from './TenantContext';
+import { recordAuditEvent } from '../data/audit/auditLogger';
 
-export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance';
+export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance' | 'audit';
 
 interface AssessmentContextType {
   state: AssessmentState;
@@ -249,6 +250,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
 
+      // Asynchronously append to immutable audit ledger
+      recordAuditEvent({
+        tenantId: currentTenant.id,
+        actorId: currentUser.id,
+        actorEmail: currentUser.email,
+        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+        actionType: 'CONTROL_STATUS_UPDATED',
+        targetEntity: controlId,
+        previousState: current.status,
+        newState: status,
+      }).catch(err => console.warn('Audit record failed:', err));
+
       // Check if this action achieved 100% SPRS readiness
       const metAfter = Object.entries(updated.controls).filter(
         ([id, c]) => id !== controlId ? c.status === 'MET' : status === 'MET'
@@ -260,7 +273,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       return updated;
     });
-  }, [canEdit, currentTenant.id, currentUser.name, triggerSprsCelebration]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration]);
 
   // Action: Update Control Notes with RBAC Check
   const updateControlNotes = useCallback((controlId: string, notes: string) => {
@@ -285,6 +298,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         tags: [],
       };
 
+      // Record audit event for narrative change
+      recordAuditEvent({
+        tenantId: currentTenant.id,
+        actorId: currentUser.id,
+        actorEmail: currentUser.email,
+        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+        actionType: 'CONTROL_NOTES_UPDATED',
+        targetEntity: controlId,
+        previousState: current.implementationNotes ? `${current.implementationNotes.substring(0, 60)}...` : '',
+        newState: notes ? `${notes.substring(0, 60)}...` : '',
+      }).catch(err => console.warn('Audit record failed:', err));
+
       return {
         ...prev,
         controls: {
@@ -298,7 +323,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.name]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, isSandboxMode, currentTenant.isDemo, updateLiveControl]);
 
   // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
@@ -315,6 +340,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         tags: [],
       };
 
+      recordAuditEvent({
+        tenantId: currentTenant.id,
+        actorId: currentUser.id,
+        actorEmail: currentUser.email,
+        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+        actionType: 'CONTROL_ROLE_UPDATED',
+        targetEntity: controlId,
+        previousState: current.responsibleRole,
+        newState: role,
+      }).catch(err => console.warn('Audit record failed:', err));
+
       return {
         ...prev,
         controls: {
@@ -328,7 +364,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.name]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name]);
 
   // Action: Apply Starter Template
   const applyStarterTemplate = useCallback((controlId: string, narrative: string) => {
@@ -348,6 +384,16 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         tags: [],
       };
 
+      recordAuditEvent({
+        tenantId: currentTenant.id,
+        actorId: currentUser.id,
+        actorEmail: currentUser.email,
+        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+        actionType: 'TEMPLATE_APPLIED',
+        targetEntity: controlId,
+        newState: { status: 'IN_PROGRESS', templateLength: narrative.length },
+      }).catch(err => console.warn('Audit record failed:', err));
+
       return {
         ...prev,
         controls: {
@@ -362,7 +408,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.name]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name]);
 
   // Action: Bulk Apply STIG Policy Narratives across mapped controls
   const bulkApplyStigNarratives = useCallback((narratives: Record<string, string>): number => {
@@ -551,8 +597,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       evidenceIndex: [newItem, ...inheritedItems, ...prev.evidenceIndex],
     }));
 
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'EVIDENCE_UPLOADED',
+      targetEntity: file.name,
+      newState: { controlId, sha256: fileHash, sizeBytes: file.size },
+    }).catch(err => console.warn('Audit record failed:', err));
+
     return newItem;
-  }, [canEdit, currentTenant.id, currentTenant.isDemo, currentUser.name, isSandboxMode, createLiveEvidenceUploadUrl]);
+  }, [canEdit, currentTenant.id, currentTenant.isDemo, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, isSandboxMode, createLiveEvidenceUploadUrl]);
 
   // Action: Remove Evidence
   const removeEvidence = useCallback(async (evidenceId: string) => {
@@ -563,11 +619,20 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     await EvidenceVault.deleteFile(currentTenant.id, evidenceId);
 
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'EVIDENCE_DELETED',
+      targetEntity: evidenceId,
+    }).catch(err => console.warn('Audit record failed:', err));
+
     setState(prev => ({
       ...prev,
       evidenceIndex: prev.evidenceIndex.filter(e => e.id !== evidenceId),
     }));
-  }, [canEdit, currentTenant.id]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles]);
 
   // Action: Load 100% Demo Scenario
   const loadDemoScenario = useCallback(() => {
@@ -587,9 +652,19 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
     await EvidenceVault.clearTenant(currentTenant.id);
+
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'ASSESSMENT_RESET',
+      targetEntity: `Tenant Enclave (${currentTenant.name})`,
+    }).catch(err => console.warn('Audit record failed:', err));
+
     const blank = createInitialState(currentTenant);
     setState(blank);
-  }, [canEdit, currentTenant]);
+  }, [canEdit, currentTenant, currentUser.id, currentUser.email, currentUser.roles]);
 
   // Action: Import Assessment JSON
   const importAssessmentJSON = useCallback(async (file: File): Promise<boolean> => {

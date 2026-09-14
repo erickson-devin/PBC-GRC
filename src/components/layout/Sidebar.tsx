@@ -9,11 +9,13 @@ import {
   Building,
   Users,
   Shield,
+  ShieldCheck,
   Terminal,
   FileCheck,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { BrandLogo } from '../common/BrandLogo';
 
 export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, metrics, state, openExportModal } = useAssessment();
@@ -54,6 +56,13 @@ export const Sidebar: React.FC = () => {
       badgeColor: 'bg-slate-700 text-slate-300',
     },
     {
+      id: 'audit',
+      label: 'Audit Trail (Immutable)',
+      icon: ShieldCheck,
+      badge: 'NIST 3.3',
+      badgeColor: 'bg-cyan-500/20 text-cyan-300',
+    },
+    {
       id: 'guidance',
       label: 'CMMC & FAR Guidance',
       icon: BookOpen,
@@ -63,6 +72,22 @@ export const Sidebar: React.FC = () => {
   return (
     <aside className="no-print w-full md:w-64 bg-slate-900/60 border-r border-slate-800 flex flex-col justify-between p-4 shrink-0">
       <div className="space-y-6">
+        {/* Top Branding Block */}
+        <div 
+          onClick={() => setActiveTab('dashboard')}
+          className="px-2 py-1.5 cursor-pointer group flex items-center gap-3 border-b border-slate-800/80 pb-4"
+        >
+          <BrandLogo size="md" />
+          <div className="min-w-0">
+            <h2 className="text-xs font-black tracking-tight text-white group-hover:text-cyan-400 transition-colors truncate">
+              Event Horizon: Singularity
+            </h2>
+            <p className="text-[10px] font-mono text-cyan-400/90 tracking-wider uppercase mt-0.5 truncate">
+              Pitch Black Cyber // Singularity GRC
+            </p>
+          </div>
+        </div>
+
         {/* Navigation Items */}
         <div>
           <p className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase px-3 mb-2">

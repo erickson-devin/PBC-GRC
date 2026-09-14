@@ -13,16 +13,17 @@ import {
   Lock,
   Search,
   CheckCircle2,
-  AlertTriangle,
   ArrowRight,
   Sparkles,
   Globe,
   Clock,
   ArrowUpRight,
   Award,
+  ArrowLeft,
 } from 'lucide-react';
-import { useTenant, buildInviteUrl, SUPER_ADMIN_PRESET_USER } from '../../context/TenantContext';
+import { useTenant, buildInviteUrl } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
+import { BrandLogo } from '../common/BrandLogo';
 import { getLicenseTierPrice, normalizeLicenseTier } from '../../types/tenant';
 import { NewTenantModal } from './NewTenantModal';
 import { FinanceProvisioningLog } from './FinanceProvisioningLog';
@@ -44,12 +45,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     currentUser,
     isSuperAdmin,
     switchTenant,
-    switchUser,
     revokeInvitation,
     resendInvitation,
   } = useTenant();
 
-  const { logout } = useAuth();
+  const { logout, openAuthModal } = useAuth();
 
   // Modals & UI state
   const [isNewTenantModalOpen, setIsNewTenantModalOpen] = useState(false);
@@ -58,10 +58,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [copiedEnclaveId, setCopiedEnclaveId] = useState<string | null>(null);
 
-  // Operator bypass for local evaluation/testing if user is not yet logged in as devin
-  const [developerOverride, setDeveloperOverride] = useState(false);
-
-  const hasAccess = isSuperAdmin || developerOverride;
+  const hasAccess = isSuperAdmin;
 
   const handleCopy = async (text: string, id: string, type: 'token' | 'enclave') => {
     try {
@@ -90,69 +87,51 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
 
   // -------------------------------------------------------------------------
-  // 1. ROUTE GUARD: Unauthorized Screen
+  // 1. ROUTE GUARD: Unauthorized Screen (Discrete 403 High-Security Gate)
   // -------------------------------------------------------------------------
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6 font-sans">
-        <div className="w-full max-w-lg p-1.5 rounded-[2.5rem] bg-gradient-to-b from-rose-500/30 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl animate-scaleUp">
-          <div className="p-6 sm:p-8 rounded-[calc(2.5rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-center space-y-5">
+        <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-slate-800/40 via-slate-900/30 to-slate-950 ring-1 ring-slate-800 shadow-2xl animate-scaleUp">
+          <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-center space-y-6">
             
-            <div className="w-14 h-14 mx-auto rounded-3xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-xl shadow-rose-500/10">
-              <Lock className="w-7 h-7" />
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shadow-lg shadow-rose-500/5">
+              <Lock className="w-6 h-6" />
             </div>
 
-            <div>
-              <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-3 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                RESTRICTED CLEARANCE AREA
+            <div className="space-y-2">
+              <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-3 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-800">
+                ACCESS RESTRICTED
               </span>
-              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-2.5">
-                Super Admin Clearance Required
+              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight pt-1">
+                403 - Administrative Access Required
               </h1>
-              <p className="text-xs text-slate-400 mt-2 leading-relaxed max-w-md mx-auto">
-                The Tenant Provisioning Engine is strictly restricted to authorized Pitch Black Cyber administrative personnel. Access attempts are logged in compliance with DoD FAR 52.204-21 audit requirements.
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-sm mx-auto">
+                This portal is restricted to authorized platform administrators.
               </p>
             </div>
 
-            {/* Current Session Summary */}
-            <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-left text-xs space-y-1.5">
-              <div className="flex items-center justify-between text-slate-400">
-                <span>Active Session:</span>
-                <span className="font-mono text-white font-semibold">{currentUser.email || 'Unauthenticated'}</span>
-              </div>
-              <div className="flex items-center justify-between text-slate-400">
-                <span>Clearance Status:</span>
-                <span className="font-bold text-rose-400 flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Insufficient Privileges
-                </span>
-              </div>
-            </div>
+            <div className="pt-2 space-y-3">
+              <button
+                onClick={() => openAuthModal('signin')}
+                className="w-full btn-primary text-xs py-3 flex items-center justify-center gap-2 font-bold shadow-lg shadow-brand-500/20"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Sign In as Administrator</span>
+              </button>
 
-            {/* Switch to Super Admin Persona / Elevate */}
-            <div className="pt-2 space-y-2.5">
               <button
                 onClick={() => {
-                  switchUser(SUPER_ADMIN_PRESET_USER);
-                  setDeveloperOverride(true);
+                  if (onNavigateToApp) {
+                    onNavigateToApp();
+                  } else if (typeof window !== 'undefined') {
+                    window.location.hash = 'app';
+                  }
                 }}
-                className="w-full btn-primary text-xs py-3"
+                className="w-full btn-secondary text-xs py-2.5 flex items-center justify-center gap-2 font-semibold text-slate-300 hover:text-white"
               >
-                <Shield className="w-4 h-4 text-cyan-200" />
-                <span>Log In as Super Admin (devin@pitchblackcyber.com)</span>
-              </button>
-
-              <button
-                onClick={() => setDeveloperOverride(true)}
-                className="w-full btn-secondary text-xs py-2.5"
-              >
-                Bypass Guard for Local Evaluation
-              </button>
-
-              <button
-                onClick={onNavigateToLanding}
-                className="w-full py-2 px-4 text-xs font-semibold text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                Return to Public Portal
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Return to Dashboard</span>
               </button>
             </div>
 
@@ -191,12 +170,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 via-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-brand-500/25">
-              <Shield className="w-5 h-5" />
-            </div>
+            <BrandLogo size="md" />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-base text-white tracking-tight">PBC-GRC</span>
+                <span className="font-extrabold text-base text-white tracking-tight">Event Horizon: Singularity</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wider">
                   SUPER ADMIN CONSOLE
                 </span>

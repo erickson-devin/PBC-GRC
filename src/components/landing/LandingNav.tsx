@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ArrowRight, Lock, Menu, X, Sparkles, Cloud } from 'lucide-react';
+import { ArrowRight, Lock, Menu, X, Sparkles, Cloud } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 
@@ -46,18 +47,16 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
           className="flex items-center gap-3 cursor-pointer group"
         >
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-brand-500 via-brand-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-brand-500/25 ring-1 ring-white/20 group-hover:scale-105 transition-transform duration-300">
-            <ShieldCheck className="w-5 h-5 text-white" />
-          </div>
+          <BrandLogo size="md" />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-lg tracking-tight text-white">PBC-GRC</span>
-              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-300 border border-brand-500/30">
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">Event Horizon: Singularity</span>
+              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
                 Defense Enclave
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-medium tracking-wide">
-              Pitch Black Cyber • CMMC 2.0 L1
+              Pitch Black Cyber // Singularity GRC
             </p>
           </div>
         </div>

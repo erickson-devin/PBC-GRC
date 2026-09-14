@@ -1,5 +1,6 @@
 import React from 'react';
-import { ShieldCheck, Mail, ExternalLink, Lock, ArrowUp } from 'lucide-react';
+import { Mail, ExternalLink, Lock, ArrowUp } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
 
 interface LandingFooterProps {
   onEnterApp: () => void;
@@ -21,13 +22,11 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
           {/* Col 1: Brand & Bio */}
           <div className="space-y-4 md:col-span-1">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-md">
-                <ShieldCheck className="w-4 h-4 text-white" />
-              </div>
-              <span className="font-extrabold text-base text-white tracking-tight">PBC-GRC</span>
+              <BrandLogo size="sm" />
+              <span className="font-extrabold text-sm sm:text-base text-white tracking-tight">Event Horizon: Singularity</span>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              DoD-grade CMMC 2.0 Level 1 compliance enclave and automated System Security Plan (SSP) engine by Pitch Black Cyber.
+              Central Governance & Compliance Engine by Pitch Black Cyber. DoD-grade CMMC 2.0 Level 1 compliance enclave and automated System Security Plan (SSP) engine.
             </p>
             <div className="flex items-center gap-2 text-slate-300">
               <Mail className="w-3.5 h-3.5 text-brand-400" />

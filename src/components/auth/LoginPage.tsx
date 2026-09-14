@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
 import {
-  ShieldCheck,
   Lock,
   ArrowLeft,
 } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { PRESET_USERS } from '../../context/TenantContext';
 
@@ -78,12 +78,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           onClick={onExitToLanding}
           className="flex items-center gap-2.5 cursor-pointer group"
         >
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-md shadow-brand-500/20 group-hover:scale-105 transition-transform">
-            <ShieldCheck className="w-4 h-4 text-white" />
-          </div>
+          <BrandLogo size="sm" />
           <div>
-            <span className="font-extrabold text-sm text-white tracking-tight">PBC-GRC</span>
-            <span className="text-[10px] text-slate-400 block font-medium">Pitch Black Cyber</span>
+            <span className="font-extrabold text-sm text-white tracking-tight">Event Horizon: Singularity</span>
+            <span className="text-[10px] text-cyan-400 block font-mono">Pitch Black Cyber</span>
           </div>
         </div>
 
@@ -105,15 +103,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             
             {/* Badge & Title */}
             <div className="text-center space-y-2 mb-6">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/30 text-[10px] font-bold uppercase tracking-widest text-brand-300">
-                <Lock className="w-3 h-3 text-brand-400" />
+              <div className="flex justify-center mb-2">
+                <BrandLogo size="lg" showText={false} />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-[10px] font-bold uppercase tracking-widest text-cyan-300">
+                <Lock className="w-3 h-3 text-cyan-400" />
                 CMMC 2.0 Level 1 Enclave
               </div>
               <h2 className="text-2xl font-black text-white tracking-tight">
                 Enterprise Sign In
               </h2>
               <p className="text-xs text-slate-400">
-                Google Cloud Identity Platform & Microsoft Entra ID
+                Event Horizon: Singularity • Google Cloud Identity & Microsoft Entra ID
               </p>
             </div>
 

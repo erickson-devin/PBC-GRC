@@ -1,6 +1,5 @@
 import React, { useRef } from 'react';
 import {
-  ShieldCheck,
   AlertTriangle,
   Download,
   Upload,
@@ -11,6 +10,7 @@ import {
   Globe,
   FileCheck,
 } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { TenantSwitcher } from './TenantSwitcher';
@@ -67,12 +67,10 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
             onClick={() => setActiveTab('dashboard')}
             className="flex items-center gap-2.5 cursor-pointer group"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-brand-500/20 group-hover:scale-105 transition-transform">
-              <ShieldCheck className="w-5 h-5 text-white" />
-            </div>
+            <BrandLogo size="sm" />
             <div>
               <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-base text-white tracking-tight">PBC-GRC</span>
+                <span className="font-extrabold text-sm sm:text-base text-white tracking-tight">Event Horizon: Singularity</span>
                 <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full border ${
                   isSandboxMode
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
@@ -82,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
                 </span>
               </div>
               <p className="text-[10px] text-slate-400 font-medium">
-                GCP-Native • {frameworkControls.length} Controls
+                Pitch Black Cyber • {frameworkControls.length} Controls
               </p>
             </div>
           </div>

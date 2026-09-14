@@ -1,0 +1,272 @@
+/**
+ * Event Horizon: Singularity - Ticket 1.4 Automated Test Suite
+ * CMMC & DoD Compliance Safeguards:
+ * 1. Cryptographically Verifiable Audit Trail (SHA-256 Hash Chaining & Tamper Detection)
+ * 2. Automated SPRS & eMASS Submission Export Engine
+ * 3. DFARS 252.204-7012 Data Retention & Cryptographic Data Sanitization (NIST SP 800-88 Rev 1)
+ */
+
+import {
+  recordAuditEvent,
+  verifyAuditChain,
+  getAuditLogs,
+  exportAuditPackageJson,
+  saveLedger,
+  GENESIS_HASH,
+} from '../src/data/audit/auditLogger';
+import {
+  calculateSprsScore,
+  getSprsPointDeduction,
+  generateEmassControlMatrixCsv,
+  generateSprsAssessmentSummary,
+} from '../src/data/reports/sprsCompiler';
+import {
+  generateGcsLifecyclePolicy,
+  calculateObjectRetentionHeaders,
+  purgeTenantData,
+  MIN_RETENTION_DAYS,
+} from '../src/data/storage/retentionPolicy';
+import { CMMC_LEVEL_2_CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls';
+import { ControlState } from '../src/types/cmmc';
+import { ReportMetadata } from '../src/types/report';
+
+let passCount = 0;
+let failCount = 0;
+
+function assert(condition: boolean, testName: string, detail?: string) {
+  if (condition) {
+    console.log(`  ✓ PASS: ${testName}`);
+    passCount++;
+  } else {
+    console.error(`  ✗ FAIL: ${testName}${detail ? ` (${detail})` : ''}`);
+    failCount++;
+  }
+}
+
+async function runTestSuite() {
+  console.log('\n================================================================');
+  console.log('🛡️  EVENT HORIZON: SINGULARITY - TICKET 1.4 TEST SUITE');
+  console.log('   CMMC & DoD Compliance Safeguards');
+  console.log('================================================================\n');
+
+  // ==========================================================================
+  // SECTION 1: CRYPTOGRAPHIC AUDIT LEDGER & HASH CHAINING
+  // ==========================================================================
+  console.log('--- Test Group 1: Immutable SHA-256 Chained Audit Ledger ---');
+  const testTenant = 'test-tenant-safeguards-01';
+  saveLedger(testTenant, []); // Reset ledger
+
+  // 1.1 First block links to GENESIS_HASH
+  const entry1 = await recordAuditEvent({
+    tenantId: testTenant,
+    actorEmail: 'ciso@defense-prime.com',
+    actorRole: 'Tenant Owner',
+    actionType: 'CONTROL_STATUS_UPDATED',
+    targetEntity: 'AC.L1-3.1.1',
+    previousState: 'NOT_STARTED',
+    newState: 'MET',
+  });
+
+  assert(entry1.sequenceNumber === 1, 'First block sequence number is 1');
+  assert(entry1.previousHash === GENESIS_HASH, 'First block previousHash equals GENESIS_HASH');
+  assert(entry1.sha256Hash.length === 64, 'First block has 64-character SHA-256 digest');
+
+  // 1.2 Second block points to First Block
+  const entry2 = await recordAuditEvent({
+    tenantId: testTenant,
+    actorEmail: 'ciso@defense-prime.com',
+    actorRole: 'Tenant Owner',
+    actionType: 'EVIDENCE_UPLOADED',
+    targetEntity: 'AC.1.001_mfa_proof.pdf',
+    newState: { sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' },
+  });
+
+  assert(entry2.sequenceNumber === 2, 'Second block sequence number is 2');
+  assert(entry2.previousHash === entry1.sha256Hash, 'Second block previousHash equals entry1.sha256Hash');
+
+  // 1.3 Third block points to Second Block
+  const entry3 = await recordAuditEvent({
+    tenantId: testTenant,
+    actorEmail: 'auditor@thirdparty-c3pao.org',
+    actorRole: 'Lead Assessor',
+    actionType: 'DOCUMENT_GENERATED',
+    targetEntity: 'NIST_SP_800_18_SSP',
+    newState: { version: '1.0.0' },
+  });
+
+  assert(entry3.sequenceNumber === 3, 'Third block sequence number is 3');
+  assert(entry3.previousHash === entry2.sha256Hash, 'Third block previousHash equals entry2.sha256Hash');
+
+  // 1.4 Traversal Verification on Pristine Chain
+  const entries = getAuditLogs(testTenant);
+  assert(entries.length === 3, 'Ledger contains exactly 3 entries');
+
+  const verifyResult = await verifyAuditChain(entries);
+  assert(verifyResult.isValid === true, 'Untampered chain traverses successfully (isValid = true)');
+  assert(verifyResult.totalEntries === 3, 'Verified total entries is 3');
+  assert(verifyResult.rootHash === entry1.sha256Hash, 'Root hash matches block 1 digest');
+  assert(verifyResult.headHash === entry3.sha256Hash, 'Head hash matches block 3 digest');
+
+  // 1.5 Tamper Detection: Mutating Payload in Entry 2
+  const tamperedEntries = JSON.parse(JSON.stringify(entries));
+  tamperedEntries[1].newState = { sha256: 'MALICIOUS_TAMPERED_HASH_CONTENT' };
+
+  const tamperResult = await verifyAuditChain(tamperedEntries);
+  assert(tamperResult.isValid === false, 'Tampered chain fails cryptographic verification (isValid = false)');
+  assert(tamperResult.brokenIndex === 1, 'Tamper detector correctly identifies broken block at index 1');
+
+  // 1.6 Tamper Detection: Mutating Linkage Pointer
+  const pointerTamperedEntries = JSON.parse(JSON.stringify(entries));
+  pointerTamperedEntries[2].previousHash = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const pointerResult = await verifyAuditChain(pointerTamperedEntries);
+  assert(pointerResult.isValid === false, 'Pointer linkage mutation fails verification');
+  assert(pointerResult.brokenIndex === 2, 'Pointer violation detected at index 2');
+
+  // 1.7 JSON Export Certified Bundle
+  const exportJson = await exportAuditPackageJson(testTenant, 'Vanguard Defense');
+  assert(exportJson.includes('Event Horizon: Singularity'), 'Export JSON includes platform name');
+  assert(exportJson.includes('"isValid": true'), 'Export JSON includes verified chain proof');
+
+  // ==========================================================================
+  // SECTION 2: AUTOMATED SPRS & eMASS EXPORT ENGINE
+  // ==========================================================================
+  console.log('\n--- Test Group 2: DoD SPRS Score & eMASS Submission Generator ---');
+
+  // 2.1 SPRS Point Deduction Weights
+  assert(getSprsPointDeduction('AC.L1-3.1.1') === 5, 'AC.L1-3.1.1 carries 5-point deduction');
+  assert(getSprsPointDeduction('3.1.1') === 5, 'Normalized 3.1.1 carries 5-point deduction');
+  assert(getSprsPointDeduction('AC.L2-3.1.5') === 3, 'AC.L2-3.1.5 carries 3-point deduction');
+  assert(getSprsPointDeduction('AC.L2-3.1.3') === 1, 'AC.L2-3.1.3 carries 1-point deduction');
+
+  // 2.2 Perfect SPRS Score Evaluation (110 Points)
+  const perfectControlStates: Record<string, ControlState> = {};
+  for (const c of CMMC_LEVEL_2_CONTROLS) {
+    perfectControlStates[c.id] = {
+      id: c.id,
+      tenantId: testTenant,
+      status: 'MET',
+      implementationNotes: 'Enforced via automated Azure Entra ID / GCP Zero Trust policies.',
+      responsibleRole: 'CISO',
+      lastUpdated: '2026-09-14',
+      tags: [],
+    };
+  }
+
+  const perfectScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, perfectControlStates);
+  assert(perfectScore.score === 110, 'Full compliance yields maximum 110 SPRS score');
+  assert(perfectScore.totalDeductions === 0, 'Zero deductions on fully compliant assessment');
+  assert(perfectScore.metCount === 110, 'All 110 controls met');
+  assert(perfectScore.completionPercentage === 100, '100% completion percentage');
+
+  // 2.3 Single Critical Deficiency (-5 points)
+  const fivePointDeficientStates: Record<string, ControlState> = { ...perfectControlStates };
+  fivePointDeficientStates['AC.L1-3.1.1'] = {
+    ...fivePointDeficientStates['AC.L1-3.1.1'],
+    status: 'NOT_MET',
+  };
+
+  const fivePointScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, fivePointDeficientStates);
+  assert(fivePointScore.score === 105, '110 - 5 = 105 SPRS score for unmet 3.1.1');
+  assert(fivePointScore.totalDeductions === 5, 'Total deductions is 5');
+  assert(fivePointScore.deductionsByWeight.fivePoint.includes('AC.L1-3.1.1'), 'AC.L1-3.1.1 in 5-point list');
+
+  // 2.4 Multiple Deficiencies (-5 + -3 + -1 = -9 points)
+  const multiDeficientStates: Record<string, ControlState> = { ...fivePointDeficientStates };
+  multiDeficientStates['AC.L2-3.1.5'] = { ...multiDeficientStates['AC.L2-3.1.5'], status: 'IN_PROGRESS' }; // -3
+  multiDeficientStates['AC.L2-3.1.3'] = { ...multiDeficientStates['AC.L2-3.1.3'], status: 'NOT_MET' };     // -1
+
+  const multiScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, multiDeficientStates);
+  assert(multiScore.score === 101, '110 - (5+3+1) = 101 SPRS score');
+  assert(multiScore.totalDeductions === 9, 'Total deductions is 9');
+
+  // 2.5 eMASS Control Matrix CSV Generator
+  const sampleMeta: ReportMetadata = {
+    systemName: 'Vanguard Tactical Enclave',
+    organizationName: 'Vanguard Defense Solutions',
+    cageCode: '9X7B4',
+    samStatus: 'ACTIVE',
+    systemOwner: 'Devin Erickson',
+    primaryAssessor: 'Lead Assessor Chen',
+    boundaryDescription: 'Hybrid cloud enclave boundary',
+    systemEnvironment: 'GCC High & GCS',
+    operationalStatus: 'Operational',
+    cloudServiceProviders: 'Google Cloud, Microsoft 365',
+    classificationLevel: 'UNCLASSIFIED // CUI',
+    assessmentDate: '2026-09-14',
+    version: '1.0.0',
+    framework: 'CMMC_L2',
+  };
+
+  const emassCsv = generateEmassControlMatrixCsv(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, sampleMeta);
+  assert(emassCsv.includes('"System ID / Name","CAGE Code","Control ID"'), 'eMASS CSV contains expected headers');
+  assert(emassCsv.includes('"9X7B4"'), 'eMASS CSV contains tenant CAGE code');
+  assert(emassCsv.includes('"Implemented"'), 'eMASS CSV tracks implemented controls');
+  assert(emassCsv.includes('"Planned / In Progress"'), 'eMASS CSV tracks in-progress controls');
+
+  // 2.6 Official SPRS Assessment Summary
+  const sprsSummary = generateSprsAssessmentSummary(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, sampleMeta);
+  assert(sprsSummary.sprsSubmissionHeader.platform.includes('Event Horizon: Singularity'), 'SPRS summary includes platform name');
+  assert(sprsSummary.sprsMetrics.activeSprsScore === 101, 'SPRS summary records active score 101');
+  assert(sprsSummary.organizationProfile.cageCode === '9X7B4', 'SPRS summary records CAGE code');
+
+  // ==========================================================================
+  // SECTION 3: DFARS 252.204-7012 DATA RETENTION & CRYPTOGRAPHIC WIPE
+  // ==========================================================================
+  console.log('\n--- Test Group 3: DFARS 252.204-7012 Retention & Cryptographic Sanitization ---');
+
+  // 3.1 Minimum Retention Policy
+  assert(MIN_RETENTION_DAYS === 1095, 'Minimum audit retention is 1095 days (3 years)');
+
+  const gcsPolicy = generateGcsLifecyclePolicy('gs://singularity-evidence-prod');
+  assert(gcsPolicy.isLocked === true, 'GCS lifecycle policy is locked');
+  assert(gcsPolicy.retentionPeriodDays === 1095, 'Retention period is 1095 days');
+  assert(gcsPolicy.lifecycleRules.some(r => r.action.storageClass === 'COLDLINE'), 'Policy transitions to Coldline');
+  assert(gcsPolicy.lifecycleRules.some(r => r.action.storageClass === 'ARCHIVE'), 'Policy transitions to Archive');
+
+  // 3.2 Object Retention Headers
+  const retentionHeaders = calculateObjectRetentionHeaders('2026-09-14T00:00:00.000Z', 1095);
+  assert(retentionHeaders.retentionMode === 'COMPLIANCE', 'Retention mode is COMPLIANCE');
+  assert(retentionHeaders.retainUntilDate.startsWith('2029-'), 'RetainUntilDate is 3 years in the future (2029)');
+  assert(retentionHeaders.customMetadata['x-goog-compliance-standard'] === 'DFARS-252.204-7012', 'Header includes DFARS-252.204-7012 metadata');
+
+  // 3.3 Cryptographic Tenant Data Wipe & Certificate of Destruction
+  const destructionCert = await purgeTenantData({
+    tenantId: testTenant,
+    systemName: 'Vanguard Tactical Enclave',
+    cageCode: '9X7B4',
+    actorName: 'Alex Mercer',
+    actorEmail: 'alex.mercer@vanguard-defense.us',
+  });
+
+  assert(destructionCert.certificateId.startsWith('CERT-DEST-'), 'Certificate ID has CERT-DEST- prefix');
+  assert(destructionCert.sanitizationMethod.includes('Cryptographic Erase'), 'Method is Cryptographic Erase');
+  assert(destructionCert.complianceStandard === 'DFARS 252.204-7012', 'Standard is DFARS 252.204-7012');
+  assert(destructionCert.certificateSha256.length === 64, 'Certificate includes 64-char SHA-256 signature');
+
+  // 3.4 Verification that destruction was recorded in audit ledger
+  const postWipeLogs = getAuditLogs(testTenant);
+  const wipeEntry = postWipeLogs.find(l => l.actionType === 'CRYPTOGRAPHIC_WIPE_PERFORMED');
+  assert(wipeEntry !== undefined, 'Destruction event recorded in immutable audit ledger');
+  assert(wipeEntry?.metadata?.certificateId === destructionCert.certificateId, 'Audit entry references certificate ID');
+
+  // Verify full chain remains cryptographically valid after wipe entry
+  const postWipeVerification = await verifyAuditChain(postWipeLogs);
+  assert(postWipeVerification.isValid === true, 'Audit chain remains 100% cryptographically valid with wipe block appended');
+
+  // ==========================================================================
+  // SUMMARY
+  // ==========================================================================
+  console.log('\n================================================================');
+  console.log(`📊 TEST RESULTS: ${passCount} / ${passCount + failCount} TESTS PASSED (${Math.round((passCount / (passCount + failCount)) * 100)}%)`);
+  console.log('================================================================\n');
+
+  if (failCount > 0) {
+    process.exit(1);
+  }
+}
+
+runTestSuite().catch(err => {
+  console.error('Fatal test runner error:', err);
+  process.exit(1);
+});

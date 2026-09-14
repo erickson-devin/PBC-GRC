@@ -15,6 +15,7 @@ import {
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
 import { AuthProviderType, getLicenseTierBadge } from '../types/tenant';
+import { BrandLogo } from '../components/common/BrandLogo';
 
 interface AcceptInvitePageProps {
   onSuccessNavigate?: () => void;
@@ -233,18 +234,16 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       {/* Top Header */}
       <header className="px-6 py-4 flex items-center justify-between border-b border-slate-900 bg-slate-950/70 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-brand-500/20">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
+          <BrandLogo size="sm" />
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-base text-white tracking-tight">PBC-GRC</span>
-              <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
+              <span className="font-extrabold text-base text-white tracking-tight">Event Horizon: Singularity</span>
+              <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                 ENCLAVE ONBOARDING
               </span>
             </div>
             <p className="text-[10px] text-slate-400 font-medium">
-              DoD Defense Industrial Base • Level 1 Readiness
+              Pitch Black Cyber • DoD Defense Industrial Base Readiness
             </p>
           </div>
         </div>

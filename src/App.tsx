@@ -24,6 +24,7 @@ import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
+import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
@@ -250,6 +251,7 @@ const AppContent: React.FC = () => {
               {activeTab === 'controls' && <ControlsList />}
               {activeTab === 'ssp' && <SSPBuilder />}
               {activeTab === 'vault' && <EvidenceVaultView />}
+              {activeTab === 'audit' && <AuditTrailViewer />}
               {activeTab === 'guidance' && <AssessmentGuidanceView />}
             </main>
           </div>
@@ -278,6 +280,7 @@ const AppContent: React.FC = () => {
                 {activeTab === 'controls' && <ControlsList />}
                 {activeTab === 'ssp' && <SSPBuilder />}
                 {activeTab === 'vault' && <EvidenceVaultView />}
+                {activeTab === 'audit' && <AuditTrailViewer />}
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
               </main>
             </div>

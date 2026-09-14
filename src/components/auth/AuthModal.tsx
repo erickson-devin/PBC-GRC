@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  ShieldCheck,
   Lock,
   Mail,
   Key,
@@ -11,6 +10,7 @@ import {
   CheckCircle2,
   UserCheck,
 } from 'lucide-react';
+import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { PRESET_USERS } from '../../context/TenantContext';
 
@@ -101,20 +101,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
           {/* Header */}
           <div className="text-center space-y-2 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 via-brand-600 to-indigo-700 flex items-center justify-center mx-auto shadow-lg shadow-brand-500/25 ring-1 ring-white/20">
-              <ShieldCheck className="w-6 h-6 text-white" />
+            <div className="flex justify-center mb-2">
+              <BrandLogo size="lg" showText={false} />
             </div>
             
-            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/30 text-[10px] font-bold uppercase tracking-widest text-brand-300">
-              <Lock className="w-3 h-3 text-brand-400" />
-              DoD CMMC 2.0 Enclave Gateway
+            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-[10px] font-bold uppercase tracking-widest text-cyan-300">
+              <Lock className="w-3 h-3 text-cyan-400" />
+              Event Horizon: Singularity Enclave
             </div>
 
             <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">
               Sign In to Defense Enclave
             </h3>
             <p className="text-xs text-slate-400">
-              Access your organization's isolated CMMC Level 1 compliance portal.
+              Event Horizon: Singularity • Central Governance & Compliance Engine
             </p>
           </div>
 
