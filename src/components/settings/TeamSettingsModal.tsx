@@ -188,12 +188,15 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     onClose();
   };
 
+  if (!isOpen) return null;
+
   return (
     <>
       <div
         onClick={handleModalClose}
         className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
       >
+
         {/* Double-Bezel Card Container */}
         <div
           onClick={e => e.stopPropagation()}
