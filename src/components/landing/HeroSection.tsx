@@ -1,12 +1,12 @@
 import React from 'react';
-import { 
-  ShieldCheck, 
-  ArrowRight, 
-  FileText, 
-  CheckCircle2, 
-  Lock, 
-  Database, 
-  Sparkles, 
+import {
+  ShieldCheck,
+  ArrowRight,
+  FileText,
+  CheckCircle2,
+  Lock,
+  Database,
+  Sparkles,
   Fingerprint,
   ChevronRight
 } from 'lucide-react';
@@ -25,7 +25,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 }) => {
   return (
     <section className="relative pt-32 pb-20 md:pt-40 md:pb-28 overflow-hidden">
-      
+
       {/* Ambient background glow and grid mesh */}
       <div className="absolute inset-0 pointer-events-none -z-10">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[450px] bg-brand-500/10 rounded-full blur-[140px]" />
@@ -34,10 +34,10 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
+
         {/* Central Hero Stack */}
         <div className="max-w-4xl mx-auto text-center space-y-6">
-          
+
           {/* Brand Logo Emblem */}
           <div className="flex justify-center mb-2">
             <BrandLogo size="lg" showText={false} />
@@ -67,7 +67,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 
           {/* Primary Action Buttons */}
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-4">
-            
+
             {/* Primary Sandbox CTA */}
             <button
               onClick={onExploreSandbox}
@@ -117,7 +117,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             </span>
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800">
               <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-              CMMC Level 1 Ready
+              CMMC 2.0 Ready
             </span>
           </div>
 
@@ -129,7 +129,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           <div className="p-2 sm:p-3 rounded-[2rem] bg-gradient-to-b from-slate-700/40 via-slate-800/20 to-slate-900/40 ring-1 ring-white/10 shadow-2xl shadow-black/80 backdrop-blur-2xl">
             {/* Inner Core */}
             <div className="rounded-[calc(2rem-0.75rem)] bg-slate-950/95 border border-slate-800/80 overflow-hidden shadow-inner">
-              
+
               {/* Window Bar */}
               <div className="px-4 py-3 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -153,7 +153,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 
               {/* Showcase Grid Preview */}
               <div className="p-5 sm:p-7 grid grid-cols-1 md:grid-cols-3 gap-5">
-                
+
                 {/* Panel 1: Live Status Gauge */}
                 <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-3">
                   <div className="flex items-center justify-between">

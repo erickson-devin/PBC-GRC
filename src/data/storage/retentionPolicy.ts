@@ -207,6 +207,7 @@ export async function purgeTenantData(params: {
  * Downloads the signed Certificate of Destruction as a certified JSON artifact.
  */
 export function downloadCertificateOfDestruction(certificate: CertificateOfDestruction): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const blob = new Blob([JSON.stringify(certificate, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -426,6 +426,7 @@ interface TenantContextType {
   ) => Promise<{ invitation: TenantInvitation; inviteUrl: string }>;
   revokeInvitation: (invitationId: string) => void;
   resendInvitation: (invitationId: string) => Promise<{ inviteUrl: string }>;
+  updateInvitation: (invitationId: string, updates: Partial<TenantInvitation>) => void;
   updateMemberRole: (tenantId: string, memberId: string, newRole: TenantRole) => void;
   removeMember: (tenantId: string, memberId: string) => void;
   getTenantMembers: (tenantId: string) => TeamMember[];
@@ -441,6 +442,9 @@ interface TenantContextType {
     systemBoundaryScope?: string;
   }) => void;
   updateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
+  suspendTenant: (tenantId: string, suspend?: boolean) => void;
+  updateTenantOwner: (tenantId: string, newOwnerEmail: string, newOwnerName?: string) => void;
+  extendInvitationExpiration: (invitationId: string, days?: number) => Promise<{ expiresAt: string }>;
   deleteTenant: (tenantId: string) => void;
   switchUserRole: (role: TenantRole) => void;
   switchUser: (user: User) => void;
@@ -1225,20 +1229,115 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [updateTenant, currentTenant.id, setActiveFramework]);
 
-  const deleteTenant = useCallback((tenantId: string) => {
-    const list = isSandboxMode ? demoTenants : liveTenants;
-    if (list.length <= 1) {
-      alert('Cannot delete the only remaining organization in this enclave.');
-      return;
+  const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
+    const updateFn = (prev: Tenant[]) =>
+      prev.map(t => {
+        if (t.id === tenantId) {
+          const nextSuspended = suspend !== undefined ? suspend : !t.isSuspended;
+          return {
+            ...t,
+            isSuspended: nextSuspended,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return t;
+      });
+
+    if (isSandboxMode) {
+      setDemoTenants(updateFn);
+    } else {
+      setLiveTenants(updateFn);
     }
+  }, [isSandboxMode]);
+
+  const updateTenantOwner = useCallback((tenantId: string, newOwnerEmail: string, newOwnerName?: string) => {
+    const cleanEmail = newOwnerEmail.trim().toLowerCase();
+    const cleanName = newOwnerName?.trim() || cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+    // 1. Update tenant systemOwner
+    updateTenant(tenantId, {
+      systemOwner: `${cleanName} (${cleanEmail})`,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // 2. Reassign team member roles for this tenant
+    setTeamMembers(prev => {
+      const list = prev[tenantId] || [];
+      const updated = list.map(m => {
+        if (m.role === 'TENANT_OWNER' && m.email.toLowerCase() !== cleanEmail) {
+          return { ...m, role: 'ASSESSOR' as TenantRole };
+        }
+        if (m.email.toLowerCase() === cleanEmail) {
+          return { ...m, name: cleanName, role: 'TENANT_OWNER' as TenantRole, status: 'ACTIVE' as const };
+        }
+        return m;
+      });
+
+      if (!updated.some(m => m.email.toLowerCase() === cleanEmail)) {
+        updated.unshift({
+          id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          tenantId,
+          email: cleanEmail,
+          name: cleanName,
+          role: 'TENANT_OWNER',
+          status: 'ACTIVE',
+          joinedAt: new Date().toISOString(),
+        });
+      }
+
+      return {
+        ...prev,
+        [tenantId]: updated,
+      };
+    });
+
+    // 3. Update current user role if active user is this new owner
+    if (currentUser.email.toLowerCase() === cleanEmail) {
+      setCurrentUser(prev => ({
+        ...prev,
+        roles: {
+          ...prev.roles,
+          [tenantId]: 'TENANT_OWNER',
+        },
+      }));
+    }
+  }, [updateTenant, currentUser.email]);
+
+  const deleteTenant = useCallback((tenantId: string) => {
+    // 1. Clean up invitations associated with this tenant
+    setInvitations(prev => prev.filter(inv => inv.tenantId !== tenantId));
+
+    // 2. Clean up team members
+    setTeamMembers(prev => {
+      const next = { ...prev };
+      delete next[tenantId];
+      return next;
+    });
+
+    // 3. Clean up tenant localStorage data
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.removeItem(`pbc_cmmc_assessment_v3_${tenantId}`);
+        window.localStorage.removeItem(`pbc_assessment_${tenantId}`);
+        window.localStorage.removeItem(`pbc_audit_ledger_${tenantId}`);
+      } catch {}
+    }
+
+    // 4. Remove tenant from live or demo list
     if (isSandboxMode) {
       const filtered = demoTenants.filter(t => t.id !== tenantId);
-      setDemoTenants(filtered);
-      if (demoActiveTenantId === tenantId) setDemoActiveTenantId(filtered[0].id);
+      const nextDemo = filtered.length > 0 ? filtered : SEED_TENANTS;
+      setDemoTenants(nextDemo);
+      if (demoActiveTenantId === tenantId) {
+        setDemoActiveTenantId(nextDemo[0].id);
+      }
     } else {
       const filtered = liveTenants.filter(t => t.id !== tenantId);
-      setLiveTenants(filtered);
-      if (liveActiveTenantId === tenantId) setLiveActiveTenantId(filtered[0].id);
+      const nextLive = filtered.length > 0 ? filtered : [DEFAULT_BLANK_TENANT];
+      setLiveTenants(nextLive);
+      if (liveActiveTenantId === tenantId) {
+        setLiveActiveTenantId(nextLive[0].id);
+      }
     }
   }, [isSandboxMode, demoTenants, demoActiveTenantId, liveTenants, liveActiveTenantId]);
 
@@ -1672,6 +1771,108 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   /**
+   * Extend invitation expiration by specified number of days (default 7 days)
+   */
+  const extendInvitationExpiration = useCallback(async (invitationId: string, days: number = 7): Promise<{ expiresAt: string }> => {
+    let newExpiresAt = '';
+    setInvitations(prev =>
+      prev.map(inv => {
+        if (inv.id === invitationId) {
+          const currentExp = new Date(inv.expiresAt).getTime();
+          const baseTime = currentExp > Date.now() ? currentExp : Date.now();
+          newExpiresAt = new Date(baseTime + days * 24 * 60 * 60 * 1000).toISOString();
+          return {
+            ...inv,
+            status: 'PENDING' as const,
+            expiresAt: newExpiresAt,
+          };
+        }
+        return inv;
+      })
+    );
+    return { expiresAt: newExpiresAt };
+  }, []);
+
+  /**
+   * Update details of an existing pending or active invitation
+   */
+  const updateInvitation = useCallback((invitationId: string, updates: Partial<TenantInvitation>) => {
+    let targetToken = '';
+    let oldTenantId = '';
+    let newTenantId = '';
+
+    setInvitations(prev =>
+      prev.map(inv => {
+        if (inv.id === invitationId) {
+          targetToken = inv.token;
+          oldTenantId = inv.tenantId;
+          newTenantId = updates.tenantId || oldTenantId;
+
+          const updated: TenantInvitation = {
+            ...inv,
+            ...updates,
+          };
+
+          if (updates.tenantId && updates.tenantId !== inv.tenantId) {
+            const targetTenant =
+              liveTenants.find(t => t.id === updates.tenantId) ||
+              demoTenants.find(t => t.id === updates.tenantId);
+            if (targetTenant) {
+              updated.tenantName = targetTenant.name;
+              updated.systemName = targetTenant.systemName;
+              updated.cageCode = targetTenant.cageCode;
+              updated.licenseTier = targetTenant.licenseTier;
+            }
+          }
+
+          return updated;
+        }
+        return inv;
+      })
+    );
+
+    // Synchronize team member entry if present
+    if (targetToken) {
+      setTeamMembers(prev => {
+        const destTenantId = newTenantId || oldTenantId;
+        if (destTenantId !== oldTenantId) {
+          const oldList = (prev[oldTenantId] || []).filter(m => m.invitationToken !== targetToken);
+          const movingMember = (prev[oldTenantId] || []).find(m => m.invitationToken === targetToken);
+          const newList = [...(prev[destTenantId] || [])];
+          if (movingMember) {
+            newList.push({
+              ...movingMember,
+              tenantId: destTenantId,
+              email: (updates.email || movingMember.email).trim().toLowerCase(),
+              role: updates.role || movingMember.role,
+            });
+          }
+          return {
+            ...prev,
+            [oldTenantId]: oldList,
+            [destTenantId]: newList,
+          };
+        } else {
+          const currentList = prev[oldTenantId] || [];
+          return {
+            ...prev,
+            [oldTenantId]: currentList.map(m => {
+              if (m.invitationToken === targetToken) {
+                return {
+                  ...m,
+                  email: (updates.email || m.email).trim().toLowerCase(),
+                  role: updates.role || m.role,
+                };
+              }
+              return m;
+            }),
+          };
+        }
+      });
+    }
+  }, [liveTenants, demoTenants]);
+
+  /**
    * Update role for an active team member
    */
   const updateMemberRole = useCallback((tenantId: string, memberId: string, newRole: TenantRole) => {
@@ -1771,6 +1972,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     inviteStaffMember,
     revokeInvitation,
     resendInvitation,
+    extendInvitationExpiration,
+    updateInvitation,
     updateMemberRole,
     removeMember,
     getTenantMembers,
@@ -1778,6 +1981,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
+    suspendTenant,
+    updateTenantOwner,
     updateTenantFrameworkScope,
     deleteTenant,
     switchUserRole,
@@ -1826,6 +2031,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     inviteStaffMember,
     revokeInvitation,
     resendInvitation,
+    extendInvitationExpiration,
+    updateInvitation,
     updateMemberRole,
     removeMember,
     getTenantMembers,
@@ -1833,6 +2040,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
+    suspendTenant,
+    updateTenantOwner,
     updateTenantFrameworkScope,
     deleteTenant,
     switchUserRole,

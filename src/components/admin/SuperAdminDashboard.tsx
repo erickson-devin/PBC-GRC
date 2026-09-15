@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Shield,
   Building2,
@@ -20,19 +21,75 @@ import {
   ArrowUpRight,
   Award,
   ArrowLeft,
+  MoreVertical,
+  Edit3,
+  Download,
+  PauseCircle,
+  PlayCircle,
+  AlertTriangle,
+  CalendarPlus,
+  Flame,
+  FileCheck2,
+  X,
+  UserPlus,
+  ShieldCheck,
+  BadgeCheck,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
-import { getLicenseTierPrice, normalizeLicenseTier } from '../../types/tenant';
+import { getLicenseTierPrice, normalizeLicenseTier, Tenant, TenantInvitation } from '../../types/tenant';
 import { NewTenantModal } from './NewTenantModal';
+import { EditEnclaveModal } from './EditEnclaveModal';
+import { EditInvitationModal } from './EditInvitationModal';
 import { FinanceProvisioningLog } from './FinanceProvisioningLog';
+import {
+  generateEnclaveHandoverPackage,
+  executeCryptographicDestruction,
+} from '../../data/storage/offboardingEngine';
+import { CertificateOfDestruction } from '../../types/audit';
 
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
   onNavigateToLanding?: () => void;
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
+
+export interface PlatformAdminUser {
+  id: string;
+  name: string;
+  email: string;
+  roleTitle: string;
+  clearanceLevel: 'ROOT_APPLICATION_OWNER' | 'PLATFORM_SUPER_ADMIN' | 'SYSTEM_OPERATOR';
+  permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS';
+  enclaveScope: 'ALL_ENCLAVES';
+  grantedAt: string;
+  isRootOwner?: boolean;
+}
+
+const DEFAULT_PLATFORM_ADMINS: PlatformAdminUser[] = [
+  {
+    id: 'admin-root-01',
+    name: 'Devin (Pitch Black Cyber)',
+    email: 'devin@pitchblackcyber.com',
+    roleTitle: 'Root Application Owner / Platform Super Admin',
+    clearanceLevel: 'ROOT_APPLICATION_OWNER',
+    permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS',
+    enclaveScope: 'ALL_ENCLAVES',
+    grantedAt: '2026-01-01T00:00:00.000Z',
+    isRootOwner: true,
+  },
+  {
+    id: 'admin-ops-02',
+    name: 'Defense Cyber Operations Command',
+    email: 'admin@pitchblackcyber.com',
+    roleTitle: 'Platform Security Operator',
+    clearanceLevel: 'PLATFORM_SUPER_ADMIN',
+    permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS',
+    enclaveScope: 'ALL_ENCLAVES',
+    grantedAt: '2026-01-15T08:00:00.000Z',
+  },
+];
 
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   onNavigateToApp,
@@ -45,18 +102,106 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     currentUser,
     isSuperAdmin,
     switchTenant,
+    suspendTenant,
+    deleteTenant,
     revokeInvitation,
     resendInvitation,
+    extendInvitationExpiration,
   } = useTenant();
 
   const { logout, openAuthModal } = useAuth();
 
   // Modals & UI state
   const [isNewTenantModalOpen, setIsNewTenantModalOpen] = useState(false);
+  const [selectedTenantForEdit, setSelectedTenantForEdit] = useState<Tenant | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Invitation editing state
+  const [selectedInvitationForEdit, setSelectedInvitationForEdit] = useState<TenantInvitation | null>(null);
+  const [isEditInvitationModalOpen, setIsEditInvitationModalOpen] = useState(false);
+
+  // Platform Admins state
+  const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminUser[]>(() => {
+    try {
+      const saved = localStorage.getItem('pbc_platform_admins_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return DEFAULT_PLATFORM_ADMINS;
+  });
+
+  const [isAddAdminModalOpen, setIsAddAdminModalOpen] = useState(false);
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminRole, setNewAdminRole] = useState('Platform Super Admin');
+
+  // Destruction state
+  const [selectedTenantForDestruction, setSelectedTenantForDestruction] = useState<Tenant | null>(null);
+  const [isDestructionModalOpen, setIsDestructionModalOpen] = useState(false);
+  const [destructionConfirmInput, setDestructionConfirmInput] = useState('');
+  const [isDestroying, setIsDestroying] = useState(false);
+  const [destructionCertificate, setDestructionCertificate] = useState<CertificateOfDestruction | null>(null);
+
+  // Search & Filter state
   const [tenantSearch, setTenantSearch] = useState('');
   const [inviteSearch, setInviteSearch] = useState('');
+  const [enclaveStatusFilter, setEnclaveStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED'>('ALL');
+
+  // Copy & Action dropdown state
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [copiedEnclaveId, setCopiedEnclaveId] = useState<string | null>(null);
+  const [exportingTenantId, setExportingTenantId] = useState<string | null>(null);
+  const [notificationToast, setNotificationToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+
+  // Floating Context Menu state (Fixed Position Portal)
+  const [floatingMenu, setFloatingMenu] = useState<{
+    tenant: Tenant;
+    top: number;
+    right: number;
+  } | null>(null);
+
+  const floatingMenuRef = useRef<HTMLDivElement>(null);
+
+  // Sync platform admins to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('pbc_platform_admins_v2', JSON.stringify(platformAdmins));
+    } catch {}
+  }, [platformAdmins]);
+
+  // Dismiss floating menu on click outside or window scroll
+  useEffect(() => {
+    const handleDismiss = (event: MouseEvent) => {
+      if (floatingMenuRef.current && !floatingMenuRef.current.contains(event.target as Node)) {
+        setFloatingMenu(null);
+      }
+    };
+    const handleScrollOrResize = () => {
+      setFloatingMenu(null);
+    };
+
+    document.addEventListener('mousedown', handleDismiss);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+
+    return () => {
+      document.removeEventListener('mousedown', handleDismiss);
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, []);
+
+  // Auto-dismiss notification toast
+  useEffect(() => {
+    if (notificationToast) {
+      const timer = setTimeout(() => setNotificationToast(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [notificationToast]);
 
   const hasAccess = isSuperAdmin;
 
@@ -84,7 +229,152 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     }
   };
 
+  // Open Context Menu Popover with Fixed Portal Positioning
+  const handleOpenActionMenu = (e: React.MouseEvent<HTMLButtonElement>, tenant: Tenant) => {
+    e.stopPropagation();
+    if (floatingMenu?.tenant.id === tenant.id) {
+      setFloatingMenu(null);
+      return;
+    }
 
+    const rect = e.currentTarget.getBoundingClientRect();
+    const menuHeight = 230;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < menuHeight ? rect.top - menuHeight - 6 : rect.bottom + 6;
+    const right = Math.max(16, window.innerWidth - rect.right);
+
+    setFloatingMenu({
+      tenant,
+      top,
+      right,
+    });
+  };
+
+  // Enclave Handover Package Export
+  const handleExportOffboarding = async (tenant: Tenant) => {
+    setExportingTenantId(tenant.id);
+    setFloatingMenu(null);
+    try {
+      await generateEnclaveHandoverPackage(tenant.id, tenant);
+      setNotificationToast({
+        type: 'success',
+        message: `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,
+      });
+    } catch (err: any) {
+      console.error('Failed to export offboarding package:', err);
+      setNotificationToast({
+        type: 'error',
+        message: `Failed to export offboarding package: ${err.message || 'Unknown error'}`,
+      });
+    } finally {
+      setExportingTenantId(null);
+    }
+  };
+
+  // Toggle Enclave Suspension
+  const handleToggleSuspension = (tenant: Tenant) => {
+    setFloatingMenu(null);
+    const nextSuspended = !tenant.isSuspended;
+    suspendTenant(tenant.id, nextSuspended);
+    setNotificationToast({
+      type: 'info',
+      message: nextSuspended
+        ? `Enclave "${tenant.name}" is now SUSPENDED. User access is frozen.`
+        : `Enclave "${tenant.name}" has been REACTIVATED. Full operational access restored.`,
+    });
+  };
+
+  // Open Edit Modal
+  const handleOpenEditModal = (tenant: Tenant) => {
+    setSelectedTenantForEdit(tenant);
+    setIsEditModalOpen(true);
+    setFloatingMenu(null);
+  };
+
+  // Open Edit Invitation Modal
+  const handleOpenEditInvitationModal = (invitation: TenantInvitation) => {
+    setSelectedInvitationForEdit(invitation);
+    setIsEditInvitationModalOpen(true);
+  };
+
+  // Open Destruction Confirmation Modal
+  const handleOpenDestructionModal = (tenant: Tenant) => {
+    setSelectedTenantForDestruction(tenant);
+    setDestructionConfirmInput('');
+    setDestructionCertificate(null);
+    setIsDestructionModalOpen(true);
+    setFloatingMenu(null);
+  };
+
+  // Execute Cryptographic Destruction
+  const handleExecuteDestruction = async () => {
+    if (!selectedTenantForDestruction) return;
+
+    setIsDestroying(true);
+    try {
+      const cert = await executeCryptographicDestruction({
+        tenantId: selectedTenantForDestruction.id,
+        systemName: selectedTenantForDestruction.systemName,
+        cageCode: selectedTenantForDestruction.cageCode,
+        actorName: currentUser.name || 'Pitch Black Cyber Super Admin',
+        actorEmail: currentUser.email || 'devin@pitchblackcyber.com',
+      });
+
+      deleteTenant(selectedTenantForDestruction.id);
+
+      setDestructionCertificate(cert);
+      setNotificationToast({
+        type: 'success',
+        message: `Enclave "${selectedTenantForDestruction.name}" cryptographically destroyed. Certificate ${cert.certificateId} downloaded.`,
+      });
+    } catch (err: any) {
+      console.error('Cryptographic destruction failed:', err);
+      setNotificationToast({
+        type: 'error',
+        message: `Destruction protocol failed: ${err.message || 'Unknown error'}`,
+      });
+    } finally {
+      setIsDestroying(false);
+    }
+  };
+
+  // Add New Platform Admin
+  const handleAddPlatformAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminName.trim() || !newAdminEmail.trim()) return;
+
+    const newAdmin: PlatformAdminUser = {
+      id: `admin-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: newAdminName.trim(),
+      email: newAdminEmail.trim().toLowerCase(),
+      roleTitle: newAdminRole.trim() || 'Platform Super Admin',
+      clearanceLevel: 'PLATFORM_SUPER_ADMIN',
+      permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS',
+      enclaveScope: 'ALL_ENCLAVES',
+      grantedAt: new Date().toISOString(),
+    };
+
+    setPlatformAdmins(prev => [...prev, newAdmin]);
+    setNewAdminName('');
+    setNewAdminEmail('');
+    setNewAdminRole('Platform Super Admin');
+    setIsAddAdminModalOpen(false);
+
+    setNotificationToast({
+      type: 'success',
+      message: `Super Admin clearance granted to ${newAdmin.name} (${newAdmin.email}).`,
+    });
+  };
+
+  const handleRevokePlatformAdmin = (adminId: string, email: string) => {
+    if (confirm(`Revoke platform administrator clearance for ${email}?`)) {
+      setPlatformAdmins(prev => prev.filter(a => a.id !== adminId));
+      setNotificationToast({
+        type: 'info',
+        message: `Platform administrator clearance revoked for ${email}.`,
+      });
+    }
+  };
 
   // -------------------------------------------------------------------------
   // 1. ROUTE GUARD: Unauthorized Screen (Discrete 403 High-Security Gate)
@@ -144,11 +434,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   // -------------------------------------------------------------------------
   // 2. AUTHORIZED SUPER ADMIN CONSOLE
   // -------------------------------------------------------------------------
-  const filteredTenants = tenants.filter(t =>
-    t.name.toLowerCase().includes(tenantSearch.toLowerCase()) ||
-    t.cageCode.toLowerCase().includes(tenantSearch.toLowerCase()) ||
-    t.id.toLowerCase().includes(tenantSearch.toLowerCase())
-  );
+  const filteredTenants = tenants
+    .filter(t => {
+      if (enclaveStatusFilter === 'ACTIVE') return !t.isSuspended;
+      if (enclaveStatusFilter === 'SUSPENDED') return Boolean(t.isSuspended);
+      return true;
+    })
+    .filter(t =>
+      t.name.toLowerCase().includes(tenantSearch.toLowerCase()) ||
+      t.cageCode.toLowerCase().includes(tenantSearch.toLowerCase()) ||
+      t.id.toLowerCase().includes(tenantSearch.toLowerCase())
+    );
 
   const filteredInvitations = invitations.filter(i =>
     i.email.toLowerCase().includes(inviteSearch.toLowerCase()) ||
@@ -157,14 +453,54 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   );
 
   const pendingInvitesCount = invitations.filter(i => i.status === 'PENDING').length;
+  const activeEnclavesCount = tenants.filter(t => !t.isSuspended).length;
+  const suspendedEnclavesCount = tenants.filter(t => t.isSuspended).length;
   const foundationalCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'FOUNDATIONAL').length;
   const defenseProCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'DEFENSE_PRO').length;
   const enterpriseCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'ENTERPRISE').length;
   const totalArr = tenants.reduce((acc, t) => acc + getLicenseTierPrice(t.licenseTier), 0);
 
+  const destructionExpectedChallenge = selectedTenantForDestruction
+    ? (selectedTenantForDestruction.cageCode && selectedTenantForDestruction.cageCode !== 'PENDING'
+        ? selectedTenantForDestruction.cageCode
+        : selectedTenantForDestruction.name)
+    : '';
+
+  const isDestructionConfirmed = Boolean(
+    destructionConfirmInput.trim().toUpperCase() === destructionExpectedChallenge.trim().toUpperCase()
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500 selection:text-white">
       
+      {/* Toast Notification Banner */}
+      {notificationToast && (
+        <div className="fixed top-16 right-6 z-50 animate-fadeIn">
+          <div className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-3 text-xs font-semibold backdrop-blur-md ${
+            notificationToast.type === 'success'
+              ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
+              : notificationToast.type === 'error'
+              ? 'bg-rose-950/90 border-rose-500/40 text-rose-200'
+              : 'bg-cyan-950/90 border-cyan-500/40 text-cyan-200'
+          }`}>
+            {notificationToast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            ) : notificationToast.type === 'error' ? (
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-cyan-400" />
+            )}
+            <span>{notificationToast.message}</span>
+            <button
+              onClick={() => setNotificationToast(null)}
+              className="ml-2 text-slate-400 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Super Admin Navigation Bar */}
       <header className="bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-4 sm:px-8 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
@@ -235,14 +571,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               Tenant Provisioning & Enclave Management
             </h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
-              Initialize cryptographic defense enclaves, generate onboarding tokens, and manage client subscriptions.
+              Initialize cryptographic defense enclaves, configure boundaries, export compliance offboarding bundles, and execute NIST SP 800-88 sanitized deletion.
             </p>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={() => setIsNewTenantModalOpen(true)}
-              className="btn-primary text-xs px-5 py-2.5"
+              className="btn-primary text-xs px-5 py-2.5 shadow-lg shadow-cyan-500/20"
             >
               <Plus className="w-4 h-4" />
               <span>Provision New Tenant</span>
@@ -256,8 +592,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
               <Building2 className="w-3.5 h-3.5 text-cyan-400" /> Total Enclaves
             </span>
-            <p className="text-3xl font-black text-white font-mono mt-1">{tenants.length}</p>
-            <p className="text-[11px] text-slate-500">Live & sandbox organizations</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-3xl font-black text-white font-mono">{tenants.length}</span>
+              <span className="text-[11px] text-emerald-400 font-mono font-semibold">
+                ({activeEnclavesCount} active{suspendedEnclavesCount > 0 ? `, ${suspendedEnclavesCount} suspended` : ''})
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500">Live & sandbox boundaries</p>
           </div>
 
           <div className="stitch-card p-5 space-y-1">
@@ -300,19 +641,56 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 <span>Isolated Defense Enclaves ({filteredTenants.length})</span>
               </h2>
               <p className="text-xs text-slate-400">
-                DoD contractor environments with dedicated assessment matrix and SSP records
+                DoD contractor environments with dedicated assessment matrix, RLS database boundaries, and SSP records
               </p>
             </div>
 
-            <div className="relative w-full sm:w-72">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search tenant name or CAGE..."
-                value={tenantSearch}
-                onChange={e => setTenantSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
-              />
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+              {/* Enclave Status Filter Tabs */}
+              <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-semibold">
+                <button
+                  onClick={() => setEnclaveStatusFilter('ALL')}
+                  className={`px-3 py-1 rounded-lg transition-colors ${
+                    enclaveStatusFilter === 'ALL'
+                      ? 'bg-slate-800 text-white font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  All ({tenants.length})
+                </button>
+                <button
+                  onClick={() => setEnclaveStatusFilter('ACTIVE')}
+                  className={`px-3 py-1 rounded-lg transition-colors ${
+                    enclaveStatusFilter === 'ACTIVE'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Active ({activeEnclavesCount})
+                </button>
+                <button
+                  onClick={() => setEnclaveStatusFilter('SUSPENDED')}
+                  className={`px-3 py-1 rounded-lg transition-colors ${
+                    enclaveStatusFilter === 'SUSPENDED'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Suspended ({suspendedEnclavesCount})
+                </button>
+              </div>
+
+              {/* Search input */}
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search name, CAGE, ID..."
+                  value={tenantSearch}
+                  onChange={e => setTenantSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
+                />
+              </div>
             </div>
           </div>
 
@@ -326,7 +704,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <th className="py-3 px-4">License Tier</th>
                   <th className="py-3 px-4">Framework Scope</th>
                   <th className="py-3 px-4">System Owner</th>
-                  <th className="py-3 px-4">Seats</th>
+                  <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -336,16 +714,43 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   const activeFrameworks = t.enabledFrameworks && t.enabledFrameworks.length > 0
                     ? t.enabledFrameworks
                     : [t.primaryFramework || 'CMMC_L1'];
+                  const isSuspended = Boolean(t.isSuspended);
+
                   return (
                     <tr
                       key={t.id}
-                      className="even:bg-slate-950/40 odd:bg-slate-900/20 hover:bg-slate-800/60 transition-colors duration-150"
+                      className={`transition-colors duration-150 ${
+                        isSuspended
+                          ? 'bg-amber-950/15 hover:bg-amber-950/25 border-l-2 border-l-amber-500/60'
+                          : 'even:bg-slate-950/40 odd:bg-slate-900/20 hover:bg-slate-800/60'
+                      }`}
                     >
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-white text-xs">{t.name}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-bold text-white text-xs">{t.name}</div>
+                          {isSuspended && (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wider flex items-center gap-1">
+                              <PauseCircle className="w-2.5 h-2.5" /> Suspended
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[11px] text-slate-400 truncate max-w-xs">{t.systemName}</div>
-                        <div className="text-[10px] font-mono text-slate-500">{t.id}</div>
+                        <div className="text-[10px] font-mono text-slate-500 flex items-center gap-2 mt-0.5">
+                          <span>{t.id}</span>
+                          <button
+                            onClick={() => handleCopy(t.id, t.id, 'enclave')}
+                            className="text-slate-400 hover:text-white"
+                            title="Copy Enclave ID"
+                          >
+                            {copiedEnclaveId === t.id ? (
+                              <Check className="w-3 h-3 text-emerald-400 inline" />
+                            ) : (
+                              <Copy className="w-3 h-3 inline" />
+                            )}
+                          </button>
+                        </div>
                       </td>
+
                       <td className="py-3.5 px-4">
                         <span className="font-mono text-xs px-2 py-0.5 rounded bg-cyan-950/40 text-cyan-300 font-bold border border-cyan-500/30">
                           {t.cageCode || 'PENDING'}
@@ -358,6 +763,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           )}
                         </div>
                       </td>
+
                       <td className="py-3.5 px-4">
                         {(() => {
                           const norm = normalizeLicenseTier(t.licenseTier);
@@ -387,10 +793,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           </span>
                         )}
                       </td>
+
                       <td className="py-3.5 px-4">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                               {t.primaryFramework || 'CMMC_L1'}
                             </span>
                             <span className="text-[9px] font-mono text-slate-400">PRIMARY</span>
@@ -406,33 +813,61 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           )}
                         </div>
                       </td>
+
                       <td className="py-3.5 px-4">
                         <div className="text-slate-200 text-xs font-medium truncate max-w-xs">{t.systemOwner || 'Unassigned'}</div>
                         <div className="text-[10px] font-mono text-slate-500">{t.domain || 'N/A'}</div>
+                        <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                          {members.length > 0 ? `${members.length} team seat(s)` : '1 (Owner)'}
+                        </div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-300">
-                        {members.length > 0 ? `${members.length} members` : '1 (Owner)'}
+
+                      <td className="py-3.5 px-4">
+                        {isSuspended ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-amber-400 font-bold font-mono text-[10px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                              <PauseCircle className="w-3 h-3" /> Suspended
+                            </span>
+                            <div className="text-[9px] text-slate-500">Access Frozen</div>
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                              <CheckCircle2 className="w-3 h-3" /> Active
+                            </span>
+                            <div className="text-[9px] text-slate-500">RLS Enforced</div>
+                          </div>
+                        )}
                       </td>
+
                       <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleCopy(t.id, t.id, 'enclave')}
-                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
-                            title="Copy Enclave Tenant ID"
-                          >
-                            {copiedEnclaveId === t.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                          </button>
+                        <div className="relative inline-flex items-center justify-end gap-1.5">
+                          
+                          {/* Quick Launch Button */}
                           <button
                             onClick={() => handleEnterEnclave(t.id)}
-                            className="btn-primary text-xs px-3 py-1.5"
+                            className={`btn-primary text-xs px-3 py-1.5 flex items-center gap-1 font-bold ${
+                              isSuspended ? 'opacity-80' : ''
+                            }`}
+                            title={isSuspended ? 'Launch Enclave (Administrative View)' : 'Launch Enclave'}
                           >
                             <span>Launch</span>
                             <ArrowUpRight className="w-3.5 h-3.5" />
                           </button>
+
+                          {/* Action Dropdown Trigger */}
+                          <button
+                            onClick={(e) => handleOpenActionMenu(e, t)}
+                            className={`p-1.5 rounded-xl border transition-all ${
+                              floatingMenu?.tenant.id === t.id
+                                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700'
+                            }`}
+                            title="Enclave Lifecycle Actions"
+                          >
+                            <MoreVertical className="w-3.5 h-3.5" />
+                          </button>
+
                         </div>
                       </td>
                     </tr>
@@ -443,7 +878,112 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Section 2: Pending & Recent Onboarding Invitations */}
+        {/* Section 2: Platform Administrators & System Operators Panel */}
+        <div className="stitch-card p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-purple-400" />
+                <span>Platform Administrators & System Operators ({platformAdmins.length})</span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Root platform clearance, global boundary override permissions, and multi-enclave administrative credentials
+              </p>
+            </div>
+
+            <button
+              onClick={() => setIsAddAdminModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-purple-950/20"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Add Platform Admin</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+                <tr>
+                  <th className="py-3 px-4">Operator Identity</th>
+                  <th className="py-3 px-4">Email & Authentication</th>
+                  <th className="py-3 px-4">Clearance & Role</th>
+                  <th className="py-3 px-4">System Permissions Badge</th>
+                  <th className="py-3 px-4">Boundary Scope</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 font-sans">
+                {platformAdmins.map(admin => (
+                  <tr
+                    key={admin.id}
+                    className={`even:bg-slate-950/40 odd:bg-slate-900/20 hover:bg-slate-800/60 transition-colors ${
+                      admin.isRootOwner ? 'border-l-2 border-l-purple-500/80' : ''
+                    }`}
+                  >
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white text-xs">{admin.name}</span>
+                        {admin.isRootOwner && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase tracking-wider">
+                            ROOT OWNER
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">{admin.roleTitle}</div>
+                    </td>
+
+                    <td className="py-3.5 px-4 font-mono">
+                      <div className="text-slate-200 text-xs font-semibold">{admin.email}</div>
+                      <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        <span>Verified Google/Microsoft SSO</span>
+                      </div>
+                    </td>
+
+                    <td className="py-3.5 px-4">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                        <BadgeCheck className="w-3 h-3 text-purple-400" />
+                        <span>{admin.clearanceLevel}</span>
+                      </span>
+                    </td>
+
+                    <td className="py-3.5 px-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-black bg-purple-950/60 text-purple-200 border border-purple-500/40 uppercase tracking-wide">
+                        <Key className="w-3 h-3 text-purple-400" />
+                        <span>{admin.permissionBadge}</span>
+                      </span>
+                    </td>
+
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-slate-300">
+                      <div className="text-emerald-400 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        <span>Global Access</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">All Live & Sandbox Enclaves</div>
+                    </td>
+
+                    <td className="py-3.5 px-4 text-right">
+                      {admin.isRootOwner ? (
+                        <span className="text-[10px] font-mono text-slate-500 italic px-2 py-1">
+                          Immutable
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleRevokePlatformAdmin(admin.id, admin.email)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 text-xs font-semibold transition-colors"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Section 3: Pending & Recent Onboarding Invitations */}
         <div className="stitch-card p-6 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
@@ -452,7 +992,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 <span>Onboarding & Staff Invitations ({filteredInvitations.length})</span>
               </h2>
               <p className="text-xs text-slate-400">
-                Cryptographically generated tokens awaiting claim via <code className="text-cyan-300 font-mono">/accept-invite</code>
+                Authorized access tokens awaiting contractor claim via <code className="text-cyan-300 font-mono">/accept-invite</code>
               </p>
             </div>
 
@@ -475,7 +1015,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   <th className="py-3 px-4">Invited Recipient</th>
                   <th className="py-3 px-4">Enclave & Role</th>
                   <th className="py-3 px-4">Status & Expiration</th>
-                  <th className="py-3 px-4">Invite Token</th>
+                  <th className="py-3 px-4">Token Preview</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -483,6 +1023,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 {filteredInvitations.map(inv => {
                   const isExpired = new Date(inv.expiresAt).getTime() < Date.now();
                   const inviteUrl = buildInviteUrl(inv.token);
+
                   return (
                     <tr
                       key={inv.id}
@@ -492,6 +1033,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                         <div className="font-mono text-white text-xs font-semibold">{inv.email}</div>
                         <div className="text-[10px] text-slate-500 font-mono">Invited by: {inv.invitedBy}</div>
                       </td>
+
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-200 text-xs">{inv.tenantName}</div>
                         {inv.role === 'TENANT_OWNER' ? (
@@ -508,6 +1050,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           </span>
                         )}
                       </td>
+
                       <td className="py-3.5 px-4">
                         {inv.status === 'ACCEPTED' ? (
                           <span className="inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
@@ -530,57 +1073,102 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           Expires {new Date(inv.expiresAt).toLocaleDateString()}
                         </div>
                       </td>
+
                       <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <code className="font-mono text-[11px] text-slate-300 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 select-all">
-                            {inv.token.slice(0, 16)}...
-                          </code>
-                          <button
-                            onClick={() => handleCopy(inviteUrl, inv.id, 'token')}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
-                            title="Copy full invite link"
-                          >
-                            {copiedTokenId === inv.id ? (
-                              <Check className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        </div>
+                        <code className="font-mono text-[11px] text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 select-all">
+                          {inv.token.slice(0, 14)}...
+                        </code>
                       </td>
+
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           {inv.status === 'PENDING' && (
                             <>
+                              {/* 1. Edit Invitation Action */}
+                              <button
+                                onClick={() => handleOpenEditInvitationModal(inv)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-cyan-950 text-cyan-300 hover:text-cyan-200 border border-slate-700 hover:border-cyan-500/40 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+                                title="Edit Recipient, Enclave, Role, or Expiration"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+
+                              {/* 2. Copy Invite Link */}
+                              <button
+                                onClick={() => handleCopy(inviteUrl, inv.id, 'token')}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+                                title="Copy full invite link to clipboard"
+                              >
+                                {copiedTokenId === inv.id ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                    <span className="text-emerald-400">Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3" />
+                                    <span>Copy Link</span>
+                                  </>
+                                )}
+                              </button>
+
+                                {/* 3. Extend (+7 Days) */}
+                              <button
+                                onClick={async () => {
+                                  const res = await extendInvitationExpiration(inv.id, 7);
+                                  setNotificationToast({
+                                    type: 'info',
+                                    message: `Invitation for ${inv.email} extended to ${new Date(res.expiresAt).toLocaleDateString()} (+7 days).`,
+                                  });
+                                }}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-amber-300 hover:text-white border border-slate-700 transition-all"
+                                title="Extend Expiration (+7 Days)"
+                              >
+                                <CalendarPlus className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* 4. Resend Token (+14 days) */}
                               <button
                                 onClick={async () => {
                                   const res = await resendInvitation(inv.id);
                                   await handleCopy(res.inviteUrl, inv.id, 'token');
-                                  alert(`Invitation renewed for 14 days! New link copied to clipboard.`);
+                                  setNotificationToast({
+                                    type: 'success',
+                                    message: `Invitation refreshed for 14 days! Link copied to clipboard.`,
+                                  });
                                 }}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
-                                title="Resend & Extend Expiration"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 transition-all"
+                                title="Resend & Extend by 14 Days"
                               >
                                 <RotateCw className="w-3.5 h-3.5" />
                               </button>
+
+                              {/* 5. Revoke Token */}
                               <button
                                 onClick={() => {
-                                  if (confirm(`Revoke invitation for ${inv.email}?`)) {
+                                  if (confirm(`Revoke onboarding invitation for ${inv.email}? Link will become immediately invalid.`)) {
                                     revokeInvitation(inv.id);
+                                    setNotificationToast({
+                                      type: 'info',
+                                      message: `Invitation for ${inv.email} has been revoked.`,
+                                    });
                                   }
                                 }}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 transition-all"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 transition-all"
                                 title="Revoke Token"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </>
                           )}
+
+                          {/* 5. External route link */}
                           <a
                             href={inviteUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 transition-all"
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white border border-slate-700 transition-all"
                             title="Open Acceptance Route in New Tab"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
@@ -595,7 +1183,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Section 3: Finance-Driven Manual Provisioning Pipeline & Audit Log */}
+        {/* Section 4: Finance-Driven Manual Provisioning Pipeline & Audit Log */}
         <FinanceProvisioningLog
           tenants={tenants}
           invitations={invitations}
@@ -605,11 +1193,370 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
       </main>
 
-      {/* New Tenant Provisioning Modal */}
+      {/* Floating Enclave Action Context Menu rendered via React Portal at Root Document Level */}
+      {floatingMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={floatingMenuRef}
+          style={{
+            position: 'fixed',
+            top: `${floatingMenu.top}px`,
+            right: `${floatingMenu.right}px`,
+            zIndex: 9999,
+          }}
+          className="w-56 p-1.5 rounded-2xl bg-slate-900 border border-slate-700/90 shadow-2xl shadow-black/90 animate-scaleUp text-left space-y-0.5"
+        >
+          <div className="px-3 py-1.5 text-[10px] uppercase font-mono font-bold text-slate-400 border-b border-slate-800">
+            Enclave: {floatingMenu.tenant.cageCode || 'BOUNDARY'}
+          </div>
+
+          {/* 1. Edit Configuration */}
+          <button
+            onClick={() => handleOpenEditModal(floatingMenu.tenant)}
+            className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+          >
+            <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Edit Configuration</span>
+          </button>
+
+          {/* 2. Export Offboarding Package */}
+          <button
+            onClick={() => handleExportOffboarding(floatingMenu.tenant)}
+            disabled={exportingTenantId === floatingMenu.tenant.id}
+            className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+          >
+            {exportingTenantId === floatingMenu.tenant.id ? (
+              <span className="w-3.5 h-3.5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            <span>Export Offboarding Package</span>
+          </button>
+
+          {/* 3. Suspend / Reactivate Enclave */}
+          <button
+            onClick={() => handleToggleSuspension(floatingMenu.tenant)}
+            className={`w-full px-3 py-2 rounded-xl text-left text-xs font-semibold flex items-center gap-2.5 transition-colors ${
+              floatingMenu.tenant.isSuspended
+                ? 'text-emerald-300 hover:bg-emerald-950/40 hover:text-emerald-200'
+                : 'text-amber-300 hover:bg-amber-950/40 hover:text-amber-200'
+            }`}
+          >
+            {floatingMenu.tenant.isSuspended ? (
+              <>
+                <PlayCircle className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Reactivate Enclave</span>
+              </>
+            ) : (
+              <>
+                <PauseCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span>Suspend Enclave</span>
+              </>
+            )}
+          </button>
+
+          <div className="my-1 border-t border-slate-800" />
+
+          {/* 4. Cryptographic Sanitize & Destroy */}
+          <button
+            onClick={() => handleOpenDestructionModal(floatingMenu.tenant)}
+            className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 flex items-center gap-2.5 transition-colors"
+          >
+            <Flame className="w-3.5 h-3.5 text-rose-500" />
+            <span>Sanitize & Destroy</span>
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* 1. New Tenant Provisioning Modal */}
       <NewTenantModal
         isOpen={isNewTenantModalOpen}
         onClose={() => setIsNewTenantModalOpen(false)}
       />
+
+      {/* 2. Edit Enclave Configuration Modal */}
+      <EditEnclaveModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setSelectedTenantForEdit(null);
+        }}
+        tenant={selectedTenantForEdit}
+        onSaved={() => {
+          setNotificationToast({
+            type: 'success',
+            message: 'Enclave configuration updated successfully.',
+          });
+        }}
+      />
+
+      {/* 3. Edit Invitation Modal */}
+      <EditInvitationModal
+        isOpen={isEditInvitationModalOpen}
+        onClose={() => {
+          setIsEditInvitationModalOpen(false);
+          setSelectedInvitationForEdit(null);
+        }}
+        invitation={selectedInvitationForEdit}
+        tenants={tenants}
+        onSaved={() => {
+          setNotificationToast({
+            type: 'success',
+            message: 'Invitation details updated successfully.',
+          });
+        }}
+      />
+
+      {/* 4. Add Platform Administrator Modal */}
+      {isAddAdminModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+          <div className="relative w-full max-w-lg my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-purple-900/40 via-slate-900/60 to-slate-950 ring-1 ring-purple-500/40 shadow-2xl shadow-purple-950/40 animate-scaleUp">
+            <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
+              
+              <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                      Grant Platform Super Admin Clearance
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Issue global boundary override and operator credentials
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsAddAdminModalOpen(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddPlatformAdmin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    Operator Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newAdminName}
+                    onChange={e => setNewAdminName(e.target.value)}
+                    placeholder="e.g. Sarah Connor, CISSP"
+                    className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    Operator Corporate Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={newAdminEmail}
+                    onChange={e => setNewAdminEmail(e.target.value)}
+                    placeholder="e.g. sconnor@pitchblackcyber.com"
+                    className="w-full px-3 py-2 text-xs font-mono bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                    Role Title
+                  </label>
+                  <input
+                    type="text"
+                    value={newAdminRole}
+                    onChange={e => setNewAdminRole(e.target.value)}
+                    placeholder="e.g. Principal GRC Security Engineer"
+                    className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-400"
+                  />
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/30 text-[11px] text-purple-200 flex items-start gap-2.5">
+                  <Key className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                  <p>
+                    Clearance includes <strong>FULL_SYSTEM_OVERRIDE</strong> across all tenant database boundaries, staff onboarding, cryptographic sanitization, and compliance exports.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddAdminModalOpen(false)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 border border-slate-800 rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary text-xs px-5 py-2.5 font-bold shadow-lg shadow-purple-500/20"
+                  >
+                    Grant Clearance
+                  </button>
+                </div>
+              </form>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Two-Step NIST SP 800-88 Cryptographic Sanitization & Destruction Modal */}
+      {isDestructionModalOpen && selectedTenantForDestruction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+          <div className="relative w-full max-w-xl my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-rose-900/40 via-slate-900/60 to-slate-950 ring-1 ring-rose-700/60 shadow-2xl shadow-rose-950/40 animate-scaleUp">
+            <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
+              
+              <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                    <Flame className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-mono font-extrabold tracking-widest px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                      NIST SP 800-88 PROTOCOL
+                    </span>
+                    <h2 className="text-xl font-black text-white tracking-tight pt-1">
+                      Cryptographic Sanitize & Destroy
+                    </h2>
+                  </div>
+                </div>
+
+                {!isDestroying && (
+                  <button
+                    onClick={() => {
+                      setIsDestructionModalOpen(false);
+                      setSelectedTenantForDestruction(null);
+                    }}
+                    className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
+
+              {destructionCertificate ? (
+                <div className="space-y-4 py-2">
+                  <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 space-y-2 text-xs">
+                    <div className="flex items-center gap-2 font-bold text-sm text-emerald-200">
+                      <FileCheck2 className="w-5 h-5 text-emerald-400" />
+                      <span>Certificate of Destruction Issued & Signed</span>
+                    </div>
+                    <p className="text-slate-300">
+                      Enclave records were overwritten with pseudo-random cryptographic noise and purged in compliance with NIST SP 800-88 Rev 1.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2 text-xs font-mono">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Certificate ID:</span>
+                      <span className="text-cyan-300 font-bold">{destructionCertificate.certificateId}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Purged Objects:</span>
+                      <span className="text-white font-bold">{destructionCertificate.purgedObjectsCount}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400">
+                      <span>Method:</span>
+                      <span className="text-slate-200">{destructionCertificate.sanitizationMethod}</span>
+                    </div>
+                    <div className="pt-2 border-t border-slate-800">
+                      <span className="text-slate-400 block mb-1">SHA-256 Checksum:</span>
+                      <span className="text-[11px] text-purple-300 break-all bg-slate-950 p-2 rounded block">
+                        {destructionCertificate.certificateSha256}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 flex justify-end">
+                    <button
+                      onClick={() => {
+                        setIsDestructionModalOpen(false);
+                        setSelectedTenantForDestruction(null);
+                      }}
+                      className="btn-primary text-xs px-6 py-2.5 font-bold"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : isDestroying ? (
+                <div className="py-8 text-center space-y-4">
+                  <div className="w-14 h-14 mx-auto rounded-full border-4 border-rose-500/20 border-t-rose-500 animate-spin" />
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-white">
+                      Executing 3-Pass Cryptographic Wipe...
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono">
+                      Overwriting local keys • Revoking certificates • Writing audit block
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-xs space-y-2 text-rose-200">
+                    <div className="font-bold flex items-center gap-2 text-rose-300">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>Warning: Permanent & Irreversible Destruction</span>
+                    </div>
+                    <p className="text-slate-300 leading-relaxed">
+                      Executing this command will cryptographically overwrite all compliance assessments, control narratives, SSP drafts, and evidence indices for <strong className="text-white">{selectedTenantForDestruction.name}</strong> ({selectedTenantForDestruction.id}).
+                    </p>
+                    <p className="text-slate-400 text-[11px]">
+                      A formal, digitally signed Certificate of Destruction will be generated, registered in the immutable audit ledger, and downloaded to your browser.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <label className="text-xs text-slate-300 font-medium block">
+                      To confirm cryptographic deletion, type <code className="font-mono font-bold text-rose-300 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/60 select-all">{destructionExpectedChallenge}</code> below:
+                    </label>
+
+                    <input
+                      type="text"
+                      value={destructionConfirmInput}
+                      onChange={e => setDestructionConfirmInput(e.target.value)}
+                      placeholder={`Type "${destructionExpectedChallenge}"`}
+                      className="w-full px-3 py-2.5 text-xs font-mono font-bold bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 transition-all"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsDestructionModalOpen(false);
+                        setSelectedTenantForDestruction(null);
+                      }}
+                      className="px-4 py-2.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 border border-slate-800 rounded-xl transition-colors"
+                    >
+                      Cancel
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!isDestructionConfirmed || isDestroying}
+                      onClick={handleExecuteDestruction}
+                      className="px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30"
+                    >
+                      <Flame className="w-4 h-4" />
+                      <span>Execute Cryptographic Wipe & Destroy</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

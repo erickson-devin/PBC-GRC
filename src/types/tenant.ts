@@ -120,6 +120,7 @@ export interface Tenant {
   systemBoundaryScope?: string;
   licenseTier?: LicenseTier;
   annualPrice?: number;
+  isSuspended?: boolean; // When true, access to this enclave is frozen while preserving records
   enabledFrameworks?: ComplianceFramework[]; // Enclave-scoped enabled frameworks e.g. ['CMMC_L1', 'CMMC_L2']
   primaryFramework?: ComplianceFramework;   // Default framework to render for this enclave
 }
