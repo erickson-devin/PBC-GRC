@@ -18,6 +18,8 @@ import {
   BaselineTier,
   OverlayFilters,
   OverlayParameter,
+  CiaTriadSelection,
+  ImpactLevel,
 } from '../types/framework';
 
 // Storage Version 4 Keys (Strict separation of Live vs Sandbox)
@@ -479,6 +481,10 @@ interface TenantContextType {
   activeOverlayFilters: OverlayFilters;
   setActiveOverlayFilters: React.Dispatch<React.SetStateAction<OverlayFilters>>;
   toggleNonNetworkedOverlay: () => void;
+  toggleOverlayFilter: (key: keyof OverlayFilters) => void;
+  ciaTriad: CiaTriadSelection;
+  setCiaImpact: (dimension: 'confidentiality' | 'integrity' | 'availability', level: ImpactLevel) => void;
+  toggleAllControlsApplied: () => void;
 }
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
@@ -793,15 +799,52 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {}
   }, []);
 
-  const toggleNonNetworkedOverlay = useCallback(() => {
+  const [ciaTriad, setCiaTriad] = useState<CiaTriadSelection>(() => {
+    try {
+      const saved = localStorage.getItem('pbc_active_cia_triad');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      confidentiality: 'MODERATE',
+      integrity: 'MODERATE',
+      availability: 'MODERATE',
+      isAllControlsApplied: true,
+    };
+  });
+
+  const setCiaImpact = useCallback((dimension: 'confidentiality' | 'integrity' | 'availability', level: ImpactLevel) => {
+    setCiaTriad(prev => {
+      const next = { ...prev, [dimension]: level, isAllControlsApplied: false };
+      try {
+        localStorage.setItem('pbc_active_cia_triad', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const toggleAllControlsApplied = useCallback(() => {
+    setCiaTriad(prev => {
+      const next = { ...prev, isAllControlsApplied: !prev.isAllControlsApplied };
+      try {
+        localStorage.setItem('pbc_active_cia_triad', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const toggleOverlayFilter = useCallback((key: keyof OverlayFilters) => {
     setActiveOverlayFilters(prev => {
-      const next = { ...prev, nonNetworkedOnly: !prev.nonNetworkedOnly };
+      const next = { ...prev, [key]: !prev[key] };
       try {
         localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(next));
       } catch {}
       return next;
     });
   }, []);
+
+  const toggleNonNetworkedOverlay = useCallback(() => {
+    toggleOverlayFilter('nonNetworkedOnly');
+  }, [toggleOverlayFilter]);
 
   useEffect(() => {
     try {
@@ -2004,6 +2047,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activeOverlayFilters,
     setActiveOverlayFilters,
     toggleNonNetworkedOverlay,
+    toggleOverlayFilter,
+    ciaTriad,
+    setCiaImpact,
+    toggleAllControlsApplied,
   }), [
     tenants,
     currentTenant,
@@ -2063,6 +2110,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activeOverlayFilters,
     setActiveOverlayFilters,
     toggleNonNetworkedOverlay,
+    toggleOverlayFilter,
+    ciaTriad,
+    setCiaImpact,
+    toggleAllControlsApplied,
   ]);
 
 

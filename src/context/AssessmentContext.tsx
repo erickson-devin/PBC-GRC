@@ -10,7 +10,7 @@ import {
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
 import { FrameworkControlDefinition } from '../types/framework';
 import { ReportDocumentType } from '../types/report';
-import { getFrameworkControls, getEquivalentControlIds } from '../data/frameworks';
+import { getFrameworkControls, getEquivalentControlIds, FRAMEWORK_REGISTRY } from '../data/frameworks';
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
@@ -74,16 +74,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     activeFramework,
     activeBaselineTier,
     activeOverlayFilters,
+    ciaTriad,
   } = useTenant();
 
-  // Dynamically resolve controls for the currently selected framework, baseline, and overlay
+  // Dynamically resolve controls for the currently selected framework, baseline/CIA triad, and overlay filters
   const frameworkControls = useMemo(() => {
+    const baseline = activeFramework === 'NIST_800_53_REV5' ? ciaTriad : activeBaselineTier;
     return getFrameworkControls(
       activeFramework,
-      activeBaselineTier,
-      activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE'
+      baseline,
+      activeOverlayFilters
     );
-  }, [activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly]);
+  }, [activeFramework, activeBaselineTier, ciaTriad, activeOverlayFilters]);
 
   // Load tenant-isolated assessment state
   const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment(currentTenant));
@@ -144,14 +146,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       notStarted: number;
       notMet: number;
       percentage: number;
-    }> = {
-      AC: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
-      IA: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
-      MP: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
-      PE: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
-      SC: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
-      SI: { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 },
-    };
+    }> = {};
+
+    const currentFwDef = FRAMEWORK_REGISTRY[activeFramework];
+    if (currentFwDef?.domains) {
+      for (const dCode of Object.keys(currentFwDef.domains)) {
+        domainStats[dCode] = { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 };
+      }
+    }
 
     for (const ctrl of frameworkControls) {
       const cState = state.controls[ctrl.id];
@@ -198,7 +200,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       isSprsReady,
       domainStats: domainStats as any,
     };
-  }, [frameworkControls, state.controls]);
+  }, [frameworkControls, state.controls, activeFramework]);
 
   // Celebrate SPRS readiness
   const triggerSprsCelebration = useCallback(() => {
@@ -714,8 +716,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Action: Export Markdown
   const exportAssessmentMarkdown = useCallback(() => {
-    StorageService.exportMarkdown(state);
-  }, [state]);
+    StorageService.exportMarkdown(state, frameworkControls, activeFramework);
+  }, [state, frameworkControls, activeFramework]);
 
   const value = useMemo(() => ({
     state,

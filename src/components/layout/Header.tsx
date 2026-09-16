@@ -13,6 +13,8 @@ import {
 import { BrandLogo } from '../common/BrandLogo';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { getFrameworkTitle } from '../../data/frameworks';
+import { calculateSprsScore } from '../../data/reports/sprsCompiler';
 import { TenantSwitcher } from './TenantSwitcher';
 import { FrameworkSwitcher } from './FrameworkSwitcher';
 import { UserProfileDropdown } from '../auth/UserProfileDropdown';
@@ -25,6 +27,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, onRequestLicense }) => {
   const {
+    state,
     metrics,
     frameworkControls,
     loadDemoScenario,
@@ -36,6 +39,15 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework } = useTenant();
+  const totalCount = metrics.totalControls || frameworkControls.length || 1;
+  const frameworkTitle = getFrameworkTitle(activeFramework);
+
+  const sprsResult = React.useMemo(() => {
+    if (activeFramework === 'CMMC_L2') {
+      return calculateSprsScore(frameworkControls, state.controls);
+    }
+    return null;
+  }, [activeFramework, frameworkControls, state.controls]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,22 +112,31 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
         <div className="flex items-center gap-2.5 w-full md:w-auto justify-end flex-wrap">
           
           {/* SPRS / Compliance Indicator */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 shadow-inner">
+          <div
+            onClick={() => setActiveTab('controls')}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 shadow-inner cursor-pointer transition-colors"
+            title={`View ${frameworkTitle} control requirements`}
+          >
             <div className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
               <Lock className="w-3.5 h-3.5 text-slate-400" />
               <span className="hidden sm:inline">
-                {activeFramework === 'CMMC_L1' ? 'SPRS Readiness:' : 'Readiness:'}
+                {activeFramework === 'CMMC_L1' ? 'SPRS Readiness:' : `${frameworkTitle} Readiness:`}
               </span>
             </div>
             {metrics.isSprsReady ? (
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                {metrics.metCount} / {metrics.totalControls} MET (100%)
+                {metrics.metCount} / {totalCount} MET (100%)
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                 <AlertTriangle className="w-3.5 h-3.5" />
-                {metrics.metCount} / {metrics.totalControls} Met ({metrics.completionPercentage}%)
+                {metrics.metCount} / {totalCount} Met ({metrics.completionPercentage}%)
+                {sprsResult && (
+                  <span className="ml-1 pl-1 border-l border-amber-500/30 font-mono text-[11px]">
+                    {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
+                  </span>
+                )}
               </span>
             )}
           </div>

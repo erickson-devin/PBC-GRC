@@ -180,6 +180,39 @@ async function runTestSuite() {
   assert(multiScore.score === 101, '110 - (5+3+1) = 101 SPRS score');
   assert(multiScore.totalDeductions === 9, 'Total deductions is 9');
 
+  // 2.4.1 Zero Controls Met Yields Exactly -203 Hard Floor
+  const zeroControlStates: Record<string, ControlState> = {};
+  for (const c of CMMC_LEVEL_2_CONTROLS) {
+    zeroControlStates[c.id] = {
+      id: c.id,
+      tenantId: testTenant,
+      status: 'NOT_MET',
+      implementationNotes: 'Not implemented.',
+      responsibleRole: 'CISO',
+      lastUpdated: '2026-09-14',
+      tags: [],
+    };
+  }
+  const zeroScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, zeroControlStates);
+  assert(zeroScore.score === -203, '0 controls met yields exactly -203 SPRS score');
+  assert(zeroScore.metCount === 0, '0 controls met');
+  assert(zeroScore.minScore === -203, 'minScore is -203');
+
+  // 2.4.2 Strict 41/14/55 Point Distribution Verification
+  let count5 = 0;
+  let count3 = 0;
+  let count1 = 0;
+  for (const c of CMMC_LEVEL_2_CONTROLS) {
+    const w = getSprsPointDeduction(c.id);
+    if (w === 5) count5++;
+    else if (w === 3) count3++;
+    else count1++;
+  }
+  assert(count5 === 41, `Exactly 41 controls carry 5-point weight (found: ${count5})`);
+  assert(count3 === 14, `Exactly 14 controls carry 3-point weight (found: ${count3})`);
+  assert(count1 === 55, `Exactly 55 controls carry 1-point weight (found: ${count1})`);
+  assert(count5 + count3 + count1 === 110, 'All 110 CMMC Level 2 controls accounted for');
+
   // 2.5 eMASS Control Matrix CSV Generator
   const sampleMeta: ReportMetadata = {
     systemName: 'Vanguard Tactical Enclave',

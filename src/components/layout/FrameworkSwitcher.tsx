@@ -6,10 +6,13 @@ import {
   Shield,
   WifiOff,
   Sliders,
+  Radio,
+  Smartphone,
+  EyeOff,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
-import { ComplianceFramework, BaselineTier } from '../../types/framework';
+import { ComplianceFramework, ImpactLevel } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 
 export const FrameworkSwitcher: React.FC = () => {
@@ -17,10 +20,12 @@ export const FrameworkSwitcher: React.FC = () => {
     currentTenant,
     activeFramework,
     setActiveFramework,
-    activeBaselineTier,
-    setActiveBaselineTier,
     activeOverlayFilters,
     toggleNonNetworkedOverlay,
+    toggleOverlayFilter,
+    ciaTriad,
+    setCiaImpact,
+    toggleAllControlsApplied,
   } = useTenant();
 
   const { metrics } = useAssessment();
@@ -239,63 +244,165 @@ export const FrameworkSwitcher: React.FC = () => {
             })}
           </div>
 
-          {/* NIST 800-53 Baseline Tier Options (Visible if NIST selected) */}
+          {/* NIST 800-53 Baseline & CIA Triad Selection */}
           {activeFramework === 'NIST_800_53_REV5' && (
-            <div className="pt-2 border-t border-slate-800 px-2 space-y-1.5">
-              <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
-                <span className="flex items-center gap-1">
+            <div className="pt-2.5 border-t border-slate-800 px-2 space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-200">
+                <span className="flex items-center gap-1.5">
                   <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>NIST 800-53 Baseline Tier</span>
+                  <span>NIST SP 800-53 Rev 5 Baseline Scoping</span>
                 </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleAllControlsApplied();
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    ciaTriad.isAllControlsApplied
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                      : 'bg-slate-800 text-slate-400 border border-slate-700'
+                  }`}
+                >
+                  {ciaTriad.isAllControlsApplied ? 'All Controls Applied' : 'Custom CIA Triad'}
+                </button>
               </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'LOW_LOW_LOW' as BaselineTier, label: 'Low Impact', desc: 'Standard Low' },
-                  { id: 'MOD_MOD_MOD' as BaselineTier, label: 'Moderate', desc: 'Full Baseline' },
-                  { id: 'LOW_LOW_MOD' as BaselineTier, label: 'Low-Mod', desc: 'High Avail' },
-                ].map(b => (
-                  <button
-                    key={b.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveBaselineTier(b.id);
-                    }}
-                    className={`py-1.5 px-2 rounded-lg text-center text-xs transition-all ${
-                      activeBaselineTier === b.id
-                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
-                        : 'bg-slate-800/70 hover:bg-slate-800 text-slate-400 border border-slate-700/60'
-                    }`}
-                  >
-                    <div className="font-bold text-[11px]">{b.label}</div>
-                    <div className="text-[9px] text-slate-400 mt-0.5">{b.desc}</div>
-                  </button>
+
+              {/* Granular CIA Triad Selector */}
+              <div className={`space-y-1.5 p-2 rounded-xl bg-slate-950/60 border border-slate-800 transition-opacity ${ciaTriad.isAllControlsApplied ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="text-[10px] text-slate-400 font-semibold mb-1">CIA Triad Impact Categorization</div>
+                {(['confidentiality', 'integrity', 'availability'] as const).map(dim => (
+                  <div key={dim} className="flex items-center justify-between text-[10px]">
+                    <span className="capitalize text-slate-300 font-medium w-24">{dim}:</span>
+                    <div className="flex items-center gap-1">
+                      {(['LOW', 'MODERATE', 'HIGH'] as ImpactLevel[]).map(lvl => {
+                        const isSelected = ciaTriad[dim] === lvl;
+                        return (
+                          <button
+                            key={lvl}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCiaImpact(dim, lvl);
+                            }}
+                            className={`px-2 py-0.5 rounded text-[9px] font-bold transition-all ${
+                              isSelected
+                                ? 'bg-brand-600 text-white shadow-sm'
+                                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {lvl === 'MODERATE' ? 'Mod' : lvl.charAt(0) + lvl.slice(1).toLowerCase()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Overlay Parameter Toggle Callout */}
-          <div className="pt-2 border-t border-slate-800 px-2 flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <WifiOff className={`w-4 h-4 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400' : 'text-slate-500'}`} />
-              <div>
-                <div className="font-bold text-slate-200 text-[11px]">Tactical / Non-Networked Overlay</div>
-                <div className="text-[10px] text-slate-400">Filters out network boundary controls</div>
+          {/* Operational Overlays & Tailoring Caveats */}
+          <div className="pt-2.5 border-t border-slate-800 px-2 space-y-2">
+            <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+              <span>Operational Caveats & Overlays</span>
+            </div>
+
+            <div className="space-y-1">
+              {/* Overlay 1: Non-Networked / Stand-alone / Air-gapped */}
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
+                <div className="flex items-center gap-2">
+                  <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400' : 'text-slate-500'}`} />
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-300">Stand-Alone / Air-Gapped</div>
+                    <div className="text-[9px] text-slate-500">Excludes SC-7, AC-17, SC-8</div>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleOverlayFilter('nonNetworkedOnly');
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    activeOverlayFilters.nonNetworkedOnly
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {activeOverlayFilters.nonNetworkedOnly ? 'Active' : 'Off'}
+                </button>
+              </div>
+
+              {/* Overlay 2: No Wireless Capabilities */}
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
+                <div className="flex items-center gap-2">
+                  <Radio className={`w-3.5 h-3.5 ${activeOverlayFilters.noWireless ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-300">No Wireless Capabilities</div>
+                    <div className="text-[9px] text-slate-500">Excludes AC-18 wireless access</div>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleOverlayFilter('noWireless');
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    activeOverlayFilters.noWireless
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {activeOverlayFilters.noWireless ? 'Active' : 'Off'}
+                </button>
+              </div>
+
+              {/* Overlay 3: No Mobile Devices */}
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
+                <div className="flex items-center gap-2">
+                  <Smartphone className={`w-3.5 h-3.5 ${activeOverlayFilters.noMobileDevices ? 'text-indigo-400' : 'text-slate-500'}`} />
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-300">No Mobile Devices</div>
+                    <div className="text-[9px] text-slate-500">Excludes AC-19, MP-7 mobile controls</div>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleOverlayFilter('noMobileDevices');
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    activeOverlayFilters.noMobileDevices
+                      ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {activeOverlayFilters.noMobileDevices ? 'Active' : 'Off'}
+                </button>
+              </div>
+
+              {/* Overlay 4: No PII Processing */}
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
+                <div className="flex items-center gap-2">
+                  <EyeOff className={`w-3.5 h-3.5 ${activeOverlayFilters.noPiiProcessing ? 'text-emerald-400' : 'text-slate-500'}`} />
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-300">No PII Processing</div>
+                    <div className="text-[9px] text-slate-500">Excludes PT family & privacy safeguards</div>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleOverlayFilter('noPiiProcessing');
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                    activeOverlayFilters.noPiiProcessing
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {activeOverlayFilters.noPiiProcessing ? 'Active' : 'Off'}
+                </button>
               </div>
             </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleNonNetworkedOverlay();
-              }}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
-                activeOverlayFilters.nonNetworkedOnly
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  : 'bg-slate-800 text-slate-400 hover:text-white border border-slate-700'
-              }`}
-            >
-              {activeOverlayFilters.nonNetworkedOnly ? 'Enabled' : 'Disabled'}
-            </button>
           </div>
 
         </div>

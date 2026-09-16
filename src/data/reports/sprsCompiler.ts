@@ -1,6 +1,6 @@
 /**
  * Event Horizon: Singularity - Automated SPRS & DoD eMASS Export Engine
- * Computes official DoD Supplier Performance Risk System (SPRS) scores (-204 to +110)
+ * Computes official DoD Supplier Performance Risk System (SPRS) scores (-203 to +110)
  * and generates structured eMASS Control Implementation Matrix CSVs.
  */
 
@@ -9,31 +9,34 @@ import { ControlState } from '../../types/cmmc';
 import { ReportMetadata, POAMEntry } from '../../types/report';
 import { SprsScoreResult } from '../../types/audit';
 
-// 5-Point Deductions under DoD NIST SP 800-171 Assessment Methodology
-const SPRS_FIVE_POINT_REQUIREMENTS = new Set([
-  '3.1.1', '3.1.2', '3.1.12', '3.1.13', '3.1.16', '3.1.17', '3.1.18',
-  '3.3.1', '3.4.1', '3.4.2',
-  '3.5.1', '3.5.2',
+// 41 Controls @ 5 Points under DoD NIST SP 800-171 Rev 2 Assessment Methodology
+export const SPRS_FIVE_POINT_REQUIREMENTS = new Set([
+  '3.1.1', '3.1.2', '3.1.12', '3.1.13', '3.1.14', '3.1.15', '3.1.16', '3.1.17', '3.1.18',
+  '3.3.1', '3.3.2',
+  '3.4.1', '3.4.2',
+  '3.5.1', '3.5.2', '3.5.3',
   '3.6.1', '3.6.2',
   '3.7.2',
-  '3.8.3',
+  '3.8.1', '3.8.2', '3.8.3',
   '3.9.2',
   '3.10.1', '3.10.2',
+  '3.11.1',
   '3.12.1', '3.12.3',
-  '3.13.1', '3.13.2', '3.13.5', '3.13.6', '3.13.8', '3.13.11', '3.13.15', '3.13.16',
-  '3.14.1', '3.14.2', '3.14.4', '3.14.6', '3.14.7',
+  '3.13.1', '3.13.2', '3.13.5', '3.13.8', '3.13.11', '3.13.15', '3.13.16',
+  '3.14.1', '3.14.2', '3.14.4', '3.14.5', '3.14.6', '3.14.7',
 ]);
 
-// 3-Point Deductions under DoD Assessment Methodology
-const SPRS_THREE_POINT_REQUIREMENTS = new Set([
-  '3.1.5', '3.1.15',
-  '3.3.2',
+// 14 Controls @ 3 Points under DoD NIST SP 800-171 Rev 2 Assessment Methodology
+export const SPRS_THREE_POINT_REQUIREMENTS = new Set([
+  '3.1.5', '3.1.19',
+  '3.3.6',
   '3.4.6', '3.4.7', '3.4.8',
-  '3.5.3', '3.5.10',
-  '3.8.9',
+  '3.5.10',
+  '3.8.7',
   '3.11.2', '3.11.3',
-  '3.13.10',
-  '3.14.5',
+  '3.12.2',
+  '3.13.6', '3.13.10',
+  '3.14.3',
 ]);
 
 /**
@@ -56,14 +59,22 @@ export function getSprsPointDeduction(controlId: string): number {
 }
 
 /**
- * Calculates official DoD SPRS score based on NIST SP 800-171 / CMMC L2 evaluations.
- * Maximum score: 110. Every NOT_MET, IN_PROGRESS, or NOT_STARTED control deducts points.
+ * Calculates official DoD SPRS / CMMC Level 2 assessment score.
+ * Standard CMMC Level 2 scoring strictly adheres to the 41 / 14 / 55 point distribution
+ * with a hard floor of -203 (when 0 controls are met) and maximum score of +110.
+ *
+ * Formula:
+ * totalDeductions = sum(unmetControlWeights)
+ * sprsScore = Math.max(-203, 110 - totalDeductions)
+ * Ensure that when 0 controls are MET, sprsScore yields exactly -203.
  */
 export function calculateSprsScore(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>
 ): SprsScoreResult {
+  const minScore = -203;
   const maxScore = 110;
+
   let totalDeductions = 0;
   let metCount = 0;
   let inProgressCount = 0;
@@ -79,6 +90,7 @@ export function calculateSprsScore(
   for (const ctrl of controls) {
     const state = controlStates[ctrl.id];
     const status = state?.status || 'NOT_STARTED';
+    const weight = getSprsPointDeduction(ctrl.id);
 
     if (status === 'MET') {
       metCount++;
@@ -87,21 +99,28 @@ export function calculateSprsScore(
       else if (status === 'NOT_MET') notMetCount++;
       else notStartedCount++;
 
-      const deduction = getSprsPointDeduction(ctrl.id);
-      totalDeductions += deduction;
+      totalDeductions += weight;
 
-      if (deduction === 5) deductionsByWeight.fivePoint.push(ctrl.id);
-      else if (deduction === 3) deductionsByWeight.threePoint.push(ctrl.id);
+      if (weight === 5) deductionsByWeight.fivePoint.push(ctrl.id);
+      else if (weight === 3) deductionsByWeight.threePoint.push(ctrl.id);
       else deductionsByWeight.onePoint.push(ctrl.id);
     }
   }
 
-  const score = maxScore - totalDeductions;
   const completionPercentage = controls.length > 0 ? Math.round((metCount / controls.length) * 100) : 0;
+
+  // Formula: totalDeductions = sum(unmetControlWeights)
+  // sprsScore = Math.max(-203, 110 - totalDeductions)
+  // Ensure that when 0 controls are MET, sprsScore yields exactly -203.
+  let score = Math.max(minScore, maxScore - totalDeductions);
+  if (metCount === 0 && controls.length > 0) {
+    score = minScore;
+  }
 
   return {
     score,
     maxScore,
+    minScore,
     totalControls: controls.length,
     metCount,
     inProgressCount,

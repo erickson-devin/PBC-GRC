@@ -74,6 +74,7 @@ export interface CertificateOfDestruction {
 export interface SprsScoreResult {
   score: number;
   maxScore: number;
+  minScore?: number;
   totalControls: number;
   metCount: number;
   inProgressCount: number;

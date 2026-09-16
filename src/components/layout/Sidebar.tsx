@@ -15,18 +15,22 @@ import {
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { getFrameworkGuidanceText } from '../../data/frameworks';
 import { BrandLogo } from '../common/BrandLogo';
 
 export const Sidebar: React.FC = () => {
-  const { activeTab, setActiveTab, metrics, state, openExportModal } = useAssessment();
+  const { activeTab, setActiveTab, metrics, state, frameworkControls, openExportModal } = useAssessment();
   const {
     currentTenant,
     canManageTenant,
     setIsTeamModalOpen,
     setIsStigModalOpen,
     isSuperAdmin,
+    activeFramework,
   } = useTenant();
 
+  const totalControls = frameworkControls.length || metrics.totalControls || 17;
+  const guidance = getFrameworkGuidanceText(activeFramework);
 
   const navItems: { id: NavigationTab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: string | number; badgeColor?: string }[] = [
     {
@@ -36,9 +40,9 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'controls',
-      label: 'Control Matrix (17)',
+      label: `Control Matrix (${totalControls})`,
       icon: CheckSquare,
-      badge: `${metrics.metCount}/17`,
+      badge: `${metrics.metCount}/${totalControls}`,
       badgeColor: metrics.isSprsReady ? 'bg-emerald-500/20 text-emerald-300' : 'bg-brand-500/20 text-brand-300',
     },
     {
@@ -239,9 +243,9 @@ export const Sidebar: React.FC = () => {
       <div className="hidden md:block pt-4 border-t border-slate-800/80 text-[11px] text-slate-500 space-y-1">
         <p className="flex items-center gap-1">
           <Layers className="w-3.5 h-3.5 text-slate-400" />
-          <span>FAR 52.204-21 Compliant</span>
+          <span>{guidance.authority} Compliant</span>
         </p>
-        <p>17 Controls • Zero POA&Ms Allowed</p>
+        <p>{totalControls} Controls • {guidance.poamPermitted ? 'Time-Bounded POA&Ms' : 'Zero POA&Ms Allowed'}</p>
       </div>
     </aside>
   );

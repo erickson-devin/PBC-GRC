@@ -20,6 +20,7 @@ import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { ControlCard } from './ControlCard';
 
 interface AssessmentMatrixProps {
@@ -49,6 +50,7 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   } = useTenant();
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
 
   const currentFrameworkDef = useMemo(() => {
     return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -58,6 +60,21 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   const availableDomains = useMemo(() => {
     return Object.values(currentFrameworkDef.domains || {});
   }, [currentFrameworkDef]);
+
+  // Impact weight counts for CMMC Level 2
+  const weightCounts = useMemo(() => {
+    if (activeFramework !== 'CMMC_L2') return { five: 0, three: 0, one: 0 };
+    let five = 0;
+    let three = 0;
+    let one = 0;
+    for (const c of frameworkControls) {
+      const w = getSprsPointDeduction(c.id);
+      if (w === 5) five++;
+      else if (w === 3) three++;
+      else one++;
+    }
+    return { five, three, one };
+  }, [activeFramework, frameworkControls]);
 
   // Filtered Controls
   const filteredControls = useMemo(() => {
@@ -88,9 +105,17 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         }
       }
 
+      // Impact weight filter (specifically for CMMC Level 2)
+      if (activeFramework === 'CMMC_L2' && selectedWeightFilter !== 'ALL') {
+        const weight = getSprsPointDeduction(ctrl.id);
+        if (weight !== selectedWeightFilter) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, searchQuery, state.controls]);
+  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls]);
 
   const handleControlClick = (id: string) => {
     if (onSelectControl) {
@@ -340,6 +365,61 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               );
             })}
           </div>
+
+          {/* CMMC Level 2 Impact Weight Filter */}
+          {activeFramework === 'CMMC_L2' && (
+            <div className="w-full pt-3 border-t border-slate-800/60 flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-rose-400" /> Filter by Impact Weight:
+              </span>
+              <button
+                onClick={() => setSelectedWeightFilter('ALL')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  selectedWeightFilter === 'ALL'
+                    ? 'bg-slate-200 text-slate-900 font-bold shadow-sm'
+                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                All ({totalControlsCount})
+              </button>
+              <button
+                onClick={() => setSelectedWeightFilter(5)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  selectedWeightFilter === 5
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50 ring-1 ring-cyan-400/40 font-bold shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+                    : 'bg-slate-950 text-slate-400 hover:text-rose-300 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                <span>5-Pt (High Impact)</span>
+                <span className="text-[10px] font-mono opacity-80">({weightCounts.five})</span>
+              </button>
+              <button
+                onClick={() => setSelectedWeightFilter(3)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  selectedWeightFilter === 3
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 ring-1 ring-amber-500/30 font-bold shadow-sm'
+                    : 'bg-slate-950 text-slate-400 hover:text-amber-300 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <span>3-Pt (Mod Impact)</span>
+                <span className="text-[10px] font-mono opacity-80">({weightCounts.three})</span>
+              </button>
+              <button
+                onClick={() => setSelectedWeightFilter(1)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  selectedWeightFilter === 1
+                    ? 'bg-slate-800 text-slate-200 border border-slate-600 font-bold shadow-sm'
+                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                <span>1-Pt (Std Impact)</span>
+                <span className="text-[10px] font-mono opacity-80">({weightCounts.one})</span>
+              </button>
+            </div>
+          )}
 
         </div>
       </div>

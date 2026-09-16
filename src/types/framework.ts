@@ -7,7 +7,16 @@ export type ComplianceFramework =
   | 'SOC_2_TYPE_II'
   | 'HIPAA_SECURITY';
 
-export type BaselineTier = 'LOW_LOW_LOW' | 'MOD_MOD_MOD' | 'LOW_LOW_MOD';
+export type ImpactLevel = 'LOW' | 'MODERATE' | 'HIGH';
+
+export interface CiaTriadSelection {
+  confidentiality: ImpactLevel;
+  integrity: ImpactLevel;
+  availability: ImpactLevel;
+  isAllControlsApplied?: boolean;
+}
+
+export type BaselineTier = 'LOW_LOW_LOW' | 'MOD_MOD_MOD' | 'LOW_LOW_MOD' | 'ALL_CONTROLS';
 
 export type OverlayParameter = 'NONE' | 'NON_NETWORKED';
 
@@ -46,6 +55,14 @@ export interface FrameworkControlDefinition {
   starterTemplates?: StarterTemplate[];
   baselineTiers?: BaselineTier[];
   nonNetworkedApplicable: boolean; // false for network/boundary specific controls (SC-7, AC-17, etc.)
+  requiresWireless?: boolean; // true for wireless-specific controls (AC-18, etc.)
+  requiresMobile?: boolean; // true for mobile device controls (AC-19, MP-7, etc.)
+  requiresPii?: boolean; // true for PII/privacy controls (PT family, etc.)
+  ciaImpact?: {
+    confidentiality?: ImpactLevel;
+    integrity?: ImpactLevel;
+    availability?: ImpactLevel;
+  };
   mappings?: {
     targetFramework: ComplianceFramework;
     targetControlId: string;
@@ -73,7 +90,10 @@ export interface FrameworkDefinition {
 }
 
 export interface OverlayFilters {
-  nonNetworkedOnly: boolean;
+  nonNetworkedOnly: boolean; // Stand-alone / Air-gapped (excludes SC-7, AC-17, etc.)
+  noWireless?: boolean; // No wireless capabilities (excludes AC-18, etc.)
+  noMobileDevices?: boolean; // No mobile devices (excludes AC-19, etc.)
+  noPiiProcessing?: boolean; // No PII processing (excludes PT family, privacy notices)
 }
 
 export interface CrossFrameworkEvidenceInheritance {

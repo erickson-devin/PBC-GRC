@@ -23,6 +23,8 @@ import { FrameworkControlDefinition, FrameworkDomainInfo } from '../../types/fra
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
+import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
+import { getControlImpactBadge } from '../../data/frameworks';
 
 interface ControlCardProps {
   control: FrameworkControlDefinition | ControlDefinition | any;
@@ -43,7 +45,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     uploadEvidence,
     setSelectedControlId,
   } = useAssessment();
-  const { canEdit, currentTenant } = useTenant();
+  const { canEdit, currentTenant, activeFramework } = useTenant();
 
   const ctrlState = state.controls[control.id];
   const status: ControlStatus = ctrlState?.status || 'NOT_STARTED';
@@ -98,6 +100,21 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           </span>
         );
     }
+  };
+
+  // Tactical Point Weight Badge Helper for CMMC Level 2 mode
+  const renderPointWeightBadge = () => {
+    const weight = getSprsPointDeduction(control.id);
+    const badge = getControlImpactBadge(weight);
+    return (
+      <span
+        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono uppercase tracking-wider font-bold ${badge.badgeClass}`}
+        title={`SPRS Assessment Impact: ${weight} Point Deduction under DoD NIST SP 800-171`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${badge.dotClass}`} />
+        <span>{badge.tagText}</span>
+      </span>
+    );
   };
 
   // Drag & Drop Handlers
@@ -186,6 +203,9 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             <span className="font-mono font-bold text-sm tracking-wide px-3 py-1 rounded-lg bg-cyan-950/50 text-cyan-300 border border-cyan-500/30 shadow-sm shadow-cyan-950/30">
               {control.id}
             </span>
+
+            {/* Tactical Point Weight Badge for CMMC Level 2 */}
+            {activeFramework === 'CMMC_L2' && renderPointWeightBadge()}
 
             {/* Status Badge */}
             {renderStatusBadge()}

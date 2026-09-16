@@ -5,39 +5,40 @@ import {
   Download,
   Copy,
   Check,
-  Building,
   Eye,
   Edit3,
   Lock,
-  FileCheck,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
+import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 import { DEFAULT_GCP_CONFIG } from '../../services/gcsService';
 
 export const SSPBuilder: React.FC = () => {
   const {
     state,
     metrics,
+    frameworkControls,
     updateSSPMetadata,
     exportAssessmentMarkdown,
-    openExportModal,
   } = useAssessment();
 
-  const { currentTenant, canEdit } = useTenant();
+  const { currentTenant, canEdit, activeFramework } = useTenant();
 
   const [viewMode, setViewMode] = useState<'document' | 'form'>('document');
   const [copied, setCopied] = useState<boolean>(false);
 
   const meta = state.sspMetadata;
+  const frameworkTitle = getFrameworkTitle(activeFramework);
+  const guidance = getFrameworkGuidanceText(activeFramework);
+  const totalControls = frameworkControls.length || metrics.totalControls || 1;
 
   const handlePrint = () => {
     window.print();
   };
 
   const handleCopyText = () => {
-    let text = `SYSTEM SECURITY PLAN (SSP) - CMMC LEVEL 1 / FAR 52.204-21\n\n`;
+    let text = `SYSTEM SECURITY PLAN (SSP) - ${frameworkTitle.toUpperCase()} / ${guidance.authority.toUpperCase()}\n\n`;
     text += `ORGANIZATION: ${meta.organizationName}\n`;
     text += `CAGE CODE: ${meta.cageCode}\n`;
     text += `SAM.GOV STATUS: ${meta.samStatus || 'Active'}\n`;
@@ -46,12 +47,13 @@ export const SSPBuilder: React.FC = () => {
     text += `ASSESSMENT DATE: ${meta.assessmentDate}\n`;
     text += `GCS ENCLAVE: gs://${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${currentTenant.id}/\n\n`;
     text += `SYSTEM BOUNDARY & SCOPE:\n${meta.systemBoundaryScope}\n\n`;
-    text += `17 CONTROLS ASSESSMENT MATRIX:\n`;
+    text += `${totalControls} CONTROLS ASSESSMENT MATRIX:\n`;
 
-    for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+    for (const ctrl of frameworkControls) {
       const cState = state.controls[ctrl.id];
       const evidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
-      text += `\n[${ctrl.id}] ${ctrl.title} (${ctrl.farReference})\n`;
+      const authority = ctrl.authorityReference || ctrl.id;
+      text += `\n[${ctrl.id}] ${ctrl.title} (${authority})\n`;
       text += `Status: ${cState?.status || 'NOT_STARTED'}\n`;
       text += `Implementation Statement:\n${cState?.implementationNotes || 'No implementation notes provided.'}\n`;
       if (evidence.length > 0) {
@@ -83,7 +85,7 @@ export const SSPBuilder: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                NIST SP 800-171 / FAR 52.204-21 compliance documentation automatically compiled for all 17 controls.
+                {guidance.standardRef} compliance documentation automatically compiled for all {totalControls} controls.
               </p>
             </div>
           </div>
@@ -113,59 +115,45 @@ export const SSPBuilder: React.FC = () => {
               }`}
             >
               <Edit3 className="w-3.5 h-3.5" />
-              <span>Edit System Info</span>
+              <span>Edit Metadata</span>
             </button>
           </div>
 
-          {/* Official Artifact Package Generator */}
-          <button
-            onClick={() => openExportModal('NIST_SP_800_18_SSP')}
-            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs transition-all flex items-center gap-2 shadow-lg shadow-brand-600/25 hover:scale-[1.02]"
-            title="Open Artifact & Document Generator for official export (PDF/HTML/JSON/POA&M)"
-          >
-            <FileCheck className="w-4 h-4" />
-            <span>Export Official Package</span>
-          </button>
-
-          {/* Print / PDF Button */}
-          <button
-            onClick={handlePrint}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20 hover:scale-[1.02]"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Print / Save as PDF</span>
-          </button>
-
-          {/* Copy Text */}
           <button
             onClick={handleCopyText}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-            title="Copy Full SSP Text"
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
           >
-            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+            <span>{copied ? 'Copied to Clipboard' : 'Copy Plaintext'}</span>
           </button>
 
-          {/* Export Markdown */}
           <button
-            onClick={exportAssessmentMarkdown}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-            title="Download SSP Markdown (.md)"
+            onClick={() => exportAssessmentMarkdown()}
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5 text-slate-400" />
+            <span>Download MD</span>
+          </button>
+
+          <button
+            onClick={handlePrint}
+            className="px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-lg shadow-brand-500/20"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Print Official SSP</span>
           </button>
         </div>
       </div>
 
-      {/* VIEW 1: SYSTEM INFO FORM */}
+      {/* VIEW 1: METADATA FORM EDITOR */}
       {viewMode === 'form' && (
-        <div className="no-print bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl">
-          <div>
-            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <Building className="w-5 h-5 text-brand-400" />
-              System & Organization Governance Information
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl">
+          <div className="border-b border-slate-800 pb-4">
+            <h3 className="text-lg font-bold text-white tracking-tight">
+              Edit Enclave & System Identification
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              These details populate the System Security Plan header, boundary scope narrative, and executive summary for <strong>{currentTenant.name}</strong>.
+              These details populate the formal cover page, attestation block, and system environment sections of your SSP.
             </p>
           </div>
 
@@ -176,37 +164,7 @@ export const SSPBuilder: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Organization Name */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Organization Name
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit}
-                value={meta.organizationName}
-                onChange={(e) => updateSSPMetadata({ organizationName: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Apex Defense Solutions, LLC"
-              />
-            </div>
-
-            {/* CAGE Code */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                CAGE Code (Commercial and Government Entity)
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit}
-                value={meta.cageCode}
-                onChange={(e) => updateSSPMetadata({ cageCode: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none uppercase disabled:opacity-70"
-                placeholder="e.g. 9X7B4"
-              />
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* System Name */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -218,14 +176,63 @@ export const SSPBuilder: React.FC = () => {
                 value={meta.systemName}
                 onChange={(e) => updateSSPMetadata({ systemName: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Corporate Operations Enclave (COE)"
+                placeholder="e.g. Defense Contracting Information Network (DCIN)"
               />
+            </div>
+
+            {/* Organization Name */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Organization / Contractor Name
+              </label>
+              <input
+                type="text"
+                disabled={!canEdit}
+                value={meta.organizationName}
+                onChange={(e) => updateSSPMetadata({ organizationName: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="e.g. Vanguard Defense Systems LLC"
+              />
+            </div>
+
+            {/* CAGE Code */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Commercial and Government Entity (CAGE) Code
+              </label>
+              <input
+                type="text"
+                disabled={!canEdit}
+                value={meta.cageCode}
+                onChange={(e) => updateSSPMetadata({ cageCode: e.target.value.toUpperCase() })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="e.g. 8K3R1"
+                maxLength={5}
+              />
+            </div>
+
+            {/* SAM Status */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                SAM.gov Registration Status
+              </label>
+              <select
+                disabled={!canEdit}
+                value={meta.samStatus}
+                onChange={(e) => updateSSPMetadata({ samStatus: e.target.value as any })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+              >
+                <option value="ACTIVE">ACTIVE - Compliant for Federal Award</option>
+                <option value="EXPIRED">EXPIRED - Renewal Required</option>
+                <option value="IN_PROGRESS">IN_PROGRESS - Registration Underway</option>
+                <option value="NOT_REGISTERED">NOT_REGISTERED</option>
+              </select>
             </div>
 
             {/* System Owner */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Designated System Owner & Role
+                Designated System Owner
               </label>
               <input
                 type="text"
@@ -233,14 +240,29 @@ export const SSPBuilder: React.FC = () => {
                 value={meta.systemOwner}
                 onChange={(e) => updateSSPMetadata({ systemOwner: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Alex Mercer, CMMC CCA"
+                placeholder="e.g. Alex Mercer, Chief Information Officer"
+              />
+            </div>
+
+            {/* Lead Assessor / Author */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Lead Assessment Author
+              </label>
+              <input
+                type="text"
+                disabled={!canEdit}
+                value={meta.authorName}
+                onChange={(e) => updateSSPMetadata({ authorName: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="e.g. Lead CMMC Assessor / Security Engineer"
               />
             </div>
 
             {/* Assessment Date */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Assessment Baseline Date
+                Baseline Assessment Date
               </label>
               <input
                 type="date"
@@ -277,7 +299,7 @@ export const SSPBuilder: React.FC = () => {
                 value={meta.systemBoundaryScope}
                 onChange={(e) => updateSSPMetadata({ systemBoundaryScope: e.target.value })}
                 className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="Describe the operational boundary, physical facilities, cloud tenants, and components that process, store, or transmit FCI..."
+                placeholder="Describe the operational boundary, physical facilities, cloud tenants, and components..."
               />
             </div>
 
@@ -330,7 +352,7 @@ export const SSPBuilder: React.FC = () => {
           {/* Document Header & Cover Banner */}
           <div className="border-b-2 border-slate-900 pb-6 space-y-2">
             <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
-              <span>SECURITY CLASSIFICATION: UNCLASSIFIED // FCI ONLY</span>
+              <span>SECURITY CLASSIFICATION: UNCLASSIFIED // COMPLIANCE CONTROL SET</span>
               <span>VERSION {meta.version}</span>
             </div>
             
@@ -338,17 +360,17 @@ export const SSPBuilder: React.FC = () => {
               SYSTEM SECURITY PLAN (SSP)
             </h1>
             <p className="text-sm font-semibold text-slate-700">
-              Basic Safeguarding of Covered Contractor Information Systems
+              {guidance.scopeDescription}
             </p>
             <div className="flex items-center gap-2 pt-1 flex-wrap">
               <span className="text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-300">
-                FAR 52.204-21
+                {guidance.authority}
               </span>
               <span className="text-xs font-bold px-2 py-0.5 bg-brand-50 text-brand-800 rounded border border-brand-200">
-                CMMC 2.0 Level 1 (17 Controls)
+                {frameworkTitle} ({totalControls} Controls)
               </span>
               <span className="text-xs font-bold px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded border border-emerald-200">
-                NIST SP 800-171 Baseline
+                {guidance.standardRef} Baseline
               </span>
             </div>
           </div>
@@ -405,7 +427,7 @@ export const SSPBuilder: React.FC = () => {
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
-                <span className="text-2xl font-extrabold text-slate-900 font-mono">{metrics.metCount}/17</span>
+                <span className="text-2xl font-extrabold text-slate-900 font-mono">{metrics.metCount}/{totalControls}</span>
                 <p className="text-[11px] font-semibold text-slate-600 mt-0.5">Practices Met</p>
               </div>
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
@@ -413,8 +435,8 @@ export const SSPBuilder: React.FC = () => {
                 <p className="text-[11px] font-semibold text-slate-600 mt-0.5">Overall Readiness</p>
               </div>
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
-                <span className="text-2xl font-extrabold text-slate-900 font-mono">0</span>
-                <p className="text-[11px] font-semibold text-slate-600 mt-0.5">Allowed POA&Ms</p>
+                <span className="text-2xl font-extrabold text-slate-900 font-mono">{guidance.poamPermitted ? (totalControls - metrics.metCount) : 0}</span>
+                <p className="text-[11px] font-semibold text-slate-600 mt-0.5">{guidance.poamPermitted ? 'Open Deficiencies' : 'Allowed POA&Ms'}</p>
               </div>
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
                 <span className="text-2xl font-extrabold text-slate-900 font-mono">{state.evidenceIndex.length}</span>
@@ -423,17 +445,18 @@ export const SSPBuilder: React.FC = () => {
             </div>
           </div>
 
-          {/* Section 4: 17 CMMC Level 1 Practices Evaluation Matrix */}
+          {/* Section 4: Practices Evaluation Matrix */}
           <div className="space-y-4 print-page-break">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg border-l-4 border-brand-600">
-              4. FAR 52.204-21 / CMMC Level 1 Practices Evaluation Matrix (17 Controls)
+              4. {frameworkTitle} Practices Evaluation Matrix ({totalControls} Controls)
             </h2>
 
             <div className="space-y-4">
-              {CMMC_LEVEL_1_CONTROLS.map((ctrl) => {
+              {frameworkControls.map((ctrl) => {
                 const cState = state.controls[ctrl.id];
                 const status = cState?.status || 'NOT_STARTED';
                 const evidenceList = state.evidenceIndex.filter((e) => e.controlId === ctrl.id);
+                const authority = ctrl.authorityReference || ctrl.id;
 
                 return (
                   <div
@@ -450,7 +473,7 @@ export const SSPBuilder: React.FC = () => {
                           {ctrl.title}
                         </span>
                         <span className="text-[11px] text-slate-500 font-mono">
-                          ({ctrl.farReference})
+                          ({authority})
                         </span>
                       </div>
 
@@ -470,7 +493,7 @@ export const SSPBuilder: React.FC = () => {
 
                     {/* Requirement Summary */}
                     <p className="text-[11px] text-slate-600 italic">
-                      Requirement: {ctrl.plainEnglishSummary}
+                      Requirement: {ctrl.plainEnglishSummary || ctrl.discussion}
                     </p>
 
                     {/* Implementation Narrative */}
@@ -520,7 +543,7 @@ export const SSPBuilder: React.FC = () => {
             </h2>
 
             <p className="text-xs text-slate-700 leading-relaxed">
-              I, the undersigned Senior Official / System Owner, hereby certify that the information contained within this System Security Plan (SSP) accurately reflects the security safeguards implemented within <strong>{meta.systemName}</strong> for <strong>{meta.organizationName}</strong> in accordance with FAR 52.204-21 and CMMC Level 1 standards.
+              I, the undersigned Senior Official / System Owner, hereby certify that the information contained within this System Security Plan (SSP) accurately reflects the security safeguards implemented within <strong>{meta.systemName}</strong> for <strong>{meta.organizationName}</strong> in accordance with {guidance.authority} and {frameworkTitle} standards.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6">

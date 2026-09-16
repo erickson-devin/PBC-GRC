@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,11 +13,31 @@ import {
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
+import { calculateSprsScore } from '../../data/reports/sprsCompiler';
 import { DomainCards } from './DomainCards';
 
 export const ComplianceOverview: React.FC = () => {
-  const { metrics, state, setActiveTab, openExportModal } = useAssessment();
-  const { currentTenant, canEdit } = useTenant();
+  const { metrics, state, frameworkControls, setActiveTab, openExportModal } = useAssessment();
+  const { currentTenant, canEdit, activeFramework } = useTenant();
+
+  const frameworkTitle = getFrameworkTitle(activeFramework);
+  const guidance = getFrameworkGuidanceText(activeFramework);
+  const totalCount = metrics.totalControls || frameworkControls.length || 1;
+
+  // Real-time CMMC L2 SPRS score (-203 to +110)
+  const sprsResult = useMemo(() => {
+    if (activeFramework === 'CMMC_L2') {
+      return calculateSprsScore(frameworkControls, state.controls);
+    }
+    return null;
+  }, [activeFramework, frameworkControls, state.controls]);
+
+  // Progress Bar Percentage Math (Guaranteed to sum to 100% across totalCount)
+  const metPct = totalCount > 0 ? (metrics.metCount / totalCount) * 100 : 0;
+  const inProgressPct = totalCount > 0 ? (metrics.inProgressCount / totalCount) * 100 : 0;
+  const notMetPct = totalCount > 0 ? (metrics.notMetCount / totalCount) * 100 : 0;
+  const notStartedPct = totalCount > 0 ? (metrics.notStartedCount / totalCount) * 100 : 0;
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -52,19 +72,24 @@ export const ComplianceOverview: React.FC = () => {
           <div className="space-y-3 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800/80 border border-slate-700 text-slate-300">
               <Shield className="w-3.5 h-3.5 text-brand-400" />
-              <span>CMMC 2.0 Level 1 / FAR 52.204-21 Compliance Engine</span>
+              <span>{guidance.bannerTitle}</span>
             </div>
 
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               {metrics.isSprsReady ? (
                 <span className="text-emerald-400 flex items-center gap-3">
                   <CheckCircle2 className="w-8 h-8 shrink-0 text-emerald-400" />
-                  SPRS Ready: 100% Baseline Achieved
+                  {frameworkTitle} Ready: 100% Baseline Achieved
                 </span>
               ) : (
                 <span className="flex items-center gap-3">
                   <AlertTriangle className="w-8 h-8 shrink-0 text-amber-400" />
                   Self-Assessment In Progress ({metrics.completionPercentage}%)
+                  {sprsResult && (
+                    <span className="text-sm font-mono font-normal px-2.5 py-0.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      SPRS Score: {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
+                    </span>
+                  )}
                 </span>
               )}
             </h1>
@@ -72,15 +97,19 @@ export const ComplianceOverview: React.FC = () => {
             <p className="text-sm text-slate-300 leading-relaxed">
               {metrics.isSprsReady ? (
                 <>
-                  All 17 FAR 52.204-21 / NIST SP 800-171 practices for <strong>{currentTenant.name}</strong> are documented and evaluated as <strong>MET</strong>. 
-                  Your organization satisfies the CMMC Level 1 standard with zero allowable POA&Ms. 
-                  You are ready to generate your formal System Security Plan (SSP) and submit your score to SPRS.
+                  All {totalCount} {guidance.standardRef} practices for <strong>{currentTenant.name}</strong> are documented and evaluated as <strong>MET</strong>. 
+                  {guidance.poamPermitted ? (
+                    <> Your organization satisfies the {frameworkTitle} baseline with full evidence integrity.</>
+                  ) : (
+                    <> Your organization satisfies the {frameworkTitle} standard with zero allowable POA&Ms.</>
+                  )}
+                  {' '}You are ready to generate your formal System Security Plan (SSP) and submit your compliance artifacts.
                 </>
               ) : (
                 <>
-                  CMMC Level 1 mandates satisfying all <strong>17 practices</strong> across 6 domains. 
-                  Unlike Level 2, <span className="text-amber-300 font-semibold">Plans of Action & Milestones (POA&Ms) are NOT permitted</span> for Level 1 certification. 
-                  Currently, <strong>{metrics.totalControls - metrics.metCount}</strong> of 17 controls require review or evidence.
+                  {frameworkTitle} mandates satisfying all <strong>{totalCount} controls</strong> across the active scope. 
+                  {' '}{guidance.poamPolicyText} 
+                  {' '}Currently, <strong>{totalCount - metrics.metCount}</strong> of {totalCount} controls require review or evidence.
                 </>
               )}
             </p>
@@ -117,7 +146,7 @@ export const ComplianceOverview: React.FC = () => {
               onClick={() => setActiveTab('controls')}
               className="btn-secondary w-full py-3 text-sm"
             >
-              <span>Manage Control Matrix (17)</span>
+              <span>Manage Control Matrix ({totalCount})</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -127,25 +156,33 @@ export const ComplianceOverview: React.FC = () => {
         {/* Dynamic Progress Bar */}
         <div className="mt-8 pt-6 border-t border-slate-800/80 space-y-2">
           <div className="flex items-center justify-between text-xs font-medium">
-            <span className="text-slate-400">Total CMMC Level 1 Readiness Progress</span>
-            <span className="text-white font-mono">{metrics.metCount} / 17 Controls Met ({metrics.completionPercentage}%)</span>
+            <span className="text-slate-400">Total {frameworkTitle} Readiness Progress</span>
+            <span className="text-white font-mono">
+              {metrics.metCount} / {totalCount} Controls Met ({metrics.completionPercentage}%)
+              {sprsResult && ` • SPRS: ${sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}`}
+            </span>
           </div>
 
           <div className="w-full bg-slate-850 rounded-full h-3 overflow-hidden flex shadow-inner">
             <div
               className="bg-emerald-500 transition-all duration-700 relative"
-              style={{ width: `${(metrics.metCount / 17) * 100}%` }}
+              style={{ width: `${metPct}%` }}
               title={`${metrics.metCount} Met`}
             />
             <div
               className="bg-amber-500 transition-all duration-700"
-              style={{ width: `${(metrics.inProgressCount / 17) * 100}%` }}
+              style={{ width: `${inProgressPct}%` }}
               title={`${metrics.inProgressCount} In Progress`}
             />
             <div
               className="bg-rose-500 transition-all duration-700"
-              style={{ width: `${(metrics.notMetCount / 17) * 100}%` }}
+              style={{ width: `${notMetPct}%` }}
               title={`${metrics.notMetCount} Not Met`}
+            />
+            <div
+              className="bg-slate-700/60 transition-all duration-700"
+              style={{ width: `${notStartedPct}%` }}
+              title={`${metrics.notStartedCount} Not Started`}
             />
           </div>
 
@@ -168,7 +205,7 @@ export const ComplianceOverview: React.FC = () => {
             </div>
 
             <span className="font-mono text-slate-400">
-              17 of 17 Required for DoD SPRS
+              {metrics.metCount} of {totalCount} Satisfied
             </span>
           </div>
         </div>
@@ -186,10 +223,10 @@ export const ComplianceOverview: React.FC = () => {
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-extrabold text-white font-mono">{metrics.metCount}</span>
-            <span className="text-xs text-slate-400">/ 17 practices</span>
+            <span className="text-xs text-slate-400">/ {totalCount} controls</span>
           </div>
           <p className="text-[11px] text-emerald-400 font-medium mt-2">
-            {metrics.isSprsReady ? '100% Target Met' : `${17 - metrics.metCount} controls remaining`}
+            {metrics.isSprsReady ? '100% Target Met' : `${totalCount - metrics.metCount} controls remaining`}
           </p>
         </div>
 
@@ -249,12 +286,12 @@ export const ComplianceOverview: React.FC = () => {
         </div>
       </div>
 
-      {/* 6 CMMC Domains Section */}
+      {/* Framework Domains Section */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-bold text-white tracking-tight">
-              CMMC Domain Assessment Breakdown
+              {frameworkTitle} Domain Assessment Breakdown
             </h3>
             <p className="text-xs text-slate-400">
               Click any domain card to jump directly to its filtered control requirements in the matrix.
@@ -265,7 +302,7 @@ export const ComplianceOverview: React.FC = () => {
             onClick={() => setActiveTab('controls')}
             className="text-xs font-semibold text-brand-400 hover:text-brand-300 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 transition-colors"
           >
-            <span>View All 17 Controls</span>
+            <span>View All {totalCount} Controls</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>

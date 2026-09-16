@@ -1,5 +1,6 @@
 import { AssessmentState, ControlState, SSPMetadata, EvidenceItem } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
+import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
 import { GcsService, DEFAULT_GCP_CONFIG } from './gcsService';
 
@@ -260,11 +261,16 @@ export const StorageService = {
   },
 
   /**
-   * Export formatted NIST SP 800-171 / FAR 52.204-21 Markdown SSP
+   * Export formatted Markdown SSP for the active framework
    */
-  exportMarkdown(state: AssessmentState): void {
+  exportMarkdown(
+    state: AssessmentState,
+    controls?: FrameworkControlDefinition[],
+    framework: ComplianceFramework = 'CMMC_L1'
+  ): void {
     const meta = state.sspMetadata;
-    let md = `# SYSTEM SECURITY PLAN (SSP) - CMMC LEVEL 1\n\n`;
+    const fwTitle = framework === 'CMMC_L1' ? 'CMMC LEVEL 1' : framework.replace(/_/g, ' ');
+    let md = `# SYSTEM SECURITY PLAN (SSP) - ${fwTitle.toUpperCase()}\n\n`;
     md += `**Document Version:** ${meta.version || '1.0.0'}\n`;
     md += `**Organization:** ${meta.organizationName}\n`;
     md += `**CAGE Code:** ${meta.cageCode || 'N/A'}\n`;
@@ -278,13 +284,17 @@ export const StorageService = {
     md += `## 2. Operating Environment & Cloud Service Providers (CSPs)\n`;
     md += `- **Environment:** ${meta.systemEnvironment}\n`;
     md += `- **Authorized CSPs:** ${meta.cloudServiceProviders}\n\n`;
-    md += `## 3. 17 CMMC Level 1 Security Requirements Matrix (FAR 52.204-21)\n\n`;
 
-    for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+    const activeControls: (FrameworkControlDefinition | typeof CMMC_LEVEL_1_CONTROLS[number])[] =
+      controls && controls.length > 0 ? controls : CMMC_LEVEL_1_CONTROLS;
+    md += `## 3. ${activeControls.length} Controls Security Requirements Matrix\n\n`;
+
+    for (const ctrl of activeControls) {
       const cState = state.controls[ctrl.id];
       const ctrlEvidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
+      const authority = 'authorityReference' in ctrl ? ctrl.authorityReference : (ctrl as any).farReference || '';
       md += `### ${ctrl.id}: ${ctrl.title}\n`;
-      md += `- **FAR Reference:** ${ctrl.farReference}\n`;
+      if (authority) md += `- **Authority Reference:** ${authority}\n`;
       md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
       md += `- **Evaluation Status:** **${cState?.status || 'NOT_STARTED'}**\n`;
       md += `- **Responsible Role:** ${cState?.responsibleRole || 'IT / Security Lead'}\n`;
@@ -307,7 +317,7 @@ export const StorageService = {
     const a = document.createElement('a');
     a.href = url;
     const orgSlug = (meta.organizationName || 'Tenant').replace(/[^a-zA-Z0-9]/g, '_');
-    a.download = `CMMC_Level1_SSP_${orgSlug}_${new Date().toISOString().split('T')[0]}.md`;
+    a.download = `${framework}_SSP_${orgSlug}_${new Date().toISOString().split('T')[0]}.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
