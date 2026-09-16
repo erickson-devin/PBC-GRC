@@ -75,7 +75,7 @@ export const DomainCards: React.FC = () => {
           <div
             key={code}
             onClick={() => handleDomainClick(code)}
-            className="group relative bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 transition-all duration-200 cursor-pointer shadow-lg hover:shadow-brand-500/5 hover:-translate-y-0.5 flex flex-col justify-between"
+            className="group relative bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/30 rounded-2xl p-5 transition-all duration-200 cursor-pointer shadow-lg hover:shadow-cyan-500/5 hover:-translate-y-0.5 flex flex-col justify-between"
           >
             {/* Header */}
             <div>
@@ -95,7 +95,7 @@ export const DomainCards: React.FC = () => {
                     <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">
                       {code} Domain
                     </span>
-                    <h4 className="text-base font-bold text-white group-hover:text-brand-300 transition-colors">
+                    <h4 className="text-base font-bold text-white group-hover:text-cyan-300 transition-colors">
                       {domain.name}
                     </h4>
                   </div>
@@ -106,8 +106,8 @@ export const DomainCards: React.FC = () => {
                     <CheckCircle2 className="w-3 h-3" /> Met
                   </span>
                 ) : (
-                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                    {stats.met} of {total} Met
+                  <span className="text-[11px] font-medium font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
+                    {stats.met} / {total} Met
                   </span>
                 )}
               </div>
@@ -143,7 +143,7 @@ export const DomainCards: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-1 text-xs text-brand-400 group-hover:text-brand-300 font-medium">
+              <div className="flex items-center justify-between pt-1 text-xs text-cyan-400 group-hover:text-cyan-300 font-semibold">
                 <span>View {total} Controls</span>
                 <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
               </div>

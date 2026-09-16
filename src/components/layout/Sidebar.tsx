@@ -42,8 +42,8 @@ export const Sidebar: React.FC = () => {
       id: 'controls',
       label: `Control Matrix (${totalControls})`,
       icon: CheckSquare,
-      badge: `${metrics.metCount}/${totalControls}`,
-      badgeColor: metrics.isSprsReady ? 'bg-emerald-500/20 text-emerald-300' : 'bg-brand-500/20 text-brand-300',
+      badge: metrics.isSprsReady ? '100%' : `${metrics.completionPercentage}%`,
+      badgeColor: metrics.isSprsReady ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-300',
     },
     {
       id: 'ssp',

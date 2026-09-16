@@ -2,23 +2,25 @@ import React, { useMemo } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
-  Clock,
-  HelpCircle,
   Paperclip,
   FileText,
   ArrowRight,
   Shield,
   Building2,
   Lock,
+  Target,
+  ShieldCheck,
+  Database,
+  ExternalLink,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
-import { calculateSprsScore } from '../../data/reports/sprsCompiler';
+import { calculateSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { DomainCards } from './DomainCards';
 
 export const ComplianceOverview: React.FC = () => {
-  const { metrics, state, frameworkControls, setActiveTab, openExportModal } = useAssessment();
+  const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
   const { currentTenant, canEdit, activeFramework } = useTenant();
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
@@ -38,6 +40,24 @@ export const ComplianceOverview: React.FC = () => {
   const inProgressPct = totalCount > 0 ? (metrics.inProgressCount / totalCount) * 100 : 0;
   const notMetPct = totalCount > 0 ? (metrics.notMetCount / totalCount) * 100 : 0;
   const notStartedPct = totalCount > 0 ? (metrics.notStartedCount / totalCount) * 100 : 0;
+
+  // High-Yield Remediation: Top 3 unmet controls sorted by SPRS point impact (5-pt > 3-pt > 1-pt)
+  const highYieldRemediations = useMemo(() => {
+    return frameworkControls
+      .filter((c) => state.controls[c.id]?.status !== 'MET')
+      .map((c) => ({
+        control: c,
+        weight: getSprsPointDeduction(c.id),
+        status: state.controls[c.id]?.status || 'NOT_STARTED',
+      }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 3);
+  }, [frameworkControls, state.controls]);
+
+  const handleRemediateControl = (controlId: string) => {
+    setSelectedControlId(controlId);
+    setActiveTab('controls');
+  };
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -61,21 +81,27 @@ export const ComplianceOverview: React.FC = () => {
         </div>
       )}
 
-      {/* Hero / SPRS Status Banner */}
+      {/* Hero: Consolidated Tactical Command HUD */}
       <div className={`relative overflow-hidden rounded-3xl p-6 sm:p-8 border shadow-2xl transition-all ${
         metrics.isSprsReady
-          ? 'bg-gradient-to-br from-emerald-950/70 via-slate-900 to-slate-900 border-emerald-500/40 shadow-emerald-500/10'
+          ? 'bg-gradient-to-br from-emerald-950/80 via-slate-900 to-slate-900 border-emerald-500/40 shadow-emerald-500/10'
           : 'bg-gradient-to-br from-slate-900 via-slate-900/90 to-brand-950/40 border-slate-800 shadow-brand-500/5'
       }`}>
-        <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+        <div className="relative z-10 grid grid-cols-1 xl:grid-cols-12 gap-8 items-center">
           
-          <div className="space-y-3 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800/80 border border-slate-700 text-slate-300">
-              <Shield className="w-3.5 h-3.5 text-brand-400" />
-              <span>{guidance.bannerTitle}</span>
+          {/* Left Block: Authority, Status, Description & Tenant Meta */}
+          <div className="xl:col-span-7 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800/90 border border-slate-700 text-slate-200">
+                <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{guidance.bannerTitle}</span>
+              </div>
+              <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                {guidance.authority}
+              </span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-tight">
               {metrics.isSprsReady ? (
                 <span className="text-emerald-400 flex items-center gap-3">
                   <CheckCircle2 className="w-8 h-8 shrink-0 text-emerald-400" />
@@ -85,205 +111,293 @@ export const ComplianceOverview: React.FC = () => {
                 <span className="flex items-center gap-3">
                   <AlertTriangle className="w-8 h-8 shrink-0 text-amber-400" />
                   Self-Assessment In Progress ({metrics.completionPercentage}%)
-                  {sprsResult && (
-                    <span className="text-sm font-mono font-normal px-2.5 py-0.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                      SPRS Score: {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
-                    </span>
-                  )}
                 </span>
               )}
             </h1>
 
-            <p className="text-sm text-slate-300 leading-relaxed">
+            <p className="text-sm text-slate-300 leading-relaxed max-w-xl">
               {metrics.isSprsReady ? (
                 <>
-                  All {totalCount} {guidance.standardRef} practices for <strong>{currentTenant.name}</strong> are documented and evaluated as <strong>MET</strong>. 
-                  {guidance.poamPermitted ? (
-                    <> Your organization satisfies the {frameworkTitle} baseline with full evidence integrity.</>
-                  ) : (
-                    <> Your organization satisfies the {frameworkTitle} standard with zero allowable POA&Ms.</>
-                  )}
-                  {' '}You are ready to generate your formal System Security Plan (SSP) and submit your compliance artifacts.
+                  All {totalCount} {guidance.standardRef} practices for <strong>{currentTenant.name}</strong> are evaluated as <strong>MET</strong> with cryptographic evidence assurance.
+                  {' '}Your organization satisfies the {frameworkTitle} baseline and is ready for formal System Security Plan export.
                 </>
               ) : (
                 <>
-                  {frameworkTitle} mandates satisfying all <strong>{totalCount} controls</strong> across the active scope. 
+                  {frameworkTitle} mandates satisfying all <strong>{totalCount} controls</strong> across the active enclave boundary.
                   {' '}{guidance.poamPolicyText} 
-                  {' '}Currently, <strong>{totalCount - metrics.metCount}</strong> of {totalCount} controls require review or evidence.
+                  {' '}Currently, <strong>{totalCount - metrics.metCount}</strong> of {totalCount} controls require implementation narrative or verified evidence.
                 </>
               )}
             </p>
 
             {/* Micro Badges with Active Tenant Metadata */}
             <div className="flex flex-wrap items-center gap-2.5 pt-2 text-xs font-medium text-slate-400">
-              <span className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-200 flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-brand-400" />
+              <span className="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-200 flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-cyan-400" />
                 <strong className="text-white">{currentTenant.name}</strong>
               </span>
-              <span className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300 font-mono">
-                CAGE: <strong className="text-brand-300">{currentTenant.cageCode || 'N/A'}</strong>
+              <span className="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300 font-mono">
+                CAGE: <strong className="text-cyan-300">{currentTenant.cageCode || 'N/A'}</strong>
               </span>
-              <span className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300">
+              <span className="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300">
                 SAM: <strong className={currentTenant.samStatus === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'}>{currentTenant.samStatus}</strong>
               </span>
-              <span className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300">
+              <span className="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300">
                 Evidence Files: <strong className="text-white">{state.evidenceIndex.length}</strong>
               </span>
             </div>
           </div>
 
-          {/* Right Action Box */}
-          <div className="flex flex-col sm:flex-row lg:flex-col gap-3 w-full sm:w-auto lg:w-64 shrink-0">
-            <button
-              onClick={() => openExportModal()}
-              className="btn-primary w-full py-3 text-sm shadow-lg shadow-cyan-500/25"
-            >
-              <FileText className="w-4 h-4" />
-              <span>Generate Official SSP</span>
-            </button>
+          {/* Right Block: Consolidated Tactical Command HUD */}
+          <div className="xl:col-span-5 bg-slate-950/70 backdrop-blur-md rounded-2xl border border-slate-800/90 p-5 sm:p-6 shadow-xl space-y-5">
+            {/* Primary Score & Status */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                  {sprsResult ? 'Official DoD SPRS Score' : `${frameworkTitle} Readiness`}
+                </p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className={`text-3xl sm:text-4xl font-black font-mono tracking-tight ${
+                    metrics.isSprsReady ? 'text-emerald-400' : sprsResult && sprsResult.score > 0 ? 'text-cyan-400' : 'text-white'
+                  }`}>
+                    {sprsResult ? (sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score) : `${metrics.completionPercentage}%`}
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {sprsResult ? '(-203 to +110 range)' : `(${metrics.metCount}/${totalCount} MET)`}
+                  </span>
+                </div>
+              </div>
 
-            <button
-              onClick={() => setActiveTab('controls')}
-              className="btn-secondary w-full py-3 text-sm"
-            >
-              <span>Manage Control Matrix ({totalCount})</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-
-        </div>
-
-        {/* Dynamic Progress Bar */}
-        <div className="mt-8 pt-6 border-t border-slate-800/80 space-y-2">
-          <div className="flex items-center justify-between text-xs font-medium">
-            <span className="text-slate-400">Total {frameworkTitle} Readiness Progress</span>
-            <span className="text-white font-mono">
-              {metrics.metCount} / {totalCount} Controls Met ({metrics.completionPercentage}%)
-              {sprsResult && ` • SPRS: ${sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}`}
-            </span>
-          </div>
-
-          <div className="w-full bg-slate-850 rounded-full h-3 overflow-hidden flex shadow-inner">
-            <div
-              className="bg-emerald-500 transition-all duration-700 relative"
-              style={{ width: `${metPct}%` }}
-              title={`${metrics.metCount} Met`}
-            />
-            <div
-              className="bg-amber-500 transition-all duration-700"
-              style={{ width: `${inProgressPct}%` }}
-              title={`${metrics.inProgressCount} In Progress`}
-            />
-            <div
-              className="bg-rose-500 transition-all duration-700"
-              style={{ width: `${notMetPct}%` }}
-              title={`${metrics.notMetCount} Not Met`}
-            />
-            <div
-              className="bg-slate-700/60 transition-all duration-700"
-              style={{ width: `${notStartedPct}%` }}
-              title={`${metrics.notStartedCount} Not Started`}
-            />
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 flex-wrap gap-2">
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Met ({metrics.metCount})
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> In Progress ({metrics.inProgressCount})
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-600" /> Not Started ({metrics.notStartedCount})
-              </span>
-              {metrics.notMetCount > 0 && (
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> Not Met ({metrics.notMetCount})
+              <div className="text-right">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono border ${
+                  metrics.isSprsReady
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+                }`}>
+                  {metrics.isSprsReady ? 'AUDIT READY' : `${metrics.completionPercentage}% BASELINE`}
                 </span>
-              )}
+                <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                  {metrics.metCount} of {totalCount} controls
+                </p>
+              </div>
             </div>
 
-            <span className="font-mono text-slate-400">
-              {metrics.metCount} of {totalCount} Satisfied
-            </span>
+            {/* Single Unified Multi-Segment Progress Bar */}
+            <div className="space-y-2">
+              <div className="w-full bg-slate-800 rounded-full h-3.5 overflow-hidden flex shadow-inner border border-slate-700/50">
+                <div
+                  className="bg-emerald-500 transition-all duration-700"
+                  style={{ width: `${metPct}%` }}
+                  title={`${metrics.metCount} Met`}
+                />
+                <div
+                  className="bg-amber-500 transition-all duration-700"
+                  style={{ width: `${inProgressPct}%` }}
+                  title={`${metrics.inProgressCount} In Progress`}
+                />
+                <div
+                  className="bg-rose-500 transition-all duration-700"
+                  style={{ width: `${notMetPct}%` }}
+                  title={`${metrics.notMetCount} Not Met`}
+                />
+                <div
+                  className="bg-slate-700/60 transition-all duration-700"
+                  style={{ width: `${notStartedPct}%` }}
+                  title={`${metrics.notStartedCount} Not Started`}
+                />
+              </div>
+
+              {/* Inline Legend / Tooltip Indicators */}
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-2 pt-0.5">
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <strong>{metrics.metCount}</strong> MET
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <strong>{metrics.inProgressCount}</strong> IN PROGRESS
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-slate-600" />
+                    <strong>{metrics.notStartedCount}</strong> NOT STARTED
+                  </span>
+                  {metrics.notMetCount > 0 && (
+                    <span className="flex items-center gap-1.5 text-rose-400">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      <strong>{metrics.notMetCount}</strong> NOT MET
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Action CTA Block */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <button
+                onClick={() => openExportModal()}
+                className="btn-primary py-2.5 text-xs shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Generate Official SSP</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('controls')}
+                className="btn-secondary py-2.5 text-xs flex items-center justify-center gap-2"
+              >
+                <span>Control Matrix ({totalCount})</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
+
         </div>
       </div>
 
-      {/* 4 Metric Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Met Count Card */}
-        <div className="stitch-card p-5 shadow-lg flex flex-col justify-between hover:border-emerald-500/40">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Controls Satisfied</span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
-              <CheckCircle2 className="w-4 h-4" />
+      {/* Two Actionable Operational Widgets */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        
+        {/* Widget 1: High-Yield Remediation Priority */}
+        <div className="stitch-card p-6 shadow-xl flex flex-col justify-between border-slate-800 hover:border-cyan-500/30 transition-all">
+          <div>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center">
+                  <Target className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-tight">High-Yield Remediation Priority</h3>
+                  <p className="text-[11px] text-slate-400">Top unmet controls ranked by SPRS point impact</p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                {highYieldRemediations.length} PRIORITIES
+              </span>
             </div>
+
+            {highYieldRemediations.length === 0 ? (
+              <div className="p-5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center my-3 space-y-1.5">
+                <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <p className="text-xs font-bold text-emerald-300">All High-Yield Controls Satisfied</p>
+                <p className="text-[11px] text-slate-400">
+                  Zero high-deduction requirements remaining. Your active enclave satisfies full baseline scoring.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5 my-3">
+                {highYieldRemediations.map(({ control, weight, status }) => (
+                  <div
+                    key={control.id}
+                    onClick={() => handleRemediateControl(control.id)}
+                    className="p-3 rounded-xl bg-slate-850/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer group flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="font-mono text-xs font-bold text-cyan-400">{control.id}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                          {control.domain}
+                        </span>
+                      </div>
+                      <p className="text-xs font-medium text-slate-200 truncate group-hover:text-cyan-300 transition-colors">
+                        {control.title}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold border ${
+                        weight === 5
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                          : weight === 3
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          : 'bg-slate-700 text-slate-300 border-slate-600'
+                      }`}>
+                        -{weight} SPRS PTS
+                      </span>
+                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
+                        {status.replace('_', ' ')}
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-white font-mono">{metrics.metCount}</span>
-            <span className="text-xs text-slate-400">/ {totalCount} controls</span>
+
+          <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+            <span>Resolving 5-pt controls yields immediate SPRS recovery</span>
+            <button
+              onClick={() => setActiveTab('controls')}
+              className="text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors"
+            >
+              <span>View Control Matrix</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <p className="text-[11px] text-emerald-400 font-medium mt-2">
-            {metrics.isSprsReady ? '100% Target Met' : `${totalCount - metrics.metCount} controls remaining`}
-          </p>
         </div>
 
-        {/* In Progress Card */}
-        <div className="stitch-card p-5 shadow-lg flex flex-col justify-between hover:border-amber-500/40">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">In Progress</span>
-            <div className="w-8 h-8 rounded-lg bg-amber-500/15 text-amber-400 flex items-center justify-center">
-              <Clock className="w-4 h-4" />
+        {/* Widget 2: Evidence Vault & Artifact Health */}
+        <div className="stitch-card p-6 shadow-xl flex flex-col justify-between border-slate-800 hover:border-cyan-500/30 transition-all">
+          <div>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 flex items-center justify-center">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-tight">Evidence Vault & Artifact Health</h3>
+                  <p className="text-[11px] text-slate-400">Cryptographic audit integrity and cloud storage posture</p>
+                </div>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                {state.evidenceIndex.length} GCS SYNCED
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 my-3">
+              <div className="p-3 rounded-xl bg-slate-850/80 border border-slate-800">
+                <p className="text-[10px] font-mono uppercase text-slate-400">Integrity Digest</p>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-white">SHA-256 Validated</span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1 truncate">Chained cryptographic proof</p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-850/80 border border-slate-800">
+                <p className="text-[10px] font-mono uppercase text-slate-400">Storage Retention</p>
+                <div className="flex items-center gap-1.5 mt-1">
+                  <Lock className="w-4 h-4 text-cyan-400" />
+                  <span className="text-xs font-bold text-white">DFARS 252.204-7012</span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">3-Year locked retention</p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-slate-400" />
+                <span className="text-slate-300">Total Enclave Artifacts Attached:</span>
+              </div>
+              <span className="font-mono font-bold text-white">{state.evidenceIndex.length} Verified Files</span>
             </div>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-white font-mono">{metrics.inProgressCount}</span>
-            <span className="text-xs text-slate-400">controls</span>
+
+          <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+            <span className="text-slate-400 text-[11px]">Enclave bucket: gs://pbc-grc-evidence</span>
+            <button
+              onClick={() => setActiveTab('vault')}
+              className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1.5 hover:border-cyan-500/40"
+            >
+              <span>Open Evidence Vault</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <p className="text-[11px] text-amber-400 font-medium mt-2">
-            Narratives or evidence active
-          </p>
         </div>
 
-        {/* Not Started Card */}
-        <div className="stitch-card p-5 shadow-lg flex flex-col justify-between hover:border-slate-700">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Not Started</span>
-            <div className="w-8 h-8 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center">
-              <HelpCircle className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-white font-mono">{metrics.notStartedCount}</span>
-            <span className="text-xs text-slate-400">controls</span>
-          </div>
-          <p className="text-[11px] text-slate-400 font-medium mt-2">
-            {metrics.notStartedCount === 0 ? 'All controls initiated' : 'Action required'}
-          </p>
-        </div>
-
-        {/* Evidence Vault Card */}
-        <div 
-          onClick={() => setActiveTab('vault')}
-          className="stitch-card p-5 shadow-lg flex flex-col justify-between cursor-pointer hover:border-cyan-500/40 group transition-all"
-        >
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Evidence Artifacts</span>
-            <div className="w-8 h-8 rounded-lg bg-cyan-500/15 text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Paperclip className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-white font-mono">{state.evidenceIndex.length}</span>
-            <span className="text-xs text-slate-400">GCS Synced</span>
-          </div>
-          <p className="text-[11px] text-cyan-400 font-medium mt-2 flex items-center gap-1">
-            <span>View Vault</span>
-            <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
-          </p>
-        </div>
       </div>
 
       {/* Framework Domains Section */}

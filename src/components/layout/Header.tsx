@@ -124,17 +124,17 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
               </span>
             </div>
             {metrics.isSprsReady ? (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                {metrics.metCount} / {totalCount} MET (100%)
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                {metrics.metCount} / {totalCount} MET
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                {metrics.metCount} / {totalCount} Met ({metrics.completionPercentage}%)
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                {metrics.metCount} / {totalCount} MET
                 {sprsResult && (
-                  <span className="ml-1 pl-1 border-l border-amber-500/30 font-mono text-[11px]">
-                    {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
+                  <span className="ml-1 pl-1.5 border-l border-amber-500/40 text-cyan-300">
+                    SPRS {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
                   </span>
                 )}
               </span>
