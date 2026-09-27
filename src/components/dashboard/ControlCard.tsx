@@ -25,6 +25,8 @@ import { useTenant } from '../../context/TenantContext';
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { getControlImpactBadge } from '../../data/frameworks';
+import { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
+import { FailingAssetInfo } from '../../types/telemetry';
 
 interface ControlCardProps {
   control: FrameworkControlDefinition | ControlDefinition | any;
@@ -60,6 +62,10 @@ export const ControlCard: React.FC<ControlCardProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [quickTemplateNotice, setQuickTemplateNotice] = useState(false);
+  const [isAssetDrawerOpen, setIsAssetDrawerOpen] = useState(false);
+
+  const failingAssets: FailingAssetInfo[] = ctrlState?.failingAssets || [];
+  const hasFailingAssets = failingAssets.length > 0;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -242,6 +248,36 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               {control.plainEnglishSummary}
             </p>
           </div>
+
+          {/* Tactical Telemetry Warning Banner (Per-Asset Root-Cause Analysis) */}
+          {hasFailingAssets && (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsAssetDrawerOpen(true);
+              }}
+              className="group flex items-center justify-between px-3.5 py-2 rounded-xl bg-gradient-to-r from-rose-950/60 via-amber-950/40 to-slate-900 border border-rose-500/40 hover:border-rose-400 cursor-pointer transition-all shadow-sm shadow-rose-950/40 mt-1.5"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="p-1 rounded-lg bg-rose-500/20 text-rose-400">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse" />
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-rose-200 group-hover:text-white transition-colors">
+                    ⚠️ {failingAssets.length} of 4 Endpoints Non-Compliant
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-500/30">
+                    DISA STIG Telemetry
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 text-xs font-semibold text-rose-300 group-hover:text-white transition-colors">
+                <span>Open Root-Cause Drawer</span>
+                <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+              </div>
+            </div>
+          )}
 
           {/* Cross-Framework Mappings (Inheritance Bridges) */}
           {control.mappings && control.mappings.length > 0 && (
@@ -513,6 +549,15 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
         </div>
       )}
+
+      {/* Asset Health & Root-Cause Remediation Drawer */}
+      <AssetRemediationDrawer
+        isOpen={isAssetDrawerOpen}
+        onClose={() => setIsAssetDrawerOpen(false)}
+        control={control}
+        failingAssets={failingAssets}
+        totalEndpoints={4}
+      />
     </div>
   );
 };

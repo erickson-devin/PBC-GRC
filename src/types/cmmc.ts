@@ -1,3 +1,5 @@
+import { FailingAssetInfo } from './telemetry';
+
 export type ControlStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'MET' | 'NOT_MET';
 
 export type DomainCode = 'AC' | 'IA' | 'MP' | 'PE' | 'SC' | 'SI';
@@ -58,6 +60,8 @@ export interface ControlState {
   lastUpdated: string;
   tags: string[];
   updatedBy?: string;
+  failingAssets?: FailingAssetInfo[];
+  telemetrySyncedAt?: string;
 }
 
 export interface SSPMetadata {

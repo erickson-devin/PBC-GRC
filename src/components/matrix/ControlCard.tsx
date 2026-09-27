@@ -1,3 +1,2 @@
-export { ControlCard } from '../dashboard/ControlCard';
-export default ControlCard;
-import { ControlCard } from '../dashboard/ControlCard';
+export { ControlCard, default } from '../dashboard/ControlCard';
+export { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';

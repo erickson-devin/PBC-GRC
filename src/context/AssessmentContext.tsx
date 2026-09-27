@@ -17,8 +17,18 @@ import { GcsService } from '../services/gcsService';
 import { ApiClient } from '../services/apiClient';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent } from '../data/audit/auditLogger';
+import {
+  AssetTelemetryRecord,
+  BoundaryAggregationResult,
+  FailingAssetInfo,
+} from '../types/telemetry';
+import {
+  getEnclaveFleet,
+  aggregateAssetTelemetry,
+  applyBoundaryTelemetryToControls,
+} from '../data/telemetry/assetTelemetryEngine';
 
-export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance' | 'audit';
+export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance' | 'audit' | 'stigs';
 
 interface AssessmentContextType {
   state: AssessmentState;
@@ -37,8 +47,13 @@ interface AssessmentContextType {
   previewEvidence: EvidenceItem | null;
   setPreviewEvidence: (item: EvidenceItem | null) => void;
 
+  // Boundary Telemetry & Fleet State
+  fleetAssets: AssetTelemetryRecord[];
+  boundaryAggregation: BoundaryAggregationResult | null;
+  refreshBoundaryTelemetry: () => Promise<BoundaryAggregationResult>;
+
   // Actions with RBAC enforcement
-  updateControlStatus: (controlId: string, status: ControlStatus) => void;
+  updateControlStatus: (controlId: string, status: ControlStatus, failingAssets?: FailingAssetInfo[]) => void;
   updateControlNotes: (controlId: string, notes: string) => void;
   updateControlRole: (controlId: string, role: string) => void;
   applyStarterTemplate: (controlId: string, narrative: string) => void;
@@ -97,6 +112,34 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [exportModalInitialDocType, setExportModalInitialDocType] = useState<ReportDocumentType | undefined>(undefined);
+
+  // Boundary Telemetry & Fleet State
+  const [fleetAssets, setFleetAssets] = useState<AssetTelemetryRecord[]>(() => getEnclaveFleet(currentTenant.id));
+  const [boundaryAggregation, setBoundaryAggregation] = useState<BoundaryAggregationResult | null>(null);
+
+  const refreshBoundaryTelemetry = useCallback(async () => {
+    try {
+      const boundary = await aggregateAssetTelemetry(currentTenant.id);
+      setBoundaryAggregation(boundary);
+      setFleetAssets(getEnclaveFleet(currentTenant.id));
+
+      setState(prev => ({
+        ...prev,
+        controls: applyBoundaryTelemetryToControls(prev.controls, boundary),
+      }));
+
+      return boundary;
+    } catch (err) {
+      console.error('[AssessmentContext] Boundary aggregation failed:', err);
+      const fallback = await aggregateAssetTelemetry(currentTenant.id);
+      return fallback;
+    }
+  }, [currentTenant.id]);
+
+  // Initial boundary evaluation on mount / tenant switch
+  useEffect(() => {
+    refreshBoundaryTelemetry();
+  }, [currentTenant.id, refreshBoundaryTelemetry]);
 
   const openExportModal = useCallback((initialDocType?: ReportDocumentType) => {
     setExportModalInitialDocType(initialDocType);
@@ -217,7 +260,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
   // Action: Update Control Status with RBAC Check
-  const updateControlStatus = useCallback((controlId: string, status: ControlStatus) => {
+  const updateControlStatus = useCallback((
+    controlId: string,
+    status: ControlStatus,
+    failingAssets?: FailingAssetInfo[]
+  ) => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to modify controls for this tenant.');
       return;
@@ -246,6 +293,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           [controlId]: {
             ...current,
             status,
+            failingAssets: failingAssets !== undefined ? failingAssets : current.failingAssets,
             lastUpdated: new Date().toISOString(),
             updatedBy: currentUser.name,
           },
@@ -736,6 +784,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     previewEvidence,
     setPreviewEvidence,
 
+    fleetAssets,
+    boundaryAggregation,
+    refreshBoundaryTelemetry,
+
     updateControlStatus,
     updateControlNotes,
     updateControlRole,
@@ -764,6 +816,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     selectedStatusFilter,
     searchQuery,
     previewEvidence,
+    fleetAssets,
+    boundaryAggregation,
+    refreshBoundaryTelemetry,
     updateControlStatus,
     updateControlNotes,
     updateControlRole,

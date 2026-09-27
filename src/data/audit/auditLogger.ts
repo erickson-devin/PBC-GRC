@@ -9,51 +9,14 @@ import {
   AuditVerificationResult,
   AuditFilterOptions,
 } from '../../types/audit';
+import { computeSha256, canonicalJson } from './cryptoUtils';
+
+// Re-export so existing consumers of auditLogger can keep their imports unchanged
+export { computeSha256, canonicalJson } from './cryptoUtils';
+
 
 export const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
-/**
- * Universal cryptographic SHA-256 digest computation (Browser + Node.js).
- */
-export async function computeSha256(text: string): Promise<string> {
-  if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
-    try {
-      const data = new TextEncoder().encode(text);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      return Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-    } catch {}
-  }
-
-  // Fallback for Node.js test runners
-  try {
-    const nodeCrypto = await import(/* @vite-ignore */ 'crypto');
-    return nodeCrypto.createHash('sha256').update(text).digest('hex');
-  } catch {
-    // Pure JS fallback if crypto is completely unavailable
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-      hash = ((hash << 5) - hash) + text.charCodeAt(i);
-      hash |= 0;
-    }
-    return `sim_hash_${Math.abs(hash).toString(16).padStart(32, '0')}`;
-  }
-}
-
-/**
- * Deterministically serializes objects with recursively sorted keys for tamper-evident hashing.
- */
-export function canonicalJson(val: any): string {
-  if (val === null || val === undefined || typeof val !== 'object') {
-    return JSON.stringify(val);
-  }
-  if (Array.isArray(val)) {
-    return '[' + val.map(canonicalJson).join(',') + ']';
-  }
-  const keys = Object.keys(val).sort();
-  return '{' + keys.map(k => `${JSON.stringify(k)}:${canonicalJson(val[k])}`).join(',') + '}';
-}
 
 /**
  * Builds the canonical string representation of an audit entry for hash computation.

@@ -25,6 +25,7 @@ import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
+import { PhotonScanConsole } from './components/telemetry/PhotonScanConsole';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
@@ -253,6 +254,7 @@ const AppContent: React.FC = () => {
               {activeTab === 'vault' && <EvidenceVaultView />}
               {activeTab === 'audit' && <AuditTrailViewer />}
               {activeTab === 'guidance' && <AssessmentGuidanceView />}
+              {activeTab === 'stigs' && <PhotonScanConsole />}
             </main>
           </div>
 
@@ -282,6 +284,7 @@ const AppContent: React.FC = () => {
                 {activeTab === 'vault' && <EvidenceVaultView />}
                 {activeTab === 'audit' && <AuditTrailViewer />}
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
+                {activeTab === 'stigs' && <PhotonScanConsole />}
               </main>
             </div>
 

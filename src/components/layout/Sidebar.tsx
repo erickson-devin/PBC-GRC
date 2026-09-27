@@ -24,7 +24,6 @@ export const Sidebar: React.FC = () => {
     currentTenant,
     canManageTenant,
     setIsTeamModalOpen,
-    setIsStigModalOpen,
     isSuperAdmin,
     activeFramework,
   } = useTenant();
@@ -152,15 +151,23 @@ export const Sidebar: React.FC = () => {
           </p>
 
           <button
-            onClick={() => setIsStigModalOpen(true)}
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs text-cyan-300 hover:text-white hover:bg-cyan-950/40 border border-cyan-500/30 transition-all text-left shadow-sm group"
+            onClick={() => setActiveTab('stigs')}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs transition-all text-left shadow-sm group ${
+              activeTab === 'stigs'
+                ? 'bg-cyan-600/15 text-cyan-300 border border-cyan-500/30 shadow-sm shadow-cyan-500/10'
+                : 'text-cyan-300 hover:text-white hover:bg-cyan-950/40 border border-cyan-500/30'
+            }`}
           >
             <div className="flex items-center gap-2.5">
-              <Terminal className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+              <Terminal className={`w-4 h-4 group-hover:scale-110 transition-transform ${activeTab === 'stigs' ? 'text-cyan-300' : 'text-cyan-400'}`} />
               <span>Technical Baselines & STIGs</span>
             </div>
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-              DISA
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+              activeTab === 'stigs'
+                ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/40'
+                : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+            }`}>
+              PHOTON
             </span>
           </button>
 

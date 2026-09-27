@@ -17,7 +17,8 @@ export type AuditActionType =
   | 'RBAC_ROLE_MODIFIED'
   | 'DATA_RETENTION_APPLIED'
   | 'CRYPTOGRAPHIC_WIPE_PERFORMED'
-  | 'ASSESSMENT_RESET';
+  | 'ASSESSMENT_RESET'
+  | 'TELEMETRY_INGESTED';
 
 export interface AuditLogEntry {
   id: string;
