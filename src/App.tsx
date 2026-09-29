@@ -10,7 +10,7 @@ import { ControlsList } from './components/controls/ControlsList';
 import { SSPBuilder } from './components/ssp/SSPBuilder';
 import { EvidenceVaultView } from './components/vault/EvidenceVaultView';
 import { AssessmentGuidanceView } from './components/guidance/AssessmentGuidanceView';
-import { ControlDetailModal } from './components/controls/ControlDetailModal';
+import { InspectDocumentModal } from './components/matrix/InspectDocumentModal';
 import { EvidencePreviewModal } from './components/common/EvidencePreviewModal';
 import { LandingPage } from './components/landing/LandingPage';
 import { LoginPage } from './components/auth/LoginPage';
@@ -25,12 +25,12 @@ import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
-import { PhotonScanConsole } from './components/telemetry/PhotonScanConsole';
+import { AssetInventoryManager } from './components/telemetry/AssetInventoryManager';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
 const AppContent: React.FC = () => {
-  const { activeTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
+  const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
   const { openLicenseModal } = useAuth();
   const {
     currentTenant,
@@ -249,17 +249,47 @@ const AppContent: React.FC = () => {
             {/* Dynamic Tab Content Area */}
             <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0">
               {activeTab === 'dashboard' && <ComplianceOverview />}
-              {activeTab === 'controls' && <ControlsList />}
+              {(activeTab === 'matrix' || activeTab === 'controls') && <ControlsList />}
+              {activeTab === 'assets' && (
+                <div className="space-y-4">
+                  {/* Accretion Discovery Engine Banner */}
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-sm">
+                    <span className="flex h-2.5 w-2.5 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
+                    </span>
+                    <span>
+                      <strong className="text-cyan-100">Accretion Discovery Engine:</strong>{' '}
+                      Listening for subnet telemetry on{' '}
+                      <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/assets/accretion-sync</code>
+                    </span>
+                  </div>
+                  <AssetInventoryManager />
+                </div>
+              )}
               {activeTab === 'ssp' && <SSPBuilder />}
-              {activeTab === 'vault' && <EvidenceVaultView />}
-              {activeTab === 'audit' && <AuditTrailViewer />}
+              {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
+              {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
+              {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
+              {activeTab === 'rbac' && <TeamSettingsModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
+              {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}
               {activeTab === 'guidance' && <AssessmentGuidanceView />}
-              {activeTab === 'stigs' && <PhotonScanConsole />}
+              {activeTab === 'settings' && (
+                <div className="space-y-6">
+                  <div>
+                    <h2 className="text-xl font-bold text-white">Enclave Settings</h2>
+                    <p className="text-sm text-slate-400 mt-1">Configure your enclave boundary, integrations, and compliance preferences.</p>
+                  </div>
+                  <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-sm text-slate-400">
+                    <p>Enclave configuration settings will be available here. Use the Team & Role RBAC tab to manage your team members and permissions.</p>
+                  </div>
+                </div>
+              )}
             </main>
           </div>
 
           {/* Enclave Modals */}
-          <ControlDetailModal />
+          <InspectDocumentModal />
           <EvidencePreviewModal />
         </div>
       )}
@@ -279,17 +309,47 @@ const AppContent: React.FC = () => {
               {/* Dynamic Tab Content Area */}
               <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0">
                 {activeTab === 'dashboard' && <ComplianceOverview />}
-                {activeTab === 'controls' && <ControlsList />}
+                {(activeTab === 'matrix' || activeTab === 'controls') && <ControlsList />}
+                {activeTab === 'assets' && (
+                  <div className="space-y-4">
+                    {/* Accretion Discovery Engine Banner */}
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-sm">
+                      <span className="flex h-2.5 w-2.5 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
+                      </span>
+                      <span>
+                        <strong className="text-cyan-100">Accretion Discovery Engine:</strong>{' '}
+                        Listening for subnet telemetry on{' '}
+                        <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/assets/accretion-sync</code>
+                      </span>
+                    </div>
+                    <AssetInventoryManager />
+                  </div>
+                )}
                 {activeTab === 'ssp' && <SSPBuilder />}
-                {activeTab === 'vault' && <EvidenceVaultView />}
-                {activeTab === 'audit' && <AuditTrailViewer />}
+                {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
+                {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
+                {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
+                {activeTab === 'rbac' && <TeamSettingsModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
+                {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
-                {activeTab === 'stigs' && <PhotonScanConsole />}
+                {activeTab === 'settings' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h2 className="text-xl font-bold text-white">Enclave Settings</h2>
+                      <p className="text-sm text-slate-400 mt-1">Configure your enclave boundary, integrations, and compliance preferences.</p>
+                    </div>
+                    <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-sm text-slate-400">
+                      <p>Enclave configuration settings will be available here. Use the Team & Role RBAC tab to manage your team members and permissions.</p>
+                    </div>
+                  </div>
+                )}
               </main>
             </div>
 
             {/* Enclave Modals */}
-            <ControlDetailModal />
+            <InspectDocumentModal />
             <EvidencePreviewModal />
           </div>
         </ProtectedRoute>

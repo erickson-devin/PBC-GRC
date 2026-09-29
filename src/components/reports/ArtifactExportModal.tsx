@@ -45,9 +45,13 @@ import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 interface ArtifactExportModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** When true, renders inline without modal overlay (for embedded tab views) */
+  embedded?: boolean;
+  /** Pre-select a specific document type when opening (e.g., 'POAM') */
+  initialDocType?: string;
 }
 
-export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen, onClose }) => {
+export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen, onClose, embedded = false, initialDocType: propInitialDocType }) => {
   const {
     state,
     frameworkControls,
@@ -102,12 +106,14 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   // Sync state whenever activeFramework or exportModalInitialDocType changes
   useEffect(() => {
-    if (exportModalInitialDocType) {
+    if (propInitialDocType) {
+      setSelectedDocType(propInitialDocType as ReportDocumentType);
+    } else if (exportModalInitialDocType) {
       setSelectedDocType(exportModalInitialDocType);
     } else {
       setSelectedDocType(getDefaultDocumentTypeForFramework(activeFramework));
     }
-  }, [activeFramework, exportModalInitialDocType, isOpen]);
+  }, [activeFramework, exportModalInitialDocType, propInitialDocType, isOpen]);
 
   // Sync initial metadata from current tenant when opening modal
   useEffect(() => {
@@ -216,9 +222,9 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     },
   ];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-6xl h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+  // ── Inner content (shared between modal and embedded modes) ──
+  const innerContent = (
+    <div className={embedded ? 'bg-slate-900 border border-slate-800 rounded-3xl w-full flex flex-col shadow-2xl overflow-hidden' : 'bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-6xl h-[92vh] flex flex-col shadow-2xl overflow-hidden'}>
         
         {/* Modal Top Bar */}
         <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 shrink-0">
@@ -1022,6 +1028,19 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
         </div>
 
       </div>
+  );
+
+  // ── Embedded mode: render inline without modal chrome ──
+  if (embedded) {
+    return innerContent;
+  }
+
+  // ── Modal mode: wrapped in fixed overlay ──
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+      {innerContent}
     </div>
   );
 };

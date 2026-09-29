@@ -78,6 +78,7 @@ export function getFrameworkGuidanceText(framework: ComplianceFramework): Framew
         sprsReadyGuidance: 'All 110 NIST SP 800-171 practices are documented and MET. Baseline score of +110 achieved for C3PAO assessment readiness.',
       };
     case 'NIST_800_53_REV5':
+    case 'nist-800-53-r5':
       return {
         bannerTitle: 'NIST SP 800-53 Rev 5 Security & Privacy Controls Engine',
         authority: 'NIST SP 800-53 Rev 5 / FISMA',
@@ -110,6 +111,7 @@ export function getFrameworkGuidanceText(framework: ComplianceFramework): Framew
         inProgressGuidance: 'HIPAA Security Rule mandates complete evaluation of Administrative, Physical, and Technical safeguard specifications.',
         sprsReadyGuidance: 'All HIPAA Security Rule specifications are satisfied and verified. Security risk assessment documentation ready for HHS OCR review.',
       };
+    default:
       return {
         bannerTitle: `${framework} Compliance Engine`,
         authority: 'Regulatory Compliance Standard',

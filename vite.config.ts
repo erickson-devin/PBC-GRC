@@ -76,9 +76,12 @@ export default defineConfig({
             return 'stig-catalog';
           }
 
-          // ── CMMC control definitions ────────────────────────────────────
-          if (id.includes('/src/data/cmmcLevel1Controls')) {
-            return 'cmmc-data';
+          // ── Framework & Control Catalog definitions ─────────────────────
+          if (
+            id.includes('/src/data/cmmcLevel1Controls') ||
+            id.includes('/src/data/frameworks/')
+          ) {
+            return 'framework-catalogs';
           }
         },
       },

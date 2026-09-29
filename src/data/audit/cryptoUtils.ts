@@ -22,7 +22,7 @@
  *
  * No Node.js `crypto` module is ever imported, keeping the browser bundle clean.
  */
-export async function computeSha256(text: string): Promise<string> {
+export async function computeSha256(input: string | ArrayBuffer | Uint8Array): Promise<string> {
   // Web Crypto API: available in all modern browsers and Node.js 18+
   const subtle =
     typeof globalThis !== 'undefined' &&
@@ -32,10 +32,13 @@ export async function computeSha256(text: string): Promise<string> {
       ? crypto.subtle
       : null;
 
-  if (subtle && typeof TextEncoder !== 'undefined') {
+  if (subtle) {
     try {
-      const encoded = new TextEncoder().encode(text);
-      const hashBuffer = await subtle.digest('SHA-256', encoded);
+      const buffer =
+        typeof input === 'string'
+          ? (typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(input) : Buffer.from(input))
+          : input;
+      const hashBuffer = await subtle.digest('SHA-256', buffer as any);
       return Array.from(new Uint8Array(hashBuffer))
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
@@ -45,7 +48,7 @@ export async function computeSha256(text: string): Promise<string> {
   }
 
   // Pure-JS djb2 polynomial fallback — no external dependencies
-  // Clearly prefixed so callers can detect non-cryptographic hashes in logs
+  const text = typeof input === 'string' ? input : (typeof TextDecoder !== 'undefined' ? new TextDecoder().decode(input) : String(input));
   let h = 5381;
   for (let i = 0; i < text.length; i++) {
     h = (((h << 5) + h) ^ text.charCodeAt(i)) >>> 0;

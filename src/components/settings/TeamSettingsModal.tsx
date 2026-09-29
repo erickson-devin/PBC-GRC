@@ -22,6 +22,8 @@ import { InviteStaffModal } from './InviteStaffModal';
 interface TeamSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** When true, renders inline without modal overlay (for embedded tab views) */
+  embedded?: boolean;
 }
 
 const ALL_FRAMEWORKS: { id: ComplianceFramework; label: string; shortName: string; authority: string; count: number }[] = [
@@ -35,6 +37,7 @@ const ALL_FRAMEWORKS: { id: ComplianceFramework; label: string; shortName: strin
 export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   isOpen,
   onClose,
+  embedded = false,
 }) => {
   const {
     currentTenant,
@@ -188,21 +191,11 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     onClose();
   };
 
-  if (!isOpen) return null;
+  if (!embedded && !isOpen) return null;
 
-  return (
-    <>
-      <div
-        onClick={handleModalClose}
-        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
-      >
-
-        {/* Double-Bezel Card Container */}
-        <div
-          onClick={e => e.stopPropagation()}
-          className="w-full max-w-3xl p-1 rounded-2xl bg-gradient-to-b from-cyan-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[92vh] flex flex-col"
-        >
-          <div className="p-5 sm:p-7 rounded-[calc(1rem-0.125rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(92vh-0.5rem)] overflow-y-auto space-y-5">
+  // ── Shared inner content (used by both modal and embedded mode) ──
+  const innerContent = (
+    <div className={embedded ? 'space-y-5' : 'p-5 sm:p-7 rounded-[calc(1rem-0.125rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(92vh-0.5rem)] overflow-y-auto space-y-5'}>
             
             {/* Header */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-800/80 shrink-0">
@@ -659,10 +652,36 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
             )}
 
           </div>
+  );
+
+  // ── Embedded mode: render inline without modal chrome ──
+  if (embedded) {
+    return (
+      <>
+        {innerContent}
+        <InviteStaffModal
+          isOpen={isInviteModalOpen}
+          onClose={() => setIsInviteModalOpen(false)}
+        />
+      </>
+    );
+  }
+
+  // ── Modal mode: wrapped in fixed overlay ──
+  return (
+    <>
+      <div
+        onClick={handleModalClose}
+        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
+      >
+        <div
+          onClick={e => e.stopPropagation()}
+          className="w-full max-w-3xl p-1 rounded-2xl bg-gradient-to-b from-cyan-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[92vh] flex flex-col"
+        >
+          {innerContent}
         </div>
       </div>
 
-      {/* Invite Staff Child Modal */}
       <InviteStaffModal
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}

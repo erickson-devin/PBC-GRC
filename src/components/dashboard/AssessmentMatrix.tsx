@@ -15,6 +15,7 @@ import {
   Paperclip,
   FileEdit,
   Radio,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -51,6 +52,7 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
+  const [selectedBaselineFilter, setSelectedBaselineFilter] = useState<'ALL' | 'LOW' | 'MODERATE' | 'HIGH'>('ALL');
 
   const currentFrameworkDef = useMemo(() => {
     return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -91,6 +93,20 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         return false;
       }
 
+      // Baseline impact filter (per NIST SP 800-53B guidelines)
+      if (selectedBaselineFilter !== 'ALL') {
+        if (selectedBaselineFilter === 'LOW') {
+          const isLow = ctrl.baselineImpact === 'LOW' || ctrl.baselineTiers?.includes('LOW_LOW_LOW');
+          if (!isLow) return false;
+        } else if (selectedBaselineFilter === 'MODERATE') {
+          const isLowOrMod =
+            ctrl.baselineImpact === 'LOW' ||
+            ctrl.baselineImpact === 'MODERATE' ||
+            ctrl.baselineTiers?.some((t) => ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD'].includes(t));
+          if (!isLowOrMod) return false;
+        }
+      }
+
       // Search query
       if (searchQuery.trim() !== '') {
         const query = searchQuery.toLowerCase();
@@ -115,7 +131,7 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
       return true;
     });
-  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls]);
+  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls]);
 
   const handleControlClick = (id: string) => {
     if (onSelectControl) {
@@ -364,6 +380,23 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 </button>
               );
             })}
+          </div>
+
+          {/* Baseline Filter Dropdown */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" /> Baseline:
+            </span>
+            <select
+              value={selectedBaselineFilter}
+              onChange={(e) => setSelectedBaselineFilter(e.target.value as any)}
+              className="bg-slate-950 text-cyan-300 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-medium focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer shadow-sm hover:border-slate-700 transition-colors"
+            >
+              <option value="ALL">All Controls</option>
+              <option value="LOW">Low Baseline</option>
+              <option value="MODERATE">Moderate Baseline</option>
+              <option value="HIGH">High Baseline</option>
+            </select>
           </div>
 
           {/* CMMC Level 2 Impact Weight Filter */}

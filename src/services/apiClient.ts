@@ -210,25 +210,35 @@ export const ApiClient = {
   },
 
   /**
-   * Uploads binary file directly to GCS via Signed URL
+   * Uploads binary file directly to Local Enclave Storage or GCS via Signed URL
    */
-  async uploadFileToGcs(signedUrl: string, file: File | Blob, mimeType: string): Promise<void> {
+  async uploadFileToGcs(signedUrl: string, file: File | Blob, mimeType: string, tenantId?: string): Promise<void> {
     // If running with emulated mock token, simulate direct upload
     if (signedUrl.includes('GCS_SECURE_TOKEN_EMULATED')) {
       console.log('[ApiClient] Emulated GCS signed URL upload succeeded.');
       return;
     }
 
-    const res = await fetch(signedUrl, {
+    const targetUrl = signedUrl.startsWith('/') && API_BASE_URL ? `${API_BASE_URL}${signedUrl}` : signedUrl;
+    const headers: Record<string, string> = {
+      'Content-Type': mimeType || 'application/octet-stream',
+    };
+    if (tenantId) {
+      headers['x-tenant-id'] = tenantId;
+    }
+    const token = this.getToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const res = await fetch(targetUrl, {
       method: 'PUT',
-      headers: {
-        'Content-Type': mimeType || 'application/octet-stream',
-      },
+      headers,
       body: file,
     });
 
     if (!res.ok) {
-      throw new Error(`GCS upload failed with status ${res.status}: ${res.statusText}`);
+      throw new Error(`Evidence upload failed with status ${res.status}: ${res.statusText}`);
     }
   },
 };

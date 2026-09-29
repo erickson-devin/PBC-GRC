@@ -1,4 +1,5 @@
 import { FailingAssetInfo } from './telemetry';
+import { AssessmentObjective } from './assessment';
 
 export type ControlStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'MET' | 'NOT_MET';
 
@@ -87,6 +88,7 @@ export interface AssessmentState {
   controls: Record<string, ControlState>;
   evidenceIndex: EvidenceItem[];
   lastSaved: string;
+  objectives?: Record<string, AssessmentObjective>;
 }
 
 export interface ComplianceMetrics {

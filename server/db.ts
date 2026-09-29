@@ -436,20 +436,3 @@ export async function initDb(): Promise<void> {
   }
 }
 
-/**
- * Commercial license tier pricing defaults & ARR calculation
- */
-export const DEFAULT_LICENSE_PRICING = {
-  FOUNDATIONAL: 3500,
-  DEFENSE_PRO: 7000,
-  ENTERPRISE: 14000,
-  'single-org': 3500,
-  'msp-assessor': 14000,
-} as const;
-
-export function calculateAnnualPrice(tier: string = 'FOUNDATIONAL'): number {
-  if (tier === 'DEFENSE_PRO') return 7000;
-  if (tier === 'ENTERPRISE' || tier === 'msp-assessor') return 14000;
-  return 3500;
-}
-

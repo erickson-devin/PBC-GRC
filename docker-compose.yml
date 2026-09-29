@@ -1,0 +1,71 @@
+version: '3.8'
+
+# ==============================================================================
+# Event Horizon: Singularity — Air-Gapped & On-Premises Orchestration
+# Services: PostgreSQL 16 Database + Singularity Enclave App & API
+# ==============================================================================
+
+services:
+  # ── 1. PostgreSQL 16 Relational Storage with RLS Support ───────────────────
+  singularity-db:
+    image: postgres:16-alpine
+    container_name: singularity-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-cmmc_compliance_db}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cmmc_compliance_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - singularity-network
+
+  # ── 2. Event Horizon: Singularity Application & Local Storage API ──────────
+  singularity-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: singularity-app
+    restart: unless-stopped
+    depends_on:
+      singularity-db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Local On-Premises / Air-Gapped Storage Driver
+      STORAGE_PROVIDER: local
+      LOCAL_STORAGE_PATH: /app/data/evidence
+      # Database Connection
+      DB_HOST: singularity-db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASS: ${POSTGRES_PASSWORD:-postgres_secure_pass}
+      DB_NAME: ${POSTGRES_DB:-cmmc_compliance_db}
+      # Client-side configuration
+      VITE_STORAGE_PROVIDER: local
+      VITE_LOCAL_STORAGE_PATH: ./data/evidence
+      VITE_API_URL: ""
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persistent local evidence vault mounted to host disk
+      - ./data/evidence:/app/data/evidence
+    networks:
+      - singularity-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  singularity-network:
+    driver: bridge

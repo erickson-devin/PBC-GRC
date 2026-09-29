@@ -4,10 +4,12 @@ export type ComplianceFramework =
   | 'CMMC_L1'
   | 'CMMC_L2'
   | 'NIST_800_53_REV5'
+  | 'nist-800-53-r5'
   | 'SOC_2_TYPE_II'
   | 'HIPAA_SECURITY';
 
 export type ImpactLevel = 'LOW' | 'MODERATE' | 'HIGH';
+export type BaselineImpactFilter = 'ALL' | 'LOW' | 'MODERATE' | 'HIGH';
 
 export interface CiaTriadSelection {
   confidentiality: ImpactLevel;
@@ -54,6 +56,7 @@ export interface FrameworkControlDefinition {
   auditorChecklist: string[];
   starterTemplates?: StarterTemplate[];
   baselineTiers?: BaselineTier[];
+  baselineImpact?: 'LOW' | 'MODERATE' | 'HIGH'; // NIST SP 800-53B baseline allocation (LOW, MODERATE, HIGH)
   nonNetworkedApplicable: boolean; // false for network/boundary specific controls (SC-7, AC-17, etc.)
   requiresWireless?: boolean; // true for wireless-specific controls (AC-18, etc.)
   requiresMobile?: boolean; // true for mobile device controls (AC-19, MP-7, etc.)
@@ -94,13 +97,4 @@ export interface OverlayFilters {
   noWireless?: boolean; // No wireless capabilities (excludes AC-18, etc.)
   noMobileDevices?: boolean; // No mobile devices (excludes AC-19, etc.)
   noPiiProcessing?: boolean; // No PII processing (excludes PT family, privacy notices)
-}
-
-export interface CrossFrameworkEvidenceInheritance {
-  evidenceId: string;
-  originalControlId: string;
-  originalFramework: ComplianceFramework;
-  mappedControlId: string;
-  mappedFramework: ComplianceFramework;
-  mappingType: MappingType;
 }

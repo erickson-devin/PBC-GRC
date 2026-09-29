@@ -173,15 +173,6 @@ export interface TeamMember {
   avatarUrl?: string;
 }
 
-
-export interface TenantUserAssignment {
-  id: string;
-  userId: string;
-  tenantId: string;
-  role: TenantRole;
-  assignedAt: string;
-}
-
 export interface GcpServiceConfig {
   projectId: string;
   region: string;

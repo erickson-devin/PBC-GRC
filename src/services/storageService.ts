@@ -1,14 +1,19 @@
 import { AssessmentState, ControlState, SSPMetadata, EvidenceItem } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
-import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
+import { getFrameworkControls } from '../data/frameworks';
 import { GcsService, DEFAULT_GCP_CONFIG } from './gcsService';
 
 const STORAGE_KEY_PREFIX = 'pbc_cmmc_assessment_v3_';
 
-export function createInitialControlsState(tenantId?: string): Record<string, ControlState> {
+export function createInitialControlsState(
+  tenantId?: string,
+  framework: ComplianceFramework = 'CMMC_L1',
+  controls?: FrameworkControlDefinition[]
+): Record<string, ControlState> {
+  const targetControls = controls && controls.length > 0 ? controls : getFrameworkControls(framework);
   const initial: Record<string, ControlState> = {};
-  for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+  for (const ctrl of targetControls) {
     initial[ctrl.id] = {
       id: ctrl.id,
       tenantId,
@@ -42,11 +47,12 @@ export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
 }
 
 export function createInitialState(tenant: Tenant): AssessmentState {
+  const framework = tenant.primaryFramework || 'CMMC_L1';
   return {
     version: '2.0.0',
     tenantId: tenant.id,
     sspMetadata: createDefaultSspMetadata(tenant),
-    controls: createInitialControlsState(tenant.id),
+    controls: createInitialControlsState(tenant.id, framework),
     evidenceIndex: [],
     lastSaved: new Date().toISOString(),
   };
@@ -58,9 +64,10 @@ export function createInitialState(tenant: Tenant): AssessmentState {
 export function createDemoState(tenant: Tenant): AssessmentState {
   const controls: Record<string, ControlState> = {};
   const evidenceIndex: EvidenceItem[] = [];
+  const cmmcControls = getFrameworkControls('CMMC_L1');
 
-  for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
-    const template = ctrl.starterTemplates[0];
+  for (const ctrl of cmmcControls) {
+    const template = ctrl.starterTemplates?.[0];
     controls[ctrl.id] = {
       id: ctrl.id,
       tenantId: tenant.id,
@@ -73,7 +80,7 @@ export function createDemoState(tenant: Tenant): AssessmentState {
     };
 
     if (template && template.recommendedEvidence) {
-      template.recommendedEvidence.slice(0, 2).forEach((filename, idx) => {
+      template.recommendedEvidence.slice(0, 2).forEach((filename: string, idx: number) => {
         const fileId = `demo_${ctrl.id.replace(/[^a-zA-Z0-9]/g, '_')}_${idx + 1}`;
         const gcsPath = GcsService.generateGcsPath(tenant.id, ctrl.id, fileId, filename);
         // Pre-computed representative SHA-256 hash
@@ -119,11 +126,12 @@ export function createDemoState(tenant: Tenant): AssessmentState {
 export function createPartialDemoState(tenant: Tenant): AssessmentState {
   const controls: Record<string, ControlState> = {};
   const evidenceIndex: EvidenceItem[] = [];
+  const cmmcControls = getFrameworkControls('CMMC_L1');
 
-  CMMC_LEVEL_1_CONTROLS.forEach((ctrl, idx) => {
+  cmmcControls.forEach((ctrl, idx: number) => {
     const isMet = idx < 10;
     const isInProgress = idx >= 10 && idx < 14;
-    const template = ctrl.starterTemplates[0];
+    const template = ctrl.starterTemplates?.[0];
 
     controls[ctrl.id] = {
       id: ctrl.id,
@@ -140,7 +148,7 @@ export function createPartialDemoState(tenant: Tenant): AssessmentState {
       updatedBy: 'MSP Consultant',
     };
 
-    if (isMet && template && template.recommendedEvidence.length > 0) {
+    if (isMet && template && template.recommendedEvidence && template.recommendedEvidence.length > 0) {
       const filename = template.recommendedEvidence[0];
       const fileId = `b_demo_${ctrl.id.replace(/[^a-zA-Z0-9]/g, '_')}_1`;
       evidenceIndex.push({
@@ -179,14 +187,15 @@ export const StorageService = {
   /**
    * Load isolated assessment for a specific tenant, performing legacy migration if needed
    */
-  loadAssessment(tenant: Tenant): AssessmentState {
+  loadAssessment(tenant: Tenant, framework: ComplianceFramework = 'CMMC_L1'): AssessmentState {
     try {
       const key = this.getTenantKey(tenant.id);
       const data = localStorage.getItem(key);
       if (data) {
         const parsed = JSON.parse(data) as AssessmentState;
-        // Ensure all 17 controls are present
-        for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+        const targetControls = getFrameworkControls(framework);
+        // Ensure all framework controls are present
+        for (const ctrl of targetControls) {
           if (!parsed.controls[ctrl.id]) {
             parsed.controls[ctrl.id] = {
               id: ctrl.id,
@@ -285,14 +294,14 @@ export const StorageService = {
     md += `- **Environment:** ${meta.systemEnvironment}\n`;
     md += `- **Authorized CSPs:** ${meta.cloudServiceProviders}\n\n`;
 
-    const activeControls: (FrameworkControlDefinition | typeof CMMC_LEVEL_1_CONTROLS[number])[] =
-      controls && controls.length > 0 ? controls : CMMC_LEVEL_1_CONTROLS;
+    const activeControls: FrameworkControlDefinition[] =
+      controls && controls.length > 0 ? controls : getFrameworkControls(framework);
     md += `## 3. ${activeControls.length} Controls Security Requirements Matrix\n\n`;
 
     for (const ctrl of activeControls) {
       const cState = state.controls[ctrl.id];
       const ctrlEvidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
-      const authority = 'authorityReference' in ctrl ? ctrl.authorityReference : (ctrl as any).farReference || '';
+      const authority = ctrl.authorityReference || '';
       md += `### ${ctrl.id}: ${ctrl.title}\n`;
       if (authority) md += `- **Authority Reference:** ${authority}\n`;
       md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;

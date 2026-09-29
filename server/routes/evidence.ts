@@ -1,17 +1,39 @@
-import { Router, Request, Response } from 'express';
+import express, { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import { Storage } from '@google-cloud/storage';
 import { queryWithTenant } from '../db';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 
 const router = Router();
 
-// GCP Cloud Storage Configuration
+// Storage Provider Configuration
+const storageProvider = (process.env.STORAGE_PROVIDER || 'local').toLowerCase();
+const localStoragePath = path.resolve(process.env.LOCAL_STORAGE_PATH || './data/evidence');
+
+// Ensure local evidence directory exists when local storage is enabled
+if (storageProvider === 'local') {
+  try {
+    fs.mkdirSync(localStoragePath, { recursive: true });
+    console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStoragePath}`);
+  } catch (err: any) {
+    console.warn(`[Evidence Storage] Local storage directory setup notice: ${err.message}`);
+  }
+}
+
+// GCP Cloud Storage Configuration (when STORAGE_PROVIDER === 'gcs')
 const gcsProjectId = process.env.VITE_GCP_PROJECT_ID || 'grc-tool-507203';
 const gcsBucketName = process.env.VITE_GCS_BUCKET_NAME || 'pbc-grc-evidence-prod';
 
-const storage = new Storage({
-  projectId: gcsProjectId,
-});
+let storage: Storage | null = null;
+if (storageProvider === 'gcs') {
+  try {
+    storage = new Storage({ projectId: gcsProjectId });
+  } catch {
+    storage = null;
+  }
+}
 
 function mapRowToEvidence(row: any) {
   return {
@@ -23,7 +45,7 @@ function mapRowToEvidence(row: any) {
     mimeType: row.mime_type || 'application/octet-stream',
     gcsPath: row.gcs_path,
     fileHash: row.file_hash,
-    syncStatus: row.sync_status || 'gcs_synced',
+    syncStatus: row.sync_status || (storageProvider === 'local' ? 'local_storage' : 'gcs_synced'),
     description: row.description || '',
     uploadedBy: row.uploaded_by || '',
     uploadedAt: row.uploaded_at || new Date().toISOString(),
@@ -31,9 +53,24 @@ function mapRowToEvidence(row: any) {
 }
 
 /**
+ * GET /api/v1/evidence/config/storage-info
+ * Returns storage provider status, path, and air-gapped configuration.
+ */
+router.get('/config/storage-info', async (_req: Request, res: Response): Promise<void> => {
+  res.json({
+    provider: storageProvider,
+    localStoragePath,
+    isAirGapped: storageProvider === 'local',
+    status: 'ACTIVE',
+  });
+});
+
+/**
  * POST /api/v1/evidence/upload-url
- * Generates a GCS Signed URL for evidence artifacts and saves the record
- * (file_name, sha256_hash, gcs_object_path) to the evidence table.
+ * Generates an upload URL for evidence artifacts:
+ * - When STORAGE_PROVIDER === 'local', generates a relative local upload endpoint (/upload-local/:id)
+ * - When STORAGE_PROVIDER === 'gcs', generates a GCS Signed URL
+ * Saves initial metadata to evidence table.
  */
 router.post('/upload-url', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
@@ -56,29 +93,44 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
   const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const objectPath = `tenants/${tenantId}/controls/${controlId}/${evidenceId}_${cleanFileName}`;
-  const gcsUri = `gs://${gcsBucketName}/${objectPath}`;
   const effectiveMime = mimeType || 'application/octet-stream';
   const effectiveSize = fileSize || 0;
   const effectiveUser = req.user?.name || req.user?.email || 'Compliance Assessor';
 
   let signedUploadUrl: string;
+  let storedStoragePath: string;
+  let initialSyncStatus: string;
 
-  try {
-    // Attempt production GCS v4 Signed URL generation
-    const bucket = storage.bucket(gcsBucketName);
-    const file = bucket.file(objectPath);
-    const [url] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'write',
-      expires: Date.now() + 15 * 60 * 1000, // 15 minutes validity
-      contentType: effectiveMime,
-    });
-    signedUploadUrl = url;
-  } catch (gcsErr: any) {
-    // Local / emulation fallback for non-GCP hosted test environments
-    console.warn('[GCS Signed URL] Live GCS credential unavailable, generating secure emulated upload URL:', gcsErr.message);
-    const expiresSec = Math.floor(Date.now() / 1000) + 900;
-    signedUploadUrl = `https://storage.googleapis.com/${gcsBucketName}/${objectPath}?GoogleAccessId=cmmc-evidence-signer@${gcsProjectId}.iam.gserviceaccount.com&Expires=${expiresSec}&Signature=GCS_SECURE_TOKEN_EMULATED`;
+  if (storageProvider === 'local') {
+    // On-Premises Air-Gapped Enclave: upload to local Express handler
+    signedUploadUrl = `/api/v1/evidence/upload-local/${evidenceId}`;
+    storedStoragePath = path.join(localStoragePath, objectPath);
+    initialSyncStatus = 'local_storage';
+  } else {
+    // Cloud GCS deployment
+    const gcsUri = `gs://${gcsBucketName}/${objectPath}`;
+    storedStoragePath = gcsUri;
+    initialSyncStatus = 'gcs_signed_url';
+
+    try {
+      if (storage) {
+        const bucket = storage.bucket(gcsBucketName);
+        const file = bucket.file(objectPath);
+        const [url] = await file.getSignedUrl({
+          version: 'v4',
+          action: 'write',
+          expires: Date.now() + 15 * 60 * 1000,
+          contentType: effectiveMime,
+        });
+        signedUploadUrl = url;
+      } else {
+        throw new Error('GCS client not configured');
+      }
+    } catch (gcsErr: any) {
+      console.warn('[GCS Signed URL] Emulating GCS upload URL:', gcsErr.message);
+      const expiresSec = Math.floor(Date.now() / 1000) + 900;
+      signedUploadUrl = `https://storage.googleapis.com/${gcsBucketName}/${objectPath}?GoogleAccessId=cmmc-evidence-signer@${gcsProjectId}.iam.gserviceaccount.com&Expires=${expiresSec}&Signature=GCS_SECURE_TOKEN_EMULATED`;
+    }
   }
 
   try {
@@ -88,7 +140,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
         id, tenant_id, control_id, file_name, file_size, mime_type,
         gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, 'gcs_signed_url', $9, $10, NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()
       )
       RETURNING *;
     `;
@@ -100,16 +152,16 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
       fileName,
       effectiveSize,
       effectiveMime,
-      gcsUri,
+      storedStoragePath,
       fileHash,
-      description || `CMMC Level 1 Audit Evidence for ${controlId}`,
+      initialSyncStatus,
+      description || `Audit Evidence for ${controlId}`,
       effectiveUser,
     ]);
 
     const savedRecord = mapRowToEvidence(result.rows[0]);
 
     // Cross-Framework Evidence Inheritance:
-    // Automatically associate upload with mapped controls (e.g. AC.L1-3.1.1 in CMMC -> AC-2 in NIST 800-53 & CC6.1 in SOC 2)
     try {
       const mappedControlIds = getEquivalentControlIds(controlId);
       for (const mappedId of mappedControlIds) {
@@ -131,20 +183,21 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
           fileName,
           effectiveSize,
           effectiveMime,
-          gcsUri,
+          storedStoragePath,
           fileHash,
           inhDesc,
           effectiveUser,
         ]);
       }
     } catch (inhErr: any) {
-      console.warn(`[Evidence API] Cross-framework evidence inheritance notice:`, inhErr.message);
+      console.warn(`[Evidence API] Cross-framework inheritance notice:`, inhErr.message);
     }
 
     res.status(201).json({
-      message: 'Evidence record created and GCS upload URL generated',
+      message: storageProvider === 'local' ? 'Evidence record created for local enclave storage' : 'Evidence record created and GCS upload URL generated',
       uploadUrl: signedUploadUrl,
-      gcsPath: gcsUri,
+      gcsPath: storedStoragePath,
+      storageProvider,
       evidenceId,
       evidence: savedRecord,
       inheritedTo: getEquivalentControlIds(controlId),
@@ -159,9 +212,166 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
 });
 
 /**
+ * PUT /api/v1/evidence/upload-local/:evidenceId
+ * Handles direct binary uploads for On-Premises and Air-Gapped Enclaves.
+ * Persists raw file to LOCAL_STORAGE_PATH, computes SHA-256 hash, and verifies integrity.
+ */
+const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.tenantId!;
+  const { evidenceId } = req.params;
+
+  try {
+    const result = await queryWithTenant(
+      tenantId,
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
+      [evidenceId, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: `Evidence record ${evidenceId} not found` });
+      return;
+    }
+
+    const record = result.rows[0];
+    const buffer = req.body as Buffer;
+
+    if (!buffer || buffer.length === 0) {
+      res.status(400).json({ error: 'No binary data received in request body' });
+      return;
+    }
+
+    // Calculate SHA-256 integrity hash from the buffer
+    const computedHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+    // Determine target local file destination
+    let targetFilePath = record.gcs_path;
+    if (!targetFilePath || targetFilePath.startsWith('gs://')) {
+      const cleanFileName = (record.file_name || 'evidence.bin').replace(/[^a-zA-Z0-9._-]/g, '_');
+      targetFilePath = path.join(localStoragePath, `tenants/${tenantId}/controls/${record.control_id}/${evidenceId}_${cleanFileName}`);
+    }
+
+    const targetDir = path.dirname(targetFilePath);
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    // Write file to disk
+    fs.writeFileSync(targetFilePath, buffer);
+
+    // Verify hash match with metadata
+    const hashMatch = !record.file_hash || record.file_hash.toLowerCase() === computedHash.toLowerCase();
+
+    // Update metadata record with verified file size, verified hash, and local_storage status
+    await queryWithTenant(
+      tenantId,
+      'UPDATE evidence_metadata SET file_size = $1, file_hash = $2, gcs_path = $3, sync_status = $4 WHERE id = $5',
+      [buffer.length, computedHash, targetFilePath, 'local_storage', evidenceId]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Evidence successfully saved to local enclave disk',
+      evidenceId,
+      fileSize: buffer.length,
+      fileHash: computedHash,
+      hashVerified: hashMatch,
+      storagePath: targetFilePath,
+    });
+  } catch (err: any) {
+    console.error(`[Local Evidence Upload Error]:`, err);
+    res.status(500).json({
+      error: 'Failed to write evidence to local disk',
+      details: err.message,
+    });
+  }
+};
+
+router.put('/upload-local/:evidenceId', express.raw({ type: () => true, limit: '100mb' }), handleLocalBinaryUpload);
+router.post('/upload-local/:evidenceId', express.raw({ type: () => true, limit: '100mb' }), handleLocalBinaryUpload);
+
+/**
+ * GET /api/v1/evidence/:evidenceId/file
+ * Downloads or previews evidence file from local disk or redirects.
+ */
+router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.tenantId!;
+  const { evidenceId } = req.params;
+
+  try {
+    const result = await queryWithTenant(
+      tenantId,
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
+      [evidenceId, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Evidence not found' });
+      return;
+    }
+
+    const record = result.rows[0];
+    const filePath = record.gcs_path;
+
+    if (filePath && !filePath.startsWith('gs://') && fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', record.mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${record.file_name}"`);
+      res.sendFile(filePath);
+      return;
+    }
+
+    res.status(404).json({ error: 'File not found on local storage path' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/evidence/:evidenceId/verify-integrity
+ * Recalculates the SHA-256 hash from local disk and validates against recorded hash.
+ */
+router.get('/:evidenceId/verify-integrity', async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.tenantId!;
+  const { evidenceId } = req.params;
+
+  try {
+    const result = await queryWithTenant(
+      tenantId,
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
+      [evidenceId, tenantId]
+    );
+
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Evidence record not found' });
+      return;
+    }
+
+    const record = result.rows[0];
+    const filePath = record.gcs_path;
+
+    if (!filePath || filePath.startsWith('gs://') || !fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'Local file does not exist on disk for verification' });
+      return;
+    }
+
+    const buffer = fs.readFileSync(filePath);
+    const computedHash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const isMatch = computedHash.toLowerCase() === (record.file_hash || '').toLowerCase();
+
+    res.json({
+      evidenceId,
+      fileName: record.file_name,
+      storedHash: record.file_hash,
+      currentHash: computedHash,
+      verified: isMatch,
+      status: isMatch ? 'INTEGRITY_VERIFIED' : 'INTEGRITY_MISMATCH',
+      verifiedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/v1/evidence
  * Retrieves all evidence artifacts for the active tenant.
- * Optionally filter by ?control_id= to get direct & inherited evidence for a control.
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
@@ -186,6 +396,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       tenantId,
       totalCount: evidenceList.length,
       evidence: evidenceList,
+      storageProvider,
     });
   } catch (err: any) {
     console.error(`[Evidence API] Error fetching evidence for tenant ${tenantId}:`, err);
@@ -198,8 +409,6 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * GET /api/v1/evidence/:evidenceId
- * Retrieves a single evidence artifact.
- * Guarded by RLS: If requested artifact belongs to another tenant, returns 404.
  */
 router.get('/:evidenceId', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;

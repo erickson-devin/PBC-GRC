@@ -14,27 +14,6 @@ import {
 
 const router = Router();
 
-// Canonical list of all 17 CMMC 2.0 Level 1 Security Controls (FAR 52.204-21)
-export const CMMC_L1_CONTROL_IDS = [
-  'AC.L1-3.1.1',
-  'AC.L1-3.1.2',
-  'AC.L1-3.1.20',
-  'AC.L1-3.1.22',
-  'IA.L1-3.5.1',
-  'IA.L1-3.5.2',
-  'MP.L1-3.8.3',
-  'PE.L1-3.10.1',
-  'PE.L1-3.10.3',
-  'PE.L1-3.10.4',
-  'PE.L1-3.10.5',
-  'SC.L1-3.13.1',
-  'SC.L1-3.13.5',
-  'SI.L1-3.14.1',
-  'SI.L1-3.14.2',
-  'SI.L1-3.14.4',
-  'SI.L1-3.14.5',
-];
-
 /**
  * Format DB row into client-compatible ControlState
  */

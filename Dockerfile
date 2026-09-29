@@ -1,27 +1,54 @@
-# Stage 1: Build Frontend Vite Application
+# ==============================================================================
+# Event Horizon: Singularity — Air-Gapped & On-Premises Enclave Dockerfile
+# Multi-Stage Build: Vite Frontend Builder + Node 20-Alpine Express API Host
+# ==============================================================================
+
+# ── Stage 1: Build Frontend Vite Application ──────────────────────────────────
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Copy dependency manifests and install full development dependencies
 COPY package*.json ./
 RUN npm ci
+
+# Copy full repository source and build production static bundle
 COPY . .
 RUN npm run build
 
-# Stage 2: Production Cloud SQL Express API & Static Host
-FROM node:20-alpine
+# ── Stage 2: Production Air-Gapped / On-Premises Runtime ──────────────────────
+FROM node:20-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=8080
 
+# Set default production environment variables
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV STORAGE_PROVIDER=local
+ENV LOCAL_STORAGE_PATH=/app/data/evidence
+
+# Create local evidence storage directory
+RUN mkdir -p /app/data/evidence
+
+# Copy production package manifests and install production-only dependencies
 COPY package*.json ./
 RUN npm ci --omit=dev
 
+# Copy compiled frontend distribution from builder
 COPY --from=builder /app/dist ./dist
+
+# Copy backend server code, TypeScript configuration, and source definitions
 COPY --from=builder /app/server ./server
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/tsconfig*.json ./
 
+# Install tsx globally for fast, zero-transpile Node ESM execution
 RUN npm install -g tsx
 
-EXPOSE 8080
+# Expose default application port
+EXPOSE 3000
 
+# Health check verifying API responsiveness
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/v1/evidence/config/storage-info || exit 1
+
+# Start Event Horizon: Singularity Express Server & Static Host
 CMD ["tsx", "server/index.ts"]

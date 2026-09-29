@@ -233,6 +233,21 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             <span className="text-[11px] font-mono text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
               {control.authorityReference || control.farReference || 'Baseline'}
             </span>
+
+            {/* Baseline Impact Tag */}
+            {control.baselineImpact && (
+              <span
+                className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border shadow-sm ${
+                  control.baselineImpact === 'LOW'
+                    ? 'bg-cyan-950/70 text-cyan-300 border-cyan-500/40'
+                    : control.baselineImpact === 'MODERATE'
+                    ? 'bg-amber-950/70 text-amber-300 border-amber-500/40'
+                    : 'bg-rose-950/70 text-rose-300 border-rose-500/40'
+                }`}
+              >
+                {control.baselineImpact} BASELINE
+              </span>
+            )}
           </div>
 
           {/* Control Title & Plain-English Summary */}

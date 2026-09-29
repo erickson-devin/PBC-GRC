@@ -7,10 +7,17 @@ import {
   SSPMetadata,
   ComplianceMetrics,
 } from '../types/cmmc';
-import { CMMC_LEVEL_1_CONTROLS } from '../data/cmmcLevel1Controls';
+import { AssessmentObjective, ObjectiveStatus } from '../types/assessment';
 import { FrameworkControlDefinition } from '../types/framework';
 import { ReportDocumentType } from '../types/report';
-import { getFrameworkControls, getEquivalentControlIds, FRAMEWORK_REGISTRY } from '../data/frameworks';
+import {
+  getFrameworkControls,
+  getEquivalentControlIds,
+  FRAMEWORK_REGISTRY,
+  findControlDefinition,
+  getAssessmentObjectivesForControl,
+  calculateControlRollup,
+} from '../data/frameworks';
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
@@ -28,7 +35,22 @@ import {
   applyBoundaryTelemetryToControls,
 } from '../data/telemetry/assetTelemetryEngine';
 
-export type NavigationTab = 'dashboard' | 'controls' | 'ssp' | 'vault' | 'guidance' | 'audit' | 'stigs';
+export type NavigationTab =
+  | 'dashboard'
+  | 'matrix'      // Control Matrix (renamed from 'controls')
+  | 'controls'    // Legacy alias → renders same as 'matrix'
+  | 'assets'      // Asset Inventory & Fleet
+  | 'evidence'    // Evidence Vault (renamed from 'vault')
+  | 'vault'       // Legacy alias → renders same as 'evidence'
+  | 'ssp'         // System Security Plan
+  | 'poam'        // Plan of Action & Milestones
+  | 'export'      // Export Audit Package
+  | 'rbac'        // Team & Role RBAC
+  | 'audit_logs'  // Immutable Audit Trail (renamed from 'audit')
+  | 'audit'       // Legacy alias → renders same as 'audit_logs'
+  | 'guidance'    // Framework Guidance & Authority
+  | 'settings'    // Enclave Settings
+  | 'stigs';      // Legacy — now external link, kept for backwards compat
 
 interface AssessmentContextType {
   state: AssessmentState;
@@ -67,6 +89,15 @@ interface AssessmentContextType {
   exportAssessmentJSON: () => void;
   exportAssessmentMarkdown: () => void;
 
+  // NIST SP 800-171A Objective-Level Evaluation & Rollup
+  getObjectivesForControl: (controlId: string) => AssessmentObjective[];
+  updateObjectiveStatus: (objectiveId: string, status: ObjectiveStatus) => void;
+  updateObjectiveNarrative: (objectiveId: string, narrative: string) => void;
+  applyObjectivePrefilledNarrative: (objectiveId: string) => void;
+  applyAllObjectiveTemplatesForControl: (controlId: string) => void;
+  linkEvidenceToObjective: (objectiveId: string, evidenceId: string) => void;
+  recalculateControlStatusFromObjectives: (controlId: string) => ControlStatus;
+
   // Artifact & Compliance Export Center Modal
   isExportModalOpen: boolean;
   setIsExportModalOpen: (open: boolean) => void;
@@ -94,7 +125,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Dynamically resolve controls for the currently selected framework, baseline/CIA triad, and overlay filters
   const frameworkControls = useMemo(() => {
-    const baseline = activeFramework === 'NIST_800_53_REV5' ? ciaTriad : activeBaselineTier;
+    const isNist80053 = activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5';
+    const baseline = isNist80053 ? ciaTriad : activeBaselineTier;
     return getFrameworkControls(
       activeFramework,
       baseline,
@@ -129,8 +161,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }));
 
       return boundary;
-    } catch (err) {
-      console.error('[AssessmentContext] Boundary aggregation failed:', err);
+    } catch {
       const fallback = await aggregateAssetTelemetry(currentTenant.id);
       return fallback;
     }
@@ -310,20 +341,21 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         targetEntity: controlId,
         previousState: current.status,
         newState: status,
-      }).catch(err => console.warn('Audit record failed:', err));
+      }).catch(() => {});
 
       // Check if this action achieved 100% SPRS readiness
       const metAfter = Object.entries(updated.controls).filter(
         ([id, c]) => id !== controlId ? c.status === 'MET' : status === 'MET'
       ).length;
 
-      if (metAfter === CMMC_LEVEL_1_CONTROLS.length && status === 'MET') {
+      const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
+      if (metAfter === totalRequired && status === 'MET') {
         setTimeout(triggerSprsCelebration, 150);
       }
 
       return updated;
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls]);
 
   // Action: Update Control Notes with RBAC Check
   const updateControlNotes = useCallback((controlId: string, notes: string) => {
@@ -358,7 +390,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         targetEntity: controlId,
         previousState: current.implementationNotes ? `${current.implementationNotes.substring(0, 60)}...` : '',
         newState: notes ? `${notes.substring(0, 60)}...` : '',
-      }).catch(err => console.warn('Audit record failed:', err));
+      }).catch(() => {});
 
       return {
         ...prev,
@@ -399,7 +431,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         targetEntity: controlId,
         previousState: current.responsibleRole,
         newState: role,
-      }).catch(err => console.warn('Audit record failed:', err));
+      }).catch(() => {});
 
       return {
         ...prev,
@@ -442,7 +474,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         actionType: 'TEMPLATE_APPLIED',
         targetEntity: controlId,
         newState: { status: 'IN_PROGRESS', templateLength: narrative.length },
-      }).catch(err => console.warn('Audit record failed:', err));
+      }).catch(() => {});
 
       return {
         ...prev,
@@ -523,6 +555,363 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return appliedCount;
   }, [canEdit, currentTenant.id, currentTenant.isDemo, isSandboxMode, currentUser.name, updateLiveControl]);
 
+  // -------------------------------------------------------------------------
+  // NIST SP 800-171A Objective-Level Evaluation & Rollup Engine
+  // -------------------------------------------------------------------------
+
+  const getObjectivesForControl = useCallback((controlId: string): AssessmentObjective[] => {
+    const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+    return getAssessmentObjectivesForControl(
+      controlId,
+      ctrl?.title,
+      ctrl?.assessmentObjectives,
+      state.objectives
+    );
+  }, [frameworkControls, state.objectives]);
+
+  const recalculateControlStatusFromObjectives = useCallback((controlId: string): ControlStatus => {
+    const objectives = getObjectivesForControl(controlId);
+    if (!objectives || objectives.length === 0) return 'NOT_STARTED';
+    const rollup = calculateControlRollup(objectives);
+    return rollup.calculatedStatus;
+  }, [getObjectivesForControl]);
+
+  const updateObjectiveStatus = useCallback((objectiveId: string, status: ObjectiveStatus) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify objectives for this tenant.');
+      return;
+    }
+
+    const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
+    const controlId = match ? match[1] : objectiveId;
+
+    setState(prev => {
+      const existingObjectives = prev.objectives || {};
+      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+      const baseObjectives = getAssessmentObjectivesForControl(
+        controlId,
+        ctrl?.title,
+        ctrl?.assessmentObjectives,
+        existingObjectives
+      );
+
+      const target = baseObjectives.find(o => o.id === objectiveId) || {
+        id: objectiveId,
+        controlId,
+        letter: match ? match[2] : 'a',
+        text: 'Objective determination',
+        status,
+        prefilledTemplate: '',
+        implementationNarrative: '',
+        linkedEvidenceIds: [],
+        isAutoVerifiedByTelemetry: false,
+      };
+
+      const updatedObjective: AssessmentObjective = {
+        ...target,
+        status,
+        lastUpdated: new Date().toISOString(),
+        updatedBy: currentUser.name,
+      };
+
+      const nextObjectives: Record<string, AssessmentObjective> = {
+        ...existingObjectives,
+        [objectiveId]: updatedObjective,
+      };
+
+      // Recalculate control status according to rollup spec:
+      const allObjs = baseObjectives.map(o => o.id === objectiveId ? updatedObjective : o);
+      const rollup = calculateControlRollup(allObjs);
+      const rolledStatus: ControlStatus = rollup.calculatedStatus;
+
+      const currentCtrl = prev.controls[controlId] || {
+        id: controlId,
+        tenantId: currentTenant.id,
+        status: 'NOT_STARTED',
+        implementationNotes: '',
+        responsibleRole: 'IT / Security Lead',
+        lastUpdated: new Date().toISOString(),
+        tags: [],
+      };
+
+      const updatedControls = {
+        ...prev.controls,
+        [controlId]: {
+          ...currentCtrl,
+          status: rolledStatus,
+          lastUpdated: new Date().toISOString(),
+          updatedBy: currentUser.name,
+        },
+      };
+
+      if (rolledStatus === 'MET') {
+        const metAfter = Object.entries(updatedControls).filter(
+          ([id, c]) => id !== controlId ? c.status === 'MET' : true
+        ).length;
+        const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
+        if (metAfter === totalRequired) {
+          setTimeout(triggerSprsCelebration, 150);
+        }
+      }
+
+      return {
+        ...prev,
+        objectives: nextObjectives,
+        controls: updatedControls,
+      };
+    });
+
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'CONTROL_STATUS_UPDATED',
+      targetEntity: objectiveId,
+      previousState: 'STATUS_UPDATE',
+      newState: status,
+    }).catch(() => {});
+  }, [canEdit, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration]);
+
+  const updateObjectiveNarrative = useCallback((objectiveId: string, narrative: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
+      return;
+    }
+
+    const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
+    const controlId = match ? match[1] : objectiveId;
+
+    setState(prev => {
+      const existingObjectives = prev.objectives || {};
+      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+      const baseObjectives = getAssessmentObjectivesForControl(
+        controlId,
+        ctrl?.title,
+        ctrl?.assessmentObjectives,
+        existingObjectives
+      );
+
+      const target = baseObjectives.find(o => o.id === objectiveId);
+      if (!target) return prev;
+
+      const updatedObjective: AssessmentObjective = {
+        ...target,
+        implementationNarrative: narrative,
+        lastUpdated: new Date().toISOString(),
+        updatedBy: currentUser.name,
+      };
+
+      return {
+        ...prev,
+        objectives: {
+          ...existingObjectives,
+          [objectiveId]: updatedObjective,
+        },
+      };
+    });
+  }, [canEdit, frameworkControls, currentUser]);
+
+  const applyObjectivePrefilledNarrative = useCallback((objectiveId: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
+      return;
+    }
+
+    const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
+    const controlId = match ? match[1] : objectiveId;
+
+    setState(prev => {
+      const existingObjectives = prev.objectives || {};
+      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+      const baseObjectives = getAssessmentObjectivesForControl(
+        controlId,
+        ctrl?.title,
+        ctrl?.assessmentObjectives,
+        existingObjectives
+      );
+
+      const target = baseObjectives.find(o => o.id === objectiveId);
+      if (!target) return prev;
+
+      const confirmedNarrative = target.prefilledTemplate;
+      const updatedObjective: AssessmentObjective = {
+        ...target,
+        implementationNarrative: confirmedNarrative,
+        status: 'MET',
+        lastUpdated: new Date().toISOString(),
+        updatedBy: currentUser.name,
+      };
+
+      const nextObjectives: Record<string, AssessmentObjective> = {
+        ...existingObjectives,
+        [objectiveId]: updatedObjective,
+      };
+
+      const allObjs = baseObjectives.map(o => o.id === objectiveId ? updatedObjective : o);
+      const total = allObjs.length;
+      let metOrNaCount = 0;
+      let hasNotMet = false;
+      for (const obj of allObjs) {
+        if (obj.status === 'NOT_MET') hasNotMet = true;
+        if (obj.status === 'MET' || obj.status === 'NOT_APPLICABLE') metOrNaCount++;
+      }
+
+      const rolledStatus: ControlStatus = hasNotMet
+        ? 'NOT_MET'
+        : metOrNaCount === total && total > 0
+        ? 'MET'
+        : 'IN_PROGRESS';
+
+      const currentCtrl = prev.controls[controlId] || {
+        id: controlId,
+        tenantId: currentTenant.id,
+        status: 'NOT_STARTED',
+        implementationNotes: '',
+        responsibleRole: 'IT / Security Lead',
+        lastUpdated: new Date().toISOString(),
+        tags: [],
+      };
+
+      let combinedNotes = currentCtrl.implementationNotes || '';
+      const sectionHeader = `[Objective ${target.letter.toUpperCase()} - ${target.text}]:\n${confirmedNarrative}`;
+      if (!combinedNotes.includes(confirmedNarrative)) {
+        combinedNotes = combinedNotes ? `${combinedNotes}\n\n${sectionHeader}` : sectionHeader;
+      }
+
+      return {
+        ...prev,
+        objectives: nextObjectives,
+        controls: {
+          ...prev.controls,
+          [controlId]: {
+            ...currentCtrl,
+            status: rolledStatus,
+            implementationNotes: combinedNotes,
+            lastUpdated: new Date().toISOString(),
+            updatedBy: currentUser.name,
+          },
+        },
+      };
+    });
+  }, [canEdit, frameworkControls, currentUser, currentTenant.id]);
+
+  const applyAllObjectiveTemplatesForControl = useCallback((controlId: string) => {
+    if (!canEdit) {
+      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
+      return;
+    }
+
+    setState(prev => {
+      const existingObjectives = prev.objectives || {};
+      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+      const baseObjectives = getAssessmentObjectivesForControl(
+        controlId,
+        ctrl?.title,
+        ctrl?.assessmentObjectives,
+        existingObjectives
+      );
+
+      const nextObjectives = { ...existingObjectives };
+      const narrativeSections: string[] = [];
+
+      baseObjectives.forEach(obj => {
+        const narrative = obj.prefilledTemplate;
+        nextObjectives[obj.id] = {
+          ...obj,
+          status: 'MET',
+          implementationNarrative: narrative,
+          lastUpdated: new Date().toISOString(),
+          updatedBy: currentUser.name,
+        };
+        narrativeSections.push(`[Objective ${obj.letter.toUpperCase()} - ${obj.text}]:\n${narrative}`);
+      });
+
+      const currentCtrl = prev.controls[controlId] || {
+        id: controlId,
+        tenantId: currentTenant.id,
+        status: 'NOT_STARTED',
+        implementationNotes: '',
+        responsibleRole: 'IT / Security Lead',
+        lastUpdated: new Date().toISOString(),
+        tags: [],
+      };
+
+      const updatedControls = {
+        ...prev.controls,
+        [controlId]: {
+          ...currentCtrl,
+          status: 'MET' as ControlStatus,
+          implementationNotes: narrativeSections.join('\n\n'),
+          lastUpdated: new Date().toISOString(),
+          updatedBy: currentUser.name,
+        },
+      };
+
+      const metAfter = Object.entries(updatedControls).filter(
+        ([id, c]) => id !== controlId ? c.status === 'MET' : true
+      ).length;
+      const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
+      if (metAfter === totalRequired) {
+        setTimeout(triggerSprsCelebration, 150);
+      }
+
+      return {
+        ...prev,
+        objectives: nextObjectives,
+        controls: updatedControls,
+      };
+    });
+  }, [canEdit, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration]);
+
+  const linkEvidenceToObjective = useCallback((objectiveId: string, evidenceId: string) => {
+    if (!canEdit) return;
+
+    const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
+    const controlId = match ? match[1] : objectiveId;
+
+    setState(prev => {
+      const existingObjectives = prev.objectives || {};
+      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+      const baseObjectives = getAssessmentObjectivesForControl(
+        controlId,
+        ctrl?.title,
+        ctrl?.assessmentObjectives,
+        existingObjectives
+      );
+
+      const target = baseObjectives.find(o => o.id === objectiveId) || {
+        id: objectiveId,
+        controlId,
+        letter: match ? match[2] : 'a',
+        text: 'Objective determination',
+        status: 'NOT_STARTED' as ObjectiveStatus,
+        prefilledTemplate: '',
+        implementationNarrative: '',
+        linkedEvidenceIds: [],
+        isAutoVerifiedByTelemetry: false,
+      };
+
+      const currentLinked = target.linkedEvidenceIds || [];
+      const updatedLinked = currentLinked.includes(evidenceId)
+        ? currentLinked.filter(id => id !== evidenceId)
+        : [...currentLinked, evidenceId];
+
+      return {
+        ...prev,
+        objectives: {
+          ...existingObjectives,
+          [objectiveId]: {
+            ...target,
+            linkedEvidenceIds: updatedLinked,
+            lastUpdated: new Date().toISOString(),
+            updatedBy: currentUser.name,
+          },
+        },
+      };
+    });
+  }, [canEdit, frameworkControls, currentUser]);
+
   // Action: Update SSP Metadata with RBAC Check
   const updateSSPMetadata = useCallback((metadata: Partial<SSPMetadata>) => {
     if (!canEdit) {
@@ -565,8 +954,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         });
 
         if (uploadResp) {
-          // Upload binary to GCS via Signed URL
-          await ApiClient.uploadFileToGcs(uploadResp.uploadUrl, file, file.type);
+          // Upload binary to Local Enclave Storage or GCS via Signed URL
+          await ApiClient.uploadFileToGcs(uploadResp.uploadUrl, file, file.type, currentTenant.id);
           // Save in local IndexedDB vault for client-side preview
           await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
 
@@ -596,8 +985,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
           return uploadResp.evidence;
         }
-      } catch (liveUploadErr) {
-        console.warn('[AssessmentContext] Live upload error, falling back to local vault:', liveUploadErr);
+      } catch {
+        // Fallback to local vault
       }
     }
 
@@ -655,7 +1044,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       actionType: 'EVIDENCE_UPLOADED',
       targetEntity: file.name,
       newState: { controlId, sha256: fileHash, sizeBytes: file.size },
-    }).catch(err => console.warn('Audit record failed:', err));
+    }).catch(() => {});
 
     return newItem;
   }, [canEdit, currentTenant.id, currentTenant.isDemo, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, isSandboxMode, createLiveEvidenceUploadUrl]);
@@ -676,7 +1065,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
       actionType: 'EVIDENCE_DELETED',
       targetEntity: evidenceId,
-    }).catch(err => console.warn('Audit record failed:', err));
+    }).catch(() => {});
 
     setState(prev => ({
       ...prev,
@@ -710,7 +1099,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
       actionType: 'ASSESSMENT_RESET',
       targetEntity: `Tenant Enclave (${currentTenant.name})`,
-    }).catch(err => console.warn('Audit record failed:', err));
+    }).catch(() => {});
 
     const blank = createInitialState(currentTenant);
     setState(blank);
@@ -731,8 +1120,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         throw new Error('Invalid assessment JSON structure');
       }
 
-      // Ensure all 17 controls are present in imported state
-      for (const ctrl of CMMC_LEVEL_1_CONTROLS) {
+      // Ensure all framework controls are present in imported state
+      const targetControls = frameworkControls.length > 0 ? frameworkControls : getFrameworkControls(activeFramework);
+      for (const ctrl of targetControls) {
         if (!imported.controls[ctrl.id]) {
           imported.controls[ctrl.id] = {
             id: ctrl.id,
@@ -750,12 +1140,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       imported.lastSaved = new Date().toISOString();
       setState(imported);
       return true;
-    } catch (err) {
-      console.error('Failed to parse assessment JSON:', err);
+    } catch {
       alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
       return false;
     }
-  }, [canEdit, currentTenant.id]);
+  }, [canEdit, currentTenant.id, frameworkControls, activeFramework]);
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
@@ -806,6 +1195,15 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setIsExportModalOpen,
     exportModalInitialDocType,
     openExportModal,
+
+    // NIST SP 800-171A Objective-Level Evaluation & Rollup
+    getObjectivesForControl,
+    updateObjectiveStatus,
+    updateObjectiveNarrative,
+    applyObjectivePrefilledNarrative,
+    applyAllObjectiveTemplatesForControl,
+    linkEvidenceToObjective,
+    recalculateControlStatusFromObjectives,
   }), [
     state,
     metrics,
@@ -835,6 +1233,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     isExportModalOpen,
     exportModalInitialDocType,
     openExportModal,
+    getObjectivesForControl,
+    updateObjectiveStatus,
+    updateObjectiveNarrative,
+    applyObjectivePrefilledNarrative,
+    applyAllObjectiveTemplatesForControl,
+    linkEvidenceToObjective,
+    recalculateControlStatusFromObjectives,
   ]);
 
   return (

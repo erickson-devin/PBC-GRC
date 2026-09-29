@@ -49,7 +49,7 @@ const LEGACY_STORAGE_KEYS = [
 /**
  * Generate a cryptographically secure token for tenant and staff onboarding invites
  */
-export function generateCryptoToken(): string {
+function generateCryptoToken(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `pbc_inv_${crypto.randomUUID().replace(/-/g, '')}`;
   }
@@ -85,7 +85,7 @@ export function isSuperAdminUser(user?: User | null): boolean {
  * Normalized string helper for deduplication
  * Removes legal entity suffixes (LLC, Inc, Corp, Co) and symbols to compare true entity identity
  */
-export function normalizeOrgName(name: string): string {
+function normalizeOrgName(name: string): string {
   if (!name) return '';
   return name
     .toLowerCase()
@@ -99,7 +99,7 @@ export function normalizeOrgName(name: string): string {
  * Deduplicate tenant lists by unique id, verified domain, or normalized name
  * Merges duplicate entries and retains the most configured / recent authoritative record
  */
-export function deduplicateTenants(tenantList: Tenant[]): Tenant[] {
+function deduplicateTenants(tenantList: Tenant[]): Tenant[] {
   const seenIds = new Set<string>();
   const seenEntities = new Map<string, Tenant>();
   const result: Tenant[] = [];
@@ -256,9 +256,7 @@ export const PRESET_USERS: User[] = [
   },
 ];
 
-export const SUPER_ADMIN_PRESET_USER: User = PRESET_USERS[3];
-
-export const SEED_INVITATIONS: TenantInvitation[] = [
+const SEED_INVITATIONS: TenantInvitation[] = [
   {
     id: 'inv-seed-01',
     token: 'pbc_inv_7f4d1e9a3b8c2d5e0f1a4b7c8d9e2f3a',
@@ -293,7 +291,7 @@ export const SEED_INVITATIONS: TenantInvitation[] = [
   },
 ];
 
-export const SEED_TEAM_MEMBERS: Record<string, TeamMember[]> = {
+const SEED_TEAM_MEMBERS: Record<string, TeamMember[]> = {
   'tenant-vanguard-01': [
     {
       id: 'mem-alex-01',
@@ -544,8 +542,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }
         }
       }
-    } catch (err) {
-      console.error('Error initializing live tenants:', err);
+    } catch {
+      // live tenants initialization fallback
     } finally {
       // Purge legacy storage keys
       LEGACY_STORAGE_KEYS.forEach(k => {
@@ -606,8 +604,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (saved) {
         return JSON.parse(saved) as User;
       }
-    } catch (e) {
-      console.error('Error loading user from storage:', e);
+    } catch {
+      // storage user load fallback
     }
     return PRESET_USERS[0];
   });
@@ -635,8 +633,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return parsed;
         }
       }
-    } catch (e) {
-      console.warn('Error loading invitations:', e);
+    } catch {
+      // invitations storage load fallback
     }
     return SEED_INVITATIONS;
   });
@@ -651,8 +649,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return parsed;
         }
       }
-    } catch (e) {
-      console.warn('Error loading team members:', e);
+    } catch {
+      // team members storage load fallback
     }
     return SEED_TEAM_MEMBERS;
   });
@@ -743,8 +741,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (saved && ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'].includes(saved)) {
         return saved as ComplianceFramework;
       }
-    } catch (e) {
-      console.warn('Error loading active framework:', e);
+    } catch {
+      // framework storage load fallback
     }
     return 'CMMC_L1';
   });
@@ -755,8 +753,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (saved && ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD'].includes(saved)) {
         return saved as BaselineTier;
       }
-    } catch (e) {
-      console.warn('Error loading active baseline tier:', e);
+    } catch {
+      // baseline tier storage load fallback
     }
     return 'LOW_LOW_LOW';
   });
@@ -767,8 +765,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (saved) {
         return JSON.parse(saved);
       }
-    } catch (e) {
-      console.warn('Error loading active overlay filters:', e);
+    } catch {
+      // overlay filters storage load fallback
     }
     return { nonNetworkedOnly: false };
   });
@@ -906,8 +904,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLiveControls(controlsMap);
       setLiveEvidence(evidenceList);
     } catch (err: any) {
-      console.warn('[TenantContext] Live sync fallback to local storage:', err.message);
-      setSyncError(err.message);
+      setSyncError(err?.message || 'Sync error');
     } finally {
       setIsSyncing(false);
     }
@@ -937,8 +934,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         [controlId]: updated,
       }));
       return updated;
-    } catch (err: any) {
-      console.error('[TenantContext] Failed to update live control:', err);
+    } catch {
       return null;
     }
   }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
@@ -958,8 +954,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const resp = await ApiClient.requestUploadUrl(currentTenant.id, payload);
       setLiveEvidence(prev => [resp.evidence, ...(prev || [])]);
       return resp;
-    } catch (err: any) {
-      console.error('[TenantContext] Failed to request live upload URL:', err);
+    } catch {
       return null;
     }
   }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);

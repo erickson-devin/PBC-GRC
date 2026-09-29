@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Paperclip,
   Upload,
@@ -19,27 +19,43 @@ import {
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { CMMC_LEVEL_1_CONTROLS, DOMAINS } from '../../data/cmmcLevel1Controls';
-import { DomainCode, EvidenceItem } from '../../types/cmmc';
+import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks';
+import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
 
 export const EvidenceVaultView: React.FC = () => {
   const {
     state,
+    frameworkControls,
     uploadEvidence,
     removeEvidence,
     setPreviewEvidence,
     setSelectedControlId,
   } = useAssessment();
 
-  const { currentTenant, canEdit } = useTenant();
+  const { currentTenant, canEdit, activeFramework } = useTenant();
+
+  const currentFrameworkDef = useMemo(() => {
+    return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
+  }, [activeFramework]);
+
+  const availableDomains = useMemo(() => {
+    return Object.values(currentFrameworkDef.domains || {});
+  }, [currentFrameworkDef]);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedDomain, setSelectedDomain] = useState<DomainCode | 'ALL'>('ALL');
-  const [targetControlId, setTargetControlId] = useState<string>(CMMC_LEVEL_1_CONTROLS[0].id);
+  const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
+  const [targetControlId, setTargetControlId] = useState<string>(() => frameworkControls[0]?.id || 'AC.L1-3.1.1');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Synchronize targetControlId when framework controls change
+  useEffect(() => {
+    if (frameworkControls.length > 0 && !frameworkControls.some(c => c.id === targetControlId)) {
+      setTargetControlId(frameworkControls[0].id);
+    }
+  }, [frameworkControls, targetControlId]);
 
   // Storage calculation
   const totalBytes = useMemo(() => {
@@ -54,7 +70,7 @@ export const EvidenceVaultView: React.FC = () => {
   // Filtered evidence items
   const filteredItems = useMemo(() => {
     return state.evidenceIndex.filter((item) => {
-      const ctrl = CMMC_LEVEL_1_CONTROLS.find((c) => c.id === item.controlId);
+      const ctrl = findControlDefinition(item.controlId);
       if (selectedDomain !== 'ALL' && ctrl && ctrl.domain !== selectedDomain) {
         return false;
       }
@@ -198,7 +214,7 @@ export const EvidenceVaultView: React.FC = () => {
                 onChange={(e) => setTargetControlId(e.target.value)}
                 className="w-full text-xs font-medium rounded-xl px-3 py-2.5 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500"
               >
-                {CMMC_LEVEL_1_CONTROLS.map((c) => (
+                {frameworkControls.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.id} - {c.title}
                   </option>
@@ -256,19 +272,19 @@ export const EvidenceVaultView: React.FC = () => {
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              All (17)
+              All ({frameworkControls.length})
             </button>
-            {(Object.keys(DOMAINS) as DomainCode[]).map((d) => (
+            {availableDomains.map((d) => (
               <button
-                key={d}
-                onClick={() => setSelectedDomain(d)}
+                key={d.code}
+                onClick={() => setSelectedDomain(d.code)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  selectedDomain === d
+                  selectedDomain === d.code
                     ? 'bg-brand-600 text-white'
                     : 'bg-slate-800 text-slate-400 hover:text-white'
                 }`}
               >
-                {d}
+                {d.code}
               </button>
             ))}
           </div>
@@ -300,7 +316,7 @@ export const EvidenceVaultView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-800/80 text-slate-300">
                 {filteredItems.map((item) => {
-                  const ctrl = CMMC_LEVEL_1_CONTROLS.find((c) => c.id === item.controlId);
+                  const ctrl = findControlDefinition(item.controlId);
 
                   return (
                     <tr key={item.id} className="hover:bg-slate-850/60 transition-colors">

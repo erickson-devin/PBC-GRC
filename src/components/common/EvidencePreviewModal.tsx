@@ -14,7 +14,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { GcsService } from '../../services/gcsService';
-import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
+import { findControlDefinition } from '../../data/frameworks';
 
 export const EvidencePreviewModal: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
@@ -68,7 +68,7 @@ export const EvidencePreviewModal: React.FC = () => {
 
   if (!previewEvidence) return null;
 
-  const control = CMMC_LEVEL_1_CONTROLS.find((c) => c.id === previewEvidence.controlId);
+  const control = findControlDefinition(previewEvidence.controlId);
   const isImage = previewEvidence.mimeType.includes('image') || previewEvidence.name.match(/\.(png|jpg|jpeg|webp|gif)$/i);
   const isPdf = previewEvidence.mimeType.includes('pdf') || previewEvidence.name.endsWith('.pdf');
 
