@@ -104,6 +104,15 @@ export function getLicenseTierBadge(tier?: string | null): { label: string; badg
   };
 }
 
+export interface EnclaveStackProfile {
+  identityProvider: 'ENTRA_ID_GOV' | 'ENTRA_ID_COMMERCIAL' | 'OKTA' | 'ACTIVE_DIRECTORY';
+  edrSolution: 'CROWDSTRIKE_FALCON' | 'DEFENDER_FOR_ENDPOINT' | 'SENTINELONE' | 'GENERIC_AV';
+  infrastructure: 'AZURE_GOV' | 'AWS_GOVCLOUD' | 'ON_PREM_RHEL' | 'HYBRID_CLOUD';
+  mdmSolution: 'INTUNE' | 'JAMF' | 'WORKSPACE_ONE' | 'MANUAL_GPO';
+  siemSolution: 'SENTINEL' | 'SPLUNK_GOV' | 'ELASTIC' | 'LOCAL_AUDITD';
+  odpParams?: Record<string, string>;
+}
+
 export interface Tenant {
   id: string; // e.g. "tenant-apex-01"
   name: string; // e.g. "Apex Defense Solutions, LLC"
@@ -123,6 +132,7 @@ export interface Tenant {
   isSuspended?: boolean; // When true, access to this enclave is frozen while preserving records
   enabledFrameworks?: ComplianceFramework[]; // Enclave-scoped enabled frameworks e.g. ['CMMC_L1', 'CMMC_L2']
   primaryFramework?: ComplianceFramework;   // Default framework to render for this enclave
+  stackProfile?: EnclaveStackProfile;
 }
 
 export interface User {

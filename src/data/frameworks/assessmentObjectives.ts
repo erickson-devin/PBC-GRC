@@ -4000,6 +4000,8 @@ export function getAssessmentObjectivesForControl(
   });
 }
 
+export const getObjectivesForControl = getAssessmentObjectivesForControl;
+
 /**
  * Calculates Rollup status for a set of objectives following C3PAO evaluation logic:
  * - If ALL objectives are MET or NOT_APPLICABLE -> 'MET'

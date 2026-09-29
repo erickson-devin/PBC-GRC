@@ -26,6 +26,9 @@ import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
 import { AssetInventoryManager } from './components/telemetry/AssetInventoryManager';
+import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
+import { EnclaveSettings } from './components/settings/EnclaveSettings';
+import { PolicyLibraryView } from './views/PolicyLibraryView';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
@@ -42,6 +45,8 @@ const AppContent: React.FC = () => {
     setIsTeamModalOpen,
     isStigModalOpen,
     setIsStigModalOpen,
+    isStackSurveyModalOpen,
+    setIsStackSurveyModalOpen,
   } = useTenant();
 
   // Legal Modal State (Privacy Policy & Terms of Service)
@@ -268,23 +273,14 @@ const AppContent: React.FC = () => {
                 </div>
               )}
               {activeTab === 'ssp' && <SSPBuilder />}
+              {activeTab === 'policies' && <PolicyLibraryView />}
               {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
               {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
               {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
               {activeTab === 'rbac' && <TeamSettingsModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
               {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}
               {activeTab === 'guidance' && <AssessmentGuidanceView />}
-              {activeTab === 'settings' && (
-                <div className="space-y-6">
-                  <div>
-                    <h2 className="text-xl font-bold text-white">Enclave Settings</h2>
-                    <p className="text-sm text-slate-400 mt-1">Configure your enclave boundary, integrations, and compliance preferences.</p>
-                  </div>
-                  <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-sm text-slate-400">
-                    <p>Enclave configuration settings will be available here. Use the Team & Role RBAC tab to manage your team members and permissions.</p>
-                  </div>
-                </div>
-              )}
+              {activeTab === 'settings' && <EnclaveSettings />}
             </main>
           </div>
 
@@ -328,23 +324,14 @@ const AppContent: React.FC = () => {
                   </div>
                 )}
                 {activeTab === 'ssp' && <SSPBuilder />}
+                {activeTab === 'policies' && <PolicyLibraryView />}
                 {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
                 {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
                 {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
                 {activeTab === 'rbac' && <TeamSettingsModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
                 {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
-                {activeTab === 'settings' && (
-                  <div className="space-y-6">
-                    <div>
-                      <h2 className="text-xl font-bold text-white">Enclave Settings</h2>
-                      <p className="text-sm text-slate-400 mt-1">Configure your enclave boundary, integrations, and compliance preferences.</p>
-                    </div>
-                    <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-sm text-slate-400">
-                      <p>Enclave configuration settings will be available here. Use the Team & Role RBAC tab to manage your team members and permissions.</p>
-                    </div>
-                  </div>
-                )}
+                {activeTab === 'settings' && <EnclaveSettings />}
               </main>
             </div>
 
@@ -396,6 +383,10 @@ const AppContent: React.FC = () => {
       <ArtifactExportModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
+      />
+      <EnclaveStackSurveyModal
+        isOpen={isStackSurveyModalOpen}
+        onClose={() => setIsStackSurveyModalOpen(false)}
       />
     </>
   );

@@ -15,6 +15,7 @@ import {
   Package,
   Settings,
   Lock,
+  Scroll,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -112,6 +113,13 @@ export const Sidebar: React.FC = () => {
     {
       title: 'Compliance Documents & Exports',
       items: [
+        {
+          id: 'policies',
+          label: 'Living Policy Library',
+          icon: Scroll,
+          badge: '20 FAMILIES',
+          badgeColor: 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30',
+        },
         {
           id: 'ssp',
           label: 'System Security Plan (SSP)',

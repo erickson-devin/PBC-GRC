@@ -42,6 +42,7 @@ export type NavigationTab =
   | 'assets'      // Asset Inventory & Fleet
   | 'evidence'    // Evidence Vault (renamed from 'vault')
   | 'vault'       // Legacy alias → renders same as 'evidence'
+  | 'policies'    // Living Policy Library
   | 'ssp'         // System Security Plan
   | 'poam'        // Plan of Action & Milestones
   | 'export'      // Export Audit Package

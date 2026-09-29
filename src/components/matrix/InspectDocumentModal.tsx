@@ -20,6 +20,10 @@ import {
   ShieldCheck,
   HardDrive,
   Terminal,
+  Download,
+  RefreshCw,
+  FileText,
+  Sliders,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { ComplianceFramework } from '../../types/framework';
@@ -34,6 +38,10 @@ import {
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { StigRule } from '../../types/stig';
 import { ObjectiveChecklist } from './ObjectiveChecklist';
+import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
+import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
+import { NIST_800_171A_REGISTRY } from '../../data/frameworks/assessmentObjectives';
+import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
 interface InspectDocumentModalProps {
   controlId?: string | null;
@@ -62,7 +70,7 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
 
   // Primary active tab defaults to 'objectives' as specified
   const [activeTab, setActiveTab] = useState<
-    'objectives' | 'narrative' | 'guidance' | 'evidence' | 'mappings' | 'stigs'
+    'objectives' | 'narrative' | 'guidance' | 'evidence' | 'mappings' | 'stigs' | 'living_policy'
   >('objectives');
 
   const [templateFilter, setTemplateFilter] = useState<'all' | 'm365' | 'gcp' | 'activedirectory' | 'physical'>('all');
@@ -71,27 +79,110 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [appliedStigRuleId, setAppliedStigRuleId] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
+  const [recompileCount, setRecompileCount] = useState<number>(0);
+  const [recompileNotice, setRecompileNotice] = useState<boolean>(false);
+  const [copiedPolicy, setCopiedPolicy] = useState<boolean>(false);
+  const [policyViewMode, setPolicyViewMode] = useState<'preview' | 'raw'>('preview');
+  const [isSurveyModalOpen, setIsSurveyModalOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeId = propControlId !== undefined ? propControlId : selectedControlId;
+
+  const controlIndex = activeId ? frameworkControls.findIndex((c) => c.id === activeId) : -1;
+  const control = activeId
+    ? (controlIndex >= 0 ? frameworkControls[controlIndex] : findControlDefinition(activeId))
+    : null;
+
+  const getFamilyPrefix = (id?: string, domain?: string): string => {
+    if (domain && domain.length <= 4) return domain.toUpperCase();
+    if (!id) return '';
+    if (id.includes('-')) {
+      const part = id.split('-')[0];
+      if (part.includes('.')) return part.split('.')[0].toUpperCase();
+      return part.toUpperCase();
+    }
+    if (id.startsWith('3.1.')) return 'AC';
+    if (id.startsWith('3.2.')) return 'AT';
+    if (id.startsWith('3.3.')) return 'AU';
+    if (id.startsWith('3.4.')) return 'CM';
+    if (id.startsWith('3.5.')) return 'IA';
+    if (id.startsWith('3.6.')) return 'IR';
+    if (id.startsWith('3.7.')) return 'MA';
+    if (id.startsWith('3.8.')) return 'MP';
+    if (id.startsWith('3.9.')) return 'PS';
+    if (id.startsWith('3.10.')) return 'PE';
+    if (id.startsWith('3.11.')) return 'RA';
+    if (id.startsWith('3.12.')) return 'CA';
+    if (id.startsWith('3.13.')) return 'SC';
+    if (id.startsWith('3.14.')) return 'SI';
+    return (id.split('.')[0] || '').toUpperCase();
+  };
+
+  const isPolicyControl = Boolean(
+    control?.id && (
+      control.id.endsWith('-1') ||
+      control.id === '3.1.1' ||
+      control.id === '3.2.1' ||
+      control.id === '3.3.1' ||
+      control.id === '3.4.1' ||
+      control.id === '3.5.1' ||
+      control.id === '3.6.1' ||
+      control.id === '3.7.1' ||
+      control.id === '3.8.1' ||
+      control.id === '3.9.1' ||
+      control.id === '3.10.1' ||
+      control.id === '3.11.1' ||
+      control.id === '3.12.1' ||
+      control.id === '3.13.1' ||
+      control.id === '3.14.1' ||
+      control.id.includes('.L2-3.1.1') ||
+      control.id.includes('.L2-3.5.1') ||
+      control.id.includes('.L2-3.14.1') ||
+      control.id.includes('.L2-3.3.1') ||
+      control.id.includes('.L2-3.4.1') ||
+      control.id.includes('.L2-3.13.1')
+    )
+  );
+  const familyPrefix = getFamilyPrefix(control?.id, control?.domain);
+  const familyTitle = (control as any)?.domainName || control?.domain || familyPrefix;
 
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        handleClose();
+        if (propOnClose) {
+          propOnClose();
+        } else {
+          setSelectedControlId(null);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [propOnClose, setSelectedControlId]);
 
-  if (!activeId) return null;
+  // Tab sync: reset to 'objectives' if the inspected control is not a -1 policy control
+  useEffect(() => {
+    if (!isPolicyControl && activeTab === 'living_policy') {
+      setActiveTab('objectives');
+    }
+  }, [isPolicyControl, activeTab]);
 
-  const controlIndex = frameworkControls.findIndex((c) => c.id === activeId);
-  const control =
-    controlIndex >= 0 ? frameworkControls[controlIndex] : findControlDefinition(activeId);
-  if (!control) return null;
+  const compiledFamilyControls = React.useMemo(() => {
+    if (!isPolicyControl || !familyPrefix) return [];
+    const norm = familyPrefix.split('-')[0].trim().toUpperCase();
+    return Object.values(NIST_800_171A_REGISTRY)
+      .filter((reg) => (reg.family || '').toUpperCase() === norm)
+      .sort((a, b) => a.controlNumber.localeCompare(b.controlNumber, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [isPolicyControl, familyPrefix]);
+
+  const compiledPolicyMarkdown = React.useMemo(() => {
+    if (!isPolicyControl || !currentTenant || !familyPrefix) return '';
+    return generateFamilyPolicyDocument(currentTenant, familyPrefix, familyTitle, activeFramework);
+  }, [isPolicyControl, currentTenant, familyPrefix, familyTitle, activeFramework, recompileCount]);
+
+  // Guard return ONLY AFTER all useState, useContext, useMemo, and useEffect hooks have been unconditionally initialized
+  if (!activeId || !control) return null;
 
   const currentFramework = control.framework || activeFramework;
   const currentFrameworkDef = FRAMEWORK_REGISTRY[currentFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -136,6 +227,31 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
 
   // DISA STIG Benchmark mappings
   const mappedStigRules = getStigRulesForControl(control.id);
+
+  const handleRecompile = () => {
+    setRecompileCount((prev) => prev + 1);
+    setRecompileNotice(true);
+    setTimeout(() => setRecompileNotice(false), 3000);
+  };
+
+  const handleExportPolicyMarkdown = () => {
+    const filename = `${familyPrefix}_Family_Living_Policy_${currentTenant.cageCode || 'Enclave'}.md`;
+    const blob = new Blob([compiledPolicyMarkdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyPolicyMarkdown = () => {
+    navigator.clipboard.writeText(compiledPolicyMarkdown);
+    setCopiedPolicy(true);
+    setTimeout(() => setCopiedPolicy(false), 2000);
+  };
 
   const handleClose = () => {
     if (propOnClose) {
@@ -418,6 +534,24 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
             <Terminal className="w-4 h-4" />
             <span>STIG Hardening ({mappedStigRules.length})</span>
           </button>
+
+          {/* Generated Living Policy Tab Button (for any -1 control) */}
+          {isPolicyControl && (
+            <button
+              onClick={() => setActiveTab('living_policy')}
+              className={`py-3 flex items-center gap-2 border-b-2 transition-colors shrink-0 ${
+                activeTab === 'living_policy'
+                  ? 'border-cyan-400 text-cyan-300 font-bold'
+                  : 'border-transparent hover:text-slate-200'
+              }`}
+            >
+              <FileText className="w-4 h-4 text-cyan-400" />
+              <span>Generated Living Policy</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
+                LIVE STACK
+              </span>
+            </button>
+          )}
         </div>
 
         {/* ── Scrollable Tab Body ── */}
@@ -784,7 +918,318 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
               )}
             </div>
           )}
+
+          {/* 7. Generated Living Policy Tab (for -1 controls) */}
+          {isPolicyControl && activeTab === 'living_policy' && (
+            <div className="space-y-6 animate-fadeIn">
+              {/* Action Toolbar */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-cyan-400" />
+                    Living Policy: {familyPrefix} ({familyTitle})
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800">
+                    Compiled from Active Enclave Stack
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Re-Compile from Enclave Stack Button */}
+                  <button
+                    onClick={handleRecompile}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors"
+                    title="Re-run policy compilation engine with current enclave tech stack parameters"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Re-Compile from Enclave Stack</span>
+                  </button>
+
+                  {/* Open Enclave Stack Survey Wizard Button */}
+                  <button
+                    onClick={() => setIsSurveyModalOpen(true)}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 hover:text-cyan-200 text-xs font-semibold flex items-center gap-1.5 border border-cyan-500/40 transition-colors"
+                    title="Configure Identity, EDR, Cloud, MDM, SIEM, and ODP parameters"
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Configure Stack</span>
+                  </button>
+
+                  {/* Export Policy Markdown Button */}
+                  <button
+                    onClick={handleExportPolicyMarkdown}
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-cyan-600/20 transition-all"
+                    title="Download living policy as .md file"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export Policy Markdown</span>
+                  </button>
+
+                  {/* Copy Markdown */}
+                  <button
+                    onClick={handleCopyPolicyMarkdown}
+                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                    title="Copy Markdown to Clipboard"
+                  >
+                    {copiedPolicy ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800">
+                    <button
+                      onClick={() => setPolicyViewMode('preview')}
+                      className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                        policyViewMode === 'preview'
+                          ? 'bg-slate-800 text-white'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Formatted
+                    </button>
+                    <button
+                      onClick={() => setPolicyViewMode('raw')}
+                      className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                        policyViewMode === 'raw'
+                          ? 'bg-slate-800 text-white'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Raw .MD
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Re-compile Feedback */}
+              {recompileNotice && (
+                <div className="p-3 rounded-xl bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 text-xs flex items-center gap-2 animate-fadeIn">
+                  <Check className="w-4 h-4 text-cyan-400" />
+                  <span>Living Policy successfully re-compiled from active Enclave Stack profile and ODP parameters!</span>
+                </div>
+              )}
+
+              {/* Active Stack Highlights Ribbon */}
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center gap-2 flex-wrap text-xs text-slate-400">
+                <span className="font-semibold text-slate-300">Active Enclave Telemetry Stack:</span>
+                <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900/60 font-mono text-[11px]">
+                  IAM: {currentTenant.stackProfile?.identityProvider || 'ENTRA_ID_COMMERCIAL'}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900/60 font-mono text-[11px]">
+                  EDR: {currentTenant.stackProfile?.edrSolution || 'DEFENDER_FOR_ENDPOINT'}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-900/60 font-mono text-[11px]">
+                  Infra: {currentTenant.stackProfile?.infrastructure || 'AZURE_GOV'}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900/60 font-mono text-[11px]">
+                  MDM: {currentTenant.stackProfile?.mdmSolution || 'INTUNE'}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-900/60 font-mono text-[11px]">
+                  SIEM: {currentTenant.stackProfile?.siemSolution || 'SENTINEL'}
+                </span>
+              </div>
+
+              {/* Document Rendering */}
+              {policyViewMode === 'preview' ? (
+                <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 text-slate-200 space-y-6 shadow-inner">
+                  {/* Document Header Card */}
+                  <div className="border-b border-slate-800 pb-5">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <div>
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-400 font-bold">
+                          Enclave Living Policy Standard
+                        </span>
+                        <h1 className="text-xl font-extrabold text-white mt-1">
+                          {familyTitle} ({familyPrefix}) Policy
+                        </h1>
+                      </div>
+                      <div className="text-right text-xs text-slate-400 font-mono">
+                        <div>Rev Date: {new Date().toISOString().split('T')[0]}</div>
+                        <div className="text-emerald-400 font-semibold">Status: APPROVED & ENFORCED</div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-800/80 text-xs font-mono">
+                      <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block text-[10px]">Organization</span>
+                        <span className="font-bold text-white">{currentTenant.name}</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block text-[10px]">System Name</span>
+                        <span className="font-bold text-white">{currentTenant.systemName}</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block text-[10px]">CAGE Code / SAM</span>
+                        <span className="font-bold text-white">{currentTenant.cageCode || 'N/A'} ({currentTenant.samStatus})</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block text-[10px]">Authorizing Official</span>
+                        <span className="font-bold text-white">{currentTenant.systemOwner}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 1 & 2: Purpose & Scope */}
+                  <div className="space-y-4 text-xs leading-relaxed text-slate-300">
+                    <div>
+                      <h2 className="text-sm font-bold text-white mb-1.5 flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">1</span>
+                        Purpose
+                      </h2>
+                      <p className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/60">
+                        The purpose of this policy is to establish formal management requirements and operational safeguards for the {familyTitle} family of controls in accordance with NIST SP 800-53 Rev. 5, NIST SP 800-171, and CMMC requirements.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h2 className="text-sm font-bold text-white mb-1.5 flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">2</span>
+                        Scope
+                      </h2>
+                      <p className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/60">
+                        This policy applies to all information systems, networks, software configurations, and personnel operating within or interacting with the {currentTenant.systemName} boundary.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Policy Statements */}
+                  <div className="space-y-4">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">3</span>
+                      Policy Statements & Implementation Baselines
+                    </h2>
+
+                    <div className="space-y-3">
+                      {compiledFamilyControls.map((ctrl) => (
+                        <div key={ctrl.controlNumber} className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-cyan-300 px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/60">
+                                {ctrl.controlNumber}
+                              </span>
+                              <span className="text-xs font-bold text-white">{ctrl.title}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
+                              {ctrl.objectives.length} Objectives Tailored
+                            </span>
+                          </div>
+
+                          <div className="space-y-2.5 pt-1">
+                            {ctrl.objectives.map((obj) => {
+                              const narrative = getCascadedObjectiveNarrative(
+                                ctrl.controlNumber,
+                                obj.letter,
+                                currentTenant.stackProfile || {
+                                  identityProvider: 'ENTRA_ID_COMMERCIAL',
+                                  edrSolution: 'DEFENDER_FOR_ENDPOINT',
+                                  infrastructure: 'AZURE_GOV',
+                                  mdmSolution: 'INTUNE',
+                                  siemSolution: 'SENTINEL',
+                                  odpParams: {},
+                                }
+                              );
+                              return (
+                                <div key={obj.letter} className="text-xs bg-slate-950/70 p-3 rounded-lg border border-slate-800/60 space-y-1.5">
+                                  <div className="font-semibold text-cyan-200">
+                                    Objective [{obj.letter}]: <span className="text-slate-300 font-normal">{obj.text}</span>
+                                  </div>
+                                  <div className="text-slate-300 text-[11px] leading-relaxed pt-1 border-t border-slate-800/60">
+                                    <strong className="text-slate-400">Implementation: </strong>
+                                    {narrative}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Section 4: Revision History */}
+                  <div className="space-y-2">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">4</span>
+                      Revision History
+                    </h2>
+                    <div className="overflow-x-auto rounded-xl border border-slate-800">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-900 text-slate-400 uppercase font-mono text-[10px]">
+                          <tr>
+                            <th className="p-2.5">Date</th>
+                            <th className="p-2.5">Version</th>
+                            <th className="p-2.5">Description</th>
+                            <th className="p-2.5">Author</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800 text-slate-300">
+                          <tr>
+                            <td className="p-2.5 font-mono">{new Date().toISOString().split('T')[0]}</td>
+                            <td className="p-2.5 font-mono">1.0</td>
+                            <td className="p-2.5">Initial Living Policy generation from Enclave Stack</td>
+                            <td className="p-2.5">Singularity Policy Compiler</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Section 5: Authorizing Official Signature Block */}
+                  <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2 text-xs">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">5</span>
+                      Authorizing Official Approval
+                    </h2>
+                    <p className="text-slate-400">
+                      I have reviewed and formally approved this policy for the {currentTenant.systemName} boundary.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 font-mono text-xs">
+                      <div>
+                        <strong>Signature: </strong>
+                        <span className="border-b border-slate-600 inline-block w-48 ml-1"></span>
+                      </div>
+                      <div>
+                        <strong>Date: </strong>
+                        <span className="border-b border-slate-600 inline-block w-32 ml-1"></span>
+                      </div>
+                      <div>
+                        <strong>Name: </strong> {currentTenant.systemOwner}
+                      </div>
+                      <div>
+                        <strong>Title: </strong> System Owner / Authorizing Official
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Raw Markdown View */
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono text-slate-400">policy_document.md</span>
+                    <button
+                      onClick={handleCopyPolicyMarkdown}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 flex items-center gap-1 border border-slate-700 transition-colors"
+                    >
+                      {copiedPolicy ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedPolicy ? 'Copied' : 'Copy Raw'}</span>
+                    </button>
+                  </div>
+                  <pre className="p-4 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-[500px]">
+                    {compiledPolicyMarkdown}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Enclave Stack Survey Wizard Modal */}
+        <EnclaveStackSurveyModal
+          isOpen={isSurveyModalOpen}
+          onClose={() => setIsSurveyModalOpen(false)}
+          onSaved={() => {
+            handleRecompile();
+          }}
+        />
       </div>
     </div>
   );

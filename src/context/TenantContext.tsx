@@ -9,10 +9,13 @@ import {
   TeamMember,
   AuthProviderType,
   LicenseTier,
+  EnclaveStackProfile,
 } from '../types/tenant';
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { ApiClient, UploadUrlResponse } from '../services/apiClient';
+import { getCascadedObjectiveNarrative } from '../data/frameworks/policyCompiler';
+import { NIST_800_171A_REGISTRY } from '../data/frameworks/assessmentObjectives';
 import {
   ComplianceFramework,
   BaselineTier,
@@ -383,6 +386,9 @@ interface TenantContextType {
   setIsTeamModalOpen: (open: boolean) => void;
   isStigModalOpen: boolean;
   setIsStigModalOpen: (open: boolean) => void;
+  isStackSurveyModalOpen: boolean;
+  setIsStackSurveyModalOpen: (open: boolean) => void;
+  updateStackProfile: (profile: EnclaveStackProfile) => void;
   licenseRequests: LicenseRequest[];
   invitations: TenantInvitation[];
   teamMembers: Record<string, TeamMember[]>;
@@ -658,6 +664,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
   const [isTeamModalOpen, setIsTeamModalOpen] = useState<boolean>(false);
   const [isStigModalOpen, setIsStigModalOpen] = useState<boolean>(false);
+  const [isStackSurveyModalOpen, setIsStackSurveyModalOpen] = useState<boolean>(false);
 
   // Sync storage
   useEffect(() => {
@@ -1266,6 +1273,47 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setActiveFramework(validPrimary);
     }
   }, [updateTenant, currentTenant.id, setActiveFramework]);
+
+  const updateStackProfile = useCallback((profile: EnclaveStackProfile) => {
+    updateTenant(currentTenant.id, { stackProfile: profile });
+
+    // Cascade tailored stack narratives to all assessment objectives in local storage
+    try {
+      const tenantKey = StorageService.getTenantKey(currentTenant.id);
+      const raw = localStorage.getItem(tenantKey);
+      if (raw) {
+        const assessment = JSON.parse(raw);
+        const objectives = { ...(assessment.objectives || {}) };
+
+        Object.values(NIST_800_171A_REGISTRY).forEach((ctrlReg) => {
+          ctrlReg.objectives.forEach((obj) => {
+            const objId = `${ctrlReg.controlNumber}[${obj.letter}]`;
+            const tailoredNarrative = getCascadedObjectiveNarrative(ctrlReg.controlNumber, obj.letter, profile);
+            const existing = objectives[objId];
+            objectives[objId] = {
+              id: objId,
+              controlId: ctrlReg.controlNumber,
+              letter: obj.letter,
+              text: obj.text,
+              status: existing?.status || 'NOT_STARTED',
+              prefilledTemplate: tailoredNarrative,
+              implementationNarrative: tailoredNarrative,
+              linkedEvidenceIds: existing?.linkedEvidenceIds || [],
+              isAutoVerifiedByTelemetry: existing?.isAutoVerifiedByTelemetry || false,
+              lastUpdated: new Date().toISOString(),
+              updatedBy: 'Enclave Stack Auto-Cascade',
+            };
+          });
+        });
+
+        assessment.objectives = objectives;
+        assessment.lastSaved = new Date().toISOString();
+        StorageService.saveAssessment(currentTenant.id, assessment);
+      }
+    } catch (e) {
+      console.warn('Failed to cascade stack profile to assessment storage:', e);
+    }
+  }, [currentTenant.id, updateTenant]);
 
   const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
     const updateFn = (prev: Tenant[]) =>
@@ -2000,6 +2048,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsTeamModalOpen,
     isStigModalOpen,
     setIsStigModalOpen,
+    isStackSurveyModalOpen,
+    setIsStackSurveyModalOpen,
+    updateStackProfile,
     licenseRequests,
     invitations,
     teamMembers,
@@ -2063,6 +2114,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsTeamModalOpen,
     isStigModalOpen,
     setIsStigModalOpen,
+    isStackSurveyModalOpen,
+    setIsStackSurveyModalOpen,
+    updateStackProfile,
     licenseRequests,
     invitations,
     teamMembers,
