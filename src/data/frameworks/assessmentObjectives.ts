@@ -4,7 +4,7 @@
  * Provides official determination statements [a], [b], [c]... from NIST SP 800-171A
  * ("Assessing Security Requirements for Controlled Unclassified Information") alongside
  * DoD CMMC Level 2 audit-ready pre-filled implementation narratives tailored for
- * Microsoft 365 GCC High / Entra ID, Microsoft Intune, Active Directory, DISA STIGs, and Linux baselines.
+ * Microsoft 365 GCC High / **Entra ID**, **Microsoft Intune**, **Active Directory**, **DISA STIG**s, and Linux baselines.
  */
 
 import { AssessmentObjective, ObjectiveStatus, ControlObjectiveRollup } from '../../types/assessment';
@@ -128,27 +128,28 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'authorized users are identified',
-        prefilledTemplate: 'Authorized enclave users are uniquely identified via Microsoft Entra ID (Azure AD P2) and local Active Directory Domain Services. Each user is assigned an individual User Principal Name (UPN) formatted as username@defense.company.com following formal HR onboarding and security clearance sponsorship. Shared, guest, or anonymous accounts are strictly prohibited.',
+        prefilledTemplate: 'Authorized enclave users are uniquely identified via **Microsoft Entra ID** (Azure AD P2) and local **Active Directory** Domain Services. Each user is assigned an individual User Principal Name (UPN) formatted as username@defense.company.com following formal HR onboarding and security clearance sponsorship. Shared, guest, or anonymous accounts are strictly prohibited.',
         scapRuleId: 'accounts_password_pam_minlen',
         isAutoVerifiedByTelemetry: true,
       },
       {
         letter: 'b',
         text: 'processes acting on behalf of authorized users are identified',
-        prefilledTemplate: 'Automated processes and service accounts executing on behalf of users are identified via Managed Service Accounts (gMSAs) and Entra ID Service Principals with defined certificate-based authentication and restricted API permission grants documented in the Enclave IAM Register.',
+        prefilledTemplate: 'Automated processes and service accounts executing on behalf of users are identified via Managed Service Accounts (gMSAs) and **Entra ID** Service Principals with defined certificate-based authentication and restricted API permission grants documented in the Enclave IAM Register.',
         isAutoVerifiedByTelemetry: false,
+        odpParameters: [{ id: 'ac_3_1_8_window', label: 'Observation Window', defaultValue: '15 minutes' }],
       },
       {
         letter: 'c',
         text: 'devices (and other systems) authorized to connect to the system are identified',
-        prefilledTemplate: 'Devices authorized to access the enclave boundary are registered in Microsoft Intune and verified as Entra Hybrid Joined. Network access control is enforced via 802.1X EAP-TLS with machine certificates issued by the internal enterprise PKI; unmanaged or rogue MAC addresses are blocked at the switch port / firewall level.',
+        prefilledTemplate: 'Devices authorized to access the enclave boundary are registered in **Microsoft Intune** and verified as Entra Hybrid Joined. Network access control is enforced via 802.1X EAP-TLS with machine certificates issued by the internal enterprise PKI; unmanaged or rogue MAC addresses are blocked at the switch port / firewall level.',
         scapRuleId: 'sshd_disable_root_login',
         isAutoVerifiedByTelemetry: true,
       },
       {
         letter: 'd',
         text: 'system access is limited to authorized users',
-        prefilledTemplate: 'Access to the enclave systems and CUI repositories is restricted to authenticated users matching Entra ID Conditional Access policies requiring compliant enrolled hardware, FIDO2 Phishing-Resistant MFA, and trusted geopolitical boundary IP addresses.',
+        prefilledTemplate: 'Access to the enclave systems and CUI repositories is restricted to authenticated users matching **Entra ID** Conditional Access policies requiring compliant enrolled hardware, **FIDO2 YubiKey**, and trusted geopolitical boundary IP addresses.',
         isAutoVerifiedByTelemetry: false,
       },
       {
@@ -156,11 +157,15 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
         text: 'system access is limited to processes acting on behalf of authorized users',
         prefilledTemplate: 'Background services and scheduled automated tasks operate under least-privilege service accounts with Deny Interactive Logon rights, strictly scoped to authorized folder paths and monitored via Sysmon event ID 1 (Process Creation).',
         isAutoVerifiedByTelemetry: false,
+        odpParameters: [
+          { id: 'si_3_14_1_crit', label: 'Critical Patch SLA', defaultValue: '7 days' },
+          { id: 'si_3_14_1_high', label: 'High Patch SLA', defaultValue: '30 days' }
+        ],
       },
       {
         letter: 'f',
         text: 'system access is limited to authorized devices (including other systems)',
-        prefilledTemplate: 'Hardware access is limited via Intune Device Compliance policies requiring Secure Boot, BitLocker encryption (XTS-AES 256), and Defender for Endpoint healthy status. Non-compliant devices are automatically isolated from enclave resources.',
+        prefilledTemplate: 'Hardware access is limited via **Intune** Device Compliance policies requiring Secure Boot, BitLocker encryption (XTS-AES 256), and Defender for Endpoint healthy status. Non-compliant devices are automatically isolated from enclave resources.',
         scapRuleId: 'wireless_disable_interfaces',
         isAutoVerifiedByTelemetry: true,
       },
@@ -177,6 +182,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
         text: 'the types of transactions and functions that authorized users are permitted to execute are defined',
         prefilledTemplate: 'Job descriptions and the Enclave RBAC Matrix define authorized transactions per role (e.g. System Admin, Compliance Auditor, Engineering Lead, Standard Operator). Privileged operations are restricted to dedicated administrative security groups.',
         isAutoVerifiedByTelemetry: false,
+        odpParameters: [{ id: 'ac_3_1_8_attempts', label: 'Max Invalid Attempts', defaultValue: '3 attempts' }],
       },
       {
         letter: 'b',
@@ -198,11 +204,15 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
         text: 'approved authorizations for controlling the flow of CUI are defined',
         prefilledTemplate: 'The Enclave Boundary Interconnect Agreement (ISA) and Data Flow Policy define approved egress and ingress pathways for Controlled Unclassified Information. Flow between trust zones requires explicit firewall protocol inspection.',
         isAutoVerifiedByTelemetry: false,
+        odpParameters: [
+          { id: 'ac_3_1_11_max_duration', label: 'Max Session Duration', defaultValue: '12 hours' },
+          { id: 'ac_3_1_11_idle', label: 'Idle Timeout', defaultValue: '30 minutes' }
+        ],
       },
       {
         letter: 'b',
         text: 'the flow of CUI is controlled in accordance with approved authorizations',
-        prefilledTemplate: 'Palo Alto Next-Generation Firewalls enforce Layer 7 App-ID routing and Microsoft Purview Data Loss Prevention (DLP) blocks unauthorized exfiltration of CUI labels over email, web uploads, or unapproved cloud storage sinks.',
+        prefilledTemplate: '**Palo Alto** Next-Generation Firewalls enforce Layer 7 App-ID routing and **Microsoft Purview** Data Loss Prevention (DLP) blocks unauthorized exfiltration of CUI labels over email, web uploads, or unapproved cloud storage sinks.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'iptables_rules_configured',
       },
@@ -223,7 +233,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'responsibilities of individuals are separated to reduce the opportunity for malevolent activity',
-        prefilledTemplate: 'Administrators managing servers cannot modify or purge audit logs in Azure Log Analytics / Sentinel; audit leads have read-only access to operational systems. Two-person authorization is required for firewall rule updates and PKI root revocations.',
+        prefilledTemplate: 'Administrators managing servers cannot modify or purge audit logs in **Azure Log Analytics** / Sentinel; audit leads have read-only access to operational systems. Two-person authorization is required for firewall rule updates and PKI root revocations.',
         isAutoVerifiedByTelemetry: false,
       },
     ],
@@ -251,11 +261,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
         text: 'other security functions are identified',
         prefilledTemplate: 'Security functions including firewall administration, EDR console management, backup maintenance, and SIEM monitoring are assigned dedicated granular RBAC roles rather than blanket administrative grants.',
         isAutoVerifiedByTelemetry: false,
+        odpParameters: [{ id: 'ac_3_1_8_lockout', label: 'Lockout Duration', defaultValue: '30 minutes' }],
       },
       {
         letter: 'd',
         text: 'access to other security functions is authorized in accordance with the principle of least privilege',
-        prefilledTemplate: 'Security analysts are restricted to read-only incident triage roles in Microsoft Defender and Sentinel without endpoint execution privileges, strictly limiting functional exposure.',
+        prefilledTemplate: 'Security analysts are restricted to read-only incident triage roles in **Microsoft Defender** and Sentinel without endpoint execution privileges, strictly limiting functional exposure.',
         isAutoVerifiedByTelemetry: false,
       },
     ],
@@ -318,27 +329,32 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'the number of consecutive invalid logon attempts allowed is defined',
-        prefilledTemplate: 'In accordance with DISA Windows and Linux STIG baselines, the maximum allowed consecutive invalid logon attempts is defined as 3 attempts.',
+        prefilledTemplate: 'In accordance with **DISA Windows and Linux STIG** baselines, the maximum allowed consecutive invalid logon attempts is defined as [ODP: 3 attempts].',
         isAutoVerifiedByTelemetry: false,
       },
       {
         letter: 'b',
         text: 'the time period for the allowed number of consecutive invalid logon attempts is defined',
-        prefilledTemplate: 'The observation window for counting invalid logon attempts is configured to 15 minutes before the counter resets.',
+        prefilledTemplate: 'The observation window for counting invalid logon attempts is configured to [ODP: 15 minutes] before the counter resets.',
         isAutoVerifiedByTelemetry: false,
       },
       {
         letter: 'c',
         text: 'the action to be taken when the allowed number of consecutive invalid logon attempts is exceeded is defined',
-        prefilledTemplate: 'Upon exceeding 3 invalid attempts, the account is locked for a duration of 30 minutes, requiring administrative help desk verification or automated Entra Smart Lockout step-up challenge to unlock.',
+        prefilledTemplate: 'Upon exceeding 3 invalid attempts, the account is locked for a duration of [ODP: 30 minutes], requiring administrative help desk verification or automated Entra Smart Lockout step-up challenge to unlock.',
         isAutoVerifiedByTelemetry: false,
       },
       {
         letter: 'd',
         text: 'the number of consecutive invalid logon attempts is limited in accordance with the definition',
-        prefilledTemplate: 'Group Policy Objects (GPOs) and Entra ID Smart Lockout settings enforce Account Lockout Threshold = 3, Lockout Duration = 30 minutes, and Reset Lockout Counter After = 15 minutes across all enclave hosts.',
+        prefilledTemplate: 'Group Policy Objects (GPOs) and **Entra ID** Smart Lockout settings enforce Account Lockout Threshold = [ODP: 3 attempts], Lockout Duration = [ODP: 30 minutes], and Reset Lockout Counter After = [ODP: 15 minutes] across all enclave hosts.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'accounts_passwords_pam_faillock',
+        odpParameters: [
+          { id: 'ac_3_1_8_attempts', label: 'Max Invalid Attempts', defaultValue: '3 attempts' },
+          { id: 'ac_3_1_8_lockout', label: 'Lockout Duration', defaultValue: '30 minutes' },
+          { id: 'ac_3_1_8_window', label: 'Observation Window', defaultValue: '15 minutes' }
+        ],
       },
     ],
   },
@@ -365,9 +381,10 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'session lock after a defined period of inactivity is initiated',
-        prefilledTemplate: 'Microsoft Intune Configuration Profiles and DISA STIG GPOs enforce an automated screen lock threshold of 15 minutes (900 seconds) of inactivity across all workstations, servers, and virtual desktop sessions.',
+        prefilledTemplate: '**Microsoft Intune** Configuration Profiles and **DISA STIG** GPOs enforce an automated screen lock threshold of [ODP: 15 minutes (900 seconds)] of inactivity across all workstations, servers, and virtual desktop sessions.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'screen_locking_enabled',
+        odpParameters: [{ id: 'ac_3_1_10_timeout', label: 'Inactivity Lock Period', defaultValue: '15 minutes (900 seconds)' }],
       },
       {
         letter: 'b',
@@ -387,13 +404,13 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'conditions for automatic session termination are defined',
-        prefilledTemplate: 'Session termination conditions are defined in the Enclave Access Policy: VPN and SSH sessions terminate after 12 hours of total duration or 30 minutes of idle inactivity; Web application tokens expire after 8 hours.',
+        prefilledTemplate: 'Session termination conditions are defined in the Enclave Access Policy: VPN and SSH sessions terminate after [ODP: 12 hours] of total duration or [ODP: 30 minutes] of idle inactivity; Web application tokens expire after 8 hours.',
         isAutoVerifiedByTelemetry: false,
       },
       {
         letter: 'b',
         text: 'user sessions are automatically terminated when the defined conditions are met',
-        prefilledTemplate: 'Firewall VPN gateways, SSH daemons (ClientAliveInterval 300 / ClientAliveCountMax 2), and Entra ID Conditional Access Session Lifetime controls automatically tear down network sessions upon reaching defined time limits.',
+        prefilledTemplate: 'Firewall VPN gateways, SSH daemons (ClientAliveInterval 300 / ClientAliveCountMax 2), and **Entra ID** Conditional Access Session Lifetime controls automatically tear down network sessions upon reaching defined time limits.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'sshd_set_idle_timeout',
       },
@@ -415,7 +432,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'remote access sessions are controlled',
-        prefilledTemplate: 'Remote access is routed exclusively through managed gateways enforcing FIDO2 MFA, endpoint posture validation (Intune compliance), and split tunneling prohibition. Unmanaged direct RDP or SSH across the boundary is blocked.',
+        prefilledTemplate: 'Remote access is routed exclusively through managed gateways enforcing **FIDO2 YubiKey** MFA, endpoint posture validation (**Intune** compliance), and split tunneling prohibition. Unmanaged direct RDP or SSH across the boundary is blocked.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'sshd_disable_x11_forwarding',
       },
@@ -436,7 +453,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'connections to external systems are controlled/limited',
-        prefilledTemplate: 'Boundary firewalls employ default-deny ingress filtering, restricting external inbound traffic strictly to authorized DoD / FedRAMP Moderate partner CIDR blocks over encrypted IPSec / TLS tunnels.',
+        prefilledTemplate: 'boundary firewalls (**Palo Alto NGFW**) employ default-deny ingress filtering, restricting external inbound traffic strictly to authorized DoD / FedRAMP Moderate partner CIDR blocks over encrypted IPSec / TLS tunnels.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'iptables_rules_configured',
       },
@@ -498,7 +515,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'system users are uniquely identified',
-        prefilledTemplate: 'All system users are assigned unique User Principal Names (UPN) in Microsoft Entra ID. Shared or generic accounts (e.g. admin, user, test) are disabled by automated security policies.',
+        prefilledTemplate: 'All system users are assigned unique User Principal Names (UPN) in **Microsoft Entra ID**. Shared or generic accounts (e.g. admin, user, test) are disabled by automated security policies.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'accounts_password_pam_minlen',
       },
@@ -511,7 +528,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'c',
         text: 'devices accessing the system are uniquely identified',
-        prefilledTemplate: 'Endpoints accessing the enclave are uniquely identified by device GUID and machine certificate in Microsoft Intune, with hardware SHA-256 fingerprints recorded in the Accretion asset ledger.',
+        prefilledTemplate: 'Endpoints accessing the enclave are uniquely identified by device GUID and machine certificate in **Microsoft Intune**, with hardware SHA-256 fingerprints recorded in the Accretion asset ledger.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'sshd_disable_root_login',
       },
@@ -526,7 +543,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'user identities are authenticated before system access is allowed',
-        prefilledTemplate: 'Users must authenticate via Entra ID using FIDO2 hardware keys (YubiKey) or Windows Hello for Business with TPM 2.0 attestation before receiving access tokens to any enclave resource.',
+        prefilledTemplate: 'Users must authenticate via **Entra ID** using **FIDO2 YubiKey** or Windows Hello for Business with TPM 2.0 attestation before receiving access tokens to any enclave resource.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'no_empty_passwords',
       },
@@ -553,19 +570,19 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'multifactor authentication is used for local access to privileged accounts',
-        prefilledTemplate: 'Local and console logons to servers and workstations for privileged administrative accounts require smart card / FIDO2 YubiKey hardware tokens or Windows Hello for Business PIN backed by physical TPM.',
+        prefilledTemplate: 'Local and console logons to servers and workstations for privileged administrative accounts require smart card / FIDO2 YubiKey** YubiKey** hardware tokens or Windows Hello for Business PIN backed by physical TPM.',
         isAutoVerifiedByTelemetry: true,
       },
       {
         letter: 'b',
         text: 'multifactor authentication is used for network access to privileged accounts',
-        prefilledTemplate: 'All network access (SSH, PowerShell Remoting, Windows Admin Center, Azure Portal) for privileged accounts strictly mandates phishing-resistant MFA enforced via Entra ID Conditional Access Authentication Strengths.',
+        prefilledTemplate: 'All network access (SSH, PowerShell Remoting, Windows Admin Center, Azure Portal) for privileged accounts strictly mandates phishing-resistant MFA enforced via **Entra ID** Conditional Access Authentication Strengths.',
         isAutoVerifiedByTelemetry: true,
       },
       {
         letter: 'c',
         text: 'multifactor authentication is used for network access to non-privileged accounts',
-        prefilledTemplate: 'All non-privileged user network access, including VPN connections, email access, and file share access, requires MFA via Microsoft Authenticator number matching or FIDO2 hardware keys.',
+        prefilledTemplate: 'All non-privileged user network access, including VPN connections, email access, and file share access, requires MFA via Microsoft Authenticator number matching or **FIDO2 YubiKey**.',
         isAutoVerifiedByTelemetry: true,
       },
     ],
@@ -582,14 +599,14 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'baseline configurations of organizational systems are established',
-        prefilledTemplate: 'Gold image baselines for Windows 11 Enterprise and Rocky Linux 9 are established based strictly on DISA STIG and CIS Benchmark Level 2 standards. Hardening scripts are maintained in a version-controlled Git repository.',
+        prefilledTemplate: 'Gold image baselines for Windows 11 Enterprise and Rocky Linux 9 are established based strictly on **DISA STIG** and CIS Benchmark Level 2 standards. Hardening scripts are maintained in a version-controlled Git repository.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'screen_locking_enabled',
       },
       {
         letter: 'b',
         text: 'baseline configurations of organizational systems are maintained',
-        prefilledTemplate: 'Configuration drift is continuously monitored and corrected via Microsoft Intune proactive remediation scripts and Ansible automation playbooks, enforcing automated re-alignment within 24 hours of drift detection.',
+        prefilledTemplate: 'Configuration drift is continuously monitored and corrected via **Microsoft Intune** proactive remediation scripts and Ansible automation playbooks, enforcing automated re-alignment within 24 hours of drift detection.',
         isAutoVerifiedByTelemetry: true,
       },
       {
@@ -601,7 +618,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'd',
         text: 'inventories of organizational systems under configuration control are maintained',
-        prefilledTemplate: 'Asset inventories are updated automatically through daily Intune synchronization and Photon subnet telemetry scans, recording decommissioned and newly provisioned assets in real time.',
+        prefilledTemplate: 'Asset inventories are updated automatically through daily **Intune** synchronization and Photon subnet telemetry scans, recording decommissioned and newly provisioned assets in real time.',
         isAutoVerifiedByTelemetry: true,
       },
     ],
@@ -615,13 +632,13 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'security configuration settings for information technology products employed in organizational systems are established',
-        prefilledTemplate: 'Security configuration benchmarks are documented in the Enclave Systems Configuration Standard, adopting DISA STIGs for Windows Server, Windows 11, Red Hat/Rocky Linux, and Edge/Chrome browsers.',
+        prefilledTemplate: 'Security configuration benchmarks are documented in the Enclave Systems Configuration Standard, adopting **DISA STIG**s for Windows Server, Windows 11, Red Hat/Rocky Linux, and Edge/Chrome browsers.',
         isAutoVerifiedByTelemetry: false,
       },
       {
         letter: 'b',
         text: 'security configuration settings for information technology products employed in organizational systems are enforced',
-        prefilledTemplate: 'Security settings are enforced via Active Directory GPOs and Intune Endpoint Security baselines. Local overrides are blocked, and weekly OpenSCAP scans verify compliance rates against the benchmark.',
+        prefilledTemplate: 'Security settings are enforced via **Active Directory** GPOs and **Intune** Endpoint Security baselines. Local overrides are blocked, and weekly OpenSCAP scans verify compliance rates against the benchmark.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'sshd_disable_root_login',
       },
@@ -642,7 +659,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'nonessential programs, functions, ports, protocols, and services are restricted, disabled, or prevented',
-        prefilledTemplate: 'Host-based firewalls (Windows Defender Firewall and Linux firewalld) block all non-whitelisted ports. Disabling nonessential Windows services (e.g. Xbox Live, Remote Registry) is enforced via DISA STIG policy.',
+        prefilledTemplate: 'Host-based firewalls (Windows Defender Firewall and Linux firewalld) block all non-whitelisted ports. Disabling nonessential Windows services (e.g. Xbox Live, Remote Registry) is enforced via **DISA STIG** policy.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'firewalld_enabled',
       },
@@ -680,15 +697,16 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'system audit logs and records are created to enable monitoring, analysis, investigation, and reporting of unlawful, unauthorized, or inappropriate system activity',
-        prefilledTemplate: 'Advanced Windows Audit Policies and Linux auditd are configured according to DISA STIG recommendations to log logon/logoff events, privilege use, file/object access, process creation with command-line arguments, and policy modifications.',
+        prefilledTemplate: 'Advanced Windows Audit Policies and Linux auditd are configured according to **DISA STIG** recommendations to log logon/logoff events, privilege use, file/object access, process creation with command-line arguments, and policy modifications.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'auditd_enabled',
       },
       {
         letter: 'b',
         text: 'system audit logs and records are retained to enable monitoring, analysis, investigation, and reporting of unlawful, unauthorized, or inappropriate system activity',
-        prefilledTemplate: 'Audit logs are forwarded in near-real-time to an immutable, WORM-configured Azure Log Analytics workspace / Sentinel instance with a 365-day retention policy meeting DoD CMMC requirements.',
+        prefilledTemplate: 'Audit logs are forwarded in near-real-time to an immutable, WORM-configured **Microsoft Sentinel** workspace with a [ODP: 3 years total, 1 year online] retention policy meeting DoD CMMC requirements.',
         isAutoVerifiedByTelemetry: true,
+        odpParameters: [{ id: 'au_3_3_1_retention', label: 'Log Retention SLA', defaultValue: '3 years total, 1 year online' }],
       },
     ],
   },
@@ -731,7 +749,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'c',
         text: 'organizational communications are monitored at external boundaries',
-        prefilledTemplate: 'External traffic is continuously monitored by Palo Alto Next-Gen Firewall threat prevention and Cloudflare DDoS/WAF systems with automated alerts dispatched to the SOC for anomaly detection.',
+        prefilledTemplate: 'External traffic is continuously monitored by **Palo Alto** Next-Gen Firewall threat prevention and Cloudflare DDoS/WAF systems with automated alerts dispatched to the SOC for anomaly detection.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'iptables_rules_configured',
       },
@@ -757,14 +775,14 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'g',
         text: 'organizational communications are protected at external boundaries',
-        prefilledTemplate: 'External boundary transmissions utilize cryptographic encapsulation via IPsec VPN tunnels using FIPS 140-3 validated AES-256-GCM encryption algorithms.',
+        prefilledTemplate: 'External boundary transmissions utilize cryptographic encapsulation via IPsec VPN tunnels using **FIPS 140-3** validated AES-256 encryption algorithms.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'tls_version_minimum',
       },
       {
         letter: 'h',
         text: 'organizational communications are protected at key internal boundaries',
-        prefilledTemplate: 'Internal data in transit between enclave services mandates TLS 1.3 or SMB 3.1.1 encryption with AES-128-GCM / AES-256-GCM cipher suites.',
+        prefilledTemplate: 'Internal data in transit between enclave services mandates **TLS 1.3** or SMB 3.1.1 encryption with AES-128-GCM / AES-256 cipher suites.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'tls_version_minimum',
       },
@@ -779,7 +797,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'cryptographic mechanisms are identified to prevent unauthorized disclosure of CUI during transmission',
-        prefilledTemplate: 'FIPS 140-2/3 validated cryptography mechanisms (TLS 1.2/1.3, IPsec ESP with AES-256-GCM, SSHv2 with ed25519 or ecdsa-sha2-nistp384) are formally specified in the Cryptographic Standards Policy.',
+        prefilledTemplate: '**FIPS 140-3** validated cryptography mechanisms (**TLS 1.3**, IPsec ESP with AES-256, SSHv2 with ed25519 or ecdsa-sha2-nistp384) are formally specified in the Cryptographic Standards Policy.',
         isAutoVerifiedByTelemetry: false,
       },
       {
@@ -828,13 +846,13 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'e',
         text: 'the time period within which to correct system flaws is specified',
-        prefilledTemplate: 'Flaw correction SLAs are defined: Critical CVEs (CVSS 9.0+) within 14 days, High (7.0-8.9) within 30 days, Medium within 60 days, and Low within 90 days of release.',
+        prefilledTemplate: 'Flaw correction SLAs are defined: Critical CVEs (CVSS 9.0+) within [ODP: 7 days], High (7.0-8.9) within [ODP: 30 days], Medium within 60 days, and Low within 90 days of release.',
         isAutoVerifiedByTelemetry: false,
       },
       {
         letter: 'f',
         text: 'system flaws are corrected within the specified time period',
-        prefilledTemplate: 'Windows Updates are deployed automatically via Microsoft Intune rings (Pilot, Broad); Linux servers are patched via Ansible playbooks using dnf-automatic, verifying patch compliance within defined SLAs.',
+        prefilledTemplate: 'Windows Updates are deployed automatically via **Microsoft Intune** rings (Pilot, Broad); Linux servers are patched via Ansible playbooks using dnf-automatic, verifying patch compliance within defined SLAs.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'dnf_automatic_enabled',
       },
@@ -849,14 +867,14 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'malicious code protection mechanisms are employed at system entry and exit points',
-        prefilledTemplate: 'Microsoft Defender for Office 365 Safe Links and Safe Attachments scan all inbound and outbound email at the mail gateway boundary, quarantining malicious payloads before mailbox delivery.',
+        prefilledTemplate: '**Microsoft Defender** for Office 365 Safe Links and Safe Attachments scan all inbound and outbound email at the mail gateway boundary, quarantining malicious payloads before mailbox delivery.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'ensure_antivirus_installed',
       },
       {
         letter: 'b',
         text: 'malicious code protection mechanisms are employed at system endpoints',
-        prefilledTemplate: 'Microsoft Defender for Endpoint (EDR) is installed and active on all Windows and Linux systems with Real-Time Protection, Cloud-Delivered Protection, and Tamper Protection permanently enabled.',
+        prefilledTemplate: '**Microsoft Defender for Endpoint** (EDR) is installed and active on all Windows and Linux systems with Real-Time Protection, Cloud-Delivered Protection, and Tamper Protection permanently enabled.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'ensure_antivirus_installed',
       },
@@ -1107,7 +1125,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'malicious code protection mechanisms are updated as new releases are available',
-        prefilledTemplate: 'Antivirus signatures and cloud-delivered EDR intelligence definitions are configured to update automatically every 4 hours via Microsoft Defender Cloud Protection, with administrator alerts if endpoints remain out-of-date past 48 hours.',
+        prefilledTemplate: 'Antivirus signatures and cloud-delivered EDR intelligence definitions are configured to update automatically every 4 hours via **Microsoft Defender** Cloud Protection, with administrator alerts if endpoints remain out-of-date past 48 hours.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'antivirus_definitions_updated_daily',
       },
@@ -1127,7 +1145,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'malicious code scans are performed with the defined frequency',
-        prefilledTemplate: 'Automated scan schedules are enforced through Microsoft Intune / EDR policies, running silently without user interference and logging scan completion telemetry to the central console.',
+        prefilledTemplate: 'Automated scan schedules are enforced through **Microsoft Intune** / EDR policies, running silently without user interference and logging scan completion telemetry to the central console.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'defender_scheduled_scan_weekly',
       },
@@ -1152,7 +1170,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'authorized users are identified',
-        prefilledTemplate: 'All corporate personnel requiring access to systems processing, storing, or transmitting Federal Contract Information (FCI) are provisioned individual named user accounts in Microsoft Entra ID / Google Workspace. Generic, guest, and shared accounts are strictly prohibited across all endpoints and cloud tenants.',
+        prefilledTemplate: 'All corporate personnel requiring access to systems processing, storing, or transmitting Federal Contract Information (FCI) are provisioned individual named user accounts in **Microsoft Entra ID** / Google Workspace. Generic, guest, and shared accounts are strictly prohibited across all endpoints and cloud tenants.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'account_unique_id',
       },
@@ -1166,7 +1184,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'c',
         text: 'devices (and other systems) authorized to connect to systems are identified',
-        prefilledTemplate: 'Corporate-managed laptops and workstations authorized to connect to the internal network or access FCI repositories are inventoried in Microsoft Intune / MDM with corporate asset tags and verified hardware compliance before connection.',
+        prefilledTemplate: 'Corporate-managed laptops and workstations authorized to connect to the internal network or access FCI repositories are inventoried in **Microsoft Intune** / MDM with corporate asset tags and verified hardware compliance before connection.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'device_inventory_enrolled',
       },
@@ -1213,7 +1231,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'connections to external systems are verified',
-        prefilledTemplate: 'External connections are verified using cryptographic authentication, TLS 1.3 certificates, and IPsec/WireGuard VPN encryption prior to establishing communications session with internal network resources.',
+        prefilledTemplate: 'External connections are verified using cryptographic authentication, **TLS 1.3** certificates, and IPsec/WireGuard VPN encryption prior to establishing communications session with internal network resources.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'external_connection_encryption',
       },
@@ -1273,7 +1291,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'system users are uniquely identified',
-        prefilledTemplate: 'Every employee, contractor, and administrator accessing systems containing FCI is assigned a unique User Principal Name (UPN) formatted as firstname.lastname@company.com. Shared, group, or generic user credentials are strictly prohibited and disabled in Microsoft Entra ID / directory services.',
+        prefilledTemplate: 'Every employee, contractor, and administrator accessing systems containing FCI is assigned a unique User Principal Name (UPN) formatted as firstname.lastname@company.com. Shared, group, or generic user credentials are strictly prohibited and disabled in **Microsoft Entra ID** / directory services.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'unique_user_identifiers',
       },
@@ -1287,7 +1305,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'c',
         text: 'devices accessing organizational systems are uniquely identified',
-        prefilledTemplate: 'All corporate laptops, desktops, and mobile devices are enrolled in central endpoint management (Microsoft Intune / MDM) with unique device hostnames, serial numbers, and device certificates that uniquely identify the hardware.',
+        prefilledTemplate: 'All corporate laptops, desktops, and mobile devices are enrolled in central endpoint management (**Microsoft Intune** / MDM) with unique device hostnames, serial numbers, and device certificates that uniquely identify the hardware.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'device_unique_naming',
       },
@@ -1301,7 +1319,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'the identity of each user is authenticated (or verified) as a prerequisite to allowing system access',
-        prefilledTemplate: 'All users must authenticate before gaining access to endpoints and cloud systems processing FCI. User authentication requires strong passwords (minimum 14 characters) and mandatory phishing-resistant Multi-Factor Authentication (MFA) via Microsoft Authenticator number matching or FIDO2 security keys.',
+        prefilledTemplate: 'All users must authenticate before gaining access to endpoints and cloud systems processing FCI. User authentication requires strong passwords (minimum 14 characters) and mandatory phishing-resistant Multi-Factor Authentication (MFA) via Microsoft Authenticator number matching or **FIDO2 YubiKey** security keys.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'mfa_enforced_cloud_endpoints',
       },
@@ -1315,7 +1333,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'c',
         text: 'the identity of each device is authenticated (or verified) as a prerequisite to allowing system access',
-        prefilledTemplate: 'Endpoints authenticating to the corporate network or cloud tenant are verified via device certificates issued by Intune/MDM and hardware-bound TPM 2.0 attestation before network access or single sign-on tokens are granted.',
+        prefilledTemplate: 'Endpoints authenticating to the corporate network or cloud tenant are verified via device certificates issued by **Intune**/MDM and hardware-bound TPM 2.0 attestation before network access or single sign-on tokens are granted.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'device_certificate_authentication',
       },
@@ -1420,7 +1438,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'c',
         text: 'organizational communications are protected at external boundaries of the systems',
-        prefilledTemplate: 'All remote communications traversing external boundaries (such as telework connections) are encrypted using industry-standard protocols (TLS 1.3, IPsec, WireGuard) to safeguard FCI in transit.',
+        prefilledTemplate: 'All remote communications traversing external boundaries (such as telework connections) are encrypted using industry-standard protocols (**TLS 1.3**, IPsec, WireGuard) to safeguard FCI in transit.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'transit_encryption_tls13',
       },
@@ -1480,7 +1498,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'information system flaws are identified within the defined time frame',
-        prefilledTemplate: 'Endpoint management telemetry (Microsoft Intune / RMM) and automated vulnerability tracking identify missing OS patches and vulnerable software packages across all endpoints on a weekly cadence.',
+        prefilledTemplate: 'Endpoint management telemetry (**Microsoft Intune** / RMM) and automated vulnerability tracking identify missing OS patches and vulnerable software packages across all endpoints on a weekly cadence.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'vulnerability_detection_cadence',
       },
@@ -1506,7 +1524,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'f',
         text: 'information system flaws are corrected within the defined time frame',
-        prefilledTemplate: 'Automated patch deployment rings in Microsoft Intune / Windows Update for Business enforce installation of security updates across 100% of workstations within the 14-day SLA, enforcing automatic reboot during maintenance windows.',
+        prefilledTemplate: 'Automated patch deployment rings in **Microsoft Intune** / Windows Update for Business enforce installation of security updates across 100% of workstations within the 14-day SLA, enforcing automatic reboot during maintenance windows.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'patch_sla_compliance_14days',
       },
@@ -1526,7 +1544,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'malicious code protection is provided at designated locations within organizational systems',
-        prefilledTemplate: 'Microsoft Defender for Endpoint / commercial EDR is installed and operational across 100% of company workstations. Real-time file inspection, cloud-delivered behavioral monitoring, and automated threat quarantine are enforced via MDM configuration profiles.',
+        prefilledTemplate: '**Microsoft Defender** for Endpoint / commercial EDR is installed and operational across 100% of company workstations. Real-time file inspection, cloud-delivered behavioral monitoring, and automated threat quarantine are enforced via MDM configuration profiles.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'antivirus_realtime_protection_enabled',
       },
@@ -1540,7 +1558,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'a',
         text: 'malicious code protection mechanisms are updated as new releases are available',
-        prefilledTemplate: 'Antivirus engine and threat intelligence signature updates are configured to download and apply automatically via Microsoft Defender Cloud Protection. Workstations check for definition updates every 4 hours, and administrators receive alerts if signatures become more than 48 hours outdated.',
+        prefilledTemplate: 'Antivirus engine and threat intelligence signature updates are configured to download and apply automatically via **Microsoft Defender** Cloud Protection. Workstations check for definition updates every 4 hours, and administrators receive alerts if signatures become more than 48 hours outdated.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'antivirus_definitions_updated_daily',
       },
@@ -1560,7 +1578,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         letter: 'b',
         text: 'malicious code scans are performed with the defined frequency',
-        prefilledTemplate: 'Scheduled scans are enforced by Microsoft Intune MDM policies, executing automatically without user interference and logging completion results to the centralized security center.',
+        prefilledTemplate: 'Scheduled scans are enforced by **Microsoft Intune** MDM policies, executing automatically without user interference and logging completion results to the centralized security center.',
         isAutoVerifiedByTelemetry: true,
         scapRuleId: 'defender_scheduled_scan_weekly',
       },
@@ -1584,12 +1602,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "an access control policy is developed, documented, and disseminated to designated personnel",
-        "prefilledTemplate": "The organization develops and disseminates an official Access Control Policy addressing purpose, scope, roles, responsibilities, management commitment, and compliance across [ODP: Azure Government and AWS GovCloud enclaves].",
+        "prefilledTemplate": "The organization develops and disseminates an official Access Control Policy addressing purpose, scope, roles, responsibilities, management commitment, and compliance across [ODP: **Azure Gov** and **AWS GovCloud** enclaves].",
         "odpParameters": [
           {
             "id": "ac1_scope",
             "label": "Cloud Enclave Scope",
-            "defaultValue": "Azure Government and AWS GovCloud enclaves"
+            "defaultValue": "**Azure Gov** and **AWS GovCloud** enclaves"
           }
         ]
       },
@@ -1620,19 +1638,19 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the types of system accounts to support organizational missions and business functions are identified and selected",
-        "prefilledTemplate": "The organization defines and documents approved system account types in the Access Control Policy, encompassing individual employee accounts, privileged administrative accounts, automated service principals, and emergency break-glass credentials in [ODP: Azure Government and AWS GovCloud enclaves].",
+        "prefilledTemplate": "The organization defines and documents approved system account types in the Access Control Policy, encompassing individual employee accounts, privileged administrative accounts, automated service principals, and emergency break-glass credentials in [ODP: **Azure Gov** and **AWS GovCloud** enclaves].",
         "odpParameters": [
           {
             "id": "ac2_account_types",
             "label": "Cloud Enclave Scope",
-            "defaultValue": "Azure Government and AWS GovCloud enclaves"
+            "defaultValue": "**Azure Gov** and **AWS GovCloud** enclaves"
           }
         ]
       },
       {
         "letter": "b",
         "text": "account managers for system accounts are assigned",
-        "prefilledTemplate": "Identity lifecycle management is assigned to the designated IT Identity & Access Management (IAM) Lead and Systems Engineering Team, with automated SCIM synchronization governed through Microsoft Entra ID Governance and AWS IAM Identity Center."
+        "prefilledTemplate": "Identity lifecycle management is assigned to the designated IT Identity & Access Management (IAM) Lead and Systems Engineering Team, with automated SCIM synchronization governed through **Microsoft Entra ID** Governance and AWS IAM Identity Center."
       },
       {
         "letter": "c",
@@ -1706,7 +1724,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system enforces approved authorizations for logical access to information and system resources in accordance with applicable access control policies",
-        "prefilledTemplate": "Logical access enforcement is executed through Microsoft Entra ID Conditional Access, Azure RBAC, and Linux POSIX/sudoers configurations following DISA RHEL 9 STIG rules. Default-deny policies block all unauthorized resource operations.",
+        "prefilledTemplate": "Logical access enforcement is executed through **Microsoft Entra ID** Conditional Access, Azure RBAC, and Linux POSIX/sudoers configurations following **DISA RHEL 9 STIG** rules. Default-deny policies block all unauthorized resource operations.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "file_permissions_unauthorized_write"
       },
@@ -1725,7 +1743,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "information flow control policies are enforced for approved authorizations between interconnected systems and internal enclaves",
-        "prefilledTemplate": "Flow control policies are enforced at perimeter and inter-VNet boundaries using Azure Network Security Groups (NSGs) and AWS Security Groups. Cross-boundary data flows require inspection via Next-Gen Firewalls and Palo Alto Panorama appliances.",
+        "prefilledTemplate": "Flow control policies are enforced at perimeter and inter-VNet boundaries using **Azure NSGs** and AWS Security Groups. Cross-boundary data flows require inspection via Next-Gen Firewalls and **Palo Alto** Panorama appliances.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "firewalld_sshd_port_enabled"
       },
@@ -1744,7 +1762,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the principle of least privilege is employed for specific categories of users and processes acting on behalf of users",
-        "prefilledTemplate": "The enclave enforces least privilege by assigning users non-privileged standard accounts for everyday productivity. Administrative roles (Global Admin, Subscription Owner) are strictly managed via Entra ID Privileged Identity Management (PIM) with just-in-time (JIT) activation.",
+        "prefilledTemplate": "The enclave enforces least privilege by assigning users non-privileged standard accounts for everyday productivity. Administrative roles (Global Admin, Subscription Owner) are strictly managed via **Entra ID** Privileged Identity Management (PIM) with just-in-time (JIT) activation.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "sudo_remove_nopasswd"
       },
@@ -1820,7 +1838,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system displays an approved system use notification message or banner before granting access",
-        "prefilledTemplate": "A federally approved DoD/USG warning banner is presented prior to login across SSH (/etc/issue), Windows interactive logon (LegalNoticeText GPO), and Microsoft Entra ID tenant branding.",
+        "prefilledTemplate": "A federally approved DoD/USG warning banner is presented prior to login across SSH (/etc/issue), Windows interactive logon (LegalNoticeText GPO), and **Microsoft Entra ID** tenant branding.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "banner_etc_issue"
       },
@@ -1839,7 +1857,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system initiates a session lock after the defined period of inactivity or upon receiving a request from a user",
-        "prefilledTemplate": "Endpoints and servers initiate an automated session lock after [ODP: 15 minutes of inactivity] enforced via Microsoft Intune Configuration Profiles and Linux /etc/profile.d/autologout.sh (TMOUT=900).",
+        "prefilledTemplate": "Endpoints and servers initiate an automated session lock after [ODP: 15 minutes of inactivity] enforced via **Microsoft Intune** Configuration Profiles and Linux /etc/profile.d/autologout.sh (TMOUT=900).",
         "odpParameters": [
           {
             "id": "ac11_lock_timeout",
@@ -1853,7 +1871,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "b",
         "text": "the session lock conceals previously visible information with a publicly viewable screen display",
-        "prefilledTemplate": "Session lock immediately blanks the screen or displays a locked screen saver requiring user re-authentication via password or FIDO2 token before resuming operational state."
+        "prefilledTemplate": "Session lock immediately blanks the screen or displays a locked screen saver requiring user re-authentication via password or **FIDO2 YubiKey** before resuming operational state."
       }
     ]
   },
@@ -1882,12 +1900,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization authorizes, monitors, and controls remote access sessions to the information system",
-        "prefilledTemplate": "Remote access is restricted to corporate-managed laptops establishing an encrypted tunnel through GlobalProtect VPN with machine certificate verification and Entra ID Conditional Access evaluation."
+        "prefilledTemplate": "Remote access is restricted to corporate-managed laptops establishing an encrypted tunnel through GlobalProtect VPN with machine certificate verification and **Entra ID** Conditional Access evaluation."
       },
       {
         "letter": "b",
         "text": "the system enforces encryption of remote access sessions using approved cryptography",
-        "prefilledTemplate": "All remote access traffic is encrypted in transit using FIPS 140-3 validated IPsec (AES-256-GCM) or TLS 1.3 ciphersuites. Split tunneling is strictly disabled by gateway profile policy.",
+        "prefilledTemplate": "All remote access traffic is encrypted in transit using **FIPS 140-3** validated IPsec (AES-256) or **TLS 1.3** ciphersuites. Split tunneling is strictly disabled by gateway profile policy.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "sshd_use_approved_ciphers"
       },
@@ -1918,7 +1936,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "b",
         "text": "the system enforces authentication and encryption of wireless sessions using approved cryptographic protocols",
-        "prefilledTemplate": "Wireless access requires 802.1X EAP-TLS certificate-based authentication using Intune-deployed device certificates and AES-256 GCM encryption."
+        "prefilledTemplate": "Wireless access requires 802.1X EAP-TLS certificate-based authentication using **Intune**-deployed device certificates and **AES-256** GCM encryption."
       },
       {
         "letter": "c",
@@ -1942,12 +1960,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization authorizes mobile device connections to organizational networks and systems",
-        "prefilledTemplate": "Only government-furnished or enterprise-owned mobile devices enrolled in Microsoft Intune Mobile Device Management (MDM) are authorized to access corporate resources."
+        "prefilledTemplate": "Only government-furnished or enterprise-owned mobile devices enrolled in **Microsoft Intune** Mobile Device Management (MDM) are authorized to access corporate resources."
       },
       {
         "letter": "b",
         "text": "the system enforces full-disk encryption and containerized workspace isolation on mobile devices",
-        "prefilledTemplate": "Mobile device policies mandate iOS/Android device encryption (AES-256), 6-digit biometric passcodes, remote-wipe enablement, and containerized Microsoft Outlook/Teams via Intune App Protection Policies."
+        "prefilledTemplate": "Mobile device policies mandate iOS/Android device encryption (**AES-256**), 6-digit biometric passcodes, remote-wipe enablement, and containerized Microsoft Outlook/Teams via **Intune** App Protection Policies."
       }
     ]
   },
@@ -2072,7 +2090,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "role-based cybersecurity training is provided to personnel with assigned security roles and responsibilities",
-        "prefilledTemplate": "Systems administrators, security engineers, and developers complete role-based training (e.g., OWASP Top 10, Cloud Security Alliance CCSK, DISA STIG hardening) within [ODP: 60 days of assuming role].",
+        "prefilledTemplate": "Systems administrators, security engineers, and developers complete role-based training (e.g., OWASP Top 10, Cloud Security Alliance CCSK, **DISA STIG** hardening) within [ODP: 60 days of assuming role].",
         "odpParameters": [
           {
             "id": "at3_role_window",
@@ -2127,12 +2145,14 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization identifies the types of events that the system must log to support auditing requirements",
-        "prefilledTemplate": "The organization defines auditable event types in the Enclave Logging Standard, including user authentication, privilege escalation, file access to sensitive datastores, firewall rule changes, and system administration activities in [ODP: Microsoft Sentinel and Splunk GovCloud].",
+        "prefilledTemplate": "The organization defines auditable event types in the Enclave Logging Standard, including user authentication, privilege escalation, file access to sensitive datastores, firewall rule changes, and system administration activities in [ODP: **Microsoft Sentinel** and **Splunk Cloud Gov**].",
+        "isAutoVerifiedByTelemetry": true,
+        "scapRuleId": "service_auditd_enabled",
         "odpParameters": [
           {
             "id": "au2_siem_platform",
             "label": "SIEM Logging Platform",
-            "defaultValue": "Microsoft Sentinel and Splunk GovCloud"
+            "defaultValue": "**Microsoft Sentinel** and **Splunk Cloud Gov**"
           }
         ]
       },
@@ -2229,12 +2249,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "b",
         "text": "audit logs are retained for the defined compliance retention period",
-        "prefilledTemplate": "Audit records are retained for a minimum of [ODP: 3 years, with 1 year immediately searchable online] in accordance with OMB M-21-31 and FedRAMP Moderate guidelines.",
+        "prefilledTemplate": "Audit records are retained for a minimum of [ODP: 3 years total, 1 year online] in accordance with OMB M-21-31 and FedRAMP Moderate guidelines.",
         "odpParameters": [
           {
             "id": "au9_retention_period",
             "label": "Audit Log Retention Mandate",
-            "defaultValue": "3 years, with 1 year immediately searchable online"
+            "defaultValue": "3 years total, 1 year online"
           }
         ]
       }
@@ -2354,12 +2374,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization develops, documents, and maintains under configuration control, a current baseline configuration of the system",
-        "prefilledTemplate": "The organization develops and maintains hardened baseline configurations for virtual machines, container images, and network components derived from [ODP: DISA STIGs and CIS Benchmark Level 2]. Baseline templates are codified as Terraform and Ansible infrastructure-as-code (IaC).",
+        "prefilledTemplate": "The organization develops and maintains hardened baseline configurations for virtual machines, container images, and network components derived from [ODP: **DISA STIG**s and CIS Benchmark Level 2]. Baseline templates are codified as **Terraform/Ansible IaC**.",
         "odpParameters": [
           {
             "id": "cm2_baseline_standard",
             "label": "Hardening Standard",
-            "defaultValue": "DISA STIGs and CIS Benchmark Level 2"
+            "defaultValue": "**DISA STIG**s and CIS Benchmark Level 2"
           }
         ],
         "isAutoVerifiedByTelemetry": true,
@@ -2596,7 +2616,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "b",
         "text": "the organization protects the confidentiality, integrity, and availability of backup information at storage locations",
-        "prefilledTemplate": "Backups are encrypted in transit and at rest using FIPS 140-3 validated AES-256 keys. Geo-redundant storage (GRS) replicates backups to an alternate federal region separated by >500 miles."
+        "prefilledTemplate": "Backups are encrypted in transit and at rest using **FIPS 140-3** validated **AES-256** keys. Geo-redundant storage (GRS) replicates backups to an alternate federal region separated by >500 miles."
       },
       {
         "letter": "c",
@@ -2644,20 +2664,20 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system uniquely identifies and authenticates organizational users or processes acting on behalf of organizational users",
-        "prefilledTemplate": "Every user is assigned an individual, non-shared User Principal Name (UPN) formatted as user@defense.company.com managed through Microsoft Entra ID Government and synced to Active Directory.",
+        "prefilledTemplate": "Every user is assigned an individual, non-shared User Principal Name (UPN) formatted as user@defense.company.com managed through **Microsoft Entra ID** Government and synced to **Active Directory**.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "accounts_password_pam_minlen"
       },
       {
         "letter": "b",
         "text": "the system implements multi-factor authentication (MFA) for network access to privileged and non-privileged accounts",
-        "prefilledTemplate": "Conditional Access enforces mandatory Multi-Factor Authentication (MFA) using Microsoft Authenticator (number matching enabled) or FIDO2 hardware security keys for all network logon sessions.",
+        "prefilledTemplate": "Conditional Access enforces mandatory Multi-Factor Authentication (MFA) using Microsoft Authenticator (number matching enabled) or **FIDO2 YubiKey** hardware security keys for all network logon sessions.",
         "isAutoVerifiedByTelemetry": true
       },
       {
         "letter": "c",
         "text": "the system implements phishing-resistant multi-factor authentication for privileged administrative access",
-        "prefilledTemplate": "Privileged administrative roles require phishing-resistant FIDO2 hardware tokens (YubiKey 5 FIPS) or DoD Common Access Cards (CAC) / PIV credentials. SMS and voice phone calls are disabled."
+        "prefilledTemplate": "Privileged administrative roles require phishing-resistant **FIDO2 YubiKey** hardware tokens (YubiKey 5 FIPS) or DoD Common Access Cards (CAC) / PIV credentials. SMS and voice phone calls are disabled."
       },
       {
         "letter": "d",
@@ -2693,7 +2713,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "c",
         "text": "the system enforces password lifetime and expiration at the defined frequency when MFA is not utilized",
-        "prefilledTemplate": "Where legacy authenticators exist without FIDO2, passwords expire every [ODP: 90 days]. Where phishing-resistant MFA is strictly enforced, password expirations follow NIST SP 800-63B guidelines prohibiting arbitrary expiration.",
+        "prefilledTemplate": "Where legacy authenticators exist without **FIDO2 YubiKey**, passwords expire every [ODP: 90 days]. Where phishing-resistant MFA is strictly enforced, password expirations follow NIST SP 800-63B guidelines prohibiting arbitrary expiration.",
         "odpParameters": [
           {
             "id": "ia5_password_rotation_cadence",
@@ -2707,7 +2727,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "d",
         "text": "the system prohibits password reuse for the defined number of generations",
-        "prefilledTemplate": "The system remembers previous passwords and prohibits reuse for [ODP: 24 password generations] via pam_pwhistory and Active Directory GPO.",
+        "prefilledTemplate": "The system remembers previous passwords and prohibits reuse for [ODP: 24 password generations] via pam_pwhistory and **Active Directory** GPO.",
         "odpParameters": [
           {
             "id": "ia5_password_history",
@@ -2875,7 +2895,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "b",
         "text": "the system enforces strong authenticators and encryption for nonlocal maintenance sessions",
-        "prefilledTemplate": "Nonlocal maintenance is conducted over TLS 1.3 encrypted bastion hosts with MFA authentication and full session keystroke recording."
+        "prefilledTemplate": "Nonlocal maintenance is conducted over **TLS 1.3** encrypted bastion hosts with MFA authentication and full session keystroke recording."
       },
       {
         "letter": "c",
@@ -2916,7 +2936,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization sanitizes system media prior to disposal, release out of organizational control, or release for reuse",
-        "prefilledTemplate": "All digital media (hard drives, SSDs, backup tapes) are sanitized per NIST SP 800-88 Rev. 1 guidelines (cryptographic erase or degaussing/physical degaussing and shredding to <2mm particles).",
+        "prefilledTemplate": "All digital media (hard drives, SSDs, backup tapes) are sanitized per **NIST SP 800-88 Rev 1 crypto-wipe**.",
         "isAutoVerifiedByTelemetry": true
       },
       {
@@ -2994,17 +3014,17 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization enforces physical access control at entry and exit points to facilities containing system components",
-        "prefilledTemplate": "Perimeter doors and internal server spaces enforce encrypted RFID badge readers and biometric door locks with anti-passback controls."
+        "prefilledTemplate": "Perimeter doors and internal server spaces enforce **RFID badges** and biometric door locks with anti-passback controls."
       },
       {
         "letter": "b",
         "text": "the organization controls physical access to system components by monitoring physical access logs",
-        "prefilledTemplate": "Badge entry attempts are logged to an immutable physical security database and CCTV cameras record all ingress/egress points with [ODP: 90-day video retention].",
+        "prefilledTemplate": "Badge entry attempts are logged to an immutable physical security database and CCTV cameras record all ingress/egress points with [ODP: **90-day CCTV retention**].",
         "odpParameters": [
           {
             "id": "pe3_cctv_retention",
             "label": "CCTV Footage Retention",
-            "defaultValue": "90-day video retention"
+            "defaultValue": "**90-day CCTV retention**"
           }
         ]
       },
@@ -3187,7 +3207,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "b",
         "text": "the organization establishes screening criteria for individuals filling positions of differing risk levels",
-        "prefilledTemplate": "High-risk positions mandate Tier 3 (Secret) or Tier 5 (Top Secret) federal background investigations, while moderate positions require Tier 1 checks."
+        "prefilledTemplate": "High-risk positions mandate **Tier 1/3/5 background checks**."
       }
     ]
   },
@@ -3223,7 +3243,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization disables system access within the defined time period upon termination of employment",
-        "prefilledTemplate": "HR ticketing triggers automated deprovisioning in Entra ID, revoking all tokens, active sessions, and VPN access within [ODP: 4 hours of notification] (or immediately for involuntary terminations).",
+        "prefilledTemplate": "HR ticketing triggers automated deprovisioning in **Entra ID**, revoking all tokens, active sessions, and VPN access within [ODP: 4 hours of notification] (or immediately for involuntary terminations).",
         "odpParameters": [
           {
             "id": "ps4_termination_sla",
@@ -3371,7 +3391,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization monitors for vulnerabilities in the system and application components using automated scanning tools at the defined frequency",
-        "prefilledTemplate": "Automated vulnerability scans are performed [ODP: weekly for operating systems and containers, and monthly for web applications] using Tenable Nessus and Microsoft Defender for Cloud.",
+        "prefilledTemplate": "Automated vulnerability scans are performed [ODP: weekly for operating systems and containers, and monthly for web applications] using Tenable Nessus and **Microsoft Defender** for Cloud.",
         "odpParameters": [
           {
             "id": "ra5_scan_cadence",
@@ -3512,7 +3532,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system monitors and controls communications at the external boundary of the system and at key internal boundaries within the system",
-        "prefilledTemplate": "Network boundaries are protected via Azure Virtual Network Security Groups (NSGs), AWS Security Groups, and Next-Generation Firewalls (NGFW) with intrusion prevention systems (IPS) actively blocking unauthorized ingress and egress traffic.",
+        "prefilledTemplate": "Network boundaries are protected via **Azure NSGs**, AWS Security Groups, and **Palo Alto NGFW** with intrusion prevention systems (IPS) actively blocking unauthorized ingress and egress traffic.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "firewalld_service_enabled"
       },
@@ -3536,7 +3556,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system prevents remote devices from simultaneously establishing non-remote connections with the system and communicating with external systems",
-        "prefilledTemplate": "GlobalProtect and Azure VPN clients enforce a strict full-tunnel configuration pushed via Intune GPO. Split-tunneling is blocked at the kernel network driver level, preventing dual-homed routing to the public internet.",
+        "prefilledTemplate": "GlobalProtect and Azure VPN clients enforce a strict full-tunnel configuration pushed via **Intune** GPO. Split-tunneling is blocked at the kernel network driver level, preventing dual-homed routing to the public internet.",
         "isAutoVerifiedByTelemetry": true
       },
       {
@@ -3554,7 +3574,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system protects the confidentiality and integrity of transmitted information",
-        "prefilledTemplate": "All sensitive data and network communications in transit are encrypted using FIPS 140-3 validated TLS 1.3 / IPsec tunnels with AES-256-GCM ciphers. Deprecated ciphers (SSLv3, TLS 1.0, TLS 1.1, RC4, 3DES) are disabled.",
+        "prefilledTemplate": "All sensitive data and network communications in transit are encrypted using **FIPS 140-3** validated **TLS 1.3** / IPsec tunnels with AES-256 ciphers. Deprecated ciphers (SSLv3, TLS 1.0, TLS 1.1, RC4, 3DES) are disabled.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "sshd_use_approved_ciphers"
       },
@@ -3573,7 +3593,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization establishes and manages cryptographic keys for required cryptography in accordance with key management procedures",
-        "prefilledTemplate": "Cryptographic keys are generated and protected within FIPS 140-3 Level 3 Hardware Security Modules (HSMs) using Azure Key Vault and AWS KMS with dual-custody access controls."
+        "prefilledTemplate": "Cryptographic keys are generated and protected within **FIPS 140-3** Level 3 Hardware Security Modules (HSMs) using Azure Key Vault and AWS KMS with dual-custody access controls."
       },
       {
         "letter": "b",
@@ -3616,14 +3636,14 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system protects the confidentiality and integrity of information at rest",
-        "prefilledTemplate": "All information at rest is encrypted using AES-256 BitLocker on Windows endpoints, dm-crypt/LUKS on Linux systems, and cloud storage server-side encryption with customer-managed keys (CMK).",
+        "prefilledTemplate": "All information at rest is encrypted using **AES-256** BitLocker on Windows endpoints, dm-crypt/LUKS on Linux systems, and cloud storage server-side encryption with customer-managed keys (CMK).",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "encrypt_partitions"
       },
       {
         "letter": "b",
         "text": "cryptographic mechanisms used for information at rest protection are managed to prevent unauthorized access or disclosure",
-        "prefilledTemplate": "BitLocker recovery keys and LUKS key material are backed up to Entra ID with access restricted to authorized Tier 3 Systems Administrators."
+        "prefilledTemplate": "BitLocker recovery keys and LUKS key material are backed up to **Entra ID** with access restricted to authorized Tier 3 Systems Administrators."
       }
     ]
   },
@@ -3659,7 +3679,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization identifies, reports, and corrects system flaws",
-        "prefilledTemplate": "Flaws and vulnerabilities are tracked in Jira and remediated through automated patch management using Microsoft Intune and Ansible Automation Platform.",
+        "prefilledTemplate": "Flaws and vulnerabilities are tracked in Jira and remediated through automated patch management using **Microsoft Intune** and Ansible Automation Platform.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "security_patches_up_to_date"
       },
@@ -3678,12 +3698,17 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "c",
         "text": "the organization installs security-relevant software and firmware updates within the defined time period of release",
-        "prefilledTemplate": "Security patches are deployed within [ODP: 30 days of vendor release for High/Medium, and within 7 days for Critical/Zero-Day vulnerabilities].",
+        "prefilledTemplate": "Security patches are deployed within Critical/Zero-Day vulnerabilities within [ODP: 7 days], and High/Medium vulnerabilities within [ODP: 30 days]..",
         "odpParameters": [
           {
-            "id": "si2_patch_deployment_sla",
-            "label": "Patch Remediation Window",
-            "defaultValue": "30 days of vendor release for High/Medium, and within 7 days for Critical/Zero-Day vulnerabilities"
+            "id": "si2_patch_critical",
+            "label": "Critical Patch SLA",
+            "defaultValue": "7 days"
+          },
+          {
+            "id": "si2_patch_high",
+            "label": "High Patch SLA",
+            "defaultValue": "30 days"
           }
         ]
       }
@@ -3697,7 +3722,7 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization employs malicious code protection mechanisms at system entry and exit points and on endpoint devices",
-        "prefilledTemplate": "Endpoint Detection and Response (EDR) via Microsoft Defender for Endpoint is active on all Windows, macOS, and Linux endpoints, with cloud-delivered protection and automated behavioral heuristics blocking malware execution.",
+        "prefilledTemplate": "Endpoint Detection and Response (EDR) via **Microsoft Defender for Endpoint** is active on all Windows, macOS, and Linux endpoints, with cloud-delivered protection and automated behavioral heuristics blocking malware execution.",
         "isAutoVerifiedByTelemetry": true,
         "scapRuleId": "service_defender_active"
       },
@@ -3735,12 +3760,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the system monitors for attacks and indicators of potential compromise at strategic locations",
-        "prefilledTemplate": "Microsoft Sentinel, Azure Network Watcher, and Sysmon continuously ingest network flow logs, DNS queries, and endpoint telemetry across [ODP: Azure Government and AWS GovCloud enclaves].",
+        "prefilledTemplate": "Microsoft Sentinel, Azure Network Watcher, and Sysmon continuously ingest network flow logs, DNS queries, and endpoint telemetry across [ODP: **Azure Gov** and **AWS GovCloud** enclaves].",
         "odpParameters": [
           {
             "id": "si4_monitored_enclave",
             "label": "Monitored Cloud Enclaves",
-            "defaultValue": "Azure Government and AWS GovCloud enclaves"
+            "defaultValue": "**Azure Gov** and **AWS GovCloud** enclaves"
           }
         ],
         "isAutoVerifiedByTelemetry": true,
@@ -3828,12 +3853,12 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
       {
         "letter": "a",
         "text": "the organization develops a plan for managing supply chain risks associated with the research, development, design, manufacturing, acquisition, delivery, integration, operations, and disposal of system components",
-        "prefilledTemplate": "The organization maintains a formal SCRM Plan detailing supplier tier mapping, third-party dependency scanning, and hardware provenance verification."
+        "prefilledTemplate": "The organization maintains a formal SCRM Plan detailing supplier tier mapping, third-party dependency scanning, **SBOM generation**, and hardware provenance verification."
       },
       {
         "letter": "b",
         "text": "the supply chain risk management plan is reviewed and updated at the defined frequency",
-        "prefilledTemplate": "The SCRM Plan is reviewed and updated [ODP: annually] to incorporate federal NDAA Section 889 and Section 5949 prohibitions.",
+        "prefilledTemplate": "The SCRM Plan is reviewed and updated [ODP: annually] to incorporate **NDAA 889/5949 compliance**.",
         "odpParameters": [
           {
             "id": "sr2_update_cadence",
@@ -3941,7 +3966,7 @@ export function getAssessmentObjectivesForControl(
       const existing = customStore?.[objId];
       const cleanText = rawText.replace(/^Determine if\s+/i, '').trim();
 
-      const synthesizedTemplate = `The enclave implementation satisfies requirement ${normNum}[${letter}] (${cleanText}). Compliance is enforced across cloud identity (Microsoft Entra ID), endpoint baselines (Microsoft Intune / DISA STIGs), and network perimeter controls with verified operational configurations.`;
+      const synthesizedTemplate = `The enclave implementation satisfies requirement ${normNum}[${letter}] (${cleanText}). Compliance is enforced across cloud identity (**Microsoft Entra ID**), endpoint baselines (**Microsoft Intune** / **DISA STIG**s), and network perimeter controls with verified operational configurations.`;
 
       if (existing) {
         return {

@@ -35,22 +35,22 @@ export function getCascadedObjectiveNarrative(
 
   // Tailor based on stack identity provider
   if (stack.identityProvider === 'ENTRA_ID_GOV') {
-    narrative = narrative.replace(/directory services|identity provider/gi, 'Microsoft Entra ID (GovCloud)');
+    narrative = narrative.replace(/directory services|identity provider|\*\*Microsoft Entra ID\*\*|\*\*Entra ID\*\*/gi, '**Microsoft Entra ID (GovCloud)**');
   } else if (stack.identityProvider === 'ENTRA_ID_COMMERCIAL') {
-    narrative = narrative.replace(/directory services|identity provider/gi, 'Microsoft Entra ID (Commercial)');
+    narrative = narrative.replace(/directory services|identity provider|\*\*Microsoft Entra ID\*\*|\*\*Entra ID\*\*/gi, '**Microsoft Entra ID (Commercial)**');
   } else if (stack.identityProvider === 'OKTA') {
-    narrative = narrative.replace(/directory services|identity provider/gi, 'Okta Identity Cloud');
+    narrative = narrative.replace(/directory services|identity provider|\*\*Microsoft Entra ID\*\*|\*\*Entra ID\*\*/gi, '**Okta Identity Cloud**');
   } else if (stack.identityProvider === 'ACTIVE_DIRECTORY') {
-    narrative = narrative.replace(/directory services|identity provider/gi, 'On-Premises Active Directory');
+    narrative = narrative.replace(/directory services|identity provider|\*\*Microsoft Entra ID\*\*|\*\*Entra ID\*\*/gi, '**On-Premises Active Directory**');
   }
 
   // Tailor based on EDR
   if (stack.edrSolution === 'CROWDSTRIKE_FALCON') {
-    narrative = narrative.replace(/antivirus|endpoint detection|EDR/gi, 'CrowdStrike Falcon');
+    narrative = narrative.replace(/antivirus|endpoint detection|EDR|\*\*Microsoft Defender for Endpoint\*\*|\*\*CrowdStrike Falcon\*\*/gi, '**CrowdStrike Falcon**');
   } else if (stack.edrSolution === 'DEFENDER_FOR_ENDPOINT') {
-    narrative = narrative.replace(/antivirus|endpoint detection|EDR/gi, 'Microsoft Defender for Endpoint');
+    narrative = narrative.replace(/antivirus|endpoint detection|EDR|\*\*Microsoft Defender for Endpoint\*\*|\*\*CrowdStrike Falcon\*\*/gi, '**Microsoft Defender for Endpoint**');
   } else if (stack.edrSolution === 'SENTINELONE') {
-    narrative = narrative.replace(/antivirus|endpoint detection|EDR/gi, 'SentinelOne Singularity');
+    narrative = narrative.replace(/antivirus|endpoint detection|EDR|\*\*Microsoft Defender for Endpoint\*\*|\*\*CrowdStrike Falcon\*\*/gi, '**SentinelOne Singularity**');
   }
 
   // Tailor based on MDM
@@ -62,23 +62,47 @@ export function getCascadedObjectiveNarrative(
 
   // Tailor based on SIEM
   if (stack.siemSolution === 'SENTINEL') {
-    narrative = narrative.replace(/SIEM|audit log server|central log server/gi, 'Microsoft Sentinel');
+    narrative = narrative.replace(/SIEM|audit log server|central log server|\*\*Microsoft Sentinel\*\*|\*\*Splunk Cloud Gov\*\*/gi, '**Microsoft Sentinel**');
   } else if (stack.siemSolution === 'SPLUNK_GOV') {
-    narrative = narrative.replace(/SIEM|audit log server|central log server/gi, 'Splunk GovCloud');
+    narrative = narrative.replace(/SIEM|audit log server|central log server|\*\*Microsoft Sentinel\*\*|\*\*Splunk Cloud Gov\*\*/gi, '**Splunk Cloud Gov**');
   } else if (stack.siemSolution === 'ELASTIC') {
-    narrative = narrative.replace(/SIEM|audit log server|central log server/gi, 'Elastic Security');
+    narrative = narrative.replace(/SIEM|audit log server|central log server|\*\*Microsoft Sentinel\*\*|\*\*Splunk Cloud Gov\*\*/gi, '**Elastic Security**');
   }
+
+  // Tailor based on Infrastructure
+  if (stack.infrastructure === 'AZURE_GOV') {
+    narrative = narrative.replace(/\*\*Azure Gov\*\* and \*\*AWS GovCloud\*\* enclaves/gi, '**Azure Gov** enclaves');
+    narrative = narrative.replace(/\*\*Azure Gov\*\*|\*\*AWS GovCloud\*\*/gi, '**Azure Gov**');
+  } else if (stack.infrastructure === 'AWS_GOVCLOUD') {
+    narrative = narrative.replace(/\*\*Azure Gov\*\* and \*\*AWS GovCloud\*\* enclaves/gi, '**AWS GovCloud** enclaves');
+    narrative = narrative.replace(/\*\*Azure Gov\*\*|\*\*AWS GovCloud\*\*/gi, '**AWS GovCloud**');
+  } else if (stack.infrastructure === 'ON_PREM_RHEL') {
+    narrative = narrative.replace(/\*\*Azure Gov\*\* and \*\*AWS GovCloud\*\* enclaves/gi, 'On-Premises RHEL enclaves');
+    narrative = narrative.replace(/\*\*Azure Gov\*\*|\*\*AWS GovCloud\*\*/gi, 'On-Premises RHEL infrastructure');
+  } else if (stack.infrastructure === 'HYBRID_CLOUD') {
+    narrative = narrative.replace(/\*\*Azure Gov\*\* and \*\*AWS GovCloud\*\* enclaves/gi, 'Hybrid Cloud enclaves');
+    narrative = narrative.replace(/\*\*Azure Gov\*\*|\*\*AWS GovCloud\*\*/gi, 'Hybrid Cloud infrastructure');
+  }
+
 
   // Resolve ODP placeholders
   if (stack.odpParams) {
     Object.keys(stack.odpParams).forEach((key) => {
-      const placeholder = new RegExp(`{{ODP_${key}}}`, 'g');
-      narrative = narrative.replace(placeholder, stack.odpParams![key]);
+      // Find the objective's defined parameter to know its default value text
+      const paramDef = objective?.odpParameters?.find(p => p.id === key) ||
+        getObjectivesForControl(controlId).find(o => o.letter.toLowerCase() === objectiveLetter.toLowerCase())?.odpParameters?.find(p => p.id === key);
+      
+      if (paramDef) {
+        // Replace exact [ODP: defaultValue] block with the tenant's new value
+        const targetText = `[ODP: ${paramDef.defaultValue}]`;
+        narrative = narrative.split(targetText).join(stack.odpParams![key]);
+      }
     });
   }
 
-  // Fallback for unresolved ODP placeholders
-  narrative = narrative.replace(/{{ODP_[A-Z0-9_]+}}/g, '[Organization-Defined Parameter]');
+  // Fallback for unresolved ODP placeholders: remove the [ODP: ] wrapping to just display the default, or leave it.
+  // We'll leave it as [ODP: default] because it's naturally readable.
+
 
   return narrative;
 }
