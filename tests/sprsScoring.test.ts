@@ -128,6 +128,10 @@ for (const field of ['systemName', 'organizationName', 'systemOwner', 'systemBou
 assert(!isSspComplete(CONTROLS.filter((c) => c.id !== sspId), allMet, SSP), 'catalog without 3.12.4 => SSP not complete');
 assert(isSspComplete(CONTROLS, allMet, SSP), 'complete SSP => gate open');
 assert(calculateSprsScore(CONTROLS, allMet, SSP).scoreStatus === 'SCORED', 'complete SSP => SCORED');
+assert(noSspControl.sspGaps.length === 1 && /3.12.4/.test(noSspControl.sspGaps[0]), 'gate reports exactly what is missing (3.12.4 not MET)', noSspControl.sspGaps);
+const blankGaps = calculateSprsScore(CONTROLS, allMet, { ...SSP, systemOwner: '', systemBoundaryScope: ' ' }).sspGaps;
+assert(blankGaps.length === 2 && blankGaps.some((g) => /owner/i.test(g)) && blankGaps.some((g) => /boundary/i.test(g)), 'gate lists each empty SSP field', blankGaps);
+assert(calculateSprsScore(CONTROLS, allMet, SSP).sspGaps.length === 0, 'no gaps once the SSP is complete');
 assert(formatSprsScore({ score: null }) === 'Not Scored', 'formats null as "Not Scored"');
 assert(
   formatSprsScore({ score: 105 }) === '+105' && formatSprsScore({ score: -12 }) === '-12' && formatSprsScore({ score: 0 }) === '0',

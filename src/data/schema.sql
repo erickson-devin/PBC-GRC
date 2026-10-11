@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS tenant_users (
     user_email VARCHAR(255) NOT NULL,
     user_name VARCHAR(255) NOT NULL,
     tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    role VARCHAR(32) NOT NULL CHECK (role IN ('TENANT_OWNER', 'ASSESSOR', 'VIEWER')),
+    role VARCHAR(32) NOT NULL CHECK (role IN ('TENANT_OWNER', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT unq_user_tenant UNIQUE (user_id, tenant_id)
 );
@@ -103,6 +103,13 @@ ALTER TABLE control_assessments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE evidence_metadata ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ssp_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_users ENABLE ROW LEVEL SECURITY;
+
+-- FORCE makes the table owner subject to the policies too (superusers / BYPASSRLS roles still bypass).
+-- The authoritative, idempotent version of this DDL lives in server/schema.ts and is applied by initDb().
+ALTER TABLE control_assessments FORCE ROW LEVEL SECURITY;
+ALTER TABLE evidence_metadata FORCE ROW LEVEL SECURITY;
+ALTER TABLE ssp_documents FORCE ROW LEVEL SECURITY;
+ALTER TABLE tenant_users FORCE ROW LEVEL SECURITY;
 
 -- Control Assessments Isolation Policy
 CREATE POLICY rls_control_assessments_tenant_isolation ON control_assessments

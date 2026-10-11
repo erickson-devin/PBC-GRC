@@ -77,6 +77,8 @@ export interface SprsScoreResult {
   score: number | null;
   scoreStatus: 'SCORED' | 'NOT_SCORED';
   notScoredReason?: string;
+  /** What is still missing from the SSP (empty when scored). */
+  sspGaps: string[];
   maxScore: number;
   minScore?: number;
   totalControls: number;

@@ -84,21 +84,41 @@ const hasText = (value: string | undefined | null): boolean => Boolean(value && 
  * SSP gate. DoD Assessment Methodology section 5(g): the assessment is based on review of the SSP,
  * so "it is not possible to conduct the assessment" without one. The SSP is complete when
  * requirement 3.12.4 is marked MET AND the plan's identification and boundary fields are filled in.
+ * Returns a human-readable list of what is still missing (empty = gate open).
  */
+export function getSspGaps(
+  controls: FrameworkControlDefinition[],
+  controlStates: Record<string, ControlState>,
+  sspMetadata: SspIdentity | null | undefined
+): string[] {
+  const gaps: string[] = [];
+
+  const sspControl = controls.find((c) => extractNistRequirementId(c.id) === SPRS_SSP_REQUIREMENT);
+  if (!sspControl) {
+    gaps.push('Requirement 3.12.4 (System Security Plan) is not part of this control catalog');
+  } else if (controlStates[sspControl.id]?.status !== 'MET') {
+    gaps.push('Requirement 3.12.4 (System Security Plan) is not marked MET');
+  }
+
+  const fields: [keyof SspIdentity, string][] = [
+    ['systemName', 'System name'],
+    ['organizationName', 'Organization name'],
+    ['systemOwner', 'System owner'],
+    ['systemBoundaryScope', 'System boundary scope'],
+  ];
+  for (const [key, label] of fields) {
+    if (!hasText(sspMetadata?.[key])) gaps.push(`${label} is empty in the SSP`);
+  }
+
+  return gaps;
+}
+
 export function isSspComplete(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   sspMetadata: SspIdentity | null | undefined
 ): boolean {
-  const sspControl = controls.find((c) => extractNistRequirementId(c.id) === SPRS_SSP_REQUIREMENT);
-  if (!sspControl || controlStates[sspControl.id]?.status !== 'MET') return false;
-  if (!sspMetadata) return false;
-  return (
-    hasText(sspMetadata.systemName) &&
-    hasText(sspMetadata.organizationName) &&
-    hasText(sspMetadata.systemOwner) &&
-    hasText(sspMetadata.systemBoundaryScope)
-  );
+  return getSspGaps(controls, controlStates, sspMetadata).length === 0;
 }
 
 /**
@@ -149,11 +169,13 @@ export function calculateSprsScore(
   }
 
   const completionPercentage = controls.length > 0 ? Math.round((metCount / controls.length) * 100) : 0;
-  const sspComplete = isSspComplete(controls, controlStates, sspMetadata);
+  const sspGaps = getSspGaps(controls, controlStates, sspMetadata);
+  const sspComplete = sspGaps.length === 0;
 
   return {
     score: sspComplete ? SPRS_MAX_SCORE - totalDeductions : null,
     scoreStatus: sspComplete ? 'SCORED' : 'NOT_SCORED',
+    sspGaps,
     notScoredReason: sspComplete
       ? undefined
       : 'No completed System Security Plan (requirement 3.12.4). The DoD Assessment Methodology does not allow a score without one.',

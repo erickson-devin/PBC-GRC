@@ -20,6 +20,7 @@ import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/framewor
 import { calculateSprsScore, formatSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { DomainCards } from './DomainCards';
+import { SspGateBanner } from './SspGateBanner';
 
 export const ComplianceOverview: React.FC = () => {
   const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
@@ -65,7 +66,9 @@ export const ComplianceOverview: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      
+      {/* SSP gate: the SPRS score is locked until a System Security Plan exists; point the user at the SSP + POA&M */}
+      {sprsResult && <SspGateBanner sprs={sprsResult} />}
+
       {/* RBAC Read-Only Banner for Viewers */}
       {!canEdit && (
         <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-4 text-xs">

@@ -5,38 +5,53 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Database Connection Configuration
-const dbHost = process.env.DB_HOST || '/cloudsql/grc-tool-507203:us-central1:pbc-grc-db';
-const dbUser = process.env.DB_USER || 'postgres';
-const dbName = process.env.DB_NAME || 'cmmc_compliance_db';
-const dbPass = process.env.DB_PASS || '';
-const dbPort = process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432;
+/**
+ * Connection settings, chosen from the environment:
+ *   1. DATABASE_URL  - standard PostgreSQL connection string (postgres://user:pass@host:5432/db?sslmode=require).
+ *                      Takes precedence; works for managed Postgres, RDS, on-prem, docker, etc.
+ *   2. DB_HOST etc.  - discrete settings. A DB_HOST starting with "/" (default: the Cloud SQL socket) is a Unix
+ *                      domain socket; anything else is TCP using DB_PORT.
+ * Optional TLS for either: DB_SSL=true (certificate verification stays on unless DB_SSL_REJECT_UNAUTHORIZED=false).
+ */
+export function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): { config: pg.PoolConfig; target: string } {
+  const common: pg.PoolConfig = {
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  };
+  if (env.DB_SSL === 'true') {
+    common.ssl = { rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' };
+  }
 
-// Configure Pool for Cloud SQL Unix Domain Sockets or standard TCP
-const isSocket = dbHost.startsWith('/cloudsql') || dbHost.startsWith('/');
+  const databaseUrl = env.DATABASE_URL?.trim();
+  if (databaseUrl) {
+    let target = 'DATABASE_URL';
+    try {
+      const url = new URL(databaseUrl);
+      target = `${url.hostname}${url.port ? `:${url.port}` : ''}${url.pathname}`; // never log credentials
+    } catch {
+      // leave generic label; pg will report a precise error on connect
+    }
+    return { config: { ...common, connectionString: databaseUrl }, target };
+  }
 
-export const pool = new Pool(
-  isSocket
-    ? {
-        host: dbHost,
-        user: dbUser,
-        database: dbName,
-        password: dbPass,
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      }
-    : {
-        host: dbHost,
-        port: dbPort,
-        user: dbUser,
-        database: dbName,
-        password: dbPass,
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      }
-);
+  const host = env.DB_HOST || '/cloudsql/grc-tool-507203:us-central1:pbc-grc-db';
+  const user = env.DB_USER || 'postgres';
+  const database = env.DB_NAME || 'cmmc_compliance_db';
+  const password = env.DB_PASS || '';
+  const port = env.DB_PORT ? parseInt(env.DB_PORT, 10) : 5432;
+  const isSocket = host.startsWith('/');
+
+  return {
+    config: isSocket
+      ? { ...common, host, user, database, password }
+      : { ...common, host, port, user, database, password },
+    target: `${host}${isSocket ? '' : `:${port}`}/${database}`,
+  };
+}
+
+const { config: poolConfig, target: dbTarget } = buildPoolConfig();
+export const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
   console.error('[Cloud SQL Pool Error]:', errorMessage(err));
@@ -45,6 +60,7 @@ pool.on('error', (err) => {
 import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data/frameworks/controlMappings';
 import { errorMessage } from '../src/utils/errors';
 import { isTenantRole } from '../src/utils/roles';
+import { buildSchemaSql } from './schema';
 import type { TenantRole } from '../src/types/tenant';
 
 // In-memory tenant isolation state for fallback when local PostgreSQL is not running
@@ -75,6 +91,18 @@ interface InMemoryEvidence {
   uploaded_at: string;
 }
 
+interface InMemoryTenantUser {
+  id: string;
+  user_id: string;
+  user_email: string;
+  user_name: string;
+  tenant_id: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+}
+
+const memoryTenantUsers = new Map<string, InMemoryTenantUser>(); // key: `${tenant_id}__${user_id}`
 const memoryControls = new Map<string, InMemoryControl>(); // key: `${tenant_id}__${control_id}`
 const memoryEvidence = new Map<string, InMemoryEvidence>(); // key: id
 
@@ -91,7 +119,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     client.release();
     dbVerified = true;
     isUsingMemoryFallback = false;
-    console.log(`[Cloud SQL] Successfully connected to PostgreSQL instance at ${dbHost}/${dbName}`);
+    console.log(`[Cloud SQL] Successfully connected to PostgreSQL at ${dbTarget}`);
     return true;
   } catch (err: unknown) {
     isUsingMemoryFallback = true;
@@ -306,6 +334,39 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     };
   }
 
+  // 6. tenant_users: upsert (INSERT ... ON CONFLICT (user_id, tenant_id) DO UPDATE)
+  if (/INSERT\s+INTO\s+tenant_users/i.test(normalized)) {
+    // params: [user_id, user_email, user_name, tenant_id, role]
+    const [userId, email, name, rowTenantId, role] = params;
+    if (rowTenantId !== tenantId) {
+      throw new Error(`Row-Level Security violation: tenant ${tenantId} cannot write membership for tenant ${rowTenantId}`);
+    }
+    const key = `${tenantId}__${userId}`;
+    const existing = memoryTenantUsers.get(key);
+    const now = new Date().toISOString();
+    const record: InMemoryTenantUser = {
+      id: existing?.id || `tu_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      user_id: userId,
+      user_email: email,
+      user_name: name,
+      tenant_id: tenantId,
+      role,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    };
+    memoryTenantUsers.set(key, record);
+    return { rows: [record], command: 'INSERT', rowCount: 1, oid: 0, fields: [] };
+  }
+
+  // 7. tenant_users: SELECT (RLS: only the active tenant's rows; optional user_id filter in params[0])
+  if (/FROM\s+tenant_users/i.test(normalized)) {
+    const filterUser = /user_id\s*=\s*\$1/i.test(normalized) ? params[0] : undefined;
+    const rows = [...memoryTenantUsers.values()]
+      .filter((r) => r.tenant_id === tenantId && (filterUser === undefined || r.user_id === filterUser))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return { rows, command: 'SELECT', rowCount: rows.length, oid: 0, fields: [] };
+  }
+
   // 5. SELECT from control_mappings
   if (/SELECT\s+.*FROM\s+control_mappings/i.test(normalized)) {
     return {
@@ -337,94 +398,8 @@ export async function initDb(): Promise<void> {
 
   const client = await pool.connect();
   try {
-    await client.query(`
-      CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-      CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-      CREATE TABLE IF NOT EXISTS tenants (
-          id VARCHAR(64) PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          cage_code VARCHAR(10),
-          sam_status VARCHAR(32) DEFAULT 'ACTIVE',
-          system_name VARCHAR(255) NOT NULL,
-          system_owner VARCHAR(255) NOT NULL,
-          industry VARCHAR(128) DEFAULT 'Defense Industrial Base (DIB)',
-          enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}',
-          primary_framework VARCHAR(64) DEFAULT 'CMMC_L1',
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
-      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}';
-      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS primary_framework VARCHAR(64) DEFAULT 'CMMC_L1';
-      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS license_tier VARCHAR(64) DEFAULT 'FOUNDATIONAL';
-      ALTER TABLE tenants ADD COLUMN IF NOT EXISTS annual_price NUMERIC DEFAULT 3500;
-
-      CREATE TABLE IF NOT EXISTS control_assessments (
-          id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-          tenant_id VARCHAR(64) NOT NULL,
-          control_id VARCHAR(64) NOT NULL,
-          status VARCHAR(32) NOT NULL DEFAULT 'NOT_STARTED',
-          implementation_notes TEXT DEFAULT '',
-          responsible_role VARCHAR(128) DEFAULT 'IT / Security Lead',
-          tags TEXT[] DEFAULT '{}',
-          updated_by VARCHAR(255),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CONSTRAINT unq_tenant_control UNIQUE (tenant_id, control_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS evidence_metadata (
-          id VARCHAR(64) PRIMARY KEY,
-          tenant_id VARCHAR(64) NOT NULL,
-          control_id VARCHAR(64) NOT NULL,
-          file_name VARCHAR(255) NOT NULL,
-          file_size BIGINT NOT NULL,
-          mime_type VARCHAR(128) NOT NULL,
-          gcs_path TEXT NOT NULL,
-          file_hash VARCHAR(64) NOT NULL,
-          sync_status VARCHAR(32) DEFAULT 'gcs_synced',
-          description TEXT,
-          uploaded_by VARCHAR(255),
-          uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
-      CREATE TABLE IF NOT EXISTS control_mappings (
-          id VARCHAR(64) PRIMARY KEY,
-          source_framework VARCHAR(64) NOT NULL,
-          source_control_id VARCHAR(64) NOT NULL,
-          target_framework VARCHAR(64) NOT NULL,
-          target_control_id VARCHAR(64) NOT NULL,
-          mapping_type VARCHAR(32) DEFAULT 'EQUIVALENT',
-          notes TEXT DEFAULT '',
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CONSTRAINT unq_source_target_mapping UNIQUE (source_framework, source_control_id, target_framework, target_control_id)
-      );
-
-      ALTER TABLE control_assessments ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE evidence_metadata ENABLE ROW LEVEL SECURITY;
-
-      DO $$
-      BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_policies WHERE tablename = 'control_assessments' AND policyname = 'rls_control_assessments_tenant_isolation'
-        ) THEN
-          CREATE POLICY rls_control_assessments_tenant_isolation ON control_assessments
-              FOR ALL
-              USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
-              WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
-        END IF;
-
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_policies WHERE tablename = 'evidence_metadata' AND policyname = 'rls_evidence_metadata_tenant_isolation'
-        ) THEN
-          CREATE POLICY rls_evidence_metadata_tenant_isolation ON evidence_metadata
-              FOR ALL
-              USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''))
-              WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), ''));
-        END IF;
-      END
-      $$;
-    `);
+    // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts)
+    await client.query(buildSchemaSql());
 
     // Seed canonical control mappings if not present
     for (const m of CANONICAL_CONTROL_MAPPINGS) {
@@ -446,59 +421,89 @@ export async function initDb(): Promise<void> {
 
 
 /**
- * Returns true when `userId` has a tenant_users membership row for `tenantId`.
- * Fails closed: if the table is unavailable or the DB is in in-memory fallback mode, returns false
- * (callers still honour tenant membership asserted by verified token claims).
+ * The user's membership row in the tenant, or null. Works against PostgreSQL and the in-memory fallback.
+ * Fails closed (null) if the table is unavailable.
  */
-export async function isTenantMember(userId: string, tenantId: string): Promise<boolean> {
-  if (isUsingMemoryFallback || !userId || !tenantId) return false;
-  try {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
-      const res = await client.query(
-        'SELECT 1 FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
-        [userId, tenantId]
-      );
-      await client.query('COMMIT');
-      return (res.rowCount ?? 0) > 0;
-    } catch (e) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch {
-    return false;
+async function findTenantMember(userId: string, tenantId: string): Promise<{ role: unknown } | null> {
+  if (!userId || !tenantId) return null;
+  if (isUsingMemoryFallback) {
+    return memoryTenantUsers.get(`${tenantId}__${userId}`) ?? null;
   }
-}
-
-/**
- * Returns the user's role in the tenant from tenant_users, or null if there is no membership row.
- * Fails closed (null) when the table is unavailable or the DB is in in-memory fallback mode.
- */
-export async function getTenantRole(userId: string, tenantId: string): Promise<TenantRole | null> {
-  if (isUsingMemoryFallback || !userId || !tenantId) return null;
   try {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
-      const res = await client.query(
-        'SELECT role FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
-        [userId, tenantId]
-      );
-      await client.query('COMMIT');
-      const role: unknown = res.rows[0]?.role;
-      return isTenantRole(role) ? role : null;
-    } catch (e) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw e;
-    } finally {
-      client.release();
-    }
+    const result = await queryWithTenant(
+      tenantId,
+      'SELECT role FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
+      [userId, tenantId]
+    );
+    return result.rows[0] ?? null;
   } catch {
     return null;
   }
+}
+
+/** True when `userId` has a tenant_users membership row for `tenantId`. */
+export async function isTenantMember(userId: string, tenantId: string): Promise<boolean> {
+  return (await findTenantMember(userId, tenantId)) !== null;
+}
+
+/** The user's role in the tenant from tenant_users, or null if there is no (valid) membership row. */
+export async function getTenantRole(userId: string, tenantId: string): Promise<TenantRole | null> {
+  const member = await findTenantMember(userId, tenantId);
+  return member && isTenantRole(member.role) ? member.role : null;
+}
+
+export interface TenantMember {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  tenantId: string;
+  role: TenantRole;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapMemberRow(row: pg.QueryResultRow): TenantMember {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    email: row.user_email,
+    name: row.user_name,
+    tenantId: row.tenant_id,
+    role: row.role,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+/** Inserts the member, or updates their role/contact details if they already belong to the tenant. */
+export async function upsertTenantMember(
+  tenantId: string,
+  member: { userId: string; email: string; name: string; role: TenantRole }
+): Promise<TenantMember> {
+  const result = await queryWithTenant(
+    tenantId,
+    `INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id, tenant_id) DO UPDATE
+       SET user_email = EXCLUDED.user_email, user_name = EXCLUDED.user_name, role = EXCLUDED.role, updated_at = NOW()
+     RETURNING *`,
+    [member.userId, member.email, member.name, tenantId, member.role]
+  );
+  return mapMemberRow(result.rows[0]);
+}
+
+/** All members of the tenant (RLS limits the query to the active tenant). */
+export async function listTenantMembers(tenantId: string): Promise<TenantMember[]> {
+  const result = await queryWithTenant(
+    tenantId,
+    'SELECT * FROM tenant_users WHERE tenant_id = $1 ORDER BY created_at ASC',
+    [tenantId]
+  );
+  return result.rows.map(mapMemberRow);
+}
+
+/** Test hook: clears the in-memory fallback membership store. */
+export function __resetMemoryTenantUsersForTests(): void {
+  memoryTenantUsers.clear();
 }

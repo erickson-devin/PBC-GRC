@@ -17,6 +17,7 @@ import {
   Save,
   Check,
 } from 'lucide-react';
+import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import {
@@ -795,7 +796,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
           {/* TAB 4: SPRS / eMASS SUBMISSION ENGINE */}
           {activeTab === 'sprs' && (
             <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
-              
+              <SspGateBanner sprs={sprsResult} />
+
               {/* Executive Score Card */}
               <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
@@ -833,11 +835,6 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                       }`}>
                         {formatSprsScore(sprsResult)}
                       </span>
-                      {sprsResult.notScoredReason && (
-                        <span className="mt-1 block max-w-[16rem] text-[10px] leading-snug text-amber-300/90">
-                          {sprsResult.notScoredReason}
-                        </span>
-                      )}
                     </div>
                     <div className="h-10 w-px bg-slate-800" />
                     <div>
