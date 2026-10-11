@@ -19,8 +19,32 @@ import {
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { getFrameworkGuidanceText } from '../../data/frameworks';
+import { getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { BrandLogo } from '../common/BrandLogo';
+
+// ─── Badge Design System ────────────────────────────────────────────────────
+type BadgeVariant = 'neutral' | 'status' | 'accent';
+
+const BADGE_VARIANT_CLASSES: Record<BadgeVariant, string> = {
+  neutral: 'bg-slate-800/60 text-slate-300 border border-slate-700/50',
+  status:  'bg-cyan-950/40 text-cyan-400 border border-cyan-800/40',
+  accent:  'bg-purple-950/40 text-purple-300 border border-purple-800/40',
+};
+
+const BADGE_BASE =
+  'inline-flex items-center justify-center shrink-0 rounded-full px-2.5 py-0.5 text-xs font-mono tracking-tight leading-none whitespace-nowrap font-medium';
+
+interface SidebarBadgeProps {
+  children: React.ReactNode;
+  variant?: BadgeVariant;
+}
+
+/** Standardized sidebar badge pill with design-system tokens. */
+const SidebarBadge: React.FC<SidebarBadgeProps> = ({ children, variant = 'neutral' }) => (
+  <span className={`${BADGE_BASE} ${BADGE_VARIANT_CLASSES[variant]}`}>
+    {children}
+  </span>
+);
 
 // ─── Sidebar navigation item types ─────────────────────────────────────────
 interface NavItem {
@@ -28,7 +52,7 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string | number;
-  badgeColor?: string;
+  badgeVariant?: BadgeVariant;
 }
 
 interface ExternalNavItem {
@@ -37,7 +61,7 @@ interface ExternalNavItem {
   icon: React.ComponentType<{ className?: string }>;
   href: string;
   badge?: string;
-  badgeColor?: string;
+  badgeVariant?: BadgeVariant;
 }
 
 type SidebarItem = NavItem | ExternalNavItem;
@@ -47,18 +71,39 @@ interface NavSection {
   items: SidebarItem[];
 }
 
+// ─── Role label helper ──────────────────────────────────────────────────────
+function getRoleLabel(role: string): string {
+  switch (role) {
+    case 'TENANT_OWNER': return 'Owner';
+    case 'MSP_ADMIN':    return 'MSP Admin';
+    case 'ASSESSOR':     return 'Assessor';
+    case 'VIEWER':       return 'Viewer';
+    default:             return role;
+  }
+}
+
 // ─── Component ──────────────────────────────────────────────────────────────
 export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, metrics, state, frameworkControls } = useAssessment();
   const {
     currentTenant,
-    canManageTenant,
+    currentRole,
     isSuperAdmin,
     activeFramework,
   } = useTenant();
 
   const totalControls = frameworkControls.length || metrics.totalControls || 17;
   const guidance = getFrameworkGuidanceText(activeFramework);
+
+  // ── Dynamic data bindings ───────────────────────────────────────────────
+  const frameworkDef = FRAMEWORK_REGISTRY[activeFramework];
+  const familyCount = frameworkDef?.domains
+    ? Object.keys(frameworkDef.domains).length
+    : 0;
+  const evidenceCount = state.evidenceIndex.length;
+  const completionLabel = metrics.isSprsReady
+    ? '100%'
+    : `${metrics.completionPercentage}%`;
 
   // Photon external URL — environment-configurable, falls back to Blake's beta instance
   const photonUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PHOTON_URL)
@@ -78,15 +123,13 @@ export const Sidebar: React.FC = () => {
           id: 'matrix',
           label: `Control Matrix (${totalControls})`,
           icon: CheckSquare,
-          badge: metrics.isSprsReady ? '100%' : `${metrics.completionPercentage}%`,
-          badgeColor: metrics.isSprsReady ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-300',
+          badge: completionLabel,
+          badgeVariant: metrics.isSprsReady ? 'status' : 'neutral',
         },
         {
           id: 'assets',
           label: 'Asset Inventory & Fleet',
           icon: Server,
-          badge: 'ACCRETION READY',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300',
         },
       ],
     },
@@ -98,15 +141,14 @@ export const Sidebar: React.FC = () => {
           label: 'Technical Baselines & STIGs',
           icon: Terminal,
           href: photonUrl,
-          badge: 'PHOTON',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30',
+          badgeVariant: 'status',
         } as ExternalNavItem,
         {
           id: 'evidence',
           label: 'Evidence Vault',
           icon: Lock,
-          badge: state.evidenceIndex.length,
-          badgeColor: 'bg-slate-700 text-slate-300',
+          badge: evidenceCount,
+          badgeVariant: 'neutral',
         },
       ],
     },
@@ -117,15 +159,15 @@ export const Sidebar: React.FC = () => {
           id: 'policies',
           label: 'Living Policy Library',
           icon: Scroll,
-          badge: '20 FAMILIES',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30',
+          badge: familyCount > 0 ? `${familyCount} Families` : undefined,
+          badgeVariant: 'status',
         },
         {
           id: 'ssp',
           label: 'System Security Plan (SSP)',
           icon: FileText,
-          badge: 'Audit Ready',
-          badgeColor: 'bg-indigo-500/20 text-indigo-300',
+          badge: metrics.isSprsReady ? 'Audit Ready' : `${metrics.completionPercentage}%`,
+          badgeVariant: metrics.isSprsReady ? 'status' : 'neutral',
         },
         {
           id: 'poam',
@@ -146,15 +188,15 @@ export const Sidebar: React.FC = () => {
           id: 'rbac',
           label: 'Team & Role RBAC',
           icon: Users,
-          badge: canManageTenant ? 'Owner' : undefined,
-          badgeColor: 'bg-purple-500/20 text-purple-300',
+          badge: getRoleLabel(currentRole),
+          badgeVariant: 'accent',
         },
         {
           id: 'audit_logs',
           label: 'Immutable Audit Trail',
           icon: ShieldCheck,
-          badge: 'NIST 3.3',
-          badgeColor: 'bg-cyan-500/20 text-cyan-300',
+          badge: guidance.standardRef.split('/')[0].trim(),
+          badgeVariant: 'status',
         },
         {
           id: 'guidance',
@@ -216,18 +258,13 @@ export const Sidebar: React.FC = () => {
                     <button
                       key={item.label}
                       onClick={() => handleExternalClick(item.href)}
-                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent transition-all text-left group"
+                      className="w-full flex items-center justify-between min-h-[36px] px-3 py-1.5 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent transition-all text-left group"
                     >
-                      <div className="flex items-center gap-3">
-                        <Icon className="w-4 h-4 text-slate-400" />
-                        <span>{item.label}</span>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Icon className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span className="truncate">{item.label}</span>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        {item.badge && (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${item.badgeColor || 'bg-slate-800 text-slate-300'}`}>
-                            {item.badge}
-                          </span>
-                        )}
+                      <div className="flex items-center gap-1.5 shrink-0 ml-2">
                         <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-cyan-400 transition-colors" />
                       </div>
                     </button>
@@ -243,20 +280,22 @@ export const Sidebar: React.FC = () => {
                   <button
                     key={navItem.id}
                     onClick={() => setActiveTab(navItem.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-sm transition-all text-left ${
+                    className={`w-full flex items-center justify-between min-h-[36px] px-3 py-1.5 rounded-xl font-medium text-sm transition-all text-left ${
                       isActive
                         ? 'bg-brand-600/15 text-brand-400 border border-brand-500/30 shadow-sm shadow-brand-500/10'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
                     }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <Icon className={`w-4 h-4 ${isActive ? 'text-brand-400' : 'text-slate-400'}`} />
-                      <span>{navItem.label}</span>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-brand-400' : 'text-slate-400'}`} />
+                      <span className="truncate">{navItem.label}</span>
                     </div>
                     {navItem.badge !== undefined && (
-                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${navItem.badgeColor || 'bg-slate-800 text-slate-300'}`}>
-                        {navItem.badge}
-                      </span>
+                      <div className="shrink-0 ml-2">
+                        <SidebarBadge variant={navItem.badgeVariant}>
+                          {navItem.badge}
+                        </SidebarBadge>
+                      </div>
                     )}
                   </button>
                 );
@@ -272,13 +311,13 @@ export const Sidebar: React.FC = () => {
               onClick={() => {
                 if (typeof window !== 'undefined') window.location.hash = 'admin';
               }}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-xs text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-amber-500/30 transition-all text-left shadow-sm"
+              className="w-full flex items-center justify-between min-h-[36px] px-3 py-1.5 rounded-xl font-bold text-xs text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 border border-amber-500/30 transition-all text-left shadow-sm"
             >
               <div className="flex items-center gap-2.5">
                 <ShieldCheck className="w-4 h-4 text-amber-400" />
                 <span>Super Admin Portal</span>
               </div>
-              <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <span className="inline-flex items-center justify-center shrink-0 rounded-full px-2.5 py-0.5 text-[9px] uppercase font-mono tracking-tight leading-none whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 /admin
               </span>
             </button>
