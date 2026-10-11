@@ -30,9 +30,9 @@ export interface AuditLogEntry {
   actorRole?: string;
   actionType: AuditActionType;
   targetEntity: string; // e.g. "AC.L1-3.1.1", "evidence-7a91b", "NIST_SP_800_18_SSP"
-  previousState?: any;
-  newState?: any;
-  metadata?: Record<string, any>;
+  previousState?: unknown;
+  newState?: unknown;
+  metadata?: Record<string, unknown>;
   previousHash: string; // SHA-256 hash of preceding entry in chain
   sha256Hash: string; // SHA-256 digest of this entry payload + previousHash
 }

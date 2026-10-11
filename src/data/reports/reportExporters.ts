@@ -643,6 +643,23 @@ export function downloadHtmlDocument(doc: CompiledDocument): void {
 }
 
 /**
+ * Deterministic JSON serialization with recursively sorted object keys.
+ * (A `JSON.stringify` key-array replacer only whitelists names at every depth and silently
+ * drops nested fields such as metrics and controls, so it cannot be used for a checksum.)
+ */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
  * Builds a structured, machine-readable JSON compliance package for audit verification.
  */
 export async function generateMachineReadablePackage(
@@ -689,14 +706,14 @@ export async function generateMachineReadablePackage(
       notStartedCount: doc.summaryMetrics.notStartedCount,
       completionPercentage: doc.summaryMetrics.completionPercentage,
       isSprsReady: doc.summaryMetrics.metCount === doc.summaryMetrics.totalControls,
-      domainStats: {} as any,
+      domainStats: doc.summaryMetrics.domainStats,
     },
     controls: controlMap,
     evidenceIndex: evidenceList,
     poamEntries: doc.poamEntries || [],
   };
 
-  const canonicalString = JSON.stringify(rawPayload, Object.keys(rawPayload).sort());
+  const canonicalString = canonicalJson(rawPayload);
   const integrityChecksum = await computeSha256(canonicalString);
 
   return {

@@ -38,6 +38,7 @@ import { AssetComplianceTable } from './AssetComplianceTable';
 import { AssetInventoryManager } from './AssetInventoryManager';
 import { ingestScanReportToAsset } from '../../data/telemetry/assetTelemetryEngine';
 import { getEnclaveAssets, syncAssetScanResult } from '../../data/telemetry/assetRegistry';
+import { errorMessage } from '../../utils/errors';
 
 // ---------------------------------------------------------------------------
 // OS Profile Options
@@ -304,11 +305,11 @@ export const PhotonScanConsole: React.FC = () => {
 
       // Auto-dismiss notification
       setTimeout(() => setSyncNotification(null), 8000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setScanStatus('ERROR');
       setTerminalLines(prev => [
         ...prev,
-        `[${new Date().toISOString()}] ✖ Ingestion error: ${err?.message || 'Unknown error'}`,
+        `[${new Date().toISOString()}] ✖ Ingestion error: ${errorMessage(err) || 'Unknown error'}`,
       ]);
     }
   }, [lastReport, scanStatus, updateControlStatus, currentTenant.id]);

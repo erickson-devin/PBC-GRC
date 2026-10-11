@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
 import { initDb, checkDatabaseConnection } from './db';
+import { errorMessage } from '../src/utils/errors';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,8 +74,8 @@ export const server = app.listen(PORT, async () => {
   try {
     await checkDatabaseConnection();
     await initDb();
-  } catch (err: any) {
-    console.warn('[Server Startup] DB init notice:', err.message);
+  } catch (err: unknown) {
+    console.warn('[Server Startup] DB init notice:', errorMessage(err));
   }
 });
 

@@ -15,10 +15,12 @@ import {
   completeMagicLinkSignIn,
   signOutFirebase,
   isFirebaseConfigured,
+  type AuthUserLike,
 } from '../config/firebase';
 import { User, AuthProviderType, LicenseTier } from '../types/tenant';
 import { useTenant, PRESET_USERS } from './TenantContext';
 import { buildDevMockIdToken } from '../config/devAuthToken';
+import { errorMessage, errorCode } from '../utils/errors';
 
 interface AuthContextType {
   firebaseUser: FirebaseUser | null;
@@ -109,7 +111,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     displayName: string | null,
     provider: AuthProviderType,
     token?: string,
-    fbUser?: FirebaseUser | null
+    fbUser?: AuthUserLike | null
   ) => {
     const { tenant, role } = resolveTenantForEmail(email);
 
@@ -223,18 +225,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         result.user
       );
       setIsAuthModalOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Microsoft login failed:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
+      if (errorCode(err) === 'auth/popup-closed-by-user') {
         setAuthError('Sign-in popup was closed before completing authentication.');
-      } else if (err.code === 'auth/popup-blocked') {
+      } else if (errorCode(err) === 'auth/popup-blocked') {
         setAuthError('Pop-up window was blocked by your browser. Please allow pop-ups for this site to sign in with Microsoft.');
-      } else if (err.code === 'auth/unauthorized-domain') {
+      } else if (errorCode(err) === 'auth/unauthorized-domain') {
         setAuthError(`Domain '${typeof window !== 'undefined' ? window.location.hostname : 'grc.pitchblackcyber.com'}' is not authorized in Firebase Console. Add it under Authentication -> Settings -> Authorized Domains.`);
-      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
+      } else if (errorCode(err) === 'auth/configuration-not-found' || errorCode(err) === 'auth/operation-not-allowed') {
         setAuthError('Microsoft provider is not enabled yet in your Firebase Console. Go to Authentication -> Sign-in method and enable Microsoft.');
       } else {
-        setAuthError(err.message || 'Microsoft 365 sign-in encountered an error.');
+        setAuthError(errorMessage(err) || 'Microsoft 365 sign-in encountered an error.');
       }
     } finally {
       setLoading(false);
@@ -263,20 +265,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         result.user
       );
       setIsAuthModalOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Google Workspace login failed:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
+      if (errorCode(err) === 'auth/popup-closed-by-user') {
         setAuthError('Sign-in popup was closed before completing authentication.');
-      } else if (err.code === 'auth/popup-blocked') {
+      } else if (errorCode(err) === 'auth/popup-blocked') {
         setAuthError('Pop-up window was blocked by your browser. Please allow pop-ups for this site to sign in with Google.');
-      } else if (err.code === 'auth/unauthorized-domain') {
+      } else if (errorCode(err) === 'auth/unauthorized-domain') {
         setAuthError(`Domain '${typeof window !== 'undefined' ? window.location.hostname : 'grc.pitchblackcyber.com'}' is not authorized in Firebase Console. Add it under Authentication -> Settings -> Authorized Domains.`);
-      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/operation-not-allowed') {
+      } else if (errorCode(err) === 'auth/configuration-not-found' || errorCode(err) === 'auth/operation-not-allowed') {
         setAuthError('Google Sign-In is not enabled yet in your Firebase Console. Go to Authentication -> Sign-in method and enable Google.');
-      } else if (err.code === 'auth/invalid-api-key') {
+      } else if (errorCode(err) === 'auth/invalid-api-key') {
         setAuthError('Invalid Firebase API key. Please check your GCP Identity Platform configuration.');
       } else {
-        setAuthError(err.message || 'Google Workspace sign-in encountered an error.');
+        setAuthError(errorMessage(err) || 'Google Workspace sign-in encountered an error.');
       }
     } finally {
       setLoading(false);
@@ -307,16 +309,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         result.user
       );
       setIsAuthModalOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Email login failed:', err);
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      if (errorCode(err) === 'auth/user-not-found' || errorCode(err) === 'auth/wrong-password' || errorCode(err) === 'auth/invalid-credential') {
         setAuthError('Invalid credentials. If you are a new contractor, please request an enclave license.');
-      } else if (err.code === 'auth/configuration-not-found' || err.code === 'auth/invalid-api-key') {
+      } else if (errorCode(err) === 'auth/configuration-not-found' || errorCode(err) === 'auth/invalid-api-key') {
         // Fallback simulation
         await handleUserSession(email, null, 'password');
         setIsAuthModalOpen(false);
       } else {
-        setAuthError(err.message || 'Authentication failed. Please verify your credentials.');
+        setAuthError(errorMessage(err) || 'Authentication failed. Please verify your credentials.');
       }
     } finally {
       setLoading(false);
@@ -341,13 +343,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await sendMagicLinkEmail(email, redirectPath || window.location.origin + '/app');
       alert(`Secure passwordless login link dispatched to ${email}. Check your inbox to access the defense enclave.`);
       setIsAuthModalOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Send magic link failed:', err);
-      if (err.code === 'auth/configuration-not-found' || err.code === 'auth/invalid-api-key') {
+      if (errorCode(err) === 'auth/configuration-not-found' || errorCode(err) === 'auth/invalid-api-key') {
         await handleUserSession(email, 'Assessor ' + email.split('@')[0], 'emailLink');
         setIsAuthModalOpen(false);
       } else {
-        setAuthError(err.message || 'Failed to dispatch magic link. Please try again.');
+        setAuthError(errorMessage(err) || 'Failed to dispatch magic link. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -369,9 +371,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         result.user
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Complete magic link failed:', err);
-      setAuthError(err.message || 'Magic link verification failed or link expired.');
+      setAuthError(errorMessage(err) || 'Magic link verification failed or link expired.');
     } finally {
       setLoading(false);
     }
@@ -384,7 +386,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await sendPasswordResetEmail(auth, email);
       alert(`Password reset link dispatched to ${email}.`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Password reset failed:', err);
       alert('Password reset instructions dispatched (simulation).');
     }

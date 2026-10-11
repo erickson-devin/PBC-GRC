@@ -18,7 +18,7 @@ import {
   Check,
   Terminal,
 } from 'lucide-react';
-import { ControlDefinition, ControlStatus, DomainInfo } from '../../types/cmmc';
+import { ControlStatus, DomainInfo } from '../../types/cmmc';
 import { FrameworkControlDefinition, FrameworkDomainInfo } from '../../types/framework';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -29,7 +29,7 @@ import { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
 import { FailingAssetInfo } from '../../types/telemetry';
 
 interface ControlCardProps {
-  control: FrameworkControlDefinition | ControlDefinition | any;
+  control: FrameworkControlDefinition;
   domainInfo: DomainInfo | FrameworkDomainInfo | any;
   onOpenDetailModal?: () => void;
 }
@@ -298,7 +298,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           {control.mappings && control.mappings.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
               <span className="text-[10px] font-mono font-semibold text-slate-500 uppercase">Equivalencies:</span>
-              {control.mappings.slice(0, 4).map((m: any, idx: number) => (
+              {control.mappings.slice(0, 4).map((m, idx) => (
                 <span
                   key={idx}
                   title={`${m.targetFramework}: ${m.targetTitle || m.targetControlId}`}
@@ -513,7 +513,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             {evidenceCount > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                 {evidenceList.map((item) => {
-                  const isInherited = item.syncStatus === ('inherited' as any) || (item.description && item.description.startsWith('[Inherited'));
+                  const isInherited = item.syncStatus === 'inherited' || (item.description && item.description.startsWith('[Inherited'));
                   return (
                     <div
                       key={item.id}

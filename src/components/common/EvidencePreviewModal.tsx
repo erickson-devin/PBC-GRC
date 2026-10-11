@@ -12,11 +12,12 @@ import {
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { ErrorBoundary } from './ErrorBoundary';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { GcsService } from '../../services/gcsService';
 import { findControlDefinition } from '../../data/frameworks';
 
-export const EvidencePreviewModal: React.FC = () => {
+const EvidencePreviewModalContent: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
   const { currentTenant } = useTenant();
 
@@ -253,5 +254,23 @@ export const EvidencePreviewModal: React.FC = () => {
 
       </div>
     </div>
+  );
+};
+
+export const EvidencePreviewModal: React.FC = () => {
+  const { previewEvidence, setPreviewEvidence } = useAssessment();
+
+  // Nothing is being previewed, so there is nothing to guard.
+  if (!previewEvidence) return null;
+
+  return (
+    <ErrorBoundary
+      name="Evidence Preview"
+      variant="modal"
+      resetKeys={[previewEvidence.id]}
+      onReset={() => setPreviewEvidence(null)}
+    >
+      <EvidencePreviewModalContent />
+    </ErrorBoundary>
   );
 };

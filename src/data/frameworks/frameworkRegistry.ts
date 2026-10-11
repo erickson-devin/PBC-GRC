@@ -112,7 +112,7 @@ export const FRAMEWORK_REGISTRY: Record<string, FrameworkDefinition> = {
   // Registered alias for RMF specification
   'nist-800-53-r5': {
     ...NIST_800_53_DEF,
-    id: 'NIST_800_53_REV5' as any,
+    id: 'NIST_800_53_REV5',
   },
   SOC_2_TYPE_II: {
     id: 'SOC_2_TYPE_II',

@@ -11,6 +11,7 @@ import {
   LicenseTier,
   EnclaveStackProfile,
 } from '../types/tenant';
+import { errorMessage } from '../utils/errors';
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { ApiClient, UploadUrlResponse } from '../services/apiClient';
@@ -910,8 +911,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setLiveControls(controlsMap);
       setLiveEvidence(evidenceList);
-    } catch (err: any) {
-      setSyncError(err?.message || 'Sync error');
+    } catch (err: unknown) {
+      setSyncError(errorMessage(err) || 'Sync error');
     } finally {
       setIsSyncing(false);
     }

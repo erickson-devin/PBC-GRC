@@ -41,6 +41,7 @@ import { ObjectiveChecklist } from './ObjectiveChecklist';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
 import { NIST_800_171A_REGISTRY } from '../../data/frameworks/assessmentObjectives';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
 interface InspectDocumentModalProps {
@@ -48,7 +49,7 @@ interface InspectDocumentModalProps {
   onClose?: () => void;
 }
 
-export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
+const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   controlId: propControlId,
   onClose: propOnClose,
 }) => {
@@ -145,7 +146,7 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
     )
   );
   const familyPrefix = getFamilyPrefix(control?.id, control?.domain);
-  const familyTitle = (control as any)?.domainName || control?.domain || familyPrefix;
+  const familyTitle = control?.domainName || control?.domain || familyPrefix;
 
   // Handle escape key
   useEffect(() => {
@@ -200,7 +201,7 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
 
   const domainInfo = currentFrameworkDef.domains[control.domain] || {
     code: control.domain,
-    name: (control as any).domainName || control.domain,
+    name: control.domainName || control.domain,
     description: '',
     totalControls: 0,
     iconName: 'Shield',
@@ -208,8 +209,8 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
   };
 
   const authorityRef =
-    (control as any).authorityReference ||
-    (control as any).farReference ||
+    control.authorityReference ||
+    control.farReference ||
     'NIST SP 800-171 Requirement';
   const controlEvidence = state.evidenceIndex.filter((e) => e.controlId === control.id);
   const objectives = getObjectivesForControl(control.id);
@@ -835,7 +836,7 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
                 <p className="text-xs text-slate-400">No cross-framework mappings defined for this control.</p>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {rawMappings.map((m: any, idx: number) => (
+                  {rawMappings.map((m, idx) => (
                     <div
                       key={idx}
                       onClick={() => handleNavigateToMapped(m.targetFramework, m.targetControlId)}
@@ -1233,6 +1234,25 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
         />
       </div>
     </div>
+  );
+};
+
+export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = (props) => {
+  const { selectedControlId, setSelectedControlId } = useAssessment();
+  const activeId = props.controlId !== undefined ? props.controlId : selectedControlId;
+
+  // Nothing is open, so there is nothing to guard.
+  if (!activeId) return null;
+
+  return (
+    <ErrorBoundary
+      name="Control Inspector"
+      variant="modal"
+      resetKeys={[activeId]}
+      onReset={() => (props.onClose ? props.onClose() : setSelectedControlId(null))}
+    >
+      <InspectDocumentModalContent {...props} />
+    </ErrorBoundary>
   );
 };
 

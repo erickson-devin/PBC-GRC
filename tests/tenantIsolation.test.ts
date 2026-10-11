@@ -1,3 +1,4 @@
+import './testEnv';
 import app, { server } from '../server/index';
 import http from 'http';
 
@@ -179,7 +180,7 @@ async function runTests() {
     assert(uploadUrlRes.status === 201, 'GCS Signed Upload URL generated (HTTP 201)');
     assert(Boolean(uploadUrlRes.body?.uploadUrl), 'Upload URL contains valid presigned endpoint');
     assert(
-      uploadUrlRes.body?.gcsPath?.includes(`tenants/${tenantA}/controls/AC.L1-3.1.1/`),
+      uploadUrlRes.body?.gcsPath?.replace(/\\/g, '/').includes(`tenants/${tenantA}/controls/AC.L1-3.1.1/`),
       'GCS object path is partitioned strictly under Company A tenant folder'
     );
     assert(

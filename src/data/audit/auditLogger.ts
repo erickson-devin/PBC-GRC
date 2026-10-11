@@ -28,9 +28,9 @@ export function createCanonicalEntryPayload(
   actorEmail: string,
   actionType: AuditActionType,
   targetEntity: string,
-  previousState: any,
-  newState: any,
-  metadata: any,
+  previousState: unknown,
+  newState: unknown,
+  metadata: Record<string, unknown> | undefined,
   previousHash: string
 ): string {
   const obj = {
@@ -100,9 +100,9 @@ export async function recordAuditEvent(params: {
   actorRole?: string;
   actionType: AuditActionType;
   targetEntity: string;
-  previousState?: any;
-  newState?: any;
-  metadata?: Record<string, any>;
+  previousState?: unknown;
+  newState?: unknown;
+  metadata?: Record<string, unknown>;
 }): Promise<AuditLogEntry> {
   const entries = loadLedger(params.tenantId);
   const sequenceNumber = entries.length + 1;

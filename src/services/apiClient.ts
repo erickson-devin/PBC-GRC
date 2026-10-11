@@ -1,8 +1,8 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
-import { ComplianceFramework, BaselineTier, OverlayParameter } from '../types/framework';
+import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
 const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
-const API_BASE_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.VITE_API_URL) || '';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.VITE_API_URL) || '';
 
 export interface UploadUrlResponse {
   message: string;
@@ -98,7 +98,7 @@ export const ApiClient = {
    * GET /api/v1/controls/frameworks
    * Fetches all supported compliance framework metadata
    */
-  async getFrameworks(): Promise<any[]> {
+  async getFrameworks(): Promise<FrameworkSummary[]> {
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/controls/frameworks`);
       if (!res.ok) return [];
@@ -113,7 +113,7 @@ export const ApiClient = {
    * GET /api/v1/controls/mappings
    * Fetches cross-framework control mappings
    */
-  async getControlMappings(controlId?: string): Promise<any[]> {
+  async getControlMappings(controlId?: string): Promise<ControlMapping[]> {
     try {
       const url = controlId
         ? `${API_BASE_URL}/api/v1/controls/mappings?control_id=${encodeURIComponent(controlId)}`

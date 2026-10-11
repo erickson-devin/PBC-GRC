@@ -59,7 +59,7 @@ export const DomainCards: React.FC = () => {
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {Object.keys(domains).map((code) => {
         const domain = domains[code];
-        const stats = (metrics.domainStats as Record<string, any>)[code] || {
+        const stats = metrics.domainStats[code] || {
           total: domain.totalControls || 0,
           met: 0,
           inProgress: 0,

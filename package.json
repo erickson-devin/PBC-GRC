@@ -17,7 +17,9 @@
     "test:artifacts": "tsx tests/artifactGenerator.test.ts",
     "test:scope": "tsx tests/enclaveFrameworkScope.test.ts",
     "test:cmmc": "tsx tests/cmmcComplianceSafeguards.test.ts",
-    "test:all": "tsx tests/tenantIsolation.test.ts && tsx tests/multiFramework.test.ts && tsx tests/stigAutomation.test.ts && tsx tests/artifactGenerator.test.ts && tsx tests/enclaveFrameworkScope.test.ts && tsx tests/cmmcComplianceSafeguards.test.ts",
+    "test:policy": "tsx tests/enclaveStackPolicy.test.ts",
+    "test:offboarding": "tsx tests/offboardingAndDestruction.test.ts",
+    "test:all": "tsx tests/tenantIsolation.test.ts && tsx tests/multiFramework.test.ts && tsx tests/stigAutomation.test.ts && tsx tests/artifactGenerator.test.ts && tsx tests/enclaveFrameworkScope.test.ts && tsx tests/cmmcComplianceSafeguards.test.ts && tsx tests/enclaveStackPolicy.test.ts && tsx tests/offboardingAndDestruction.test.ts",
     "scanner:test": "python3 scanner-agent/runner.py --test-scan",
     "preview": "vite preview"
   },

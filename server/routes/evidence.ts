@@ -1,10 +1,12 @@
 import express, { Router, Request, Response } from 'express';
+import type pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { Storage } from '@google-cloud/storage';
 import { queryWithTenant } from '../db';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
+import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
 
@@ -18,8 +20,8 @@ if (storageProvider === 'local') {
   try {
     fs.mkdirSync(localStoragePath, { recursive: true });
     console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStoragePath}`);
-  } catch (err: any) {
-    console.warn(`[Evidence Storage] Local storage directory setup notice: ${err.message}`);
+  } catch (err: unknown) {
+    console.warn(`[Evidence Storage] Local storage directory setup notice: ${errorMessage(err)}`);
   }
 }
 
@@ -55,7 +57,7 @@ function resolveTenantLocalPath(tenantId: string, candidate: unknown): string | 
   return resolveWithin(path.join(localStoragePath, 'tenants', tenantId), candidate);
 }
 
-function mapRowToEvidence(row: any) {
+function mapRowToEvidence(row: pg.QueryResultRow) {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -230,8 +232,8 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
           effectiveUser,
         ]);
       }
-    } catch (inhErr: any) {
-      console.warn(`[Evidence API] Cross-framework inheritance notice:`, inhErr.message);
+    } catch (inhErr: unknown) {
+      console.warn(`[Evidence API] Cross-framework inheritance notice:`, errorMessage(inhErr));
     }
 
     res.status(201).json({
@@ -243,11 +245,11 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
       evidence: savedRecord,
       inheritedTo: getEquivalentControlIds(controlId),
     });
-  } catch (dbErr: any) {
+  } catch (dbErr: unknown) {
     console.error(`[Evidence API] Failed to store evidence metadata for tenant ${tenantId}:`, dbErr);
     res.status(500).json({
       error: 'Failed to record evidence in database',
-      details: dbErr.message,
+      details: errorMessage(dbErr),
     });
   }
 });
@@ -336,11 +338,11 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
       hashVerified: hashMatch,
       storagePath: targetFilePath,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(`[Local Evidence Upload Error]:`, err);
     res.status(500).json({
       error: 'Failed to write evidence to local disk',
-      details: err.message,
+      details: errorMessage(err),
     });
   }
 };
@@ -380,8 +382,8 @@ router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<voi
     }
 
     res.status(404).json({ error: 'File not found on local storage path' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
@@ -426,8 +428,8 @@ router.get('/:evidenceId/verify-integrity', async (req: Request, res: Response):
       status: isMatch ? 'INTEGRITY_VERIFIED' : 'INTEGRITY_MISMATCH',
       verifiedAt: new Date().toISOString(),
     });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err: unknown) {
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
@@ -460,11 +462,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       evidence: evidenceList,
       storageProvider,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(`[Evidence API] Error fetching evidence for tenant ${tenantId}:`, err);
     res.status(500).json({
       error: 'Failed to fetch evidence records',
-      details: err.message,
+      details: errorMessage(err),
     });
   }
 });
@@ -492,11 +494,11 @@ router.get('/:evidenceId', async (req: Request, res: Response): Promise<void> =>
     }
 
     res.json(mapRowToEvidence(result.rows[0]));
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(`[Evidence API] Error fetching evidence ${evidenceId}:`, err);
     res.status(500).json({
       error: 'Failed to fetch evidence record',
-      details: err.message,
+      details: errorMessage(err),
     });
   }
 });

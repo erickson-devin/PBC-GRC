@@ -37,7 +37,7 @@ export function generatePolicyDocument(
     tenant = tenantOrFamily;
     controlFamily = (controlFamilyOrStack as string) || 'AC';
     familyTitle = familyTitleOrFramework || `${controlFamily} Policy`;
-    activeFramework = frameworkArg || (tenant as any).activeFramework || 'NIST_800_53_REV5';
+    activeFramework = frameworkArg || tenant.primaryFramework || 'NIST_800_53_REV5';
   }
 
   const stack: EnclaveStackProfile = tenant.stackProfile || {

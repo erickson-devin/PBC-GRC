@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   Scroll,
 } from 'lucide-react';
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { useTenant } from '../context/TenantContext';
 import { useAssessment } from '../context/AssessmentContext';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
@@ -175,7 +176,7 @@ export const NIST_800_53_FAMILIES: PolicyFamilyItem[] = [
 const CMMC_L1_FAMILIES = ['AC', 'IA', 'MP', 'PE', 'SC', 'SI'];
 const CMMC_L2_FAMILIES = ['AC', 'AT', 'AU', 'CA', 'CM', 'IA', 'IR', 'MA', 'MP', 'PE', 'PS', 'RA', 'SC', 'SI'];
 
-export const PolicyLibraryView: React.FC = () => {
+const PolicyLibraryViewContent: React.FC = () => {
   const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework } = useTenant();
   const { setActiveTab, setSelectedControlId } = useAssessment();
 
@@ -650,6 +651,15 @@ export const PolicyLibraryView: React.FC = () => {
         </div>
       </div>
     </div>
+  );
+};
+
+export const PolicyLibraryView: React.FC = () => {
+  const { activeFramework } = useTenant();
+  return (
+    <ErrorBoundary name="Policy Library" variant="panel" resetKeys={[activeFramework]}>
+      <PolicyLibraryViewContent />
+    </ErrorBoundary>
   );
 };
 

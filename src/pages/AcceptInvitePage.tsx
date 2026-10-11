@@ -16,6 +16,7 @@ import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
 import { AuthProviderType, getLicenseTierBadge } from '../types/tenant';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { errorMessage } from '../utils/errors';
 
 interface AcceptInvitePageProps {
   onSuccessNavigate?: () => void;
@@ -153,9 +154,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       }
 
       handleClaimSuccess();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('SSO Claim error:', err);
-      setClaimError(err.message || 'Single Sign-On authentication encountered an error.');
+      setClaimError(errorMessage(err) || 'Single Sign-On authentication encountered an error.');
       setIsSubmitting(false);
     }
   };
@@ -199,7 +200,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       }
 
       handleClaimSuccess();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Password claim error:', err);
       // Even if mock firebase password fails, proceed with session binding
       await claimInviteToken(invitation.token, {

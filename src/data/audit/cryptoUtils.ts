@@ -24,21 +24,18 @@
  */
 export async function computeSha256(input: string | ArrayBuffer | Uint8Array): Promise<string> {
   // Web Crypto API: available in all modern browsers and Node.js 18+
-  const subtle =
-    typeof globalThis !== 'undefined' &&
-    (globalThis as any).crypto?.subtle
-      ? (globalThis as any).crypto.subtle
-      : typeof crypto !== 'undefined' && crypto.subtle
-      ? crypto.subtle
-      : null;
+  const subtle: SubtleCrypto | null =
+    (typeof globalThis !== 'undefined' && globalThis.crypto?.subtle) || null;
 
   if (subtle) {
     try {
-      const buffer =
+      const buffer: BufferSource =
         typeof input === 'string'
-          ? (typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(input) : Buffer.from(input))
+          ? new TextEncoder().encode(input)
+          : input instanceof Uint8Array
+          ? input.slice() // copy into a plain ArrayBuffer (a view may sit on a SharedArrayBuffer)
           : input;
-      const hashBuffer = await subtle.digest('SHA-256', buffer as any);
+      const hashBuffer = await subtle.digest('SHA-256', buffer);
       return Array.from(new Uint8Array(hashBuffer))
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');

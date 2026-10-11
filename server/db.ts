@@ -39,10 +39,11 @@ export const pool = new Pool(
 );
 
 pool.on('error', (err) => {
-  console.error('[Cloud SQL Pool Error]:', err.message);
+  console.error('[Cloud SQL Pool Error]:', errorMessage(err));
 });
 
 import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data/frameworks/controlMappings';
+import { errorMessage } from '../src/utils/errors';
 
 // In-memory tenant isolation state for fallback when local PostgreSQL is not running
 interface InMemoryControl {
@@ -75,6 +76,9 @@ interface InMemoryEvidence {
 const memoryControls = new Map<string, InMemoryControl>(); // key: `${tenant_id}__${control_id}`
 const memoryEvidence = new Map<string, InMemoryEvidence>(); // key: id
 
+/** Bind parameter values accepted by the query helpers. */
+export type SqlParam = string | number | boolean | Date | string[] | null | undefined;
+
 let isUsingMemoryFallback = false;
 let dbVerified = false;
 
@@ -87,9 +91,9 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     isUsingMemoryFallback = false;
     console.log(`[Cloud SQL] Successfully connected to PostgreSQL instance at ${dbHost}/${dbName}`);
     return true;
-  } catch (err: any) {
+  } catch (err: unknown) {
     isUsingMemoryFallback = true;
-    console.warn(`[Cloud SQL] Real PostgreSQL connection unavailable (${err.message}). Using local high-fidelity RLS-isolated fallback storage.`);
+    console.warn(`[Cloud SQL] Real PostgreSQL connection unavailable (${errorMessage(err)}). Using local high-fidelity RLS-isolated fallback storage.`);
     return false;
   }
 }
@@ -98,7 +102,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
  * Execute query guarded by Row-Level Security (RLS) tenant context session variable:
  * SET LOCAL app.current_tenant_id = '${tenantId}'
  */
-export async function queryWithTenant(tenantId: string, text: string, params: any[] = []): Promise<pg.QueryResult<any>> {
+export async function queryWithTenant(tenantId: string, text: string, params: SqlParam[] = []): Promise<pg.QueryResult> {
   // Sanitize tenant ID to prevent injection
   const sanitizedTenantId = tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
 
@@ -120,10 +124,10 @@ export async function queryWithTenant(tenantId: string, text: string, params: an
       } finally {
         client.release();
       }
-    } catch (connErr: any) {
+    } catch (connErr: unknown) {
       // If live connection dropped or fails, fallback gracefully in local dev
       if (process.env.NODE_ENV !== 'production') {
-        console.warn('[Cloud SQL] Database query failed, falling back to local tenant isolation store:', connErr.message);
+        console.warn('[Cloud SQL] Database query failed, falling back to local tenant isolation store:', errorMessage(connErr));
         isUsingMemoryFallback = true;
       } else {
         throw connErr;
@@ -139,7 +143,9 @@ export async function queryWithTenant(tenantId: string, text: string, params: an
  * Executes queries against in-memory store while strictly enforcing
  * tenant isolation equivalent to PostgreSQL Row-Level Security (RLS).
  */
-function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]): pg.QueryResult<any> {
+// `params` is positional and column-typed by the emulated statements below, hence the loose element type.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]): pg.QueryResult {
   const normalized = text.trim();
 
   // 1. SELECT from control_assessments
@@ -429,8 +435,8 @@ export async function initDb(): Promise<void> {
     }
 
     console.log('[Cloud SQL] Database schema, control mappings, and RLS policies verified.');
-  } catch (err: any) {
-    console.error('[Cloud SQL] Failed to run schema DDL:', err.message);
+  } catch (err: unknown) {
+    console.error('[Cloud SQL] Failed to run schema DDL:', errorMessage(err));
   } finally {
     client.release();
   }

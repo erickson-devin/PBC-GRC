@@ -2,8 +2,8 @@ import { GcpServiceConfig } from '../types/tenant';
 import { EvidenceItem } from '../types/cmmc';
 
 const getEnv = (key: string, fallback: string = ''): string => {
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
-    return (import.meta as any).env[key];
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    return import.meta.env[key];
   }
   if (typeof process !== 'undefined' && process.env && process.env[key]) {
     return process.env[key]!;

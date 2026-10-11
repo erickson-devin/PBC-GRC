@@ -38,6 +38,20 @@ const DEFAULT_ODP_PARAMS: Record<string, string> = {
   LOG_REVIEW_FREQUENCY: 'Weekly automated alert review with monthly manual audit',
 };
 
+interface StackOption<T extends string> {
+  id: T;
+  title: string;
+  badge: string;
+  recommended: boolean;
+  desc: string;
+  features: string[];
+}
+
+/** Identity helper: checks every option id against the profile's union instead of widening to string. */
+function stackOptions<T extends string>(options: StackOption<T>[]): StackOption<T>[] {
+  return options;
+}
+
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
   edrSolution: 'DEFENDER_FOR_ENDPOINT',
@@ -294,7 +308,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                {[
+                {stackOptions<EnclaveStackProfile['identityProvider']>([
                   {
                     id: 'ENTRA_ID_GOV',
                     title: 'Microsoft Entra ID (GovCloud / GCC High)',
@@ -327,12 +341,12 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Self-hosted Windows Server Active Directory domain controllers with Kerberos, LDAP, and smart card (PIV/CAC) authentication.',
                     features: ['Local Domain Controllers', 'Kerberos & PIV/CAC Smartcard', 'On-Premises Group Policy (GPO)'],
                   },
-                ].map((opt) => {
+                ]).map((opt) => {
                   const isSelected = stack.identityProvider === opt.id;
                   return (
                     <div
                       key={opt.id}
-                      onClick={() => setStack((prev) => ({ ...prev, identityProvider: opt.id as any }))}
+                      onClick={() => setStack((prev) => ({ ...prev, identityProvider: opt.id }))}
                       className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                         isSelected
                           ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-950/50 ring-1 ring-cyan-500/30'
@@ -392,7 +406,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                {[
+                {stackOptions<EnclaveStackProfile['edrSolution']>([
                   {
                     id: 'DEFENDER_FOR_ENDPOINT',
                     title: 'Microsoft Defender for Endpoint (Plan 2)',
@@ -425,12 +439,12 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Traditional signature-based antivirus protection with daily virus definition updates, host firewall, and real-time disk scanning.',
                     features: ['Daily Signature Definitions', 'Real-Time File Scanning', 'Host Perimeter Firewall'],
                   },
-                ].map((opt) => {
+                ]).map((opt) => {
                   const isSelected = stack.edrSolution === opt.id;
                   return (
                     <div
                       key={opt.id}
-                      onClick={() => setStack((prev) => ({ ...prev, edrSolution: opt.id as any }))}
+                      onClick={() => setStack((prev) => ({ ...prev, edrSolution: opt.id }))}
                       className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                         isSelected
                           ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-950/50 ring-1 ring-cyan-500/30'
@@ -490,7 +504,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                {[
+                {stackOptions<EnclaveStackProfile['infrastructure']>([
                   {
                     id: 'AZURE_GOV',
                     title: 'Microsoft Azure Government (GCC High)',
@@ -523,12 +537,12 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Physically separated and air-gapped facility datacenter running Red Hat Enterprise Linux 8/9 STIG baselines and VMware vSphere.',
                     features: ['Complete Network Isolation', 'OpenSCAP DISA STIG Automated', 'Physical Security Perimeter (PE)'],
                   },
-                ].map((opt) => {
+                ]).map((opt) => {
                   const isSelected = stack.infrastructure === opt.id;
                   return (
                     <div
                       key={opt.id}
-                      onClick={() => setStack((prev) => ({ ...prev, infrastructure: opt.id as any }))}
+                      onClick={() => setStack((prev) => ({ ...prev, infrastructure: opt.id }))}
                       className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                         isSelected
                           ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-950/50 ring-1 ring-cyan-500/30'
@@ -588,7 +602,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                {[
+                {stackOptions<EnclaveStackProfile['mdmSolution']>([
                   {
                     id: 'INTUNE',
                     title: 'Microsoft Intune',
@@ -621,12 +635,12 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Traditional Active Directory Domain Group Policy Objects (GPOs), physical USB device port locking, and local administrative controls.',
                     features: ['AD GPO Security Baselines', 'USB Mass Storage Block Policies', 'Air-Gapped Fleet Custody'],
                   },
-                ].map((opt) => {
+                ]).map((opt) => {
                   const isSelected = stack.mdmSolution === opt.id;
                   return (
                     <div
                       key={opt.id}
-                      onClick={() => setStack((prev) => ({ ...prev, mdmSolution: opt.id as any }))}
+                      onClick={() => setStack((prev) => ({ ...prev, mdmSolution: opt.id }))}
                       className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                         isSelected
                           ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-950/50 ring-1 ring-cyan-500/30'
@@ -686,7 +700,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                {[
+                {stackOptions<EnclaveStackProfile['siemSolution']>([
                   {
                     id: 'SENTINEL',
                     title: 'Microsoft Sentinel (Azure Gov)',
@@ -719,12 +733,12 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Encrypted syslog forwarders (rsyslog / auditd) sending logs to a dedicated, write-once immutable storage server inside the air-gap enclave.',
                     features: ['Write-Once Read-Many (WORM)', 'TLS Encrypted Syslog Stream', 'Local SHA-256 Checksums'],
                   },
-                ].map((opt) => {
+                ]).map((opt) => {
                   const isSelected = stack.siemSolution === opt.id;
                   return (
                     <div
                       key={opt.id}
-                      onClick={() => setStack((prev) => ({ ...prev, siemSolution: opt.id as any }))}
+                      onClick={() => setStack((prev) => ({ ...prev, siemSolution: opt.id }))}
                       className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                         isSelected
                           ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-950/50 ring-1 ring-cyan-500/30'

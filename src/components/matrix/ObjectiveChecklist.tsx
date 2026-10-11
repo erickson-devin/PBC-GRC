@@ -16,6 +16,7 @@ import {
   Ban,
   FileCheck,
   Sliders,
+  type LucideIcon,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -380,7 +381,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                       { id: 'NOT_MET', label: 'NOT MET', icon: AlertTriangle, active: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
                       { id: 'IN_PROGRESS', label: 'IN PROGRESS', icon: Clock, active: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
                       { id: 'NOT_APPLICABLE', label: 'N/A', icon: Ban, active: 'bg-slate-700 text-slate-200 border-slate-600' },
-                    ] as { id: ObjectiveStatus; label: string; icon: any; active: string }[]
+                    ] as { id: ObjectiveStatus; label: string; icon: LucideIcon; active: string }[]
                   ).map((s) => {
                     const isSelected = obj.status === s.id;
                     const IconComponent = s.icon;

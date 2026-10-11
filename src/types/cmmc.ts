@@ -27,6 +27,8 @@ export interface ControlDefinition {
   title: string;
   domain: DomainCode;
   farReference: string; // e.g. "FAR 52.204-21(b)(1)(i)"
+  authorityReference?: string; // framework-agnostic alias of farReference
+  domainName?: string; // human-readable domain / family name
   plainEnglishSummary: string;
   discussion: string;
   assessmentObjectives: string[];
@@ -34,7 +36,12 @@ export interface ControlDefinition {
   starterTemplates: StarterTemplate[];
 }
 
-export type EvidenceSyncStatus = 'local_cached' | 'gcs_synced' | 'gcs_signed_url';
+export type EvidenceSyncStatus =
+  | 'local_cached'
+  | 'local_storage'
+  | 'gcs_synced'
+  | 'gcs_signed_url'
+  | 'inherited'; // evidence reused from an equivalent control in another framework
 
 export interface EvidenceItem {
   id: string;
@@ -91,6 +98,15 @@ export interface AssessmentState {
   objectives?: Record<string, AssessmentObjective>;
 }
 
+export interface DomainStat {
+  total: number;
+  met: number;
+  inProgress: number;
+  notStarted: number;
+  notMet: number;
+  percentage: number;
+}
+
 export interface ComplianceMetrics {
   totalControls: number;
   metCount: number;
@@ -99,12 +115,6 @@ export interface ComplianceMetrics {
   notMetCount: number;
   completionPercentage: number;
   isSprsReady: boolean;
-  domainStats: Record<DomainCode, {
-    total: number;
-    met: number;
-    inProgress: number;
-    notStarted: number;
-    notMet: number;
-    percentage: number;
-  }>;
+  /** Keyed by the active framework's domain / family code (e.g. 'AC', 'CC6', 'TECH'). */
+  domainStats: Record<string, DomainStat>;
 }

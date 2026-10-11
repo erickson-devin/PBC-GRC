@@ -219,7 +219,7 @@ export const SSPBuilder: React.FC = () => {
               <select
                 disabled={!canEdit}
                 value={meta.samStatus}
-                onChange={(e) => updateSSPMetadata({ samStatus: e.target.value as any })}
+                onChange={(e) => updateSSPMetadata({ samStatus: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
               >
                 <option value="ACTIVE">ACTIVE - Compliant for Federal Award</option>

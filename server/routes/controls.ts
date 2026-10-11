@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import type pg from 'pg';
 import { queryWithTenant } from '../db';
 import {
   ComplianceFramework,
@@ -11,13 +12,14 @@ import {
   CANONICAL_CONTROL_MAPPINGS,
   getCrossFrameworkMappings,
 } from '../../src/data/frameworks';
+import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
 
 /**
  * Format DB row into client-compatible ControlState
  */
-function mapRowToControl(row: any) {
+function mapRowToControl(row: pg.QueryResultRow) {
   return {
     id: row.control_id,
     tenantId: row.tenant_id,
@@ -33,7 +35,7 @@ function mapRowToControl(row: any) {
 /**
  * Normalize framework, baseline, and overlay parameters from query
  */
-function normalizeFrameworkParams(query: any): {
+function normalizeFrameworkParams(query: Request['query']): {
   framework: ComplianceFramework;
   baseline: BaselineTier;
   overlay: OverlayParameter;
@@ -85,7 +87,10 @@ function normalizeFrameworkParams(query: any): {
  */
 router.get('/frameworks', (_req: Request, res: Response): void => {
   res.json({
-    frameworks: Object.values(FRAMEWORK_REGISTRY).map(f => ({
+    // The registry also holds aliases (e.g. 'nist-800-53-r5'); list each framework once, by canonical id.
+    frameworks: Object.entries(FRAMEWORK_REGISTRY)
+      .filter(([key, f]) => key === f.id)
+      .map(([, f]) => ({
       id: f.id,
       name: f.name,
       shortName: f.shortName,
@@ -163,17 +168,17 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       [tenantId]
     );
 
-    const existingMap = new Map<string, any>();
+    const existingMap = new Map<string, pg.QueryResultRow>();
     for (const row of result.rows) {
       existingMap.set(row.control_id, row);
     }
 
-    const controlsList: any[] = [];
+    const controlsList: ReturnType<typeof mapRowToControl>[] = [];
     const missingControls: string[] = [];
 
     for (const ctrl of frameworkControls) {
       if (existingMap.has(ctrl.id)) {
-        controlsList.push(mapRowToControl(existingMap.get(ctrl.id)));
+        controlsList.push(mapRowToControl(existingMap.get(ctrl.id)!));
       } else {
         missingControls.push(ctrl.id);
       }
@@ -248,11 +253,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       totalCount: controlsList.length,
       controls: controlsList,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(`[Controls API] Error fetching controls for tenant ${tenantId}:`, err);
     res.status(500).json({
       error: 'Failed to fetch control assessments',
-      details: err.message,
+      details: errorMessage(err),
     });
   }
 });
@@ -313,11 +318,11 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
       message: `Control ${controlId} updated successfully`,
       control: updated,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(`[Controls API] Error updating control ${controlId} for tenant ${tenantId}:`, err);
     res.status(500).json({
       error: `Failed to update control ${controlId}`,
-      details: err.message,
+      details: errorMessage(err),
     });
   }
 });

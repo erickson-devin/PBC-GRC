@@ -49,6 +49,7 @@ export interface FrameworkControlDefinition {
   framework: ComplianceFramework;
   domain: string; // Domain or Family code (e.g., 'AC', 'CC6', 'TECH')
   domainName: string;
+  farReference?: string; // legacy CMMC L1 field name, mirrors authorityReference
   authorityReference: string; // e.g., "FAR 52.204-21(b)(1)(i)", "NIST SP 800-53 Rev 5 AC-2", "AICPA TSC CC6.1"
   plainEnglishSummary: string;
   discussion: string;
@@ -98,3 +99,18 @@ export interface OverlayFilters {
   noMobileDevices?: boolean; // No mobile devices (excludes AC-19, etc.)
   noPiiProcessing?: boolean; // No PII processing (excludes PT family, privacy notices)
 }
+
+/** Shape returned by `GET /api/v1/controls/frameworks` (registry metadata without the domain/control tables). */
+export type FrameworkSummary = Pick<
+  FrameworkDefinition,
+  | 'id'
+  | 'name'
+  | 'shortName'
+  | 'version'
+  | 'authority'
+  | 'description'
+  | 'totalControls'
+  | 'defaultBaseline'
+  | 'supportedBaselines'
+  | 'supportsNonNetworkedOverlay'
+> & { domainCount: number };

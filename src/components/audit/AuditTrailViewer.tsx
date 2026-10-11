@@ -251,7 +251,7 @@ export const AuditTrailViewer: React.FC = () => {
             <span>Action:</span>
             <select
               value={selectedAction}
-              onChange={e => setSelectedAction(e.target.value as any)}
+              onChange={e => setSelectedAction(e.target.value as typeof selectedAction)}
               className="px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
             >
               <option value="ALL">All Actions</option>

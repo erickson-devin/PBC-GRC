@@ -10,6 +10,7 @@ import {
 import { FrameworkControlDefinition, ComplianceFramework } from '../../types/framework';
 import { ControlState, EvidenceItem, ControlStatus } from '../../types/cmmc';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
+import { computeDomainStats } from '../frameworks/domainStats';
 
 /**
  * Resolves the standard recommended document type for a given compliance framework.
@@ -53,6 +54,7 @@ export function calculateSummaryMetrics(
   const completionPercentage = total > 0 ? Math.round((metCount / total) * 100) : 0;
 
   return {
+    domainStats: computeDomainStats(controls, controlStates),
     totalControls: total,
     metCount,
     inProgressCount,

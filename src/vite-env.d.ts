@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_GCP_DATABASE_NAME?: string;
   readonly VITE_GCP_IDENTITY_DOMAIN?: string;
   readonly VITE_APP_URL?: string;
+  readonly VITE_API_URL?: string;
+  readonly VITE_PHOTON_URL?: string;
 
   // Firebase / Google Cloud Identity Platform
   readonly VITE_FIREBASE_API_KEY?: string;

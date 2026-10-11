@@ -17,8 +17,8 @@ import { buildDevMockIdToken } from './devAuthToken';
  * Reads from Vite environment variables with graceful fallback for dev & demo sandbox
  */
 const getEnv = (key: string, fallback: string = ''): string => {
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
-    return (import.meta as any).env[key];
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    return import.meta.env[key];
   }
   if (typeof process !== 'undefined' && process.env && process.env[key]) {
     return process.env[key]!;
@@ -118,7 +118,20 @@ export const checkIsSignInWithEmailLink = (url: string = window.location.href): 
   }
 };
 
-export const completeMagicLinkSignIn = async (email: string, url: string = window.location.href) => {
+/** The subset of a Firebase user the app consumes (also satisfied by the dev-only stand-in user). */
+export interface AuthUserLike {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  emailVerified: boolean;
+  photoURL: string | null;
+  getIdToken(): Promise<string>;
+}
+
+export const completeMagicLinkSignIn = async (
+  email: string,
+  url: string = window.location.href
+): Promise<{ user: AuthUserLike }> => {
   if (!auth || !isFirebaseConfigured) {
     if (!import.meta.env.DEV) {
       throw new Error('Firebase authentication is not configured; magic-link sign-in is unavailable.');
@@ -131,7 +144,7 @@ export const completeMagicLinkSignIn = async (email: string, url: string = windo
         emailVerified: true,
         photoURL: null,
         getIdToken: async () => buildDevMockIdToken({ sub: email, email }) ?? '',
-      } as any,
+      },
     };
   }
   return await signInWithEmailLink(auth, email, url);

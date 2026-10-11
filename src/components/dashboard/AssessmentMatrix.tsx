@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
@@ -28,7 +29,7 @@ interface AssessmentMatrixProps {
   onSelectControl?: (controlId: string) => void;
 }
 
-export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectControl }) => {
+const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectControl }) => {
   const {
     frameworkControls,
     state,
@@ -112,7 +113,7 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         const query = searchQuery.toLowerCase();
         const matchesId = ctrl.id.toLowerCase().includes(query);
         const matchesTitle = ctrl.title.toLowerCase().includes(query);
-        const refText = (ctrl.authorityReference || (ctrl as any).farReference || '').toLowerCase();
+        const refText = (ctrl.authorityReference || ctrl.farReference || '').toLowerCase();
         const matchesRef = refText.includes(query);
         const matchesSummary = (ctrl.plainEnglishSummary || '').toLowerCase().includes(query);
         const matchesNotes = (ctrlState?.implementationNotes || '').toLowerCase().includes(query);
@@ -389,7 +390,7 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             </span>
             <select
               value={selectedBaselineFilter}
-              onChange={(e) => setSelectedBaselineFilter(e.target.value as any)}
+              onChange={(e) => setSelectedBaselineFilter(e.target.value as typeof selectedBaselineFilter)}
               className="bg-slate-950 text-cyan-300 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-medium focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer shadow-sm hover:border-slate-700 transition-colors"
             >
               <option value="ALL">All Controls</option>
@@ -525,10 +526,10 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 const evidenceList = state.evidenceIndex.filter((e) => e.controlId === ctrl.id);
                 const evidenceCount = evidenceList.length;
                 const hasInheritedEvidence = evidenceList.some(
-                  (e) => (e.syncStatus as any) === 'inherited' || (e.description && e.description.startsWith('[Inherited'))
+                  (e) => e.syncStatus === 'inherited' || (e.description && e.description.startsWith('[Inherited'))
                 );
                 const hasNotes = Boolean(ctrlState?.implementationNotes && ctrlState.implementationNotes.trim().length > 0);
-                const authorityRef = ctrl.authorityReference || (ctrl as any).farReference || 'Baseline';
+                const authorityRef = ctrl.authorityReference || ctrl.farReference || 'Baseline';
                 const mappings = ctrl.mappings || [];
 
                 return (
@@ -652,6 +653,15 @@ export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       )}
 
     </div>
+  );
+};
+
+export const AssessmentMatrix: React.FC<AssessmentMatrixProps> = (props) => {
+  const { activeFramework } = useTenant();
+  return (
+    <ErrorBoundary name="Control Matrix" variant="panel" resetKeys={[activeFramework]}>
+      <AssessmentMatrixContent {...props} />
+    </ErrorBoundary>
   );
 };
 

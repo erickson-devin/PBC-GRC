@@ -3,6 +3,7 @@
  * Validates Ticket 1.1 functionality for Event Horizon GRC
  */
 
+import './testEnv';
 import app, { server } from '../server/index';
 import http from 'http';
 

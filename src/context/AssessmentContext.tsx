@@ -21,6 +21,7 @@ import {
 import { StorageService, createInitialState, createDemoState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
+import { computeDomainStats } from '../data/frameworks/domainStats';
 import { ApiClient } from '../services/apiClient';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent } from '../data/audit/auditLogger';
@@ -209,58 +210,23 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Calculate Real-time Compliance Metrics dynamically for active framework controls
   const metrics: ComplianceMetrics = useMemo(() => {
     const totalControls = frameworkControls.length;
+    const currentFwDef = FRAMEWORK_REGISTRY[activeFramework];
+    const domainStats = computeDomainStats(
+      frameworkControls,
+      state.controls,
+      currentFwDef?.domains ? Object.keys(currentFwDef.domains) : []
+    );
+
     let metCount = 0;
     let inProgressCount = 0;
     let notStartedCount = 0;
     let notMetCount = 0;
-
-    const domainStats: Record<string, {
-      total: number;
-      met: number;
-      inProgress: number;
-      notStarted: number;
-      notMet: number;
-      percentage: number;
-    }> = {};
-
-    const currentFwDef = FRAMEWORK_REGISTRY[activeFramework];
-    if (currentFwDef?.domains) {
-      for (const dCode of Object.keys(currentFwDef.domains)) {
-        domainStats[dCode] = { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 };
-      }
+    for (const stat of Object.values(domainStats)) {
+      metCount += stat.met;
+      inProgressCount += stat.inProgress;
+      notMetCount += stat.notMet;
+      notStartedCount += stat.notStarted;
     }
-
-    for (const ctrl of frameworkControls) {
-      const cState = state.controls[ctrl.id];
-      const status = cState?.status || 'NOT_STARTED';
-      const dCode = ctrl.domain;
-
-      if (!domainStats[dCode]) {
-        domainStats[dCode] = { total: 0, met: 0, inProgress: 0, notStarted: 0, notMet: 0, percentage: 0 };
-      }
-
-      domainStats[dCode].total += 1;
-
-      if (status === 'MET') {
-        metCount += 1;
-        domainStats[dCode].met += 1;
-      } else if (status === 'IN_PROGRESS') {
-        inProgressCount += 1;
-        domainStats[dCode].inProgress += 1;
-      } else if (status === 'NOT_MET') {
-        notMetCount += 1;
-        domainStats[dCode].notMet += 1;
-      } else {
-        notStartedCount += 1;
-        domainStats[dCode].notStarted += 1;
-      }
-    }
-
-    // Calculate domain completion percentages
-    Object.keys(domainStats).forEach(d => {
-      const stat = domainStats[d];
-      stat.percentage = stat.total > 0 ? Math.round((stat.met / stat.total) * 100) : 0;
-    });
 
     const completionPercentage = totalControls > 0 ? Math.round((metCount / totalControls) * 100) : 0;
     const isSprsReady = metCount === totalControls && totalControls > 0;
@@ -273,7 +239,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       notMetCount,
       completionPercentage,
       isSprsReady,
-      domainStats: domainStats as any,
+      domainStats,
     };
   }, [frameworkControls, state.controls, activeFramework]);
 

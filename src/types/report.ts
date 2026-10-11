@@ -1,5 +1,5 @@
 import { ComplianceFramework, BaselineTier } from './framework';
-import { ControlStatus, ComplianceMetrics } from './cmmc';
+import { ControlStatus, ComplianceMetrics, DomainStat } from './cmmc';
 
 export type ReportDocumentType =
   | 'NIST_SP_800_18_SSP'
@@ -91,6 +91,7 @@ export interface DocumentSummaryMetrics {
   notMetCount: number;
   notStartedCount: number;
   completionPercentage: number;
+  domainStats: Record<string, DomainStat>;
 }
 
 export interface CompiledDocument {

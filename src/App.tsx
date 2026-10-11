@@ -29,6 +29,7 @@ import { AssetInventoryManager } from './components/telemetry/AssetInventoryMana
 import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
@@ -394,13 +395,15 @@ const AppContent: React.FC = () => {
 
 export const App: React.FC = () => {
   return (
-    <TenantProvider>
-      <AuthProvider>
-        <AssessmentProvider>
-          <AppContent />
-        </AssessmentProvider>
-      </AuthProvider>
-    </TenantProvider>
+    <ErrorBoundary name="Application" variant="root">
+      <TenantProvider>
+        <AuthProvider>
+          <AssessmentProvider>
+            <AppContent />
+          </AssessmentProvider>
+        </AuthProvider>
+      </TenantProvider>
+    </ErrorBoundary>
   );
 };
 

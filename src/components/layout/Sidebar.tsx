@@ -106,7 +106,7 @@ export const Sidebar: React.FC = () => {
     : `${metrics.completionPercentage}%`;
 
   // Photon external URL — environment-configurable, falls back to Blake's beta instance
-  const photonUrl = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_PHOTON_URL)
+  const photonUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_PHOTON_URL)
     || 'http://beta.vpn.pitchblackcyber.com:8800/';
 
   // ── Section Definitions ─────────────────────────────────────────────────

@@ -314,6 +314,10 @@ async function runArtifactGeneratorTests() {
     assert(pkg.framework === 'CMMC_L1', 'Package framework matches assessment framework');
     assert(Boolean(pkg.integrityChecksum), `Generated SHA-256 integrity checksum (found: ${pkg.integrityChecksum.substring(0, 16)}...)`);
     assert(Object.keys(pkg.controls).length === cmmcL1Controls.length, `Package contains all evaluated controls (count: ${Object.keys(pkg.controls).length})`);
+    const domainStats = pkg.metrics.domainStats;
+    const domainTotal = Object.values(domainStats).reduce((sum, d) => sum + d.total, 0);
+    assert(Object.keys(domainStats).length > 0, `Package metrics contain populated domain stats (domains: ${Object.keys(domainStats).join(', ')})`);
+    assert(domainTotal === pkg.metrics.totalControls, 'Domain stats totals reconcile with totalControls');
     assert(pkg.evidenceIndex.length === 1, 'Package contains evidence index with hashes');
     assert(pkg.evidenceIndex[0].fileHash === mockEvidence[0].fileHash, 'Evidence SHA-256 hash preserved');
 

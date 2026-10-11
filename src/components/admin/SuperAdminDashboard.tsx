@@ -48,6 +48,7 @@ import {
   executeCryptographicDestruction,
 } from '../../data/storage/offboardingEngine';
 import { CertificateOfDestruction } from '../../types/audit';
+import { errorMessage } from '../../utils/errors';
 
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
@@ -260,11 +261,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         type: 'success',
         message: `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to export offboarding package:', err);
       setNotificationToast({
         type: 'error',
-        message: `Failed to export offboarding package: ${err.message || 'Unknown error'}`,
+        message: `Failed to export offboarding package: ${errorMessage(err) || 'Unknown error'}`,
       });
     } finally {
       setExportingTenantId(null);
@@ -327,11 +328,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         type: 'success',
         message: `Enclave "${selectedTenantForDestruction.name}" cryptographically destroyed. Certificate ${cert.certificateId} downloaded.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Cryptographic destruction failed:', err);
       setNotificationToast({
         type: 'error',
-        message: `Destruction protocol failed: ${err.message || 'Unknown error'}`,
+        message: `Destruction protocol failed: ${errorMessage(err) || 'Unknown error'}`,
       });
     } finally {
       setIsDestroying(false);
