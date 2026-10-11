@@ -224,7 +224,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
               </div>
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-500/40">
+                  <span className="badge text-[10px] uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-500/40">
                     DISA STIG & CIS BENCHMARK SUITE
                   </span>
                   <span className="text-xs text-slate-400 font-mono">
@@ -279,10 +279,10 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                       : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:bg-slate-850 border border-slate-800/70'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-cyan-400' : 'text-slate-400'}`} />
                   <span>{p.shortName}</span>
                   {p.isTacticalOverlay && (
-                    <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    <span className="badge text-[10px] uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
                       Air-Gapped
                     </span>
                   )}
@@ -298,10 +298,10 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   {selectedProfile.title}
                 </h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                <span className="badge text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                   {selectedProfile.version}
                 </span>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                <span className="badge text-[10px] font-semibold px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
                   {selectedProfile.authority}
                 </span>
               </div>
@@ -321,7 +321,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                   <span className="w-2 h-2 rounded-full bg-blue-400"></span>
                   CAT III: <strong className="text-slate-200">{severityCounts.CAT_III}</strong>
                 </span>
-                <span className="text-slate-500">|</span>
+                <span className="text-slate-400">|</span>
                 <span className="text-cyan-400">
                   <strong>{mappedToActiveCount}</strong> rules mapped to active framework
                 </span>
@@ -374,7 +374,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
             {/* Search Input */}
             <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
@@ -443,19 +443,19 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                 const snippetTab = activeSnippetTab[rule.id] || (rule.powershellSnippet ? 'powershell' : rule.bashSnippet ? 'bash' : 'ansible');
                 
                 let sevBadge = (
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                  <span className="badge text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
                     CAT III
                   </span>
                 );
                 if (rule.severity === 'CAT_I') {
                   sevBadge = (
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                    <span className="badge text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">
                       CAT I (CRITICAL)
                     </span>
                   );
                 } else if (rule.severity === 'CAT_II') {
                   sevBadge = (
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    <span className="badge text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
                       CAT II (MEDIUM)
                     </span>
                   );
@@ -477,8 +477,8 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                             {rule.ruleVersion}
                           </span>
                           {sevBadge}
-                          <span className="text-slate-500 text-xs">•</span>
-                          <span className="text-xs font-mono text-slate-500">
+                          <span className="text-slate-400 text-xs">•</span>
+                          <span className="text-xs font-mono text-slate-400">
                             {rule.id}
                           </span>
                         </div>
@@ -508,7 +508,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
 
                     {/* Mapped Framework Control Badges */}
                     <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                      <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-500 mr-1">
+                      <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 mr-1">
                         Controls:
                       </span>
                       {rule.mappedControlIds.map(cId => {
@@ -516,7 +516,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                         return (
                           <span
                             key={cId}
-                            className={`text-[10px] font-mono px-2 py-0.5 rounded-md ${
+                            className={`badge text-[10px] font-mono px-2 py-0.5 rounded-md ${
                               isCurrentActive
                                 ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-bold'
                                 : 'bg-slate-800 text-slate-300 border border-slate-700'
@@ -699,7 +699,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
           )}
 
           {/* Footer Bar */}
-          <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
+          <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 shrink-0">
             <span className="font-mono">
               Displaying {filteredRules.length} of {selectedProfile.rules.length} benchmark rules
             </span>

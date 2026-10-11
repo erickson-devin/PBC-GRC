@@ -294,7 +294,7 @@ export const EvidenceVaultView: React.FC = () => {
       {/* Evidence Table */}
       {filteredItems.length === 0 ? (
         <div className="text-center py-16 bg-slate-900/40 border border-slate-800 rounded-3xl p-8 space-y-3">
-          <Paperclip className="w-10 h-10 text-slate-500 mx-auto" />
+          <Paperclip className="w-10 h-10 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-white">No evidence files found for {currentTenant.name}</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
             Upload policies, screenshots, or configuration audits using the uploader above or inside any control detail view.
@@ -327,11 +327,11 @@ export const EvidenceVaultView: React.FC = () => {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="font-semibold text-white truncate max-w-xs">{item.name}</p>
-                              <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                              <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                                 GCS
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-500 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>
+                            <p className="text-[11px] text-slate-400 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>
                           </div>
                         </div>
                       </td>
@@ -351,7 +351,7 @@ export const EvidenceVaultView: React.FC = () => {
                             </span>
                           </button>
                         ) : (
-                          <span className="font-mono text-[11px] text-slate-500">{item.controlId}</span>
+                          <span className="font-mono text-[11px] text-slate-400">{item.controlId}</span>
                         )}
                       </td>
 
@@ -368,7 +368,7 @@ export const EvidenceVaultView: React.FC = () => {
                             {copiedHash === item.fileHash ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
                           </button>
                         ) : (
-                          <span className="text-slate-500">Uncalculated</span>
+                          <span className="text-slate-400">Uncalculated</span>
                         )}
                       </td>
 

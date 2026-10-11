@@ -44,6 +44,8 @@ pool.on('error', (err) => {
 
 import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data/frameworks/controlMappings';
 import { errorMessage } from '../src/utils/errors';
+import { isTenantRole } from '../src/utils/roles';
+import type { TenantRole } from '../src/types/tenant';
 
 // In-memory tenant isolation state for fallback when local PostgreSQL is not running
 interface InMemoryControl {
@@ -469,5 +471,34 @@ export async function isTenantMember(userId: string, tenantId: string): Promise<
     }
   } catch {
     return false;
+  }
+}
+
+/**
+ * Returns the user's role in the tenant from tenant_users, or null if there is no membership row.
+ * Fails closed (null) when the table is unavailable or the DB is in in-memory fallback mode.
+ */
+export async function getTenantRole(userId: string, tenantId: string): Promise<TenantRole | null> {
+  if (isUsingMemoryFallback || !userId || !tenantId) return null;
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+      const res = await client.query(
+        'SELECT role FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
+        [userId, tenantId]
+      );
+      await client.query('COMMIT');
+      const role: unknown = res.rows[0]?.role;
+      return isTenantRole(role) ? role : null;
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch {
+    return null;
   }
 }

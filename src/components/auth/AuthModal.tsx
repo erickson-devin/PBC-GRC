@@ -240,7 +240,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   Defense Assessor or External Auditor Email
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                  <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                   <input
                     type="email"
                     required
@@ -266,7 +266,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
 
-              <p className="text-[11px] text-slate-500 text-center">
+              <p className="text-[11px] text-slate-400 text-center">
                 Temporary access code valid for 15 minutes. No passwords required.
               </p>
             </form>
@@ -278,7 +278,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">Work Email</label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                  <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                   <input
                     type="email"
                     required
@@ -303,7 +303,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                     </button>
                   </div>
                   <div className="relative">
-                    <Key className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                    <Key className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                     <input
                       type="password"
                       required
@@ -375,7 +375,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                 <UserCheck className="w-3 h-3 text-brand-400" />
                 Evaluator Demo Personas:
               </span>
-              <span className="text-[9px] text-slate-500">1-Click Sandbox Login</span>
+              <span className="text-[10px] text-slate-400">1-Click Sandbox Login</span>
             </div>
 
             <div className="grid grid-cols-3 gap-1.5">
@@ -388,7 +388,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   <span className="block text-[10px] font-bold text-slate-200 group-hover:text-brand-300 truncate">
                     {preset.name.split(' ')[0]}
                   </span>
-                  <span className="block text-[9px] text-slate-500 truncate">
+                  <span className="block text-[10px] text-slate-400 truncate">
                     {preset.roles['tenant-vanguard-01'] === 'TENANT_OWNER' ? 'Owner' : 'Assessor'}
                   </span>
                 </button>
@@ -397,7 +397,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           </div>
 
           {/* Legal Links */}
-          <div className="mt-3 text-center text-[10px] text-slate-500">
+          <div className="mt-3 text-center text-[10px] text-slate-400">
             <span>By proceeding, you agree to our </span>
             <button
               type="button"

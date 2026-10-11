@@ -179,19 +179,19 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   const renderOsBadge = (os: string) => {
     switch (os) {
       case 'rhel9':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 9</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 9</span>;
       case 'rhel8':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 8</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 8</span>;
       case 'ubuntu2204':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">Ubuntu 22</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">Ubuntu 22</span>;
       case 'win2022':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/15 text-blue-300 border border-blue-500/30">Win 2022</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/15 text-blue-300 border border-blue-500/30">Win 2022</span>;
       case 'win11':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">Win 11</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">Win 11</span>;
       case 'cisco_ios':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Cisco IOS</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Cisco IOS</span>;
       default:
-        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">{os}</span>;
+        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">{os}</span>;
     }
   };
 
@@ -200,21 +200,21 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     switch (origin) {
       case 'ACCRETION_DISCOVERY':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40">
             <Radio className="w-2.5 h-2.5 text-cyan-400" />
             <span>ACCRETION DISCOVERY</span>
           </span>
         );
       case 'PHOTON_AGENT':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
             <Zap className="w-2.5 h-2.5 text-violet-400" />
             <span>PHOTON AGENT</span>
           </span>
         );
       case 'CSV_IMPORT':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/40">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/40">
             <FileSpreadsheet className="w-2.5 h-2.5 text-indigo-400" />
             <span>CSV IMPORT</span>
           </span>
@@ -222,7 +222,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       case 'MANUAL_ENTRY':
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
             <span>MANUAL ADMIN</span>
           </span>
         );
@@ -234,28 +234,28 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     switch (cat) {
       case 'CUI_ASSET':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
             <Database className="w-3 h-3 text-cyan-400" />
             <span>CUI Asset</span>
           </span>
         );
       case 'SECURITY_PROTECTION':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-500/15 text-violet-300 border border-violet-500/30">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-500/15 text-violet-300 border border-violet-500/30">
             <Lock className="w-3 h-3 text-violet-400" />
             <span>Security Protection (SPA)</span>
           </span>
         );
       case 'CONTRACTOR_RISK':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
             <AlertTriangle className="w-3 h-3 text-amber-400" />
             <span>Contractor Risk</span>
           </span>
         );
       case 'OUT_OF_SCOPE':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
             <span>Out of Scope</span>
           </span>
         );
@@ -362,7 +362,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             <Server className="w-4 h-4 text-cyan-400" />
           </div>
           <p className="text-2xl font-black text-white mt-1.5">{totalCount}</p>
-          <span className="text-[10px] text-slate-500">Endpoints registered</span>
+          <span className="text-[10px] text-slate-400">Endpoints registered</span>
         </div>
 
         <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-4">
@@ -397,7 +397,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       <div className="flex flex-col sm:flex-row items-center gap-3">
         {/* Search */}
         <div className="relative flex-1 w-full">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
@@ -462,7 +462,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
           <tbody className="divide-y divide-slate-800/60">
             {filteredAssets.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-500">
+                <td colSpan={7} className="py-8 text-center text-slate-400">
                   No enclave assets match your active filters.
                 </td>
               </tr>
@@ -494,7 +494,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                             </span>
                             {renderOriginBadge(asset.sourceOrigin)}
                             {asset.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                              <span className="badge px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
                                 UNCONFIRMED
                               </span>
                             )}
@@ -513,7 +513,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                       <div className="font-mono text-slate-200 text-xs">
                         {asset.ipAddress}
                       </div>
-                      <div className="font-mono text-[10px] text-slate-500">
+                      <div className="font-mono text-[10px] text-slate-400">
                         {asset.macAddress}
                       </div>
                     </td>
@@ -558,7 +558,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                               </button>
                               <button
                                 onClick={() => setClassifyingAsset(null)}
-                                className="text-center text-[10px] text-slate-500 hover:text-white pt-1"
+                                className="text-center text-[10px] text-slate-400 hover:text-white pt-1"
                               >
                                 Cancel
                               </button>
@@ -619,7 +619,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                           </span>
                         </div>
                       ) : (
-                        <span className="text-[10px] font-mono text-slate-500">Unscored</span>
+                        <span className="text-[10px] font-mono text-slate-400">Unscored</span>
                       )}
                     </td>
 

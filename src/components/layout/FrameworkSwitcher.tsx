@@ -13,7 +13,7 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { ComplianceFramework, ImpactLevel } from '../../types/framework';
-import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { FRAMEWORK_REGISTRY, getFrameworkFamilyCount } from '../../data/frameworks';
 
 export const FrameworkSwitcher: React.FC = () => {
   const {
@@ -66,16 +66,16 @@ export const FrameworkSwitcher: React.FC = () => {
       label: 'CMMC Level 1 (Foundational)',
       badge: 'FAR 52.204-21',
       authority: 'DoD CMMC 2.0',
-      count: 17,
-      description: '17 basic safeguarding requirements for Federal Contract Information (FCI).',
+      count: FRAMEWORK_REGISTRY.CMMC_L1.totalControls,
+      description: `${FRAMEWORK_REGISTRY.CMMC_L1.totalControls} basic safeguarding requirements across ${getFrameworkFamilyCount('CMMC_L1')} families for Federal Contract Information (FCI).`,
     },
     {
       id: 'CMMC_L2',
       label: 'CMMC Level 2 (Advanced)',
       badge: 'NIST 800-171',
       authority: 'DFARS 252.204-7012',
-      count: 110,
-      description: '110 security controls across 14 families for Controlled Unclassified Information (CUI).',
+      count: FRAMEWORK_REGISTRY.CMMC_L2.totalControls,
+      description: `${FRAMEWORK_REGISTRY.CMMC_L2.totalControls} security controls across ${getFrameworkFamilyCount('CMMC_L2')} families for Controlled Unclassified Information (CUI).`,
     },
     {
       id: 'NIST_800_53_REV5',
@@ -120,7 +120,7 @@ export const FrameworkSwitcher: React.FC = () => {
             <div className="text-[10px] text-slate-400 font-mono leading-none flex items-center gap-1">
               <span>SCOPE: {currentFrameworkDef.shortName}</span>
               {activeOverlayFilters.nonNetworkedOnly && (
-                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                <span className="badge text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
                   TACTICAL
                 </span>
               )}
@@ -147,7 +147,7 @@ export const FrameworkSwitcher: React.FC = () => {
             <div className="text-[10px] text-slate-400 font-mono leading-none flex items-center gap-1">
               <span>SCOPE: {enclaveFrameworks.length} ACTIVE</span>
               {activeOverlayFilters.nonNetworkedOnly && (
-                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                <span className="badge text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
                   TACTICAL
                 </span>
               )}
@@ -189,7 +189,7 @@ export const FrameworkSwitcher: React.FC = () => {
           <div className="px-2.5 py-1.5 border-b border-slate-800">
             <div className="text-xs font-bold text-white flex items-center justify-between">
               <span>Enclave Compliance Scopes ({availableFrameworks.length})</span>
-              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
+              <span className="badge text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
                 ENCLAVE-SCOPED GRC
               </span>
             </div>
@@ -225,7 +225,7 @@ export const FrameworkSwitcher: React.FC = () => {
                       <div>
                         <div className="text-xs font-bold flex items-center gap-1.5">
                           <span>{f.label}</span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                             {f.count}
                           </span>
                         </div>
@@ -283,7 +283,7 @@ export const FrameworkSwitcher: React.FC = () => {
                               e.stopPropagation();
                               setCiaImpact(dim, lvl);
                             }}
-                            className={`px-2 py-0.5 rounded text-[9px] font-bold transition-all ${
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
                               isSelected
                                 ? 'bg-brand-600 text-white shadow-sm'
                                 : 'bg-slate-800 text-slate-400 hover:text-slate-200'
@@ -310,10 +310,10 @@ export const FrameworkSwitcher: React.FC = () => {
               {/* Overlay 1: Non-Networked / Stand-alone / Air-gapped */}
               <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
                 <div className="flex items-center gap-2">
-                  <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400' : 'text-slate-500'}`} />
+                  <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400' : 'text-slate-400'}`} />
                   <div>
                     <div className="text-[10px] font-bold text-slate-300">Stand-Alone / Air-Gapped</div>
-                    <div className="text-[9px] text-slate-500">Excludes SC-7, AC-17, SC-8</div>
+                    <div className="text-[10px] text-slate-400">Excludes SC-7, AC-17, SC-8</div>
                   </div>
                 </div>
                 <button
@@ -324,7 +324,7 @@ export const FrameworkSwitcher: React.FC = () => {
                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
                     activeOverlayFilters.nonNetworkedOnly
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-300'
                   }`}
                 >
                   {activeOverlayFilters.nonNetworkedOnly ? 'Active' : 'Off'}
@@ -334,10 +334,10 @@ export const FrameworkSwitcher: React.FC = () => {
               {/* Overlay 2: No Wireless Capabilities */}
               <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
                 <div className="flex items-center gap-2">
-                  <Radio className={`w-3.5 h-3.5 ${activeOverlayFilters.noWireless ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  <Radio className={`w-3.5 h-3.5 ${activeOverlayFilters.noWireless ? 'text-cyan-400' : 'text-slate-400'}`} />
                   <div>
                     <div className="text-[10px] font-bold text-slate-300">No Wireless Capabilities</div>
-                    <div className="text-[9px] text-slate-500">Excludes AC-18 wireless access</div>
+                    <div className="text-[10px] text-slate-400">Excludes AC-18 wireless access</div>
                   </div>
                 </div>
                 <button
@@ -348,7 +348,7 @@ export const FrameworkSwitcher: React.FC = () => {
                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
                     activeOverlayFilters.noWireless
                       ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-300'
                   }`}
                 >
                   {activeOverlayFilters.noWireless ? 'Active' : 'Off'}
@@ -358,10 +358,10 @@ export const FrameworkSwitcher: React.FC = () => {
               {/* Overlay 3: No Mobile Devices */}
               <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
                 <div className="flex items-center gap-2">
-                  <Smartphone className={`w-3.5 h-3.5 ${activeOverlayFilters.noMobileDevices ? 'text-indigo-400' : 'text-slate-500'}`} />
+                  <Smartphone className={`w-3.5 h-3.5 ${activeOverlayFilters.noMobileDevices ? 'text-indigo-400' : 'text-slate-400'}`} />
                   <div>
                     <div className="text-[10px] font-bold text-slate-300">No Mobile Devices</div>
-                    <div className="text-[9px] text-slate-500">Excludes AC-19, MP-7 mobile controls</div>
+                    <div className="text-[10px] text-slate-400">Excludes AC-19, MP-7 mobile controls</div>
                   </div>
                 </div>
                 <button
@@ -372,7 +372,7 @@ export const FrameworkSwitcher: React.FC = () => {
                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
                     activeOverlayFilters.noMobileDevices
                       ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-300'
                   }`}
                 >
                   {activeOverlayFilters.noMobileDevices ? 'Active' : 'Off'}
@@ -382,10 +382,10 @@ export const FrameworkSwitcher: React.FC = () => {
               {/* Overlay 4: No PII Processing */}
               <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-950/40 text-xs">
                 <div className="flex items-center gap-2">
-                  <EyeOff className={`w-3.5 h-3.5 ${activeOverlayFilters.noPiiProcessing ? 'text-emerald-400' : 'text-slate-500'}`} />
+                  <EyeOff className={`w-3.5 h-3.5 ${activeOverlayFilters.noPiiProcessing ? 'text-emerald-400' : 'text-slate-400'}`} />
                   <div>
                     <div className="text-[10px] font-bold text-slate-300">No PII Processing</div>
-                    <div className="text-[9px] text-slate-500">Excludes PT family & privacy safeguards</div>
+                    <div className="text-[10px] text-slate-400">Excludes PT family & privacy safeguards</div>
                   </div>
                 </div>
                 <button
@@ -396,7 +396,7 @@ export const FrameworkSwitcher: React.FC = () => {
                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
                     activeOverlayFilters.noPiiProcessing
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                      : 'bg-slate-800 text-slate-500 hover:text-slate-300'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-300'
                   }`}
                 >
                   {activeOverlayFilters.noPiiProcessing ? 'Active' : 'Off'}

@@ -415,7 +415,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     <span className="text-xs font-semibold text-cyan-200">
                       Industry Best-Practice Defense Baseline Narrative
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/40">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/40">
                       FedRAMP Mod / Azure Gov / STIG
                     </span>
                   </div>
@@ -547,7 +547,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     <FileText className="w-3.5 h-3.5 text-slate-400" />
                     <span>Objective Implementation Narrative</span>
                     {hasConfirmedNarrative && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
                         Confirmed for SSP
                       </span>
                     )}
@@ -620,7 +620,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                         {canEdit && (
                           <button
                             onClick={() => linkEvidenceToObjective(obj.id, ev.id)}
-                            className="text-slate-500 hover:text-rose-400 ml-0.5 text-xs font-bold"
+                            className="text-slate-400 hover:text-rose-400 ml-0.5 text-xs font-bold"
                             title="Unlink from this objective"
                           >
                             ×

@@ -2,41 +2,56 @@
  * Event Horizon: Singularity - Automated SPRS & DoD eMASS Export Engine
  * Computes official DoD Supplier Performance Risk System (SPRS) scores (-203 to +110)
  * and generates structured eMASS Control Implementation Matrix CSVs.
+ *
+ * Source: NIST SP 800-171 DoD Assessment Methodology, Version 1.2.1 (24 June 2020), Annex A.
+ * Method: start at 110; for each requirement that is NOT implemented, subtract its value (5, 3 or 1).
+ * Annex A assigns 44 requirements 5 points, 14 requirements 3 points and 51 requirements 1 point
+ * (total 313, so a fully non-compliant system scores 110 - 313 = -203). Requirement 3.12.4 (the SSP)
+ * has no point value ("NA"): it gates scoring instead (see isSspComplete).
  */
 
 import { FrameworkControlDefinition } from '../../types/framework';
-import { ControlState } from '../../types/cmmc';
+import { ControlState, SSPMetadata } from '../../types/cmmc';
 import { ReportMetadata, POAMEntry } from '../../types/report';
 import { SprsScoreResult } from '../../types/audit';
 
-// 41 Controls @ 5 Points under DoD NIST SP 800-171 Rev 2 Assessment Methodology
+export const SPRS_MAX_SCORE = 110;
+export const SPRS_MIN_SCORE = -203;
+/** Sum of every Annex A deduction: SPRS_MAX_SCORE - SPRS_MIN_SCORE. */
+export const SPRS_TOTAL_POSSIBLE_DEDUCTION = 313;
+
+/** NIST SP 800-171 requirement that is the System Security Plan. Not point-weighted ("NA"); gates the score. */
+export const SPRS_SSP_REQUIREMENT = '3.12.4';
+
+// 44 requirements @ 5 points (Annex A, Version 1.2.1)
 export const SPRS_FIVE_POINT_REQUIREMENTS = new Set([
-  '3.1.1', '3.1.2', '3.1.12', '3.1.13', '3.1.14', '3.1.15', '3.1.16', '3.1.17', '3.1.18',
-  '3.3.1', '3.3.2',
-  '3.4.1', '3.4.2',
-  '3.5.1', '3.5.2', '3.5.3',
+  '3.1.1', '3.1.2', '3.1.12', '3.1.13', '3.1.16', '3.1.17', '3.1.18',
+  '3.2.1', '3.2.2',
+  '3.3.1', '3.3.5',
+  '3.4.1', '3.4.2', '3.4.5', '3.4.6', '3.4.7', '3.4.8',
+  '3.5.1', '3.5.2', '3.5.3', '3.5.10',
   '3.6.1', '3.6.2',
-  '3.7.2',
-  '3.8.1', '3.8.2', '3.8.3',
+  '3.7.2', '3.7.5',
+  '3.8.3', '3.8.7',
   '3.9.2',
   '3.10.1', '3.10.2',
-  '3.11.1',
+  '3.11.2',
   '3.12.1', '3.12.3',
-  '3.13.1', '3.13.2', '3.13.5', '3.13.8', '3.13.11', '3.13.15', '3.13.16',
-  '3.14.1', '3.14.2', '3.14.4', '3.14.5', '3.14.6', '3.14.7',
+  '3.13.1', '3.13.2', '3.13.5', '3.13.6', '3.13.11', '3.13.15',
+  '3.14.1', '3.14.2', '3.14.3', '3.14.4', '3.14.6',
 ]);
 
-// 14 Controls @ 3 Points under DoD NIST SP 800-171 Rev 2 Assessment Methodology
+// 14 requirements @ 3 points (Annex A, Version 1.2.1). Every other requirement except 3.12.4 is 1 point (51).
 export const SPRS_THREE_POINT_REQUIREMENTS = new Set([
   '3.1.5', '3.1.19',
-  '3.3.6',
-  '3.4.6', '3.4.7', '3.4.8',
-  '3.5.10',
-  '3.8.7',
-  '3.11.2', '3.11.3',
+  '3.3.2',
+  '3.7.1', '3.7.4',
+  '3.8.1', '3.8.2', '3.8.8',
+  '3.9.1',
+  '3.11.1',
   '3.12.2',
-  '3.13.6', '3.13.10',
-  '3.14.3',
+  '3.13.8',
+  '3.14.5', '3.14.7',
 ]);
 
 /**
@@ -49,32 +64,57 @@ export function extractNistRequirementId(controlId: string): string {
 }
 
 /**
- * Returns the DoD SPRS point deduction value (5, 3, or 1) for an unmet requirement.
+ * Returns the DoD SPRS point deduction (5, 3 or 1) for an unmet requirement,
+ * or 0 for 3.12.4 (SSP), which carries no point value.
  */
 export function getSprsPointDeduction(controlId: string): number {
   const nistId = extractNistRequirementId(controlId);
+  if (nistId === SPRS_SSP_REQUIREMENT) return 0;
   if (SPRS_FIVE_POINT_REQUIREMENTS.has(nistId)) return 5;
   if (SPRS_THREE_POINT_REQUIREMENTS.has(nistId)) return 3;
   return 1;
 }
 
+/** The SSP fields that must be filled in before a System Security Plan can be considered complete. */
+type SspIdentity = Pick<SSPMetadata, 'systemName' | 'organizationName' | 'systemOwner' | 'systemBoundaryScope'>;
+
+const hasText = (value: string | undefined | null): boolean => Boolean(value && value.trim().length > 0);
+
 /**
- * Calculates official DoD SPRS / CMMC Level 2 assessment score.
- * Standard CMMC Level 2 scoring strictly adheres to the 41 / 14 / 55 point distribution
- * with a hard floor of -203 (when 0 controls are met) and maximum score of +110.
+ * SSP gate. DoD Assessment Methodology section 5(g): the assessment is based on review of the SSP,
+ * so "it is not possible to conduct the assessment" without one. The SSP is complete when
+ * requirement 3.12.4 is marked MET AND the plan's identification and boundary fields are filled in.
+ */
+export function isSspComplete(
+  controls: FrameworkControlDefinition[],
+  controlStates: Record<string, ControlState>,
+  sspMetadata: SspIdentity | null | undefined
+): boolean {
+  const sspControl = controls.find((c) => extractNistRequirementId(c.id) === SPRS_SSP_REQUIREMENT);
+  if (!sspControl || controlStates[sspControl.id]?.status !== 'MET') return false;
+  if (!sspMetadata) return false;
+  return (
+    hasText(sspMetadata.systemName) &&
+    hasText(sspMetadata.organizationName) &&
+    hasText(sspMetadata.systemOwner) &&
+    hasText(sspMetadata.systemBoundaryScope)
+  );
+}
+
+/**
+ * Calculates the DoD SPRS / CMMC Level 2 assessment score.
  *
- * Formula:
- * totalDeductions = sum(unmetControlWeights)
- * sprsScore = Math.max(-203, 110 - totalDeductions)
- * Ensure that when 0 controls are MET, sprsScore yields exactly -203.
+ *   score = 110 - sum(value of every requirement that is not MET)
+ *
+ * Without a completed SSP (see isSspComplete) no score can be calculated: `score` is null and
+ * `scoreStatus` is 'NOT_SCORED'. Counts and deductions are still reported so the gap is visible.
+ * IN_PROGRESS and NOT_STARTED requirements count as not implemented; a POA&M earns no credit.
  */
 export function calculateSprsScore(
   controls: FrameworkControlDefinition[],
-  controlStates: Record<string, ControlState>
+  controlStates: Record<string, ControlState>,
+  sspMetadata: SspIdentity | null | undefined
 ): SprsScoreResult {
-  const minScore = -203;
-  const maxScore = 110;
-
   let totalDeductions = 0;
   let metCount = 0;
   let inProgressCount = 0;
@@ -88,39 +128,37 @@ export function calculateSprsScore(
   };
 
   for (const ctrl of controls) {
-    const state = controlStates[ctrl.id];
-    const status = state?.status || 'NOT_STARTED';
+    const status = controlStates[ctrl.id]?.status || 'NOT_STARTED';
     const weight = getSprsPointDeduction(ctrl.id);
 
     if (status === 'MET') {
       metCount++;
-    } else {
-      if (status === 'IN_PROGRESS') inProgressCount++;
-      else if (status === 'NOT_MET') notMetCount++;
-      else notStartedCount++;
-
-      totalDeductions += weight;
-
-      if (weight === 5) deductionsByWeight.fivePoint.push(ctrl.id);
-      else if (weight === 3) deductionsByWeight.threePoint.push(ctrl.id);
-      else deductionsByWeight.onePoint.push(ctrl.id);
+      continue;
     }
+
+    if (status === 'IN_PROGRESS') inProgressCount++;
+    else if (status === 'NOT_MET') notMetCount++;
+    else notStartedCount++;
+
+    if (weight === 0) continue; // 3.12.4: gates the score, carries no deduction
+
+    totalDeductions += weight;
+    if (weight === 5) deductionsByWeight.fivePoint.push(ctrl.id);
+    else if (weight === 3) deductionsByWeight.threePoint.push(ctrl.id);
+    else deductionsByWeight.onePoint.push(ctrl.id);
   }
 
   const completionPercentage = controls.length > 0 ? Math.round((metCount / controls.length) * 100) : 0;
-
-  // Formula: totalDeductions = sum(unmetControlWeights)
-  // sprsScore = Math.max(-203, 110 - totalDeductions)
-  // Ensure that when 0 controls are MET, sprsScore yields exactly -203.
-  let score = Math.max(minScore, maxScore - totalDeductions);
-  if (metCount === 0 && controls.length > 0) {
-    score = minScore;
-  }
+  const sspComplete = isSspComplete(controls, controlStates, sspMetadata);
 
   return {
-    score,
-    maxScore,
-    minScore,
+    score: sspComplete ? SPRS_MAX_SCORE - totalDeductions : null,
+    scoreStatus: sspComplete ? 'SCORED' : 'NOT_SCORED',
+    notScoredReason: sspComplete
+      ? undefined
+      : 'No completed System Security Plan (requirement 3.12.4). The DoD Assessment Methodology does not allow a score without one.',
+    maxScore: SPRS_MAX_SCORE,
+    minScore: SPRS_MIN_SCORE,
     totalControls: controls.length,
     metCount,
     inProgressCount,
@@ -187,7 +225,7 @@ export function generateEmassControlMatrixCsv(
       escapeCsv(ctrl.title),
       escapeCsv(ctrl.domain),
       escapeCsv(emassStatus),
-      escapeCsv(status === 'MET' ? 0 : -weight),
+      escapeCsv(status === 'MET' || weight === 0 ? 0 : -weight),
       escapeCsv(narrative),
       escapeCsv(role),
       escapeCsv(evalDate),
@@ -210,7 +248,12 @@ export function generateSprsAssessmentSummary(
   metadata: ReportMetadata,
   poamEntries: POAMEntry[] = []
 ): Record<string, any> {
-  const sprs = calculateSprsScore(controls, controlStates);
+  const sprs = calculateSprsScore(controls, controlStates, {
+    systemName: metadata.systemName,
+    organizationName: metadata.organizationName,
+    systemOwner: metadata.systemOwner,
+    systemBoundaryScope: metadata.boundaryDescription,
+  });
 
   return {
     sprsSubmissionHeader: {
@@ -231,7 +274,9 @@ export function generateSprsAssessmentSummary(
       enclaveBoundaryScope: metadata.boundaryDescription,
     },
     sprsMetrics: {
-      activeSprsScore: sprs.score,
+      activeSprsScore: sprs.score ?? 'NOT SCORED',
+      scoreStatus: sprs.scoreStatus,
+      notScoredReason: sprs.notScoredReason ?? null,
       maximumPossibleScore: sprs.maxScore,
       totalRequirementsEvaluated: sprs.totalControls,
       implementedControls: sprs.metCount,
@@ -239,7 +284,12 @@ export function generateSprsAssessmentSummary(
       unmetControls: sprs.notMetCount,
       totalDeductions: sprs.totalDeductions,
       readinessPercentage: `${sprs.completionPercentage}%`,
-      compliancePosture: sprs.score === 110 ? 'Full NIST SP 800-171 Compliance' : 'POA&M Remediation Underway',
+      compliancePosture:
+        sprs.scoreStatus === 'NOT_SCORED'
+          ? 'Not Scored: System Security Plan required'
+          : sprs.score === SPRS_MAX_SCORE
+          ? 'Full NIST SP 800-171 Compliance'
+          : 'POA&M Remediation Underway',
     },
     deficienciesBreakdown: {
       criticalFivePointDeductions: sprs.deductionsByWeight.fivePoint,
@@ -300,4 +350,10 @@ export function downloadSprsSummaryJson(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+/** Display text for a score: "+105", "-12", "0", or "Not Scored" when no completed SSP exists. */
+export function formatSprsScore(result: Pick<SprsScoreResult, 'score'>): string {
+  if (result.score === null) return 'Not Scored';
+  return result.score > 0 ? `+${result.score}` : String(result.score);
 }

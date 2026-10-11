@@ -133,6 +133,14 @@ async function runTestSuite() {
   // ==========================================================================
   console.log('\n--- Test Group 2: DoD SPRS Score & eMASS Submission Generator ---');
 
+  // Completed-SSP fixture: SPRS only scores when the SSP (3.12.4) exists, so every scored case provides one.
+  const SSP_META = {
+    systemName: 'Vanguard Enclave',
+    organizationName: 'Vanguard Defense Systems',
+    systemOwner: 'J. Doe, CISO',
+    systemBoundaryScope: 'Corporate enclave handling CUI',
+  };
+
   // 2.1 SPRS Point Deduction Weights
   assert(getSprsPointDeduction('AC.L1-3.1.1') === 5, 'AC.L1-3.1.1 carries 5-point deduction');
   assert(getSprsPointDeduction('3.1.1') === 5, 'Normalized 3.1.1 carries 5-point deduction');
@@ -153,7 +161,7 @@ async function runTestSuite() {
     };
   }
 
-  const perfectScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, perfectControlStates);
+  const perfectScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, perfectControlStates, SSP_META);
   assert(perfectScore.score === 110, 'Full compliance yields maximum 110 SPRS score');
   assert(perfectScore.totalDeductions === 0, 'Zero deductions on fully compliant assessment');
   assert(perfectScore.metCount === 110, 'All 110 controls met');
@@ -166,7 +174,7 @@ async function runTestSuite() {
     status: 'NOT_MET',
   };
 
-  const fivePointScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, fivePointDeficientStates);
+  const fivePointScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, fivePointDeficientStates, SSP_META);
   assert(fivePointScore.score === 105, '110 - 5 = 105 SPRS score for unmet 3.1.1');
   assert(fivePointScore.totalDeductions === 5, 'Total deductions is 5');
   assert(fivePointScore.deductionsByWeight.fivePoint.includes('AC.L1-3.1.1'), 'AC.L1-3.1.1 in 5-point list');
@@ -176,42 +184,48 @@ async function runTestSuite() {
   multiDeficientStates['AC.L2-3.1.5'] = { ...multiDeficientStates['AC.L2-3.1.5'], status: 'IN_PROGRESS' }; // -3
   multiDeficientStates['AC.L2-3.1.3'] = { ...multiDeficientStates['AC.L2-3.1.3'], status: 'NOT_MET' };     // -1
 
-  const multiScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, multiDeficientStates);
+  const multiScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, SSP_META);
   assert(multiScore.score === 101, '110 - (5+3+1) = 101 SPRS score');
   assert(multiScore.totalDeductions === 9, 'Total deductions is 9');
 
-  // 2.4.1 Zero Controls Met Yields Exactly -203 Hard Floor
+  // 2.4.1 Every requirement except the SSP unmet yields exactly -203 through plain arithmetic (110 - 313)
   const zeroControlStates: Record<string, ControlState> = {};
   for (const c of CMMC_LEVEL_2_CONTROLS) {
     zeroControlStates[c.id] = {
       id: c.id,
       tenantId: testTenant,
-      status: 'NOT_MET',
+      // 3.12.4 is the SSP itself (no point value): it must be MET for any score to exist.
+      status: c.id.includes('3.12.4') ? 'MET' : 'NOT_MET',
       implementationNotes: 'Not implemented.',
       responsibleRole: 'CISO',
       lastUpdated: '2026-09-14',
       tags: [],
     };
   }
-  const zeroScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, zeroControlStates);
-  assert(zeroScore.score === -203, '0 controls met yields exactly -203 SPRS score');
-  assert(zeroScore.metCount === 0, '0 controls met');
+  const zeroScore = calculateSprsScore(CMMC_LEVEL_2_CONTROLS, zeroControlStates, SSP_META);
+  assert(zeroScore.score === -203, 'all 109 weighted requirements unmet yields exactly -203 SPRS score');
+  assert(zeroScore.totalDeductions === 313, 'total possible deduction is 313');
+  assert(zeroScore.metCount === 1, 'only the SSP requirement (3.12.4) is met');
   assert(zeroScore.minScore === -203, 'minScore is -203');
 
-  // 2.4.2 Strict 41/14/55 Point Distribution Verification
+  // 2.4.2 DoD Assessment Methodology v1.2.1 Annex A distribution: 44 x 5, 14 x 3, 51 x 1, plus 3.12.4 (NA)
   let count5 = 0;
   let count3 = 0;
   let count1 = 0;
+  let count0 = 0;
   for (const c of CMMC_LEVEL_2_CONTROLS) {
     const w = getSprsPointDeduction(c.id);
     if (w === 5) count5++;
     else if (w === 3) count3++;
-    else count1++;
+    else if (w === 1) count1++;
+    else count0++;
   }
-  assert(count5 === 41, `Exactly 41 controls carry 5-point weight (found: ${count5})`);
+  assert(count5 === 44, `Exactly 44 controls carry 5-point weight (found: ${count5})`);
   assert(count3 === 14, `Exactly 14 controls carry 3-point weight (found: ${count3})`);
-  assert(count1 === 55, `Exactly 55 controls carry 1-point weight (found: ${count1})`);
-  assert(count5 + count3 + count1 === 110, 'All 110 CMMC Level 2 controls accounted for');
+  assert(count1 === 51, `Exactly 51 controls carry 1-point weight (found: ${count1})`);
+  assert(count0 === 1, `Exactly 1 control (3.12.4 SSP) carries no point value (found: ${count0})`);
+  assert(count5 + count3 + count1 + count0 === 110, 'All 110 CMMC Level 2 controls accounted for');
+  assert(count5 * 5 + count3 * 3 + count1 === 313, 'weights sum to 313 (= 110 - (-203))');
 
   // 2.5 eMASS Control Matrix CSV Generator
   const sampleMeta: ReportMetadata = {

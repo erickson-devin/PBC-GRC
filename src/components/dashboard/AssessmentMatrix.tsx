@@ -74,7 +74,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       const w = getSprsPointDeduction(c.id);
       if (w === 5) five++;
       else if (w === 3) three++;
-      else one++;
+      else if (w === 1) one++; // 3.12.4 (SSP) has no point value
     }
     return { five, three, one };
   }, [activeFramework, frameworkControls]);
@@ -224,7 +224,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             <div>
               <p className="font-bold text-white flex items-center gap-2">
                 <span>Tactical Non-Networked / Air-Gapped Overlay Active</span>
-                <span className="text-[10px] font-mono uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">Filtered</span>
+                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">Filtered</span>
               </p>
               <p className="text-[11px] text-amber-200/80 mt-0.5">
                 Boundary- and network-dependent controls (e.g. SC-7, SC-8, AC-17, AC-18) are excluded from active audit scope for standalone tactical enclaves.
@@ -461,7 +461,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       {/* Controls Display: Cards View vs Table View */}
       {filteredControls.length === 0 ? (
         <div className="stitch-card text-center py-16 p-8 space-y-3">
-          <HelpCircle className="w-10 h-10 text-slate-500 mx-auto" />
+          <HelpCircle className="w-10 h-10 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-white">No controls match your filter criteria</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
             Try clearing your search query or switching family and status filters.
@@ -606,7 +606,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                             </span>
                           ))}
                           {mappings.length > 2 && (
-                            <span className="text-[10px] text-slate-500 font-mono">+{mappings.length - 2}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">+{mappings.length - 2}</span>
                           )}
                         </div>
                       ) : (
@@ -617,16 +617,16 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                     {/* Evidence & Narrative */}
                     <td className="py-3 px-4 text-[11px]">
                       <div className="flex items-center gap-2 text-slate-400">
-                        <span className={`flex items-center gap-1 ${hasNotes ? 'text-emerald-400' : 'text-slate-500'}`}>
+                        <span className={`flex items-center gap-1 ${hasNotes ? 'text-emerald-400' : 'text-slate-400'}`}>
                           <FileEdit className="w-3 h-3" />
                           {hasNotes ? 'Drafted' : 'None'}
                         </span>
                         <span>•</span>
-                        <span className={`flex items-center gap-1 ${evidenceCount > 0 ? 'text-cyan-400' : 'text-slate-500'}`}>
+                        <span className={`flex items-center gap-1 ${evidenceCount > 0 ? 'text-cyan-400' : 'text-slate-400'}`}>
                           <Paperclip className="w-3 h-3" />
                           {evidenceCount}
                           {hasInheritedEvidence && (
-                            <span className="text-[9px] font-mono text-amber-300 bg-amber-500/20 border border-amber-500/30 px-1 rounded ml-1">
+                            <span className="text-[10px] font-mono text-amber-300 bg-amber-500/20 border border-amber-500/30 px-1 rounded ml-1">
                               Inherited
                             </span>
                           )}

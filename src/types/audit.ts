@@ -73,7 +73,10 @@ export interface CertificateOfDestruction {
 }
 
 export interface SprsScoreResult {
-  score: number;
+  /** null when the score cannot be calculated (no completed SSP): never display a number in that case. */
+  score: number | null;
+  scoreStatus: 'SCORED' | 'NOT_SCORED';
+  notScoredReason?: string;
   maxScore: number;
   minScore?: number;
   totalControls: number;

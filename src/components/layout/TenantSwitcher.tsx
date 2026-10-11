@@ -113,7 +113,7 @@ export const TenantSwitcher: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 text-[10px] text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
-              <span className="text-slate-500">•</span>
+              <span className="text-slate-400">•</span>
               <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
             </div>
           </div>
@@ -147,7 +147,7 @@ export const TenantSwitcher: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 text-[10px] text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
-              <span className="text-slate-500">•</span>
+              <span className="text-slate-400">•</span>
               <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
             </div>
           </div>
@@ -164,7 +164,7 @@ export const TenantSwitcher: React.FC = () => {
                   <Layers className="w-3.5 h-3.5 text-brand-400" />
                   Client Organizations ({tenants.length})
                 </span>
-                <span className="text-[10px] text-slate-500 font-mono">
+                <span className="text-[10px] text-slate-400 font-mono">
                   {isSandboxMode ? 'Sandbox Enclaves' : 'Isolated Data Boundaries'}
                 </span>
               </div>
@@ -210,7 +210,7 @@ export const TenantSwitcher: React.FC = () => {
                         </span>
                         {getSamBadge(t.samStatus)}
                       </div>
-                      <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                      <p className="text-[10px] text-slate-400 truncate mt-0.5">
                         {t.systemName}
                       </p>
                     </div>

@@ -116,7 +116,7 @@ const EvidencePreviewModalContent: React.FC = () => {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-white truncate">{previewEvidence.name}</h3>
-                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <Cloud className="w-2.5 h-2.5" /> GCS Cloud Scoped
                 </span>
               </div>

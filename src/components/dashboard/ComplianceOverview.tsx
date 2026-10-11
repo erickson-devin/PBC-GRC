@@ -17,7 +17,7 @@ import {
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
-import { calculateSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
+import { calculateSprsScore, formatSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { DomainCards } from './DomainCards';
 
@@ -33,10 +33,10 @@ export const ComplianceOverview: React.FC = () => {
   // Real-time CMMC L2 SPRS score (-203 to +110)
   const sprsResult = useMemo(() => {
     if (activeFramework === 'CMMC_L2') {
-      return calculateSprsScore(frameworkControls, state.controls);
+      return calculateSprsScore(frameworkControls, state.controls, state.sspMetadata);
     }
     return null;
-  }, [activeFramework, frameworkControls, state.controls]);
+  }, [activeFramework, frameworkControls, state.controls, state.sspMetadata]);
 
   // Progress Bar Percentage Math (Guaranteed to sum to 100% across totalCount)
   const metPct = totalCount > 0 ? (metrics.metCount / totalCount) * 100 : 0;
@@ -53,7 +53,8 @@ export const ComplianceOverview: React.FC = () => {
         weight: getSprsPointDeduction(c.id),
         status: state.controls[c.id]?.status || 'NOT_STARTED',
       }))
-      .sort((a, b) => b.weight - a.weight)
+      // The SSP requirement (3.12.4) has weight 0 but blocks scoring entirely, so it always ranks first.
+      .sort((a, b) => (b.weight === 0 ? 100 : b.weight) - (a.weight === 0 ? 100 : a.weight))
       .slice(0, 3);
   }, [frameworkControls, state.controls]);
 
@@ -161,12 +162,16 @@ export const ComplianceOverview: React.FC = () => {
                 </p>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className={`text-3xl sm:text-4xl font-black font-mono tracking-tight ${
-                    metrics.isSprsReady ? 'text-emerald-400' : sprsResult && sprsResult.score > 0 ? 'text-cyan-400' : 'text-white'
+                    sprsResult?.score == null ? (sprsResult ? 'text-amber-300' : 'text-white') : metrics.isSprsReady ? 'text-emerald-400' : sprsResult.score > 0 ? 'text-cyan-400' : 'text-white'
                   }`}>
-                    {sprsResult ? (sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score) : `${metrics.completionPercentage}%`}
+                    {sprsResult ? formatSprsScore(sprsResult) : `${metrics.completionPercentage}%`}
                   </span>
                   <span className="text-xs text-slate-400 font-mono">
-                    {sprsResult ? '(-203 to +110 range)' : `(${metrics.metCount}/${totalCount} MET)`}
+                    {sprsResult
+                      ? sprsResult.scoreStatus === 'NOT_SCORED'
+                        ? '(SSP required)'
+                        : '(-203 to +110 range)'
+                      : `(${metrics.metCount}/${totalCount} MET)`}
                   </span>
                 </div>
               </div>
@@ -300,7 +305,7 @@ export const ComplianceOverview: React.FC = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-mono text-xs font-bold text-cyan-400">{control.id}</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
                           {control.domain}
                         </span>
                       </div>
@@ -322,7 +327,7 @@ export const ComplianceOverview: React.FC = () => {
                       <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
                         {status.replace('_', ' ')}
                       </span>
-                      <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
                     </div>
                   </div>
                 ))}
@@ -384,7 +389,7 @@ export const ComplianceOverview: React.FC = () => {
                       <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       <span className="text-xs font-bold text-white">SHA-256 Validated</span>
                     </div>
-                    <p className="text-[10px] text-slate-500 mt-1 truncate">
+                    <p className="text-[10px] text-slate-400 mt-1 truncate">
                       {isLocal ? 'Local disk zero-leakage hash' : 'Chained cryptographic proof'}
                     </p>
                   </div>
@@ -397,7 +402,7 @@ export const ComplianceOverview: React.FC = () => {
                         {isLocal ? 'Air-Gapped Enclave' : 'DFARS 252.204-7012'}
                       </span>
                     </div>
-                    <p className="text-[10px] text-slate-500 mt-1">
+                    <p className="text-[10px] text-slate-400 mt-1">
                       {isLocal ? 'Persistent host volume' : '3-Year locked retention'}
                     </p>
                   </div>

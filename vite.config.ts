@@ -14,9 +14,11 @@ export default defineConfig({
     port: 5173,
     open: false,
     proxy: {
+      // Must match the Express server's PORT (server/index.ts defaults to 3000).
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:3000',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

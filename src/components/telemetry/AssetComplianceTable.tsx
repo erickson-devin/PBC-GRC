@@ -121,7 +121,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
       {/* Search and Filters */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
@@ -149,7 +149,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
           <tbody className="divide-y divide-slate-800/60">
             {filteredFleet.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-slate-500">
+                <td colSpan={7} className="py-6 text-center text-slate-400">
                   No enclave endpoints matching "{searchQuery}"
                 </td>
               </tr>
@@ -180,7 +180,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                           <span className="font-mono font-bold text-white block">
                             {asset.hostName}
                           </span>
-                          <span className="text-[10px] font-mono text-slate-500">
+                          <span className="text-[10px] font-mono text-slate-400">
                             {asset.macAddress}
                           </span>
                         </div>
@@ -202,7 +202,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                     {/* Last Scan Time */}
                     <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px]">
                       <div className="flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-slate-500" />
+                        <Clock className="w-3 h-3 text-slate-400" />
                         <span>{new Date(asset.lastScanTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     </td>

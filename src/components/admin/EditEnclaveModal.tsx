@@ -13,6 +13,7 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { Tenant, CommercialLicenseTier, normalizeLicenseTier } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
+import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 
 interface EditEnclaveModalProps {
   isOpen: boolean;
@@ -22,8 +23,8 @@ interface EditEnclaveModalProps {
 }
 
 const ALL_FRAMEWORKS: { id: ComplianceFramework; label: string; shortName: string; authority: string }[] = [
-  { id: 'CMMC_L1', label: 'CMMC 2.0 Level 1 (Foundational)', shortName: 'CMMC Level 1', authority: 'FAR 52.204-21 • 17 Controls' },
-  { id: 'CMMC_L2', label: 'CMMC 2.0 Level 2 (Advanced)', shortName: 'CMMC Level 2', authority: 'DFARS 252.204-7012 • 110 Controls' },
+  { id: 'CMMC_L1', label: 'CMMC 2.0 Level 1 (Foundational)', shortName: 'CMMC Level 1', authority: `FAR 52.204-21 • ${FRAMEWORK_REGISTRY.CMMC_L1.totalControls} Controls` },
+  { id: 'CMMC_L2', label: 'CMMC 2.0 Level 2 (Advanced)', shortName: 'CMMC Level 2', authority: `DFARS 252.204-7012 • ${FRAMEWORK_REGISTRY.CMMC_L2.totalControls} Controls` },
   { id: 'NIST_800_53_REV5', label: 'NIST SP 800-53 Rev 5', shortName: 'NIST SP 800-53', authority: 'Federal Low/Mod Baselines' },
   { id: 'SOC_2_TYPE_II', label: 'AICPA SOC 2 Type II', shortName: 'SOC 2 Type II', authority: 'Trust Services Criteria (CC1–CC9)' },
   { id: 'HIPAA_SECURITY', label: 'HIPAA Security Rule', shortName: 'HIPAA Security', authority: '45 CFR Part 164 Subpart C' },
@@ -175,7 +176,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                   Organization Legal Name *
                 </label>
                 <div className="relative">
-                  <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     required
@@ -213,7 +214,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                 </span>
               </div>
               <div className="relative">
-                <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="email"
                   required
@@ -250,7 +251,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     {licenseTier === 'FOUNDATIONAL' && <Check className="w-3.5 h-3.5 text-cyan-400" />}
                   </div>
                   <div className="text-base font-black text-cyan-300 font-mono">$3,500<span className="text-[10px] font-normal text-slate-400">/yr</span></div>
-                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">Small suppliers • CMMC L1 (17 controls)</p>
+                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">Small suppliers • CMMC L1 ({FRAMEWORK_REGISTRY.CMMC_L1.totalControls} controls)</p>
                 </button>
 
                 {/* Defense Pro */}
@@ -263,7 +264,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                       : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
                   }`}
                 >
-                  <div className="absolute -top-2 right-2 px-1.5 py-0.2 rounded-full bg-brand-500 text-[8px] font-mono font-bold text-white uppercase tracking-wider">
+                  <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-brand-500 text-[10px] font-mono font-bold text-white uppercase tracking-wider">
                     Recommended
                   </div>
                   <div className="flex items-center justify-between mb-1">
@@ -273,7 +274,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     {licenseTier === 'DEFENSE_PRO' && <Check className="w-3.5 h-3.5 text-brand-400" />}
                   </div>
                   <div className="text-base font-black text-brand-300 font-mono">$7,000<span className="text-[10px] font-normal text-slate-400">/yr</span></div>
-                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">DoD Primes & Subs • CMMC L2 (110 controls)</p>
+                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">DoD Primes & Subs • CMMC L2 ({FRAMEWORK_REGISTRY.CMMC_L2.totalControls} controls)</p>
                 </button>
 
                 {/* Enterprise */}
@@ -346,7 +347,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                         className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-colors ${
                           isEnabled
                             ? 'bg-slate-900/80 border-cyan-500/30 text-white'
-                            : 'bg-slate-950 border-slate-800/80 text-slate-500 hover:border-slate-700'
+                            : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:border-slate-700'
                         }`}
                       >
                         <div className="flex items-center gap-2.5">
@@ -361,12 +362,12 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                             <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                               <span>{fw.label}</span>
                               {isPrimary && (
-                                <span className="text-[9px] font-mono font-bold text-cyan-300 bg-cyan-500/20 px-1.5 py-0.2 rounded border border-cyan-500/30">
+                                <span className="text-[10px] font-mono font-bold text-cyan-300 bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30">
                                   PRIMARY
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10px] font-mono text-slate-500">{fw.authority}</div>
+                            <div className="text-[10px] font-mono text-slate-400">{fw.authority}</div>
                           </div>
                         </div>
 

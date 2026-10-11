@@ -290,7 +290,7 @@ Website: https://pitchblackcyber.com`,
           {/* Search + Action Icons */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1 sm:w-60">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-500" />
+              <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search clause or policy..."
@@ -351,7 +351,7 @@ Website: https://pitchblackcyber.com`,
           </div>
 
           {filteredSections.length === 0 ? (
-            <div className="py-12 text-center text-slate-500">
+            <div className="py-12 text-center text-slate-400">
               No matching sections found for "{searchQuery}".
             </div>
           ) : (
@@ -370,7 +370,7 @@ Website: https://pitchblackcyber.com`,
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
           <div className="flex items-center gap-4">
             <span>Questions?</span>
             <a

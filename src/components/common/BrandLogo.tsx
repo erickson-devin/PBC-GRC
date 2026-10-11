@@ -21,7 +21,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       emblem: 'w-7 h-7',
       padding: 'p-0.5',
       title: 'text-xs font-bold',
-      subtitle: 'text-[9px]',
+      subtitle: 'text-[10px]',
       gap: 'gap-2',
     },
     md: {

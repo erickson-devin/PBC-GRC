@@ -162,7 +162,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                     )}
                   </button>
                 </div>
-                <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                <p className="text-[11px] text-slate-400 flex items-center gap-1">
                   <Lock className="w-3 h-3 text-slate-400" />
                   Token valid for 14 days • Single-use cryptographic claim
                 </p>
@@ -206,7 +206,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                   Staff / Auditor Work Email <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
                     required

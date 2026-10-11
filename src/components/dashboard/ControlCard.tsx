@@ -257,7 +257,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               className="text-base font-bold text-white hover:text-cyan-300 transition-colors cursor-pointer inline-flex items-center gap-2"
             >
               <span>{control.title}</span>
-              <ExternalLink className="w-3.5 h-3.5 text-slate-500 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <ExternalLink className="w-3.5 h-3.5 text-slate-400 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity" />
             </h3>
             <p className="text-xs text-slate-300/90 leading-relaxed mt-1">
               {control.plainEnglishSummary}
@@ -297,7 +297,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           {/* Cross-Framework Mappings (Inheritance Bridges) */}
           {control.mappings && control.mappings.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-              <span className="text-[10px] font-mono font-semibold text-slate-500 uppercase">Equivalencies:</span>
+              <span className="text-[10px] font-mono font-semibold text-slate-400 uppercase">Equivalencies:</span>
               {control.mappings.slice(0, 4).map((m, idx) => (
                 <span
                   key={idx}
@@ -308,7 +308,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                 </span>
               ))}
               {control.mappings.length > 4 && (
-                <span className="text-[10px] text-slate-500 font-mono">+{control.mappings.length - 4} more</span>
+                <span className="text-[10px] text-slate-400 font-mono">+{control.mappings.length - 4} more</span>
               )}
             </div>
           )}
@@ -317,7 +317,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           <div className="flex items-center gap-4 text-xs pt-1 flex-wrap">
             <span
               className={`flex items-center gap-1.5 font-medium ${
-                hasNotes ? 'text-emerald-400' : 'text-slate-500'
+                hasNotes ? 'text-emerald-400' : 'text-slate-400'
               }`}
             >
               <FileEdit className="w-3.5 h-3.5" />
@@ -326,7 +326,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
             <span
               className={`flex items-center gap-1.5 font-medium ${
-                evidenceCount > 0 ? 'text-cyan-400' : 'text-slate-500'
+                evidenceCount > 0 ? 'text-cyan-400' : 'text-slate-400'
               }`}
             >
               <Paperclip className="w-3.5 h-3.5" />
@@ -453,7 +453,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                 <Paperclip className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Audit Evidence Drop-Zone ({evidenceCount} attached)</span>
               </span>
-              <span className="text-[11px] text-slate-500">SHA-256 Validated • GCS Vault</span>
+              <span className="text-[11px] text-slate-400">SHA-256 Validated • GCS Vault</span>
             </div>
 
             {canEdit ? (
@@ -529,7 +529,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                             <span>{Math.round(item.fileSize / 1024)} KB</span>
                             <span>•</span>
                             {isInherited ? (
-                              <span className="text-amber-300 font-medium px-1 py-0.2 rounded bg-amber-500/20 border border-amber-500/30 flex items-center gap-0.5">
+                              <span className="text-amber-300 font-medium px-1 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 flex items-center gap-0.5">
                                 Cross-Framework Inherited
                               </span>
                             ) : (

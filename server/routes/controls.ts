@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type pg from 'pg';
 import { queryWithTenant } from '../db';
+import { requireWriteRole } from '../middleware/roleGuard';
 import {
   ComplianceFramework,
   BaselineTier,
@@ -15,6 +16,9 @@ import {
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
+
+// Read-only roles (ASSESSOR, VIEWER) may GET but never POST / PUT / DELETE.
+router.use(requireWriteRole);
 
 /**
  * Format DB row into client-compatible ControlState

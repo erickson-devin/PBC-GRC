@@ -12,6 +12,7 @@ import {
   EnclaveStackProfile,
 } from '../types/tenant';
 import { errorMessage } from '../utils/errors';
+import { canRoleWrite, isTenantRole } from '../utils/roles';
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { ApiClient, UploadUrlResponse } from '../services/apiClient';
@@ -982,16 +983,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [isSandboxMode, needsOnboarding]);
 
   // Current role in active tenant
+  // Fail closed: a user with no explicit role in this tenant is a read-only VIEWER.
+  // (Platform super admins keep owner-level access to every enclave.)
   const currentRole: TenantRole = useMemo(() => {
-    if (currentUser.roles && currentUser.roles[currentTenant.id]) {
-      return currentUser.roles[currentTenant.id];
-    }
-    return 'TENANT_OWNER';
-  }, [currentUser.roles, currentTenant.id]);
+    const explicitRole = currentUser.roles?.[currentTenant.id];
+    if (isTenantRole(explicitRole)) return explicitRole;
+    return isSuperAdminUser(currentUser) ? 'TENANT_OWNER' : 'VIEWER';
+  }, [currentUser, currentTenant.id]);
 
-  const canEdit = useMemo(() => {
-    return currentRole === 'TENANT_OWNER' || currentRole === 'ASSESSOR' || currentRole === 'MSP_ADMIN';
-  }, [currentRole]);
+  // Only TENANT_OWNER and MSP_ADMIN may edit; ASSESSOR and VIEWER are read-only.
+  const canEdit = useMemo(() => canRoleWrite(currentRole), [currentRole]);
 
   const canManageTenant = useMemo(() => {
     return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';

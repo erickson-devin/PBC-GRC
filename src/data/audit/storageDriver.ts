@@ -41,6 +41,8 @@ const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /** Last storage configuration reported by the server (single source of truth). */
 let serverStorageConfig: StorageConfig | null = null;
+/** Cached env-derived default used until the server answers (keeps getStorageConfig referentially stable). */
+let fallbackStorageConfig: StorageConfig | null = null;
 const configListeners = new Set<() => void>();
 
 function nodeEnv(key: string): string | undefined {
@@ -60,14 +62,24 @@ export function setServerStorageConfig(info: {
   isAirGapped?: boolean;
 }): StorageConfig {
   const provider = normalizeProvider(info.provider);
-  serverStorageConfig = {
+  const next: StorageConfig = {
     provider,
     localStoragePath: info.localStoragePath || DEFAULT_LOCAL_STORAGE_PATH,
     isAirGapped: info.isAirGapped ?? provider === 'local',
     maxUploadSizeBytes: DEFAULT_MAX_UPLOAD_BYTES,
   };
+  const prev = serverStorageConfig;
+  if (
+    prev &&
+    prev.provider === next.provider &&
+    prev.localStoragePath === next.localStoragePath &&
+    prev.isAirGapped === next.isAirGapped
+  ) {
+    return prev; // unchanged: keep the same reference and skip notifying subscribers
+  }
+  serverStorageConfig = next;
   configListeners.forEach((listener) => listener());
-  return serverStorageConfig;
+  return next;
 }
 
 /** Returns the config last fetched from the server, or null if none has been loaded yet. */
@@ -129,13 +141,24 @@ export function isLocalStorageProvider(): boolean {
  */
 export function getStorageConfig(): StorageConfig {
   if (serverStorageConfig) return serverStorageConfig;
+
+  // This is the `getSnapshot` for useSyncExternalStore, so it MUST return the same object
+  // reference while nothing has changed; a fresh object per call makes React re-render forever.
   const provider = getStorageProvider();
-  return {
-    provider,
-    localStoragePath: getLocalStoragePath(),
-    isAirGapped: provider === 'local',
-    maxUploadSizeBytes: DEFAULT_MAX_UPLOAD_BYTES,
-  };
+  const localStoragePath = getLocalStoragePath();
+  if (
+    !fallbackStorageConfig ||
+    fallbackStorageConfig.provider !== provider ||
+    fallbackStorageConfig.localStoragePath !== localStoragePath
+  ) {
+    fallbackStorageConfig = {
+      provider,
+      localStoragePath,
+      isAirGapped: provider === 'local',
+      maxUploadSizeBytes: DEFAULT_MAX_UPLOAD_BYTES,
+    };
+  }
+  return fallbackStorageConfig;
 }
 
 /**

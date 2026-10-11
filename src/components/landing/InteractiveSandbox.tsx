@@ -92,7 +92,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                 >
                   <Building className="w-3.5 h-3.5" />
                   <span>Vanguard Defense (100% MET)</span>
-                  <span className="px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-200 text-[10px]">17/17</span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200 text-[10px]">17/17</span>
                 </button>
 
                 <button
@@ -105,7 +105,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                 >
                   <Building className="w-3.5 h-3.5" />
                   <span>Apex Aerospace (59% MET)</span>
-                  <span className="px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-200 text-[10px]">10/17</span>
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200 text-[10px]">10/17</span>
                 </button>
               </div>
 
@@ -190,7 +190,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-mono font-bold text-brand-400">{ctrl.id}</span>
-                              <span className="text-[10px] uppercase font-semibold px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
+                              <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
                                 {ctrl.domain}
                               </span>
                             </div>

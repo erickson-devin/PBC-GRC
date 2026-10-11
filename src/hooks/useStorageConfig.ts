@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
   fetchStorageConfig,
   getStorageConfig,
@@ -19,5 +19,6 @@ export function useStorageConfig(tenantId: string | undefined): StorageConfig & 
     void fetchStorageConfig(tenantId);
   }, [tenantId]);
 
-  return { ...config, loaded: getServerStorageConfig() !== null };
+  const loaded = getServerStorageConfig() !== null;
+  return useMemo(() => ({ ...config, loaded }), [config, loaded]);
 }

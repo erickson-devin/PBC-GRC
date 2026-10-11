@@ -4,6 +4,7 @@ import { TenantProvider, useTenant } from './context/TenantContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AssessmentProvider, useAssessment } from './context/AssessmentContext';
 import { Header } from './components/layout/Header';
+import { getFrameworkTitle } from './data/frameworks';
 import { Sidebar } from './components/layout/Sidebar';
 import { ComplianceOverview } from './components/dashboard/ComplianceOverview';
 import { ControlsList } from './components/controls/ControlsList';
@@ -34,10 +35,11 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
 const AppContent: React.FC = () => {
-  const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
+  const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen, metrics } = useAssessment();
   const { openLicenseModal } = useAuth();
   const {
     currentTenant,
+    activeFramework,
     switchTenant,
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
@@ -219,7 +221,10 @@ const AppContent: React.FC = () => {
                 Live Demo Sandbox
               </span>
               <span className="text-slate-200 text-xs">
-                LIVE DEMO SANDBOX — Exploring <strong className="text-white">{currentTenant.name}</strong> (CMMC Level 1 Readiness: <strong className="text-emerald-400">100% Met • 17/17 Controls</strong>)
+                LIVE DEMO SANDBOX — Exploring <strong className="text-white">{currentTenant.name}</strong> ({getFrameworkTitle(activeFramework)} Readiness:{' '}
+                <strong className={metrics.isSprsReady ? 'text-emerald-400' : 'text-amber-300'}>
+                  {metrics.completionPercentage}% Met • {metrics.metCount}/{metrics.totalControls} Controls
+                </strong>)
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0">

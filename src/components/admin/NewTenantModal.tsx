@@ -17,6 +17,7 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { Tenant, TenantInvitation, LicenseTier, getLicenseTierBadge } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
+import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 
 interface NewTenantModalProps {
   isOpen: boolean;
@@ -25,8 +26,8 @@ interface NewTenantModalProps {
 }
 
 const ALL_FRAMEWORKS: { id: ComplianceFramework; label: string; shortName: string; authority: string }[] = [
-  { id: 'CMMC_L1', label: 'CMMC 2.0 Level 1 (Foundational)', shortName: 'CMMC Level 1', authority: 'FAR 52.204-21 • 17 Controls' },
-  { id: 'CMMC_L2', label: 'CMMC 2.0 Level 2 (Advanced)', shortName: 'CMMC Level 2', authority: 'DFARS 252.204-7012 • 110 Controls' },
+  { id: 'CMMC_L1', label: 'CMMC 2.0 Level 1 (Foundational)', shortName: 'CMMC Level 1', authority: `FAR 52.204-21 • ${FRAMEWORK_REGISTRY.CMMC_L1.totalControls} Controls` },
+  { id: 'CMMC_L2', label: 'CMMC 2.0 Level 2 (Advanced)', shortName: 'CMMC Level 2', authority: `DFARS 252.204-7012 • ${FRAMEWORK_REGISTRY.CMMC_L2.totalControls} Controls` },
   { id: 'NIST_800_53_REV5', label: 'NIST SP 800-53 Rev 5', shortName: 'NIST SP 800-53', authority: 'Federal Low/Mod Baselines' },
   { id: 'SOC_2_TYPE_II', label: 'AICPA SOC 2 Type II', shortName: 'SOC 2 Type II', authority: 'Trust Services Criteria (CC1–CC9)' },
   { id: 'HIPAA_SECURITY', label: 'HIPAA Security Rule', shortName: 'HIPAA Security', authority: '45 CFR Part 164 Subpart C' },
@@ -246,7 +247,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     )}
                   </button>
                 </div>
-                <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-1">
+                <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-1">
                   <Lock className="w-3 h-3 text-slate-400" />
                   Token: <span className="font-mono text-slate-400">{createdResult.invitation.token.slice(0, 18)}...</span> (Single-use SHA-256 bound)
                 </p>
@@ -292,7 +293,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   Company Legal Entity Name <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
-                  <Building2 className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     required
@@ -347,7 +348,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   System Boundary Name (SSP Title)
                 </label>
                 <div className="relative">
-                  <Layers className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Layers className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     placeholder="e.g. Corporate Operations Enclave (COE)"
@@ -388,7 +389,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                       </option>
                     ))}
                   </select>
-                  <p className="text-[10px] text-slate-500 mt-1">
+                  <p className="text-[10px] text-slate-400 mt-1">
                     Default compliance baseline loaded upon enclave activation.
                   </p>
                 </div>
@@ -410,7 +411,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                               ? 'bg-brand-500/10 border-brand-500/40 text-brand-200'
                               : isChecked
                               ? 'bg-slate-800/80 border-slate-600 text-slate-200'
-                              : 'bg-slate-950/50 border-slate-800/80 text-slate-500 hover:border-slate-700'
+                              : 'bg-slate-950/50 border-slate-800/80 text-slate-400 hover:border-slate-700'
                           }`}
                         >
                           <input
@@ -424,7 +425,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                             <div className="flex items-center gap-1.5 font-semibold text-[11px] leading-tight">
                               <span className="truncate">{fw.shortName}</span>
                               {isPrimary && (
-                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-brand-500/30 text-brand-300 font-mono shrink-0">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-500/30 text-brand-300 font-mono shrink-0">
                                   PRIMARY
                                 </span>
                               )}
@@ -446,7 +447,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   Tenant Owner Email (Designated Lead) <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
                     required
@@ -456,7 +457,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     className="w-full pl-10 pr-3 py-2.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 font-mono focus:outline-none focus:border-brand-500 transition-colors"
                   />
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">
+                <p className="text-[11px] text-slate-400 mt-1">
                   A secure single-use onboarding claim link will be created for this email address with <strong className="text-slate-300">TENANT_OWNER</strong> privileges.
                 </p>
               </div>

@@ -14,7 +14,7 @@ import { BrandLogo } from '../common/BrandLogo';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle } from '../../data/frameworks';
-import { calculateSprsScore } from '../../data/reports/sprsCompiler';
+import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { TenantSwitcher } from './TenantSwitcher';
 import { FrameworkSwitcher } from './FrameworkSwitcher';
 import { UserProfileDropdown } from '../auth/UserProfileDropdown';
@@ -44,10 +44,10 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
 
   const sprsResult = React.useMemo(() => {
     if (activeFramework === 'CMMC_L2') {
-      return calculateSprsScore(frameworkControls, state.controls);
+      return calculateSprsScore(frameworkControls, state.controls, state.sspMetadata);
     }
     return null;
-  }, [activeFramework, frameworkControls, state.controls]);
+  }, [activeFramework, frameworkControls, state.controls, state.sspMetadata]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -134,7 +134,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
                 {metrics.metCount} / {totalCount} MET
                 {sprsResult && (
                   <span className="ml-1 pl-1.5 border-l border-amber-500/40 text-cyan-300">
-                    SPRS {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
+                    SPRS {formatSprsScore(sprsResult)}
                   </span>
                 )}
               </span>

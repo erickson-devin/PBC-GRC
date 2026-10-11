@@ -74,7 +74,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
                   className="hover:text-white transition-colors flex items-center gap-1"
                 >
                   <span>FAR 52.204-21 Clause</span>
-                  <ExternalLink className="w-3 h-3 text-slate-500" />
+                  <ExternalLink className="w-3 h-3 text-slate-400" />
                 </a>
               </li>
               <li>
@@ -85,7 +85,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
                   className="hover:text-white transition-colors flex items-center gap-1"
                 >
                   <span>NIST SP 800-171 Rev 2</span>
-                  <ExternalLink className="w-3 h-3 text-slate-500" />
+                  <ExternalLink className="w-3 h-3 text-slate-400" />
                 </a>
               </li>
               <li>
@@ -96,7 +96,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
                   className="hover:text-white transition-colors flex items-center gap-1"
                 >
                   <span>DoD CIO CMMC 2.0 Portal</span>
-                  <ExternalLink className="w-3 h-3 text-slate-500" />
+                  <ExternalLink className="w-3 h-3 text-slate-400" />
                 </a>
               </li>
               <li>
@@ -107,7 +107,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
                   className="hover:text-white transition-colors flex items-center gap-1"
                 >
                   <span>SPRS Scoring Portal (DISA)</span>
-                  <ExternalLink className="w-3 h-3 text-slate-500" />
+                  <ExternalLink className="w-3 h-3 text-slate-400" />
                 </a>
               </li>
             </ul>
@@ -147,7 +147,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
 
         {/* Bottom Legal & Copyright Bar */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-slate-400">
             © {new Date().getFullYear()} Pitch Black Cyber, LLC. All rights reserved. CMMC is a registered trademark of the Cyber AB / DoD.
           </p>
 

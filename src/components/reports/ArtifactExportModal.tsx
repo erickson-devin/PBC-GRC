@@ -37,6 +37,7 @@ import {
 } from '../../data/reports/reportExporters';
 import {
   calculateSprsScore,
+  formatSprsScore,
   downloadEmassCsv,
   downloadSprsSummaryJson,
 } from '../../data/reports/sprsCompiler';
@@ -75,8 +76,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   // Compute live DoD SPRS scoring metrics
   const sprsResult = useMemo(() => {
-    return calculateSprsScore(frameworkControls, state.controls);
-  }, [frameworkControls, state.controls]);
+    return calculateSprsScore(frameworkControls, state.controls, state.sspMetadata);
+  }, [frameworkControls, state.controls, state.sspMetadata]);
 
   // Metadata form local state (allows editing before generation and live preview)
   const meta = state.sspMetadata;
@@ -237,7 +238,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 <h2 className="text-lg font-extrabold text-white tracking-tight">
                   Compliance Documentation & Artifact Export Center
                 </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                <span className="badge px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
                   {frameworkDef.shortName}
                 </span>
               </div>
@@ -274,7 +275,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 >
                   <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
                   <span>{opt.label}</span>
-                  <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider ${
+                  <span className={`badge text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
                     isSelected ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
                   }`}>
                     {opt.badge}
@@ -329,10 +330,14 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-300" />
               <span>SPRS / eMASS</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
-                sprsResult.score >= 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+              <span className={`badge text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                sprsResult.score === null
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : sprsResult.score >= 0
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-rose-500/20 text-rose-300'
               }`}>
-                {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
+                {formatSprsScore(sprsResult)}
               </span>
             </button>
           </div>
@@ -349,7 +354,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-6">
                 <div className="border-b border-brand-500/30 pb-4">
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <span className="px-2.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase">
+                    <span className="badge px-2.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase">
                       {formData.classificationLevel}
                     </span>
                     <span className="text-xs text-slate-400">
@@ -760,7 +765,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                               {entry.weaknessDescription}
                             </td>
                             <td className="p-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              <span className={`badge px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                                 entry.status === 'IN_PROGRESS'
                                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                                   : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
@@ -796,10 +801,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
+                      <span className="badge px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
                         DFARS 252.204-7019 / 7020
                       </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-400 bg-slate-800">
+                      <span className="badge px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-400 bg-slate-800">
                         NIST SP 800-171 Rev 2
                       </span>
                     </div>
@@ -815,8 +820,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center gap-4 text-right sm:text-center">
                     <div>
                       <span className="text-[10px] font-mono uppercase text-slate-500 block">SPRS Score</span>
-                      <span className={`text-3xl font-black font-mono tracking-tight ${
-                        sprsResult.score >= 100
+                      <span className={`${sprsResult.score === null ? 'text-2xl' : 'text-3xl'} font-black font-mono tracking-tight ${
+                        sprsResult.score === null
+                          ? 'text-amber-400'
+                          : sprsResult.score >= 100
                           ? 'text-emerald-400'
                           : sprsResult.score >= 70
                           ? 'text-cyan-400'
@@ -824,8 +831,13 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           ? 'text-amber-400'
                           : 'text-rose-400'
                       }`}>
-                        {sprsResult.score > 0 ? `+${sprsResult.score}` : sprsResult.score}
+                        {formatSprsScore(sprsResult)}
                       </span>
+                      {sprsResult.notScoredReason && (
+                        <span className="mt-1 block max-w-[16rem] text-[10px] leading-snug text-amber-300/90">
+                          {sprsResult.notScoredReason}
+                        </span>
+                      )}
                     </div>
                     <div className="h-10 w-px bg-slate-800" />
                     <div>
@@ -869,7 +881,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-rose-400">Critical 5-Point Deductions</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
+                        <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
                           {sprsResult.deductionsByWeight.fivePoint.length} Controls
                         </span>
                       </div>
@@ -881,7 +893,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           <span className="text-[10px] text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.fivePoint.map(id => (
-                            <span key={id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20">
+                            <span key={id} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20">
                               {id}
                             </span>
                           ))
@@ -893,7 +905,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-amber-400">Intermediate 3-Point Deductions</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                        <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
                           {sprsResult.deductionsByWeight.threePoint.length} Controls
                         </span>
                       </div>
@@ -905,7 +917,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           <span className="text-[10px] text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.threePoint.map(id => (
-                            <span key={id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                            <span key={id} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
                               {id}
                             </span>
                           ))
@@ -917,7 +929,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-300">Standard 1-Point Deductions</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
+                        <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
                           {sprsResult.deductionsByWeight.onePoint.length} Controls
                         </span>
                       </div>
@@ -929,7 +941,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           <span className="text-[10px] text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.onePoint.map(id => (
-                            <span key={id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                            <span key={id} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                               {id}
                             </span>
                           ))

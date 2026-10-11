@@ -638,19 +638,19 @@ export const EnclaveSettings: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">Authorizing Official</span>
+            <span className="text-slate-400 block text-[10px]">Authorizing Official</span>
             <span className="text-white font-bold">{currentTenant.systemOwner}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">CAGE Code</span>
+            <span className="text-slate-400 block text-[10px]">CAGE Code</span>
             <span className="text-white font-bold">{currentTenant.cageCode || 'N/A'}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">SAM.gov Registration</span>
+            <span className="text-slate-400 block text-[10px]">SAM.gov Registration</span>
             <span className="text-emerald-400 font-bold">{currentTenant.samStatus}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">License Tier</span>
+            <span className="text-slate-400 block text-[10px]">License Tier</span>
             <span className="text-cyan-300 font-bold">{currentTenant.licenseTier || 'DEFENSE_PRO'}</span>
           </div>
         </div>
@@ -829,7 +829,7 @@ export const EnclaveSettings: React.FC = () => {
 
               {/* Modal Footer */}
               <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between gap-4 shrink-0">
-                <span className="text-[11px] font-mono text-slate-500">
+                <span className="text-[11px] font-mono text-slate-400">
                   SHA-256 Hash Generated dynamically &middot; NIST SP 800-53 Rev. 5 / NIST SP 800-171A
                 </span>
                 <div className="flex items-center gap-2">

@@ -275,7 +275,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
             {/* Demo Presets */}
             <div className="mt-4 pt-3 border-t border-slate-800 text-[10px]">
-              <span className="text-slate-500 block mb-1 font-mono">1-Click Test Personas:</span>
+              <span className="text-slate-400 block mb-1 font-mono">1-Click Test Personas:</span>
               <div className="grid grid-cols-3 gap-1">
                 {PRESET_USERS.map(p => (
                   <button
@@ -294,7 +294,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       </main>
 
       {/* Footer */}
-      <footer className="px-6 py-4 text-center text-xs text-slate-500 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 max-w-5xl mx-auto w-full">
+      <footer className="px-6 py-4 text-center text-xs text-slate-400 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 max-w-5xl mx-auto w-full">
         <span>© {new Date().getFullYear()} Pitch Black Cyber LLC • CMMC 2.0 Level 1 Enclave</span>
         <div className="flex items-center gap-4 text-xs text-slate-400">
           <button

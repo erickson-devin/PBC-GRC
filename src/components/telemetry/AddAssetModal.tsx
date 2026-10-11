@@ -138,7 +138,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                 Hostname / FQDN <span className="text-rose-400">*</span>
               </label>
               <div className="flex items-center gap-2">
-                <Monitor className="w-4 h-4 text-slate-500 shrink-0" />
+                <Monitor className="w-4 h-4 text-slate-400 shrink-0" />
                 <input
                   type="text"
                   required
@@ -155,7 +155,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                 IP Address <span className="text-rose-400">*</span>
               </label>
               <div className="flex items-center gap-2">
-                <Wifi className="w-4 h-4 text-slate-500 shrink-0" />
+                <Wifi className="w-4 h-4 text-slate-400 shrink-0" />
                 <input
                   type="text"
                   required
@@ -172,7 +172,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block font-semibold text-slate-300 mb-1.5">
-                MAC Address <span className="text-slate-500 font-normal">(Optional)</span>
+                MAC Address <span className="text-slate-400 font-normal">(Optional)</span>
               </label>
               <input
                 type="text"

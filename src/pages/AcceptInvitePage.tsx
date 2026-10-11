@@ -337,7 +337,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                 {/* Developer / Evaluator Sample Links Helper */}
                 {invitations.length > 0 && (
                   <div className="pt-3 border-t border-slate-800/80 text-left">
-                    <p className="text-[10px] uppercase font-bold text-slate-500 mb-1.5">
+                    <p className="text-[10px] uppercase font-bold text-slate-400 mb-1.5">
                       Available Test Invitation Tokens:
                     </p>
                     <div className="space-y-1">
@@ -393,7 +393,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
 
                 <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/80 pt-2.5">
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Assigned Role</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Assigned Role</span>
                     <span className="font-bold text-cyan-300 flex items-center gap-1 mt-0.5 font-mono text-xs">
                       <Shield className="w-3.5 h-3.5" />
                       {invitation?.role === 'TENANT_OWNER' ? 'TENANT_OWNER' : invitation?.role === 'ASSESSOR' ? 'ASSESSOR' : 'VIEWER'}
@@ -401,7 +401,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   </div>
 
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">License Tier</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">License Tier</span>
                     <span className="font-semibold text-slate-200 mt-0.5 block">
                       {getLicenseTierBadge(invitation?.licenseTier).badge}
                     </span>
@@ -519,7 +519,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                         Full Name / Authorized Operator <span className="text-rose-400">*</span>
                       </label>
                       <div className="relative">
-                        <UserIcon className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                         <input
                           type="text"
                           required
@@ -536,7 +536,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                         Email Address (Locked to Invitation)
                       </label>
                       <div className="relative">
-                        <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                         <input
                           type="email"
                           readOnly
@@ -552,7 +552,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                           Password (Min 8 chars) <span className="text-rose-400">*</span>
                         </label>
                         <div className="relative">
-                          <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                           <input
                             type="password"
                             required
@@ -570,7 +570,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                           Confirm Password <span className="text-rose-400">*</span>
                         </label>
                         <div className="relative">
-                          <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                           <input
                             type="password"
                             required
@@ -606,7 +606,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
               </div>
 
               {/* Footer Terms Notice */}
-              <div className="text-center pt-2 text-[11px] text-slate-500">
+              <div className="text-center pt-2 text-[11px] text-slate-400">
                 By claiming this defense enclave, you agree to the{' '}
                 <button
                   type="button"
@@ -633,7 +633,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       </main>
 
       {/* Footer Branding */}
-      <footer className="px-6 py-4 border-t border-slate-900 text-center text-xs text-slate-500">
+      <footer className="px-6 py-4 border-t border-slate-900 text-center text-xs text-slate-400">
         Pitch Black Cyber LLC • CMMC Level 1 Readiness Engine • FAR 52.204-21 Compliant
       </footer>
 

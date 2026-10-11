@@ -233,7 +233,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               <Terminal className="w-4 h-4 text-cyan-400" />
               <span>REST Webhook Ingestion Endpoint</span>
             </span>
-            <span className="text-[10px] font-mono text-slate-500">POST (JSON)</span>
+            <span className="text-[10px] font-mono text-slate-400">POST (JSON)</span>
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -338,7 +338,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
 
         {/* Footer */}
         <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
-          <span className="text-slate-500 font-mono">
+          <span className="text-slate-400 font-mono">
             Pitch Black Cyber // Accretion Engine v3.1
           </span>
           <button

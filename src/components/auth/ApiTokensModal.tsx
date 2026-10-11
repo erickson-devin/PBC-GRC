@@ -123,7 +123,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
 
           {/* Cloud SQL Multi-Tenant note */}
           <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2">
-            <Server className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+            <Server className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
             <span>
               Calls with this token automatically resolve PostgreSQL Row-Level Security (RLS) for tenant enclave: <strong className="text-slate-300">{currentTenant.name}</strong>.
             </span>

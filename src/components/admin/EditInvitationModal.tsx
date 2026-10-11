@@ -152,7 +152,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                 Recipient Email Address *
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="email"
                   required
@@ -171,7 +171,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                 <span className="text-[10px] text-slate-400 font-mono">Isolated database boundary</span>
               </label>
               <div className="relative">
-                <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <select
                   value={tenantId}
                   onChange={e => setTenantId(e.target.value)}
@@ -278,7 +278,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
               </div>
 
               <div className="relative">
-                <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="date"
                   required

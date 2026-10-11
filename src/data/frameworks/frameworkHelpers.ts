@@ -142,6 +142,16 @@ export interface ImpactBadgeInfo {
  */
 export function getControlImpactBadge(weight: number): ImpactBadgeInfo {
   switch (weight) {
+    case 0:
+      // Requirement 3.12.4 (System Security Plan): no point value, but a missing SSP blocks scoring entirely.
+      return {
+        weight: 0,
+        label: 'Score Gate',
+        tagText: 'NA // SSP GATE',
+        badgeClass: 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/40',
+        dotClass: 'bg-indigo-400',
+        glowClass: 'shadow-indigo-950/40',
+      };
     case 5:
       return {
         weight: 5,
@@ -173,3 +183,11 @@ export function getControlImpactBadge(weight: number): ImpactBadgeInfo {
   }
 }
 
+
+/**
+ * Number of control families / domains defined by a framework (e.g. CMMC L1 = 6, CMMC L2 = 14).
+ */
+export function getFrameworkFamilyCount(framework: ComplianceFramework): number {
+  const domains = FRAMEWORK_REGISTRY[framework]?.domains;
+  return domains ? Object.keys(domains).length : 0;
+}

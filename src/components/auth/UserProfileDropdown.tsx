@@ -78,14 +78,14 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
   const getProviderIcon = () => {
     if (currentUser.authProvider === 'microsoft.com') {
       return (
-        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[9px] font-bold text-sky-400 bg-sky-950/60 rounded border border-sky-500/30 px-1" title="Microsoft 365 Entra ID">
+        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[10px] font-bold text-sky-400 bg-sky-950/60 rounded border border-sky-500/30 px-1" title="Microsoft 365 Entra ID">
           M
         </span>
       );
     }
     if (currentUser.authProvider === 'google.com') {
       return (
-        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[9px] font-bold text-amber-400 bg-amber-950/60 rounded border border-amber-500/30 px-1" title="Google Workspace">
+        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[10px] font-bold text-amber-400 bg-amber-950/60 rounded border border-amber-500/30 px-1" title="Google Workspace">
           G
         </span>
       );
@@ -223,7 +223,7 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
 
             {/* Quick RBAC Role Simulation */}
             <div className="p-2 border-t border-slate-800 bg-slate-950/40">
-              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-500 px-1 block mb-1">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-1 block mb-1">
                 Simulate CMMC Role:
               </span>
               <div className="grid grid-cols-3 gap-1">

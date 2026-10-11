@@ -5,10 +5,14 @@ import path from 'path';
 import crypto from 'crypto';
 import { Storage } from '@google-cloud/storage';
 import { queryWithTenant } from '../db';
+import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
+
+// Read-only roles (ASSESSOR, VIEWER) may GET but never POST / PUT / DELETE (uploads included).
+router.use(requireWriteRole);
 
 // Storage Provider Configuration
 // Anything other than an explicit 'gcs' resolves to local disk (matches the client-side driver default).

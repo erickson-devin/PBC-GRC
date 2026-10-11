@@ -103,6 +103,11 @@
 
 @layer components {
 
+  /* Badge / pill base: vertically centers text. Padding, color and radius come from utilities or <Badge>. */
+  .badge {
+    @apply inline-flex items-center justify-center leading-none whitespace-nowrap;
+  }
+
   /* Stitch Standard Card */
   .stitch-card {
     @apply bg-slate-900/60 border border-slate-800 rounded-xl backdrop-blur-md transition-all duration-200;

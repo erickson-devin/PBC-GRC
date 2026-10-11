@@ -146,7 +146,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
         <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400">Provisioned Enclaves</div>
           <div className="text-xl font-black text-white mt-1">{stats.totalEnclaves}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Isolated Google Cloud SQL RLS</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Isolated Google Cloud SQL RLS</div>
         </div>
 
         <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
@@ -154,13 +154,13 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
           <div className="text-xl font-black text-emerald-400 mt-1">
             ${stats.totalArr.toLocaleString('en-US')}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Flat defense licensing</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Flat defense licensing</div>
         </div>
 
         <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400">Pending Claims</div>
           <div className="text-xl font-black text-amber-400 mt-1">{stats.pendingClaims}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Awaiting contractor login</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Awaiting contractor login</div>
         </div>
 
         <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
@@ -168,7 +168,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
           <div className="text-xs font-mono font-bold text-cyan-300 mt-1.5 truncate">
             devin@pitchblackcyber.com
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Authorized Provisioner</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">Authorized Provisioner</div>
         </div>
       </div>
 
@@ -259,7 +259,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
           <tbody className="divide-y divide-slate-800/60 font-sans">
             {filteredRecords.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-8 text-slate-500">
+                <td colSpan={6} className="text-center py-8 text-slate-400">
                   No finance provisioning records matching selected filters.
                 </td>
               </tr>
@@ -273,7 +273,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
                     {/* Date Provisioned */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
                         <span className="font-mono text-slate-200">{formatDate(rec.provisionedDate)}</span>
                       </div>
                     </td>
@@ -285,7 +285,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
                           <Building2 className="w-3.5 h-3.5 text-brand-400 shrink-0" />
                           <span>{rec.clientName}</span>
                           {rec.isDemo && (
-                            <span className="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-mono">
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-mono">
                               SANDBOX
                             </span>
                           )}
@@ -333,7 +333,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
                         <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
                         <span className="text-cyan-300 font-medium">{rec.provisionedBy}</span>
                       </div>
-                      <div className="text-[10px] text-slate-500 pl-5">Internal Finance Billing</div>
+                      <div className="text-[10px] text-slate-400 pl-5">Internal Finance Billing</div>
                     </td>
 
                     {/* Invite Status */}
@@ -354,7 +354,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
                           {rec.inviteStatus}
                         </span>
                       )}
-                      <div className="text-[10px] text-slate-500 mt-0.5 font-mono truncate max-w-[140px]">
+                      <div className="text-[10px] text-slate-400 mt-0.5 font-mono truncate max-w-[140px]">
                         {rec.ownerEmail}
                       </div>
                     </td>

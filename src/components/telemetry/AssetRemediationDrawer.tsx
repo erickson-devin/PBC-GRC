@@ -282,7 +282,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                   {passingCount} of {totalEndpoints} Passing
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-400">
                 All other registered endpoints in this boundary meet the technical hardening baselines for this practice.
               </p>
             </div>

@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { isTenantMember } from '../db';
+import { getTenantRole, isTenantMember } from '../db';
+import { isTenantRole } from '../../src/utils/roles';
+import type { TenantRole } from '../../src/types/tenant';
 
 // Extend Express Request interface with authenticated user & tenant context
 declare global {
@@ -14,6 +16,8 @@ declare global {
         roles?: Record<string, string>;
       };
       tenantId?: string;
+      /** The authenticated user's role in `tenantId`; drives the write guard. */
+      tenantRole?: TenantRole;
     }
   }
 }
@@ -153,6 +157,21 @@ async function resolveTenantId(
 }
 
 /**
+ * Resolves the user's role in the active tenant. Order: token `roles` claim, then tenant_users row.
+ * Fails closed to read-only VIEWER. The one exception is dev/test mock tokens (never in production),
+ * which carry no role claim and default to TENANT_OWNER so local development keeps working.
+ */
+async function resolveTenantRole(identity: TokenIdentity, tenantId: string, devMockToken: boolean): Promise<TenantRole> {
+  const claimed = identity.user.roles?.[tenantId];
+  if (isTenantRole(claimed)) return claimed;
+
+  const stored = await getTenantRole(identity.user.uid, tenantId);
+  if (stored) return stored;
+
+  return devMockToken && isMockAuthAllowed() ? 'TENANT_OWNER' : 'VIEWER';
+}
+
+/**
  * Validates incoming Firebase Authorization Bearer tokens (req.headers.authorization)
  * and attaches verified req.user and req.tenantId to the request.
  */
@@ -186,6 +205,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       if (!tenantId) return;
       req.user = identity.user;
       req.tenantId = tenantId;
+      req.tenantRole = await resolveTenantRole(identity, tenantId, true);
       return next();
     }
 
@@ -205,6 +225,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
     req.user = identity.user;
     req.tenantId = tenantId;
+    req.tenantRole = await resolveTenantRole(identity, tenantId, false);
     return next();
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -222,6 +243,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
         if (!tenantId) return;
         req.user = identity.user;
         req.tenantId = tenantId;
+        req.tenantRole = await resolveTenantRole(identity, tenantId, true);
         return next();
       }
     }

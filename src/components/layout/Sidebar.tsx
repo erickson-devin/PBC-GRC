@@ -246,7 +246,7 @@ export const Sidebar: React.FC = () => {
         {/* Dynamic Navigation Sections */}
         {sections.map((section) => (
           <div key={section.title}>
-            <p className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase px-3 mb-2">
+            <p className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase px-3 mb-2">
               {section.title}
             </p>
             <nav className="space-y-1">
@@ -265,7 +265,7 @@ export const Sidebar: React.FC = () => {
                         <span className="truncate">{item.label}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                        <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-cyan-400 transition-colors" />
+                        <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-cyan-400 transition-colors" />
                       </div>
                     </button>
                   );
@@ -317,7 +317,7 @@ export const Sidebar: React.FC = () => {
                 <ShieldCheck className="w-4 h-4 text-amber-400" />
                 <span>Super Admin Portal</span>
               </div>
-              <span className="inline-flex items-center justify-center shrink-0 rounded-full px-2.5 py-0.5 text-[9px] uppercase font-mono tracking-tight leading-none whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <span className="inline-flex items-center justify-center shrink-0 rounded-full px-2.5 py-0.5 text-[10px] uppercase font-mono tracking-tight leading-none whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 /admin
               </span>
             </button>
@@ -362,7 +362,7 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Footer Info */}
-      <div className="hidden md:block pt-4 border-t border-slate-800/80 text-[11px] text-slate-500 space-y-1">
+      <div className="hidden md:block pt-4 border-t border-slate-800/80 text-[11px] text-slate-400 space-y-1">
         <p className="flex items-center gap-1">
           <Layers className="w-3.5 h-3.5 text-slate-400" />
           <span>{guidance.authority} Compliant</span>

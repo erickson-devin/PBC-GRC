@@ -391,7 +391,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
 
             <div className="space-y-2">
-              <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-3 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-800">
+              <span className="badge text-[10px] uppercase font-mono tracking-widest font-extrabold px-3 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-800">
                 ACCESS RESTRICTED
               </span>
               <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight pt-1">
@@ -511,7 +511,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-base text-white tracking-tight">Event Horizon: Singularity</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wider">
+                <span className="badge px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wider">
                   SUPER ADMIN CONSOLE
                 </span>
               </div>
@@ -527,7 +527,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-slate-400">Operator:</span>
               <span className="font-bold text-white">{currentUser.name}</span>
-              <span className="text-slate-500">({currentUser.email})</span>
+              <span className="text-slate-400">({currentUser.email})</span>
             </div>
 
             <button
@@ -599,7 +599,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 ({activeEnclavesCount} active{suspendedEnclavesCount > 0 ? `, ${suspendedEnclavesCount} suspended` : ''})
               </span>
             </div>
-            <p className="text-[11px] text-slate-500">Live & sandbox boundaries</p>
+            <p className="text-[11px] text-slate-400">Live & sandbox boundaries</p>
           </div>
 
           <div className="stitch-card p-5 space-y-1">
@@ -609,7 +609,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <p className="text-3xl font-black text-emerald-400 font-mono mt-1">
               ${totalArr.toLocaleString()}/yr
             </p>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-400">
               {foundationalCount} Foundational • {defenseProCount} Defense Pro • {enterpriseCount} Enterprise
             </p>
           </div>
@@ -619,7 +619,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               <Clock className="w-3.5 h-3.5 text-amber-400" /> Pending Invites
             </span>
             <p className="text-3xl font-black text-amber-300 font-mono mt-1">{pendingInvitesCount}</p>
-            <p className="text-[11px] text-slate-500">Awaiting contractor claim</p>
+            <p className="text-[11px] text-slate-400">Awaiting contractor claim</p>
           </div>
 
           <div className="stitch-card p-5 space-y-1">
@@ -629,7 +629,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <p className="text-3xl font-black text-purple-300 font-mono mt-1">
               {Object.values(teamMembers).reduce((acc, curr) => acc + curr.length, 0)}
             </p>
-            <p className="text-[11px] text-slate-500">Owners, Assessors & Viewers</p>
+            <p className="text-[11px] text-slate-400">Owners, Assessors & Viewers</p>
           </div>
         </div>
 
@@ -730,13 +730,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                         <div className="flex items-center gap-2">
                           <div className="font-bold text-white text-xs">{t.name}</div>
                           {isSuspended && (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wider flex items-center gap-1">
+                            <span className="badge px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase tracking-wider flex items-center gap-1">
                               <PauseCircle className="w-2.5 h-2.5" /> Suspended
                             </span>
                           )}
                         </div>
                         <div className="text-[11px] text-slate-400 truncate max-w-xs">{t.systemName}</div>
-                        <div className="text-[10px] font-mono text-slate-500 flex items-center gap-2 mt-0.5">
+                        <div className="text-[10px] font-mono text-slate-400 flex items-center gap-2 mt-0.5">
                           <span>{t.id}</span>
                           <button
                             onClick={() => handleCopy(t.id, t.id, 'enclave')}
@@ -753,14 +753,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-cyan-950/40 text-cyan-300 font-bold border border-cyan-500/30">
+                        <span className="badge font-mono text-xs px-2 py-0.5 rounded bg-cyan-950/40 text-cyan-300 font-bold border border-cyan-500/30">
                           {t.cageCode || 'PENDING'}
                         </span>
                         <div className="text-[10px] text-slate-400 mt-1">
                           {t.samStatus === 'ACTIVE' ? (
                             <span className="text-emerald-400 font-medium">SAM Active</span>
                           ) : (
-                            <span className="text-slate-500">SAM {t.samStatus}</span>
+                            <span className="text-slate-400">SAM {t.samStatus}</span>
                           )}
                         </div>
                       </td>
@@ -770,26 +770,26 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           const norm = normalizeLicenseTier(t.licenseTier);
                           if (norm === 'ENTERPRISE') {
                             return (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
+                              <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
                                 <Building2 className="w-3 h-3" /> Enterprise ($14k)
                               </span>
                             );
                           }
                           if (norm === 'DEFENSE_PRO') {
                             return (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wide">
+                              <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wide">
                                 <Award className="w-3 h-3" /> Defense Pro ($7k)
                               </span>
                             );
                           }
                           return (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wide">
+                            <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wide">
                               <Shield className="w-3 h-3" /> Foundational ($3.5k)
                             </span>
                           );
                         })()}
                         {t.isDemo && (
-                          <span className="ml-1 text-[9px] font-mono font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                          <span className="badge ml-1 text-[10px] font-mono font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
                             DEMO
                           </span>
                         )}
@@ -798,15 +798,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       <td className="py-3.5 px-4">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            <span className="badge text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                               {t.primaryFramework || 'CMMC_L1'}
                             </span>
-                            <span className="text-[9px] font-mono text-slate-400">PRIMARY</span>
+                            <span className="text-[10px] font-mono text-slate-400">PRIMARY</span>
                           </div>
                           {activeFrameworks.length > 1 && (
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {activeFrameworks.filter(f => f !== (t.primaryFramework || 'CMMC_L1')).map(fw => (
-                                <span key={fw} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80">
+                                <span key={fw} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/80">
                                   {fw}
                                 </span>
                               ))}
@@ -817,7 +817,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
                       <td className="py-3.5 px-4">
                         <div className="text-slate-200 text-xs font-medium truncate max-w-xs">{t.systemOwner || 'Unassigned'}</div>
-                        <div className="text-[10px] font-mono text-slate-500">{t.domain || 'N/A'}</div>
+                        <div className="text-[10px] font-mono text-slate-400">{t.domain || 'N/A'}</div>
                         <div className="text-[10px] font-mono text-slate-400 mt-0.5">
                           {members.length > 0 ? `${members.length} team seat(s)` : '1 (Owner)'}
                         </div>
@@ -826,17 +826,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       <td className="py-3.5 px-4">
                         {isSuspended ? (
                           <div className="space-y-0.5">
-                            <span className="inline-flex items-center gap-1 text-amber-400 font-bold font-mono text-[10px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                            <span className="badge inline-flex items-center gap-1 text-amber-400 font-bold font-mono text-[10px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
                               <PauseCircle className="w-3 h-3" /> Suspended
                             </span>
-                            <div className="text-[9px] text-slate-500">Access Frozen</div>
+                            <div className="text-[10px] text-slate-400">Access Frozen</div>
                           </div>
                         ) : (
                           <div className="space-y-0.5">
-                            <span className="inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                            <span className="badge inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                               <CheckCircle2 className="w-3 h-3" /> Active
                             </span>
-                            <div className="text-[9px] text-slate-500">RLS Enforced</div>
+                            <div className="text-[10px] text-slate-400">RLS Enforced</div>
                           </div>
                         )}
                       </td>
@@ -925,7 +925,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white text-xs">{admin.name}</span>
                         {admin.isRootOwner && (
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase tracking-wider">
+                          <span className="badge px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase tracking-wider">
                             ROOT OWNER
                           </span>
                         )}
@@ -942,14 +942,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                      <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/15 text-purple-300 border border-purple-500/30">
                         <BadgeCheck className="w-3 h-3 text-purple-400" />
                         <span>{admin.clearanceLevel}</span>
                       </span>
                     </td>
 
                     <td className="py-3.5 px-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-black bg-purple-950/60 text-purple-200 border border-purple-500/40 uppercase tracking-wide">
+                      <span className="badge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-black bg-purple-950/60 text-purple-200 border border-purple-500/40 uppercase tracking-wide">
                         <Key className="w-3 h-3 text-purple-400" />
                         <span>{admin.permissionBadge}</span>
                       </span>
@@ -960,12 +960,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                         <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                         <span>Global Access</span>
                       </div>
-                      <div className="text-[10px] text-slate-500">All Live & Sandbox Enclaves</div>
+                      <div className="text-[10px] text-slate-400">All Live & Sandbox Enclaves</div>
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
                       {admin.isRootOwner ? (
-                        <span className="text-[10px] font-mono text-slate-500 italic px-2 py-1">
+                        <span className="text-[10px] font-mono text-slate-400 italic px-2 py-1">
                           Immutable
                         </span>
                       ) : (
@@ -1032,21 +1032,21 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     >
                       <td className="py-3.5 px-4">
                         <div className="font-mono text-white text-xs font-semibold">{inv.email}</div>
-                        <div className="text-[10px] text-slate-500 font-mono">Invited by: {inv.invitedBy}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">Invited by: {inv.invitedBy}</div>
                       </td>
 
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-200 text-xs">{inv.tenantName}</div>
                         {inv.role === 'TENANT_OWNER' ? (
-                          <span className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                          <span className="badge inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
                             <Shield className="w-3 h-3" /> Tenant Owner
                           </span>
                         ) : inv.role === 'ASSESSOR' ? (
-                          <span className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                          <span className="badge inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                             <CheckCircle2 className="w-3 h-3" /> Assessor
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50">
+                          <span className="badge inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50">
                             <Lock className="w-3 h-3" /> Viewer
                           </span>
                         )}
@@ -1054,29 +1054,29 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
                       <td className="py-3.5 px-4">
                         {inv.status === 'ACCEPTED' ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                          <span className="badge inline-flex items-center gap-1 text-emerald-400 font-bold font-mono text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                             <CheckCircle2 className="w-3 h-3" /> Claimed
                           </span>
                         ) : inv.status === 'REVOKED' ? (
-                          <span className="inline-flex items-center gap-1 text-rose-400 font-bold font-mono text-[11px] bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                          <span className="badge inline-flex items-center gap-1 text-rose-400 font-bold font-mono text-[11px] bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
                             Revoked
                           </span>
                         ) : isExpired ? (
-                          <span className="inline-flex items-center gap-1 text-amber-400 font-bold font-mono text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          <span className="badge inline-flex items-center gap-1 text-amber-400 font-bold font-mono text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                             Expired
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-cyan-300 font-bold font-mono text-[11px] bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
+                          <span className="badge inline-flex items-center gap-1 text-cyan-300 font-bold font-mono text-[11px] bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
                             <Clock className="w-3 h-3 text-cyan-400" /> Pending Claim
                           </span>
                         )}
-                        <div className="text-[10px] font-mono text-slate-500 mt-1">
+                        <div className="text-[10px] font-mono text-slate-400 mt-1">
                           Expires {new Date(inv.expiresAt).toLocaleDateString()}
                         </div>
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <code className="font-mono text-[11px] text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 select-all">
+                        <code className="badge font-mono text-[11px] text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 select-all">
                           {inv.token.slice(0, 14)}...
                         </code>
                       </td>
@@ -1420,7 +1420,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     <Flame className="w-6 h-6" />
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase font-mono font-extrabold tracking-widest px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                    <span className="badge text-[10px] uppercase font-mono font-extrabold tracking-widest px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
                       NIST SP 800-88 PROTOCOL
                     </span>
                     <h2 className="text-xl font-black text-white tracking-tight pt-1">
