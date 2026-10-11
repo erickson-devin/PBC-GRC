@@ -177,6 +177,44 @@ async function run() {
   assert(Date.now() - t0 < 2000, 'and it is rejected instantly: no attempt to reach Google for certificates', Date.now() - t0);
   assert((await call('GET', '/auth/me', { token: forge({ alg: 'HS256' }, { ...goodClaims, exp: now - 10 }, SECRET) })).status === 401, 'expired local token -> 401');
 
+  console.log('\n--- Registration by invitation (how a new person gets an account on an air-gapped install) ---');
+  const invite = async (email: string, role = 'ASSESSOR') =>
+    call('POST', `/tenants/${tenantId}/invites`, { token: annToken, tenant: tenantId, body: { email, role } });
+  const register = (token: string, password: string, name?: string) => call('POST', '/auth/register-with-invite', { body: { token, password, name } });
+  const hire = await invite('newhire@enclave.mil');
+  const hireToken: string = hire.body?.token;
+  assert(hire.status === 201 && /^inv_/.test(hireToken), 'a local-auth owner issues an invitation');
+  assert((await register('inv_' + 'z'.repeat(43), PASSWORD)).status === 404, 'an unknown token cannot register (404)');
+  assert((await register('garbage', PASSWORD)).status === 404, 'a malformed token cannot register (404)');
+  const weak = await register(hireToken, 'short');
+  assert(weak.status === 400 && /at least/i.test(weak.body?.error), 'a weak password is refused with the reason (400)', weak.body);
+  assert((await login('newhire@enclave.mil', 'short')).status === 401 && (await call('POST', '/invites/preview', { body: { token: hireToken } })).body?.invitation?.status === 'PENDING', 'and nothing was created or consumed by the failed attempt');
+
+  const reg = await register(hireToken, PASSWORD, 'New Hire');
+  assert(reg.status === 201 && typeof reg.body?.token === 'string' && reg.body?.tenantId === tenantId && reg.body?.role === 'ASSESSOR', 'a valid token registers the invited address, consumes the invitation and signs in (201)', reg.body);
+  assert(reg.body?.user?.email === 'newhire@enclave.mil' && reg.body?.user?.name === 'New Hire', 'the account is bound to the INVITED email, not one the caller chooses');
+  assert(verifyLocalToken(reg.body?.token).email === 'newhire@enclave.mil', 'the returned session token is a valid local token');
+  assert((await call('GET', '/controls', { token: reg.body?.token, tenant: tenantId })).status === 200, 'the new account can read the tenant straight away');
+  assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: reg.body?.token, tenant: tenantId, body: { status: 'MET' } })).status === 403, 'with the invited (read-only) role');
+  assert((await login('newhire@enclave.mil', PASSWORD)).status === 200, 'and can sign in normally afterwards with that password');
+  assert((await register(hireToken, PASSWORD)).status === 409, 'the token cannot register a second account (409)');
+
+  const existing = await invite('ann@enclave.mil', 'VIEWER'); // Ann already has an account
+  const existingReg = await register(existing.body?.token, PASSWORD);
+  assert(existingReg.status === 409 && existingReg.body?.reason === 'account_exists', 'an existing account is told to sign in instead (409), no duplicate created', existingReg.body);
+  assert((await call('POST', '/invites/preview', { body: { token: existing.body?.token } })).body?.invitation?.status === 'PENDING', 'and the invitation was NOT consumed by that attempt');
+  assert((await call('POST', '/invites/accept', { token: annToken, body: { token: existing.body?.token } })).status === 200, 'she accepts it while signed in (the normal path for existing users)');
+
+  const dead = await invite('revoked.hire@enclave.mil');
+  const deadInvite = (await call('GET', `/tenants/${tenantId}/invites`, { token: annToken, tenant: tenantId })).body?.invitations.find((i: any) => i.email === 'revoked.hire@enclave.mil');
+  await call('DELETE', `/tenants/${tenantId}/invites/${deadInvite.id}`, { token: annToken, tenant: tenantId });
+  assert((await register(dead.body?.token, PASSWORD)).status === 410, 'a revoked invitation cannot register (410)');
+  assert((await login('revoked.hire@enclave.mil', PASSWORD)).status === 401, 'and no account was left behind');
+  const noAuthMode = process.env.AUTH_MODE;
+  process.env.AUTH_MODE = 'firebase';
+  assert((await register(hireToken, PASSWORD)).status === 404, 'outside local mode the endpoint does not exist (404)');
+  process.env.AUTH_MODE = noAuthMode;
+
   console.log('\n--- Production hardening (NODE_ENV=production) ---');
   const originalEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'production';

@@ -14,6 +14,7 @@ import { useTenant } from '../../context/TenantContext';
 import { Tenant, CommercialLicenseTier, normalizeLicenseTier } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 
 interface EditEnclaveModalProps {
   isOpen: boolean;
@@ -167,6 +168,8 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
           </div>
 
           {/* Form */}
+          {tenant && <LegacyTenantNotice tenant={tenant} variant="inline" />}
+
           <form onSubmit={handleSubmit} className="space-y-5">
 
             {/* Row 1: Organization Name & CAGE Code */}

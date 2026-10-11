@@ -12,6 +12,8 @@ import {
   CalendarPlus,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { errorMessage } from '../../utils/errors';
 import { Tenant, TenantInvitation, TenantRole } from '../../types/tenant';
 
 interface EditInvitationModalProps {
@@ -29,7 +31,8 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
   tenants,
   onSaved,
 }) => {
-  const { updateInvitation } = useTenant();
+  const { updateInvitation, extendInvitationExpiration } = useTenant();
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [email, setEmail] = useState('');
   const [tenantId, setTenantId] = useState('');
@@ -78,6 +81,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
     if (!email.trim() || !tenantId) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const newExpiresAt = new Date(`${expiresDate}T23:59:59.999Z`).toISOString();
       const targetTenant = tenants.find(t => t.id === tenantId);
@@ -93,7 +97,13 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
         expiresAt: newExpiresAt,
       };
 
-      updateInvitation(invitation.id, updates);
+      // Server-issued invitations: role and email are edited via PATCH. A later expiry is applied with "extend"
+      // (the link stays the same); shortening an expiry is not supported.
+      await updateInvitation(invitation.id, updates);
+      if (invitation.serverBacked) {
+        const extraDays = Math.ceil((new Date(newExpiresAt).getTime() - new Date(invitation.expiresAt).getTime()) / 86400000);
+        if (extraDays > 0 && extraDays <= 30) await extendInvitationExpiration(invitation.id, extraDays);
+      }
       setShowSuccessToast(true);
 
       if (onSaved) {
@@ -107,8 +117,9 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
         setIsSubmitting(false);
         onClose();
       }, 700);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to update invitation:', err);
+      setSubmitError(errorMessage(err) || 'Could not update the invitation.');
       setIsSubmitting(false);
     }
   };
@@ -288,6 +299,8 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                 />
               </div>
             </div>
+
+            <ErrorNotice message={submitError} />
 
             {/* Actions */}
             <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">

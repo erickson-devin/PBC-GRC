@@ -108,6 +108,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     revokeInvitation,
     resendInvitation,
     extendInvitationExpiration,
+    refreshAllTeams,
   } = useTenant();
 
   const { logout, openAuthModal } = useAuth();
@@ -157,6 +158,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [copiedEnclaveId, setCopiedEnclaveId] = useState<string | null>(null);
   const [exportingTenantId, setExportingTenantId] = useState<string | null>(null);
   const [notificationToast, setNotificationToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+
+  // Invitations and teams of server-backed tenants live on the server: load them for every tenant the admin manages
+  useEffect(() => {
+    void refreshAllTeams();
+  }, [refreshAllTeams, tenants.length]);
 
   // Floating Context Menu state (Fixed Position Portal)
   const [floatingMenu, setFloatingMenu] = useState<{
@@ -1098,8 +1104,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                               {/* 2. Copy Invite Link */}
                               <button
                                 onClick={() => handleCopy(inviteUrl, inv.id, 'token')}
-                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition-all"
-                                title="Copy full invite link to clipboard"
+                                disabled={!inv.token}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={inv.token ? 'Copy full invite link to clipboard' : 'The server stores only a hash of the link: use Resend to create a new one'}
                               >
                                 {copiedTokenId === inv.id ? (
                                   <>
@@ -1117,11 +1124,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                                 {/* 3. Extend (+7 Days) */}
                               <button
                                 onClick={async () => {
-                                  const res = await extendInvitationExpiration(inv.id, 7);
-                                  setNotificationToast({
-                                    type: 'info',
-                                    message: `Invitation for ${inv.email} extended to ${new Date(res.expiresAt).toLocaleDateString()} (+7 days).`,
-                                  });
+                                  try {
+                                    const res = await extendInvitationExpiration(inv.id, 7);
+                                    setNotificationToast({
+                                      type: 'info',
+                                      message: `Invitation for ${inv.email} extended to ${new Date(res.expiresAt).toLocaleDateString()} (+7 days).`,
+                                    });
+                                  } catch (err: unknown) {
+                                    setNotificationToast({ type: 'error', message: errorMessage(err) || 'Could not extend the invitation.' });
+                                  }
                                 }}
                                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-amber-300 hover:text-white border border-slate-700 transition-all"
                                 title="Extend Expiration (+7 Days)"
@@ -1132,12 +1143,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                               {/* 4. Resend Token (+14 days) */}
                               <button
                                 onClick={async () => {
-                                  const res = await resendInvitation(inv.id);
-                                  await handleCopy(res.inviteUrl, inv.id, 'token');
-                                  setNotificationToast({
-                                    type: 'success',
-                                    message: `Invitation refreshed for 14 days! Link copied to clipboard.`,
-                                  });
+                                  try {
+                                    const res = await resendInvitation(inv.id);
+                                    await handleCopy(res.inviteUrl, inv.id, 'token');
+                                    setNotificationToast({
+                                      type: 'success',
+                                      message: `New invitation link created and copied. The previous link no longer works.`,
+                                    });
+                                  } catch (err: unknown) {
+                                    setNotificationToast({ type: 'error', message: errorMessage(err) || 'Could not resend the invitation.' });
+                                  }
                                 }}
                                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white border border-slate-700 transition-all"
                                 title="Resend & Extend by 14 Days"
@@ -1147,13 +1162,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
                               {/* 5. Revoke Token */}
                               <button
-                                onClick={() => {
+                                onClick={async () => {
                                   if (confirm(`Revoke onboarding invitation for ${inv.email}? Link will become immediately invalid.`)) {
-                                    revokeInvitation(inv.id);
-                                    setNotificationToast({
-                                      type: 'info',
-                                      message: `Invitation for ${inv.email} has been revoked.`,
-                                    });
+                                    try {
+                                      await revokeInvitation(inv.id);
+                                      setNotificationToast({
+                                        type: 'info',
+                                        message: `Invitation for ${inv.email} has been revoked.`,
+                                      });
+                                    } catch (err: unknown) {
+                                      setNotificationToast({ type: 'error', message: errorMessage(err) || 'Could not revoke the invitation.' });
+                                    }
                                   }
                                 }}
                                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 transition-all"

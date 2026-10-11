@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
-import { AuthProviderType, getLicenseTierBadge } from '../types/tenant';
+import { AuthProviderType, TenantInvitation, getLicenseTierBadge } from '../types/tenant';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { errorMessage } from '../utils/errors';
 
@@ -31,14 +31,18 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
 }) => {
   const {
     getInvitationByToken,
+    previewInvitation,
     claimInviteToken,
     invitations,
+    isSandboxMode,
   } = useTenant();
 
   const {
     loginWithGoogle,
     loginWithMicrosoft,
     loginWithEmailPassword,
+    registerWithInvite,
+    authMode,
     authError,
     clearAuthError,
   } = useAuth();
@@ -63,7 +67,11 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   };
 
   const [token, setToken] = useState<string>(getTokenFromUrl);
-  const [activeAuthTab, setActiveAuthTab] = useState<'sso' | 'password'>('sso');
+  const [selectedAuthTab, setActiveAuthTab] = useState<'sso' | 'password'>('sso');
+  // Air-gapped installs (AUTH_MODE=local) have no SSO: the invited person sets a password on this server
+  const isLocalAuth = authMode === 'local';
+  const activeAuthTab = isLocalAuth ? 'password' : selectedAuthTab;
+  const minPasswordLength = isLocalAuth ? 12 : 8;
 
   // Password registration fields
   const [fullName, setFullName] = useState('');
@@ -86,7 +94,41 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     };
   }, []);
 
-  const invitation = token ? getInvitationByToken(token) : undefined;
+  // LIVE: what the server knows about the token (organisation, role, status), fetched with the token alone (it works
+  // before sign-in). The demo sandbox still reads its local fake invitations.
+  type InviteView = Pick<TenantInvitation, 'token' | 'tenantName' | 'email' | 'role' | 'status' | 'expiresAt' | 'cageCode' | 'licenseTier'>;
+  const [liveInvitation, setLiveInvitation] = useState<InviteView | undefined>(undefined);
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isSandboxMode || !token) {
+      setLiveInvitation(undefined);
+      setPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    previewInvitation(token)
+      .then((preview) => {
+        if (cancelled) return;
+        setLiveInvitation(preview ? { token, tenantName: preview.tenantName, email: preview.email, role: preview.role, status: preview.status, expiresAt: preview.expiresAt } : undefined);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLiveInvitation(undefined);
+        setPreviewError(errorMessage(err) || 'Could not check the invitation.');
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, isSandboxMode, previewInvitation]);
+
+  const invitation: InviteView | undefined = isSandboxMode ? (token ? getInvitationByToken(token) : undefined) : liveInvitation;
 
   // Auto-fill full name from email if invitation is present
   useEffect(() => {
@@ -168,8 +210,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     e.preventDefault();
     if (!invitation) return;
 
-    if (!password || password.length < 8) {
-      setClaimError('Password must be at least 8 characters long.');
+    if (!password || password.length < minPasswordLength) {
+      setClaimError(`Password must be at least ${minPasswordLength} characters long.`);
       return;
     }
 
@@ -182,17 +224,45 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     setClaimError(null);
     clearAuthError();
 
+    const name = fullName.trim() || invitation.email.split('@')[0];
+    const credentials = { name, email: invitation.email, authProvider: 'password' as AuthProviderType };
+
     try {
+      if (isLocalAuth && !isSandboxMode) {
+        // Air-gapped: the server creates the account for the invited address, accepts the invitation and signs us in.
+        try {
+          await registerWithInvite(invitation.token, name, password);
+        } catch (err: unknown) {
+          if ((err as { reason?: string }).reason !== 'account_exists') throw err;
+          // This address already has an account: sign in with ITS password, then accept the invitation.
+          const signedIn = await loginWithEmailPassword(invitation.email, password);
+          if (!signedIn) {
+            setClaimError('An account for this email already exists. Enter that account\'s password to accept the invitation.');
+            setIsSubmitting(false);
+            return;
+          }
+          const claim = await claimInviteToken(invitation.token, credentials);
+          if (!claim.success) {
+            setClaimError(claim.error || 'Failed to claim invitation.');
+            setIsSubmitting(false);
+            return;
+          }
+        }
+        handleClaimSuccess();
+        return;
+      }
+
       // Create session & authenticate with email & password
-      await loginWithEmailPassword(invitation.email, password);
+      const signedIn = await loginWithEmailPassword(invitation.email, password);
+      if (!signedIn) {
+        // Never claim without a real session: the server would refuse, and the old fallback hid that
+        setClaimError('Sign-in failed. If you do not have an account yet, use Single Sign-On to create one, then open this link again.');
+        setIsSubmitting(false);
+        return;
+      }
 
       // Claim token and associate with tenant
-      const claimResult = await claimInviteToken(invitation.token, {
-        name: fullName.trim() || invitation.email.split('@')[0],
-        email: invitation.email,
-        authProvider: 'password' as AuthProviderType,
-      });
-
+      const claimResult = await claimInviteToken(invitation.token, credentials);
       if (!claimResult.success) {
         setClaimError(claimResult.error || 'Failed to claim invitation.');
         setIsSubmitting(false);
@@ -202,19 +272,22 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       handleClaimSuccess();
     } catch (err: unknown) {
       console.error('Password claim error:', err);
-      // Even if mock firebase password fails, proceed with session binding
-      await claimInviteToken(invitation.token, {
-        name: fullName.trim() || invitation.email.split('@')[0],
-        email: invitation.email,
-        authProvider: 'password' as AuthProviderType,
-      });
-      handleClaimSuccess();
+      setClaimError(errorMessage(err) || 'Could not accept the invitation.');
+      setIsSubmitting(false);
     }
   };
 
   // -------------------------------------------------------------------------
   // Check Token Validity & Error States
   // -------------------------------------------------------------------------
+  if (previewLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-300 flex items-center justify-center font-sans" role="status" aria-live="polite">
+        <span className="text-sm">Checking your invitation…</span>
+      </div>
+    );
+  }
+
   let tokenError: 'MISSING' | 'NOT_FOUND' | 'EXPIRED' | 'CLAIMED' | 'REVOKED' | null = null;
 
   if (!token) {
@@ -225,7 +298,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     tokenError = 'CLAIMED';
   } else if (invitation.status === 'REVOKED') {
     tokenError = 'REVOKED';
-  } else if (new Date(invitation.expiresAt).getTime() < Date.now()) {
+  } else if (invitation.status === 'EXPIRED' || new Date(invitation.expiresAt).getTime() < Date.now()) {
     tokenError = 'EXPIRED';
   }
 
@@ -311,6 +384,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   {tokenError === 'EXPIRED' && 'Defense onboarding tokens expire after 14 days to preserve zero-trust security posture. Please request a refreshed link from your administrator.'}
                   {tokenError === 'CLAIMED' && 'This invitation link has already been accepted and bound to a user account. You may sign in directly with your registered credentials.'}
                   {tokenError === 'REVOKED' && 'This invitation was revoked by the security administrator or enclave owner.'}
+                  {previewError && <span className="mt-2 block text-rose-300">{previewError}</span>}
                 </p>
               </div>
 
@@ -424,7 +498,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
 
               {/* Auth Options Tabs */}
               <div className="space-y-4">
-                <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-slate-800">
+                <div className={`${isLocalAuth ? 'hidden ' : ''}grid grid-cols-2 p-1 rounded-xl bg-slate-900 border border-slate-800`}>
                   <button
                     type="button"
                     onClick={() => {
@@ -549,14 +623,14 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-                          Password (Min 8 chars) <span className="text-rose-400">*</span>
+                          Password (Min {minPasswordLength} chars) <span className="text-rose-400">*</span>
                         </label>
                         <div className="relative">
                           <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                           <input
                             type="password"
                             required
-                            minLength={8}
+                            minLength={minPasswordLength}
                             value={password}
                             onChange={e => setPassword(e.target.value)}
                             placeholder="••••••••••••"

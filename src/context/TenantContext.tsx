@@ -26,7 +26,14 @@ import {
 import { EvidenceVault } from '../services/evidenceVault';
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
-import { ApiClient, UploadUrlResponse } from '../services/apiClient';
+import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
+import {
+  ServerInvitation,
+  buildTeam,
+  mergeServerInvitations,
+  persistableInvitations,
+  toTenantInvitation,
+} from '../data/teamSync';
 import { getCascadedObjectiveNarrative } from '../data/frameworks/policyCompiler';
 import { NIST_800_171A_REGISTRY } from '../data/frameworks/assessmentObjectives';
 import {
@@ -65,6 +72,20 @@ const LEGACY_STORAGE_KEYS = [
 /**
  * Generate a cryptographically secure token for tenant and staff onboarding invites
  */
+/**
+ * Right after a sign-in the session token is saved to localStorage by an effect, a moment after the sign-in promise
+ * resolves. Wait briefly for it instead of failing a claim that is made straight away.
+ */
+async function waitForSessionToken(timeoutMs = 3000): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const token = ApiClient.getToken();
+    if (token) return token;
+    if (Date.now() > deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 function generateCryptoToken(): string {
   // Invitation tokens are bearer secrets: use the platform CSPRNG, never Math.random().
   const bytes = new Uint8Array(24);
@@ -444,20 +465,33 @@ interface TenantContextType {
   ) => void;
   claimInviteToken: (
     token: string,
-    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType }
+    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; idToken?: string }
   ) => Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }>;
   inviteStaffMember: (
     tenantId: string,
     email: string,
     role: 'ASSESSOR' | 'VIEWER'
   ) => Promise<{ invitation: TenantInvitation; inviteUrl: string }>;
-  revokeInvitation: (invitationId: string) => void;
+  revokeInvitation: (invitationId: string) => Promise<void>;
   resendInvitation: (invitationId: string) => Promise<{ inviteUrl: string }>;
-  updateInvitation: (invitationId: string, updates: Partial<TenantInvitation>) => void;
-  updateMemberRole: (tenantId: string, memberId: string, newRole: TenantRole) => void;
-  removeMember: (tenantId: string, memberId: string) => void;
+  updateInvitation: (invitationId: string, updates: Partial<TenantInvitation>) => Promise<void>;
+  updateMemberRole: (tenantId: string, memberId: string, newRole: TenantRole) => Promise<void>;
+  removeMember: (tenantId: string, memberId: string) => Promise<void>;
   getTenantMembers: (tenantId: string) => TeamMember[];
   getInvitationByToken: (token: string) => TenantInvitation | undefined;
+  /** Re-fetches the members and invitations of a server-backed tenant (default: the active one). */
+  refreshTeam: (tenantId?: string) => Promise<void>;
+  /** Same for every server-backed tenant the user administers (used by the super-admin console). */
+  refreshAllTeams: () => Promise<void>;
+  /** The last team / invitation loading error, or null. */
+  teamError: string | null;
+  /** What the accept-invite page shows before sign-in; resolves null for an unknown token. */
+  previewInvitation: (token: string) => Promise<InvitePreview | null>;
+  /**
+   * Moves a tenant that only exists in this browser to the server: creates it there, then ports its assessment and
+   * evidence files to the new server-generated id. Browser-only team members and invitations are not carried over.
+   */
+  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number }>;
 
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
@@ -722,11 +756,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [licenseRequests]);
 
   useEffect(() => {
-    localStorage.setItem(INVITATIONS_STORAGE_KEY, JSON.stringify(invitations));
+    // Server-issued invitations are owned by the server (and their tokens are secrets): never persisted here
+    localStorage.setItem(INVITATIONS_STORAGE_KEY, JSON.stringify(persistableInvitations(invitations)));
   }, [invitations]);
 
   useEffect(() => {
-    localStorage.setItem(TEAM_MEMBERS_STORAGE_KEY, JSON.stringify(teamMembers));
+    // Teams of server-backed tenants come from the server on every load; only browser-only tenants keep a local copy
+    const serverBackedIds = new Set(liveTenantsRef.current.filter(t => t.serverBacked).map(t => t.id));
+    localStorage.setItem(
+      TEAM_MEMBERS_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(Object.entries(teamMembers).filter(([tenantId]) => !serverBackedIds.has(tenantId))))
+    );
   }, [teamMembers]);
 
 
@@ -778,6 +818,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const liveTenantsRef = useRef(liveTenants);
   liveTenantsRef.current = liveTenants;
   const syncInFlight = useRef<Promise<Tenant[] | null> | null>(null);
+  // Latest values for async callbacks (avoid stale closures after an await)
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
+  const currentTenantIdRef = useRef(currentTenant.id);
+  currentTenantIdRef.current = currentTenant.id;
+  // Plaintext invitation tokens exist ONLY here, in memory, from creation/resend until the page closes.
+  // The server keeps just a hash, so a link cannot be recovered later: use Resend to issue a fresh one.
+  const inviteTokensRef = useRef<Record<string, string>>({});
+  const [teamError, setTeamError] = useState<string | null>(null);
 
   const syncTenantsFromServer = useCallback(async (tokenOverride?: string, options?: { force?: boolean }): Promise<Tenant[] | null> => {
     if (isSandboxMode) return null; // the /demo sandbox has no server-side tenants
@@ -869,6 +918,100 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (activate) setLiveActiveTenantId(createdId);
     return tenant;
   }, [syncTenantsFromServer]);
+
+  /**
+   * Loads a server-backed tenant's members and (for owners / MSP admins) pending invitations from the server and shows
+   * them in the team list. Anyone may see who is on the team; invitations are administrative, so only admins fetch them.
+   */
+  const refreshTeam = useCallback(async (tenantIdArg?: string, options: { asAdmin?: boolean } = {}): Promise<void> => {
+    if (isSandboxMode) return;
+    const tenantId = tenantIdArg ?? currentTenantIdRef.current;
+    const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (!tenant?.serverBacked) return;
+
+    try {
+      const isAdmin = options.asAdmin || canRoleWrite(currentUserRef.current.roles?.[tenantId]);
+      const [members, invites] = await Promise.all([
+        ApiClient.listMembers(tenantId),
+        isAdmin ? ApiClient.listInvites(tenantId) : Promise.resolve<ServerInvitation[]>([]),
+      ]);
+      setTeamMembers(prev => ({ ...prev, [tenantId]: buildTeam(tenantId, members, invites, inviteTokensRef.current) }));
+      if (isAdmin) {
+        const mapped = invites.map(i => toTenantInvitation(i, tenant, inviteTokensRef.current[i.id]));
+        setInvitations(prev => mergeServerInvitations(prev, tenantId, mapped));
+      }
+      setTeamError(null);
+    } catch (err: unknown) {
+      console.warn('[Team] Could not load the team from the server:', errorMessage(err));
+      setTeamError(errorMessage(err) || 'Could not load the team');
+    }
+  }, [isSandboxMode]);
+
+  const refreshAllTeams = useCallback(async (): Promise<void> => {
+    if (isSandboxMode) return;
+    for (const t of liveTenantsRef.current) {
+      if (t.serverBacked && canRoleWrite(currentUserRef.current.roles?.[t.id])) await refreshTeam(t.id);
+    }
+  }, [isSandboxMode, refreshTeam]);
+
+  /**
+   * Moves a browser-only tenant to the server: creates it there (the server assigns the id), ports its assessment and
+   * evidence files to that id, and removes the local copy. Browser-only team members and invitations cannot be honoured
+   * by the server, so they are dropped with the old record: re-invite people from the migrated tenant.
+   */
+  const migrateTenantToServer = useCallback(async (
+    target: Tenant,
+    override: ServerTenantPatch = {},
+    activate = true
+  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; controlsFailed: number }> => {
+    const base = toServerPatch(target);
+    const created = await createTenantOnServer(
+      { ...base, ...override, name: (override.name ?? target.name).trim() },
+      { domain: target.domain, licenseTier: target.licenseTier, isConfigured: target.isConfigured ?? true, activate }
+    );
+    // In live mode the server is the source of truth for control answers, so carry over everything the user filled in
+    // (otherwise the new tenant's defaults would replace it on the next sync).
+    const legacyControls = Object.values(StorageService.loadAssessment(target).controls).filter(
+      c => c.status !== 'NOT_STARTED' || (c.implementationNotes || '').trim() !== ''
+    );
+    const pushed = await Promise.allSettled(
+      legacyControls.map(c =>
+        ApiClient.updateControl(created.id, c.id, {
+          status: c.status,
+          implementationNotes: c.implementationNotes,
+          responsibleRole: c.responsibleRole,
+          updatedBy: c.updatedBy,
+        })
+      )
+    );
+    const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
+    StorageService.migrateAssessment(target, created.id);
+    const evidenceFilesMoved = await EvidenceVault.moveTenant(target.id, created.id);
+    setLiveTenants(prev => prev.filter(t => t.id !== target.id));
+    setInvitations(prev => prev.filter(i => i.tenantId !== target.id));
+    setTeamMembers(prev => {
+      const next = { ...prev };
+      delete next[target.id];
+      return next;
+    });
+    setCurrentUser(prev => {
+      const roles = { ...prev.roles };
+      delete roles[target.id];
+      return { ...prev, roles };
+    });
+    return { tenant: created, evidenceFilesMoved, controlsFailed };
+  }, [createTenantOnServer]);
+
+  /** "Move to server": the user-facing action for tenants that only exist in this browser. */
+  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number }> => {
+    if (isSandboxMode) throw new ApiError(409, 'The demo sandbox has no server to move tenants to.');
+    const target = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (!target) throw new ApiError(404, 'That tenant was not found.');
+    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, controlsFailed: 0 };
+    if (target.isConfigured === false) throw new ApiError(409, 'Finish this tenant\'s setup wizard first; it creates the tenant on the server.');
+    const moved = await migrateTenantToServer(target, {}, target.id === currentTenantIdRef.current);
+    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, controlsFailed: moved.controlsFailed };
+  }, [isSandboxMode, migrateTenantToServer]);
 
 
   // Multi-Framework & Baseline State
@@ -1134,6 +1277,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';
   }, [currentRole]);
 
+  // A server-backed tenant's team and invitations live on the server: load them when it becomes active (or the role changes)
+  useEffect(() => {
+    if (!isSandboxMode && currentTenant.serverBacked) void refreshTeam(currentTenant.id);
+  }, [isSandboxMode, currentTenant.id, currentTenant.serverBacked, currentRole, refreshTeam]);
+
   const switchTenant = useCallback((tenantId: string) => {
     if (isSandboxMode) {
       if (demoTenants.some(t => t.id === tenantId)) {
@@ -1293,27 +1441,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let finalId = tenantId;
 
     if (!isSandboxMode && target && !target.serverBacked) {
-      // A first-run draft, or a tenant that only ever existed in this browser: create the real tenant on the server,
-      // then move its local data (assessment, evidence files) under the server-assigned id and drop the local copy.
-      const created = await createTenantOnServer(
-        {
-          ...settings,
-          name: data.organizationName.trim(),
-          industry: target.industry,
-          primaryFramework: target.primaryFramework,
-          enabledFrameworks: target.enabledFrameworks,
-        },
-        { domain: target.domain, licenseTier: target.licenseTier, isConfigured: true }
-      );
-      finalId = created.id;
-      StorageService.migrateAssessment(target, finalId);
-      await EvidenceVault.moveTenant(tenantId, finalId);
-      setLiveTenants(prev => prev.filter(t => t.id !== tenantId));
-      setCurrentUser(prev => {
-        const roles = { ...prev.roles };
-        delete roles[tenantId];
-        return { ...prev, roles };
-      });
+      // A first-run draft, or a tenant that only ever existed in this browser: create the real tenant on the server and
+      // move its local data under the server-assigned id (see migrateTenantToServer).
+      const migrated = await migrateTenantToServer(target, { ...settings, name: data.organizationName.trim() });
+      finalId = migrated.tenant.id;
     } else if (!isSandboxMode && target?.serverBacked) {
       // Already on the server: persist the changes there first, so a refused update (403 etc.) is reported
       await ApiClient.updateTenant(tenantId, settings);
@@ -1364,7 +1495,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     StorageService.saveAssessment(finalId, currentAssessment);
     setIsOnboardingModalOpen(false);
     return finalId;
-  }, [isSandboxMode, createTenantOnServer]);
+  }, [isSandboxMode, migrateTenantToServer]);
 
   const updateTenant = useCallback((tenantId: string, updates: Partial<Tenant>) => {
     if (isSandboxMode) {
@@ -1706,50 +1837,27 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
     const newTenantId = newTenant.id;
 
-        const blankState = createInitialState(newTenant);
+    // Initialize 100% blank assessment state in storage
+    const blankState = createInitialState(newTenant);
     StorageService.saveAssessment(newTenantId, blankState);
 
-    // Cryptographic token & invitation
-    const token = generateCryptoToken();
-    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    // The owner hand-over is a SERVER invitation: the token is hashed there, bound to the owner's email, single-use and
+    // expiring. (The provisioning admin is already the server-side owner, so can issue it.)
+    let issued: { invitation: ServerInvitation; token: string };
+    try {
+      issued = await ApiClient.createInvite(newTenantId, { email: data.tenantOwnerEmail.trim(), role: 'TENANT_OWNER' });
+    } catch (err: unknown) {
+      throw new ApiError(
+        err instanceof ApiError ? err.status : 500,
+        'The tenant was created, but the owner invitation could not be issued: ' + errorMessage(err) + ' Invite the owner from the tenant\'s Team settings.'
+      );
+    }
+    inviteTokensRef.current[issued.invitation.id] = issued.token;
+    const invitation = { ...toTenantInvitation(issued.invitation, newTenant, issued.token), licenseTier: data.licenseTier };
+    await refreshTeam(newTenantId, { asAdmin: true });
 
-    const invitation: TenantInvitation = {
-      id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      token,
-      tenantId: newTenantId,
-      tenantName: newTenant.name,
-      email: data.tenantOwnerEmail.trim().toLowerCase(),
-      role: 'TENANT_OWNER',
-      invitedBy: currentUser.email || 'Pitch Black Cyber Super Admin',
-      createdAt: new Date().toISOString(),
-      expiresAt,
-      status: 'PENDING',
-      type: 'TENANT_ONBOARDING',
-      systemName: newTenant.systemName,
-      cageCode: newTenant.cageCode,
-      licenseTier: data.licenseTier,
-    };
-
-    const ownerMember: TeamMember = {
-      id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      tenantId: newTenantId,
-      email: data.tenantOwnerEmail.trim().toLowerCase(),
-      name: data.tenantOwnerEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      role: 'TENANT_OWNER',
-      status: 'PENDING_INVITE',
-      invitedAt: new Date().toISOString(),
-      invitationToken: token,
-    };
-
-    setInvitations(prev => [invitation, ...prev]);
-    setTeamMembers(prev => ({
-      ...prev,
-      [newTenantId]: [ownerMember],
-    }));
-
-    const inviteUrl = buildInviteUrl(token);
-    return { tenant: newTenant, invitation, inviteUrl };
-  }, [currentUser.email, createTenantOnServer]);
+    return { tenant: newTenant, invitation, inviteUrl: buildInviteUrl(issued.token) };
+  }, [createTenantOnServer, refreshTeam]);
 
 
   /**
@@ -1757,8 +1865,23 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    */
   const claimInviteToken = useCallback(async (
     token: string,
-    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType }
+    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; idToken?: string }
   ): Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }> => {
+    // LIVE: the server consumes the token and adds the signed-in user to the tenant. (The demo sandbox keeps its local fake.)
+    if (!isSandboxMode) {
+      const bearer = userCredentials.idToken ?? (await waitForSessionToken());
+      if (!bearer) return { success: false, error: 'Please sign in first, then open the invitation link again.' };
+      try {
+        const accepted = await ApiClient.acceptInvite(token, bearer);
+        const synced = await syncTenantsFromServer(bearer, { force: true });
+        const tenant = synced?.find(t => t.id === accepted.tenantId);
+        setLiveActiveTenantId(accepted.tenantId);
+        return { success: true, tenant, role: accepted.role };
+      } catch (err: unknown) {
+        return { success: false, error: errorMessage(err) || 'Could not accept the invitation.' };
+      }
+    }
+
     const invite = invitations.find(inv => inv.token === token);
     if (!invite) {
       return { success: false, error: 'Invitation token was not found or is invalid.' };
@@ -1875,7 +1998,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     return { success: true, tenant: targetTenant, role: assignedRole };
-  }, [invitations, liveTenants, demoTenants, isSandboxMode]);
+  }, [invitations, liveTenants, demoTenants, isSandboxMode, syncTenantsFromServer]);
 
   /**
    * Invite an assessor or viewer staff member to the specified tenant enclave
@@ -1885,6 +2008,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     email: string,
     role: 'ASSESSOR' | 'VIEWER'
   ): Promise<{ invitation: TenantInvitation; inviteUrl: string }> => {
+    // LIVE: invitations are issued and verified by the server. A browser-only tenant must be moved to the server first.
+    if (!isSandboxMode) {
+      const target = liveTenantsRef.current.find(t => t.id === tenantId);
+      if (!target?.serverBacked) {
+        throw new ApiError(409, 'Move this tenant to the server before inviting people: invitations are issued and verified by the server.');
+      }
+      const issued = await ApiClient.createInvite(tenantId, { email: email.trim(), role });
+      inviteTokensRef.current[issued.invitation.id] = issued.token;
+      await refreshTeam(tenantId, { asAdmin: true });
+      return { invitation: toTenantInvitation(issued.invitation, target, issued.token), inviteUrl: buildInviteUrl(issued.token) };
+    }
+
     const targetTenant =
       liveTenants.find(t => t.id === tenantId) ||
       demoTenants.find(t => t.id === tenantId) ||
@@ -1933,12 +2068,20 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const inviteUrl = buildInviteUrl(token);
     return { invitation, inviteUrl };
-  }, [liveTenants, demoTenants, currentTenant, currentUser]);
+  }, [isSandboxMode, refreshTeam, liveTenants, demoTenants, currentTenant, currentUser]);
 
   /**
    * Revoke an active or pending invitation
    */
-  const revokeInvitation = useCallback((invitationId: string) => {
+  const revokeInvitation = useCallback(async (invitationId: string): Promise<void> => {
+    const serverInvite = invitations.find(i => i.id === invitationId && i.serverBacked);
+    if (serverInvite) {
+      await ApiClient.revokeInvite(serverInvite.tenantId, invitationId);
+      delete inviteTokensRef.current[invitationId];
+      await refreshTeam(serverInvite.tenantId);
+      return;
+    }
+
     setInvitations(prev =>
       prev.map(inv =>
         inv.id === invitationId
@@ -1957,12 +2100,21 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         };
       });
     }
-  }, [invitations]);
+  }, [invitations, refreshTeam]);
 
   /**
    * Resend / refresh invitation with extended expiration
    */
   const resendInvitation = useCallback(async (invitationId: string): Promise<{ inviteUrl: string }> => {
+    // Server invitations: issue a NEW token (the old link stops working) and restart the expiry clock
+    const serverInvite = invitations.find(i => i.id === invitationId && i.serverBacked);
+    if (serverInvite) {
+      const reissued = await ApiClient.resendInvite(serverInvite.tenantId, invitationId);
+      inviteTokensRef.current[invitationId] = reissued.token;
+      await refreshTeam(serverInvite.tenantId);
+      return { inviteUrl: buildInviteUrl(reissued.token) };
+    }
+
     let token = '';
     const now = new Date();
     const newExpiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString();
@@ -1982,12 +2134,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
 
     return { inviteUrl: buildInviteUrl(token) };
-  }, []);
+  }, [invitations, refreshTeam]);
 
   /**
    * Extend invitation expiration by specified number of days (default 7 days)
    */
   const extendInvitationExpiration = useCallback(async (invitationId: string, days: number = 7): Promise<{ expiresAt: string }> => {
+    const serverInvite = invitations.find(i => i.id === invitationId && i.serverBacked);
+    if (serverInvite) {
+      const extended = await ApiClient.extendInvite(serverInvite.tenantId, invitationId, days);
+      await refreshTeam(serverInvite.tenantId);
+      return { expiresAt: extended.expiresAt };
+    }
+
     let newExpiresAt = '';
     setInvitations(prev =>
       prev.map(inv => {
@@ -2005,12 +2164,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
     );
     return { expiresAt: newExpiresAt };
-  }, []);
+  }, [invitations, refreshTeam]);
 
   /**
    * Update details of an existing pending or active invitation
    */
-  const updateInvitation = useCallback((invitationId: string, updates: Partial<TenantInvitation>) => {
+  const updateInvitation = useCallback(async (invitationId: string, updates: Partial<TenantInvitation>): Promise<void> => {
+    const serverInvite = invitations.find(i => i.id === invitationId && i.serverBacked);
+    if (serverInvite) {
+      if (updates.tenantId && updates.tenantId !== serverInvite.tenantId) {
+        throw new ApiError(400, 'An invitation cannot be moved to another tenant. Revoke it and issue a new one there.');
+      }
+      await ApiClient.updateInvite(serverInvite.tenantId, invitationId, { email: updates.email, role: updates.role });
+      await refreshTeam(serverInvite.tenantId);
+      return;
+    }
+
     let targetToken = '';
     let oldTenantId = '';
     let newTenantId = '';
@@ -2084,12 +2253,21 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       });
     }
-  }, [liveTenants, demoTenants]);
+  }, [invitations, refreshTeam, liveTenants, demoTenants]);
 
   /**
    * Update role for an active team member
    */
-  const updateMemberRole = useCallback((tenantId: string, memberId: string, newRole: TenantRole) => {
+  const updateMemberRole = useCallback(async (tenantId: string, memberId: string, newRole: TenantRole): Promise<void> => {
+    const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (!isSandboxMode && tenant?.serverBacked) {
+      const member = teamMembers[tenantId]?.find(m => m.id === memberId);
+      if (!member?.userId) throw new ApiError(400, 'This member\'s role cannot be changed.');
+      await ApiClient.setMemberRole(tenantId, { userId: member.userId, email: member.email, name: member.name, role: newRole });
+      await refreshTeam(tenantId);
+      return;
+    }
+
     setTeamMembers(prev => {
       const list = prev[tenantId] || [];
       return {
@@ -2109,12 +2287,28 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         },
       }));
     }
-  }, [teamMembers, currentUser.email]);
+  }, [isSandboxMode, refreshTeam, teamMembers, currentUser.email]);
 
   /**
    * Remove a member from the organization
    */
-  const removeMember = useCallback((tenantId: string, memberId: string) => {
+  const removeMember = useCallback(async (tenantId: string, memberId: string): Promise<void> => {
+    const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (!isSandboxMode && tenant?.serverBacked) {
+      const member = teamMembers[tenantId]?.find(m => m.id === memberId);
+      if (member?.invitationId) {
+        // A pending row is an invitation: removing it revokes it
+        await ApiClient.revokeInvite(tenantId, member.invitationId);
+        delete inviteTokensRef.current[member.invitationId];
+      } else if (member?.userId) {
+        await ApiClient.removeMember(tenantId, member.userId);
+      } else {
+        throw new ApiError(400, 'This member cannot be removed.');
+      }
+      await refreshTeam(tenantId);
+      return;
+    }
+
     setTeamMembers(prev => {
       const list = prev[tenantId] || [];
       return {
@@ -2122,7 +2316,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         [tenantId]: list.filter(m => m.id !== memberId),
       };
     });
-  }, []);
+  }, [isSandboxMode, refreshTeam, teamMembers]);
 
   /**
    * Query team members for active or specified tenant
@@ -2158,6 +2352,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const getInvitationByToken = useCallback((token: string): TenantInvitation | undefined => {
     return invitations.find(inv => inv.token === token);
   }, [invitations]);
+
+  const previewInvitation = useCallback((token: string): Promise<InvitePreview | null> => ApiClient.previewInvite(token), []);
 
   const value = useMemo(() => ({
     tenants,
@@ -2213,6 +2409,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncError,
     tenantSync,
     syncTenantsFromServer,
+    refreshTeam,
+    refreshAllTeams,
+    teamError,
+    previewInvitation,
+    migrateLocalTenantToServer,
     refreshLiveData,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
@@ -2281,6 +2482,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncError,
     tenantSync,
     syncTenantsFromServer,
+    refreshTeam,
+    refreshAllTeams,
+    teamError,
+    previewInvitation,
+    migrateLocalTenantToServer,
     refreshLiveData,
     updateLiveControl,
     createLiveEvidenceUploadUrl,

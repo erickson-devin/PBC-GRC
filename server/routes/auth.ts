@@ -7,10 +7,14 @@ import {
   verifyPassword,
 } from '../auth/localAuth';
 import {
+  LocalUserExistsError,
+  createLocalUser,
+  deleteLocalUser,
   findLocalUserByEmail,
   registerFailedLogin,
   registerSuccessfulLogin,
 } from '../auth/localUsers';
+import { previewInvitation, redeemInvitation } from '../invitations';
 import { authOnlyMiddleware } from '../middleware/authMiddleware';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -107,6 +111,94 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     }
     console.error('[Auth] Login failed:', errorMessage(err));
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+/**
+ * POST /api/v1/auth/register-with-invite   (public; only when AUTH_MODE=local)
+ * Body: { token, name?, password }. How a brand-new person gets an account on an air-gapped install: holding the
+ * invitation token proves they received it at the invited address, so the account is created for THAT email, the
+ * invitation is consumed, and they are signed in, in one step. If an account for the email already exists they are
+ * told to sign in instead (409 account_exists), and nothing is consumed.
+ */
+router.post('/register-with-invite', async (req: Request, res: Response): Promise<void> => {
+  if (!isLocalAuthMode()) {
+    res.status(404).json({ error: 'Local authentication is not enabled on this server' });
+    return;
+  }
+  if (throttled(req.ip || 'unknown')) {
+    res.setHeader('Retry-After', String(WINDOW_MS / 1000));
+    res.status(429).json({ error: 'Too many attempts. Try again shortly.' });
+    return;
+  }
+
+  const { token, name, password } = req.body ?? {};
+  if (typeof token !== 'string' || !/^inv_[A-Za-z0-9_-]{20,128}$/.test(token)) {
+    res.status(404).json({ error: 'Invitation not found' });
+    return;
+  }
+  if (typeof password !== 'string' || (name !== undefined && (typeof name !== 'string' || name.length > 255))) {
+    res.status(400).json({ error: 'A password is required' });
+    return;
+  }
+
+  try {
+    const invite = await previewInvitation(token);
+    if (!invite) {
+      res.status(404).json({ error: 'Invitation not found' });
+      return;
+    }
+    if (invite.status === 'EXPIRED' || invite.status === 'REVOKED') {
+      res.status(410).json({ error: 'This invitation is no longer valid. Ask your administrator to send a new one.', reason: invite.status.toLowerCase() });
+      return;
+    }
+    if (invite.status === 'ACCEPTED') {
+      res.status(409).json({ error: 'This invitation has already been used.', reason: 'used' });
+      return;
+    }
+    if (await findLocalUserByEmail(invite.email)) {
+      res.status(409).json({ error: 'An account for this email already exists. Sign in instead.', reason: 'account_exists' });
+      return;
+    }
+
+    let user;
+    try {
+      user = await createLocalUser({ email: invite.email, name: typeof name === 'string' ? name : '', password });
+    } catch (err: unknown) {
+      if (err instanceof LocalUserExistsError) {
+        res.status(409).json({ error: 'An account for this email already exists. Sign in instead.', reason: 'account_exists' });
+      } else {
+        // Password policy problems (length, etc.) are safe and useful to show
+        res.status(400).json({ error: errorMessage(err) || 'Invalid registration details' });
+      }
+      return;
+    }
+
+    const result = await redeemInvitation(token, { uid: user.id, email: user.email, name: user.name });
+    if (!result.ok) {
+      await deleteLocalUser(user.id); // do not leave an account behind for an invitation that could not be consumed
+      res.status(result.reason === 'used' ? 409 : result.reason === 'invalid' ? 404 : 410).json({ error: 'This invitation can no longer be used.', reason: result.reason });
+      return;
+    }
+
+    const { token: sessionToken, claims } = signLocalToken({ id: user.id, email: user.email, name: user.name });
+    console.log('[Auth] Registered ' + user.email + ' via invitation into ' + result.tenantId + ' as ' + result.role);
+    res.status(201).json({
+      token: sessionToken,
+      tokenType: 'Bearer',
+      expiresAt: new Date(claims.exp * 1000).toISOString(),
+      expiresIn: claims.exp - claims.iat,
+      user: { id: user.id, email: user.email, name: user.name },
+      tenantId: result.tenantId,
+      role: result.role,
+    });
+  } catch (err: unknown) {
+    if (err instanceof LocalAuthConfigError) {
+      res.status(503).json({ error: 'Authentication is not available: server is misconfigured' });
+      return;
+    }
+    console.error('[Auth] register-with-invite failed:', errorMessage(err));
+    res.status(500).json({ error: 'Registration failed' });
   }
 });
 

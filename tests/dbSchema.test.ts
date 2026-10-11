@@ -64,7 +64,19 @@ assert(Boolean(tenantsPolicy) && tenantsPolicy!.table === 'tenants', 'tenants ha
 assert(Boolean(selfPolicy) && selfPolicy!.table === 'tenant_users', 'tenant_users has a self-visibility policy (the tenants policy reads it under RLS, so it needs one)');
 assert(tenantsPolicy?.using === `id IN (SELECT tenant_id FROM tenant_users WHERE user_id = ${userCtx})`, 'tenants are visible only where the user has a tenant_users row', tenantsPolicy?.using);
 assert(selfPolicy?.using === `user_id = ${userCtx}`, 'tenant_users: a user sees only their own rows', selfPolicy?.using);
-assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx)), "an unset or empty user context matches nothing (NULLIF, so '' never equals a user id)");
+const tokenCtx = "NULLIF(current_setting('app.invite_token_hash', true), '')";
+assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx) || p.using.includes(tokenCtx)), "an unset or empty user / invite context matches nothing (NULLIF, so '' never equals an id or hash)");
+
+console.log('\n--- Invitations ---');
+assert(schema.includes('CREATE TABLE IF NOT EXISTS tenant_invitations'), 'tenant_invitations is created by initDb');
+const invBlock = schema.slice(schema.indexOf('CREATE TABLE IF NOT EXISTS tenant_invitations'), schema.indexOf('CREATE TABLE IF NOT EXISTS local_users'));
+assert(/token_hash CHAR\(64\) NOT NULL/.test(invBlock) && !/\btoken VARCHAR|\btoken TEXT/i.test(invBlock), 'only a SHA-256 hash of the token is stored, never the token');
+assert(invBlock.includes('CONSTRAINT unq_invitation_token_hash UNIQUE (token_hash)'), 'token hashes are unique');
+assert(/accepted_at TIMESTAMPTZ/.test(invBlock) && /revoked_at TIMESTAMPTZ/.test(invBlock) && /expires_at TIMESTAMPTZ NOT NULL/.test(invBlock), 'single-use, revocation and expiry columns exist');
+assert(/CHECK \(role IN \('TENANT_OWNER', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'\)\)/.test(invBlock), 'invited roles are limited to the four TenantRoles');
+assert(protectedTables.has('tenant_invitations') && rls.includes('ALTER TABLE tenant_invitations FORCE ROW LEVEL SECURITY;'), 'tenant_invitations has tenant isolation with FORCE RLS');
+assert(byName('rls_tenant_invitations_redeem')?.using === `token_hash = ${tokenCtx}`, 'an invitation is visible to whoever presents its token hash, and only that one');
+assert(byName('rls_tenants_invite_redeem')?.using === `id IN (SELECT tenant_id FROM tenant_invitations WHERE token_hash = ${tokenCtx})`, 'the tenant it points at is visible too (for the accept-page preview)');
 for (const p of DISCOVERY_POLICIES) {
   const start = rls.indexOf(`CREATE POLICY ${p.name}`);
   const block = rls.slice(start, rls.indexOf('END IF;', start));

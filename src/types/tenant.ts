@@ -170,6 +170,8 @@ export interface TenantInvitation {
   systemName?: string;
   cageCode?: string;
   licenseTier?: LicenseTier;
+  /** True when issued and tracked by the server (the token is hashed there; this record is never persisted locally). */
+  serverBacked?: boolean;
 }
 
 export interface TeamMember {
@@ -182,6 +184,10 @@ export interface TeamMember {
   joinedAt?: string;
   invitedAt?: string;
   invitationToken?: string;
+  /** The pending invitation this row represents (server-backed invitations have no retrievable token). */
+  invitationId?: string;
+  /** The member's user id, for server-backed members. */
+  userId?: string;
   avatarUrl?: string;
 }
 

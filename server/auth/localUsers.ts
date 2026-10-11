@@ -124,6 +124,15 @@ export async function registerSuccessfulLogin(user: LocalUser): Promise<void> {
   );
 }
 
+/** Removes a local account. Used to roll back a registration whose invitation could not be consumed. */
+export async function deleteLocalUser(id: string): Promise<void> {
+  if (getDbMode() === 'memory') {
+    for (const [email, u] of memoryUsers) if (u.id === id) memoryUsers.delete(email);
+    return;
+  }
+  await pool.query('DELETE FROM local_users WHERE id = $1', [id]);
+}
+
 /** Test hook. */
 export function __resetMemoryLocalUsersForTests(): void {
   memoryUsers.clear();

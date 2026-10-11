@@ -41,7 +41,10 @@ interface AuthContextType {
   redirectPath: string | null;
   loginWithMicrosoft: () => Promise<void>;
   loginWithGoogle: () => Promise<void>;
-  loginWithEmailPassword: (email: string, pass: string) => Promise<void>;
+  /** Resolves true when signed in, false when it failed (the reason is in authError). */
+  loginWithEmailPassword: (email: string, pass: string) => Promise<boolean>;
+  /** Air-gapped installs: creates the account for an invitation's email, accepts it and signs in. Throws ApiError. */
+  registerWithInvite: (inviteToken: string, name: string, password: string) => Promise<void>;
   sendMagicLink: (email: string) => Promise<void>;
   signInWithMagicLink: (email: string) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -320,7 +323,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   /**
    * Email & Password Sign-In for pre-configured enterprise users
    */
-  const loginWithEmailPassword = useCallback(async (email: string, pass: string) => {
+  const loginWithEmailPassword = useCallback(async (email: string, pass: string): Promise<boolean> => {
     setLoading(true);
     setAuthError(null);
     try {
@@ -329,13 +332,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const session = await ApiClient.localLogin(email, pass);
         await handleUserSession(session.user.email, session.user.name, 'password', session.token);
         setIsAuthModalOpen(false);
-        return;
+        return true;
       }
       if (!isFirebaseConfigured) {
         await new Promise(r => setTimeout(r, 500));
         await handleUserSession(email, null, 'password');
         setIsAuthModalOpen(false);
-        return;
+        return true;
       }
 
       const result = await signInWithEmailAndPassword(auth, email, pass);
@@ -348,6 +351,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         result.user
       );
       setIsAuthModalOpen(false);
+      return true;
     } catch (err: unknown) {
       console.error('Email login failed:', err);
       if (errorCode(err) === 'auth/user-not-found' || errorCode(err) === 'auth/wrong-password' || errorCode(err) === 'auth/invalid-credential') {
@@ -356,13 +360,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Fallback simulation
         await handleUserSession(email, null, 'password');
         setIsAuthModalOpen(false);
+        return true;
       } else {
         setAuthError(errorMessage(err) || 'Authentication failed. Please verify your credentials.');
       }
+      return false;
     } finally {
       setLoading(false);
     }
   }, [handleUserSession, authMode]);
+
+  /**
+   * Air-gapped onboarding by invitation: the server creates the account for the invited email, consumes the invitation
+   * and returns a session. Errors (ApiError, with `reason` e.g. 'account_exists') propagate to the caller.
+   */
+  const registerWithInvite = useCallback(async (inviteToken: string, name: string, password: string): Promise<void> => {
+    setLoading(true);
+    setAuthError(null);
+    try {
+      const session = await ApiClient.registerWithInvite({ token: inviteToken, password, name: name || undefined });
+      await handleUserSession(session.user.email, session.user.name, 'password', session.token);
+      setIsAuthModalOpen(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [handleUserSession]);
 
   /**
    * Passwordless Magic Link for Defense Assessors
@@ -524,6 +546,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loginWithMicrosoft,
     loginWithGoogle,
     loginWithEmailPassword,
+    registerWithInvite,
     sendMagicLink,
     signInWithMagicLink,
     sendPasswordReset,
@@ -550,6 +573,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loginWithMicrosoft,
     loginWithGoogle,
     loginWithEmailPassword,
+    registerWithInvite,
     sendMagicLink,
     signInWithMagicLink,
     sendPasswordReset,

@@ -24,3 +24,10 @@ export const ROLE_LABELS: Record<TenantRole, string> = {
   ASSESSOR: 'Assessor',
   VIEWER: 'Viewer',
 };
+
+/** Privilege order, lowest to highest. Used so that accepting an invitation can never LOWER someone's role. */
+const ROLE_RANK: Record<TenantRole, number> = { VIEWER: 0, ASSESSOR: 1, TENANT_OWNER: 2, MSP_ADMIN: 3 };
+
+export function maxRole(a: TenantRole | null | undefined, b: TenantRole): TenantRole {
+  return a != null && ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
+}

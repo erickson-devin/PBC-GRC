@@ -20,6 +20,7 @@ import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/framewor
 import { calculateSprsScore, formatSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { DomainCards } from './DomainCards';
+import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { ROLE_LABELS } from '../../utils/roles';
 import { SspGateBanner } from './SspGateBanner';
 
@@ -69,6 +70,9 @@ export const ComplianceOverview: React.FC = () => {
     <div className="space-y-8 animate-fadeIn">
       {/* SSP gate: the SPRS score is locked until a System Security Plan exists; point the user at the SSP + POA&M */}
       {sprsResult && <SspGateBanner sprs={sprsResult} />}
+
+      {/* A tenant that exists only in this browser: offer to move it to the server (owners only) */}
+      {canEdit && <LegacyTenantNotice tenant={currentTenant} />}
 
       {/* RBAC Read-Only Banner for Viewers */}
       {!canEdit && (

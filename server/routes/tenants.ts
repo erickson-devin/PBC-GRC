@@ -7,11 +7,14 @@ import {
   getTenantRole,
   listTenantMembers,
   listUserTenants,
+  removeTenantMember,
   updateTenantSettings,
   upsertTenantMember,
   TenantSettingsPatch,
 } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
+import { ensureActiveTenant } from './tenantGuards';
+import tenantInvitesRouter from './tenantInvites';
 import { isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
@@ -201,17 +204,11 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
 // Read-only roles (ASSESSOR, VIEWER) may list members but never add or change them.
 router.use(requireWriteRole);
 
+// Invitations: /api/v1/tenants/:tenantId/invites (create / list / revoke / resend / extend / edit)
+router.use('/:tenantId/invites', tenantInvitesRouter);
+
 const USER_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,128}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
-
-/** The tenant in the URL must be the tenant the caller authenticated against (x-tenant-id / token claims). */
-function ensureActiveTenant(req: Request, res: Response): boolean {
-  if (req.params.tenantId !== req.tenantId) {
-    res.status(403).json({ error: 'Forbidden: the tenant in the URL does not match your active tenant' });
-    return false;
-  }
-  return true;
-}
 
 /**
  * GET /api/v1/tenants/:tenantId/members
@@ -287,6 +284,51 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
   } catch (err: unknown) {
     console.error(`[Tenants API] Failed to save member for ${tenantId}:`, errorMessage(err));
     res.status(500).json({ error: 'Failed to save tenant member' });
+  }
+});
+
+/**
+ * DELETE /api/v1/tenants/:tenantId/members/:userId
+ * Removes a member. Owner / MSP admin only. You cannot remove yourself, only an MSP admin can remove an MSP admin,
+ * and the last TENANT_OWNER cannot be removed (the tenant would be left with nobody able to manage it).
+ */
+router.delete('/:tenantId/members/:userId', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const userId = String(req.params.userId);
+
+  if (!USER_ID_PATTERN.test(userId)) {
+    res.status(400).json({ error: 'Invalid userId' });
+    return;
+  }
+  if (userId === req.user?.uid) {
+    res.status(403).json({ error: 'Forbidden: you cannot remove yourself' });
+    return;
+  }
+
+  try {
+    const targetRole = await getTenantRole(userId, tenantId);
+    if (!targetRole) {
+      res.status(404).json({ error: 'Member not found' });
+      return;
+    }
+    if (targetRole === 'MSP_ADMIN' && req.tenantRole !== 'MSP_ADMIN') {
+      res.status(403).json({ error: 'Forbidden: only an MSP Admin can remove an MSP Admin' });
+      return;
+    }
+    if (targetRole === 'TENANT_OWNER') {
+      const owners = (await listTenantMembers(tenantId)).filter((m) => m.role === 'TENANT_OWNER');
+      if (owners.length <= 1) {
+        res.status(409).json({ error: 'The last Tenant Owner cannot be removed. Promote another member first.' });
+        return;
+      }
+    }
+    await removeTenantMember(tenantId, userId);
+    console.log('[Tenants API] ' + req.user?.uid + ' removed ' + userId + ' (' + targetRole + ') from ' + tenantId);
+    res.json({ removed: true, userId, previousRole: targetRole });
+  } catch (err: unknown) {
+    console.error('[Tenants API] Failed to remove member:', errorMessage(err));
+    res.status(500).json({ error: 'Failed to remove member' });
   }
 });
 

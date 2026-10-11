@@ -11,6 +11,8 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { errorMessage } from '../../utils/errors';
 import { TenantInvitation } from '../../types/tenant';
 
 interface InviteStaffModalProps {
@@ -29,6 +31,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'ASSESSOR' | 'VIEWER'>('ASSESSOR');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
   const [createdResult, setCreatedResult] = useState<{
@@ -55,15 +58,17 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
     if (!email.trim()) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const result = await inviteStaffMember(currentTenant.id, email.trim().toLowerCase(), role);
       setCreatedResult(result);
       if (onInviteSent) {
         onInviteSent(result.invitation, result.inviteUrl);
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to dispatch staff invitation:', err);
-      alert('Failed to generate staff invitation. Please try again.');
+      // ApiError messages are user-safe: expired session, no permission, tenant not on the server yet, offline...
+      setSubmitError(errorMessage(err) || 'Failed to generate the staff invitation. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -200,6 +205,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
           ) : (
             /* Invite Form */
             <form onSubmit={handleSubmit} className="space-y-4">
+              <ErrorNotice message={submitError} />
               {/* Staff / Auditor Email */}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">

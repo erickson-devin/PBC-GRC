@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import authRouter from './auth';
+import invitesRouter from './invites';
 import controlsRouter from './controls';
 import evidenceRouter from './evidence';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
@@ -23,6 +24,9 @@ router.get('/health', async (_req, res) => {
 
 // Public: identity provider discovery and local (air-gapped) login
 router.use('/auth', authRouter);
+
+// Invitation redemption by the invitee: preview (public, token only) and accept (authenticated)
+router.use('/invites', invitesRouter);
 
 // Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
 // tenants they belong to, or creates one and becomes its first TENANT_OWNER.

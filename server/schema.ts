@@ -20,6 +20,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'control_assessments', tenantColumn: 'tenant_id' },
   { table: 'evidence_metadata', tenantColumn: 'tenant_id' },
   { table: 'ssp_documents', tenantColumn: 'tenant_id' },
+  { table: 'tenant_invitations', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -118,6 +119,27 @@ export const TABLES_SQL = `
       CONSTRAINT unq_tenant_ssp UNIQUE (tenant_id)
   );
 
+  -- Invitations to join a tenant. The secret token is NEVER stored: only its SHA-256 hash, so a database leak does not
+  -- hand out working invitations. An invitation is single-use (accepted_at) and can be revoked or expire.
+  CREATE TABLE IF NOT EXISTS tenant_invitations (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      token_hash CHAR(64) NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      role VARCHAR(32) NOT NULL,
+      created_by VARCHAR(255) NOT NULL,
+      created_by_user_id VARCHAR(128),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      accepted_at TIMESTAMPTZ,
+      accepted_by_user_id VARCHAR(128),
+      revoked_at TIMESTAMPTZ,
+      CONSTRAINT unq_invitation_token_hash UNIQUE (token_hash),
+      CONSTRAINT tenant_invitations_role_check CHECK (role IN (${roleList}))
+  );
+  CREATE INDEX IF NOT EXISTS idx_tenant_invitations_tenant ON tenant_invitations(tenant_id);
+  CREATE INDEX IF NOT EXISTS idx_tenant_invitations_email ON tenant_invitations(tenant_id, email);
+
   -- Local (air-gapped) identities for AUTH_MODE=local. Global, not tenant-bound: a person logs in first and
   -- belongs to tenants through tenant_users. Passwords are stored only as bcrypt hashes.
   CREATE TABLE IF NOT EXISTS local_users (
@@ -148,6 +170,7 @@ export const TABLES_SQL = `
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
+const inviteTokenPredicate = "NULLIF(current_setting('app.invite_token_hash', true), '')";
 
 /**
  * Tenant DISCOVERY: lets a signed-in user see which tenants they belong to ("list my tenants") without any
@@ -176,6 +199,18 @@ export const DISCOVERY_POLICIES: readonly DiscoveryPolicy[] = [
     table: 'tenants',
     name: 'rls_tenants_member_discovery',
     using: `id IN (SELECT tenant_id FROM tenant_users WHERE user_id = ${currentUserPredicate})`,
+  },
+  // Invitation REDEMPTION: whoever holds the secret token (hashed by the server, set as app.invite_token_hash for
+  // one transaction) can see that single invitation, and the tenant it points at, before they belong to any tenant.
+  {
+    table: 'tenant_invitations',
+    name: 'rls_tenant_invitations_redeem',
+    using: `token_hash = ${inviteTokenPredicate}`,
+  },
+  {
+    table: 'tenants',
+    name: 'rls_tenants_invite_redeem',
+    using: `id IN (SELECT tenant_id FROM tenant_invitations WHERE token_hash = ${inviteTokenPredicate})`,
   },
 ];
 

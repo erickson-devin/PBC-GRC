@@ -13,6 +13,14 @@ export interface UploadUrlResponse {
 }
 
 import { ServerTenant, parseServerTenants } from '../data/tenantSync';
+import {
+  ServerInvitation,
+  ServerMember,
+  parseServerInvitation,
+  parseServerInvitations,
+  parseServerMembers,
+} from '../data/teamSync';
+import type { TenantRole } from '../types/tenant';
 
 /**
  * A failed API call with an HTTP status and a message that is safe to show to the user.
@@ -32,7 +40,7 @@ function apiErrorFromResponse(status: number, body: unknown): ApiError {
   const serverMessage = typeof (body as { error?: unknown } | null)?.error === 'string' ? (body as { error: string }).error : '';
   if (status === 401) return new ApiError(401, 'Your session has expired or is not valid. Please sign in again.');
   if (status === 403) return new ApiError(403, serverMessage || 'You do not have permission to do that.');
-  if (status === 400 || status === 404 || status === 409) return new ApiError(status, serverMessage || 'The request was not accepted.');
+  if (status === 400 || status === 404 || status === 409 || status === 410) return new ApiError(status, serverMessage || 'The request was not accepted.');
   if (status === 429) return new ApiError(429, 'Too many requests. Please wait a moment and try again.');
   return new ApiError(status, 'The server could not complete the request. Please try again.');
 }
@@ -56,6 +64,38 @@ export interface TenantSettingsInput {
   industry?: string;
   primaryFramework?: string;
   enabledFrameworks?: string[];
+}
+
+/** What the accept page shows before the invitee signs in. */
+export interface InvitePreview {
+  tenantId: string;
+  tenantName: string;
+  email: string;
+  role: TenantRole;
+  expiresAt: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
+  createdBy: string;
+}
+
+/** Authenticated JSON request that throws ApiError (with a user-safe message) on any failure. */
+async function authedJson<T>(
+  method: string,
+  path: string,
+  options: { token?: string | null; tenantId?: string; body?: unknown } = {}
+): Promise<T> {
+  const bearer = options.token ?? ApiClient.getToken();
+  if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
+  const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
+  const res = await apiFetch(`${API_BASE_URL}/api/v1${path}`, {
+    method,
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw apiErrorFromResponse(res.status, data);
+  return data as T;
 }
 
 export type AuthMode = 'firebase' | 'local';
@@ -82,6 +122,108 @@ export const ApiClient = {
     } catch {
       return null;
     }
+  },
+
+  // ---------------------------------------------------------------- team: members and invitations
+
+  /** GET /api/v1/tenants/:id/members */
+  async listMembers(tenantId: string, token?: string): Promise<ServerMember[]> {
+    return parseServerMembers(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/members`, { token, tenantId }));
+  },
+
+  /** POST /api/v1/tenants/:id/members: sets (or changes) an existing person's role. Owner / MSP admin only. */
+  async setMemberRole(tenantId: string, member: { userId: string; email: string; name?: string; role: TenantRole }, token?: string): Promise<void> {
+    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/members`, { token, tenantId, body: member });
+  },
+
+  /** DELETE /api/v1/tenants/:id/members/:userId */
+  async removeMember(tenantId: string, userId: string, token?: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { token, tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */
+  async listInvites(tenantId: string, token?: string): Promise<ServerInvitation[]> {
+    return parseServerInvitations(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/invites`, { token, tenantId }));
+  },
+
+  /** POST /api/v1/tenants/:id/invites. The returned `token` is shown ONCE: the server keeps only its hash. */
+  async createInvite(
+    tenantId: string,
+    input: { email: string; role: TenantRole; expiresInDays?: number },
+    token?: string
+  ): Promise<{ invitation: ServerInvitation; token: string }> {
+    return this.invitationWithToken(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites`, { token, tenantId, body: input }));
+  },
+
+  /** POST .../invites/:id/resend: a NEW token (the old link stops working) and a fresh expiry. */
+  async resendInvite(tenantId: string, invitationId: string, expiresInDays?: number, token?: string): Promise<{ invitation: ServerInvitation; token: string }> {
+    return this.invitationWithToken(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}/resend`, { token, tenantId, body: expiresInDays ? { expiresInDays } : {} }));
+  },
+
+  /** POST .../invites/:id/extend: pushes the expiry out; the link stays the same. */
+  async extendInvite(tenantId: string, invitationId: string, days: number, token?: string): Promise<ServerInvitation> {
+    return this.singleInvitation(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}/extend`, { token, tenantId, body: { days } }));
+  },
+
+  /** PATCH .../invites/:id: edits the email or role of an unused invitation. */
+  async updateInvite(tenantId: string, invitationId: string, patch: { email?: string; role?: TenantRole }, token?: string): Promise<ServerInvitation> {
+    return this.singleInvitation(await authedJson('PATCH', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}`, { token, tenantId, body: patch }));
+  },
+
+  /** DELETE .../invites/:id: revokes. */
+  async revokeInvite(tenantId: string, invitationId: string, token?: string): Promise<ServerInvitation> {
+    return this.singleInvitation(await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}`, { token, tenantId }));
+  },
+
+  singleInvitation(data: unknown): ServerInvitation {
+    const invitation = parseServerInvitation((data as { invitation?: unknown } | null)?.invitation);
+    if (!invitation) throw new ApiError(502, 'The server returned an unexpected response.');
+    return invitation;
+  },
+
+  invitationWithToken(data: unknown): { invitation: ServerInvitation; token: string } {
+    const token = (data as { token?: unknown } | null)?.token;
+    if (typeof token !== 'string' || !token) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { invitation: this.singleInvitation(data), token };
+  },
+
+  /**
+   * POST /api/v1/invites/preview (public). Resolves null for an unknown or malformed token; other failures throw.
+   * The token goes in the body, never the URL.
+   */
+  async previewInvite(inviteToken: string): Promise<InvitePreview | null> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/invites/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: inviteToken }),
+    });
+    if (res.status === 404) return null;
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw apiErrorFromResponse(res.status, data);
+    return ((data as { invitation?: InvitePreview } | null)?.invitation) ?? null;
+  },
+
+  /** POST /api/v1/invites/accept: consumes the token for the signed-in user. Throws ApiError with the reason. */
+  async acceptInvite(inviteToken: string, token?: string): Promise<{ tenantId: string; role: TenantRole; previousRole: TenantRole | null }> {
+    return authedJson('POST', '/invites/accept', { token, body: { token: inviteToken } });
+  },
+
+  /**
+   * POST /api/v1/auth/register-with-invite (air-gapped installs). Creates the account for the INVITED email, consumes
+   * the invitation and signs the person in. 409 `account_exists` means: sign in instead.
+   */
+  async registerWithInvite(input: { token: string; password: string; name?: string }): Promise<LocalLoginResponse & { tenantId: string; role: TenantRole }> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/auth/register-with-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = apiErrorFromResponse(res.status, data);
+      throw Object.assign(err, { reason: (data as { reason?: string } | null)?.reason });
+    }
+    return data as LocalLoginResponse & { tenantId: string; role: TenantRole };
   },
 
   /**

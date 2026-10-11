@@ -831,6 +831,18 @@ export async function updateTenantSettings(tenantId: string, patch: TenantSettin
   }
 }
 
+/** In-memory store only: the display name of a tenant (used by the invitation preview in DB_MODE=memory). */
+export function getMemoryTenantName(tenantId: string): string | null {
+  return memoryTenants.get(tenantId)?.name ?? null;
+}
+
+/** Removes a member from a tenant. Returns false if they were not a member. Tenant-scoped (RLS). */
+export async function removeTenantMember(tenantId: string, userId: string): Promise<boolean> {
+  if (isMemoryMode()) return memoryTenantUsers.delete(tenantId + "__" + userId);
+  const res = await queryWithTenant(tenantId, "DELETE FROM tenant_users WHERE tenant_id = $1 AND user_id = $2", [tenantId, userId]);
+  return (res.rowCount ?? 0) > 0;
+}
+
 /** Test hook: clears the in-memory tenant and membership stores. */
 export function __resetMemoryTenantsForTests(): void {
   memoryTenants.clear();

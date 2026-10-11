@@ -18,6 +18,9 @@ import { useTenant, buildInviteUrl } from '../../context/TenantContext';
 import { TenantRole } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { InviteStaffModal } from './InviteStaffModal';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
+import { errorMessage } from '../../utils/errors';
 
 interface TeamSettingsModalProps {
   isOpen: boolean;
@@ -50,6 +53,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     resendInvitation,
     invitations,
     updateTenantFrameworkScope,
+    refreshTeam,
+    teamError,
+    isSandboxMode,
   } = useTenant();
 
   const [activeModalTab, setActiveModalTab] = useState<'team' | 'scope'>('team');
@@ -57,6 +63,24 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [showRoleInfo, setShowRoleInfo] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Destructive actions are confirmed inline (no blocking confirm() dialogs)
+  const [pendingAction, setPendingAction] = useState<{ type: 'revoke' | 'remove'; id: string; label: string } | null>(null);
+
+  // A server-backed tenant's team lives on the server: load it whenever this screen is opened
+  React.useEffect(() => {
+    if (isOpen) {
+      setNotice(null);
+      setActionError(null);
+      setPendingAction(null);
+      void refreshTeam(currentTenant.id);
+    }
+  }, [isOpen, currentTenant.id, refreshTeam]);
+
+  // Invitations are issued by the server, so a browser-only tenant has to be moved there first
+  const isBrowserOnlyTenant = !isSandboxMode && !currentTenant.serverBacked;
 
   // Framework Scope Local State
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>(
@@ -102,30 +126,57 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     }
   };
 
-  const handleResend = async (token: string) => {
-    const targetInvite = invitations.find(i => i.token === token);
-    if (targetInvite) {
-      const res = await resendInvitation(targetInvite.id);
-      await navigator.clipboard.writeText(res.inviteUrl);
-      alert(`Invitation renewed for 14 days! Link copied to clipboard.`);
+  /** Runs a team action with a busy flag and a visible error (a failed call must never be silent). */
+  const runAction = async (action: () => Promise<void>, success?: string) => {
+    setBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await action();
+      if (success) setNotice(success);
+    } catch (err: unknown) {
+      setActionError(errorMessage(err) || 'That did not work. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleRevoke = (token: string, email: string) => {
-    const targetInvite = invitations.find(i => i.token === token);
-    if (targetInvite && confirm(`Revoke pending invitation for ${email}?`)) {
-      revokeInvitation(targetInvite.id);
-    }
-  };
+  // The invitation behind a pending row. Server invitations are identified by id (the server keeps only a token hash);
+  // legacy browser-only ones by their token.
+  const inviteIdFor = (member: { invitationId?: string; invitationToken?: string }): string | undefined =>
+    member.invitationId ?? invitations.find(i => i.token === member.invitationToken)?.id;
 
-  const handleRemoveActiveMember = (memberId: string, memberEmail: string) => {
+  // Resending issues a NEW link (the old one stops working) and restarts the expiry clock
+  const handleResend = (invitationId: string) =>
+    runAction(async () => {
+      const res = await resendInvitation(invitationId);
+      try {
+        await navigator.clipboard.writeText(res.inviteUrl);
+        setNotice('New invitation link created and copied to the clipboard. The previous link no longer works.');
+      } catch {
+        setNotice('New invitation link created: ' + res.inviteUrl);
+      }
+    });
+
+  const askRevoke = (invitationId: string, email: string) =>
+    setPendingAction({ type: 'revoke', id: invitationId, label: email });
+
+  const askRemove = (memberId: string, memberEmail: string) => {
     if (memberEmail.toLowerCase() === currentUser.email.toLowerCase()) {
-      alert('You cannot remove yourself from this defense enclave.');
+      setActionError('You cannot remove yourself from this defense enclave.');
       return;
     }
-    if (confirm(`Remove member "${memberEmail}" from ${currentTenant.name}? They will lose access immediately.`)) {
-      removeMember(currentTenant.id, memberId);
-    }
+    setPendingAction({ type: 'remove', id: memberId, label: memberEmail });
+  };
+
+  const confirmPending = () => {
+    const action = pendingAction;
+    if (!action) return;
+    setPendingAction(null);
+    void runAction(
+      () => (action.type === 'revoke' ? revokeInvitation(action.id) : removeMember(currentTenant.id, action.id)),
+      action.type === 'revoke' ? 'Invitation revoked.' : 'Member removed. They have lost access.'
+    );
   };
 
   const getRoleBadge = (role: TenantRole) => {
@@ -333,13 +384,36 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   {canManageTenant && (
                     <button
                       onClick={() => setIsInviteModalOpen(true)}
-                      className="btn-primary text-xs px-4 py-2 shrink-0"
+                      disabled={isBrowserOnlyTenant}
+                      title={isBrowserOnlyTenant ? 'Move this tenant to the server first' : undefined}
+                      className="btn-primary text-xs px-4 py-2 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Invite Staff / Auditor</span>
                     </button>
                   )}
                 </div>
+
+                {isBrowserOnlyTenant && <LegacyTenantNotice tenant={currentTenant} variant="inline" />}
+                <ErrorNotice message={actionError || teamError} />
+                {notice && (
+                  <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">{notice}</div>
+                )}
+                {pendingAction && (
+                  <div role="alertdialog" aria-label="Confirm" className="flex flex-col gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                      {pendingAction.type === 'revoke'
+                        ? `Revoke the pending invitation for ${pendingAction.label}?`
+                        : `Remove ${pendingAction.label} from ${currentTenant.name}? They will lose access immediately.`}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <button type="button" onClick={() => setPendingAction(null)} className="px-3 py-1.5 font-semibold text-slate-300 hover:text-white">Cancel</button>
+                      <button type="button" onClick={confirmPending} className="rounded-lg bg-rose-600 px-3 py-1.5 font-bold text-white hover:bg-rose-500">
+                        {pendingAction.type === 'revoke' ? 'Revoke' : 'Remove'}
+                      </button>
+                    </span>
+                  </div>
+                )}
 
                 {/* Members Table */}
                 <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
@@ -388,7 +462,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                 <div className="relative inline-block">
                                   <select
                                     value={member.role}
-                                    onChange={e => updateMemberRole(currentTenant.id, member.id, e.target.value as TenantRole)}
+                                    disabled={busy}
+                                    onChange={e => { const role = e.target.value as TenantRole; void runAction(() => updateMemberRole(currentTenant.id, member.id, role), 'Role updated.'); }}
                                     className="text-[10px] font-bold rounded-lg px-2.5 py-1 bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer transition-colors"
                                   >
                                     <option value="TENANT_OWNER">Tenant Owner</option>
@@ -419,8 +494,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                             {/* Actions */}
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
-                                {isPending && member.invitationToken && (
+                                {isPending && inviteIdFor(member) && canManageTenant && (
                                   <>
+                                    {member.invitationToken && (
                                     <button
                                       onClick={() => handleCopyInvite(member.invitationToken!, member.id)}
                                       className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
@@ -432,15 +508,18 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                         <Copy className="w-3.5 h-3.5" />
                                       )}
                                     </button>
+                                    )}
                                     <button
-                                      onClick={() => handleResend(member.invitationToken!)}
+                                      disabled={busy}
+                                      onClick={() => handleResend(inviteIdFor(member)!)}
                                       className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
-                                      title="Resend / Refresh Link"
+                                      title="Resend: issue a new link"
                                     >
                                       <RotateCw className="w-3.5 h-3.5" />
                                     </button>
                                     <button
-                                      onClick={() => handleRevoke(member.invitationToken!, member.email)}
+                                      disabled={busy}
+                                      onClick={() => askRevoke(inviteIdFor(member)!, member.email)}
                                       className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
                                       title="Revoke Invite"
                                     >
@@ -451,7 +530,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
                                 {!isPending && canManageTenant && !isSelf && (
                                   <button
-                                    onClick={() => handleRemoveActiveMember(member.id, member.email)}
+                                    disabled={busy}
+                                    onClick={() => askRemove(member.id, member.email)}
                                     className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
                                     title="Remove Member"
                                   >
