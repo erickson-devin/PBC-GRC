@@ -20,9 +20,14 @@ import {
 import { User, AuthProviderType, LicenseTier } from '../types/tenant';
 import { useTenant, PRESET_USERS } from './TenantContext';
 import { buildDevMockIdToken } from '../config/devAuthToken';
+import { ApiClient, AuthMode } from '../services/apiClient';
 import { errorMessage, errorCode } from '../utils/errors';
 
+const LOCAL_MODE_SSO_MESSAGE = 'Single sign-on is not available on this air-gapped installation. Sign in with your local account.';
+
 interface AuthContextType {
+  /** Identity provider the server uses; null until the server has answered. */
+  authMode: AuthMode | null;
   firebaseUser: FirebaseUser | null;
   currentUser: User;
   idToken: string | null;
@@ -136,10 +141,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     syncAuthUser(userProfile, tenant.id);
   }, [resolveTenantForEmail, syncAuthUser]);
 
+  // The server is the source of truth for the identity provider (not a build-time flag). If it cannot be reached
+  // we assume Firebase, which is the previous behaviour.
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    ApiClient.getAuthMode().then((mode) => {
+      if (!cancelled) setAuthMode(mode ?? 'firebase');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   /**
-   * Listen to Firebase onAuthStateChanged & check incoming magic links
+   * Listen to Firebase onAuthStateChanged & check incoming magic links.
+   * Skipped entirely in local (air-gapped) mode: nothing may try to reach Google.
    */
   useEffect(() => {
+    if (authMode === null) return;
+    if (authMode === 'local') {
+      setLoading(false);
+      return;
+    }
     let unsubscribe: () => void = () => {};
 
     const initAuth = async () => {
@@ -198,12 +222,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       unsubscribe();
     };
-  }, [handleUserSession]);
+  }, [handleUserSession, authMode]);
 
   /**
    * Microsoft 365 / Entra ID OAuth Sign-In
    */
   const loginWithMicrosoft = useCallback(async () => {
+    if (authMode === 'local') {
+      setAuthError(LOCAL_MODE_SSO_MESSAGE);
+      return;
+    }
     setLoading(true);
     setAuthError(null);
     try {
@@ -241,12 +269,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [handleUserSession]);
+  }, [handleUserSession, authMode]);
 
   /**
    * Google Workspace / Cloud Identity OAuth Sign-In
    */
   const loginWithGoogle = useCallback(async () => {
+    if (authMode === 'local') {
+      setAuthError(LOCAL_MODE_SSO_MESSAGE);
+      return;
+    }
     setLoading(true);
     setAuthError(null);
     try {
@@ -283,7 +315,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [handleUserSession]);
+  }, [handleUserSession, authMode]);
 
   /**
    * Email & Password Sign-In for pre-configured enterprise users
@@ -292,6 +324,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     setAuthError(null);
     try {
+      if (authMode === 'local') {
+        // Air-gapped: verify against the local identity store; no Firebase call is made.
+        const session = await ApiClient.localLogin(email, pass);
+        await handleUserSession(session.user.email, session.user.name, 'password', session.token);
+        setIsAuthModalOpen(false);
+        return;
+      }
       if (!isFirebaseConfigured) {
         await new Promise(r => setTimeout(r, 500));
         await handleUserSession(email, null, 'password');
@@ -323,12 +362,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [handleUserSession]);
+  }, [handleUserSession, authMode]);
 
   /**
    * Passwordless Magic Link for Defense Assessors
    */
   const sendMagicLink = useCallback(async (email: string) => {
+    if (authMode === 'local') {
+      setAuthError(LOCAL_MODE_SSO_MESSAGE);
+      return;
+    }
     setLoading(true);
     setAuthError(null);
     try {
@@ -354,12 +397,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [handleUserSession, redirectPath]);
+  }, [handleUserSession, redirectPath, authMode]);
 
   /**
    * Complete Magic Link Sign-In
    */
   const signInWithMagicLink = useCallback(async (email: string) => {
+    if (authMode === 'local') {
+      setAuthError(LOCAL_MODE_SSO_MESSAGE);
+      return;
+    }
     setLoading(true);
     try {
       const result = await completeMagicLinkSignIn(email, window.location.href);
@@ -377,12 +424,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setLoading(false);
     }
-  }, [handleUserSession]);
+  }, [handleUserSession, authMode]);
 
   /**
    * Password Reset
    */
   const sendPasswordReset = useCallback(async (email: string) => {
+    if (authMode === 'local') {
+      alert('Password resets are handled by your administrator on this air-gapped installation.');
+      return;
+    }
     try {
       await sendPasswordResetEmail(auth, email);
       alert(`Password reset link dispatched to ${email}.`);
@@ -390,7 +441,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Password reset failed:', err);
       alert('Password reset instructions dispatched (simulation).');
     }
-  }, []);
+  }, [authMode]);
 
   /**
    * One-Click Demo Persona Switcher
@@ -458,6 +509,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const value = useMemo(() => ({
+    authMode,
     firebaseUser,
     currentUser,
     idToken,
@@ -483,6 +535,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     closeLicenseModal,
     clearAuthError,
   }), [
+    authMode,
     firebaseUser,
     currentUser,
     idToken,

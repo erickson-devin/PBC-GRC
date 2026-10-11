@@ -24,6 +24,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
     closeAuthModal,
     authModalMode,
     openLicenseModal,
+    authMode,
     loginWithMicrosoft,
     loginWithGoogle,
     loginWithEmailPassword,
@@ -35,9 +36,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
     clearAuthError,
   } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'sso' | 'magiclink' | 'password'>(
+  const [selectedTab, setActiveTab] = useState<'sso' | 'magiclink' | 'password'>(
     authModalMode === 'magiclink' ? 'magiclink' : 'sso'
   );
+  // Air-gapped installs have no SSO or magic links: only local credentials work.
+  const isLocalAuth = authMode === 'local';
+  const activeTab = isLocalAuth ? 'password' : selectedTab;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isForgotPassword, setIsForgotPassword] = useState(false);
@@ -128,7 +132,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           )}
 
           {/* Authentication Mode Tabs */}
-          <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-800 mb-5">
+          <div className={`${isLocalAuth ? 'hidden ' : ''}flex rounded-xl bg-slate-900 p-1 border border-slate-800 mb-5`}>
             <button
               onClick={() => { setActiveTab('sso'); clearAuthError(); }}
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${

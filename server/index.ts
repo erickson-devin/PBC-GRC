@@ -3,7 +3,8 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
-import { initDb, checkDatabaseConnection } from './db';
+import { initDb, assertDbModeAllowed, getDbMode } from './db';
+import { assertAuthConfig, isLocalAuthMode } from './auth/localAuth';
 import { errorMessage } from '../src/utils/errors';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -67,15 +68,20 @@ export const server = app.listen(PORT, async () => {
   console.log(`=======================================================`);
   console.log(`🚀 PBC-GRC Cloud SQL Express API Server running on port ${PORT}`);
   console.log(`🔐 RLS Tenant Context: Active (SET LOCAL app.current_tenant_id)`);
-  console.log(`📡 Endpoints: /api/v1/controls, /api/v1/evidence, /api/v1/health`);
+  console.log(`📡 Endpoints: /api/v1/auth, /api/v1/tenants, /api/v1/controls, /api/v1/evidence, /api/v1/health`);
   console.log(`=======================================================`);
 
-  // Attempt database verification and schema creation
+  // Fail loudly: a server that cannot reach its database (or is misconfigured) must not pretend to be healthy.
   try {
-    await checkDatabaseConnection();
+    assertDbModeAllowed();
+    assertAuthConfig();
     await initDb();
+    console.log(`[Startup] Database mode: ${getDbMode()} | Auth mode: ${isLocalAuthMode() ? 'local (air-gapped)' : 'firebase'}`);
   } catch (err: unknown) {
-    console.warn('[Server Startup] DB init notice:', errorMessage(err));
+    console.error('\n[FATAL] Server cannot start:', errorMessage(err));
+    console.error('        Set DATABASE_URL / DB_* for PostgreSQL, or DB_MODE=memory for local development only.\n');
+    server.close();
+    process.exit(1);
   }
 });
 

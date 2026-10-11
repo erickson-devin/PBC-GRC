@@ -109,22 +109,53 @@ const memoryEvidence = new Map<string, InMemoryEvidence>(); // key: id
 /** Bind parameter values accepted by the query helpers. */
 export type SqlParam = string | number | boolean | Date | string[] | null | undefined;
 
-let isUsingMemoryFallback = false;
-let dbVerified = false;
+export type DbMode = 'postgres' | 'memory';
 
+/**
+ * Which store the API uses. There is NO automatic fallback:
+ *   - unset / DB_MODE=postgres : PostgreSQL. If it is unreachable, startup fails and queries throw.
+ *   - DB_MODE=memory           : explicit opt-in to the in-memory, RLS-emulating store (local development and
+ *                                tests only; data is lost on restart, and refused when NODE_ENV=production).
+ */
+export function getDbMode(env: NodeJS.ProcessEnv = process.env): DbMode {
+  const raw = (env.DB_MODE || 'postgres').trim().toLowerCase();
+  if (raw === 'postgres' || raw === 'memory') return raw;
+  throw new Error(`Invalid DB_MODE "${env.DB_MODE}": expected "postgres" or "memory"`);
+}
+
+const isMemoryMode = (): boolean => getDbMode() === 'memory';
+
+/** Throws on a configuration that must never run, e.g. the volatile in-memory store in production. */
+export function assertDbModeAllowed(env: NodeJS.ProcessEnv = process.env): void {
+  if (getDbMode(env) === 'memory' && env.NODE_ENV === 'production') {
+    throw new Error('DB_MODE=memory is not allowed when NODE_ENV=production: data would be lost on restart and tenant isolation would not be enforced by PostgreSQL.');
+  }
+}
+
+/**
+ * Verifies the PostgreSQL connection. Resolves true when connected, false in memory mode (no database),
+ * and REJECTS when PostgreSQL is configured but unreachable: callers must not continue silently.
+ */
 export async function checkDatabaseConnection(): Promise<boolean> {
-  if (dbVerified && !isUsingMemoryFallback) return true;
+  if (isMemoryMode()) return false;
   try {
     const client = await pool.connect();
     client.release();
-    dbVerified = true;
-    isUsingMemoryFallback = false;
-    console.log(`[Cloud SQL] Successfully connected to PostgreSQL at ${dbTarget}`);
-    return true;
   } catch (err: unknown) {
-    isUsingMemoryFallback = true;
-    console.warn(`[Cloud SQL] Real PostgreSQL connection unavailable (${errorMessage(err)}). Using local high-fidelity RLS-isolated fallback storage.`);
-    return false;
+    throw new Error(`PostgreSQL connection failed (${dbTarget}): ${errorMessage(err)}. Fix DATABASE_URL / DB_* settings, or set DB_MODE=memory for local development.`);
+  }
+  console.log(`[Cloud SQL] Successfully connected to PostgreSQL at ${dbTarget}`);
+  return true;
+}
+
+/** Non-throwing status for health probes. */
+export async function getDatabaseStatus(): Promise<'connected' | 'memory' | 'unavailable'> {
+  if (isMemoryMode()) return 'memory';
+  try {
+    await checkDatabaseConnection();
+    return 'connected';
+  } catch {
+    return 'unavailable';
   }
 }
 
@@ -136,37 +167,28 @@ export async function queryWithTenant(tenantId: string, text: string, params: Sq
   // Sanitize tenant ID to prevent injection
   const sanitizedTenantId = tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-  if (!isUsingMemoryFallback) {
-    try {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        // Set PostgreSQL session variable for Row-Level Security
-        await client.query(`SET LOCAL app.current_tenant_id = '${sanitizedTenantId}'`);
-        // Also call set_config for maximum compatibility
-        await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', sanitizedTenantId]);
-        const res = await client.query(text, params);
-        await client.query('COMMIT');
-        return res;
-      } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
-      } finally {
-        client.release();
-      }
-    } catch (connErr: unknown) {
-      // If live connection dropped or fails, fallback gracefully in local dev
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[Cloud SQL] Database query failed, falling back to local tenant isolation store:', errorMessage(connErr));
-        isUsingMemoryFallback = true;
-      } else {
-        throw connErr;
-      }
-    }
+  if (isMemoryMode()) {
+    // Explicit DB_MODE=memory: emulate RLS tenant isolation in process memory
+    return executeInMemoryWithTenant(sanitizedTenantId, text, params);
   }
 
-  // High-fidelity fallback enforcing strict RLS tenant isolation semantics
-  return executeInMemoryWithTenant(sanitizedTenantId, text, params);
+  // PostgreSQL. Errors propagate to the caller; there is deliberately no fallback to another store.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Set PostgreSQL session variable for Row-Level Security
+    await client.query(`SET LOCAL app.current_tenant_id = '${sanitizedTenantId}'`);
+    // Also call set_config for maximum compatibility
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', sanitizedTenantId]);
+    const res = await client.query(text, params);
+    await client.query('COMMIT');
+    return res;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -393,8 +415,11 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
  * Initializes database schema with RLS policies if connected to a live PostgreSQL database
  */
 export async function initDb(): Promise<void> {
-  const isConnected = await checkDatabaseConnection();
-  if (!isConnected) return;
+  if (isMemoryMode()) {
+    console.warn('[Database] DB_MODE=memory: using the in-memory store. Data is NOT persisted and PostgreSQL RLS is NOT in effect.');
+    return;
+  }
+  await checkDatabaseConnection(); // rejects if PostgreSQL is unreachable
 
   const client = await pool.connect();
   try {
@@ -413,7 +438,7 @@ export async function initDb(): Promise<void> {
 
     console.log('[Cloud SQL] Database schema, control mappings, and RLS policies verified.');
   } catch (err: unknown) {
-    console.error('[Cloud SQL] Failed to run schema DDL:', errorMessage(err));
+    throw new Error(`Failed to initialise the database schema: ${errorMessage(err)}`);
   } finally {
     client.release();
   }
@@ -426,7 +451,7 @@ export async function initDb(): Promise<void> {
  */
 async function findTenantMember(userId: string, tenantId: string): Promise<{ role: unknown } | null> {
   if (!userId || !tenantId) return null;
-  if (isUsingMemoryFallback) {
+  if (isMemoryMode()) {
     return memoryTenantUsers.get(`${tenantId}__${userId}`) ?? null;
   }
   try {
@@ -503,7 +528,116 @@ export async function listTenantMembers(tenantId: string): Promise<TenantMember[
   return result.rows.map(mapMemberRow);
 }
 
-/** Test hook: clears the in-memory fallback membership store. */
-export function __resetMemoryTenantUsersForTests(): void {
+export interface NewTenantInput {
+  id: string;
+  name: string;
+  cageCode?: string;
+  samStatus?: string;
+  systemName: string;
+  systemOwner: string;
+  industry?: string;
+  enabledFrameworks: string[];
+  primaryFramework: string;
+  licenseTier: string;
+}
+
+export interface TenantRecord {
+  id: string;
+  name: string;
+  cageCode: string | null;
+  samStatus: string;
+  systemName: string;
+  systemOwner: string;
+  industry: string;
+  enabledFrameworks: string[];
+  primaryFramework: string;
+  licenseTier: string;
+  createdAt: string;
+}
+
+export class TenantExistsError extends Error {
+  constructor(tenantId: string) {
+    super(`Tenant ${tenantId} already exists`);
+    this.name = 'TenantExistsError';
+  }
+}
+
+const memoryTenants = new Map<string, TenantRecord>();
+
+function toTenantRecord(t: NewTenantInput, createdAt: string): TenantRecord {
+  return {
+    id: t.id,
+    name: t.name,
+    cageCode: t.cageCode ?? null,
+    samStatus: t.samStatus ?? 'ACTIVE',
+    systemName: t.systemName,
+    systemOwner: t.systemOwner,
+    industry: t.industry ?? 'Defense Industrial Base (DIB)',
+    enabledFrameworks: t.enabledFrameworks,
+    primaryFramework: t.primaryFramework,
+    licenseTier: t.licenseTier,
+    createdAt,
+  };
+}
+
+/**
+ * Creates a tenant and makes `owner` its first TENANT_OWNER, atomically: on PostgreSQL both rows are written in
+ * ONE transaction under the new tenant's RLS context, so a failure can never leave an ownerless tenant behind.
+ * Throws TenantExistsError if the id is taken.
+ */
+export async function createTenantWithOwner(
+  tenant: NewTenantInput,
+  owner: { userId: string; email: string; name: string }
+): Promise<{ tenant: TenantRecord; member: TenantMember }> {
+  const tenantId = tenant.id;
+
+  if (isMemoryMode()) {
+    if (memoryTenants.has(tenantId)) throw new TenantExistsError(tenantId);
+    const record = toTenantRecord(tenant, new Date().toISOString());
+    memoryTenants.set(tenantId, record);
+    const member = await upsertTenantMember(tenantId, { ...owner, role: 'TENANT_OWNER' });
+    return { tenant: record, member };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+
+    const inserted = await client.query(
+      `INSERT INTO tenants (id, name, cage_code, sam_status, system_name, system_owner, industry,
+                            enabled_frameworks, primary_framework, license_tier)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING created_at`,
+      [
+        tenantId, tenant.name, tenant.cageCode ?? null, tenant.samStatus ?? 'ACTIVE', tenant.systemName,
+        tenant.systemOwner, tenant.industry ?? 'Defense Industrial Base (DIB)', tenant.enabledFrameworks,
+        tenant.primaryFramework, tenant.licenseTier,
+      ]
+    );
+    const memberRow = await client.query(
+      `INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role)
+       VALUES ($1, $2, $3, $4, 'TENANT_OWNER') RETURNING *`,
+      [owner.userId, owner.email, owner.name, tenantId]
+    );
+    await client.query('COMMIT');
+
+    return {
+      tenant: toTenantRecord(tenant, new Date(inserted.rows[0].created_at).toISOString()),
+      member: mapMemberRow(memberRow.rows[0]),
+    };
+  } catch (err: unknown) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if ((err as { code?: string })?.code === '23505') throw new TenantExistsError(tenantId);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Test hook: clears the in-memory tenant and membership stores. */
+export function __resetMemoryTenantsForTests(): void {
+  memoryTenants.clear();
   memoryTenantUsers.clear();
 }
+

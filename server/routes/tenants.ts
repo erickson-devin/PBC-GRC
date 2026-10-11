@@ -1,10 +1,99 @@
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import { getTenantRole, listTenantMembers, upsertTenantMember } from '../db';
+import { TenantExistsError, createTenantWithOwner, getTenantRole, listTenantMembers, upsertTenantMember } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
+
+const ALLOWED_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+const CAGE_PATTERN = /^[A-Za-z0-9]{5}$/;
+
+function slugify(value: string): string {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return slug || 'org';
+}
+
+/**
+ * POST /api/v1/tenants   (authenticate-only: the caller does not belong to any tenant yet)
+ * Creates a tenant and makes the authenticated user its first TENANT_OWNER, atomically.
+ * Body: { name, systemName?, systemOwner?, cageCode?, industry?, primaryFramework?, enabledFrameworks? }.
+ * The license tier is never taken from the client: new tenants start on FOUNDATIONAL.
+ * Set ALLOW_TENANT_CREATION=false to turn self-service creation off (e.g. when provisioning is admin-only).
+ */
+export async function createTenantHandler(req: Request, res: Response): Promise<void> {
+  if (process.env.ALLOW_TENANT_CREATION === 'false') {
+    res.status(403).json({ error: 'Forbidden: tenant creation is disabled on this server' });
+    return;
+  }
+
+  const user = req.user!;
+  const { name, systemName, systemOwner, cageCode, industry, primaryFramework, enabledFrameworks } = req.body ?? {};
+
+  if (typeof name !== 'string' || name.trim().length < 2 || name.length > 255) {
+    res.status(400).json({ error: 'Invalid name: 2-255 characters required' });
+    return;
+  }
+  if (cageCode !== undefined && (typeof cageCode !== 'string' || !CAGE_PATTERN.test(cageCode))) {
+    res.status(400).json({ error: 'Invalid cageCode: 5 letters or digits' });
+    return;
+  }
+  for (const [field, value, max] of [['systemName', systemName, 255], ['systemOwner', systemOwner, 255], ['industry', industry, 128]] as const) {
+    if (value !== undefined && (typeof value !== 'string' || value.length > max)) {
+      res.status(400).json({ error: `Invalid ${field}` });
+      return;
+    }
+  }
+  const primary = primaryFramework === undefined ? 'CMMC_L1' : primaryFramework;
+  if (typeof primary !== 'string' || !ALLOWED_FRAMEWORKS.includes(primary)) {
+    res.status(400).json({ error: `Invalid primaryFramework: expected one of ${ALLOWED_FRAMEWORKS.join(', ')}` });
+    return;
+  }
+  const enabled: unknown = enabledFrameworks === undefined ? [primary] : enabledFrameworks;
+  if (!Array.isArray(enabled) || enabled.length === 0 || !enabled.every((f) => typeof f === 'string' && ALLOWED_FRAMEWORKS.includes(f))) {
+    res.status(400).json({ error: 'Invalid enabledFrameworks: a non-empty list of supported frameworks' });
+    return;
+  }
+  const enabledList = [...new Set([primary, ...(enabled as string[])])];
+
+  const orgName = name.trim();
+  const owner = {
+    userId: user.uid,
+    email: (user.email || `${user.uid}@no-email.invalid`).toLowerCase(),
+    name: user.name || (user.email ? user.email.split('@')[0] : user.uid),
+  };
+
+  // Random suffix makes ids unguessable and collisions practically impossible; retry covers the rest.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const id = `tenant-${slugify(orgName)}-${crypto.randomBytes(4).toString('hex')}`;
+    try {
+      const created = await createTenantWithOwner(
+        {
+          id,
+          name: orgName,
+          cageCode: cageCode?.toUpperCase(),
+          systemName: (typeof systemName === 'string' && systemName.trim()) || `${orgName} Enclave`,
+          systemOwner: (typeof systemOwner === 'string' && systemOwner.trim()) || owner.name,
+          industry,
+          enabledFrameworks: enabledList,
+          primaryFramework: primary,
+          licenseTier: 'FOUNDATIONAL',
+        },
+        owner
+      );
+      console.log(`[Tenants API] ${owner.userId} created tenant ${id} and is its TENANT_OWNER`);
+      res.status(201).json({ tenant: created.tenant, member: created.member, role: 'TENANT_OWNER' });
+      return;
+    } catch (err: unknown) {
+      if (err instanceof TenantExistsError) continue;
+      console.error('[Tenants API] Failed to create tenant:', errorMessage(err));
+      res.status(500).json({ error: 'Failed to create tenant' });
+      return;
+    }
+  }
+  res.status(500).json({ error: 'Failed to allocate a unique tenant id; please retry' });
+}
 
 // Read-only roles (ASSESSOR, VIEWER) may list members but never add or change them.
 router.use(requireWriteRole);

@@ -3,6 +3,15 @@ version: '3.8'
 # ==============================================================================
 # Event Horizon: Singularity — Air-Gapped & On-Premises Orchestration
 # Services: PostgreSQL 16 Database + Singularity Enclave App & API
+#
+# Required secrets (put them in a .env file next to this file, or export them):
+#   POSTGRES_PASSWORD   password of the database ADMIN account (used only to bootstrap; the app never uses it)
+#   APP_DB_PASSWORD     password of the application's database role
+#   LOCAL_AUTH_SECRET   >= 32 random characters used to sign sessions (e.g. `openssl rand -hex 32`)
+#
+# Security model: the app connects as APP_DB_USER, an ordinary role (NOSUPERUSER, NOBYPASSRLS). PostgreSQL
+# superusers bypass row-level security, so using POSTGRES_USER here would silently disable tenant isolation.
+# The init script only runs when the data volume is first created; for an existing volume see docs/ON_PREM_DATABASE.md.
 # ==============================================================================
 
 services:
@@ -12,13 +21,19 @@ services:
     container_name: singularity-db
     restart: unless-stopped
     environment:
+      # Admin account: bootstraps the database and the application role. Not used by the application.
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (database admin password)}
       POSTGRES_DB: ${POSTGRES_DB:-cmmc_compliance_db}
+      # Consumed by docker/postgres/10-app-role.sh
+      APP_DB_USER: ${APP_DB_USER:-grc_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD (application database role password)}
     ports:
-      - "${DB_PORT:-5432}:5432"
+      # Bound to localhost: the database should not be reachable from the network
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/10-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cmmc_compliance_db}"]
       interval: 5s
@@ -44,12 +59,15 @@ services:
       # Local On-Premises / Air-Gapped Storage Driver
       STORAGE_PROVIDER: local
       LOCAL_STORAGE_PATH: /app/data/evidence
-      # Database Connection
+      # Database: PostgreSQL only (DB_MODE=memory is refused in production). Connects as the NON-superuser app role.
       DB_HOST: singularity-db
       DB_PORT: 5432
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASS: ${POSTGRES_PASSWORD:-postgres_secure_pass}
+      DB_USER: ${APP_DB_USER:-grc_app}
+      DB_PASS: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD (application database role password)}
       DB_NAME: ${POSTGRES_DB:-cmmc_compliance_db}
+      # Air-gapped identity: bcrypt passwords + locally signed JWTs. No Firebase / Google / Microsoft required.
+      AUTH_MODE: ${AUTH_MODE:-local}
+      LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:?Set LOCAL_AUTH_SECRET (>= 32 random characters)}
       # Client-side configuration
       VITE_API_URL: ""
     ports:

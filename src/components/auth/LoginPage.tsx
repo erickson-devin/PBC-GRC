@@ -20,6 +20,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 }) => {
   const {
     isAuthenticated,
+    authMode,
     loginWithMicrosoft,
     loginWithGoogle,
     loginWithEmailPassword,
@@ -31,7 +32,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     clearAuthError,
   } = useAuth();
 
-  const [activeTab, setActiveTab] = React.useState<'sso' | 'magiclink' | 'password'>('sso');
+  const [selectedTab, setActiveTab] = React.useState<'sso' | 'magiclink' | 'password'>('sso');
+  // Air-gapped installs have no SSO or magic links: only local credentials work.
+  const isLocalAuth = authMode === 'local';
+  const activeTab = isLocalAuth ? 'password' : selectedTab;
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
 
@@ -127,7 +131,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             )}
 
             {/* Tabs */}
-            <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-800 mb-5 text-xs">
+            <div className={`${isLocalAuth ? 'hidden ' : ''}flex rounded-xl bg-slate-900 p-1 border border-slate-800 mb-5 text-xs`}>
               <button
                 onClick={() => { setActiveTab('sso'); clearAuthError(); }}
                 className={`flex-1 py-1.5 rounded-lg font-semibold transition-all ${

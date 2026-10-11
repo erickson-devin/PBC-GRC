@@ -12,7 +12,49 @@ export interface UploadUrlResponse {
   evidence: EvidenceItem;
 }
 
+export type AuthMode = 'firebase' | 'local';
+
+export interface LocalLoginResponse {
+  token: string;
+  tokenType: 'Bearer';
+  expiresAt: string;
+  expiresIn: number;
+  user: { id: string; email: string; name: string };
+}
+
 export const ApiClient = {
+  /**
+   * GET /api/v1/auth/config
+   * Which identity provider the server uses. Returns null if the server cannot be reached.
+   */
+  async getAuthMode(): Promise<AuthMode | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/config`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { mode?: string };
+      return data.mode === 'local' ? 'local' : 'firebase';
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * POST /api/v1/auth/login  (air-gapped installs, AUTH_MODE=local)
+   * Throws an Error carrying the server's message (e.g. invalid credentials, account locked).
+   */
+  async localLogin(email: string, password: string): Promise<LocalLoginResponse> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((data as { error?: string }).error || `Sign-in failed (HTTP ${res.status})`);
+    }
+    return data as LocalLoginResponse;
+  },
+
   /**
    * Retrieve active Firebase ID Token from localStorage
    */

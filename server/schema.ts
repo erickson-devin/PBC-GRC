@@ -118,6 +118,21 @@ export const TABLES_SQL = `
       CONSTRAINT unq_tenant_ssp UNIQUE (tenant_id)
   );
 
+  -- Local (air-gapped) identities for AUTH_MODE=local. Global, not tenant-bound: a person logs in first and
+  -- belongs to tenants through tenant_users. Passwords are stored only as bcrypt hashes.
+  CREATE TABLE IF NOT EXISTS local_users (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      email VARCHAR(255) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      password_hash VARCHAR(100) NOT NULL,
+      disabled BOOLEAN NOT NULL DEFAULT FALSE,
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ,
+      last_login_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_local_users_email UNIQUE (email)
+  );
+
   -- Global reference data (not tenant-bound, no RLS)
   CREATE TABLE IF NOT EXISTS control_mappings (
       id VARCHAR(64) PRIMARY KEY,
