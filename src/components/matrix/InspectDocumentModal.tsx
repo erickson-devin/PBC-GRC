@@ -29,7 +29,7 @@ import { ControlStatus } from '../../types/cmmc';
 import { ComplianceFramework } from '../../types/framework';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { getStorageProvider, getLocalStoragePath } from '../../data/audit/storageDriver';
+import { useStorageConfig } from '../../hooks/useStorageConfig';
 import {
   findControlDefinition,
   FRAMEWORK_REGISTRY,
@@ -67,6 +67,7 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework, setActiveFramework } = useTenant();
+  const storageConfig = useStorageConfig(currentTenant?.id);
 
   // Primary active tab defaults to 'objectives' as specified
   const [activeTab, setActiveTab] = useState<
@@ -689,8 +690,8 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
               {/* Uploaded Evidence Items */}
               <div className="space-y-3">
                 {(() => {
-                  const storageProvider = getStorageProvider();
-                  const localStoragePath = getLocalStoragePath();
+                  const storageProvider = storageConfig.provider;
+                  const localStoragePath = storageConfig.localStoragePath;
                   const isLocal = storageProvider === 'local';
 
                   return (
@@ -733,7 +734,7 @@ export const InspectDocumentModal: React.FC<InspectDocumentModalProps> = ({
                             <span className="text-slate-400 font-mono">
                               {(ev.fileSize / 1024).toFixed(1)} KB • {new Date(ev.uploadedAt).toLocaleDateString()}
                             </span>
-                            {getStorageProvider() === 'local' ? (
+                            {storageConfig.provider === 'local' ? (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono text-[9px] font-bold">
                                 <ShieldCheck className="w-2.5 h-2.5 text-cyan-400" />
                                 <span>LOCAL ENCLAVE • SHA-256 CHECKED</span>

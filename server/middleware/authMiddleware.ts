@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { isTenantMember } from '../db';
 
 // Extend Express Request interface with authenticated user & tenant context
 declare global {
@@ -24,9 +25,131 @@ if (!getApps().length) {
       projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'grc-tool-507203',
     });
     console.log('[Firebase Admin] Initialized successfully');
-  } catch (err: any) {
-    console.warn('[Firebase Admin] Initialization notice:', err.message);
+  } catch (err: unknown) {
+    console.warn('[Firebase Admin] Initialization notice:', err instanceof Error ? err.message : err);
   }
+}
+
+const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const DEV_FALLBACK_TENANT_ID = 'tenant-vanguard-01';
+
+/**
+ * Mock / unsigned-token support exists only for local development and automated tests.
+ * It is never honoured when NODE_ENV === 'production'.
+ */
+function isMockAuthAllowed(): boolean {
+  return process.env.NODE_ENV !== 'production';
+}
+
+function isMockToken(token: string): boolean {
+  return token.startsWith('mock-test-jwt-') || token.includes('mock_pbc_signature');
+}
+
+interface TokenIdentity {
+  user: NonNullable<Request['user']>;
+  /** Tenant IDs the token itself asserts membership of (claims). */
+  claimedTenantIds: Set<string>;
+}
+
+function readJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const parsed: unknown = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Collects every tenant ID asserted by token claims (tenant_id, tenantId, tenant_ids, roles map keys). */
+function extractTenantClaims(claims: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && TENANT_ID_PATTERN.test(value)) ids.add(value);
+  };
+
+  add(claims.tenant_id);
+  add(claims.tenantId);
+  for (const key of ['tenant_ids', 'tenantIds']) {
+    const list = claims[key];
+    if (Array.isArray(list)) list.forEach(add);
+  }
+  if (claims.roles && typeof claims.roles === 'object' && !Array.isArray(claims.roles)) {
+    Object.keys(claims.roles as Record<string, unknown>).forEach(add);
+  }
+  return ids;
+}
+
+function rolesFromClaims(claims: Record<string, unknown>): Record<string, string> {
+  if (!claims.roles || typeof claims.roles !== 'object' || Array.isArray(claims.roles)) return {};
+  const out: Record<string, string> = {};
+  for (const [tenant, role] of Object.entries(claims.roles as Record<string, unknown>)) {
+    if (typeof role === 'string') out[tenant] = role;
+  }
+  return out;
+}
+
+function identityFromClaims(
+  claims: Record<string, unknown>,
+  defaults: { uid: string; email: string; name: string }
+): TokenIdentity {
+  return {
+    user: {
+      uid: (typeof claims.sub === 'string' && claims.sub) || (typeof claims.uid === 'string' && claims.uid) || defaults.uid,
+      email: typeof claims.email === 'string' ? claims.email : defaults.email,
+      name: typeof claims.name === 'string' ? claims.name : defaults.name,
+      roles: rolesFromClaims(claims),
+    },
+    claimedTenantIds: extractTenantClaims(claims),
+  };
+}
+
+/**
+ * Resolves the tenant for this request. The x-tenant-id header is only a *selector*:
+ * the authenticated user must actually belong to the tenant, via a token claim or a
+ * tenant_users membership row. Returns null (after writing the error response) on failure.
+ *
+ * `allowUnscopedDev` lets dev-only mock tokens that carry no tenant claims at all
+ * choose a tenant via the header; it is always false for real Firebase tokens.
+ */
+async function resolveTenantId(
+  res: Response,
+  identity: TokenIdentity,
+  requestedTenantId: string | undefined,
+  allowUnscopedDev: boolean
+): Promise<string | null> {
+  const { claimedTenantIds, user } = identity;
+
+  if (requestedTenantId) {
+    if (!TENANT_ID_PATTERN.test(requestedTenantId)) {
+      res.status(400).json({ error: 'Invalid x-tenant-id header format' });
+      return null;
+    }
+    const permitted =
+      claimedTenantIds.has(requestedTenantId) ||
+      (allowUnscopedDev && claimedTenantIds.size === 0) ||
+      (await isTenantMember(user.uid, requestedTenantId));
+
+    if (!permitted) {
+      console.warn(`[AuthMiddleware] Denied: user ${user.uid} is not a member of tenant ${requestedTenantId}`);
+      res.status(403).json({ error: 'Forbidden: authenticated user does not belong to the requested tenant' });
+      return null;
+    }
+    return requestedTenantId;
+  }
+
+  if (claimedTenantIds.size === 1) {
+    return [...claimedTenantIds][0];
+  }
+  if (claimedTenantIds.size === 0 && allowUnscopedDev) {
+    return DEV_FALLBACK_TENANT_ID;
+  }
+
+  res.status(400).json({
+    error: 'Tenant context required: Please provide x-tenant-id header or sign in with tenant assignment',
+  });
+  return null;
 }
 
 /**
@@ -50,85 +173,75 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return;
   }
 
-  // Determine requested tenant ID from x-tenant-id header
-  const requestedTenantId = (req.headers['x-tenant-id'] as string)?.trim();
+  const rawTenantHeader = req.headers['x-tenant-id'];
+  const requestedTenantId = (Array.isArray(rawTenantHeader) ? rawTenantHeader[0] : rawTenantHeader)?.trim() || undefined;
+
+  const mockAllowed = isMockAuthAllowed();
 
   try {
-    // 1. Check for development / mock token support (for testing and local dev)
-    if (token.startsWith('mock-test-jwt-') || token.includes('mock_pbc_signature')) {
-      const parsedUser = decodeMockToken(token);
-      req.user = parsedUser;
-      req.tenantId = requestedTenantId || (parsedUser as any).tenantId || 'tenant-vanguard-01';
+    // 1. Development / test mock tokens. Never accepted in production.
+    if (mockAllowed && isMockToken(token)) {
+      const identity = decodeMockToken(token);
+      const tenantId = await resolveTenantId(res, identity, requestedTenantId, true);
+      if (!tenantId) return;
+      req.user = identity.user;
+      req.tenantId = tenantId;
       return next();
     }
 
     // 2. Production Firebase ID Token verification
     const decodedToken = await getAuth().verifyIdToken(token);
-    req.user = {
+    const identity = identityFromClaims(decodedToken as unknown as Record<string, unknown>, {
       uid: decodedToken.uid,
-      email: decodedToken.email,
+      email: decodedToken.email || '',
       name: decodedToken.name || (decodedToken.email ? decodedToken.email.split('@')[0] : 'Assessor'),
-      roles: (decodedToken.roles as Record<string, string>) || {},
-    };
+    });
+    // The verified uid / email always win over any custom claim of the same name.
+    identity.user.uid = decodedToken.uid;
+    identity.user.email = decodedToken.email;
 
-    // Resolve tenant ID: header takes precedence, then token claims
-    const tenantId = requestedTenantId || (decodedToken.tenant_id as string) || (decodedToken.tenantId as string);
+    const tenantId = await resolveTenantId(res, identity, requestedTenantId, false);
+    if (!tenantId) return;
 
-    if (!tenantId) {
-      res.status(400).json({
-        error: 'Tenant context required: Please provide x-tenant-id header or sign in with tenant assignment',
-      });
-      return;
-    }
-
+    req.user = identity.user;
     req.tenantId = tenantId;
     return next();
-  } catch (err: any) {
-    // In local dev without live GCP credentials, decode payload gracefully if valid JWT structure
-    if (process.env.NODE_ENV !== 'production' && token.includes('.')) {
-      try {
-        const parts = token.split('.');
-        if (parts.length >= 2) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-          req.user = {
-            uid: payload.sub || payload.uid || 'user-dev-local',
-            email: payload.email || 'assessor@vanguard-defense.us',
-            name: payload.name || 'Compliance Assessor',
-          };
-          req.tenantId = requestedTenantId || payload.tenantId || 'tenant-vanguard-01';
-          return next();
-        }
-      } catch (parseErr) {
-        // Fall through to 401
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    // Local dev without live GCP credentials: accept an unsigned JWT payload. Never in production.
+    if (mockAllowed && token.includes('.')) {
+      const payload = readJwtPayload(token);
+      if (payload) {
+        const identity = identityFromClaims(payload, {
+          uid: 'user-dev-local',
+          email: 'assessor@vanguard-defense.us',
+          name: 'Compliance Assessor',
+        });
+        const tenantId = await resolveTenantId(res, identity, requestedTenantId, true);
+        if (!tenantId) return;
+        req.user = identity.user;
+        req.tenantId = tenantId;
+        return next();
       }
     }
 
-    console.error('[AuthMiddleware] Token verification failed:', err.message);
+    console.error('[AuthMiddleware] Token verification failed:', message);
     res.status(401).json({
       error: 'Unauthorized: Invalid or expired Firebase ID token',
-      details: err.message,
     });
   }
 }
 
-function decodeMockToken(token: string) {
-  if (token.includes('mock_pbc_signature')) {
-    try {
-      const payloadPart = token.split('.')[1];
-      const payload = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
-      return {
-        uid: payload.sub || 'user-alex-lead',
-        email: payload.email || 'alex.mercer@vanguard-defense.us',
-        name: 'Alex Mercer, CMMC CCA',
-      };
-    } catch {
-      // Fallback
-    }
-  }
-
-  return {
+function decodeMockToken(token: string): TokenIdentity {
+  const defaults = {
     uid: 'user-alex-lead',
     email: 'alex.mercer@vanguard-defense.us',
     name: 'Alex Mercer, CMMC CCA',
   };
+  const payload = readJwtPayload(token);
+  if (!payload) {
+    return { user: { ...defaults, roles: {} }, claimedTenantIds: new Set() };
+  }
+  return identityFromClaims(payload, defaults);
 }

@@ -9,7 +9,8 @@ import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappin
 const router = Router();
 
 // Storage Provider Configuration
-const storageProvider = (process.env.STORAGE_PROVIDER || 'local').toLowerCase();
+// Anything other than an explicit 'gcs' resolves to local disk (matches the client-side driver default).
+const storageProvider: 'local' | 'gcs' = (process.env.STORAGE_PROVIDER || 'local').toLowerCase() === 'gcs' ? 'gcs' : 'local';
 const localStoragePath = path.resolve(process.env.LOCAL_STORAGE_PATH || './data/evidence');
 
 // Ensure local evidence directory exists when local storage is enabled
@@ -33,6 +34,25 @@ if (storageProvider === 'gcs') {
   } catch {
     storage = null;
   }
+}
+
+const CONTROL_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Resolves `candidate` and returns it only if it stays inside `root` (path-traversal guard).
+ * Returns null for anything that escapes the root or is the root itself.
+ */
+function resolveWithin(root: string, candidate: string): string | null {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(resolvedRoot, candidate);
+  return resolved.startsWith(resolvedRoot + path.sep) ? resolved : null;
+}
+
+/** Local evidence for a tenant may only live under <localStoragePath>/tenants/<tenantId>/. */
+function resolveTenantLocalPath(tenantId: string, candidate: unknown): string | null {
+  if (typeof candidate !== 'string' || !candidate || candidate.startsWith('gs://')) return null;
+  return resolveWithin(path.join(localStoragePath, 'tenants', tenantId), candidate);
 }
 
 function mapRowToEvidence(row: any) {
@@ -90,6 +110,18 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
     return;
   }
 
+  if (typeof controlId !== 'string' || !CONTROL_ID_PATTERN.test(controlId) || controlId === '.' || controlId === '..') {
+    res.status(400).json({
+      error: 'Invalid controlId: only letters, digits, dots, underscores and hyphens are allowed',
+    });
+    return;
+  }
+
+  if (typeof fileName !== 'string' || typeof fileHash !== 'string') {
+    res.status(400).json({ error: 'Invalid fileName or fileHash: expected strings' });
+    return;
+  }
+
   const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const objectPath = `tenants/${tenantId}/controls/${controlId}/${evidenceId}_${cleanFileName}`;
@@ -103,8 +135,13 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
 
   if (storageProvider === 'local') {
     // On-Premises Air-Gapped Enclave: upload to local Express handler
+    const safeLocalPath = resolveWithin(localStoragePath, objectPath);
+    if (!safeLocalPath) {
+      res.status(400).json({ error: 'Invalid evidence path: resolved location is outside the evidence store' });
+      return;
+    }
     signedUploadUrl = `/api/v1/evidence/upload-local/${evidenceId}`;
-    storedStoragePath = path.join(localStoragePath, objectPath);
+    storedStoragePath = safeLocalPath;
     initialSyncStatus = 'local_storage';
   } else {
     // Cloud GCS deployment
@@ -112,24 +149,28 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
     storedStoragePath = gcsUri;
     initialSyncStatus = 'gcs_signed_url';
 
+    if (!storage) {
+      console.error('[GCS Signed URL] STORAGE_PROVIDER=gcs but the GCS client is not configured');
+      res.status(503).json({
+        error: 'Cloud evidence storage is unavailable: the GCS client is not configured. Contact your administrator or switch STORAGE_PROVIDER to local.',
+      });
+      return;
+    }
+
     try {
-      if (storage) {
-        const bucket = storage.bucket(gcsBucketName);
-        const file = bucket.file(objectPath);
-        const [url] = await file.getSignedUrl({
-          version: 'v4',
-          action: 'write',
-          expires: Date.now() + 15 * 60 * 1000,
-          contentType: effectiveMime,
-        });
-        signedUploadUrl = url;
-      } else {
-        throw new Error('GCS client not configured');
-      }
-    } catch (gcsErr: any) {
-      console.warn('[GCS Signed URL] Emulating GCS upload URL:', gcsErr.message);
-      const expiresSec = Math.floor(Date.now() / 1000) + 900;
-      signedUploadUrl = `https://storage.googleapis.com/${gcsBucketName}/${objectPath}?GoogleAccessId=cmmc-evidence-signer@${gcsProjectId}.iam.gserviceaccount.com&Expires=${expiresSec}&Signature=GCS_SECURE_TOKEN_EMULATED`;
+      const [url] = await storage.bucket(gcsBucketName).file(objectPath).getSignedUrl({
+        version: 'v4',
+        action: 'write',
+        expires: Date.now() + 15 * 60 * 1000,
+        contentType: effectiveMime,
+      });
+      signedUploadUrl = url;
+    } catch (gcsErr: unknown) {
+      console.error('[GCS Signed URL] Signing failed:', gcsErr instanceof Error ? gcsErr.message : gcsErr);
+      res.status(503).json({
+        error: 'Cloud evidence storage is unavailable: unable to sign an upload URL. No evidence record was created.',
+      });
+      return;
     }
   }
 
@@ -218,7 +259,16 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
  */
 const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
-  const { evidenceId } = req.params;
+  const evidenceId = String(req.params.evidenceId);
+
+  if (storageProvider !== 'local') {
+    res.status(409).json({ error: 'Local evidence upload is disabled: STORAGE_PROVIDER is not local' });
+    return;
+  }
+  if (!EVIDENCE_ID_PATTERN.test(evidenceId)) {
+    res.status(400).json({ error: 'Invalid evidence ID' });
+    return;
+  }
 
   try {
     const result = await queryWithTenant(
@@ -244,10 +294,21 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
     const computedHash = crypto.createHash('sha256').update(buffer).digest('hex');
 
     // Determine target local file destination
-    let targetFilePath = record.gcs_path;
-    if (!targetFilePath || targetFilePath.startsWith('gs://')) {
+    let targetFilePath = resolveTenantLocalPath(tenantId, record.gcs_path);
+    if (!targetFilePath) {
       const cleanFileName = (record.file_name || 'evidence.bin').replace(/[^a-zA-Z0-9._-]/g, '_');
-      targetFilePath = path.join(localStoragePath, `tenants/${tenantId}/controls/${record.control_id}/${evidenceId}_${cleanFileName}`);
+      if (!CONTROL_ID_PATTERN.test(String(record.control_id))) {
+        res.status(400).json({ error: 'Evidence record has an invalid control ID' });
+        return;
+      }
+      targetFilePath = resolveWithin(
+        localStoragePath,
+        `tenants/${tenantId}/controls/${record.control_id}/${evidenceId}_${cleanFileName}`
+      );
+    }
+    if (!targetFilePath) {
+      res.status(400).json({ error: 'Evidence storage path is outside the evidence store' });
+      return;
     }
 
     const targetDir = path.dirname(targetFilePath);
@@ -308,11 +369,12 @@ router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<voi
     }
 
     const record = result.rows[0];
-    const filePath = record.gcs_path;
+    const filePath = resolveTenantLocalPath(tenantId, record.gcs_path);
 
-    if (filePath && !filePath.startsWith('gs://') && fs.existsSync(filePath)) {
+    if (filePath && fs.existsSync(filePath)) {
+      const safeDownloadName = String(record.file_name || 'evidence').replace(/[^a-zA-Z0-9._-]/g, '_');
       res.setHeader('Content-Type', record.mime_type || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${record.file_name}"`);
+      res.setHeader('Content-Disposition', `inline; filename="${safeDownloadName}"`);
       res.sendFile(filePath);
       return;
     }
@@ -344,9 +406,9 @@ router.get('/:evidenceId/verify-integrity', async (req: Request, res: Response):
     }
 
     const record = result.rows[0];
-    const filePath = record.gcs_path;
+    const filePath = resolveTenantLocalPath(tenantId, record.gcs_path);
 
-    if (!filePath || filePath.startsWith('gs://') || !fs.existsSync(filePath)) {
+    if (!filePath || !fs.existsSync(filePath)) {
       res.status(404).json({ error: 'Local file does not exist on disk for verification' });
       return;
     }

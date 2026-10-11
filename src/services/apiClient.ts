@@ -181,6 +181,21 @@ export const ApiClient = {
   },
 
   /**
+   * GET /api/v1/evidence/config/storage-info
+   * Reports the server's active evidence storage provider (local disk or GCS).
+   */
+  async getStorageInfo(
+    tenantId: string
+  ): Promise<{ provider: string; localStoragePath: string; isAirGapped: boolean } | null> {
+    const res = await fetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  },
+
+  /**
    * POST /api/v1/evidence/upload-url
    * Requests a GCS Signed URL and registers evidence metadata in Cloud SQL
    */
@@ -213,22 +228,20 @@ export const ApiClient = {
    * Uploads binary file directly to Local Enclave Storage or GCS via Signed URL
    */
   async uploadFileToGcs(signedUrl: string, file: File | Blob, mimeType: string, tenantId?: string): Promise<void> {
-    // If running with emulated mock token, simulate direct upload
-    if (signedUrl.includes('GCS_SECURE_TOKEN_EMULATED')) {
-      console.log('[ApiClient] Emulated GCS signed URL upload succeeded.');
-      return;
-    }
-
-    const targetUrl = signedUrl.startsWith('/') && API_BASE_URL ? `${API_BASE_URL}${signedUrl}` : signedUrl;
+    const isServerRelative = signedUrl.startsWith('/');
+    const targetUrl = isServerRelative && API_BASE_URL ? `${API_BASE_URL}${signedUrl}` : signedUrl;
     const headers: Record<string, string> = {
       'Content-Type': mimeType || 'application/octet-stream',
     };
-    if (tenantId) {
-      headers['x-tenant-id'] = tenantId;
-    }
-    const token = this.getToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    // Only our own API receives credentials; a GCS signed URL carries its own signature.
+    if (isServerRelative) {
+      if (tenantId) {
+        headers['x-tenant-id'] = tenantId;
+      }
+      const token = this.getToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
     }
 
     const res = await fetch(targetUrl, {

@@ -51,8 +51,6 @@ services:
       DB_PASS: ${POSTGRES_PASSWORD:-postgres_secure_pass}
       DB_NAME: ${POSTGRES_DB:-cmmc_compliance_db}
       # Client-side configuration
-      VITE_STORAGE_PROVIDER: local
-      VITE_LOCAL_STORAGE_PATH: ./data/evidence
       VITE_API_URL: ""
     ports:
       - "3000:3000"

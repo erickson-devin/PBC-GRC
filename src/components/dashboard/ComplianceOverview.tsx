@@ -18,12 +18,13 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 import { calculateSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
-import { getStorageProvider, getLocalStoragePath } from '../../data/audit/storageDriver';
+import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { DomainCards } from './DomainCards';
 
 export const ComplianceOverview: React.FC = () => {
   const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
   const { currentTenant, canEdit, activeFramework } = useTenant();
+  const storageConfig = useStorageConfig(currentTenant?.id);
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
   const guidance = getFrameworkGuidanceText(activeFramework);
@@ -343,8 +344,8 @@ export const ComplianceOverview: React.FC = () => {
 
         {/* Widget 2: Evidence Vault & Artifact Health */}
         {(() => {
-          const storageProvider = getStorageProvider();
-          const localStoragePath = getLocalStoragePath();
+          const storageProvider = storageConfig.provider;
+          const localStoragePath = storageConfig.localStoragePath;
           const isLocal = storageProvider === 'local';
 
           return (

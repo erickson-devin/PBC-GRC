@@ -10,6 +10,7 @@ import {
   signInWithEmailLink,
   signOut,
 } from 'firebase/auth';
+import { buildDevMockIdToken } from './devAuthToken';
 
 /**
  * Google Cloud Identity Platform / Firebase Configuration
@@ -119,6 +120,9 @@ export const checkIsSignInWithEmailLink = (url: string = window.location.href): 
 
 export const completeMagicLinkSignIn = async (email: string, url: string = window.location.href) => {
   if (!auth || !isFirebaseConfigured) {
+    if (!import.meta.env.DEV) {
+      throw new Error('Firebase authentication is not configured; magic-link sign-in is unavailable.');
+    }
     return {
       user: {
         uid: `magic-${email.replace(/[^a-zA-Z0-9]/g, '-')}`,
@@ -126,7 +130,7 @@ export const completeMagicLinkSignIn = async (email: string, url: string = windo
         displayName: 'Assessor ' + email.split('@')[0],
         emailVerified: true,
         photoURL: null,
-        getIdToken: async () => `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ sub: email, email, iss: 'https://securetoken.google.com/grc-tool-507203', exp: Math.floor(Date.now() / 1000) + 3600 }))}.mock_magic_link_token`,
+        getIdToken: async () => buildDevMockIdToken({ sub: email, email }) ?? '',
       } as any,
     };
   }

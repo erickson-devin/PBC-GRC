@@ -18,6 +18,7 @@ import {
 } from '../config/firebase';
 import { User, AuthProviderType, LicenseTier } from '../types/tenant';
 import { useTenant, PRESET_USERS } from './TenantContext';
+import { buildDevMockIdToken } from '../config/devAuthToken';
 
 interface AuthContextType {
   firebaseUser: FirebaseUser | null;
@@ -127,7 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setCurrentUser(userProfile);
-    setIdToken(token || `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ sub: userProfile.id, email, iss: 'https://securetoken.google.com/grc-tool-507203', exp: Math.floor(Date.now() / 1000) + 3600 }))}.mock_pbc_signature`);
+    setIdToken(token || buildDevMockIdToken({ sub: userProfile.id, email }));
     setIsAuthenticated(true);
     setAuthError(null);
     syncAuthUser(userProfile, tenant.id);
@@ -394,7 +395,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const loginAsPreset = useCallback((presetUser: User) => {
     setCurrentUser(presetUser);
-    setIdToken(`eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({ sub: presetUser.id, email: presetUser.email, iss: 'https://securetoken.google.com/grc-tool-507203', exp: Math.floor(Date.now() / 1000) + 7200 }))}.mock_pbc_signature`);
+    setIdToken(buildDevMockIdToken({ sub: presetUser.id, email: presetUser.email }, 7200));
     setIsAuthenticated(true);
     setAuthError(null);
     setIsAuthModalOpen(false);

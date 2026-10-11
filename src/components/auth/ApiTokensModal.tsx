@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
+import { buildDevMockIdToken } from '../../config/devAuthToken';
 
 interface ApiTokensModalProps {
   isOpen: boolean;
@@ -27,20 +28,22 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
 
   if (!isOpen) return null;
 
-  const displayToken = idToken || `eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.${btoa(JSON.stringify({
-    iss: "https://securetoken.google.com/grc-tool-507203",
-    aud: "grc-tool-507203",
-    sub: currentUser.id,
-    email: currentUser.email,
-    tenant_id: currentTenant.id,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-  }))}.mock_pbc_gcp_signed_identity_token`;
+  const displayToken =
+    idToken ||
+    buildDevMockIdToken({
+      aud: 'grc-tool-507203',
+      sub: currentUser.id,
+      email: currentUser.email,
+      tenant_id: currentTenant.id,
+    }) ||
+    '';
 
   const curlExample = `curl -X GET "https://grc.pitchblackcyber.com/api/v1/assessments" \\
-  -H "Authorization: Bearer ${displayToken.slice(0, 24)}..." \\
+  -H "Authorization: Bearer ${displayToken ? `${displayToken.slice(0, 24)}...` : '<ID_TOKEN>'}" \\
   -H "X-Tenant-ID: ${currentTenant.id}"`;
 
   const handleCopy = () => {
+    if (!displayToken) return;
     navigator.clipboard.writeText(displayToken);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
@@ -84,7 +87,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </div>
 
             <div className="relative p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono text-[11px] text-slate-300 break-all select-all">
-              {displayToken}
+              {displayToken || 'No active session token. Sign in with a verified identity provider to obtain one.'}
             </div>
 
             <div className="flex justify-end">

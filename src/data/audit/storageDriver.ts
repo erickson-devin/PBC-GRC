@@ -11,6 +11,7 @@
  */
 
 import { computeSha256 } from './cryptoUtils';
+import { ApiClient } from '../../services/apiClient';
 
 export type StorageProviderType = 'local' | 'gcs';
 
@@ -35,22 +36,76 @@ export interface StoredEvidenceMetadata {
   integrityVerified: boolean;
 }
 
+const DEFAULT_LOCAL_STORAGE_PATH = './data/evidence/';
+const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+
+/** Last storage configuration reported by the server (single source of truth). */
+let serverStorageConfig: StorageConfig | null = null;
+const configListeners = new Set<() => void>();
+
+function nodeEnv(key: string): string | undefined {
+  return typeof process !== 'undefined' ? process.env?.[key] : undefined;
+}
+
+function normalizeProvider(value: string | undefined): StorageProviderType {
+  return value?.toLowerCase() === 'gcs' ? 'gcs' : 'local';
+}
+
 /**
- * Resolves the active storage provider from environment variables.
+ * Applies a storage configuration fetched from the server and notifies subscribers.
+ */
+export function setServerStorageConfig(info: {
+  provider?: string;
+  localStoragePath?: string;
+  isAirGapped?: boolean;
+}): StorageConfig {
+  const provider = normalizeProvider(info.provider);
+  serverStorageConfig = {
+    provider,
+    localStoragePath: info.localStoragePath || DEFAULT_LOCAL_STORAGE_PATH,
+    isAirGapped: info.isAirGapped ?? provider === 'local',
+    maxUploadSizeBytes: DEFAULT_MAX_UPLOAD_BYTES,
+  };
+  configListeners.forEach((listener) => listener());
+  return serverStorageConfig;
+}
+
+/** Returns the config last fetched from the server, or null if none has been loaded yet. */
+export function getServerStorageConfig(): StorageConfig | null {
+  return serverStorageConfig;
+}
+
+/** Subscribe to storage config changes (used by useStorageConfig via useSyncExternalStore). */
+export function subscribeStorageConfig(listener: () => void): () => void {
+  configListeners.add(listener);
+  return () => {
+    configListeners.delete(listener);
+  };
+}
+
+/**
+ * Fetches the active storage configuration from `GET /api/v1/evidence/config/storage-info`.
+ * The server is the single source of truth, so the browser can never disagree with it
+ * because of a stale build-time `VITE_*` value. Returns null if the server is unreachable.
+ */
+export async function fetchStorageConfig(tenantId: string): Promise<StorageConfig | null> {
+  try {
+    const info = await ApiClient.getStorageInfo(tenantId);
+    return info ? setServerStorageConfig(info) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves the active storage provider.
+ * - Browser: the value reported by the server (see fetchStorageConfig); 'local' until loaded.
+ * - Node (Express backend / Docker / tests): process.env.STORAGE_PROVIDER.
  * Defaults to 'local' for on-premises, air-gapped enclaves, and offline self-contained deployments.
  */
 export function getStorageProvider(): StorageProviderType {
-  // Check process.env (Node.js runtime / Express backend / Docker)
-  if (typeof process !== 'undefined' && process.env?.STORAGE_PROVIDER) {
-    return process.env.STORAGE_PROVIDER.toLowerCase() === 'gcs' ? 'gcs' : 'local';
-  }
-
-  // Check Vite client-side environment (import.meta.env)
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_STORAGE_PROVIDER) {
-    return (import.meta as any).env.VITE_STORAGE_PROVIDER.toLowerCase() === 'gcs' ? 'gcs' : 'local';
-  }
-
-  return 'local';
+  if (serverStorageConfig) return serverStorageConfig.provider;
+  return normalizeProvider(nodeEnv('STORAGE_PROVIDER'));
 }
 
 /**
@@ -58,13 +113,8 @@ export function getStorageProvider(): StorageProviderType {
  * Defaults to './data/evidence/'.
  */
 export function getLocalStoragePath(): string {
-  if (typeof process !== 'undefined' && process.env?.LOCAL_STORAGE_PATH) {
-    return process.env.LOCAL_STORAGE_PATH;
-  }
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_LOCAL_STORAGE_PATH) {
-    return (import.meta as any).env.VITE_LOCAL_STORAGE_PATH;
-  }
-  return './data/evidence/';
+  if (serverStorageConfig) return serverStorageConfig.localStoragePath;
+  return nodeEnv('LOCAL_STORAGE_PATH') || DEFAULT_LOCAL_STORAGE_PATH;
 }
 
 /**
@@ -78,12 +128,13 @@ export function isLocalStorageProvider(): boolean {
  * Retrieves the comprehensive storage configuration object.
  */
 export function getStorageConfig(): StorageConfig {
+  if (serverStorageConfig) return serverStorageConfig;
   const provider = getStorageProvider();
   return {
     provider,
     localStoragePath: getLocalStoragePath(),
     isAirGapped: provider === 'local',
-    maxUploadSizeBytes: 100 * 1024 * 1024, // 100 MB
+    maxUploadSizeBytes: DEFAULT_MAX_UPLOAD_BYTES,
   };
 }
 

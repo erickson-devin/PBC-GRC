@@ -436,3 +436,32 @@ export async function initDb(): Promise<void> {
   }
 }
 
+
+/**
+ * Returns true when `userId` has a tenant_users membership row for `tenantId`.
+ * Fails closed: if the table is unavailable or the DB is in in-memory fallback mode, returns false
+ * (callers still honour tenant membership asserted by verified token claims).
+ */
+export async function isTenantMember(userId: string, tenantId: string): Promise<boolean> {
+  if (isUsingMemoryFallback || !userId || !tenantId) return false;
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+      const res = await client.query(
+        'SELECT 1 FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
+        [userId, tenantId]
+      );
+      await client.query('COMMIT');
+      return (res.rowCount ?? 0) > 0;
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch {
+    return false;
+  }
+}

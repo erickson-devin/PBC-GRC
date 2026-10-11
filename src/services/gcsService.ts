@@ -58,29 +58,6 @@ export const GcsService = {
   },
 
   /**
-   * Simulate or generate a GCS Signed URL for direct-to-bucket upload or download
-   */
-  async generateSignedUploadUrl(
-    tenantId: string,
-    controlId: string,
-    fileName: string,
-    _contentType: string
-  ): Promise<{ signedUrl: string; gcsPath: string; expiresAt: string }> {
-    const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const gcsPath = this.generateGcsPath(tenantId, controlId, fileId, fileName);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min validity
-    
-    // In live GCP environment, presigned URLs are signed by cmmc-evidence-signer service account
-    const mockSignedUrl = `https://storage.googleapis.com/${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${tenantId}/controls/${controlId}/${fileId}?GoogleAccessId=cmmc-evidence-signer@${DEFAULT_GCP_CONFIG.projectId}.iam.gserviceaccount.com&Expires=${Math.floor(Date.now() / 1000) + 900}&Signature=GCS_SECURE_TOKEN_EMULATED`;
-
-    return {
-      signedUrl: mockSignedUrl,
-      gcsPath,
-      expiresAt,
-    };
-  },
-
-  /**
    * Cryptographically verify evidence immutability by comparing stored SHA-256 hash
    */
   async verifyIntegrity(
