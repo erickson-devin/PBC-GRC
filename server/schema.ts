@@ -147,8 +147,43 @@ export const TABLES_SQL = `
   );
 `;
 
+const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
+
+/**
+ * Tenant DISCOVERY: lets a signed-in user see which tenants they belong to ("list my tenants") without any
+ * tenant context, using `app.current_user_id` (set by the server inside a transaction, never by clients).
+ *
+ * Policies are permissive, so they are OR'd with the tenant-isolation policies above. They are SELECT-only and
+ * have no WITH CHECK: they can reveal a user's OWN memberships and the tenants those point at, and can never
+ * grant a write or expose anyone else's rows.
+ *
+ * The tenants policy reads tenant_users, which is itself under RLS for the same session, so tenant_users needs
+ * the matching self-visibility policy; without it the subquery would see nothing.
+ */
+export interface DiscoveryPolicy {
+  table: string;
+  name: string;
+  using: string;
+}
+
+export const DISCOVERY_POLICIES: readonly DiscoveryPolicy[] = [
+  {
+    table: 'tenant_users',
+    name: 'rls_tenant_users_self_discovery',
+    using: `user_id = ${currentUserPredicate}`,
+  },
+  {
+    table: 'tenants',
+    name: 'rls_tenants_member_discovery',
+    using: `id IN (SELECT tenant_id FROM tenant_users WHERE user_id = ${currentUserPredicate})`,
+  },
+];
+
 /** ENABLE + FORCE row level security and the tenant-isolation policy for every tenant-bound table. */
-export function buildRlsSql(tables: readonly RlsTable[] = RLS_TENANT_TABLES): string {
+export function buildRlsSql(
+  tables: readonly RlsTable[] = RLS_TENANT_TABLES,
+  discovery: readonly DiscoveryPolicy[] = DISCOVERY_POLICIES
+): string {
   const alters = tables
     .map(
       ({ table }) =>
@@ -171,12 +206,27 @@ export function buildRlsSql(tables: readonly RlsTable[] = RLS_TENANT_TABLES): st
     })
     .join('\n\n');
 
+  // Permissive, SELECT-only, no WITH CHECK: see DISCOVERY_POLICIES
+  const discoveryPolicies = discovery
+    .map(
+      ({ table, name, using }) => `    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies WHERE schemaname = current_schema() AND tablename = '${table}' AND policyname = '${name}'
+    ) THEN
+      CREATE POLICY ${name} ON ${table}
+        FOR SELECT
+        USING (${using});
+    END IF;`
+    )
+    .join('\n\n');
+
   return `
   ${alters}
 
   DO $$
   BEGIN
 ${policies}
+
+${discoveryPolicies}
   END
   $$;
 `;

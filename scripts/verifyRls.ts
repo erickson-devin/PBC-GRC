@@ -9,13 +9,15 @@
  *   2. the connecting role can be subject to RLS at all (superusers and BYPASSRLS roles always bypass it);
  *   3. with no tenant context a query sees zero rows, with a tenant context it sees only that tenant's rows,
  *      and a write for a different tenant is rejected.
- * It inserts and removes a few rows prefixed "rls_verify_" in tenant_users. Exit code 0 = all checks passed.
+ *   4. tenant DISCOVERY: in user context a user sees only the tenants they belong to (and only their own
+ *      membership rows), and that context can never write.
+ * It inserts and removes a few rows prefixed "rls_verify_" in tenants and tenant_users. Exit code 0 = all checks passed.
  */
 export {};
 
 process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: this script must hit the real DB
 
-const { pool, initDb, queryWithTenant, checkDatabaseConnection } = await import('../server/db');
+const { pool, initDb, queryWithTenant, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES } = await import('../server/schema');
 
 let failures = 0;
@@ -89,6 +91,77 @@ async function main() {
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
+    }
+  }
+
+  await verifyDiscovery();
+}
+
+async function verifyDiscovery() {
+  console.log('\n--- 4. Tenant discovery (user context) ---');
+  const U1 = 'rls_verify_disc_u1'; // member of X only
+  const U2 = 'rls_verify_disc_u2'; // member of Y only
+  const U3 = 'rls_verify_disc_u3'; // member of nothing
+  const makeTenant = (id: string) =>
+    queryWithTenant(
+      id,
+      `INSERT INTO tenants (id, name, system_name, system_owner) VALUES ($1, $2, 'sys', 'owner') ON CONFLICT (id) DO NOTHING`,
+      [id, id]
+    );
+  const join = (tenant: string, user: string, role: string) =>
+    queryWithTenant(
+      tenant,
+      `INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role) VALUES ($1, $2, $1, $3, $4) ON CONFLICT (user_id, tenant_id) DO NOTHING`,
+      [user, `${user}@example.mil`, tenant, role]
+    );
+
+  try {
+    await makeTenant(TENANT_X);
+    await makeTenant(TENANT_Y);
+    await join(TENANT_X, U1, 'TENANT_OWNER');
+    await join(TENANT_Y, U2, 'VIEWER');
+
+    const u1 = await listUserTenants(U1);
+    check(u1.length === 1 && u1[0].id === TENANT_X && u1[0].role === 'TENANT_OWNER', 'user 1 lists exactly tenant X with their role', JSON.stringify(u1.map((t) => [t.id, t.role])));
+    const u2 = await listUserTenants(U2);
+    check(u2.length === 1 && u2[0].id === TENANT_Y && u2[0].role === 'VIEWER', 'user 2 lists exactly tenant Y with their role', JSON.stringify(u2.map((t) => [t.id, t.role])));
+    check((await listUserTenants(U3)).length === 0, 'a user with no membership lists nothing');
+
+    // Raw queries in user context: the policies, not the WHERE clause, must do the filtering.
+    const rawTenants = await queryWithUser(U1, "SELECT id FROM tenants WHERE id LIKE 'rls_verify_%'", []);
+    check(rawTenants.rows.length === 1 && rawTenants.rows[0].id === TENANT_X, 'unfiltered SELECT on tenants as user 1 returns only tenant X (policy, not WHERE)', JSON.stringify(rawTenants.rows));
+    const rawMembers = await queryWithUser(U1, "SELECT user_id FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []);
+    check(rawMembers.rows.length === 1 && rawMembers.rows[0].user_id === U1, 'unfiltered SELECT on tenant_users as user 1 returns only user 1 (not other members)', JSON.stringify(rawMembers.rows));
+    const noUser = await queryWithUser('', "SELECT id FROM tenants WHERE id LIKE 'rls_verify_%'", []);
+    check(noUser.rows.length === 0, "an empty user id matches nothing");
+    const noContext = await pool.query("SELECT id FROM tenants WHERE id LIKE 'rls_verify_%'");
+    check(noContext.rows.length === 0, 'no user and no tenant context => zero tenants');
+    const asTenantX = await queryWithTenant(TENANT_X, "SELECT id FROM tenants WHERE id LIKE 'rls_verify_%'", []);
+    check(asTenantX.rows.length === 1 && asTenantX.rows[0].id === TENANT_X, 'tenant context still sees only its own tenant (discovery does not widen it)', JSON.stringify(asTenantX.rows));
+
+    // Discovery must never grant writes.
+    let insertRejected = false;
+    try {
+      await queryWithUser(U1, "INSERT INTO tenants (id, name, system_name, system_owner) VALUES ('rls_verify_new', 'n', 's', 'o')", []);
+    } catch {
+      insertRejected = true;
+    }
+    check(insertRejected, 'user context cannot INSERT into tenants');
+    const upd = await queryWithUser(U1, "UPDATE tenants SET name = 'hacked' WHERE id = $1", [TENANT_X]);
+    check(upd.rowCount === 0, 'user context cannot UPDATE tenants', 'rows updated: ' + upd.rowCount);
+    const del = await queryWithUser(U1, 'DELETE FROM tenant_users WHERE user_id = $1', [U1]);
+    check(del.rowCount === 0, 'user context cannot DELETE its own membership', 'rows deleted: ' + del.rowCount);
+    let promoteRejected = false;
+    try {
+      await queryWithUser(U1, "INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role) VALUES ($1, 'e', 'e', $2, 'TENANT_OWNER')", [U1, TENANT_Y]);
+    } catch {
+      promoteRejected = true;
+    }
+    check(promoteRejected, 'user context cannot add itself to another tenant');
+  } finally {
+    for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM tenants WHERE id LIKE 'rls_verify_%'", []).catch(() => undefined);
     }
   }
 }

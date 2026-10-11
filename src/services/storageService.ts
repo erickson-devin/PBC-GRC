@@ -237,6 +237,31 @@ export const StorageService = {
   },
 
   /**
+   * Moves a tenant's locally stored assessment (controls, narratives, evidence index, SSP metadata) to a new
+   * tenant id, rewriting every embedded tenantId, and removes the old copy. Used when a browser-only tenant is
+   * migrated to a server-created tenant. Returns the migrated state.
+   */
+  migrateAssessment(from: Tenant, toTenantId: string): AssessmentState {
+    const old = this.loadAssessment(from);
+    const controls: AssessmentState['controls'] = {};
+    for (const [id, c] of Object.entries(old.controls)) controls[id] = { ...c, tenantId: toTenantId };
+    const migrated: AssessmentState = {
+      ...old,
+      tenantId: toTenantId,
+      controls,
+      evidenceIndex: old.evidenceIndex.map((e) => ({ ...e, tenantId: toTenantId })),
+      sspMetadata: { ...old.sspMetadata, tenantId: toTenantId },
+    };
+    this.saveAssessment(toTenantId, migrated);
+    try {
+      if (from.id !== toTenantId) localStorage.removeItem(this.getTenantKey(from.id));
+    } catch {
+      // storage unavailable: the old copy simply stays
+    }
+    return migrated;
+  },
+
+  /**
    * Save assessment state under strict tenant namespace
    */
   saveAssessment(tenantId: string, state: AssessmentState): void {

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import authRouter from './auth';
 import controlsRouter from './controls';
 import evidenceRouter from './evidence';
-import tenantsRouter, { createTenantHandler } from './tenants';
+import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { getDatabaseStatus } from '../db';
 
@@ -24,7 +24,9 @@ router.get('/health', async (_req, res) => {
 // Public: identity provider discovery and local (air-gapped) login
 router.use('/auth', authRouter);
 
-// Creating a tenant only needs an authenticated user: they have no tenant yet and become its first TENANT_OWNER.
+// Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
+// tenants they belong to, or creates one and becomes its first TENANT_OWNER.
+router.get('/tenants', authOnlyMiddleware, listMyTenantsHandler);
 router.post('/tenants', authOnlyMiddleware, createTenantHandler);
 
 // Everything else is protected by authentication AND tenant membership

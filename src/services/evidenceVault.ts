@@ -103,6 +103,30 @@ export const EvidenceVault = {
   },
 
   /**
+   * Re-keys every stored evidence file from one tenant id to another. Used when a browser-only tenant is
+   * migrated to a server-created tenant (which has a different id): its evidence must follow it.
+   */
+  async moveTenant(fromTenantId: string, toTenantId: string): Promise<number> {
+    let moved = 0;
+    try {
+      const allKeys = await keys();
+      const prefix = `${EVIDENCE_STORE_PREFIX}${fromTenantId}_`;
+      for (const k of allKeys) {
+        if (typeof k !== 'string' || !k.startsWith(prefix)) continue;
+        const record = await get<StoredEvidenceRecord>(k);
+        if (!record) continue;
+        const evidenceId = k.slice(prefix.length);
+        await set(this.getStoreKey(toTenantId, evidenceId), { ...record, tenantId: toTenantId });
+        await del(k);
+        moved++;
+      }
+    } catch (err) {
+      console.error(`Error moving evidence from tenant ${fromTenantId} to ${toTenantId}:`, err);
+    }
+    return moved;
+  },
+
+  /**
    * Clear all stored evidence files for a specific tenant
    */
   async clearTenant(tenantId: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { buildPoolConfig } from '../server/db';
-import { RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql, rlsPolicyName } from '../server/schema';
+import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql, rlsPolicyName } from '../server/schema';
 
 /**
  * Pure checks (no database needed) on the schema bootstrap and the pool configuration:
@@ -54,6 +54,26 @@ assert(tenantBound.length >= 4, `found tenant-bound tables in the DDL (${tenantB
 assert(tenantBound.every((t) => protectedTables.has(t)), 'every table with a tenant_id column is covered by RLS', tenantBound.filter((t) => !protectedTables.has(t)));
 assert(!protectedTables.has('control_mappings'), 'global reference data (control_mappings) is intentionally not RLS-bound');
 assert(!protectedTables.has('local_users') && !tenantBound.includes('local_users'), 'local_users is global identity data (login happens before any tenant exists), not tenant-bound');
+
+console.log('\n--- Tenant discovery policies ("list my tenants") ---');
+const byName = (name: string) => DISCOVERY_POLICIES.find((p) => p.name === name);
+const tenantsPolicy = byName('rls_tenants_member_discovery');
+const selfPolicy = byName('rls_tenant_users_self_discovery');
+const userCtx = "NULLIF(current_setting('app.current_user_id', true), '')";
+assert(Boolean(tenantsPolicy) && tenantsPolicy!.table === 'tenants', 'tenants has a member-discovery policy');
+assert(Boolean(selfPolicy) && selfPolicy!.table === 'tenant_users', 'tenant_users has a self-visibility policy (the tenants policy reads it under RLS, so it needs one)');
+assert(tenantsPolicy?.using === `id IN (SELECT tenant_id FROM tenant_users WHERE user_id = ${userCtx})`, 'tenants are visible only where the user has a tenant_users row', tenantsPolicy?.using);
+assert(selfPolicy?.using === `user_id = ${userCtx}`, 'tenant_users: a user sees only their own rows', selfPolicy?.using);
+assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx)), "an unset or empty user context matches nothing (NULLIF, so '' never equals a user id)");
+for (const p of DISCOVERY_POLICIES) {
+  const start = rls.indexOf(`CREATE POLICY ${p.name}`);
+  const block = rls.slice(start, rls.indexOf('END IF;', start));
+  assert(start > 0 && /FOR SELECT/.test(block) && !/FOR ALL|FOR INSERT|FOR UPDATE|FOR DELETE/.test(block), `${p.name} is SELECT-only: it can never grant a write`);
+  assert(!/WITH CHECK/.test(block), `${p.name} has no WITH CHECK`);
+  assert(rls.includes(`policyname = '${p.name}'`), `${p.name} is created idempotently`);
+}
+assert(DISCOVERY_POLICIES.every((p) => protectedTables.has(p.table)), 'discovery policies only extend tables that already have FORCE RLS');
+assert(!TABLES_SQL.includes('app.current_user_id'), 'the user context is used only by policies, never by table definitions');
 
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);

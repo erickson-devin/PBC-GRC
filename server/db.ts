@@ -635,6 +635,202 @@ export async function createTenantWithOwner(
   }
 }
 
+/**
+ * Runs a query in USER context: `app.current_user_id` is set for the transaction (and no tenant), which is what the
+ * tenant-discovery RLS policies key on. PostgreSQL only; there is no SQL emulation in DB_MODE=memory.
+ */
+export async function queryWithUser(userId: string, text: string, params: SqlParam[] = []): Promise<pg.QueryResult> {
+  if (isMemoryMode()) throw new Error('queryWithUser requires PostgreSQL (DB_MODE=memory has no SQL emulation)');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', userId]);
+    const res = await client.query(text, params);
+    await client.query('COMMIT');
+    return res;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** A tenant the user belongs to, with the user's role in it. */
+export interface MyTenant extends Omit<TenantRecord, 'createdAt'> {
+  createdAt: string | null;
+  role: TenantRole;
+  joinedAt: string;
+}
+
+/**
+ * Every tenant the user is a member of (tenant_users), with their role in each. Works with no tenant context:
+ * on PostgreSQL the discovery RLS policies expose only this user's own membership rows and the tenants they
+ * point at, so even a bug in this query cannot return anybody else's data.
+ */
+export async function listUserTenants(userId: string): Promise<MyTenant[]> {
+  if (!userId) return [];
+
+  if (isMemoryMode()) {
+    return [...memoryTenantUsers.values()]
+      .filter((m) => m.user_id === userId && isTenantRole(m.role))
+      .map((m) => {
+        const t = memoryTenants.get(m.tenant_id);
+        return {
+          id: m.tenant_id,
+          name: t?.name ?? m.tenant_id,
+          cageCode: t?.cageCode ?? null,
+          samStatus: t?.samStatus ?? 'ACTIVE',
+          systemName: t?.systemName ?? '',
+          systemOwner: t?.systemOwner ?? '',
+          industry: t?.industry ?? '',
+          enabledFrameworks: t?.enabledFrameworks ?? [],
+          primaryFramework: t?.primaryFramework ?? 'CMMC_L1',
+          licenseTier: t?.licenseTier ?? 'FOUNDATIONAL',
+          createdAt: t?.createdAt ?? null,
+          role: m.role as TenantRole,
+          joinedAt: m.created_at,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  const res = await queryWithUser(
+    userId,
+    `SELECT tu.tenant_id, tu.role, tu.created_at AS joined_at,
+            t.name, t.cage_code, t.sam_status, t.system_name, t.system_owner, t.industry,
+            t.enabled_frameworks, t.primary_framework, t.license_tier, t.created_at AS tenant_created_at
+       FROM tenant_users tu
+       LEFT JOIN tenants t ON t.id = tu.tenant_id
+      WHERE tu.user_id = $1
+      ORDER BY COALESCE(t.name, tu.tenant_id)`,
+    [userId]
+  );
+
+  return res.rows
+    .filter((r) => isTenantRole(r.role))
+    .map((r) => ({
+      id: r.tenant_id,
+      name: r.name ?? r.tenant_id,
+      cageCode: r.cage_code ?? null,
+      samStatus: r.sam_status ?? 'ACTIVE',
+      systemName: r.system_name ?? '',
+      systemOwner: r.system_owner ?? '',
+      industry: r.industry ?? '',
+      enabledFrameworks: r.enabled_frameworks ?? [],
+      primaryFramework: r.primary_framework ?? 'CMMC_L1',
+      licenseTier: r.license_tier ?? 'FOUNDATIONAL',
+      createdAt: r.tenant_created_at ? new Date(r.tenant_created_at).toISOString() : null,
+      role: r.role as TenantRole,
+      joinedAt: new Date(r.joined_at).toISOString(),
+    }));
+}
+
+export interface TenantSettingsPatch {
+  name?: string;
+  cageCode?: string;
+  samStatus?: string;
+  systemName?: string;
+  systemOwner?: string;
+  industry?: string;
+  primaryFramework?: string;
+  enabledFrameworks?: string[];
+}
+
+/** Keeps the framework settings consistent: the primary framework is always one of the enabled ones. */
+function reconcileFrameworks(
+  current: { primaryFramework: string; enabledFrameworks: string[] },
+  patch: Pick<TenantSettingsPatch, 'primaryFramework' | 'enabledFrameworks'>
+): { primaryFramework: string; enabledFrameworks: string[] } {
+  let enabled = patch.enabledFrameworks ?? current.enabledFrameworks;
+  let primary = patch.primaryFramework ?? current.primaryFramework;
+  if (enabled.length === 0) enabled = [primary];
+  if (!enabled.includes(primary)) {
+    // An explicitly chosen primary is always honoured (and enabled); otherwise fall back to the first enabled one.
+    if (patch.primaryFramework) enabled = [primary, ...enabled];
+    else primary = enabled[0];
+  }
+  return { primaryFramework: primary, enabledFrameworks: [...new Set(enabled)] };
+}
+
+function rowToTenantRecord(row: pg.QueryResultRow): TenantRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    cageCode: row.cage_code ?? null,
+    samStatus: row.sam_status ?? 'ACTIVE',
+    systemName: row.system_name,
+    systemOwner: row.system_owner,
+    industry: row.industry ?? '',
+    enabledFrameworks: row.enabled_frameworks ?? [],
+    primaryFramework: row.primary_framework ?? 'CMMC_L1',
+    licenseTier: row.license_tier ?? 'FOUNDATIONAL',
+    createdAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+/**
+ * Updates the settings of a tenant the caller already has write access to (the route enforces that).
+ * Runs under the tenant's RLS context, so it can only ever touch that tenant's row. The license tier is
+ * deliberately not patchable. Returns null if the tenant row does not exist.
+ */
+export async function updateTenantSettings(tenantId: string, patch: TenantSettingsPatch): Promise<TenantRecord | null> {
+  if (isMemoryMode()) {
+    const current = memoryTenants.get(tenantId);
+    if (!current) return null;
+    const frameworks = reconcileFrameworks(current, patch);
+    const next: TenantRecord = {
+      ...current,
+      name: patch.name ?? current.name,
+      cageCode: patch.cageCode ?? current.cageCode,
+      samStatus: patch.samStatus ?? current.samStatus,
+      systemName: patch.systemName ?? current.systemName,
+      systemOwner: patch.systemOwner ?? current.systemOwner,
+      industry: patch.industry ?? current.industry,
+      ...frameworks,
+    };
+    memoryTenants.set(tenantId, next);
+    return next;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+    const existing = await client.query(
+      'SELECT primary_framework, enabled_frameworks FROM tenants WHERE id = $1 FOR UPDATE',
+      [tenantId]
+    );
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const frameworks = reconcileFrameworks(
+      { primaryFramework: existing.rows[0].primary_framework, enabledFrameworks: existing.rows[0].enabled_frameworks ?? [] },
+      patch
+    );
+    const res = await client.query(
+      `UPDATE tenants SET
+          name = COALESCE($2, name), cage_code = COALESCE($3, cage_code), sam_status = COALESCE($4, sam_status),
+          system_name = COALESCE($5, system_name), system_owner = COALESCE($6, system_owner),
+          industry = COALESCE($7, industry), primary_framework = $8, enabled_frameworks = $9, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [
+        tenantId, patch.name ?? null, patch.cageCode ?? null, patch.samStatus ?? null, patch.systemName ?? null,
+        patch.systemOwner ?? null, patch.industry ?? null, frameworks.primaryFramework, frameworks.enabledFrameworks,
+      ]
+    );
+    await client.query('COMMIT');
+    return rowToTenantRecord(res.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 /** Test hook: clears the in-memory tenant and membership stores. */
 export function __resetMemoryTenantsForTests(): void {
   memoryTenants.clear();

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Tenant,
   TenantRole,
@@ -13,6 +13,17 @@ import {
 } from '../types/tenant';
 import { errorMessage } from '../utils/errors';
 import { canRoleWrite, isTenantRole } from '../utils/roles';
+import {
+  applyRoleSync,
+  isValidCageCode,
+  mergeServerTenants,
+  parseServerTenants,
+  pickActiveTenantId,
+  serverTenantToTenant,
+  toServerPatch,
+  ServerTenantPatch,
+} from '../data/tenantSync';
+import { EvidenceVault } from '../services/evidenceVault';
 import { StorageService, createInitialState } from '../services/storageService';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { ApiClient, UploadUrlResponse } from '../services/apiClient';
@@ -55,10 +66,11 @@ const LEGACY_STORAGE_KEYS = [
  * Generate a cryptographically secure token for tenant and staff onboarding invites
  */
 function generateCryptoToken(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `pbc_inv_${crypto.randomUUID().replace(/-/g, '')}`;
-  }
-  return `pbc_inv_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
+  // Invitation tokens are bearer secrets: use the platform CSPRNG, never Math.random().
+  const bytes = new Uint8Array(24);
+  globalThis.crypto.getRandomValues(bytes);
+  const random = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `pbc_inv_${Date.now().toString(36)}_${random}`;
 }
 
 /**
@@ -116,7 +128,8 @@ function deduplicateTenants(tenantList: Tenant[]): Tenant[] {
     // Use normalized domain or normalized company name as entity identity
     const domainKey = t.domain && t.domain.trim() ? t.domain.toLowerCase().trim() : '';
     const nameKey = normalizeOrgName(t.name);
-    const entityKey = domainKey ? `dom:${domainKey}` : `name:${nameKey}`;
+    // Tenants confirmed by the server are distinct by id: two real organisations can normalise to the same name.
+    const entityKey = t.serverBacked ? `id:${t.id}` : domainKey ? `dom:${domainKey}` : `name:${nameKey}`;
 
     if (seenEntities.has(entityKey)) {
       const existing = seenEntities.get(entityKey)!;
@@ -371,6 +384,12 @@ const checkIsSandboxRoute = (): boolean => {
   );
 };
 
+export interface TenantSyncState {
+  status: 'idle' | 'syncing' | 'synced' | 'error';
+  lastSyncedAt: string | null;
+  error: string | null;
+}
+
 interface TenantContextType {
   tenants: Tenant[];
   currentTenant: Tenant;
@@ -408,7 +427,7 @@ interface TenantContextType {
     licenseTier?: LicenseTier;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
-  }) => Tenant;
+  }) => Promise<Tenant>;
   provisionTenant: (data: {
     companyName: string;
     cageCode?: string;
@@ -448,7 +467,8 @@ interface TenantContextType {
     systemName: string;
     systemOwner: string;
     systemBoundaryScope?: string;
-  }) => void;
+    cloudServiceProviders?: string;
+  }) => Promise<string>; // resolves the final tenant id (a browser-only tenant gets a NEW, server-assigned id)
   updateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
   suspendTenant: (tenantId: string, suspend?: boolean) => void;
   updateTenantOwner: (tenantId: string, newOwnerEmail: string, newOwnerName?: string) => void;
@@ -464,6 +484,14 @@ interface TenantContextType {
   liveEvidence: EvidenceItem[] | null;
   isSyncing: boolean;
   syncError: string | null;
+  /** State of the last sync of the tenant list (and the user's roles in it) with GET /api/v1/tenants. */
+  tenantSync: TenantSyncState;
+  /**
+   * Re-fetches the tenants this user belongs to, and their roles, from the server. Resolves the new tenant list,
+   * or null if there is nothing to sync (sandbox, not signed in, or the session was rejected). `force` waits for a
+   * sync already in flight and then runs a fresh one.
+   */
+  syncTenantsFromServer: (token?: string, options?: { force?: boolean }) => Promise<Tenant[] | null>;
   refreshLiveData: (
     tenantToFetch?: string,
     frameworkToFetch?: ComplianceFramework,
@@ -743,6 +771,106 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return isSuperAdminUser(currentUser);
   }, [currentUser]);
 
+  // ── Server → client tenant synchronisation ─────────────────────────────────────────────────────────────
+  // The server decides which tenants a user belongs to and what role they hold. localStorage is only a cache:
+  // after every sign-in (and on reload of a signed-in session) it is reconciled with GET /api/v1/tenants.
+  const [tenantSync, setTenantSync] = useState<TenantSyncState>({ status: 'idle', lastSyncedAt: null, error: null });
+  const liveTenantsRef = useRef(liveTenants);
+  liveTenantsRef.current = liveTenants;
+  const syncInFlight = useRef<Promise<Tenant[] | null> | null>(null);
+
+  const syncTenantsFromServer = useCallback(async (tokenOverride?: string, options?: { force?: boolean }): Promise<Tenant[] | null> => {
+    if (isSandboxMode) return null; // the /demo sandbox has no server-side tenants
+    const token = tokenOverride ?? ApiClient.getToken();
+    if (!token) return null;
+    if (syncInFlight.current) {
+      // Coalesce overlapping triggers (login + mount), unless the caller needs a sync that starts AFTER now
+      // (e.g. right after creating a tenant, when an older in-flight listing would not include it).
+      if (!options?.force) return syncInFlight.current;
+      await syncInFlight.current.catch(() => null);
+    }
+
+    const run = (async (): Promise<Tenant[] | null> => {
+      setTenantSync((prev) => ({ ...prev, status: 'syncing', error: null }));
+      try {
+        const server = await ApiClient.listMyTenants(token);
+        if (server === null) {
+          // The session was not accepted: nothing to reconcile, and nothing server-backed may be trusted.
+          setTenantSync((prev) => ({ ...prev, status: 'idle' }));
+          return null;
+        }
+
+        const result = mergeServerTenants(liveTenantsRef.current, server, new Date(), { placeholderIds: [DEFAULT_BLANK_TENANT.id] });
+        setLiveTenants(result.tenants);
+        setCurrentUser((prev) => ({ ...prev, roles: applyRoleSync(prev.roles ?? {}, result) }));
+        setLiveActiveTenantId((prev) => pickActiveTenantId(prev, result.tenants, result.serverTenantIds, [DEFAULT_BLANK_TENANT.id]));
+        // A user who already has tenants on the server does not need the first-run wizard
+        if (server.length > 0) setIsOnboardingModalOpen(false);
+        setTenantSync({ status: 'synced', lastSyncedAt: new Date().toISOString(), error: null });
+        return result.tenants;
+      } catch (err: unknown) {
+        // Offline or server error: keep the cache, but say so. The server still enforces every request.
+        console.warn('[Tenants] Could not sync tenants from the server:', errorMessage(err));
+        setTenantSync((prev) => ({ ...prev, status: 'error', error: errorMessage(err) || 'Tenant sync failed' }));
+        return null;
+      }
+    })();
+
+    syncInFlight.current = run;
+    try {
+      return await run;
+    } finally {
+      if (syncInFlight.current === run) syncInFlight.current = null;
+    }
+  }, [isSandboxMode]);
+
+  // Reload with an existing session: refresh the cache from the server straight away.
+  useEffect(() => {
+    if (!isSandboxMode && ApiClient.getToken()) {
+      void syncTenantsFromServer();
+    }
+  }, [isSandboxMode, syncTenantsFromServer]);
+
+  /**
+   * Creates a tenant ON THE SERVER (POST /api/v1/tenants) and then pulls the authoritative record back with the
+   * tenant sync, so the UI shows exactly what the server stored, with the caller's server-assigned role.
+   * Throws ApiError (401 / 403 / 400 / 5xx / network) for the caller to show. The id is generated by the server.
+   *
+   * `browserOnly` fields are not part of the server record and are applied locally afterwards.
+   */
+  const createTenantOnServer = useCallback(async (
+    input: ServerTenantPatch & { name: string },
+    browserOnly: Partial<Pick<Tenant, 'domain' | 'licenseTier' | 'isConfigured'>> & { activate?: boolean } = {}
+  ): Promise<Tenant> => {
+    const token = ApiClient.getToken() ?? undefined;
+    const created = await ApiClient.createTenant(input, token);
+    const createdId = created.tenant.id;
+
+    // Pull the authoritative record (and our role) from the server.
+    const synced = await syncTenantsFromServer(token, { force: true });
+    let tenant = synced?.find((t) => t.id === createdId);
+
+    if (!tenant) {
+      // Created, but the follow-up listing failed (e.g. a network blip): build the tenant from the POST response so
+      // the UI is not stuck. The next successful sync reconciles it.
+      const record = parseServerTenants({ tenants: [{ ...created.tenant, role: 'TENANT_OWNER', source: 'membership' }] })[0];
+      const built = serverTenantToTenant(record, undefined, new Date().toISOString());
+      tenant = built;
+      setLiveTenants((prev) => (prev.some((t) => t.id === createdId) ? prev : [...prev.filter((t) => t.id !== DEFAULT_BLANK_TENANT.id), built]));
+      setCurrentUser((prev) => ({ ...prev, roles: { ...prev.roles, [createdId]: 'TENANT_OWNER' } }));
+    }
+
+    const { activate = true, ...extras } = browserOnly;
+    const defined = Object.fromEntries(Object.entries(extras).filter(([, v]) => v !== undefined)) as Partial<Tenant>;
+    if (Object.keys(defined).length > 0) {
+      tenant = { ...tenant, ...defined };
+      setLiveTenants((prev) => prev.map((t) => (t.id === createdId ? { ...t, ...defined } : t)));
+    }
+    if (activate) setLiveActiveTenantId(createdId);
+    return tenant;
+  }, [syncTenantsFromServer]);
+
+
   // Multi-Framework & Baseline State
   const [activeFramework, setActiveFrameworkState] = useState<ComplianceFramework>(() => {
     try {
@@ -886,6 +1014,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
+    // A tenant that exists only in this browser (a draft, or legacy data) has nothing on the server to load
+    const serverTenant = liveTenantsRef.current.find(t => t.id === targetTenantId);
+    if (serverTenant && !serverTenant.serverBacked) {
+      setLiveControls(null);
+      setLiveEvidence(null);
+      return;
+    }
+
     const token = ApiClient.getToken();
     if (!token) {
       // Unauthenticated fallback
@@ -1013,7 +1149,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   /**
    * Create a new organization with strict deduplication
    */
-  const createTenant = useCallback((data: {
+  const createTenant = useCallback(async (data: {
     name: string;
     cageCode: string;
     samStatus: SamStatus;
@@ -1026,9 +1162,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     licenseTier?: LicenseTier;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
-  }): Tenant => {
-    const normName = normalizeOrgName(data.name);
-
+  }): Promise<Tenant> => {
     if (isSandboxMode) {
       const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
       const newTenantId = `tenant-demo-${slug}-${Date.now().toString(36).substring(2, 6)}`;
@@ -1058,66 +1192,25 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return newDemoTenant;
     }
 
-    // Live mode deduplication check
-    const existing = liveTenants.find(t =>
-      (data.domain && t.domain && t.domain.toLowerCase().trim() === data.domain.toLowerCase().trim()) ||
-      normalizeOrgName(t.name) === normName
-    );
-
-    if (existing) {
-      // Update existing rather than creating duplicate
-      setLiveTenants(prev => prev.map(t => (t.id === existing.id ? {
-        ...t,
-        name: data.name.trim(),
-        cageCode: data.cageCode.trim().toUpperCase() || t.cageCode,
-        samStatus: data.samStatus || t.samStatus,
-        systemName: data.systemName.trim() || t.systemName,
-        systemOwner: data.systemOwner.trim() || t.systemOwner,
-        industry: data.industry || t.industry,
-        primaryFramework: data.primaryFramework || t.primaryFramework || 'CMMC_L1',
-        enabledFrameworks: data.enabledFrameworks || t.enabledFrameworks || ['CMMC_L1'],
-        updatedAt: new Date().toISOString(),
-      } : t)));
-      setLiveActiveTenantId(existing.id);
-      return existing;
-    }
-
-    const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-    const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 6)}`;
+    // Live mode: the server creates the tenant and assigns the caller as TENANT_OWNER. There is no local fallback.
+    // (Failures surface to the caller as ApiError; a tenant that exists only in this browser could not be used.)
+    const cage = data.cageCode.trim().toUpperCase();
     const primFw = data.primaryFramework || 'CMMC_L1';
     const enFw = data.enabledFrameworks && data.enabledFrameworks.length > 0 ? data.enabledFrameworks : [primFw];
-    const newTenant: Tenant = {
-      id: newTenantId,
-      name: data.name.trim(),
-      cageCode: data.cageCode.trim().toUpperCase() || 'PENDING',
-      samStatus: data.samStatus || 'ACTIVE',
-      systemName: data.systemName.trim() || `${data.name} Operations Boundary`,
-      systemOwner: data.systemOwner.trim(),
-      industry: data.industry || 'Defense Industrial Base (DIB)',
-      domain: data.domain,
-      isDemo: false,
-      isConfigured: data.isConfigured ?? true,
-      licenseTier: data.licenseTier,
-      primaryFramework: primFw,
-      enabledFrameworks: enFw,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setLiveTenants(prev => deduplicateTenants([...prev, newTenant]));
-    setLiveActiveTenantId(newTenantId);
-
-    // Assign creator as TENANT_OWNER
-    setCurrentUser(prevUser => ({
-      ...prevUser,
-      roles: {
-        ...prevUser.roles,
-        [newTenantId]: 'TENANT_OWNER',
+    return createTenantOnServer(
+      {
+        name: data.name.trim(),
+        cageCode: isValidCageCode(cage) ? cage : undefined,
+        samStatus: data.samStatus,
+        systemName: data.systemName.trim() || undefined,
+        systemOwner: data.systemOwner.trim() || undefined,
+        industry: data.industry || undefined,
+        primaryFramework: primFw,
+        enabledFrameworks: enFw,
       },
-    }));
-
-    return newTenant;
-  }, [isSandboxMode, liveTenants]);
+      { domain: data.domain, licenseTier: data.licenseTier }
+    );
+  }, [isSandboxMode, createTenantOnServer]);
 
   /**
    * Initializes a brand-new blank tenant state for an authenticated contractor
@@ -1148,81 +1241,102 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return existing;
     }
 
-    // 2. If no duplicate exists, create new blank tenant
-    const slug = domainPrefix.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-    const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 7)}`;
-
-    const newTenant: Tenant = {
-      id: newTenantId,
+    // 2. First sign-in with no tenant anywhere: show the setup wizard for a DRAFT. The draft has no generated id of
+    //    its own (it reuses the fixed placeholder id) and is never stored as a real tenant: completing the wizard
+    //    creates the tenant on the server (see completeTenantOnboarding).
+    const draft: Tenant = {
+      ...DEFAULT_BLANK_TENANT,
       name: formattedTitle,
       cageCode: '',
       samStatus: 'NOT_REGISTERED',
       systemName: `${formattedTitle} Operations Boundary`,
       systemOwner: email,
-      industry: 'Defense Industrial Base (DIB)',
       domain: emailDomain,
-      isDemo: false,
       isConfigured: false,
+      serverBacked: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    // Explicitly initialize 100% blank assessment state in localStorage
-    const blankState = createInitialState(newTenant);
-    StorageService.saveAssessment(newTenantId, blankState);
-
-    // Register into liveTenants
-    setLiveTenants(prev => deduplicateTenants([...prev.filter(t => t.id !== DEFAULT_BLANK_TENANT.id), newTenant]));
-    setLiveActiveTenantId(newTenantId);
-
-    // Assign authenticated user as TENANT_OWNER
+    setLiveTenants(prev => [draft, ...prev.filter(t => t.id !== DEFAULT_BLANK_TENANT.id)]);
+    setLiveActiveTenantId(DEFAULT_BLANK_TENANT.id);
+    // Local-only role so the wizard is usable; the server assigns the real role when the tenant is created.
     setCurrentUser(prevUser => ({
       ...prevUser,
-      roles: {
-        ...prevUser.roles,
-        [newTenantId]: 'TENANT_OWNER',
-      },
+      roles: { ...prevUser.roles, [DEFAULT_BLANK_TENANT.id]: 'TENANT_OWNER' },
     }));
 
     setIsOnboardingModalOpen(true);
-    return newTenant;
+    return draft;
   }, [liveTenants]);
 
   /**
    * Complete 2-step onboarding wizard and finalize tenant configuration
    */
-  const completeTenantOnboarding = useCallback((tenantId: string, data: {
+  const completeTenantOnboarding = useCallback(async (tenantId: string, data: {
     organizationName: string;
     cageCode?: string;
     samStatus?: SamStatus;
     systemName: string;
     systemOwner: string;
     systemBoundaryScope?: string;
-  }) => {
-    setLiveTenants(prev => {
-      const updated = prev.map(t => {
-        if (t.id === tenantId) {
-          return {
-            ...t,
-            name: data.organizationName.trim(),
-            cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
-            samStatus: data.samStatus || 'ACTIVE',
-            systemName: data.systemName.trim(),
-            systemOwner: data.systemOwner.trim(),
-            systemBoundaryScope: data.systemBoundaryScope?.trim(),
-            isConfigured: true,
-            isDemo: false,
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return t;
-      });
-      return deduplicateTenants(updated);
+    cloudServiceProviders?: string;
+  }): Promise<string> => {
+    const target = liveTenantsRef.current.find(t => t.id === tenantId);
+    const settings = toServerPatch({
+      name: data.organizationName,
+      cageCode: data.cageCode,
+      samStatus: data.samStatus,
+      systemName: data.systemName,
+      systemOwner: data.systemOwner,
     });
+    let finalId = tenantId;
 
-    // Update existing assessment's SSP metadata in storage
+    if (!isSandboxMode && target && !target.serverBacked) {
+      // A first-run draft, or a tenant that only ever existed in this browser: create the real tenant on the server,
+      // then move its local data (assessment, evidence files) under the server-assigned id and drop the local copy.
+      const created = await createTenantOnServer(
+        {
+          ...settings,
+          name: data.organizationName.trim(),
+          industry: target.industry,
+          primaryFramework: target.primaryFramework,
+          enabledFrameworks: target.enabledFrameworks,
+        },
+        { domain: target.domain, licenseTier: target.licenseTier, isConfigured: true }
+      );
+      finalId = created.id;
+      StorageService.migrateAssessment(target, finalId);
+      await EvidenceVault.moveTenant(tenantId, finalId);
+      setLiveTenants(prev => prev.filter(t => t.id !== tenantId));
+      setCurrentUser(prev => {
+        const roles = { ...prev.roles };
+        delete roles[tenantId];
+        return { ...prev, roles };
+      });
+    } else if (!isSandboxMode && target?.serverBacked) {
+      // Already on the server: persist the changes there first, so a refused update (403 etc.) is reported
+      await ApiClient.updateTenant(tenantId, settings);
+    }
+
+    // Browser-side details (system boundary text) and the local copy of the settings
+    const applyLocal = (list: Tenant[]) => list.map(t => (t.id === finalId ? {
+      ...t,
+      name: data.organizationName.trim(),
+      cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
+      samStatus: data.samStatus || 'ACTIVE',
+      systemName: data.systemName.trim(),
+      systemOwner: data.systemOwner.trim(),
+      systemBoundaryScope: data.systemBoundaryScope?.trim(),
+      isConfigured: true,
+      isDemo: false,
+      updatedAt: new Date().toISOString(),
+    } : t));
+    setLiveTenants(prev => deduplicateTenants(applyLocal(prev)));
+
+    // Update the assessment's SSP metadata in storage
     const currentAssessment = StorageService.loadAssessment({
-      id: tenantId,
+      id: finalId,
       name: data.organizationName,
       cageCode: data.cageCode || '',
       samStatus: data.samStatus || 'ACTIVE',
@@ -1243,20 +1357,38 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       systemName: data.systemName.trim(),
       systemOwner: data.systemOwner.trim(),
       systemBoundaryScope: data.systemBoundaryScope?.trim() || currentAssessment.sspMetadata.systemBoundaryScope,
+      cloudServiceProviders: data.cloudServiceProviders?.trim() || currentAssessment.sspMetadata.cloudServiceProviders,
       lastUpdated: new Date().toISOString(),
     };
 
-    StorageService.saveAssessment(tenantId, currentAssessment);
+    StorageService.saveAssessment(finalId, currentAssessment);
     setIsOnboardingModalOpen(false);
-  }, []);
+    return finalId;
+  }, [isSandboxMode, createTenantOnServer]);
 
   const updateTenant = useCallback((tenantId: string, updates: Partial<Tenant>) => {
     if (isSandboxMode) {
       setDemoTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
-    } else {
-      setLiveTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
+      return;
     }
-  }, [isSandboxMode]);
+
+    // Optimistic local update...
+    setLiveTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
+
+    // ...and for a tenant the server owns, persist the server-owned fields there. If the server refuses (e.g. 403 for a
+    // non-owner) or is unreachable, re-sync so the UI snaps back to the authoritative values instead of drifting.
+    const target = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (target?.serverBacked) {
+      const patch = toServerPatch(updates);
+      if (Object.keys(patch).length > 0) {
+        ApiClient.updateTenant(tenantId, patch).catch((err: unknown) => {
+          console.warn('[Tenants] Server rejected the tenant update; restoring server values:', errorMessage(err));
+          setTenantSync((prev) => ({ ...prev, status: 'error', error: errorMessage(err) || 'Update was not saved' }));
+          void syncTenantsFromServer(undefined, { force: true });
+        });
+      }
+    }
+  }, [isSandboxMode, syncTenantsFromServer]);
 
   const updateTenantFrameworkScope = useCallback((
     tenantId: string,
@@ -1521,11 +1653,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
-    // Automatically trigger live data sync upon authentication for real tenants
-    if (!isSandboxMode && ApiClient.getToken()) {
-      setTimeout(() => refreshLiveData(preferredTenantId), 50);
+    // Reconcile tenants and roles with the server, then load live data for the active tenant
+    if (!isSandboxMode && (user.idToken || ApiClient.getToken())) {
+      void syncTenantsFromServer(user.idToken || undefined).then(() => refreshLiveData(preferredTenantId));
     }
-  }, [isSandboxMode, demoTenants, liveTenants, refreshLiveData]);
+  }, [isSandboxMode, demoTenants, liveTenants, refreshLiveData, syncTenantsFromServer]);
 
   const submitLicenseRequest = useCallback(async (
     requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>
@@ -1553,33 +1685,28 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     primaryFramework?: ComplianceFramework;
     enabledFrameworks?: ComplianceFramework[];
   }): Promise<{ tenant: Tenant; invitation: TenantInvitation; inviteUrl: string }> => {
-    const normName = normalizeOrgName(data.companyName);
-    const slug = (normName || data.companyName.toLowerCase().replace(/[^a-z0-9]/g, '-')).slice(0, 15);
-    const newTenantId = `tenant-${slug}-${Date.now().toString(36).substring(2, 6)}`;
     const emailDomain = data.tenantOwnerEmail.split('@')[1] || 'defense.us';
     const primFw = data.primaryFramework || 'CMMC_L1';
     const enFw = data.enabledFrameworks && data.enabledFrameworks.length > 0 ? data.enabledFrameworks : [primFw];
+    const cage = (data.cageCode || '').trim().toUpperCase();
 
-    const newTenant: Tenant = {
-      id: newTenantId,
-      name: data.companyName.trim(),
-      cageCode: (data.cageCode || 'PENDING').trim().toUpperCase(),
-      samStatus: 'ACTIVE',
-      systemName: (data.systemBoundaryName || `${data.companyName.trim()} Operations Boundary`).trim(),
-      systemOwner: data.tenantOwnerEmail.trim(),
-      industry: 'Defense Industrial Base (DIB)',
-      domain: emailDomain,
-      isDemo: false,
-      isConfigured: false,
-      licenseTier: data.licenseTier,
-      primaryFramework: primFw,
-      enabledFrameworks: enFw,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    // The server creates the tenant (and generates its id). The provisioning admin becomes its server-side owner;
+    // the browser-only fields below mark it for first-run setup by the invited owner. The admin's active tenant is
+    // left alone.
+    const newTenant = await createTenantOnServer(
+      {
+        name: data.companyName.trim(),
+        cageCode: isValidCageCode(cage) ? cage : undefined,
+        systemName: (data.systemBoundaryName || '').trim() || undefined,
+        systemOwner: data.tenantOwnerEmail.trim(),
+        primaryFramework: primFw,
+        enabledFrameworks: enFw,
+      },
+      { domain: emailDomain, licenseTier: data.licenseTier, isConfigured: false, activate: false }
+    );
+    const newTenantId = newTenant.id;
 
-    // Initialize 100% blank assessment state in storage
-    const blankState = createInitialState(newTenant);
+        const blankState = createInitialState(newTenant);
     StorageService.saveAssessment(newTenantId, blankState);
 
     // Cryptographic token & invitation
@@ -1614,7 +1741,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       invitationToken: token,
     };
 
-    setLiveTenants(prev => deduplicateTenants([...prev, newTenant]));
     setInvitations(prev => [invitation, ...prev]);
     setTeamMembers(prev => ({
       ...prev,
@@ -1623,7 +1749,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const inviteUrl = buildInviteUrl(token);
     return { tenant: newTenant, invitation, inviteUrl };
-  }, [currentUser.email]);
+  }, [currentUser.email, createTenantOnServer]);
 
 
   /**
@@ -2085,6 +2211,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveEvidence,
     isSyncing,
     syncError,
+    tenantSync,
+    syncTenantsFromServer,
     refreshLiveData,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
@@ -2151,6 +2279,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveEvidence,
     isSyncing,
     syncError,
+    tenantSync,
+    syncTenantsFromServer,
     refreshLiveData,
     updateLiveControl,
     createLiveEvidenceUploadUrl,

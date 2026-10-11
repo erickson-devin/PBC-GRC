@@ -16,3 +16,11 @@ export function isTenantRole(value: unknown): value is TenantRole {
 export function canRoleWrite(role: TenantRole | null | undefined): boolean {
   return role != null && (WRITE_ROLES as readonly string[]).includes(role);
 }
+
+/** Human-readable role names for the UI. */
+export const ROLE_LABELS: Record<TenantRole, string> = {
+  TENANT_OWNER: 'Tenant Owner',
+  MSP_ADMIN: 'MSP Admin',
+  ASSESSOR: 'Assessor',
+  VIEWER: 'Viewer',
+};

@@ -18,6 +18,8 @@ declare global {
         roles?: Record<string, string>;
       };
       tenantId?: string;
+      /** Every tenant id the token itself grants access to (tenant_id / tenantId / tenant_ids / roles keys). */
+      claimedTenantIds?: string[];
       /** The authenticated user's role in `tenantId`; drives the write guard. */
       tenantRole?: TenantRole;
     }
@@ -268,6 +270,7 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
 
   const { identity, devMock } = authenticated;
   req.user = identity.user;
+  req.claimedTenantIds = [...identity.claimedTenantIds];
 
   // Authenticate-only routes (e.g. creating the first tenant): the caller has no tenant yet.
   if (!requireTenant) {

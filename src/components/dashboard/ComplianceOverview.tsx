@@ -20,11 +20,12 @@ import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/framewor
 import { calculateSprsScore, formatSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { DomainCards } from './DomainCards';
+import { ROLE_LABELS } from '../../utils/roles';
 import { SspGateBanner } from './SspGateBanner';
 
 export const ComplianceOverview: React.FC = () => {
   const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
-  const { currentTenant, canEdit, activeFramework } = useTenant();
+  const { currentTenant, canEdit, currentRole, activeFramework } = useTenant();
   const storageConfig = useStorageConfig(currentTenant?.id);
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
@@ -75,7 +76,7 @@ export const ComplianceOverview: React.FC = () => {
           <div className="flex items-center gap-3">
             <Lock className="w-5 h-5 text-amber-400 shrink-0" />
             <div>
-              <span className="font-bold text-amber-300">Read-Only Viewer Mode:</span>{' '}
+              <span className="font-bold text-amber-300">Read-Only {ROLE_LABELS[currentRole]} Mode:</span>{' '}
               <span className="text-slate-300">
                 You are currently viewing <strong>{currentTenant.name}</strong> in audit review mode. 
                 Modifications to control narratives and evidence uploads are disabled.
@@ -83,7 +84,7 @@ export const ComplianceOverview: React.FC = () => {
             </div>
           </div>
           <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
-            VIEWER
+            {currentRole.replace('_', ' ')}
           </span>
         </div>
       )}

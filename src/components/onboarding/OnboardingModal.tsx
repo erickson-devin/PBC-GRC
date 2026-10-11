@@ -15,6 +15,7 @@ import confetti from 'canvas-confetti';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { SamStatus } from '../../types/tenant';
+import { errorMessage } from '../../utils/errors';
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -98,18 +99,22 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setError(null);
 
     try {
-      // 1. Complete tenant configuration in TenantContext
-      completeTenantOnboarding(currentTenant.id, {
+      // 1. Complete tenant configuration. For a new organisation this CREATES the tenant on the server (and can fail:
+      //    expired session, no permission, offline); the wizard stays open with its answers when it does.
+      const finalTenantId = await completeTenantOnboarding(currentTenant.id, {
         organizationName: orgName.trim(),
         cageCode: cageCode.trim() || 'PENDING',
         samStatus: samStatus,
         systemName: systemName.trim(),
         systemOwner: systemOwner.trim(),
         systemBoundaryScope: boundaryScope.trim(),
+        cloudServiceProviders: cloudProviders.trim(),
       });
 
-      // 2. Synchronize SSP Metadata in AssessmentContext
-      updateSSPMetadata({
+      // 2. Synchronize SSP Metadata in AssessmentContext. Only when the tenant did not change: a newly created
+      //    tenant already had its SSP metadata stored above, and this closure still belongs to the OLD tenant (its
+      //    read-only check would reject the write and pop an alert).
+      if (finalTenantId === currentTenant.id) updateSSPMetadata({
         organizationName: orgName.trim(),
         cageCode: cageCode.trim() || '',
         samStatus: samStatus,
@@ -135,9 +140,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       if (onClose) {
         onClose();
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to complete onboarding:', err);
-      setError('An error occurred saving your enclave configuration. Please try again.');
+      setError(errorMessage(err) || 'An error occurred saving your enclave configuration. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

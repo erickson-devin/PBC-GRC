@@ -12,6 +12,52 @@ export interface UploadUrlResponse {
   evidence: EvidenceItem;
 }
 
+import { ServerTenant, parseServerTenants } from '../data/tenantSync';
+
+/**
+ * A failed API call with an HTTP status and a message that is safe to show to the user.
+ * status 0 means the server could not be reached at all.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** Turns a failed response into an ApiError with a clear message for the common cases (401 / 403 / 400 / 5xx). */
+function apiErrorFromResponse(status: number, body: unknown): ApiError {
+  const serverMessage = typeof (body as { error?: unknown } | null)?.error === 'string' ? (body as { error: string }).error : '';
+  if (status === 401) return new ApiError(401, 'Your session has expired or is not valid. Please sign in again.');
+  if (status === 403) return new ApiError(403, serverMessage || 'You do not have permission to do that.');
+  if (status === 400 || status === 404 || status === 409) return new ApiError(status, serverMessage || 'The request was not accepted.');
+  if (status === 429) return new ApiError(429, 'Too many requests. Please wait a moment and try again.');
+  return new ApiError(status, 'The server could not complete the request. Please try again.');
+}
+
+/** fetch() wrapper: network failures become ApiError(0) so the UI can say "cannot reach the server". */
+async function apiFetch(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch {
+    throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
+  }
+}
+
+/** Settings accepted when creating or updating a tenant (the license tier is never client-controlled). */
+export interface TenantSettingsInput {
+  name?: string;
+  cageCode?: string;
+  samStatus?: string;
+  systemName?: string;
+  systemOwner?: string;
+  industry?: string;
+  primaryFramework?: string;
+  enabledFrameworks?: string[];
+}
+
 export type AuthMode = 'firebase' | 'local';
 
 export interface LocalLoginResponse {
@@ -36,6 +82,57 @@ export const ApiClient = {
     } catch {
       return null;
     }
+  },
+
+  /**
+   * GET /api/v1/tenants
+   * The tenants the signed-in user belongs to, each with the user's role. Resolves null when the session is not
+   * accepted (401), so callers can treat "not signed in" differently from a real failure (which throws).
+   */
+  async listMyTenants(token?: string): Promise<ServerTenant[] | null> {
+    const bearer = token ?? this.getToken();
+    if (!bearer) return null;
+    const res = await fetch(`${API_BASE_URL}/api/v1/tenants`, {
+      headers: { Authorization: `Bearer ${bearer}` },
+    });
+    if (res.status === 401) return null;
+    if (!res.ok) throw new Error(`Failed to load your tenants (HTTP ${res.status})`);
+    return parseServerTenants(await res.json());
+  },
+
+  /**
+   * POST /api/v1/tenants
+   * Creates a tenant; the caller becomes its first TENANT_OWNER. Throws ApiError (401 / 403 / 400 / 5xx / 0).
+   */
+  async createTenant(
+    input: TenantSettingsInput & { name: string },
+    token?: string
+  ): Promise<{ tenant: { id: string; name: string } & Record<string, unknown>; role: string }> {
+    const bearer = token ?? this.getToken();
+    if (!bearer) throw new ApiError(401, 'You need to be signed in to create a tenant.');
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw apiErrorFromResponse(res.status, data);
+    return data as { tenant: { id: string; name: string } & Record<string, unknown>; role: string };
+  },
+
+  /**
+   * PATCH /api/v1/tenants/:tenantId
+   * Updates tenant settings. Owner / MSP admin only. Throws ApiError.
+   */
+  async updateTenant(tenantId: string, patch: TenantSettingsInput, token?: string): Promise<void> {
+    const bearer = token ?? this.getToken();
+    if (!bearer) throw new ApiError(401, 'You need to be signed in to change tenant settings.');
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
   },
 
   /**

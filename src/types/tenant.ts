@@ -133,6 +133,8 @@ export interface Tenant {
   enabledFrameworks?: ComplianceFramework[]; // Enclave-scoped enabled frameworks e.g. ['CMMC_L1', 'CMMC_L2']
   primaryFramework?: ComplianceFramework;   // Default framework to render for this enclave
   stackProfile?: EnclaveStackProfile;
+  /** True once this tenant has been confirmed by the server (GET /api/v1/tenants). Its name, settings and the user's role come from there. */
+  serverBacked?: boolean;
 }
 
 export interface User {

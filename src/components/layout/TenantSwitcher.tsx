@@ -11,6 +11,8 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { SamStatus } from '../../types/tenant';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { errorMessage } from '../../utils/errors';
 
 export const TenantSwitcher: React.FC = () => {
   const {
@@ -27,6 +29,8 @@ export const TenantSwitcher: React.FC = () => {
 
   const [isTenantMenuOpen, setIsTenantMenuOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
 
   // New tenant form state
@@ -50,26 +54,46 @@ export const TenantSwitcher: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName.trim()) return;
+  const openCreateModal = () => {
+    setCreateError(null);
+    setIsCreateModalOpen(true);
+  };
 
-    createTenant({
-      name: newName.trim(),
-      cageCode: newCage.trim().toUpperCase() || 'PENDING',
-      samStatus: newSamStatus,
-      systemName: newSystemName.trim() || `${newName.trim()} Operations Enclave`,
-      systemOwner: newSystemOwner.trim() || currentUser.name,
-      industry: newIndustry.trim() || 'Defense Industrial Base (DIB)',
-    });
-
-    // Reset & close
-    setNewName('');
-    setNewCage('');
-    setNewSystemName('');
-    setNewSystemOwner('');
+  const closeCreateModal = () => {
+    if (isCreating) return; // do not abandon a request that is in flight
+    setCreateError(null);
     setIsCreateModalOpen(false);
-    setIsTenantMenuOpen(false);
+  };
+
+  // Creating a tenant is a server call (it can fail: expired session, no permission, offline), so the form stays
+  // open with its values and shows the error; it only resets and closes on success.
+  const handleCreateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || isCreating) return;
+
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      await createTenant({
+        name: newName.trim(),
+        cageCode: newCage.trim().toUpperCase() || 'PENDING',
+        samStatus: newSamStatus,
+        systemName: newSystemName.trim() || `${newName.trim()} Operations Enclave`,
+        systemOwner: newSystemOwner.trim() || currentUser.name,
+        industry: newIndustry.trim() || 'Defense Industrial Base (DIB)',
+      });
+
+      setNewName('');
+      setNewCage('');
+      setNewSystemName('');
+      setNewSystemOwner('');
+      setIsCreateModalOpen(false);
+      setIsTenantMenuOpen(false);
+    } catch (err: unknown) {
+      setCreateError(errorMessage(err) || 'Could not create the tenant. Please try again.');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const filteredTenants = tenants.filter(t =>
@@ -229,7 +253,7 @@ export const TenantSwitcher: React.FC = () => {
             <div className="p-2 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between gap-2">
               <button
                 onClick={() => {
-                  setIsCreateModalOpen(true);
+                  openCreateModal();
                   setIsTenantMenuOpen(false);
                 }}
                 className="w-full py-2 px-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-brand-500/20"
@@ -257,8 +281,9 @@ export const TenantSwitcher: React.FC = () => {
                 </div>
               </div>
               <button
-                onClick={() => setIsCreateModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                onClick={closeCreateModal}
+                disabled={isCreating}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -349,19 +374,23 @@ export const TenantSwitcher: React.FC = () => {
                 />
               </div>
 
+              <ErrorNotice message={createError} />
+
               <div className="pt-2 flex items-center justify-end gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                  onClick={closeCreateModal}
+                  disabled={isCreating}
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-500 rounded-xl shadow-lg shadow-brand-500/25 transition-colors"
+                  disabled={isCreating || !newName.trim()}
+                  className="px-5 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-500 rounded-xl shadow-lg shadow-brand-500/25 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Provision Client Enclave
+                  {isCreating ? 'Provisioning…' : 'Provision Client Enclave'}
                 </button>
               </div>
             </form>

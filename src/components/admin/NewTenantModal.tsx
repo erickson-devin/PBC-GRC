@@ -18,6 +18,8 @@ import { useTenant } from '../../context/TenantContext';
 import { Tenant, TenantInvitation, LicenseTier, getLicenseTierBadge } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { errorMessage } from '../../utils/errors';
 
 interface NewTenantModalProps {
   isOpen: boolean;
@@ -48,6 +50,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>('CMMC_L1');
   const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Success result state
@@ -68,6 +71,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
     setPrimaryFramework('CMMC_L1');
     setEnabledFrameworks(['CMMC_L1']);
     setCreatedResult(null);
+    setSubmitError(null);
     setCopiedLink(false);
   };
 
@@ -97,6 +101,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
     if (!companyName.trim() || !tenantOwnerEmail.trim()) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const result = await provisionTenant({
         companyName: companyName.trim(),
@@ -112,9 +117,11 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
       if (onTenantCreated) {
         onTenantCreated(result.tenant, result.invitation, result.inviteUrl);
       }
-    } catch (err) {
+    } catch (err: unknown) {
+      // ApiError messages are written for users: expired session (401), no permission (403), invalid input (400),
+      // server trouble, or no connection.
       console.error('Failed to provision tenant:', err);
-      alert('Failed to provision tenant enclave. Please check parameters and try again.');
+      setSubmitError(errorMessage(err) || 'Failed to provision the tenant enclave. Please check the details and try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -472,6 +479,8 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   Manual License Provisioning
                 </span>
               </div>
+
+              <ErrorNotice message={submitError} />
 
               {/* Form Buttons */}
               <div className="pt-3 border-t border-slate-800/80 flex items-center justify-end gap-3">

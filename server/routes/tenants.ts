@@ -1,18 +1,139 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import { TenantExistsError, createTenantWithOwner, getTenantRole, listTenantMembers, upsertTenantMember } from '../db';
+import {
+  MyTenant,
+  TenantExistsError,
+  createTenantWithOwner,
+  getTenantRole,
+  listTenantMembers,
+  listUserTenants,
+  updateTenantSettings,
+  upsertTenantMember,
+  TenantSettingsPatch,
+} from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { isTenantRole } from '../../src/utils/roles';
+import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
 
 const ALLOWED_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const CAGE_PATTERN = /^[A-Za-z0-9]{5}$/;
 
 function slugify(value: string): string {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
   return slug || 'org';
+}
+
+/**
+ * GET /api/v1/tenants   (authenticate-only: no x-tenant-id needed)
+ * The tenants the signed-in user can access, each with THEIR role in it. This is what the UI should treat as the
+ * source of truth for "which tenants do I have and what may I do", instead of cached browser state.
+ *
+ * Sources, matching what authMiddleware enforces:
+ *   - membership: a tenant_users row (read in user context; see the discovery RLS policies)
+ *   - claim:      a tenant the token grants access to (`roles` map, tenant_id, tenant_ids). Like in
+ *                 authMiddleware, a `roles` claim wins over the tenant_users row.
+ */
+export async function listMyTenantsHandler(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+
+  try {
+    const memberships = await listUserTenants(user.uid);
+    const byId = new Map<string, MyTenant & { source: 'membership' | 'claim' }>(
+      memberships.map((m) => [m.id, { ...m, source: 'membership' as const }])
+    );
+
+    // Every tenant the token grants access to. Effective role mirrors authMiddleware: the `roles` claim, else the
+    // tenant_users row, else read-only VIEWER.
+    for (const tenantId of new Set([...(req.claimedTenantIds ?? []), ...Object.keys(user.roles ?? {})])) {
+      if (!TENANT_ID_PATTERN.test(tenantId)) continue;
+      const claimed = user.roles?.[tenantId];
+      const existing = byId.get(tenantId);
+      const role: TenantRole = isTenantRole(claimed) ? claimed : existing?.role ?? 'VIEWER';
+      if (existing) {
+        existing.role = role;
+        existing.source = 'claim';
+      } else {
+        byId.set(tenantId, {
+          id: tenantId,
+          name: tenantId,
+          cageCode: null,
+          samStatus: 'ACTIVE',
+          systemName: '',
+          systemOwner: '',
+          industry: '',
+          enabledFrameworks: [],
+          primaryFramework: 'CMMC_L1',
+          licenseTier: 'FOUNDATIONAL',
+          createdAt: null,
+          role,
+          joinedAt: new Date(0).toISOString(),
+          source: 'claim',
+        });
+      }
+    }
+
+    const tenants = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ userId: user.uid, totalCount: tenants.length, tenants });
+  } catch (err: unknown) {
+    console.error(`[Tenants API] Failed to list tenants for ${user.uid}:`, errorMessage(err));
+    res.status(500).json({ error: 'Failed to list tenants' });
+  }
+}
+
+const SAM_STATUSES = ['ACTIVE', 'PENDING', 'EXPIRED', 'NOT_REGISTERED'];
+
+type FieldResult = { error: string } | { value: TenantSettingsPatch };
+
+/**
+ * Validates tenant settings from a request body. `create` requires a name; `patch` requires at least one field.
+ * Unknown fields (notably licenseTier, id, createdAt) are ignored: they cannot be set through this API.
+ */
+function parseTenantFields(body: unknown, mode: 'create' | 'patch'): FieldResult {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const value: TenantSettingsPatch = {};
+
+  if (b.name !== undefined || mode === 'create') {
+    if (typeof b.name !== 'string' || b.name.trim().length < 2 || b.name.length > 255) {
+      return { error: 'Invalid name: 2-255 characters required' };
+    }
+    value.name = b.name.trim();
+  }
+  if (b.cageCode !== undefined) {
+    if (typeof b.cageCode !== 'string' || !CAGE_PATTERN.test(b.cageCode)) return { error: 'Invalid cageCode: 5 letters or digits' };
+    value.cageCode = b.cageCode.toUpperCase();
+  }
+  if (b.samStatus !== undefined) {
+    if (typeof b.samStatus !== 'string' || !SAM_STATUSES.includes(b.samStatus)) {
+      return { error: 'Invalid samStatus: expected one of ' + SAM_STATUSES.join(', ') };
+    }
+    value.samStatus = b.samStatus;
+  }
+  for (const [field, max] of [['systemName', 255], ['systemOwner', 255], ['industry', 128]] as const) {
+    const v = b[field];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.trim().length === 0 || v.length > max) return { error: 'Invalid ' + field };
+    value[field] = v.trim();
+  }
+  if (b.primaryFramework !== undefined) {
+    if (typeof b.primaryFramework !== 'string' || !ALLOWED_FRAMEWORKS.includes(b.primaryFramework)) {
+      return { error: 'Invalid primaryFramework: expected one of ' + ALLOWED_FRAMEWORKS.join(', ') };
+    }
+    value.primaryFramework = b.primaryFramework;
+  }
+  if (b.enabledFrameworks !== undefined) {
+    const list = b.enabledFrameworks;
+    if (!Array.isArray(list) || list.length === 0 || !list.every((f) => typeof f === 'string' && ALLOWED_FRAMEWORKS.includes(f))) {
+      return { error: 'Invalid enabledFrameworks: a non-empty list of supported frameworks' };
+    }
+    value.enabledFrameworks = [...new Set(list as string[])];
+  }
+
+  if (mode === 'patch' && Object.keys(value).length === 0) return { error: 'No updatable fields supplied' };
+  return { value };
 }
 
 /**
@@ -29,35 +150,16 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
   }
 
   const user = req.user!;
-  const { name, systemName, systemOwner, cageCode, industry, primaryFramework, enabledFrameworks } = req.body ?? {};
+  const parsed = parseTenantFields(req.body, 'create');
+  if ('error' in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const fields = parsed.value;
+  const primary = fields.primaryFramework ?? 'CMMC_L1';
+  const enabledList = [...new Set([primary, ...(fields.enabledFrameworks ?? [])])];
 
-  if (typeof name !== 'string' || name.trim().length < 2 || name.length > 255) {
-    res.status(400).json({ error: 'Invalid name: 2-255 characters required' });
-    return;
-  }
-  if (cageCode !== undefined && (typeof cageCode !== 'string' || !CAGE_PATTERN.test(cageCode))) {
-    res.status(400).json({ error: 'Invalid cageCode: 5 letters or digits' });
-    return;
-  }
-  for (const [field, value, max] of [['systemName', systemName, 255], ['systemOwner', systemOwner, 255], ['industry', industry, 128]] as const) {
-    if (value !== undefined && (typeof value !== 'string' || value.length > max)) {
-      res.status(400).json({ error: `Invalid ${field}` });
-      return;
-    }
-  }
-  const primary = primaryFramework === undefined ? 'CMMC_L1' : primaryFramework;
-  if (typeof primary !== 'string' || !ALLOWED_FRAMEWORKS.includes(primary)) {
-    res.status(400).json({ error: `Invalid primaryFramework: expected one of ${ALLOWED_FRAMEWORKS.join(', ')}` });
-    return;
-  }
-  const enabled: unknown = enabledFrameworks === undefined ? [primary] : enabledFrameworks;
-  if (!Array.isArray(enabled) || enabled.length === 0 || !enabled.every((f) => typeof f === 'string' && ALLOWED_FRAMEWORKS.includes(f))) {
-    res.status(400).json({ error: 'Invalid enabledFrameworks: a non-empty list of supported frameworks' });
-    return;
-  }
-  const enabledList = [...new Set([primary, ...(enabled as string[])])];
-
-  const orgName = name.trim();
+  const orgName = fields.name!;
   const owner = {
     userId: user.uid,
     email: (user.email || `${user.uid}@no-email.invalid`).toLowerCase(),
@@ -72,10 +174,11 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
         {
           id,
           name: orgName,
-          cageCode: cageCode?.toUpperCase(),
-          systemName: (typeof systemName === 'string' && systemName.trim()) || `${orgName} Enclave`,
-          systemOwner: (typeof systemOwner === 'string' && systemOwner.trim()) || owner.name,
-          industry,
+          cageCode: fields.cageCode,
+          samStatus: fields.samStatus,
+          systemName: fields.systemName || `${orgName} Enclave`,
+          systemOwner: fields.systemOwner || owner.name,
+          industry: fields.industry,
           enabledFrameworks: enabledList,
           primaryFramework: primary,
           licenseTier: 'FOUNDATIONAL',
@@ -184,6 +287,35 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
   } catch (err: unknown) {
     console.error(`[Tenants API] Failed to save member for ${tenantId}:`, errorMessage(err));
     res.status(500).json({ error: 'Failed to save tenant member' });
+  }
+});
+
+/**
+ * PATCH /api/v1/tenants/:tenantId
+ * Updates the tenant's settings (name, CAGE code, SAM status, system name/owner, industry, frameworks).
+ * Owner / MSP admin only (requireWriteRole). The license tier cannot be changed here.
+ */
+router.patch('/:tenantId', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+
+  const parsed = parseTenantFields(req.body, 'patch');
+  if ('error' in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  try {
+    const tenant = await updateTenantSettings(tenantId, parsed.value);
+    if (!tenant) {
+      res.status(404).json({ error: 'Tenant not found' });
+      return;
+    }
+    console.log('[Tenants API] ' + req.user?.uid + ' updated ' + tenantId + ': ' + Object.keys(parsed.value).join(', '));
+    res.json({ tenant });
+  } catch (err: unknown) {
+    console.error('[Tenants API] Failed to update ' + tenantId + ':', errorMessage(err));
+    res.status(500).json({ error: 'Failed to update tenant' });
   }
 });
 
