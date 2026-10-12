@@ -33,9 +33,9 @@ services:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/10-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cmmc_compliance_db}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cmmc_compliance_db}" ]
       interval: 5s
       timeout: 5s
       retries: 5
