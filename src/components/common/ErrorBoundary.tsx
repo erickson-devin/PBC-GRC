@@ -62,10 +62,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
     const details = (
       <details className="mt-3 text-left group">
-        <summary className="cursor-pointer text-[11px] font-medium text-slate-400 hover:text-slate-200 select-none">
+        <summary className="cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200 select-none">
           Technical details
         </summary>
-        <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-slate-950 border border-slate-800 p-3 text-[11px] leading-relaxed text-rose-300 font-mono whitespace-pre-wrap break-words">
+        <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-slate-950 border border-slate-800 p-3 text-xs leading-relaxed text-rose-300 font-mono whitespace-pre-wrap break-words">
           {error.message || 'Unknown error'}
           {showStack ? `\n\n${error.stack}` : ''}
         </pre>
@@ -77,7 +77,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-400">
           <AlertTriangle className="h-6 w-6" />
         </div>
-        <span className="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[10px] font-bold uppercase leading-none tracking-wider text-rose-300">
+        <span className="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-bold uppercase leading-none tracking-wider text-rose-300">
           Render error
         </span>
         <h2 className="mt-3 text-base font-bold text-white">

@@ -87,7 +87,7 @@ export const ComplianceOverview: React.FC = () => {
               </span>
             </div>
           </div>
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+          <span className="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
             {currentRole.replace('_', ' ')}
           </span>
         </div>
@@ -108,7 +108,7 @@ export const ComplianceOverview: React.FC = () => {
                 <Shield className="w-3.5 h-3.5 text-cyan-400" />
                 <span>{guidance.bannerTitle}</span>
               </div>
-              <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+              <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
                 {guidance.authority}
               </span>
             </div>
@@ -165,7 +165,7 @@ export const ComplianceOverview: React.FC = () => {
             {/* Primary Score & Status */}
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                <p className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400">
                   {sprsResult ? 'Official DoD SPRS Score' : `${frameworkTitle} Readiness`}
                 </p>
                 <div className="flex items-baseline gap-2 mt-1">
@@ -192,7 +192,7 @@ export const ComplianceOverview: React.FC = () => {
                 }`}>
                   {metrics.isSprsReady ? 'AUDIT READY' : `${metrics.completionPercentage}% BASELINE`}
                 </span>
-                <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                <p className="text-xs text-slate-400 mt-1 font-mono">
                   {metrics.metCount} of {totalCount} controls
                 </p>
               </div>
@@ -224,7 +224,7 @@ export const ComplianceOverview: React.FC = () => {
               </div>
 
               {/* Inline Legend / Tooltip Indicators */}
-              <div className="flex items-center justify-between text-[11px] font-mono text-slate-300 flex-wrap gap-2 pt-0.5">
+              <div className="flex items-center justify-between text-xs font-mono text-slate-300 flex-wrap gap-2 pt-0.5">
                 <div className="flex items-center gap-3">
                   <span className="flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -284,10 +284,10 @@ export const ComplianceOverview: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-white tracking-tight">High-Yield Remediation Priority</h3>
-                  <p className="text-[11px] text-slate-400">Top unmet controls ranked by SPRS point impact</p>
+                  <p className="text-xs text-slate-400">Top unmet controls ranked by SPRS point impact</p>
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+              <span className="px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
                 {highYieldRemediations.length} PRIORITIES
               </span>
             </div>
@@ -298,22 +298,22 @@ export const ComplianceOverview: React.FC = () => {
                   <CheckCircle2 className="w-4 h-4" />
                 </div>
                 <p className="text-xs font-bold text-emerald-300">All High-Yield Controls Satisfied</p>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-xs text-slate-400">
                   Zero high-deduction requirements remaining. Your active enclave satisfies full baseline scoring.
                 </p>
               </div>
             ) : (
               <div className="space-y-2.5 my-3">
                 {highYieldRemediations.map(({ control, weight, status }) => (
-                  <div
+                  <button type="button"
                     key={control.id}
                     onClick={() => handleRemediateControl(control.id)}
-                    className="p-3 rounded-xl bg-slate-850/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer group flex items-center justify-between gap-3"
+                    className="w-full text-left p-3 rounded-xl bg-slate-850/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer group flex items-center justify-between gap-3"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="font-mono text-xs font-bold text-cyan-400">{control.id}</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                        <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
                           {control.domain}
                         </span>
                       </div>
@@ -323,7 +323,7 @@ export const ComplianceOverview: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className={`px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold border ${
+                      <span className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold border ${
                         weight === 5
                           ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
                           : weight === 3
@@ -332,12 +332,12 @@ export const ComplianceOverview: React.FC = () => {
                       }`}>
                         -{weight} SPRS PTS
                       </span>
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
+                      <span className="text-xs font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
                         {status.replace('_', ' ')}
                       </span>
                       <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -371,7 +371,7 @@ export const ComplianceOverview: React.FC = () => {
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-white tracking-tight">Evidence Vault & Artifact Health</h3>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-xs text-slate-400">
                         {isLocal
                           ? 'Air-gapped enclave local storage posture & cryptographic integrity'
                           : 'Cryptographic audit integrity and cloud storage posture'}
@@ -379,12 +379,12 @@ export const ComplianceOverview: React.FC = () => {
                     </div>
                   </div>
                   {isLocal ? (
-                    <span className="px-2.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-cyan-950/90 text-cyan-300 border border-cyan-500/50 flex items-center gap-1.5 shadow-sm shadow-cyan-950/40">
+                    <span className="px-2.5 py-0.5 rounded-md text-xs font-mono font-bold bg-cyan-950/90 text-cyan-300 border border-cyan-500/50 flex items-center gap-1.5 shadow-sm shadow-cyan-950/40">
                       <HardDrive className="w-3 h-3 text-cyan-400" />
                       LOCAL ENCLAVE STORAGE
                     </span>
                   ) : (
-                    <span className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    <span className="px-2.5 py-0.5 rounded-md text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                       {state.evidenceIndex.length} GCS SYNCED
                     </span>
                   )}
@@ -392,25 +392,25 @@ export const ComplianceOverview: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-2.5 my-3">
                   <div className="p-3 rounded-xl bg-slate-850/80 border border-slate-800">
-                    <p className="text-[10px] font-mono uppercase text-slate-400">Integrity Digest</p>
+                    <p className="text-xs font-mono uppercase text-slate-400">Integrity Digest</p>
                     <div className="flex items-center gap-1.5 mt-1">
                       <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       <span className="text-xs font-bold text-white">SHA-256 Validated</span>
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1 truncate">
+                    <p className="text-xs text-slate-400 mt-1 truncate">
                       {isLocal ? 'Local disk zero-leakage hash' : 'Chained cryptographic proof'}
                     </p>
                   </div>
 
                   <div className="p-3 rounded-xl bg-slate-850/80 border border-slate-800">
-                    <p className="text-[10px] font-mono uppercase text-slate-400">Storage Retention</p>
+                    <p className="text-xs font-mono uppercase text-slate-400">Storage Retention</p>
                     <div className="flex items-center gap-1.5 mt-1">
                       <Lock className="w-4 h-4 text-cyan-400" />
                       <span className="text-xs font-bold text-white">
                         {isLocal ? 'Air-Gapped Enclave' : 'DFARS 252.204-7012'}
                       </span>
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
+                    <p className="text-xs text-slate-400 mt-1">
                       {isLocal ? 'Persistent host volume' : '3-Year locked retention'}
                     </p>
                   </div>
@@ -427,7 +427,7 @@ export const ComplianceOverview: React.FC = () => {
 
               <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
                 <span
-                  className="text-slate-400 text-[11px] truncate max-w-[260px]"
+                  className="text-slate-400 text-xs truncate max-w-[260px]"
                   title={isLocal ? `Local Storage Path: ${localStoragePath}` : 'Enclave bucket: gs://pbc-grc-evidence'}
                 >
                   {isLocal ? `Storage Path: ${localStoragePath}` : 'Enclave bucket: gs://pbc-grc-evidence'}

@@ -15,6 +15,15 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
+  /*
+   * Keyboard focus. Every interactive element gets a visible 2px cyan ring with an offset, so focus is never lost on the
+   * dark surfaces. :focus-visible (not :focus) keeps the ring off for mouse clicks. :where() gives the rule zero specificity:
+   * a component that sets its own focus style (e.g. an input's focus:ring-*) still wins.
+   */
+  :where(a[href], button, input, select, textarea, summary, [role="button"], [role="checkbox"], [role="radio"], [role="tab"], [role="switch"], [tabindex]:not([tabindex="-1"])):focus-visible {
+    @apply outline-none ring-2 ring-cyan-500 ring-offset-2 ring-offset-slate-900;
+  }
+
   /* Custom scrollbars */
   ::-webkit-scrollbar {
     width: 6px;
@@ -119,17 +128,17 @@
 
   /* Stitch Primary Button: Electric Cyan / Defense Blue Gradient + Glow */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 hover:from-cyan-400 hover:via-sky-400 hover:to-blue-500 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 hover:from-cyan-400 hover:via-sky-400 hover:to-blue-500 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 active:scale-[0.98] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
   }
 
   /* Stitch Secondary Button: Crisp Slate Border */
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-xs sm:text-sm text-slate-300 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-700/90 hover:border-slate-600 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-xs sm:text-sm text-slate-300 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-700/90 hover:border-slate-600 active:scale-[0.98] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
   }
 
   /* Stitch Ghost / Outline Action */
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-semibold text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition-all duration-150;
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-semibold text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none;
   }
 
   /* Stitch Dropzone with dynamic drag indicator */
@@ -144,6 +153,6 @@
 
   /* Micro-animated Close Trigger */
   .modal-close-trigger {
-    @apply p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all duration-200 hover:rotate-90 active:scale-95;
+    @apply p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-all duration-200 hover:rotate-90 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900;
   }
 }

@@ -168,7 +168,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       {/* Top Header & Framework Target Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 mb-1.5">
+          <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 mb-1.5">
             <Sparkles className="w-3 h-3 text-cyan-400" />
             <span>{currentFrameworkDef.authority.toUpperCase()} COMPLIANCE MATRIX</span>
           </div>
@@ -224,16 +224,16 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             <div>
               <p className="font-bold text-white flex items-center gap-2">
                 <span>Tactical Non-Networked / Air-Gapped Overlay Active</span>
-                <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">Filtered</span>
+                <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">Filtered</span>
               </p>
-              <p className="text-[11px] text-amber-200/80 mt-0.5">
+              <p className="text-xs text-amber-200/80 mt-0.5">
                 Boundary- and network-dependent controls (e.g. SC-7, SC-8, AC-17, AC-18) are excluded from active audit scope for standalone tactical enclaves.
               </p>
             </div>
           </div>
           <button
             onClick={toggleNonNetworkedOverlay}
-            className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold text-[11px] transition-colors shrink-0"
+            className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold text-xs transition-colors shrink-0"
           >
             Reset Overlay
           </button>
@@ -269,7 +269,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           />
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5 flex-wrap gap-2">
+        <div className="flex items-center justify-between text-xs text-slate-400 pt-0.5 flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500" /> Met ({metrics.metCount})
@@ -302,7 +302,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={`Search ${currentFrameworkDef.shortName} by control ID (e.g. ${frameworkControls[0]?.id || 'AC-2'}), title, authority reference, or keywords...`}
-            className="w-full pl-10 pr-16 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 focus:outline-none text-xs sm:text-sm text-white placeholder-slate-500 transition-all duration-200"
+            className="w-full pl-10 pr-16 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 focus:outline-none text-xs sm:text-sm text-white placeholder-slate-400 transition-all duration-200"
           />
           {searchQuery && (
             <button
@@ -426,7 +426,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
                 <span>5-Pt (High Impact)</span>
-                <span className="text-[10px] font-mono opacity-80">({weightCounts.five})</span>
+                <span className="text-xs font-mono opacity-80">({weightCounts.five})</span>
               </button>
               <button
                 onClick={() => setSelectedWeightFilter(3)}
@@ -438,7 +438,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                 <span>3-Pt (Mod Impact)</span>
-                <span className="text-[10px] font-mono opacity-80">({weightCounts.three})</span>
+                <span className="text-xs font-mono opacity-80">({weightCounts.three})</span>
               </button>
               <button
                 onClick={() => setSelectedWeightFilter(1)}
@@ -450,7 +450,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
                 <span>1-Pt (Std Impact)</span>
-                <span className="text-[10px] font-mono opacity-80">({weightCounts.one})</span>
+                <span className="text-xs font-mono opacity-80">({weightCounts.one})</span>
               </button>
             </div>
           )}
@@ -503,7 +503,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         /* High-Density Matrix Table View */
         <div className="overflow-x-auto rounded-xl border border-slate-800 stitch-card">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950/80 text-slate-400 uppercase font-mono font-semibold text-[10px] tracking-wider border-b border-slate-800">
+            <thead className="bg-slate-950/80 text-slate-400 uppercase font-mono font-semibold text-xs tracking-wider border-b border-slate-800">
               <tr>
                 <th className="py-3.5 px-4">Control ID</th>
                 <th className="py-3.5 px-4">Title & Authority Reference</th>
@@ -546,13 +546,13 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
                     {/* Title & Authority Reference */}
                     <td className="py-3 px-4 max-w-sm">
-                      <div 
+                      <button type="button" 
                         onClick={() => handleControlClick(ctrl.id)}
-                        className="font-bold text-white hover:text-cyan-300 cursor-pointer transition-colors truncate"
+                        className="text-left font-bold text-white hover:text-cyan-300 cursor-pointer transition-colors truncate"
                       >
                         {ctrl.title}
-                      </div>
-                      <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                      </button>
+                      <div className="text-xs font-mono text-slate-400 mt-0.5">
                         {authorityRef}
                       </div>
                     </td>
@@ -560,7 +560,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                     {/* Domain */}
                     <td className="py-3 px-4">
                       <span
-                        className="text-[10px] font-semibold px-2 py-0.5 rounded"
+                        className="text-xs font-semibold px-2 py-0.5 rounded"
                         style={{
                           backgroundColor: `${domainInfo.color}15`,
                           color: domainInfo.color,
@@ -574,19 +574,19 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                     {/* Status Badge */}
                     <td className="py-3 px-4">
                       {status === 'MET' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                           <CheckCircle2 className="w-3 h-3 text-emerald-400" /> MET
                         </span>
                       ) : status === 'NOT_MET' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30">
                           <AlertTriangle className="w-3 h-3 text-rose-400" /> NOT_MET
                         </span>
                       ) : status === 'IN_PROGRESS' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
                           <Clock className="w-3 h-3 text-amber-400" /> IN_PROGRESS
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-slate-800 text-slate-400 border border-slate-700">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-slate-800 text-slate-400 border border-slate-700">
                           <HelpCircle className="w-3 h-3 text-slate-400" /> NOT_STARTED
                         </span>
                       )}
@@ -600,22 +600,22 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                             <span
                               key={idx}
                               title={`${m.targetFramework}: ${m.targetTitle || m.targetControlId}`}
-                              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30"
+                              className="text-xs font-mono px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30"
                             >
                               {m.targetControlId}
                             </span>
                           ))}
                           {mappings.length > 2 && (
-                            <span className="text-[10px] text-slate-400 font-mono">+{mappings.length - 2}</span>
+                            <span className="text-xs text-slate-400 font-mono">+{mappings.length - 2}</span>
                           )}
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-600 font-mono">—</span>
+                        <span className="text-xs text-slate-400 font-mono">—</span>
                       )}
                     </td>
 
                     {/* Evidence & Narrative */}
-                    <td className="py-3 px-4 text-[11px]">
+                    <td className="py-3 px-4 text-xs">
                       <div className="flex items-center gap-2 text-slate-400">
                         <span className={`flex items-center gap-1 ${hasNotes ? 'text-emerald-400' : 'text-slate-400'}`}>
                           <FileEdit className="w-3 h-3" />
@@ -626,7 +626,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                           <Paperclip className="w-3 h-3" />
                           {evidenceCount}
                           {hasInheritedEvidence && (
-                            <span className="text-[10px] font-mono text-amber-300 bg-amber-500/20 border border-amber-500/30 px-1 rounded ml-1">
+                            <span className="text-xs font-mono text-amber-300 bg-amber-500/20 border border-amber-500/30 px-1 rounded ml-1">
                               Inherited
                             </span>
                           )}

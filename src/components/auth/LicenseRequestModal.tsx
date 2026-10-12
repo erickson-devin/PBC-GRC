@@ -103,7 +103,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
             <div>
               {/* Header */}
               <div className="space-y-2 mb-6 pr-8">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/25 text-[10px] font-bold uppercase tracking-widest text-brand-300">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/25 text-xs font-bold uppercase tracking-widest text-brand-300">
                   <ShieldCheck className="w-3.5 h-3.5 text-brand-400" />
                   Defense Enclave Licensing & Onboarding
                 </div>
@@ -118,9 +118,9 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
               {/* Commercial Pricing Selector Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
                 {/* Foundational Enclave Option */}
-                <div
+                <button type="button"
                   onClick={() => setPlan('FOUNDATIONAL')}
-                  className={`cursor-pointer p-3.5 rounded-2xl border transition-all ${
+                  className={`w-full text-left cursor-pointer p-3.5 rounded-2xl border transition-all ${
                     plan === 'FOUNDATIONAL' || plan === 'single-org'
                       ? 'bg-cyan-950/40 border-cyan-500/80 ring-1 ring-cyan-500/50 shadow-lg shadow-cyan-500/10'
                       : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
@@ -129,24 +129,24 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-bold text-white">Foundational</span>
                     {(plan === 'FOUNDATIONAL' || plan === 'single-org') && (
-                      <span className="w-4 h-4 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center text-[10px] font-black">
+                      <span className="w-4 h-4 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center text-xs font-black">
                         ✓
                       </span>
                     )}
                   </div>
                   <div className="flex items-baseline gap-1">
                     <span className="text-xl font-black text-white font-mono">$3,500</span>
-                    <span className="text-[10px] text-slate-400 font-medium">/ yr</span>
+                    <span className="text-xs text-slate-400 font-medium">/ yr</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                  <p className="text-xs text-slate-400 mt-1 leading-snug">
                     1 boundary, CMMC Level 1 (17 controls) or HIPAA/SOC 2, single owner.
                   </p>
-                </div>
+                </button>
 
                 {/* Defense Professional Option (Recommended) */}
-                <div
+                <button type="button"
                   onClick={() => setPlan('DEFENSE_PRO')}
-                  className={`cursor-pointer p-3.5 rounded-2xl border relative transition-all ${
+                  className={`w-full text-left cursor-pointer p-3.5 rounded-2xl border relative transition-all ${
                     plan === 'DEFENSE_PRO'
                       ? 'bg-brand-950/50 border-brand-500/90 ring-2 ring-brand-500/60 shadow-lg shadow-brand-500/20'
                       : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
@@ -158,24 +158,24 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                       <Sparkles className="w-3 h-3 text-amber-400" />
                     </span>
                     {plan === 'DEFENSE_PRO' && (
-                      <span className="w-4 h-4 rounded-full bg-brand-500 text-white flex items-center justify-center text-[10px] font-bold">
+                      <span className="w-4 h-4 rounded-full bg-brand-500 text-white flex items-center justify-center text-xs font-bold">
                         ✓
                       </span>
                     )}
                   </div>
                   <div className="flex items-baseline gap-1">
                     <span className="text-xl font-black text-white font-mono">$7,000</span>
-                    <span className="text-[10px] text-slate-400 font-medium">/ yr</span>
+                    <span className="text-xs text-slate-400 font-medium">/ yr</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                  <p className="text-xs text-slate-400 mt-1 leading-snug">
                     CMMC Level 2 (110 controls), NIST 800-53, STIG generator, 5 seats.
                   </p>
-                </div>
+                </button>
 
                 {/* Enterprise & Assessor Enclave Option */}
-                <div
+                <button type="button"
                   onClick={() => setPlan('ENTERPRISE')}
-                  className={`cursor-pointer p-3.5 rounded-2xl border transition-all ${
+                  className={`w-full text-left cursor-pointer p-3.5 rounded-2xl border transition-all ${
                     plan === 'ENTERPRISE' || plan === 'msp-assessor'
                       ? 'bg-purple-950/40 border-purple-500/80 ring-1 ring-purple-500/50 shadow-lg shadow-purple-500/10'
                       : 'bg-slate-900/50 border-slate-800 hover:border-slate-700'
@@ -184,19 +184,19 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-bold text-white">Enterprise</span>
                     {(plan === 'ENTERPRISE' || plan === 'msp-assessor') && (
-                      <span className="w-4 h-4 rounded-full bg-purple-500 text-white flex items-center justify-center text-[10px] font-bold">
+                      <span className="w-4 h-4 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-bold">
                         ✓
                       </span>
                     )}
                   </div>
                   <div className="flex items-baseline gap-1">
                     <span className="text-xl font-black text-white font-mono">$14,000</span>
-                    <span className="text-[10px] text-slate-400 font-medium">/ yr</span>
+                    <span className="text-xs text-slate-400 font-medium">/ yr</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                  <p className="text-xs text-slate-400 mt-1 leading-snug">
                     Unlimited enclaves, OpenSCAP sensor API, dedicated DB, 24/7 support.
                   </p>
-                </div>
+                </button>
               </div>
 
               {/* Form */}
@@ -208,14 +208,14 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                       Primary Contact Name & Title *
                     </label>
                     <div className="relative">
-                      <User className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                      <User className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                       <input
                         type="text"
                         required
                         value={fullName}
                         onChange={e => setFullName(e.target.value)}
                         placeholder="e.g. John Miller, CISO"
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                       />
                     </div>
                   </div>
@@ -226,14 +226,14 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                       Work Email (Defense Domain) *
                     </label>
                     <div className="relative">
-                      <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                      <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                       <input
                         type="email"
                         required
                         value={workEmail}
                         onChange={e => setWorkEmail(e.target.value)}
                         placeholder="john@aerodefense.com"
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                       />
                     </div>
                   </div>
@@ -246,14 +246,14 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                       Company / Organization Name *
                     </label>
                     <div className="relative">
-                      <Building2 className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                      <Building2 className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                       <input
                         type="text"
                         required
                         value={companyName}
                         onChange={e => setCompanyName(e.target.value)}
                         placeholder="e.g. Aero Defense Technologies LLC"
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                       />
                     </div>
                   </div>
@@ -261,7 +261,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                   {/* CAGE Code */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      CAGE Code <span className="text-slate-500 font-normal">(Optional)</span>
+                      CAGE Code <span className="text-slate-400 font-normal">(Optional)</span>
                     </label>
                     <input
                       type="text"
@@ -269,7 +269,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                       value={cageCode}
                       onChange={e => setCageCode(e.target.value.toUpperCase())}
                       placeholder="e.g. 8K4P1"
-                      className="w-full px-3 py-2 text-xs font-mono bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 uppercase"
+                      className="w-full px-3 py-2 text-xs font-mono bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 uppercase"
                     />
                   </div>
                 </div>
@@ -322,7 +322,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                       value={phoneNumber}
                       onChange={e => setPhoneNumber(e.target.value)}
                       placeholder="(555) 019-2834"
-                      className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                      className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                     />
                   </div>
                 </div>
@@ -337,12 +337,12 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                     value={notes}
                     onChange={e => setNotes(e.target.value)}
                     placeholder="e.g. Need Microsoft 365 GCC High tenant integration and third-party assessor read-only access for upcoming DIBCAC audit."
-                    className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 resize-none"
+                    className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 resize-none"
                   />
                 </div>
 
                 {/* Security and SLA Note */}
-                <div className="flex items-center gap-2 text-[11px] text-slate-400 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                <div className="flex items-center gap-2 text-xs text-slate-400 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
                   <Lock className="w-3.5 h-3.5 text-brand-400 shrink-0" />
                   <span>
                     Your inquiry is protected under defense-grade confidentiality. No automated charges or unverified account creation.
@@ -372,7 +372,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                 </div>
 
                 {/* Legal Notice */}
-                <div className="pt-2 text-center text-[10px] text-slate-500">
+                <div className="pt-2 text-center text-xs text-slate-400">
                   <span>By scheduling a call, you agree to our </span>
                   <button
                     type="button"

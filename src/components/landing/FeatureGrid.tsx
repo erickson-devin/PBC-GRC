@@ -90,7 +90,7 @@ export const FeatureGrid: React.FC<FeatureGridProps> = () => {
                       <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${feat.accentColor} flex items-center justify-center shadow-lg shadow-black/40 ring-1 ring-white/20 group-hover:scale-105 transition-transform duration-300`}>
                         <Icon className="w-6 h-6 text-white" />
                       </div>
-                      <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300">
+                      <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300">
                         {feat.badge}
                       </span>
                     </div>

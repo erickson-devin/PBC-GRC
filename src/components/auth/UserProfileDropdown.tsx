@@ -56,19 +56,19 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
     switch (role) {
       case 'TENANT_OWNER':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
             <Shield className="w-3 h-3" /> Tenant Owner
           </span>
         );
       case 'ASSESSOR':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
             <CheckCircle2 className="w-3 h-3" /> Assessor / C3PAO
           </span>
         );
       case 'VIEWER':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/20 text-slate-300 border border-slate-500/30">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-slate-500/20 text-slate-300 border border-slate-500/30">
             <Lock className="w-3 h-3" /> Read-Only
           </span>
         );
@@ -78,14 +78,14 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
   const getProviderIcon = () => {
     if (currentUser.authProvider === 'microsoft.com') {
       return (
-        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[10px] font-bold text-sky-400 bg-sky-950/60 rounded border border-sky-500/30 px-1" title="Microsoft 365 Entra ID">
+        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-xs font-bold text-sky-400 bg-sky-950/60 rounded border border-sky-500/30 px-1" title="Microsoft 365 Entra ID">
           M
         </span>
       );
     }
     if (currentUser.authProvider === 'google.com') {
       return (
-        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-[10px] font-bold text-amber-400 bg-amber-950/60 rounded border border-amber-500/30 px-1" title="Google Workspace">
+        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-xs font-bold text-amber-400 bg-amber-950/60 rounded border border-amber-500/30 px-1" title="Google Workspace">
           G
         </span>
       );
@@ -115,9 +115,9 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
               </span>
               {getProviderIcon()}
             </div>
-            <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <span className="truncate max-w-[90px]">{currentTenant.name}</span>
-              <span className="text-slate-600">•</span>
+              <span className="text-slate-400">•</span>
               <span className="text-brand-300 font-medium">{currentRole === 'TENANT_OWNER' ? 'Owner' : currentRole === 'ASSESSOR' ? 'Assessor' : 'Viewer'}</span>
             </div>
           </div>
@@ -134,11 +134,11 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                 <span>{currentUser.name}</span>
                 {getRoleBadge(currentRole)}
               </p>
-              <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+              <p className="text-xs text-slate-400 font-mono truncate mt-0.5">
                 {currentUser.email}
               </p>
               
-              <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+              <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
                 <span className="text-slate-400 flex items-center gap-1">
                   <Building2 className="w-3.5 h-3.5 text-brand-400" />
                   Active Enclave:
@@ -223,7 +223,7 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
 
             {/* Quick RBAC Role Simulation */}
             <div className="p-2 border-t border-slate-800 bg-slate-950/40">
-              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-1 block mb-1">
+              <span className="text-xs uppercase tracking-wider font-bold text-slate-400 px-1 block mb-1">
                 Simulate CMMC Role:
               </span>
               <div className="grid grid-cols-3 gap-1">
@@ -234,7 +234,7 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                       switchUserRole(role);
                       setIsOpen(false);
                     }}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                    className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors ${
                       currentRole === role
                         ? 'bg-brand-600 text-white shadow-sm'
                         : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -253,13 +253,13 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                   setIsOpen(false);
                   openLicenseModal('DEFENSE_PRO');
                 }}
-                className="w-full py-1.5 px-2 rounded-lg text-[11px] font-semibold text-brand-300 hover:bg-brand-500/10 flex items-center justify-between transition-colors"
+                className="w-full py-1.5 px-2 rounded-lg text-xs font-semibold text-brand-300 hover:bg-brand-500/10 flex items-center justify-between transition-colors"
               >
                 <span className="flex items-center gap-1.5">
                   <Sparkles className="w-3 h-3 text-brand-400" />
                   Request License Upgrade
                 </span>
-                <span className="text-[10px] font-mono text-emerald-400">
+                <span className="text-xs font-mono text-emerald-400">
                   ${getLicenseTierPrice(currentUser.licenseTier).toLocaleString()}/yr
                 </span>
               </button>

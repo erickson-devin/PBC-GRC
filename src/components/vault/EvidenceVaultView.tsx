@@ -258,7 +258,7 @@ export const EvidenceVaultView: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by name, control, or SHA-256 hash..."
-              className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+              className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
             />
           </div>
 
@@ -327,11 +327,11 @@ export const EvidenceVaultView: React.FC = () => {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="font-semibold text-white truncate max-w-xs">{item.name}</p>
-                              <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                              <span className="text-xs font-bold px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                                 GCS
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-400 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>
+                            <p className="text-xs text-slate-400 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>
                           </div>
                         </div>
                       </td>
@@ -343,20 +343,20 @@ export const EvidenceVaultView: React.FC = () => {
                             onClick={() => setSelectedControlId(ctrl.id)}
                             className="flex items-center gap-1.5 hover:text-brand-300 text-left group"
                           >
-                            <span className="font-mono font-bold text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-200 group-hover:bg-brand-500/20 group-hover:text-brand-300 transition-colors">
+                            <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-200 group-hover:bg-brand-500/20 group-hover:text-brand-300 transition-colors">
                               {ctrl.id}
                             </span>
-                            <span className="truncate max-w-[150px] text-[11px] text-slate-400">
+                            <span className="truncate max-w-[150px] text-xs text-slate-400">
                               {ctrl.title}
                             </span>
                           </button>
                         ) : (
-                          <span className="font-mono text-[11px] text-slate-400">{item.controlId}</span>
+                          <span className="font-mono text-xs text-slate-400">{item.controlId}</span>
                         )}
                       </td>
 
                       {/* SHA-256 Fingerprint */}
-                      <td className="py-3 px-4 font-mono text-[11px]">
+                      <td className="py-3 px-4 font-mono text-xs">
                         {item.fileHash ? (
                           <button
                             onClick={() => handleCopyHash(item.fileHash)}

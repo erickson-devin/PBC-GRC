@@ -98,7 +98,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 <Mail className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                <span className="text-xs uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
                   TEAM INVITATION
                 </span>
                 <h3 className="text-base font-bold text-white tracking-tight mt-0.5">
@@ -106,7 +106,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 </h3>
               </div>
             </div>
-            <button
+            <button aria-label="Close"
               onClick={handleClose}
               className="w-8 h-8 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
             >
@@ -167,7 +167,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                     )}
                   </button>
                 </div>
-                <p className="text-[11px] text-slate-400 flex items-center gap-1">
+                <p className="text-xs text-slate-400 flex items-center gap-1">
                   <Lock className="w-3 h-3 text-slate-400" />
                   Token valid for 14 days • Single-use cryptographic claim
                 </p>
@@ -219,7 +219,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                     placeholder="e.g. auditor@c3pao-partner.com or staff@company.com"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 font-mono transition-colors"
+                    className="w-full pl-10 pr-3 py-2.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 font-mono transition-colors"
                   />
                 </div>
               </div>
@@ -232,9 +232,9 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* ASSESSOR Option */}
-                  <div
+                  <button type="button"
                     onClick={() => setRole('ASSESSOR')}
-                    className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                    className={`w-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all ${
                       role === 'ASSESSOR'
                         ? 'bg-blue-500/10 border-blue-500/40 ring-1 ring-blue-500/30'
                         : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
@@ -249,15 +249,15 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                         <span className="w-2 h-2 rounded-full bg-blue-400" />
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <p className="text-xs text-slate-400 leading-relaxed">
                       Can edit all 17 CMMC practices, draft implementation narratives, and upload/remove evidence.
                     </p>
-                  </div>
+                  </button>
 
                   {/* VIEWER Option */}
-                  <div
+                  <button type="button"
                     onClick={() => setRole('VIEWER')}
-                    className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                    className={`w-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all ${
                       role === 'VIEWER'
                         ? 'bg-slate-700/20 border-slate-500/40 ring-1 ring-slate-500/30'
                         : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
@@ -272,10 +272,10 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                         <span className="w-2 h-2 rounded-full bg-slate-400" />
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <p className="text-xs text-slate-400 leading-relaxed">
                       Read-only clearance for external C3PAO auditors or corporate executives. Cannot alter data.
                     </p>
-                  </div>
+                  </button>
                 </div>
               </div>
 

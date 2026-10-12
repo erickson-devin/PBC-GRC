@@ -116,7 +116,7 @@ const EvidencePreviewModalContent: React.FC = () => {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-white truncate">{previewEvidence.name}</h3>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <Cloud className="w-2.5 h-2.5" /> GCS Cloud Scoped
                 </span>
               </div>
@@ -136,7 +136,7 @@ const EvidencePreviewModalContent: React.FC = () => {
                 <Download className="w-4 h-4" />
               </button>
             )}
-            <button
+            <button aria-label="Close"
               onClick={() => setPreviewEvidence(null)}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             >
@@ -149,7 +149,7 @@ const EvidencePreviewModalContent: React.FC = () => {
         <div className="px-6 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-3 flex-wrap">
             {/* GCS Path */}
-            <div className="flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+            <div className="flex items-center gap-1.5 font-mono text-xs text-slate-300">
               <Cloud className="w-3.5 h-3.5 text-brand-400 shrink-0" />
               <span className="truncate max-w-[280px] sm:max-w-md">{gcsUri}</span>
               <button
@@ -163,7 +163,7 @@ const EvidencePreviewModalContent: React.FC = () => {
 
             {/* SHA-256 Hash */}
             {previewEvidence.fileHash && (
-              <div className="flex items-center gap-1.5 font-mono text-[11px] text-emerald-300 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
+              <div className="flex items-center gap-1.5 font-mono text-xs text-emerald-300 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
                 <Shield className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>SHA-256: {previewEvidence.fileHash.substring(0, 12)}...</span>
                 <button
@@ -177,7 +177,7 @@ const EvidencePreviewModalContent: React.FC = () => {
             )}
           </div>
 
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
+          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30">
             <CheckCircle2 className="w-3 h-3" /> Audit Verified Immutability
           </span>
         </div>
@@ -209,7 +209,7 @@ const EvidencePreviewModalContent: React.FC = () => {
               </div>
             ) : (
               <div className="text-center space-y-3 p-8">
-                <FileText className="w-12 h-12 text-slate-500 mx-auto" />
+                <FileText className="w-12 h-12 text-slate-400 mx-auto" />
                 <p className="text-sm font-semibold text-white">Binary Evidence Artifact</p>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
                   Click the download button above to inspect this artifact locally.
@@ -229,12 +229,12 @@ const EvidencePreviewModalContent: React.FC = () => {
                 </p>
               </div>
               <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-left text-xs space-y-1">
-                <p className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Auditor Checklist Objective:</p>
+                <p className="text-slate-400 font-semibold uppercase text-xs tracking-wider">Auditor Checklist Objective:</p>
                 <p className="text-slate-300">
                   {control ? control.auditorChecklist[0] : 'Check security configurations.'}
                 </p>
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-xs text-slate-400">
                 To test live client-side binary uploads with real-time SHA-256 calculation, drop a file in the Evidence Vault tab.
               </p>
             </div>

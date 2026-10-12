@@ -228,25 +228,25 @@ export const Sidebar: React.FC = () => {
     <aside className="no-print w-full md:w-64 bg-slate-900/60 border-r border-slate-800 flex flex-col justify-between p-4 shrink-0">
       <div className="space-y-6">
         {/* Top Branding Block */}
-        <div 
+        <button type="button" 
           onClick={() => setActiveTab('dashboard')}
-          className="px-2 py-1.5 cursor-pointer group flex items-center gap-3 border-b border-slate-800/80 pb-4"
+          className="w-full text-left px-2 py-1.5 cursor-pointer group flex items-center gap-3 border-b border-slate-800/80 pb-4"
         >
           <BrandLogo size="md" />
           <div className="min-w-0">
             <h2 className="text-xs font-black tracking-tight text-white group-hover:text-cyan-400 transition-colors truncate">
               Event Horizon: Singularity
             </h2>
-            <p className="text-[10px] font-mono text-cyan-400/90 tracking-wider uppercase mt-0.5 truncate">
+            <p className="text-xs font-mono text-cyan-400/90 tracking-wider uppercase mt-0.5 truncate">
               Pitch Black Cyber // Singularity GRC
             </p>
           </div>
-        </div>
+        </button>
 
         {/* Dynamic Navigation Sections */}
         {sections.map((section) => (
           <div key={section.title}>
-            <p className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase px-3 mb-2">
+            <p className="text-xs font-semibold tracking-wider text-slate-400 uppercase px-3 mb-2">
               {section.title}
             </p>
             <nav className="space-y-1">
@@ -317,7 +317,7 @@ export const Sidebar: React.FC = () => {
                 <ShieldCheck className="w-4 h-4 text-amber-400" />
                 <span>Super Admin Portal</span>
               </div>
-              <span className="inline-flex items-center justify-center shrink-0 rounded-full px-2.5 py-0.5 text-[10px] uppercase font-mono tracking-tight leading-none whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <span className="inline-flex items-center justify-center shrink-0 rounded-full px-2.5 py-0.5 text-xs uppercase font-mono tracking-tight leading-none whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 /admin
               </span>
             </button>
@@ -327,23 +327,23 @@ export const Sidebar: React.FC = () => {
         {/* Active Client Organization Context Card */}
         <div className="hidden md:block p-3.5 rounded-2xl bg-slate-850 border border-slate-800/80 space-y-2.5">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase text-slate-400 flex items-center gap-1.5">
+            <span className="text-xs font-semibold uppercase text-slate-400 flex items-center gap-1.5">
               <Building className="w-3.5 h-3.5 text-brand-400" />
               Active Tenant
             </span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-brand-300">
+            <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-brand-300">
               {currentTenant.cageCode || 'CAGE'}
             </span>
           </div>
 
           <div className="text-xs text-slate-300">
             <p className="font-bold truncate text-white">{currentTenant.name}</p>
-            <p className="text-[11px] text-slate-400 truncate mt-0.5">
+            <p className="text-xs text-slate-400 truncate mt-0.5">
               {currentTenant.systemName}
             </p>
           </div>
 
-          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
             <span className="text-slate-400">Controls Met</span>
             <span className="font-semibold text-white">
               {metrics.metCount} / {metrics.totalControls}
@@ -362,7 +362,7 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Footer Info */}
-      <div className="hidden md:block pt-4 border-t border-slate-800/80 text-[11px] text-slate-400 space-y-1">
+      <div className="hidden md:block pt-4 border-t border-slate-800/80 text-xs text-slate-400 space-y-1">
         <p className="flex items-center gap-1">
           <Layers className="w-3.5 h-3.5 text-slate-400" />
           <span>{guidance.authority} Compliant</span>

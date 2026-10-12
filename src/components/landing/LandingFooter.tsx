@@ -119,7 +119,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
             <p className="text-xs text-slate-400 leading-relaxed">
               Google Cloud Storage evidence enclaves with client-side SHA-256 validation. Logical multi-tenant isolation with Cloud SQL Row-Level Security.
             </p>
-            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center gap-2 text-[11px] text-emerald-400">
+            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center gap-2 text-xs text-emerald-400">
               <Lock className="w-3.5 h-3.5" />
               <span>TLS 1.3 & SHA-256 Verified</span>
             </div>
@@ -147,7 +147,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({ onEnterApp, onOpen
 
         {/* Bottom Legal & Copyright Bar */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-[11px] text-slate-400">
+          <p className="text-xs text-slate-400">
             © {new Date().getFullYear()} Pitch Black Cyber, LLC. All rights reserved. CMMC is a registered trademark of the Cyber AB / DoD.
           </p>
 

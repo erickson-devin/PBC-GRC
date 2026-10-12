@@ -75,15 +75,15 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
         {/* Left: Brand + Multi-Tenant Switcher + Framework Switcher */}
         <div className="flex items-center gap-3 sm:gap-4 w-full md:w-auto justify-between md:justify-start flex-wrap">
           {/* Brand */}
-          <div 
+          <button type="button" 
             onClick={() => setActiveTab('dashboard')}
-            className="flex items-center gap-2.5 cursor-pointer group"
+            className="text-left flex items-center gap-2.5 cursor-pointer group"
           >
             <BrandLogo size="sm" />
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold text-sm sm:text-base text-white tracking-tight">Event Horizon: Singularity</span>
-                <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full border ${
+                <span className={`text-xs uppercase font-bold px-1.5 py-0.5 rounded-full border ${
                   isSandboxMode
                     ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                     : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -91,11 +91,11 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
                   {isSandboxMode ? 'SANDBOX' : 'LIVE ENCLAVE'}
                 </span>
               </div>
-              <p className="text-[10px] text-slate-400 font-medium">
+              <p className="text-xs text-slate-400 font-medium">
                 Pitch Black Cyber • {frameworkControls.length} Controls
               </p>
             </div>
-          </div>
+          </button>
 
           <div className="h-6 w-px bg-slate-800 hidden md:block" />
 
@@ -112,9 +112,9 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
         <div className="flex items-center gap-2.5 w-full md:w-auto justify-end flex-wrap">
           
           {/* SPRS / Compliance Indicator */}
-          <div
+          <button type="button"
             onClick={() => setActiveTab('controls')}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 shadow-inner cursor-pointer transition-colors"
+            className="text-left flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 shadow-inner cursor-pointer transition-colors"
             title={`View ${frameworkTitle} control requirements`}
           >
             <div className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
@@ -139,7 +139,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
                 )}
               </span>
             )}
-          </div>
+          </button>
 
 
           {/* Quick Action Buttons */}

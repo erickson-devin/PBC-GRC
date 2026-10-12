@@ -43,23 +43,23 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
         
         {/* Brand Logo */}
-        <div 
+        <button type="button" 
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="flex items-center gap-3 cursor-pointer group"
+          className="text-left flex items-center gap-3 cursor-pointer group"
         >
           <BrandLogo size="md" />
           <div>
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-base sm:text-lg tracking-tight text-white">Event Horizon: Singularity</span>
-              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+              <span className="text-xs uppercase font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
                 Defense Enclave
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-medium tracking-wide">
+            <p className="text-xs text-slate-400 font-medium tracking-wide">
               Pitch Black Cyber // Singularity GRC
             </p>
           </div>
-        </div>
+        </button>
 
         {/* Desktop Navigation Links */}
         <nav className="hidden md:flex items-center gap-8">

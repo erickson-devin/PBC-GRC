@@ -145,7 +145,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
               </div>
             </div>
 
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               disabled={isSubmitting}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
@@ -159,7 +159,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
             
             {/* Recipient Email */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
                 Recipient Email Address *
               </label>
               <div className="relative">
@@ -170,16 +170,16 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="e.g. auditor@c3pao.org"
-                  className="w-full pl-9 pr-3 py-2.5 text-xs font-mono bg-slate-900/90 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all font-medium"
+                  className="w-full pl-9 pr-3 py-2.5 text-xs font-mono bg-slate-900/90 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all font-medium"
                 />
               </div>
             </div>
 
             {/* Target Enclave Boundary */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
                 <span>Assigned Defense Enclave *</span>
-                <span className="text-[10px] text-slate-400 font-mono">Isolated database boundary</span>
+                <span className="text-xs text-slate-400 font-mono">Isolated database boundary</span>
               </label>
               <div className="relative">
                 <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -199,7 +199,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
 
             {/* Target Role Selector */}
             <div className="space-y-2">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
                 Enclave Access Role & Permissions *
               </label>
 
@@ -218,7 +218,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                     <Shield className="w-3.5 h-3.5 text-purple-400" />
                     <span>Tenant Owner</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 line-clamp-2">
+                  <p className="text-xs text-slate-400 line-clamp-2">
                     Full enclave admin & team control
                   </p>
                 </button>
@@ -237,7 +237,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                     <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />
                     <span>Assessor</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 line-clamp-2">
+                  <p className="text-xs text-slate-400 line-clamp-2">
                     Evaluate controls & upload evidence
                   </p>
                 </button>
@@ -256,7 +256,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                     <Lock className="w-3.5 h-3.5 text-slate-400" />
                     <span>Viewer</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 line-clamp-2">
+                  <p className="text-xs text-slate-400 line-clamp-2">
                     Read-only audit observer
                   </p>
                 </button>
@@ -266,7 +266,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
             {/* Expiration Date & Extension */}
             <div className="space-y-2 pt-1 border-t border-slate-800/80">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5 text-amber-400" />
                   <span>Token Expiration Date *</span>
                 </label>
@@ -274,14 +274,14 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                   <button
                     type="button"
                     onClick={() => handleQuickExtend(7)}
-                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white text-[10px] font-mono border border-slate-700 flex items-center gap-1 transition-colors"
+                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white text-xs font-mono border border-slate-700 flex items-center gap-1 transition-colors"
                   >
                     <CalendarPlus className="w-2.5 h-2.5" /> +7 Days
                   </button>
                   <button
                     type="button"
                     onClick={() => handleQuickExtend(14)}
-                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white text-[10px] font-mono border border-slate-700 flex items-center gap-1 transition-colors"
+                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white text-xs font-mono border border-slate-700 flex items-center gap-1 transition-colors"
                   >
                     <CalendarPlus className="w-2.5 h-2.5" /> +14 Days
                   </button>

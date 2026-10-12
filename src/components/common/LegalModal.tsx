@@ -237,7 +237,7 @@ Website: https://pitchblackcyber.com`,
                 <h3 className="text-lg font-bold text-white tracking-tight">
                   Pitch Black Cyber Legal Center
                 </h3>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
                   Effective Sept 2026
                 </span>
               </div>
@@ -296,7 +296,7 @@ Website: https://pitchblackcyber.com`,
                 placeholder="Search clause or policy..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
               />
             </div>
 
@@ -336,15 +336,15 @@ Website: https://pitchblackcyber.com`,
                   ? 'Pitch Black Cyber, LLC — Platform Privacy Policy'
                   : 'Pitch Black Cyber, LLC — Master Subscription Terms of Service'}
               </span>
-              <p className="text-slate-400 text-[11px] mt-0.5">
+              <p className="text-slate-400 text-xs mt-0.5">
                 Governing grc.pitchblackcyber.com • Dedicated CMMC 2.0 & FAR 52.204-21 Enclaves
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 font-mono text-[10px] text-slate-300">
+              <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 font-mono text-xs text-slate-300">
                 Ver: 2026.1
               </span>
-              <span className="px-2.5 py-1 rounded-lg bg-brand-500/15 border border-brand-500/30 font-mono text-[10px] text-brand-300">
+              <span className="px-2.5 py-1 rounded-lg bg-brand-500/15 border border-brand-500/30 font-mono text-xs text-brand-300">
                 Delaware, USA
               </span>
             </div>

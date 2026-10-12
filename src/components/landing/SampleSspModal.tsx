@@ -106,7 +106,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
         <div className="p-6 overflow-y-auto font-mono text-xs text-slate-300 space-y-4 bg-slate-950/90 leading-relaxed">
           <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
             <div className="text-brand-400 font-bold text-sm">SYSTEM SECURITY PLAN (SSP) - CMMC LEVEL 1</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-300 pt-2 border-t border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300 pt-2 border-t border-slate-800">
               <div><strong>Organization:</strong> Apex Defense Solutions, LLC</div>
               <div><strong>CAGE Code:</strong> 9X7B4 (SAM.gov Active)</div>
               <div><strong>System Boundary:</strong> Corporate Operations Enclave (COE)</div>
@@ -120,10 +120,10 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
               <div key={ctrl.id} className="p-3 rounded-lg bg-slate-900/60 border border-slate-800/80 space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="text-brand-400 font-bold">{ctrl.id}: {ctrl.title}</span>
-                  <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">MET</span>
+                  <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">MET</span>
                 </div>
-                <div className="text-[11px] text-slate-400">{ctrl.farReference} • {ctrl.domain}</div>
-                <p className="text-[11px] text-slate-300 pt-1 border-t border-slate-800/50">
+                <div className="text-xs text-slate-400">{ctrl.farReference} • {ctrl.domain}</div>
+                <p className="text-xs text-slate-300 pt-1 border-t border-slate-800/50">
                   {ctrl.starterTemplates[0]?.narrative || 'Control requirements fully satisfied with corporate policy and cloud configuration.'}
                 </p>
               </div>

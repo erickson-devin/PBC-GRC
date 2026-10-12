@@ -183,20 +183,20 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     switch (role) {
       case 'TENANT_OWNER':
         return (
-          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
+          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
             <Shield className="w-3 h-3 text-purple-400" /> TENANT_OWNER
           </span>
         );
       case 'ASSESSOR':
         return (
-          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm">
+          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm">
             <CheckCircle2 className="w-3 h-3 text-cyan-400" /> ASSESSOR
           </span>
         );
       case 'VIEWER':
       default:
         return (
-          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50 shadow-sm">
+          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50 shadow-sm">
             <Lock className="w-3 h-3 text-slate-400" /> VIEWER
           </span>
         );
@@ -256,7 +256,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="badge text-[10px] uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
+                    <span className="badge text-xs uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
                       RBAC ENCLAVE SETTINGS
                     </span>
                     <span className="text-xs text-slate-400 font-mono">
@@ -312,7 +312,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
               >
                 <Shield className="w-3.5 h-3.5" />
                 <span>Compliance Scope & Modules</span>
-                <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                <span className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
                   {enabledFrameworks.length}
                 </span>
               </button>
@@ -328,7 +328,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   </span>
                   <button
                     onClick={() => setShowRoleInfo(false)}
-                    className="text-[11px] text-slate-400 hover:text-white"
+                    className="text-xs text-slate-400 hover:text-white"
                   >
                     Hide
                   </button>
@@ -339,7 +339,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     <span className="font-bold text-purple-300 text-xs flex items-center gap-1">
                       <Shield className="w-3.5 h-3.5" /> TENANT_OWNER
                     </span>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <p className="text-xs text-slate-400 leading-relaxed">
                       Full control over enclave boundaries, team member invitations, role reassignments, and SSP exports.
                     </p>
                   </div>
@@ -348,7 +348,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     <span className="font-bold text-blue-300 text-xs flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5" /> ASSESSOR
                     </span>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <p className="text-xs text-slate-400 leading-relaxed">
                       Can edit all 17 CMMC controls, draft implementation statements, upload and delete SHA-256 evidence.
                     </p>
                   </div>
@@ -357,7 +357,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     <span className="font-bold text-slate-300 text-xs flex items-center gap-1">
                       <Lock className="w-3.5 h-3.5" /> VIEWER
                     </span>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <p className="text-xs text-slate-400 leading-relaxed">
                       Read-only clearance for third-party C3PAO auditors or corporate stakeholders. Cannot edit practices.
                     </p>
                   </div>
@@ -377,7 +377,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       placeholder="Search team members by name or email..."
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
                     />
                   </div>
 
@@ -418,7 +418,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                 {/* Members Table */}
                 <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+                    <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-xs tracking-wider border-b border-slate-800">
                       <tr>
                         <th className="py-3 px-4">Member Name & Email</th>
                         <th className="py-3 px-4">Enclave Role</th>
@@ -446,12 +446,12 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   <div className="flex items-center gap-1.5">
                                     <span className="font-bold text-white truncate">{member.name || member.email.split('@')[0]}</span>
                                     {isSelf && (
-                                      <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
+                                      <span className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
                                         You
                                       </span>
                                     )}
                                   </div>
-                                  <p className="text-[11px] font-mono text-slate-400 truncate">{member.email}</p>
+                                  <p className="text-xs font-mono text-slate-400 truncate">{member.email}</p>
                                 </div>
                               </div>
                             </td>
@@ -464,7 +464,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                     value={member.role}
                                     disabled={busy}
                                     onChange={e => { const role = e.target.value as TenantRole; void runAction(() => updateMemberRole(currentTenant.id, member.id, role), 'Role updated.'); }}
-                                    className="text-[10px] font-bold rounded-lg px-2.5 py-1 bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer transition-colors"
+                                    className="text-xs font-bold rounded-lg px-2.5 py-1 bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer transition-colors"
                                   >
                                     <option value="TENANT_OWNER">Tenant Owner</option>
                                     <option value="ASSESSOR">Assessor</option>
@@ -479,12 +479,12 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                             {/* Status */}
                             <td className="py-3 px-4">
                               {isPending ? (
-                                <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                                   Pending Invite
                                 </span>
                               ) : (
-                                <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                                   Active
                                 </span>
@@ -499,7 +499,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                     {member.invitationToken && (
                                     <button
                                       onClick={() => handleCopyInvite(member.invitationToken!, member.id)}
-                                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
+                                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                       title="Copy Invite Link"
                                     >
                                       {copiedTokenId === member.id ? (
@@ -512,7 +512,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                     <button
                                       disabled={busy}
                                       onClick={() => handleResend(inviteIdFor(member)!)}
-                                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
+                                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                       title="Resend: issue a new link"
                                     >
                                       <RotateCw className="w-3.5 h-3.5" />
@@ -520,7 +520,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                     <button
                                       disabled={busy}
                                       onClick={() => askRevoke(inviteIdFor(member)!, member.email)}
-                                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
+                                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                       title="Revoke Invite"
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
@@ -532,7 +532,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   <button
                                     disabled={busy}
                                     onClick={() => askRemove(member.id, member.email)}
-                                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-[11px] transition-all"
+                                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                     title="Remove Member"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -555,7 +555,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
                 {/* Team Footer */}
                 <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-xs text-slate-400">
                     Seat allocation: <strong className="text-slate-300">{members.length} members</strong> bound to {currentTenant.name}
                   </span>
                   <button
@@ -578,7 +578,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       <Shield className="w-4 h-4 text-brand-400" />
                       <span>Enclave Compliance Scope & Multi-Audit Modules</span>
                     </div>
-                    <span className="badge text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                    <span className="badge text-xs font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
                       {currentTenant.name}
                     </span>
                   </div>
@@ -593,7 +593,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     <label className="block text-xs font-bold text-slate-200 uppercase tracking-wider mb-1">
                       Primary Enclave Baseline
                     </label>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-xs text-slate-400">
                       Default framework loaded when team members access this enclave.
                     </p>
                   </div>
@@ -619,11 +619,11 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       <label className="block text-xs font-bold text-slate-200 uppercase tracking-wider">
                         Active Compliance Modules
                       </label>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
+                      <p className="text-xs text-slate-400 mt-0.5">
                         Enable multi-audit compliance to cross-assess controls across standards.
                       </p>
                     </div>
-                    <span className="badge text-[10px] font-mono px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                    <span className="badge text-xs font-mono px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
                       {enabledFrameworks.length} Selected
                     </span>
                   </div>
@@ -658,19 +658,19 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                             <div className="flex items-center justify-between gap-1">
                               <span className="font-bold text-xs truncate">{fw.shortName}</span>
                               {isPrimary ? (
-                                <span className="badge text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-brand-500/30 text-brand-300 border border-brand-500/40 shrink-0">
+                                <span className="badge text-xs font-mono font-bold px-1.5 py-0.5 rounded bg-brand-500/30 text-brand-300 border border-brand-500/40 shrink-0">
                                   PRIMARY
                                 </span>
                               ) : isChecked ? (
-                                <span className="badge text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+                                <span className="badge text-xs font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
                                   ACTIVE
                                 </span>
                               ) : null}
                             </div>
-                            <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                            <div className="text-xs text-slate-400 mt-0.5 truncate">
                               {fw.authority}
                             </div>
-                            <div className="text-[10px] text-slate-400 font-mono mt-1">
+                            <div className="text-xs text-slate-400 font-mono mt-1">
                               {fw.count} baseline controls
                             </div>
                           </div>

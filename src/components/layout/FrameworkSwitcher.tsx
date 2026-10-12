@@ -117,17 +117,17 @@ export const FrameworkSwitcher: React.FC = () => {
             <Shield className="w-3 h-3" />
           </div>
           <div className="text-left">
-            <div className="text-[10px] text-slate-400 font-mono leading-none flex items-center gap-1">
+            <div className="text-xs text-slate-400 font-mono leading-none flex items-center gap-1">
               <span>SCOPE: {currentFrameworkDef.shortName}</span>
               {activeOverlayFilters.nonNetworkedOnly && (
-                <span className="badge text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                <span className="badge text-xs px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
                   TACTICAL
                 </span>
               )}
             </div>
             <div className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5">
               <span>{currentFrameworkDef.shortName}</span>
-              <span className="text-[10px] font-mono text-cyan-300 font-normal">
+              <span className="text-xs font-mono text-cyan-300 font-normal">
                 ({metrics.totalControls})
               </span>
             </div>
@@ -144,17 +144,17 @@ export const FrameworkSwitcher: React.FC = () => {
             <Layers className="w-3 h-3" />
           </div>
           <div className="text-left">
-            <div className="text-[10px] text-slate-400 font-mono leading-none flex items-center gap-1">
+            <div className="text-xs text-slate-400 font-mono leading-none flex items-center gap-1">
               <span>SCOPE: {enclaveFrameworks.length} ACTIVE</span>
               {activeOverlayFilters.nonNetworkedOnly && (
-                <span className="badge text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                <span className="badge text-xs px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
                   TACTICAL
                 </span>
               )}
             </div>
             <div className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5">
               <span>{currentFrameworkDef.shortName}</span>
-              <span className="text-[10px] font-mono text-cyan-300 font-normal">
+              <span className="text-xs font-mono text-cyan-300 font-normal">
                 ({metrics.totalControls})
               </span>
             </div>
@@ -178,7 +178,7 @@ export const FrameworkSwitcher: React.FC = () => {
         }
       >
         <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
-        <span className="hidden xl:inline text-[11px]">
+        <span className="hidden xl:inline text-xs">
           {activeOverlayFilters.nonNetworkedOnly ? 'Tactical Overlay: ON' : 'Tactical Overlay'}
         </span>
       </button>
@@ -189,11 +189,11 @@ export const FrameworkSwitcher: React.FC = () => {
           <div className="px-2.5 py-1.5 border-b border-slate-800">
             <div className="text-xs font-bold text-white flex items-center justify-between">
               <span>Enclave Compliance Scopes ({availableFrameworks.length})</span>
-              <span className="badge text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
+              <span className="badge text-xs font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
                 ENCLAVE-SCOPED GRC
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-400 mt-0.5">
               Instantly switch between active compliance baselines provisioned for this enclave.
             </p>
           </div>
@@ -203,13 +203,13 @@ export const FrameworkSwitcher: React.FC = () => {
             {availableFrameworks.map((f) => {
               const isSelected = activeFramework === f.id;
               return (
-                <div
+                <button type="button"
                   key={f.id}
                   onClick={() => {
                     setActiveFramework(f.id);
                     setIsOpen(false);
                   }}
-                  className={`p-2.5 rounded-xl cursor-pointer transition-all ${
+                  className={`w-full text-left p-2.5 rounded-xl cursor-pointer transition-all ${
                     isSelected
                       ? 'bg-cyan-500/15 border border-cyan-500/40 text-white'
                       : 'hover:bg-slate-800/70 text-slate-300 border border-transparent'
@@ -225,21 +225,21 @@ export const FrameworkSwitcher: React.FC = () => {
                       <div>
                         <div className="text-xs font-bold flex items-center gap-1.5">
                           <span>{f.label}</span>
-                          <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          <span className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                             {f.count}
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        <div className="text-xs text-slate-400 font-mono mt-0.5">
                           {f.badge} • {f.authority}
                         </div>
                       </div>
                     </div>
                     {isSelected && <Check className="w-4 h-4 text-cyan-400 shrink-0" />}
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1.5 pl-9 leading-relaxed">
+                  <p className="text-xs text-slate-400 mt-1.5 pl-9 leading-relaxed">
                     {f.description}
                   </p>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -247,7 +247,7 @@ export const FrameworkSwitcher: React.FC = () => {
           {/* NIST 800-53 Baseline & CIA Triad Selection */}
           {activeFramework === 'NIST_800_53_REV5' && (
             <div className="pt-2.5 border-t border-slate-800 px-2 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-bold text-slate-200">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-200">
                 <span className="flex items-center gap-1.5">
                   <Sliders className="w-3.5 h-3.5 text-cyan-400" />
                   <span>NIST SP 800-53 Rev 5 Baseline Scoping</span>
@@ -257,7 +257,7 @@ export const FrameworkSwitcher: React.FC = () => {
                     e.stopPropagation();
                     toggleAllControlsApplied();
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                  className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
                     ciaTriad.isAllControlsApplied
                       ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                       : 'bg-slate-800 text-slate-400 border border-slate-700'
@@ -269,9 +269,9 @@ export const FrameworkSwitcher: React.FC = () => {
 
               {/* Granular CIA Triad Selector */}
               <div className={`space-y-1.5 p-2 rounded-xl bg-slate-950/60 border border-slate-800 transition-opacity ${ciaTriad.isAllControlsApplied ? 'opacity-50 pointer-events-none' : ''}`}>
-                <div className="text-[10px] text-slate-400 font-semibold mb-1">CIA Triad Impact Categorization</div>
+                <div className="text-xs text-slate-400 font-semibold mb-1">CIA Triad Impact Categorization</div>
                 {(['confidentiality', 'integrity', 'availability'] as const).map(dim => (
-                  <div key={dim} className="flex items-center justify-between text-[10px]">
+                  <div key={dim} className="flex items-center justify-between text-xs">
                     <span className="capitalize text-slate-300 font-medium w-24">{dim}:</span>
                     <div className="flex items-center gap-1">
                       {(['LOW', 'MODERATE', 'HIGH'] as ImpactLevel[]).map(lvl => {
@@ -283,7 +283,7 @@ export const FrameworkSwitcher: React.FC = () => {
                               e.stopPropagation();
                               setCiaImpact(dim, lvl);
                             }}
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
                               isSelected
                                 ? 'bg-brand-600 text-white shadow-sm'
                                 : 'bg-slate-800 text-slate-400 hover:text-slate-200'
@@ -302,7 +302,7 @@ export const FrameworkSwitcher: React.FC = () => {
 
           {/* Operational Overlays & Tailoring Caveats */}
           <div className="pt-2.5 border-t border-slate-800 px-2 space-y-2">
-            <div className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+            <div className="text-xs font-bold text-slate-300 flex items-center justify-between">
               <span>Operational Caveats & Overlays</span>
             </div>
 
@@ -312,8 +312,8 @@ export const FrameworkSwitcher: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400' : 'text-slate-400'}`} />
                   <div>
-                    <div className="text-[10px] font-bold text-slate-300">Stand-Alone / Air-Gapped</div>
-                    <div className="text-[10px] text-slate-400">Excludes SC-7, AC-17, SC-8</div>
+                    <div className="text-xs font-bold text-slate-300">Stand-Alone / Air-Gapped</div>
+                    <div className="text-xs text-slate-400">Excludes SC-7, AC-17, SC-8</div>
                   </div>
                 </div>
                 <button
@@ -321,7 +321,7 @@ export const FrameworkSwitcher: React.FC = () => {
                     e.stopPropagation();
                     toggleOverlayFilter('nonNetworkedOnly');
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                  className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
                     activeOverlayFilters.nonNetworkedOnly
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       : 'bg-slate-800 text-slate-400 hover:text-slate-300'
@@ -336,8 +336,8 @@ export const FrameworkSwitcher: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Radio className={`w-3.5 h-3.5 ${activeOverlayFilters.noWireless ? 'text-cyan-400' : 'text-slate-400'}`} />
                   <div>
-                    <div className="text-[10px] font-bold text-slate-300">No Wireless Capabilities</div>
-                    <div className="text-[10px] text-slate-400">Excludes AC-18 wireless access</div>
+                    <div className="text-xs font-bold text-slate-300">No Wireless Capabilities</div>
+                    <div className="text-xs text-slate-400">Excludes AC-18 wireless access</div>
                   </div>
                 </div>
                 <button
@@ -345,7 +345,7 @@ export const FrameworkSwitcher: React.FC = () => {
                     e.stopPropagation();
                     toggleOverlayFilter('noWireless');
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                  className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
                     activeOverlayFilters.noWireless
                       ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                       : 'bg-slate-800 text-slate-400 hover:text-slate-300'
@@ -360,8 +360,8 @@ export const FrameworkSwitcher: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Smartphone className={`w-3.5 h-3.5 ${activeOverlayFilters.noMobileDevices ? 'text-indigo-400' : 'text-slate-400'}`} />
                   <div>
-                    <div className="text-[10px] font-bold text-slate-300">No Mobile Devices</div>
-                    <div className="text-[10px] text-slate-400">Excludes AC-19, MP-7 mobile controls</div>
+                    <div className="text-xs font-bold text-slate-300">No Mobile Devices</div>
+                    <div className="text-xs text-slate-400">Excludes AC-19, MP-7 mobile controls</div>
                   </div>
                 </div>
                 <button
@@ -369,7 +369,7 @@ export const FrameworkSwitcher: React.FC = () => {
                     e.stopPropagation();
                     toggleOverlayFilter('noMobileDevices');
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                  className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
                     activeOverlayFilters.noMobileDevices
                       ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
                       : 'bg-slate-800 text-slate-400 hover:text-slate-300'
@@ -384,8 +384,8 @@ export const FrameworkSwitcher: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <EyeOff className={`w-3.5 h-3.5 ${activeOverlayFilters.noPiiProcessing ? 'text-emerald-400' : 'text-slate-400'}`} />
                   <div>
-                    <div className="text-[10px] font-bold text-slate-300">No PII Processing</div>
-                    <div className="text-[10px] text-slate-400">Excludes PT family & privacy safeguards</div>
+                    <div className="text-xs font-bold text-slate-300">No PII Processing</div>
+                    <div className="text-xs text-slate-400">Excludes PT family & privacy safeguards</div>
                   </div>
                 </div>
                 <button
@@ -393,7 +393,7 @@ export const FrameworkSwitcher: React.FC = () => {
                     e.stopPropagation();
                     toggleOverlayFilter('noPiiProcessing');
                   }}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                  className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
                     activeOverlayFilters.noPiiProcessing
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                       : 'bg-slate-800 text-slate-400 hover:text-slate-300'

@@ -62,10 +62,10 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white">API Keys & Cloud Identity Tokens</h3>
-                <p className="text-[11px] text-slate-400">Google Cloud Identity & Cloud Run Authentication</p>
+                <p className="text-xs text-slate-400">Google Cloud Identity & Cloud Run Authentication</p>
               </div>
             </div>
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               className="w-7 h-7 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
             >
@@ -80,13 +80,13 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                 Active Identity Platform JWT (Bearer Token)
               </span>
-              <div className="flex items-center gap-1 text-[10px] text-slate-400">
+              <div className="flex items-center gap-1 text-xs text-slate-400">
                 <Clock className="w-3 h-3 text-brand-400" />
                 <span>Expires in 1 hr</span>
               </div>
             </div>
 
-            <div className="relative p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono text-[11px] text-slate-300 break-all select-all">
+            <div className="relative p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono text-xs text-slate-300 break-all select-all">
               {displayToken || 'No active session token. Sign in with a verified identity provider to obtain one.'}
             </div>
 
@@ -116,13 +116,13 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               <Terminal className="w-3.5 h-3.5 text-brand-400" />
               Microservice Authorization Header
             </span>
-            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-[11px] text-brand-300 overflow-x-auto whitespace-pre">
+            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-brand-300 overflow-x-auto whitespace-pre">
               {curlExample}
             </div>
           </div>
 
           {/* Cloud SQL Multi-Tenant note */}
-          <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2">
+          <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs text-slate-400 flex items-start gap-2">
             <Server className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
             <span>
               Calls with this token automatically resolve PostgreSQL Row-Level Security (RLS) for tenant enclave: <strong className="text-slate-300">{currentTenant.name}</strong>.

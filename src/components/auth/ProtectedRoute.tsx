@@ -41,7 +41,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         </div>
 
         <div className="space-y-2 max-w-sm">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[10px] font-mono uppercase tracking-wider text-brand-300">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-mono uppercase tracking-wider text-brand-300">
             <Lock className="w-3 h-3 text-brand-400" />
             Verifying Identity Credentials
           </div>

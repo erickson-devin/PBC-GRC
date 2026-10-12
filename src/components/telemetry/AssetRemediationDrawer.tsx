@@ -78,7 +78,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       {/* Drawer Overlay Backdrop */}
-      <div className="absolute inset-0" onClick={onClose} />
+      <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
       {/* Slide-in Panel */}
       <div className="relative w-full max-w-2xl h-full bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col z-10 overflow-hidden text-slate-100">
@@ -90,7 +90,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
               <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-500/30">
                 {control.id}
               </span>
-              <span className="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-950/60 text-rose-300 border border-rose-500/30">
+              <span className="px-2 py-0.5 rounded text-xs font-bold font-mono bg-rose-950/60 text-rose-300 border border-rose-500/30">
                 BOUNDARY: NOT_MET
               </span>
             </div>
@@ -103,7 +103,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
             </p>
           </div>
 
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
@@ -119,7 +119,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
               ⚠️ {failingCount} of {totalEndpoints} Endpoints Non-Compliant — Worst-Case Boundary Rollup Enforced
             </span>
           </div>
-          <span className="font-mono text-[10px] text-slate-400 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-800">
+          <span className="font-mono text-xs text-slate-400 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-800">
             DoD SCAP Policy
           </span>
         </div>
@@ -178,17 +178,17 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                           <span className="font-mono font-bold text-white text-sm">
                             {asset.hostName}
                           </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
+                          <span className="px-2 py-0.5 rounded text-xs font-mono bg-slate-800 text-slate-300 border border-slate-700">
                             {asset.ipAddress}
                           </span>
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
+                        <p className="text-xs text-slate-400 mt-0.5">
                           OS: {asset.osProfile || 'Linux'} • Evaluated via OpenSCAP
                         </p>
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30">
                       {asset.severity || 'CAT_I'} • HIGH RISK
                     </span>
                   </div>
@@ -206,11 +206,11 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
 
                   {/* Raw Scanner STDOUT Error Block */}
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-mono text-slate-400 flex items-center gap-1.5">
+                    <label className="text-xs font-mono text-slate-400 flex items-center gap-1.5">
                       <Terminal className="w-3 h-3 text-rose-400" />
                       <span>Scanner Diagnostic Output (stdout)</span>
                     </label>
-                    <div className="p-3 rounded-xl bg-slate-900 border border-rose-900/40 font-mono text-[11px] text-rose-300 leading-relaxed overflow-x-auto">
+                    <div className="p-3 rounded-xl bg-slate-900 border border-rose-900/40 font-mono text-xs text-rose-300 leading-relaxed overflow-x-auto">
                       {asset.stdout || 'FAIL: Root access allowed over SSH network socket.'}
                     </div>
                   </div>
@@ -218,13 +218,13 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                   {/* Remediation Script Section */}
                   <div className="space-y-2 pt-1 border-t border-slate-800">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                      <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                         <Zap className="w-3.5 h-3.5 text-amber-400" />
                         <span>Remediation Command (Blake's Scanner Agent)</span>
                       </span>
                       <button
                         onClick={() => handleCopyScript(fix, ruleId)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-[11px] font-medium transition-colors flex items-center gap-1.5"
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-medium transition-colors flex items-center gap-1.5"
                       >
                         {isCopied ? (
                           <>
@@ -282,7 +282,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                   {passingCount} of {totalEndpoints} Passing
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 All other registered endpoints in this boundary meet the technical hardening baselines for this practice.
               </p>
             </div>

@@ -162,7 +162,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 <h3 className="text-lg font-bold text-white tracking-tight">
                   Welcome to Your Live CMMC Enclave
                 </h3>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
                   Step {step} of 2
                 </span>
               </div>
@@ -193,7 +193,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           <Sparkles className="w-4 h-4 text-brand-400 shrink-0" />
           <span>
             <strong>Blank Baseline Initialized:</strong> All 17 CMMC Level 1 controls are set to{' '}
-            <code className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-[11px]">NOT_STARTED</code>{' '}
+            <code className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-xs">NOT_STARTED</code>{' '}
             with zero pre-populated evidence.
           </span>
         </div>
@@ -226,9 +226,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   placeholder="e.g. Pitch Black Cyber LLC"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-xs text-slate-400">
                   This will appear on the cover page of all generated System Security Plans (SSPs) and SPRS score reports.
                 </p>
               </div>
@@ -245,7 +245,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                     placeholder="e.g. 9X7B4 or PENDING"
                     value={cageCode}
                     onChange={(e) => setCageCode(e.target.value.toUpperCase())}
-                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 font-mono focus:outline-none focus:border-brand-500 transition-colors"
+                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 font-mono focus:outline-none focus:border-brand-500 transition-colors"
                   />
                 </div>
 
@@ -276,12 +276,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   placeholder="e.g. Defense IT & Systems Integration, Aerospace Hardware, C3PAO"
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
 
               {/* Security Isolation Notice */}
-              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2.5 text-[11px] text-slate-400">
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2.5 text-xs text-slate-400">
                 <Lock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <span>
                   Your enclave is partitioned with Cloud SQL Row-Level Security and customer-isolated Google Cloud Storage buckets. No demo data will leak into this workspace.
@@ -307,9 +307,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   placeholder="e.g. Corporate IT & CUI Enclave or Operations Boundary"
                   value={systemName}
                   onChange={(e) => setSystemName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-xs text-slate-400">
                   The primary system or information boundary being assessed under FAR 52.204-21 / CMMC Level 1.
                 </p>
               </div>
@@ -325,7 +325,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   placeholder="e.g. Alex Mercer, Director of Security / CISO"
                   value={systemOwner}
                   onChange={(e) => setSystemOwner(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
 
@@ -338,9 +338,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   rows={3}
                   value={boundaryScope}
                   onChange={(e) => setBoundaryScope(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors resize-none leading-relaxed"
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors resize-none leading-relaxed"
                 />
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-xs text-slate-400">
                   Summarize the technical components, cloud services, and endpoints in-scope for this assessment.
                 </p>
               </div>
@@ -354,14 +354,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   type="text"
                   value={cloudProviders}
                   onChange={(e) => setCloudProviders(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
               </div>
 
               {/* Ready Checklist Summary */}
               <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-2 text-xs">
                 <span className="font-semibold text-slate-300 block">Baseline Readiness Summary:</span>
-                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                <div className="grid grid-cols-3 gap-2 text-xs">
                   <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-center">
                     <span className="text-slate-400 block">Controls Met</span>
                     <strong className="text-white font-mono text-sm">0 / 17</strong>
@@ -384,7 +384,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/90 flex items-center justify-between gap-3">
           {step === 1 ? (
             <>
-              <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+              <div className="text-xs text-slate-400 flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5 text-brand-400" />
                 <span>You can edit these details later in the SSP Builder tab.</span>
               </div>

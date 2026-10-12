@@ -45,6 +45,7 @@ import { NIST_800_171A_REGISTRY } from '../../data/frameworks/assessmentObjectiv
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
+import { activateOnKey } from '../../utils/a11y';
 interface InspectDocumentModalProps {
   controlId?: string | null;
   onClose?: () => void;
@@ -457,7 +458,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             <p className="text-xs font-bold text-cyan-200 tracking-wide">
               C3PAO Assessment Method: All objectives must be satisfied for overall control compliance.
             </p>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-xs text-slate-400">
               Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as MET or N/A. Any NOT_MET objective drops the parent control to NOT_MET.
             </p>
           </div>
@@ -476,7 +477,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           >
             <ListChecks className="w-4 h-4 text-cyan-400" />
             <span>Assessment Objectives</span>
-            <span className="badge text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
+            <span className="badge text-xs px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
               {metObjectivesCount}/{objectives.length}
             </span>
           </button>
@@ -553,7 +554,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             >
               <FileText className="w-4 h-4 text-cyan-400" />
               <span>Generated Living Policy</span>
-              <span className="badge text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
+              <span className="badge text-xs px-1.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
                 LIVE STACK
               </span>
             </button>
@@ -582,7 +583,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
                     Compiled SSP Implementation Narrative
                   </label>
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-xs text-slate-400">
                     {ctrlState.lastUpdated ? `Last modified ${new Date(ctrlState.lastUpdated).toLocaleDateString()}` : ''}
                   </span>
                 </div>
@@ -592,7 +593,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   onChange={(e) => updateControlNotes(control.id, e.target.value)}
                   disabled={!canEdit}
                   placeholder="Detail your organizational implementation for this requirement across people, processes, and technology..."
-                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 transition-all font-mono leading-relaxed disabled:opacity-60"
+                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 transition-all font-mono leading-relaxed disabled:opacity-60"
                 />
               </div>
 
@@ -634,7 +635,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                         <div>
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-bold text-white">{tmpl.title}</span>
-                            <span className="badge text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-800 text-cyan-300">
+                            <span className="badge text-xs uppercase font-mono px-2 py-0.5 rounded bg-slate-800 text-cyan-300">
                               {tmpl.category}
                             </span>
                           </div>
@@ -661,7 +662,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             <div className="space-y-6">
               {/* Drag & Drop Upload Zone */}
               {canEdit && (
-                <div
+                <div role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label="Upload evidence files: drop files here or press Enter to browse"
                   onDragOver={(e) => {
                     e.preventDefault();
                     setIsDraggingOver(true);
@@ -686,7 +687,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   <p className="text-xs font-bold text-white">
                     {isUploading ? 'Encrypting & Storing Evidence...' : 'Click to Upload or Drag & Drop'}
                   </p>
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     PDF, PNG, JPG, DOCX, TXT, LOG up to 50MB. Files are cryptographically hashed with SHA-256 for audit immutability.
                   </p>
                 </div>
@@ -705,7 +706,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                         Attached Evidence Artifacts ({controlEvidence.length})
                       </h4>
                       {isLocal && (
-                        <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-mono text-[10px] font-bold shadow-sm shadow-cyan-950/30">
+                        <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-mono text-xs font-bold shadow-sm shadow-cyan-950/30">
                           <HardDrive className="w-3 h-3 text-cyan-400" />
                           <span>LOCAL ENCLAVE STORAGE ({localStoragePath})</span>
                         </span>
@@ -716,7 +717,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
               {controlEvidence.length === 0 ? (
                 <div className="p-8 rounded-2xl bg-slate-950/40 border border-slate-800 text-center">
-                  <Paperclip className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                  <Paperclip className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-300">No Evidence Uploaded Yet</p>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
                     Attach screenshots, GPO exports, network configs, or policy sign-off documents to satisfy C3PAO audit requirements.
@@ -735,23 +736,23 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                         </div>
                         <div className="min-w-0 space-y-0.5">
                           <p className="text-xs font-bold text-white truncate">{ev.name}</p>
-                          <div className="flex items-center gap-2 flex-wrap text-[10px]">
+                          <div className="flex items-center gap-2 flex-wrap text-xs">
                             <span className="text-slate-400 font-mono">
                               {(ev.fileSize / 1024).toFixed(1)} KB • {new Date(ev.uploadedAt).toLocaleDateString()}
                             </span>
                             {storageConfig.provider === 'local' ? (
-                              <span className="badge inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono text-[10px] font-bold">
+                              <span className="badge inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono text-xs font-bold">
                                 <ShieldCheck className="w-2.5 h-2.5 text-cyan-400" />
                                 <span>LOCAL ENCLAVE • SHA-256 CHECKED</span>
                               </span>
                             ) : (
-                              <span className="badge inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
+                              <span className="badge inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-xs">
                                 GCS SYNCED
                               </span>
                             )}
                           </div>
                           {ev.fileHash && (
-                            <p className="text-[10px] text-cyan-400/80 font-mono truncate max-w-md">
+                            <p className="text-xs text-cyan-400/80 font-mono truncate max-w-md">
                               SHA-256: {ev.fileHash}
                             </p>
                           )}
@@ -841,21 +842,21 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {rawMappings.map((m, idx) => (
-                    <div
+                    <button type="button"
                       key={idx}
                       onClick={() => handleNavigateToMapped(m.targetFramework, m.targetControlId)}
-                      className="p-4 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-cyan-500/40 cursor-pointer transition-colors"
+                      className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-cyan-500/40 cursor-pointer transition-colors"
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="font-mono text-xs font-bold text-cyan-300">
                           {m.targetControlId}
                         </span>
-                        <span className="badge text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                        <span className="badge text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
                           {m.targetFramework}
                         </span>
                       </div>
                       <p className="text-xs text-slate-300 truncate">{m.targetTitle || 'Mapped Requirement'}</p>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -891,7 +892,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                           <span className="font-mono text-xs font-bold text-cyan-300">{rule.vulnId}</span>
                           <span className="font-mono text-xs text-slate-400">({rule.ruleVersion})</span>
                           <span
-                            className={`badge text-[10px] px-2 py-0.5 rounded font-bold uppercase font-mono ${
+                            className={`badge text-xs px-2 py-0.5 rounded font-bold uppercase font-mono ${
                               rule.severity === 'CAT_I'
                                 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                                 : rule.severity === 'CAT_II'
@@ -914,7 +915,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                       <p className="text-xs font-semibold text-white">{rule.title}</p>
                       <p className="text-xs text-slate-300 leading-relaxed font-sans">{rule.policyNarrative}</p>
 
-                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 font-mono">
                         <span>Benchmark: {rule.benchmarkId}</span>
                         <span>Rule: {rule.id}</span>
                       </div>
@@ -935,7 +936,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                     <FileText className="w-4 h-4 text-cyan-400" />
                     Living Policy: {familyPrefix} ({familyTitle})
                   </span>
-                  <span className="badge text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800">
+                  <span className="badge text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800">
                     Compiled from Active Enclave Stack
                   </span>
                 </div>
@@ -1017,19 +1018,19 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               {/* Active Stack Highlights Ribbon */}
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center gap-2 flex-wrap text-xs text-slate-400">
                 <span className="font-semibold text-slate-300">Active Enclave Telemetry Stack:</span>
-                <span className="badge px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900/60 font-mono text-[11px]">
+                <span className="badge px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900/60 font-mono text-xs">
                   IAM: {currentTenant.stackProfile?.identityProvider || 'ENTRA_ID_COMMERCIAL'}
                 </span>
-                <span className="badge px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900/60 font-mono text-[11px]">
+                <span className="badge px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900/60 font-mono text-xs">
                   EDR: {currentTenant.stackProfile?.edrSolution || 'DEFENDER_FOR_ENDPOINT'}
                 </span>
-                <span className="badge px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-900/60 font-mono text-[11px]">
+                <span className="badge px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-900/60 font-mono text-xs">
                   Infra: {currentTenant.stackProfile?.infrastructure || 'AZURE_GOV'}
                 </span>
-                <span className="badge px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900/60 font-mono text-[11px]">
+                <span className="badge px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900/60 font-mono text-xs">
                   MDM: {currentTenant.stackProfile?.mdmSolution || 'INTUNE'}
                 </span>
-                <span className="badge px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-900/60 font-mono text-[11px]">
+                <span className="badge px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-900/60 font-mono text-xs">
                   SIEM: {currentTenant.stackProfile?.siemSolution || 'SENTINEL'}
                 </span>
               </div>
@@ -1041,7 +1042,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   <div className="border-b border-slate-800 pb-5">
                     <div className="flex items-center justify-between gap-4 flex-wrap">
                       <div>
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-cyan-400 font-bold">
+                        <span className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">
                           Enclave Living Policy Standard
                         </span>
                         <h1 className="text-xl font-extrabold text-white mt-1">
@@ -1056,19 +1057,19 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-800/80 text-xs font-mono">
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">Organization</span>
+                        <span className="text-slate-400 block text-xs">Organization</span>
                         <span className="font-bold text-white">{currentTenant.name}</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">System Name</span>
+                        <span className="text-slate-400 block text-xs">System Name</span>
                         <span className="font-bold text-white">{currentTenant.systemName}</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">CAGE Code / SAM</span>
+                        <span className="text-slate-400 block text-xs">CAGE Code / SAM</span>
                         <span className="font-bold text-white">{currentTenant.cageCode || 'N/A'} ({currentTenant.samStatus})</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block text-[10px]">Authorizing Official</span>
+                        <span className="text-slate-400 block text-xs">Authorizing Official</span>
                         <span className="font-bold text-white">{currentTenant.systemOwner}</span>
                       </div>
                     </div>
@@ -1078,7 +1079,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   <div className="space-y-4 text-xs leading-relaxed text-slate-300">
                     <div>
                       <h2 className="text-sm font-bold text-white mb-1.5 flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">1</span>
+                        <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-xs">1</span>
                         Purpose
                       </h2>
                       <p className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/60">
@@ -1088,7 +1089,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
                     <div>
                       <h2 className="text-sm font-bold text-white mb-1.5 flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">2</span>
+                        <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-xs">2</span>
                         Scope
                       </h2>
                       <p className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/60">
@@ -1100,7 +1101,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   {/* Section 3: Policy Statements */}
                   <div className="space-y-4">
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">3</span>
+                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-xs">3</span>
                       Policy Statements & Implementation Baselines
                     </h2>
 
@@ -1114,7 +1115,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                               </span>
                               <span className="text-xs font-bold text-white">{ctrl.title}</span>
                             </div>
-                            <span className="badge text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
+                            <span className="badge text-xs font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/60">
                               {ctrl.objectives.length} Objectives Tailored
                             </span>
                           </div>
@@ -1139,7 +1140,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                                   <div className="font-semibold text-cyan-200">
                                     Objective [{obj.letter}]: <span className="text-slate-300 font-normal">{obj.text}</span>
                                   </div>
-                                  <div className="text-slate-300 text-[11px] leading-relaxed pt-1 border-t border-slate-800/60">
+                                  <div className="text-slate-300 text-xs leading-relaxed pt-1 border-t border-slate-800/60">
                                     <strong className="text-slate-400">Implementation: </strong>
                                     {narrative}
                                   </div>
@@ -1155,12 +1156,12 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   {/* Section 4: Revision History */}
                   <div className="space-y-2">
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">4</span>
+                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-xs">4</span>
                       Revision History
                     </h2>
                     <div className="overflow-x-auto rounded-xl border border-slate-800">
                       <table className="w-full text-xs text-left">
-                        <thead className="bg-slate-900 text-slate-400 uppercase font-mono text-[10px]">
+                        <thead className="bg-slate-900 text-slate-400 uppercase font-mono text-xs">
                           <tr>
                             <th className="p-2.5">Date</th>
                             <th className="p-2.5">Version</th>
@@ -1183,7 +1184,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   {/* Section 5: Authorizing Official Signature Block */}
                   <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2 text-xs">
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-[11px]">5</span>
+                      <span className="w-5 h-5 rounded-md bg-cyan-950 text-cyan-400 flex items-center justify-center font-mono text-xs">5</span>
                       Authorizing Official Approval
                     </h2>
                     <p className="text-slate-400">

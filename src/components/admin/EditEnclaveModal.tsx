@@ -158,7 +158,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
               </div>
             </div>
 
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               disabled={isSubmitting}
               className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 border border-transparent hover:border-slate-700 transition-colors"
@@ -175,7 +175,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
             {/* Row 1: Organization Name & CAGE Code */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="sm:col-span-2 space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
                   Organization Legal Name *
                 </label>
                 <div className="relative">
@@ -186,13 +186,13 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     value={name}
                     onChange={e => setName(e.target.value)}
                     placeholder="e.g. Apex Defense Solutions, LLC"
-                    className="w-full pl-9 pr-3 py-2.5 text-xs bg-slate-900/90 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all font-medium"
+                    className="w-full pl-9 pr-3 py-2.5 text-xs bg-slate-900/90 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all font-medium"
                   />
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
                   CAGE Code
                 </label>
                 <input
@@ -201,7 +201,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                   value={cageCode}
                   onChange={e => setCageCode(e.target.value.toUpperCase())}
                   placeholder="e.g. 9X7B4"
-                  className="w-full px-3 py-2.5 text-xs font-mono font-bold bg-slate-900/90 border border-slate-800 rounded-xl text-cyan-300 placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 uppercase transition-all"
+                  className="w-full px-3 py-2.5 text-xs font-mono font-bold bg-slate-900/90 border border-slate-800 rounded-xl text-cyan-300 placeholder-slate-400 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 uppercase transition-all"
                 />
               </div>
             </div>
@@ -209,10 +209,10 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
             {/* Row 2: Primary System Owner Email */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
                   Primary System Owner Email *
                 </label>
-                <span className="text-[10px] text-purple-400 font-mono">
+                <span className="text-xs text-purple-400 font-mono">
                   Reassigns TENANT_OWNER administrative seat
                 </span>
               </div>
@@ -224,16 +224,16 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                   value={ownerEmail}
                   onChange={e => setOwnerEmail(e.target.value)}
                   placeholder="e.g. ciso@defensecontractor.us"
-                  className="w-full pl-9 pr-3 py-2.5 text-xs font-mono bg-slate-900/90 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
+                  className="w-full pl-9 pr-3 py-2.5 text-xs font-mono bg-slate-900/90 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all"
                 />
               </div>
             </div>
 
             {/* Row 3: Commercial License Tier */}
             <div className="space-y-2">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
                 <span>License Subscription Tier</span>
-                <span className="text-[10px] text-slate-400 font-mono lowercase">Annual recurring commercial license</span>
+                <span className="text-xs text-slate-400 font-mono lowercase">Annual recurring commercial license</span>
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -253,8 +253,8 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     </span>
                     {licenseTier === 'FOUNDATIONAL' && <Check className="w-3.5 h-3.5 text-cyan-400" />}
                   </div>
-                  <div className="text-base font-black text-cyan-300 font-mono">$3,500<span className="text-[10px] font-normal text-slate-400">/yr</span></div>
-                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">Small suppliers • CMMC L1 ({FRAMEWORK_REGISTRY.CMMC_L1.totalControls} controls)</p>
+                  <div className="text-base font-black text-cyan-300 font-mono">$3,500<span className="text-xs font-normal text-slate-400">/yr</span></div>
+                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">Small suppliers • CMMC L1 ({FRAMEWORK_REGISTRY.CMMC_L1.totalControls} controls)</p>
                 </button>
 
                 {/* Defense Pro */}
@@ -267,7 +267,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                       : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
                   }`}
                 >
-                  <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-brand-500 text-[10px] font-mono font-bold text-white uppercase tracking-wider">
+                  <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-brand-500 text-xs font-mono font-bold text-white uppercase tracking-wider">
                     Recommended
                   </div>
                   <div className="flex items-center justify-between mb-1">
@@ -276,8 +276,8 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     </span>
                     {licenseTier === 'DEFENSE_PRO' && <Check className="w-3.5 h-3.5 text-brand-400" />}
                   </div>
-                  <div className="text-base font-black text-brand-300 font-mono">$7,000<span className="text-[10px] font-normal text-slate-400">/yr</span></div>
-                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">DoD Primes & Subs • CMMC L2 ({FRAMEWORK_REGISTRY.CMMC_L2.totalControls} controls)</p>
+                  <div className="text-base font-black text-brand-300 font-mono">$7,000<span className="text-xs font-normal text-slate-400">/yr</span></div>
+                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">DoD Primes & Subs • CMMC L2 ({FRAMEWORK_REGISTRY.CMMC_L2.totalControls} controls)</p>
                 </button>
 
                 {/* Enterprise */}
@@ -296,8 +296,8 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     </span>
                     {licenseTier === 'ENTERPRISE' && <Check className="w-3.5 h-3.5 text-purple-400" />}
                   </div>
-                  <div className="text-base font-black text-purple-300 font-mono">$14,000<span className="text-[10px] font-normal text-slate-400">/yr</span></div>
-                  <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">Multi-CAGE & Assessor MSP Networks</p>
+                  <div className="text-base font-black text-purple-300 font-mono">$14,000<span className="text-xs font-normal text-slate-400">/yr</span></div>
+                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">Multi-CAGE & Assessor MSP Networks</p>
                 </button>
               </div>
             </div>
@@ -305,18 +305,18 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
             {/* Row 4: Primary Framework Selection & Enabled Scope Checklist */}
             <div className="space-y-3 pt-1 border-t border-slate-800/80">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                   <Layers className="w-3.5 h-3.5 text-cyan-400" />
                   <span>Compliance Framework Scope</span>
                 </label>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-xs text-slate-400 font-mono">
                   Primary framework renders on launch
                 </span>
               </div>
 
               {/* Primary Framework Selector */}
               <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   Primary Enclave Framework:
                 </label>
                 <select
@@ -334,7 +334,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
 
               {/* Enabled Frameworks Scope */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   Enabled Frameworks in this Enclave (cross-framework inheritance enabled):
                 </label>
 
@@ -344,9 +344,8 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                     const isPrimary = fw.id === primaryFramework;
 
                     return (
-                      <div
+                      <label
                         key={fw.id}
-                        onClick={() => handleToggleFramework(fw.id)}
                         className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-colors ${
                           isEnabled
                             ? 'bg-slate-900/80 border-cyan-500/30 text-white'
@@ -365,17 +364,17 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
                             <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                               <span>{fw.label}</span>
                               {isPrimary && (
-                                <span className="text-[10px] font-mono font-bold text-cyan-300 bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                                <span className="text-xs font-mono font-bold text-cyan-300 bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30">
                                   PRIMARY
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10px] font-mono text-slate-400">{fw.authority}</div>
+                            <div className="text-xs font-mono text-slate-400">{fw.authority}</div>
                           </div>
                         </div>
 
                         {isEnabled && <Check className="w-3.5 h-3.5 text-cyan-400" />}
-                      </div>
+                      </label>
                     );
                   })}
                 </div>

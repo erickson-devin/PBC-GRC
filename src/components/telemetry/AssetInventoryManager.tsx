@@ -193,19 +193,19 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   const renderOsBadge = (os: string) => {
     switch (os) {
       case 'rhel9':
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 9</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 9</span>;
       case 'rhel8':
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 8</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-red-500/15 text-red-300 border border-red-500/30">RHEL 8</span>;
       case 'ubuntu2204':
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">Ubuntu 22</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">Ubuntu 22</span>;
       case 'win2022':
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/15 text-blue-300 border border-blue-500/30">Win 2022</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-blue-500/15 text-blue-300 border border-blue-500/30">Win 2022</span>;
       case 'win11':
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">Win 11</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">Win 11</span>;
       case 'cisco_ios':
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Cisco IOS</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Cisco IOS</span>;
       default:
-        return <span className="badge px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">{os}</span>;
+        return <span className="badge px-2 py-0.5 rounded text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">{os}</span>;
     }
   };
 
@@ -214,21 +214,21 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     switch (origin) {
       case 'ACCRETION_DISCOVERY':
         return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40">
             <Radio className="w-2.5 h-2.5 text-cyan-400" />
             <span>ACCRETION DISCOVERY</span>
           </span>
         );
       case 'PHOTON_AGENT':
         return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
             <Zap className="w-2.5 h-2.5 text-violet-400" />
             <span>PHOTON AGENT</span>
           </span>
         );
       case 'CSV_IMPORT':
         return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/40">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/40">
             <FileSpreadsheet className="w-2.5 h-2.5 text-indigo-400" />
             <span>CSV IMPORT</span>
           </span>
@@ -236,7 +236,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       case 'MANUAL_ENTRY':
       default:
         return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
             <span>MANUAL ADMIN</span>
           </span>
         );
@@ -249,13 +249,13 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     SECURITY_PROTECTION: { pill: 'bg-violet-500/15 text-violet-300 border-violet-500/30', icon: 'text-violet-400', text: 'text-violet-300', hover: 'hover:bg-violet-950', card: 'border-violet-500/20 bg-violet-950/20', Icon: Lock },
     CONTRACTOR_RISK: { pill: 'bg-amber-500/15 text-amber-300 border-amber-500/30', icon: 'text-amber-400', text: 'text-amber-300', hover: 'hover:bg-amber-950', card: 'border-amber-500/20 bg-amber-950/20', Icon: AlertTriangle },
     SPECIALIZED_ASSET: { pill: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', icon: 'text-emerald-400', text: 'text-emerald-300', hover: 'hover:bg-emerald-950', card: 'border-emerald-500/20 bg-emerald-950/20', Icon: Cpu },
-    OUT_OF_SCOPE: { pill: 'bg-slate-800 text-slate-400 border-slate-700', icon: 'text-slate-500', text: 'text-slate-300', hover: 'hover:bg-slate-800', card: 'border-slate-700 bg-slate-900/60', Icon: Server },
+    OUT_OF_SCOPE: { pill: 'bg-slate-800 text-slate-400 border-slate-700', icon: 'text-slate-400', text: 'text-slate-300', hover: 'hover:bg-slate-800', card: 'border-slate-700 bg-slate-900/60', Icon: Server },
   };
 
   const renderCategoryPill = (cat: CmmcAssetCategory) => {
     const style = CATEGORY_STYLE[cat];
     return (
-      <span className={`badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${style.pill}`}>
+      <span className={`badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${style.pill}`}>
         <style.Icon className={`w-3 h-3 ${style.icon}`} />
         <span>{CATEGORY_INFO[cat].label}</span>
       </span>
@@ -338,9 +338,9 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
       {/* ─── Unconfirmed Discovered Asset High-Priority Banner ─── */}
       {unconfirmedAssets.length > 0 && (
-        <div
+        <button type="button"
           onClick={() => setSelectedCategory(selectedCategory === 'UNCONFIRMED' ? 'ALL' : 'UNCONFIRMED')}
-          className="rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-950/60 via-amber-900/30 to-slate-900 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-amber-950/30 cursor-pointer hover:border-amber-400 transition-all animate-fadeIn"
+          className="w-full text-left rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-950/60 via-amber-900/30 to-slate-900 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-amber-950/30 cursor-pointer hover:border-amber-400 transition-all animate-fadeIn"
         >
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
@@ -350,7 +350,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
               <p className="text-xs font-bold text-amber-200">
                 Accretion discovered {unconfirmedAssets.length} new {unconfirmedAssets.length === 1 ? 'endpoint' : 'endpoints'}. Click to review and assign CMMC scope categories.
               </p>
-              <p className="text-[11px] text-amber-300/80 mt-0.5">
+              <p className="text-xs text-amber-300/80 mt-0.5">
                 Passive sensor detected active network MAC addresses in the enclave subnet. Until an administrator assigns a CMMC category they are excluded from the SSP boundary counts.
               </p>
             </div>
@@ -361,7 +361,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
               {selectedCategory === 'UNCONFIRMED' ? 'Showing Discovered (Click to Reset)' : `Review Discovered (${unconfirmedAssets.length})`}
             </span>
           </div>
-        </div>
+        </button>
       )}
 
       {/* Notification Banner */}
@@ -380,7 +380,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             <Server className="w-4 h-4 text-cyan-400" />
           </div>
           <p className="text-2xl font-black text-white mt-1.5">{summary.inScope}</p>
-          <span className="text-[10px] text-slate-400">{totalCount} registered{summary.unconfirmed > 0 ? `, ${summary.unconfirmed} unclassified` : ''}</span>
+          <span className="text-xs text-slate-400">{totalCount} registered{summary.unconfirmed > 0 ? `, ${summary.unconfirmed} unclassified` : ''}</span>
         </div>
 
         {CMMC_ASSET_CATEGORIES.filter(c => c !== 'OUT_OF_SCOPE').map(cat => {
@@ -392,7 +392,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                 <style.Icon className={`w-4 h-4 shrink-0 ${style.icon}`} />
               </div>
               <p className={`text-2xl font-black mt-1.5 ${style.text}`}>{summary.byCategory[cat]}</p>
-              <span className="text-[10px] text-slate-400">{CATEGORY_INFO[cat].short}</span>
+              <span className="text-xs text-slate-400">{CATEGORY_INFO[cat].short}</span>
             </div>
           );
         })}
@@ -403,7 +403,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <p className="text-2xl font-black text-emerald-400 mt-1.5">{avgComplianceScore === null ? '—' : `${avgComplianceScore}%`}</p>
-          <span className="text-[10px] text-emerald-400/70">{avgComplianceScore === null ? 'No scans yet' : 'STIG Pass Average'}</span>
+          <span className="text-xs text-emerald-400/70">{avgComplianceScore === null ? 'No scans yet' : 'STIG Pass Average'}</span>
         </div>
       </div>
 
@@ -417,7 +417,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search by name, IP, MAC, owner, or notes..."
-            className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           />
         </div>
 
@@ -515,24 +515,24 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                             </span>
                             {renderOriginBadge(asset.sourceOrigin)}
                             {asset.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && (
-                              <span className="badge px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                              <span className="badge px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
                                 UNCONFIRMED
                               </span>
                             )}
                           </div>
                           {asset.owner && (
-                            <p className="text-[10px] text-slate-300 mt-0.5">Owner: {asset.owner}</p>
+                            <p className="text-xs text-slate-300 mt-0.5">Owner: {asset.owner}</p>
                           )}
                           {asset.fipsValidationStatus === 'VALIDATED' && asset.fipsCertificateNumber && (
-                            <p className="text-[10px] text-emerald-300 mt-0.5" data-testid="fips-badge">
+                            <p className="text-xs text-emerald-300 mt-0.5" data-testid="fips-badge">
                               {describeFipsModule({ standard: asset.fipsStandard ?? null, certificateNumber: asset.fipsCertificateNumber, moduleName: asset.fipsModuleName ?? null })}
                             </p>
                           )}
                           {asset.fipsValidationStatus === 'PENDING' && (
-                            <p className="text-[10px] text-amber-300 mt-0.5">FIPS validation pending</p>
+                            <p className="text-xs text-amber-300 mt-0.5">FIPS validation pending</p>
                           )}
                           {asset.notes && (
-                            <p className="text-[10px] text-slate-400 truncate max-w-xs mt-0.5">
+                            <p className="text-xs text-slate-400 truncate max-w-xs mt-0.5">
                               {asset.notes}
                             </p>
                           )}
@@ -545,7 +545,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                       <div className="font-mono text-slate-200 text-xs">
                         {asset.ipAddress}
                       </div>
-                      <div className="font-mono text-[10px] text-slate-400">
+                      <div className="font-mono text-xs text-slate-400">
                         {asset.macAddress}
                       </div>
                     </td>
@@ -561,7 +561,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                         <div className="relative">
                           {classifyingAsset?.id === asset.id ? (
                             <div className="flex flex-col gap-1 p-2 rounded-xl bg-slate-900 border border-amber-500/50 shadow-xl z-20 absolute top-0 left-0 min-w-[260px]">
-                              <span className="text-[10px] font-bold text-amber-300 pb-1 border-b border-slate-800">
+                              <span className="text-xs font-bold text-amber-300 pb-1 border-b border-slate-800">
                                 Assign CMMC category:
                               </span>
                               {CMMC_ASSET_CATEGORIES.map(cat => (
@@ -569,7 +569,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                                   key={cat}
                                   disabled={busy}
                                   onClick={() => void handleClassifyAsset(asset, cat)}
-                                  className={`text-left px-2 py-1 rounded ${CATEGORY_STYLE[cat].hover} ${CATEGORY_STYLE[cat].text} text-[10px] font-medium disabled:opacity-50`}
+                                  className={`text-left px-2 py-1 rounded ${CATEGORY_STYLE[cat].hover} ${CATEGORY_STYLE[cat].text} text-xs font-medium disabled:opacity-50`}
                                   title={CATEGORY_INFO[cat].description}
                                 >
                                   • {CATEGORY_INFO[cat].label}
@@ -577,7 +577,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                               ))}
                               <button
                                 onClick={() => setClassifyingAsset(null)}
-                                className="text-center text-[10px] text-slate-400 hover:text-white pt-1"
+                                className="text-center text-xs text-slate-400 hover:text-white pt-1"
                               >
                                 Cancel
                               </button>
@@ -587,7 +587,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                               {renderCategoryPill(asset.cmmcAssetCategory)}
                               {canEdit && (<button
                                 onClick={() => setClassifyingAsset(asset)}
-                                className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0"
+                                className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-colors flex items-center gap-1 shrink-0"
                                 title="Click to assign permanent CMMC scoping category"
                               >
                                 <ShieldCheck className="w-3 h-3 text-amber-400" />
@@ -602,7 +602,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                     </td>
 
                     {/* Last Scan Date */}
-                    <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">
+                    <td className="py-3 px-3 text-slate-400 font-mono text-xs">
                       {asset.lastScannedAt ? (
                         <span>
                           {new Date(asset.lastScannedAt).toLocaleDateString([], {
@@ -613,7 +613,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                           })}
                         </span>
                       ) : (
-                        <span className="text-slate-600">Never Scanned</span>
+                        <span className="text-slate-400">Never Scanned</span>
                       )}
                     </td>
 
@@ -638,7 +638,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                           </span>
                         </div>
                       ) : (
-                        <span className="text-[10px] font-mono text-slate-400">Unscored</span>
+                        <span className="text-xs font-mono text-slate-400">Unscored</span>
                       )}
                     </td>
 
@@ -654,7 +654,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                               onSelectAsset(asset);
                             }
                           }}
-                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-[11px] transition-all flex items-center gap-1 shadow-sm"
+                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-xs transition-all flex items-center gap-1 shadow-sm"
                           title="Run automated Photon SCAP Scan on this endpoint"
                         >
                           <Play className="w-3 h-3" />
@@ -663,17 +663,17 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
                         {canEdit && pendingDelete?.id === asset.id ? (
                           <div className="flex items-center gap-1.5" role="group" aria-label={`Confirm removing ${asset.hostName}`}>
-                            <span className="text-[10px] text-rose-300">Remove {asset.hostName}?</span>
+                            <span className="text-xs text-rose-300">Remove {asset.hostName}?</span>
                             <button
                               disabled={busy}
                               onClick={() => void handleDeleteAsset(asset)}
-                              className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] disabled:opacity-50"
+                              className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs disabled:opacity-50"
                             >
                               Confirm
                             </button>
                             <button
                               onClick={() => setPendingDelete(null)}
-                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700"
+                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700"
                             >
                               Cancel
                             </button>
@@ -740,7 +740,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       {/* ─── CSV Bulk Import Modal ─── */}
       {isCsvModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
-          <div className="absolute inset-0" onClick={() => setIsCsvModalOpen(false)} />
+          <div aria-hidden="true" className="absolute inset-0" onClick={() => setIsCsvModalOpen(false)} />
 
           <div className="relative w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -748,7 +748,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                 <FileSpreadsheet className="w-5 h-5 text-indigo-400" />
                 <h3 className="text-base font-bold text-white">Bulk CSV Endpoint Onboarding</h3>
               </div>
-              <button
+              <button aria-label="Close"
                 onClick={() => setIsCsvModalOpen(false)}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
               >
@@ -759,7 +759,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             <p className="text-xs text-slate-400">
               Paste or inspect your CSV records below. Header line expected:
               <br />
-              <code className="text-cyan-400 font-mono text-[11px]">
+              <code className="text-cyan-400 font-mono text-xs">
                 hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes,owner
               </code>
             </p>

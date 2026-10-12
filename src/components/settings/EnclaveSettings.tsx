@@ -272,7 +272,7 @@ export const EnclaveSettings: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-xl font-bold text-white tracking-tight">Enclave Boundary & Tech Stack Configuration</h2>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
               {currentTenant.name} ({currentTenant.cageCode || 'CAGE'})
             </span>
           </div>
@@ -322,7 +322,7 @@ export const EnclaveSettings: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Identity (IAM)</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
                 {identityInfo.badge}
               </span>
             </div>
@@ -339,7 +339,7 @@ export const EnclaveSettings: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">EDR & Antivirus</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-semibold">
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-semibold">
                 {edrInfo.badge}
               </span>
             </div>
@@ -356,7 +356,7 @@ export const EnclaveSettings: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Cloud Boundary</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 font-semibold">
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 font-semibold">
                 {cloudInfo.badge}
               </span>
             </div>
@@ -373,7 +373,7 @@ export const EnclaveSettings: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">MDM & Fleets</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold">
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold">
                 {mdmInfo.badge}
               </span>
             </div>
@@ -390,7 +390,7 @@ export const EnclaveSettings: React.FC = () => {
                 </div>
                 <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">SIEM & Logging</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-semibold">
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-semibold">
                 {siemInfo.badge}
               </span>
             </div>
@@ -450,8 +450,8 @@ export const EnclaveSettings: React.FC = () => {
             return (
               <div key={item.key} className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-medium text-slate-400">{item.label}</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-900/60">
+                  <span className="text-xs font-medium text-slate-400">{item.label}</span>
+                  <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-900/60">
                     {item.control}
                   </span>
                 </div>
@@ -472,7 +472,7 @@ export const EnclaveSettings: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-white">Compiled Enclave Living Policies</h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-bold">
+                <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800 font-bold">
                   AUTO-GENERATED
                 </span>
               </div>
@@ -566,7 +566,7 @@ export const EnclaveSettings: React.FC = () => {
                       <h4 className="text-sm font-bold text-white group-hover:text-cyan-300 transition-colors">
                         {policy.name}
                       </h4>
-                      <span className="text-[10px] font-mono text-slate-400">{policy.mapping}</span>
+                      <span className="text-xs font-mono text-slate-400">{policy.mapping}</span>
                     </div>
                   </div>
                 </div>
@@ -577,7 +577,7 @@ export const EnclaveSettings: React.FC = () => {
                   {policy.tags.map((t, i) => (
                     <span
                       key={i}
-                      className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-800"
+                      className="text-xs font-mono px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-800"
                     >
                       {t}
                     </span>
@@ -640,19 +640,19 @@ export const EnclaveSettings: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400 block text-[10px]">Authorizing Official</span>
+            <span className="text-slate-400 block text-xs">Authorizing Official</span>
             <span className="text-white font-bold">{currentTenant.systemOwner}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400 block text-[10px]">CAGE Code</span>
+            <span className="text-slate-400 block text-xs">CAGE Code</span>
             <span className="text-white font-bold">{currentTenant.cageCode || 'N/A'}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400 block text-[10px]">SAM.gov Registration</span>
+            <span className="text-slate-400 block text-xs">SAM.gov Registration</span>
             <span className="text-emerald-400 font-bold">{currentTenant.samStatus}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400 block text-[10px]">License Tier</span>
+            <span className="text-slate-400 block text-xs">License Tier</span>
             <span className="text-cyan-300 font-bold">{currentTenant.licenseTier || 'DEFENSE_PRO'}</span>
           </div>
         </div>
@@ -673,7 +673,7 @@ export const EnclaveSettings: React.FC = () => {
                   <div>
                     <h3 className="text-base font-bold text-white flex items-center gap-2">
                       <span>{previewingPolicy.title}</span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
+                      <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
                         {previewingPolicy.code} Living Document
                       </span>
                     </h3>
@@ -797,7 +797,7 @@ export const EnclaveSettings: React.FC = () => {
                                       }
                                     >
                                       {cols.map((col, cIdx) => (
-                                        <td key={cIdx} className="p-2.5 font-mono text-[11px]">
+                                        <td key={cIdx} className="p-2.5 font-mono text-xs">
                                           {col}
                                         </td>
                                       ))}
@@ -831,7 +831,7 @@ export const EnclaveSettings: React.FC = () => {
 
               {/* Modal Footer */}
               <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between gap-4 shrink-0">
-                <span className="text-[11px] font-mono text-slate-400">
+                <span className="text-xs font-mono text-slate-400">
                   SHA-256 Hash Generated dynamically &middot; NIST SP 800-53 Rev. 5 / NIST SP 800-171A
                 </span>
                 <div className="flex items-center gap-2">

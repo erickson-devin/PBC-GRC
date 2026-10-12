@@ -72,10 +72,10 @@ export const DomainCards: React.FC = () => {
         const isComplete = total > 0 && stats.met === total;
 
         return (
-          <div
+          <button type="button"
             key={code}
             onClick={() => handleDomainClick(code)}
-            className="group relative bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/30 rounded-2xl p-5 transition-all duration-200 cursor-pointer shadow-lg hover:shadow-cyan-500/5 hover:-translate-y-0.5 flex flex-col justify-between"
+            className="w-full text-left group relative bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/30 rounded-2xl p-5 transition-all duration-200 cursor-pointer shadow-lg hover:shadow-cyan-500/5 hover:-translate-y-0.5 flex flex-col justify-between"
           >
             {/* Header */}
             <div>
@@ -92,7 +92,7 @@ export const DomainCards: React.FC = () => {
                     <Icon className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400">
                       {code} Domain
                     </span>
                     <h4 className="text-base font-bold text-white group-hover:text-cyan-300 transition-colors">
@@ -102,11 +102,11 @@ export const DomainCards: React.FC = () => {
                 </div>
 
                 {isComplete ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <CheckCircle2 className="w-3 h-3" /> Met
                   </span>
                 ) : (
-                  <span className="text-[11px] font-medium font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
+                  <span className="text-xs font-medium font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
                     {stats.met} / {total} Met
                   </span>
                 )}
@@ -148,7 +148,7 @@ export const DomainCards: React.FC = () => {
                 <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
               </div>
             </div>
-          </div>
+          </button>
         );
       })}
     </div>

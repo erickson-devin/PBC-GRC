@@ -80,7 +80,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
           <div className="flex items-center gap-2 text-sm font-bold text-slate-200">
             <Layers className="w-4 h-4 text-cyan-400" />
             <span>Enclave Asset Fleet Matrix</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
+            <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-500/30">
               {totalAssets} Endpoints Registered
             </span>
           </div>
@@ -127,7 +127,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search endpoint hostname, IP address, or OS profile..."
-            className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/40"
+            className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/40"
           />
         </div>
       </div>
@@ -180,7 +180,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                           <span className="font-mono font-bold text-white block">
                             {asset.hostName}
                           </span>
-                          <span className="text-[10px] font-mono text-slate-400">
+                          <span className="text-xs font-mono text-slate-400">
                             {asset.macAddress}
                           </span>
                         </div>
@@ -194,13 +194,13 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
 
                     {/* OS Profile */}
                     <td className="py-2.5 px-3">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${os.color}`}>
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium border ${os.color}`}>
                         {os.label}
                       </span>
                     </td>
 
                     {/* Last Scan Time */}
-                    <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px]">
+                    <td className="py-2.5 px-3 text-slate-400 font-mono text-xs">
                       <div className="flex items-center gap-1">
                         <Clock className="w-3 h-3 text-slate-400" />
                         <span>{new Date(asset.lastScanTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -231,12 +231,12 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                     {/* Status */}
                     <td className="py-2.5 px-3">
                       {isCompliant ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                           <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                           <span>COMPLIANT</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30">
                           <AlertTriangle className="w-3 h-3 text-rose-400" />
                           <span>{asset.failedRuleCount} NON-COMPLIANT</span>
                         </span>
@@ -256,7 +256,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                               });
                             }
                           }}
-                          className="px-2 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/30 text-[11px] font-semibold transition-colors flex items-center gap-1"
+                          className="px-2 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/30 text-xs font-semibold transition-colors flex items-center gap-1"
                           title="Load Target into Console"
                         >
                           <Terminal className="w-3 h-3" />
@@ -279,7 +279,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                               });
                             }
                           }}
-                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-[11px] transition-all flex items-center gap-1 shadow-sm"
+                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-xs transition-all flex items-center gap-1 shadow-sm"
                           title="Trigger SCAP STIG Scan against this host"
                         >
                           <Play className="w-3 h-3" />

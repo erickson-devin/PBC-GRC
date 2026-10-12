@@ -92,7 +92,7 @@ export const AssessmentGuidanceView: React.FC = () => {
                     >
                       {code} • {d.name}
                     </span>
-                    <span className="text-[11px] font-mono text-slate-400">
+                    <span className="text-xs font-mono text-slate-400">
                       {d.totalControls} {d.totalControls === 1 ? 'Practice' : 'Practices'}
                     </span>
                   </div>

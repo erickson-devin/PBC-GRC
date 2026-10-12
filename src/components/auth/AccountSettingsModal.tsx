@@ -44,10 +44,10 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white">Account & Identity Settings</h3>
-                <p className="text-[11px] text-slate-400">Defense Enclave User Profile</p>
+                <p className="text-xs text-slate-400">Defense Enclave User Profile</p>
               </div>
             </div>
-            <button
+            <button aria-label="Close"
               onClick={onClose}
               className="w-7 h-7 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
             >
@@ -58,7 +58,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
           {/* User Details */}
           <div className="space-y-3 text-xs">
             <div>
-              <label className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+              <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
                 Full Name
               </label>
               <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white font-semibold">
@@ -67,12 +67,12 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
             </div>
 
             <div>
-              <label className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+              <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
                 Work Email (Enclave Principal)
               </label>
               <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white font-mono flex items-center justify-between">
                 <span>{currentUser.email}</span>
-                <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                   <CheckCircle2 className="w-3 h-3" /> Verified
                 </span>
               </div>
@@ -80,19 +80,19 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
                   Identity Provider
                 </label>
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white font-medium text-[11px] truncate">
+                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white font-medium text-xs truncate">
                   {providerLabel}
                 </div>
               </div>
 
               <div>
-                <label className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
                   Assigned CMMC Role
                 </label>
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-brand-300 font-semibold text-[11px] flex items-center gap-1.5">
+                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-brand-300 font-semibold text-xs flex items-center gap-1.5">
                   <Shield className="w-3.5 h-3.5 text-brand-400 shrink-0" />
                   <span>{currentRole}</span>
                 </div>
@@ -100,7 +100,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
             </div>
 
             <div>
-              <label className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+              <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
                 Active Tenant Enclave
               </label>
               <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 flex items-center justify-between">
@@ -108,17 +108,17 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                   <Building className="w-3.5 h-3.5 text-brand-400 shrink-0" />
                   <span className="truncate">{currentTenant.name}</span>
                 </div>
-                <span className="font-mono text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded shrink-0">
+                <span className="font-mono text-xs text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded shrink-0">
                   {currentTenant.cageCode || 'CAGE'}
                 </span>
               </div>
             </div>
 
             <div>
-              <label className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+              <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
                 User UID (Cloud Identity)
               </label>
-              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 font-mono text-[10px] text-slate-400 truncate">
+              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 font-mono text-xs text-slate-400 truncate">
                 {firebaseUser?.uid || currentUser.id}
               </div>
             </div>

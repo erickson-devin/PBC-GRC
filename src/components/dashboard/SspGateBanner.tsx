@@ -36,7 +36,7 @@ export const SspGateBanner: React.FC<SspGateBannerProps> = ({ sprs, compact = fa
               <Lock className="h-5 w-5" />
             </span>
             <div className="min-w-0">
-              <span className="badge rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">
+              <span className="badge rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-xs font-bold uppercase tracking-wider text-amber-300">
                 SPRS score locked
               </span>
               <h2 className="mt-1.5 text-base font-bold text-white sm:text-lg">
@@ -57,7 +57,7 @@ export const SspGateBanner: React.FC<SspGateBannerProps> = ({ sprs, compact = fa
 
           {!compact && sprs.sspGaps.length > 0 && (
             <div>
-              <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
                 Still needed for the SSP
               </p>
               <ul className="space-y-1">
@@ -84,7 +84,7 @@ export const SspGateBanner: React.FC<SspGateBannerProps> = ({ sprs, compact = fa
                 <span className="flex items-center gap-1.5 text-sm font-bold text-white">
                   <FileText className="h-4 w-4 text-amber-300" /> Complete your SSP
                 </span>
-                <span className="block text-[11px] text-slate-400">Fill in the plan, then mark 3.12.4 MET</span>
+                <span className="block text-xs text-slate-400">Fill in the plan, then mark 3.12.4 MET</span>
               </span>
               <ArrowRight className="h-4 w-4 shrink-0 text-amber-300 transition-transform group-hover:translate-x-0.5" />
             </button>
@@ -100,7 +100,7 @@ export const SspGateBanner: React.FC<SspGateBannerProps> = ({ sprs, compact = fa
                 <span className="flex items-center gap-1.5 text-sm font-bold text-white">
                   <ClipboardList className="h-4 w-4 text-cyan-300" /> Start your POA&amp;M
                 </span>
-                <span className="block text-[11px] text-slate-400">
+                <span className="block text-xs text-slate-400">
                   {unimplemented} unimplemented requirement{unimplemented === 1 ? '' : 's'} need a remediation plan
                 </span>
               </span>

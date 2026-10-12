@@ -104,11 +104,11 @@ export const TenantSwitcher: React.FC = () => {
   const getSamBadge = (status: SamStatus) => {
     switch (status) {
       case 'ACTIVE':
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">SAM Active</span>;
+        return <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">SAM Active</span>;
       case 'PENDING':
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">SAM Pending</span>;
+        return <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">SAM Pending</span>;
       default:
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-700 text-slate-300">SAM N/A</span>;
+        return <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-slate-700 text-slate-300">SAM N/A</span>;
     }
   };
 
@@ -130,12 +130,12 @@ export const TenantSwitcher: React.FC = () => {
                 {currentTenant.name}
               </span>
               {currentTenant.cageCode && currentTenant.cageCode !== 'PENDING' && (
-                <span className="text-[10px] font-mono px-1 rounded bg-slate-900/80 text-brand-300 border border-slate-700">
+                <span className="text-xs font-mono px-1 rounded bg-slate-900/80 text-brand-300 border border-slate-700">
                   {currentTenant.cageCode}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
               <span className="text-slate-400">•</span>
               <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
@@ -165,11 +165,11 @@ export const TenantSwitcher: React.FC = () => {
               <span className="text-xs font-bold text-white tracking-tight max-w-[140px] md:max-w-[180px] truncate">
                 {currentTenant.name}
               </span>
-              <span className="text-[10px] font-mono px-1 rounded bg-slate-900/80 text-brand-300 border border-slate-700">
+              <span className="text-xs font-mono px-1 rounded bg-slate-900/80 text-brand-300 border border-slate-700">
                 {currentTenant.cageCode || 'CAGE'}
               </span>
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
               <span className="text-slate-400">•</span>
               <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
@@ -188,7 +188,7 @@ export const TenantSwitcher: React.FC = () => {
                   <Layers className="w-3.5 h-3.5 text-brand-400" />
                   Client Organizations ({tenants.length})
                 </span>
-                <span className="text-[10px] text-slate-400 font-mono">
+                <span className="text-xs text-slate-400 font-mono">
                   {isSandboxMode ? 'Sandbox Enclaves' : 'Isolated Data Boundaries'}
                 </span>
               </div>
@@ -201,7 +201,7 @@ export const TenantSwitcher: React.FC = () => {
                   placeholder="Search by company name or CAGE..."
                   value={searchFilter}
                   onChange={e => setSearchFilter(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
               </div>
             </div>
@@ -228,13 +228,13 @@ export const TenantSwitcher: React.FC = () => {
                         </span>
                         {isActive && <Check className="w-3.5 h-3.5 text-brand-400 shrink-0" />}
                       </div>
-                      <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
                         <span className="font-mono text-slate-300 bg-slate-800 px-1 rounded">
                           CAGE: {t.cageCode || 'PENDING'}
                         </span>
                         {getSamBadge(t.samStatus)}
                       </div>
-                      <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                      <p className="text-xs text-slate-400 truncate mt-0.5">
                         {t.systemName}
                       </p>
                     </div>
@@ -277,10 +277,10 @@ export const TenantSwitcher: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-white">Add New Client Enclave</h3>
-                  <p className="text-[11px] text-slate-400">Create a partitioned multi-tenant boundary for a DoD contractor</p>
+                  <p className="text-xs text-slate-400">Create a partitioned multi-tenant boundary for a DoD contractor</p>
                 </div>
               </div>
-              <button
+              <button aria-label="Close"
                 onClick={closeCreateModal}
                 disabled={isCreating}
                 className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
@@ -300,7 +300,7 @@ export const TenantSwitcher: React.FC = () => {
                   placeholder="e.g. Apex Defense Solutions, LLC"
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
@@ -315,7 +315,7 @@ export const TenantSwitcher: React.FC = () => {
                     placeholder="e.g. 9X7B4"
                     value={newCage}
                     onChange={e => setNewCage(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 font-mono focus:outline-none focus:border-brand-500"
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 font-mono focus:outline-none focus:border-brand-500"
                   />
                 </div>
                 <div>
@@ -344,7 +344,7 @@ export const TenantSwitcher: React.FC = () => {
                   placeholder="e.g. Corporate Operations Enclave (COE)"
                   value={newSystemName}
                   onChange={e => setNewSystemName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
@@ -357,7 +357,7 @@ export const TenantSwitcher: React.FC = () => {
                   placeholder="e.g. Cyber Ops Administrator"
                   value={newSystemOwner}
                   onChange={e => setNewSystemOwner(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
               </div>
 
@@ -370,7 +370,7 @@ export const TenantSwitcher: React.FC = () => {
                   placeholder="e.g. Aerospace Hardware & R&D"
                   value={newIndustry}
                   onChange={e => setNewIndustry(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
               </div>
 

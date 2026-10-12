@@ -250,7 +250,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 <h2 className="text-lg font-extrabold text-white tracking-tight">
                   Compliance Documentation & Artifact Export Center
                 </h2>
-                <span className="badge px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                <span className="badge px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
                   {frameworkDef.shortName}
                 </span>
               </div>
@@ -260,7 +260,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             </div>
           </div>
 
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-xl transition-colors"
           >
@@ -287,7 +287,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 >
                   <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-slate-400'}`} />
                   <span>{opt.label}</span>
-                  <span className={`badge text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                  <span className={`badge text-xs px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
                     isSelected ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
                   }`}>
                     {opt.badge}
@@ -342,7 +342,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-300" />
               <span>SPRS / eMASS</span>
-              <span className={`badge text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+              <span className={`badge text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
                 sprsResult.score === null
                   ? 'bg-amber-500/20 text-amber-300'
                   : sprsResult.score >= 0
@@ -366,7 +366,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <div className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-6">
                 <div className="border-b border-brand-500/30 pb-4">
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <span className="badge px-2.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase">
+                    <span className="badge px-2.5 py-0.5 rounded-md text-xs font-mono font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase">
                       {formData.classificationLevel}
                     </span>
                     <span className="text-xs text-slate-400">
@@ -384,27 +384,27 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 {/* System Metadata Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 p-4 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs">
                   <div>
-                    <span className="text-slate-500 font-semibold block uppercase text-[10px]">System Name</span>
+                    <span className="text-slate-400 font-semibold block uppercase text-xs">System Name</span>
                     <span className="text-white font-medium">{formData.systemName}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 font-semibold block uppercase text-[10px]">Governing Entity</span>
+                    <span className="text-slate-400 font-semibold block uppercase text-xs">Governing Entity</span>
                     <span className="text-white font-medium">{formData.organizationName}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 font-semibold block uppercase text-[10px]">CAGE Code / SAM</span>
+                    <span className="text-slate-400 font-semibold block uppercase text-xs">CAGE Code / SAM</span>
                     <span className="text-brand-300 font-mono">{formData.cageCode} • {formData.samStatus}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 font-semibold block uppercase text-[10px]">System Owner</span>
+                    <span className="text-slate-400 font-semibold block uppercase text-xs">System Owner</span>
                     <span className="text-white font-medium">{formData.systemOwner}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 font-semibold block uppercase text-[10px]">Lead Assessor</span>
+                    <span className="text-slate-400 font-semibold block uppercase text-xs">Lead Assessor</span>
                     <span className="text-white font-medium">{formData.primaryAssessor}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 font-semibold block uppercase text-[10px]">Operational Status</span>
+                    <span className="text-slate-400 font-semibold block uppercase text-xs">Operational Status</span>
                     <span className="text-emerald-400 font-medium">{formData.operationalStatus}</span>
                   </div>
                 </div>
@@ -453,7 +453,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     {sec.table && (
                       <div className="overflow-x-auto rounded-xl border border-slate-800">
                         <table className="w-full text-left text-xs">
-                          <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase tracking-wider border-b border-slate-800">
+                          <thead className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-800">
                             <tr>
                               {sec.table.headers.map((h, i) => (
                                 <th key={i} className="p-2.5 font-semibold">{h}</th>
@@ -497,7 +497,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
                                 {sub.items.map((item, iIdx) => (
                                   <div key={iIdx} className="flex justify-between gap-2 border-b border-slate-800/60 pb-1">
-                                    <span className="text-slate-500 font-medium">{item.label}:</span>
+                                    <span className="text-slate-400 font-medium">{item.label}:</span>
                                     <span className="text-slate-200 font-semibold">{item.value}</span>
                                   </div>
                                 ))}
@@ -506,7 +506,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                             {sub.table && (
                               <div className="overflow-x-auto rounded-lg border border-slate-800 mt-2">
-                                <table className="w-full text-left text-[11px]">
+                                <table className="w-full text-left text-xs">
                                   <thead className="bg-slate-900 text-slate-400 uppercase tracking-wider border-b border-slate-800">
                                     <tr>
                                       {sub.table.headers.map((h, i) => (
@@ -752,7 +752,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 <div className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-900 shadow-xl">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                      <thead className="bg-slate-950 text-slate-400 uppercase text-xs tracking-wider border-b border-slate-800">
                         <tr>
                           <th className="p-3">Weakness ID</th>
                           <th className="p-3">Control</th>
@@ -771,13 +771,13 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                             </td>
                             <td className="p-3">
                               <div className="font-bold text-white">{entry.controlId}</div>
-                              <div className="text-[11px] text-slate-400 truncate max-w-[140px]">{entry.controlTitle}</div>
+                              <div className="text-xs text-slate-400 truncate max-w-[140px]">{entry.controlTitle}</div>
                             </td>
                             <td className="p-3 text-slate-300 max-w-xs">
                               {entry.weaknessDescription}
                             </td>
                             <td className="p-3">
-                              <span className={`badge px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              <span className={`badge px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${
                                 entry.status === 'IN_PROGRESS'
                                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                                   : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
@@ -791,7 +791,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                             <td className="p-3 text-slate-300">
                               {entry.responsibleRole}
                             </td>
-                            <td className="p-3 text-slate-400 text-[11px]">
+                            <td className="p-3 text-slate-400 text-xs">
                               {entry.requiredResources}
                             </td>
                           </tr>
@@ -814,10 +814,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="badge px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
+                      <span className="badge px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
                         DFARS 252.204-7019 / 7020
                       </span>
-                      <span className="badge px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-400 bg-slate-800">
+                      <span className="badge px-2 py-0.5 rounded-full text-xs font-mono text-slate-400 bg-slate-800">
                         NIST SP 800-171 Rev 2
                       </span>
                     </div>
@@ -832,7 +832,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   {/* Primary Score Pill */}
                   <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center gap-4 text-right sm:text-center">
                     <div>
-                      <span className="text-[10px] font-mono uppercase text-slate-500 block">SPRS Score</span>
+                      <span className="text-xs font-mono uppercase text-slate-400 block">SPRS Score</span>
                       <span className={`${sprsResult.score === null ? 'text-2xl' : 'text-3xl'} font-black font-mono tracking-tight ${
                         sprsResult.score === null
                           ? 'text-amber-400'
@@ -849,7 +849,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     </div>
                     <div className="h-10 w-px bg-slate-800" />
                     <div>
-                      <span className="text-[10px] font-mono uppercase text-slate-500 block">Maximum</span>
+                      <span className="text-xs font-mono uppercase text-slate-400 block">Maximum</span>
                       <span className="text-3xl font-black font-mono text-slate-400">/ 110</span>
                     </div>
                   </div>
@@ -858,24 +858,24 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 {/* Score Breakdown Metrics Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Evaluated Controls</span>
+                    <span className="text-xs uppercase font-bold text-slate-400 block">Evaluated Controls</span>
                     <span className="text-xl font-extrabold text-white font-mono mt-0.5 block">{sprsResult.totalControls}</span>
-                    <span className="text-[10px] text-slate-400">Total Requirements</span>
+                    <span className="text-xs text-slate-400">Total Requirements</span>
                   </div>
                   <div className="p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 text-center">
-                    <span className="text-[10px] uppercase font-bold text-emerald-400 block">Implemented</span>
+                    <span className="text-xs uppercase font-bold text-emerald-400 block">Implemented</span>
                     <span className="text-xl font-extrabold text-emerald-400 font-mono mt-0.5 block">{sprsResult.metCount}</span>
-                    <span className="text-[10px] text-emerald-300">0 Point Deductions</span>
+                    <span className="text-xs text-emerald-300">0 Point Deductions</span>
                   </div>
                   <div className="p-3.5 rounded-xl bg-amber-950/20 border border-amber-500/30 text-center">
-                    <span className="text-[10px] uppercase font-bold text-amber-400 block">In Progress</span>
+                    <span className="text-xs uppercase font-bold text-amber-400 block">In Progress</span>
                     <span className="text-xl font-extrabold text-amber-400 font-mono mt-0.5 block">{sprsResult.inProgressCount}</span>
-                    <span className="text-[10px] text-amber-300">POA&M Remediation</span>
+                    <span className="text-xs text-amber-300">POA&M Remediation</span>
                   </div>
                   <div className="p-3.5 rounded-xl bg-rose-950/20 border border-rose-500/30 text-center">
-                    <span className="text-[10px] uppercase font-bold text-rose-400 block">Total Deductions</span>
+                    <span className="text-xs uppercase font-bold text-rose-400 block">Total Deductions</span>
                     <span className="text-xl font-extrabold text-rose-400 font-mono mt-0.5 block">-{sprsResult.totalDeductions}</span>
-                    <span className="text-[10px] text-rose-300">Points Subtracted</span>
+                    <span className="text-xs text-rose-300">Points Subtracted</span>
                   </div>
                 </div>
 
@@ -889,19 +889,19 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-rose-400">Critical 5-Point Deductions</span>
-                        <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
+                        <span className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
                           {sprsResult.deductionsByWeight.fivePoint.length} Controls
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         High-impact basic requirements (access control, cryptography, MFA, boundary firewalls).
                       </p>
                       <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pt-1">
                         {sprsResult.deductionsByWeight.fivePoint.length === 0 ? (
-                          <span className="text-[10px] text-emerald-400 font-mono">None (100% Satisfied)</span>
+                          <span className="text-xs text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.fivePoint.map(id => (
-                            <span key={id} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20">
+                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20">
                               {id}
                             </span>
                           ))
@@ -913,19 +913,19 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-amber-400">Intermediate 3-Point Deductions</span>
-                        <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                        <span className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
                           {sprsResult.deductionsByWeight.threePoint.length} Controls
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         Derived requirements (audit log review, configuration control, password complexity).
                       </p>
                       <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pt-1">
                         {sprsResult.deductionsByWeight.threePoint.length === 0 ? (
-                          <span className="text-[10px] text-emerald-400 font-mono">None (100% Satisfied)</span>
+                          <span className="text-xs text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.threePoint.map(id => (
-                            <span key={id} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
                               {id}
                             </span>
                           ))
@@ -937,19 +937,19 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-300">Standard 1-Point Deductions</span>
-                        <span className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
+                        <span className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
                           {sprsResult.deductionsByWeight.onePoint.length} Controls
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                      <p className="text-xs text-slate-400 leading-relaxed">
                         Procedural specifications (visitor logs, training records, physical access badges).
                       </p>
                       <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pt-1">
                         {sprsResult.deductionsByWeight.onePoint.length === 0 ? (
-                          <span className="text-[10px] text-emerald-400 font-mono">None (100% Satisfied)</span>
+                          <span className="text-xs text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.onePoint.map(id => (
-                            <span key={id} className="badge text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                               {id}
                             </span>
                           ))

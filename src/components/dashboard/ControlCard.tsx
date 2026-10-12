@@ -28,6 +28,7 @@ import { getControlImpactBadge } from '../../data/frameworks';
 import { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
 import { FailingAssetInfo } from '../../types/telemetry';
 
+import { activateOnKey } from '../../utils/a11y';
 interface ControlCardProps {
   control: FrameworkControlDefinition;
   domainInfo: DomainInfo | FrameworkDomainInfo | any;
@@ -114,7 +115,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     const badge = getControlImpactBadge(weight);
     return (
       <span
-        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono uppercase tracking-wider font-bold ${badge.badgeClass}`}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-mono uppercase tracking-wider font-bold ${badge.badgeClass}`}
         title={`SPRS Assessment Impact: ${weight} Point Deduction under DoD NIST SP 800-171`}
       >
         <span className={`w-1.5 h-1.5 rounded-full ${badge.dotClass}`} />
@@ -230,14 +231,14 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             </span>
 
             {/* Authority Reference */}
-            <span className="text-[11px] font-mono text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
+            <span className="text-xs font-mono text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
               {control.authorityReference || control.farReference || 'Baseline'}
             </span>
 
             {/* Baseline Impact Tag */}
             {control.baselineImpact && (
               <span
-                className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border shadow-sm ${
+                className={`text-xs font-mono font-bold px-2 py-0.5 rounded border shadow-sm ${
                   control.baselineImpact === 'LOW'
                     ? 'bg-cyan-950/70 text-cyan-300 border-cyan-500/40'
                     : control.baselineImpact === 'MODERATE'
@@ -266,12 +267,12 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
           {/* Tactical Telemetry Warning Banner (Per-Asset Root-Cause Analysis) */}
           {hasFailingAssets && (
-            <div
+            <button type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setIsAssetDrawerOpen(true);
               }}
-              className="group flex items-center justify-between px-3.5 py-2 rounded-xl bg-gradient-to-r from-rose-950/60 via-amber-950/40 to-slate-900 border border-rose-500/40 hover:border-rose-400 cursor-pointer transition-all shadow-sm shadow-rose-950/40 mt-1.5"
+              className="w-full text-left group flex items-center justify-between px-3.5 py-2 rounded-xl bg-gradient-to-r from-rose-950/60 via-amber-950/40 to-slate-900 border border-rose-500/40 hover:border-rose-400 cursor-pointer transition-all shadow-sm shadow-rose-950/40 mt-1.5"
             >
               <div className="flex items-center gap-2.5">
                 <span className="p-1 rounded-lg bg-rose-500/20 text-rose-400">
@@ -281,7 +282,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                   <span className="text-xs font-bold text-rose-200 group-hover:text-white transition-colors">
                     ⚠️ {failingAssets.length} of 4 Endpoints Non-Compliant
                   </span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-500/30">
+                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-500/30">
                     DISA STIG Telemetry
                   </span>
                 </div>
@@ -291,24 +292,24 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                 <span>Open Root-Cause Drawer</span>
                 <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
               </div>
-            </div>
+            </button>
           )}
 
           {/* Cross-Framework Mappings (Inheritance Bridges) */}
           {control.mappings && control.mappings.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-              <span className="text-[10px] font-mono font-semibold text-slate-400 uppercase">Equivalencies:</span>
+              <span className="text-xs font-mono font-semibold text-slate-400 uppercase">Equivalencies:</span>
               {control.mappings.slice(0, 4).map((m, idx) => (
                 <span
                   key={idx}
                   title={`${m.targetFramework}: ${m.targetTitle || m.targetControlId}`}
-                  className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950/50 text-indigo-300 border border-indigo-500/30"
+                  className="text-xs font-mono px-2 py-0.5 rounded bg-indigo-950/50 text-indigo-300 border border-indigo-500/30"
                 >
                   {m.targetControlId}
                 </span>
               ))}
               {control.mappings.length > 4 && (
-                <span className="text-[10px] text-slate-400 font-mono">+{control.mappings.length - 4} more</span>
+                <span className="text-xs text-slate-400 font-mono">+{control.mappings.length - 4} more</span>
               )}
             </div>
           )}
@@ -339,7 +340,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                   e.stopPropagation();
                   handleOpenDetail();
                 }}
-                className="flex items-center gap-1 font-mono text-[11px] px-2.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-500/35 hover:border-cyan-400 cursor-pointer transition-colors shadow-sm"
+                className="flex items-center gap-1 font-mono text-xs px-2.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-500/35 hover:border-cyan-400 cursor-pointer transition-colors shadow-sm"
                 title={`${mappedStigRules.length} DISA STIG technical rules mapped to this control requirement`}
               >
                 <Terminal className="w-3 h-3 text-cyan-400" />
@@ -438,9 +439,9 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               value={notes}
               onChange={(e) => updateControlNotes(control.id, e.target.value)}
               placeholder={`Describe how ${currentTenant.name} enforces this practice (e.g. policies, technical configurations, endpoint controls)...`}
-              className="w-full p-3.5 rounded-xl bg-slate-900 border border-slate-700/80 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs sm:text-sm text-slate-100 placeholder-slate-500 leading-relaxed font-sans transition-all duration-200 disabled:opacity-60 resize-y"
+              className="w-full p-3.5 rounded-xl bg-slate-900 border border-slate-700/80 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs sm:text-sm text-slate-100 placeholder-slate-400 leading-relaxed font-sans transition-all duration-200 disabled:opacity-60 resize-y"
             />
-            <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+            <div className="flex items-center justify-between text-xs text-slate-400 px-1">
               <span>FAR 52.204-21 audit evidence reference</span>
               <span className="font-mono">{notes.length} characters</span>
             </div>
@@ -453,11 +454,11 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                 <Paperclip className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Audit Evidence Drop-Zone ({evidenceCount} attached)</span>
               </span>
-              <span className="text-[11px] text-slate-400">SHA-256 Validated • GCS Vault</span>
+              <span className="text-xs text-slate-400">SHA-256 Validated • GCS Vault</span>
             </div>
 
             {canEdit ? (
-              <div
+              <div role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label="Upload evidence files: drop files here or press Enter to browse"
                 onDragOver={handleDragOver}
                 onDragEnter={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -497,7 +498,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                         ? 'Drop Files to Attach as Evidence'
                         : 'Drag & Drop Evidence Files Here or Click to Browse'}
                     </p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-400 mt-0.5">
                       Supports screenshots, PDFs, configuration exports, and audit reports.
                     </p>
                   </div>
@@ -525,7 +526,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                         <Paperclip className={`w-3.5 h-3.5 shrink-0 ${isInherited ? 'text-indigo-400' : 'text-cyan-400'}`} />
                         <div className="min-w-0">
                           <p className="font-semibold text-white truncate text-xs">{item.name}</p>
-                          <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
+                          <div className="flex items-center gap-1 text-xs text-slate-400 font-mono">
                             <span>{Math.round(item.fileSize / 1024)} KB</span>
                             <span>•</span>
                             {isInherited ? (
@@ -545,7 +546,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                         <button
                           onClick={() => handleCopyHash(item.fileHash!)}
                           title="Copy SHA-256"
-                          className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-750 text-[10px] font-mono text-slate-300 flex items-center gap-1 border border-slate-700 shrink-0"
+                          className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-750 text-xs font-mono text-slate-300 flex items-center gap-1 border border-slate-700 shrink-0"
                         >
                           {copiedHash === item.fileHash ? (
                             <Check className="w-2.5 h-2.5 text-emerald-400" />

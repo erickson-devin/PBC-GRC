@@ -92,7 +92,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                 >
                   <Building className="w-3.5 h-3.5" />
                   <span>Vanguard Defense (100% MET)</span>
-                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200 text-[10px]">17/17</span>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200 text-xs">17/17</span>
                 </button>
 
                 <button
@@ -105,7 +105,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                 >
                   <Building className="w-3.5 h-3.5" />
                   <span>Apex Aerospace (59% MET)</span>
-                  <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200 text-[10px]">10/17</span>
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200 text-xs">10/17</span>
                 </button>
               </div>
 
@@ -190,22 +190,22 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-mono font-bold text-brand-400">{ctrl.id}</span>
-                              <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                              <span className="text-xs uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
                                 {ctrl.domain}
                               </span>
                             </div>
                             <h4 className="text-xs font-semibold text-slate-200 line-clamp-1">{ctrl.title}</h4>
-                            <p className="text-[11px] text-slate-400 line-clamp-1">{ctrl.plainEnglishSummary}</p>
+                            <p className="text-xs text-slate-400 line-clamp-1">{ctrl.plainEnglishSummary}</p>
                           </div>
 
                           <div className="shrink-0">
                             {isMet ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                                 <CheckCircle2 className="w-3 h-3" />
                                 MET
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                 <AlertTriangle className="w-3 h-3" />
                                 IN PROGRESS
                               </span>
@@ -234,7 +234,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                   <div className="pb-3 border-b border-slate-800 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-white text-sm">SYSTEM SECURITY PLAN (SSP)</div>
-                      <div className="text-slate-400 text-[11px]">CMMC Level 1 / FAR 52.204-21 Compliant Enclave</div>
+                      <div className="text-slate-400 text-xs">CMMC Level 1 / FAR 52.204-21 Compliant Enclave</div>
                     </div>
                     <button 
                       onClick={() => onLaunchFullApp(currentOrg.id)}
@@ -245,7 +245,7 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                     </button>
                   </div>
 
-                  <div className="space-y-2 text-[11px] leading-relaxed">
+                  <div className="space-y-2 text-xs leading-relaxed">
                     <p><strong className="text-brand-400">ORGANIZATION:</strong> {currentOrg.name}</p>
                     <p><strong className="text-brand-400">CAGE CODE:</strong> {currentOrg.cageCode} | <strong className="text-brand-400">STATUS:</strong> Active (SAM.gov)</p>
                     <p><strong className="text-brand-400">SYSTEM BOUNDARY:</strong> {currentOrg.systemName} encompasses Microsoft 365 GCC/Commercial, Google Cloud Storage Evidence Enclave, and corporate endpoints.</p>
@@ -283,14 +283,14 @@ export const InteractiveSandbox: React.FC<InteractiveSandboxProps> = ({ onLaunch
                             <Lock className="w-3.5 h-3.5 text-brand-400 shrink-0" />
                             <span className="truncate">{item.name}</span>
                           </div>
-                          <div className="text-[10px] font-mono text-slate-400 flex items-center gap-2">
+                          <div className="text-xs font-mono text-slate-400 flex items-center gap-2">
                             <span>{item.size}</span>
                             <span>•</span>
                             <span className="text-purple-400">SHA-256: {item.hash.substring(0, 16)}...</span>
                           </div>
                         </div>
 
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 shrink-0">
+                        <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 shrink-0">
                           GCS Verified
                         </span>
                       </div>

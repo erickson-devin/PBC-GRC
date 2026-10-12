@@ -154,7 +154,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
       {/* Click outside backdrop */}
-      <div className="absolute inset-0" onClick={onClose} />
+      <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
       <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-6 max-h-[90vh] overflow-y-auto">
         
@@ -167,7 +167,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-black text-white">Event Horizon: Accretion</h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
                   NETWORK DISCOVERY API
                 </span>
               </div>
@@ -177,7 +177,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
             </div>
           </div>
 
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
@@ -225,12 +225,12 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>Accretion Telemetry Ingestion Complete</span>
             </div>
-            <div className="grid grid-cols-3 gap-2 text-slate-300 font-mono text-[11px] pt-1">
+            <div className="grid grid-cols-3 gap-2 text-slate-300 font-mono text-xs pt-1">
               <div>Total Processed: <strong>{simulationResult.totalProcessed}</strong></div>
               <div>New Discovered: <strong className="text-amber-400">{simulationResult.newDiscoveredCount}</strong></div>
               <div>Deduplicated: <strong className="text-cyan-400">{simulationResult.updatedExistingCount}</strong></div>
             </div>
-            <p className="text-[10px] text-emerald-400/80 font-mono pt-1 truncate">
+            <p className="text-xs text-emerald-400/80 font-mono pt-1 truncate">
               Cryptographic Digest: {simulationResult.auditHash}
             </p>
           </div>
@@ -243,7 +243,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               <Terminal className="w-4 h-4 text-cyan-400" />
               <span>REST Webhook Ingestion Endpoint</span>
             </span>
-            <span className="text-[10px] font-mono text-slate-400">POST (JSON)</span>
+            <span className="text-xs font-mono text-slate-400">POST (JSON)</span>
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -271,7 +271,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
             </span>
             <button
               onClick={() => setShowSecret(!showSecret)}
-              className="text-[11px] text-slate-400 hover:text-white"
+              className="text-xs text-slate-400 hover:text-white"
             >
               {showSecret ? 'Hide Key' : 'Reveal Key'}
             </button>
@@ -300,10 +300,10 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               {confirmRotate ? <span>Confirm: sensors must be re-keyed</span> : <RotateCcw className="w-4 h-4" />}
             </button>
           </div>
-          <p className="text-[11px] text-amber-300/90">
+          <p className="text-xs text-amber-300/90">
             Sensor API keys are not accepted by the server yet: the endpoint above currently needs a signed-in Tenant Owner / MSP Admin session token.
           </p>
-          <p className="text-[11px] text-slate-400">
+          <p className="text-xs text-slate-400">
             Pass in HTTP Header: <code className="text-cyan-400">Authorization: Bearer {config.secretKey.slice(0, 14)}...</code>
           </p>
         </div>
@@ -315,7 +315,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               <Code className="w-4 h-4 text-violet-400" />
               <span>Accretion Webhook Integration Snippet</span>
             </span>
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[11px]">
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
               {(['curl', 'python', 'json'] as const).map(tab => (
                 <button
                   key={tab}
@@ -338,12 +338,12 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
                 const text = selectedSnippetTab === 'curl' ? curlSnippet : selectedSnippetTab === 'python' ? pythonSnippet : jsonSnippet;
                 handleCopy(text, 'snippet');
               }}
-              className="absolute right-3 top-3 p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] flex items-center gap-1"
+              className="absolute right-3 top-3 p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs flex items-center gap-1"
             >
               {copiedField === 'snippet' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
               <span>{copiedField === 'snippet' ? 'Copied' : 'Copy Code'}</span>
             </button>
-            <pre className="text-[11px] text-slate-300">
+            <pre className="text-xs text-slate-300">
               {selectedSnippetTab === 'curl' && curlSnippet}
               {selectedSnippetTab === 'python' && pythonSnippet}
               {selectedSnippetTab === 'json' && jsonSnippet}

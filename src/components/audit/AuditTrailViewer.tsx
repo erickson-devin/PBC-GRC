@@ -129,10 +129,10 @@ export const AuditTrailViewer: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-800 shadow-xl">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">
               NIST SP 800-171 3.3
             </span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-400 bg-slate-800 border border-slate-700">
+            <span className="px-2 py-0.5 rounded-full text-xs font-mono text-slate-400 bg-slate-800 border border-slate-700">
               DFARS 252.204-7012
             </span>
           </div>
@@ -196,7 +196,7 @@ export const AuditTrailViewer: React.FC = () => {
                       : 'TAMPER DETECTION ALERT: HASH CHAIN BROKEN'}
                   </h3>
                   <span
-                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
+                    className={`text-xs font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
                       verification.isValid
                         ? 'bg-emerald-500/20 text-emerald-300'
                         : 'bg-rose-500/20 text-rose-300'
@@ -214,15 +214,15 @@ export const AuditTrailViewer: React.FC = () => {
             </div>
 
             {/* Cryptographic Hashes Overview */}
-            <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono">
+            <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
               <div className="p-2 rounded-xl bg-slate-900/90 border border-slate-800 space-y-0.5">
-                <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Genesis Root Hash</span>
+                <span className="text-xs uppercase tracking-wider text-slate-400 block">Genesis Root Hash</span>
                 <span className="text-cyan-400 font-bold truncate block max-w-[140px]" title={verification.rootHash}>
                   {verification.rootHash.substring(0, 16)}...
                 </span>
               </div>
               <div className="p-2 rounded-xl bg-slate-900/90 border border-slate-800 space-y-0.5">
-                <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Head Block Hash</span>
+                <span className="text-xs uppercase tracking-wider text-slate-400 block">Head Block Hash</span>
                 <span className="text-emerald-400 font-bold truncate block max-w-[140px]" title={verification.headHash}>
                   {verification.headHash.substring(0, 16)}...
                 </span>
@@ -241,7 +241,7 @@ export const AuditTrailViewer: React.FC = () => {
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search control ID, actor, or hash..."
-            className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+            className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
           />
         </div>
 
@@ -305,7 +305,7 @@ export const AuditTrailViewer: React.FC = () => {
       <div className="rounded-2xl border border-slate-800/90 overflow-hidden bg-slate-950/70 shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-900/90 border-b border-slate-800 text-[11px] font-mono text-slate-400 uppercase tracking-wider">
+            <thead className="bg-slate-900/90 border-b border-slate-800 text-xs font-mono text-slate-400 uppercase tracking-wider">
               <tr>
                 <th className="py-3 px-4"># Sequence</th>
                 <th className="py-3 px-4">Timestamp (UTC)</th>
@@ -329,7 +329,7 @@ export const AuditTrailViewer: React.FC = () => {
                     <td className="py-3 px-4 font-mono font-bold text-cyan-400">
                       #{String(entry.sequenceNumber).padStart(4, '0')}
                     </td>
-                    <td className="py-3 px-4 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                    <td className="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">
                       {new Date(entry.timestamp).toLocaleString()}
                     </td>
                     <td className="py-3 px-4">
@@ -337,19 +337,19 @@ export const AuditTrailViewer: React.FC = () => {
                         <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span className="truncate">{entry.actorEmail}</span>
                       </div>
-                      <span className="text-[10px] text-slate-400 block font-mono">
+                      <span className="text-xs text-slate-400 block font-mono">
                         {entry.actorRole || 'Operator'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${getActionBadge(entry.actionType)}`}>
+                      <span className={`px-2 py-0.5 rounded-full border text-xs font-bold uppercase tracking-wider ${getActionBadge(entry.actionType)}`}>
                         {entry.actionType.replace(/_/g, ' ')}
                       </span>
                     </td>
                     <td className="py-3 px-4 font-mono font-medium text-slate-200 max-w-[200px] truncate">
                       {entry.targetEntity}
                     </td>
-                    <td className="py-3 px-4 font-mono text-[11px]">
+                    <td className="py-3 px-4 font-mono text-xs">
                       <div className="flex items-center gap-1.5 text-slate-400 hover:text-white">
                         <span className="truncate max-w-[100px] text-emerald-400/90 font-semibold" title={entry.sha256Hash}>
                           {entry.sha256Hash.substring(0, 8)}...{entry.sha256Hash.substring(58)}
@@ -397,12 +397,12 @@ export const AuditTrailViewer: React.FC = () => {
                   <h3 className="text-base font-black text-white">
                     Audit Block #{selectedEntry.sequenceNumber}
                   </h3>
-                  <span className="text-[10px] font-mono text-slate-400">
+                  <span className="text-xs font-mono text-slate-400">
                     ID: {selectedEntry.id}
                   </span>
                 </div>
               </div>
-              <button
+              <button aria-label="Close"
                 onClick={() => setSelectedEntry(null)}
                 className="w-8 h-8 rounded-full bg-slate-900 border border-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
               >
@@ -412,31 +412,31 @@ export const AuditTrailViewer: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
-                <span className="text-slate-400 text-[10px] font-mono uppercase">Actor Email</span>
+                <span className="text-slate-400 text-xs font-mono uppercase">Actor Email</span>
                 <p className="font-semibold text-white">{selectedEntry.actorEmail}</p>
               </div>
               <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
-                <span className="text-slate-400 text-[10px] font-mono uppercase">Timestamp (UTC)</span>
+                <span className="text-slate-400 text-xs font-mono uppercase">Timestamp (UTC)</span>
                 <p className="font-mono text-slate-200">{selectedEntry.timestamp}</p>
               </div>
               <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
-                <span className="text-slate-400 text-[10px] font-mono uppercase">Action Type</span>
+                <span className="text-slate-400 text-xs font-mono uppercase">Action Type</span>
                 <p className="font-bold text-cyan-400">{selectedEntry.actionType}</p>
               </div>
               <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
-                <span className="text-slate-400 text-[10px] font-mono uppercase">Target Entity</span>
+                <span className="text-slate-400 text-xs font-mono uppercase">Target Entity</span>
                 <p className="font-mono text-slate-200 truncate">{selectedEntry.targetEntity}</p>
               </div>
             </div>
 
             {/* Cryptographic Linkage Block */}
-            <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 font-mono text-[11px]">
+            <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 font-mono text-xs">
               <div>
-                <span className="text-slate-400 text-[10px] uppercase block">Previous Hash (Parent Block Pointer)</span>
+                <span className="text-slate-400 text-xs uppercase block">Previous Hash (Parent Block Pointer)</span>
                 <span className="text-slate-300 break-all">{selectedEntry.previousHash}</span>
               </div>
               <div>
-                <span className="text-slate-400 text-[10px] uppercase block">Current Block SHA-256 Digest</span>
+                <span className="text-slate-400 text-xs uppercase block">Current Block SHA-256 Digest</span>
                 <span className="text-emerald-400 break-all font-bold">{selectedEntry.sha256Hash}</span>
               </div>
             </div>
@@ -445,7 +445,7 @@ export const AuditTrailViewer: React.FC = () => {
             {(selectedEntry.previousState !== undefined || selectedEntry.newState !== undefined) && (
               <div className="space-y-2">
                 <span className="text-xs font-semibold text-slate-300">State Mutation Payload:</span>
-                <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
                   <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800">
                     <span className="text-rose-400 font-bold block mb-1">Previous State</span>
                     <pre className="text-slate-300 overflow-x-auto whitespace-pre-wrap">
@@ -465,7 +465,7 @@ export const AuditTrailViewer: React.FC = () => {
             {selectedEntry.metadata && Object.keys(selectedEntry.metadata).length > 0 && (
               <div>
                 <span className="text-xs font-semibold text-slate-300">Operational Metadata:</span>
-                <pre className="mt-1 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto">
+                <pre className="mt-1 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300 overflow-x-auto">
                   {JSON.stringify(selectedEntry.metadata, null, 2)}
                 </pre>
               </div>

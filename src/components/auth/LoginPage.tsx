@@ -78,16 +78,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       {/* Top Bar */}
       <header className="px-6 py-4 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md flex items-center justify-between z-10">
-        <div 
+        <button type="button" 
           onClick={onExitToLanding}
-          className="flex items-center gap-2.5 cursor-pointer group"
+          className="text-left flex items-center gap-2.5 cursor-pointer group"
         >
           <BrandLogo size="sm" />
           <div>
             <span className="font-extrabold text-sm text-white tracking-tight">Event Horizon: Singularity</span>
-            <span className="text-[10px] text-cyan-400 block font-mono">Pitch Black Cyber</span>
+            <span className="text-xs text-cyan-400 block font-mono">Pitch Black Cyber</span>
           </div>
-        </div>
+        </button>
 
         {onExitToLanding && (
           <button
@@ -110,7 +110,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <div className="flex justify-center mb-2">
                 <BrandLogo size="lg" showText={false} />
               </div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-[10px] font-bold uppercase tracking-widest text-cyan-300">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-xs font-bold uppercase tracking-widest text-cyan-300">
                 <Lock className="w-3 h-3 text-cyan-400" />
                 CMMC 2.0 Level 1 Enclave
               </div>
@@ -176,7 +176,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     </svg>
                     <span className="font-bold">Sign in with Microsoft 365</span>
                   </div>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
+                  <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
                     Entra ID
                   </span>
                 </button>
@@ -196,7 +196,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     </svg>
                     <span className="font-bold">Sign in with Google Workspace</span>
                   </div>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
+                  <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
                     SSO
                   </span>
                 </button>
@@ -212,7 +212,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="auditor@defense-audit.org"
-                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
                 <button
                   type="submit"
@@ -233,7 +233,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="contractor@defense.com"
-                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
                 <input
                   type="password"
@@ -241,7 +241,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                 />
                 <button
                   type="submit"
@@ -257,14 +257,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <div className="mt-6 pt-5 border-t border-slate-800 text-xs">
               <div className="p-3 rounded-2xl bg-brand-950/30 border border-brand-500/20 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-brand-300 font-bold uppercase tracking-wider text-[10px]">
+                  <span className="text-brand-300 font-bold uppercase tracking-wider text-xs">
                     Need Enclave Licensing?
                   </span>
-                  <span className="font-mono text-[10px] text-emerald-400 font-semibold">
+                  <span className="font-mono text-xs text-emerald-400 font-semibold">
                     From $3,500 / yr
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-xs text-slate-400">
                   Acquire an enclave license for your team and schedule an onboarding session with our defense CISO architects.
                 </p>
                 <button
@@ -278,7 +278,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
 
             {/* Demo Presets */}
-            <div className="mt-4 pt-3 border-t border-slate-800 text-[10px]">
+            <div className="mt-4 pt-3 border-t border-slate-800 text-xs">
               <span className="text-slate-400 block mb-1 font-mono">1-Click Test Personas:</span>
               <div className="grid grid-cols-3 gap-1">
                 {PRESET_USERS.map(p => (

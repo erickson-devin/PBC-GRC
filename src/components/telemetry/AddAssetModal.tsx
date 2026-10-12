@@ -143,7 +143,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       {/* Click outside backdrop */}
-      <div className="absolute inset-0" onClick={onClose} />
+      <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
       <div className="relative w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-5">
         
@@ -163,7 +163,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             </div>
           </div>
 
-          <button
+          <button aria-label="Close"
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
@@ -195,7 +195,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   value={hostName}
                   onChange={e => setHostName(e.target.value)}
                   placeholder="e.g. WS-SEC-05"
-                  className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+                  className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
                 />
               </div>
             </div>
@@ -212,7 +212,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   value={ipAddress}
                   onChange={e => setIpAddress(e.target.value)}
                   placeholder="e.g. 10.0.50.35"
-                  className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+                  className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
                 />
               </div>
             </div>
@@ -229,7 +229,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                 value={macAddress}
                 onChange={e => setMacAddress(e.target.value)}
                 placeholder="52:54:00:12:34:56"
-                className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+                className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
               />
             </div>
 
@@ -273,7 +273,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                   }`}
                 >
                   <p className="font-bold text-white text-xs">{CATEGORY_INFO[cat].label}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{CATEGORY_INFO[cat].description}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{CATEGORY_INFO[cat].description}</p>
                 </button>
               ))}
             </div>
@@ -283,7 +283,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
           {isFipsEligibleCategory(cmmcAssetCategory) && (
             <fieldset className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
               <legend className="px-1.5 text-xs font-bold text-cyan-300">Cryptography & FIPS</legend>
-              <p className="text-[10px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 NIST SP 800-171 3.13.11 requires FIPS-validated cryptography to protect CUI. Record the CMVP certificate of the
                 cryptographic module this asset relies on; the policy and the SSP cite it.
               </p>
@@ -344,7 +344,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                         value={fipsCert}
                         onChange={e => setFipsCert(e.target.value)}
                         placeholder="e.g. 4211"
-                        className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+                        className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
                       />
                     </div>
                   )}
@@ -358,7 +358,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                       value={fipsModule}
                       onChange={e => setFipsModule(e.target.value)}
                       placeholder="e.g. CrowdStrike Falcon Cryptographic Module"
-                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
                     />
                   </div>
                 </div>
@@ -376,7 +376,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               value={owner}
               onChange={e => setOwner(e.target.value)}
               placeholder="e.g. IT Operations, or Jordan Lee"
-              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
           </div>
 
@@ -390,7 +390,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               value={notes}
               onChange={e => setNotes(e.target.value)}
               placeholder="e.g. Dell PowerEdge R650, Rack 4 Enclave Node, designated for CUI enclave workloads."
-              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg p-2.5 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg p-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
           </div>
 

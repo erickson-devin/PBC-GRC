@@ -291,7 +291,7 @@ const PolicyLibraryViewContent: React.FC = () => {
               <div>
                 <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
                   <span>Living Policy Library</span>
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-bold">
+                  <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-bold">
                     {activeFamilies.length} FAMILIES
                   </span>
                 </h1>
@@ -329,7 +329,7 @@ const PolicyLibraryViewContent: React.FC = () => {
               <Layers className="w-4 h-4" />
               <span>Active Enclave Architectural Profile</span>
             </span>
-            <span className="font-mono text-[11px] text-slate-400">
+            <span className="font-mono text-xs text-slate-400">
               CAGE: <strong className="text-white">{currentTenant.cageCode || 'N/A'}</strong> &middot;{' '}
               Boundary: <strong className="text-white">{currentTenant.systemName}</strong>
             </span>
@@ -337,55 +337,55 @@ const PolicyLibraryViewContent: React.FC = () => {
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <KeyRound className="w-3 h-3 text-cyan-400" /> Identity (IAM)
               </span>
-              <span className="font-mono font-bold text-white text-[11px] truncate block mt-0.5">
+              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
                 {formatTechName(stack?.identityProvider)}
               </span>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <ShieldAlert className="w-3 h-3 text-indigo-400" /> EDR / XDR
               </span>
-              <span className="font-mono font-bold text-white text-[11px] truncate block mt-0.5">
+              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
                 {formatTechName(stack?.edrSolution)}
               </span>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Cloud className="w-3 h-3 text-blue-400" /> Cloud Boundary
               </span>
-              <span className="font-mono font-bold text-white text-[11px] truncate block mt-0.5">
+              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
                 {formatTechName(stack?.infrastructure)}
               </span>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Smartphone className="w-3 h-3 text-emerald-400" /> MDM / Fleets
               </span>
-              <span className="font-mono font-bold text-white text-[11px] truncate block mt-0.5">
+              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
                 {formatTechName(stack?.mdmSolution)}
               </span>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Activity className="w-3 h-3 text-purple-400" /> SIEM / Logs
               </span>
-              <span className="font-mono font-bold text-white text-[11px] truncate block mt-0.5">
+              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
                 {formatTechName(stack?.siemSolution)}
               </span>
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Sliders className="w-3 h-3 text-amber-400" /> Inactivity Lock
               </span>
-              <span className="font-mono font-bold text-amber-300 text-[11px] truncate block mt-0.5">
+              <span className="font-mono font-bold text-amber-300 text-xs truncate block mt-0.5">
                 {stack?.odpParams?.INACTIVITY_TIMEOUT || '15 min'}
               </span>
             </div>
@@ -400,7 +400,7 @@ const PolicyLibraryViewContent: React.FC = () => {
           <div className="flex items-center justify-between pb-2 border-b border-slate-800">
             <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <span>Control Families</span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
                 {filteredFamilies.length}/{activeFamilies.length}
               </span>
             </h2>
@@ -414,7 +414,7 @@ const PolicyLibraryViewContent: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search families, controls, tech..."
-              className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
+              className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500 transition-colors"
             />
           </div>
 
@@ -445,11 +445,11 @@ const PolicyLibraryViewContent: React.FC = () => {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1">
                       <h4 className="text-xs font-bold truncate">{fam.name}</h4>
-                      <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                      <span className="text-xs font-mono text-slate-400 shrink-0">
                         {fam.controlId}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">
+                    <p className="text-xs text-slate-400 line-clamp-1 mt-0.5">
                       {fam.description}
                     </p>
                   </div>
@@ -620,7 +620,7 @@ const PolicyLibraryViewContent: React.FC = () => {
                                   }
                                 >
                                   {cols.map((col, cIdx) => (
-                                    <td key={cIdx} className="p-2.5 font-mono text-[11px]">
+                                    <td key={cIdx} className="p-2.5 font-mono text-xs">
                                       {col}
                                     </td>
                                   ))}

@@ -141,11 +141,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1">
+                  <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" />
                     SPRS: 17/17 MET (100%)
                   </span>
-                  <span className="hidden sm:inline-block text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                  <span className="hidden sm:inline-block text-xs font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
                     gs://singularity-evidence-prod
                   </span>
                 </div>
@@ -166,15 +166,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <div className="grid grid-cols-3 gap-2 pt-1 text-center">
                     <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800">
                       <div className="text-base font-extrabold text-emerald-400">17</div>
-                      <div className="text-[10px] text-slate-400">MET</div>
+                      <div className="text-xs text-slate-400">MET</div>
                     </div>
                     <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800">
                       <div className="text-base font-extrabold text-slate-400">0</div>
-                      <div className="text-[10px] text-slate-400">In Progress</div>
+                      <div className="text-xs text-slate-400">In Progress</div>
                     </div>
                     <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800">
                       <div className="text-base font-extrabold text-brand-400">15</div>
-                      <div className="text-[10px] text-slate-400">FAR Clauses</div>
+                      <div className="text-xs text-slate-400">FAR Clauses</div>
                     </div>
                   </div>
                 </div>
@@ -183,22 +183,22 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                 <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-400">GCS Evidence Vault</span>
-                    <span className="text-[10px] font-mono text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">SHA-256 Validated</span>
+                    <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">SHA-256 Validated</span>
                   </div>
                   <div className="space-y-2 text-xs">
                     <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800 flex items-center justify-between">
                       <div className="flex items-center gap-2 truncate">
                         <Lock className="w-3.5 h-3.5 text-brand-400 shrink-0" />
-                        <span className="truncate text-slate-200 font-mono text-[11px]">AC.1.001_m365_rbac.pdf</span>
+                        <span className="truncate text-slate-200 font-mono text-xs">AC.1.001_m365_rbac.pdf</span>
                       </div>
-                      <span className="text-[10px] font-mono text-emerald-400 shrink-0">e3b0c4...</span>
+                      <span className="text-xs font-mono text-emerald-400 shrink-0">e3b0c4...</span>
                     </div>
                     <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800 flex items-center justify-between">
                       <div className="flex items-center gap-2 truncate">
                         <Fingerprint className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                        <span className="truncate text-slate-200 font-mono text-[11px]">IA.1.076_duo_mfa_audit.png</span>
+                        <span className="truncate text-slate-200 font-mono text-xs">IA.1.076_duo_mfa_audit.png</span>
                       </div>
-                      <span className="text-[10px] font-mono text-emerald-400 shrink-0">7f83b1...</span>
+                      <span className="text-xs font-mono text-emerald-400 shrink-0">7f83b1...</span>
                     </div>
                   </div>
                 </div>
@@ -208,7 +208,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-400">System Security Plan</span>
-                      <span className="text-[10px] font-semibold text-brand-400">NIST SP 800-171</span>
+                      <span className="text-xs font-semibold text-brand-400">NIST SP 800-171</span>
                     </div>
                     <p className="text-xs text-slate-300 leading-relaxed">
                       Pre-compiled narratives for Microsoft 365, Active Directory & GCP Enclaves ready for C3PAO submission.

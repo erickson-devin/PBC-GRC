@@ -109,7 +109,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
               <BrandLogo size="lg" showText={false} />
             </div>
             
-            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-[10px] font-bold uppercase tracking-widest text-cyan-300">
+            <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-xs font-bold uppercase tracking-widest text-cyan-300">
               <Lock className="w-3 h-3 text-cyan-400" />
               Event Horizon: Singularity Enclave
             </div>
@@ -126,7 +126,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           {authError && (
             <div className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-start gap-2.5 animate-shake">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <div className="flex-1 text-[11px] leading-relaxed">{authError}</div>
+              <div className="flex-1 text-xs leading-relaxed">{authError}</div>
               <button onClick={clearAuthError} className="text-rose-400 hover:text-white">✕</button>
             </div>
           )}
@@ -185,7 +185,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   </svg>
                   <span className="font-bold">Sign in with Microsoft 365</span>
                 </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
+                <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
                   Entra ID
                 </span>
               </button>
@@ -219,12 +219,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   </svg>
                   <span className="font-bold">Sign in with Google Workspace</span>
                 </div>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
+                <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-black/40 text-slate-300 border border-white/10">
                   GCP Identity
                 </span>
               </button>
 
-              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 space-y-1">
                 <p className="font-semibold text-slate-300 flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-brand-400" />
                   Automatic Domain-Based Enclave Routing:
@@ -251,11 +251,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                     value={email}
                     onChange={e => handleEmailChange(e.target.value)}
                     placeholder="auditor@defense-audit.org"
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                   />
                 </div>
                 {detectedDomain && (
-                  <p className="text-[11px] text-brand-400 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-brand-400 mt-1 flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" /> Auto-resolving enclave: {detectedDomain}
                   </p>
                 )}
@@ -270,7 +270,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
 
-              <p className="text-[11px] text-slate-400 text-center">
+              <p className="text-xs text-slate-400 text-center">
                 Temporary access code valid for 15 minutes. No passwords required.
               </p>
             </form>
@@ -289,7 +289,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                     value={email}
                     onChange={e => handleEmailChange(e.target.value)}
                     placeholder="name@company.com"
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                   />
                 </div>
               </div>
@@ -301,7 +301,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                     <button
                       type="button"
                       onClick={() => setIsForgotPassword(true)}
-                      className="text-[11px] text-brand-400 hover:text-brand-300"
+                      className="text-xs text-brand-400 hover:text-brand-300"
                     >
                       Forgot password?
                     </button>
@@ -314,7 +314,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                       value={password}
                       onChange={e => setPassword(e.target.value)}
                       placeholder="••••••••••••"
-                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
                     />
                   </div>
                 </div>
@@ -351,10 +351,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           <div className="mt-6 pt-5 border-t border-slate-800">
             <div className="p-3 rounded-2xl bg-gradient-to-br from-brand-950/40 via-slate-900/60 to-slate-950 border border-brand-500/25 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-brand-300 uppercase tracking-wide">
+                <span className="text-xs font-bold text-brand-300 uppercase tracking-wide">
                   New Defense Contractor?
                 </span>
-                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                   From $3,500 / yr
                 </span>
               </div>
@@ -375,11 +375,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           {/* Evaluator Demo Personas (Instant Test-Drive) */}
           <div className="mt-4 pt-3 border-t border-slate-800/80">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1">
+              <span className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1">
                 <UserCheck className="w-3 h-3 text-brand-400" />
                 Evaluator Demo Personas:
               </span>
-              <span className="text-[10px] text-slate-400">1-Click Sandbox Login</span>
+              <span className="text-xs text-slate-400">1-Click Sandbox Login</span>
             </div>
 
             <div className="grid grid-cols-3 gap-1.5">
@@ -389,10 +389,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   onClick={() => loginAsPreset(preset)}
                   className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-left transition-colors group"
                 >
-                  <span className="block text-[10px] font-bold text-slate-200 group-hover:text-brand-300 truncate">
+                  <span className="block text-xs font-bold text-slate-200 group-hover:text-brand-300 truncate">
                     {preset.name.split(' ')[0]}
                   </span>
-                  <span className="block text-[10px] text-slate-400 truncate">
+                  <span className="block text-xs text-slate-400 truncate">
                     {preset.roles['tenant-vanguard-01'] === 'TENANT_OWNER' ? 'Owner' : 'Assessor'}
                   </span>
                 </button>
@@ -401,7 +401,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           </div>
 
           {/* Legal Links */}
-          <div className="mt-3 text-center text-[10px] text-slate-400">
+          <div className="mt-3 text-center text-xs text-slate-400">
             <span>By proceeding, you agree to our </span>
             <button
               type="button"

@@ -54,7 +54,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                     </span>
                     <span className="text-xs text-slate-400 font-medium">/ year flat</span>
                   </div>
-                  <p className="text-[11px] text-cyan-400 font-mono font-semibold mt-1">
+                  <p className="text-xs text-cyan-400 font-mono font-semibold mt-1">
                     Entry defense enclave • 1 boundary
                   </p>
                 </div>
@@ -94,7 +94,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                 <div className="text-center">
                   <a
                     href="mailto:sales@pitchblackcyber.com?subject=Foundational%20Enclave%20License%20Inquiry"
-                    className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
+                    className="text-xs text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
                   >
                     <Mail className="w-3 h-3 text-cyan-400" />
                     <span>Invoice / PO: sales@pitchblackcyber.com</span>
@@ -109,7 +109,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
           <div className="relative p-2 rounded-[2rem] bg-gradient-to-b from-brand-500/50 via-indigo-600/35 to-slate-950/80 ring-2 ring-brand-500 shadow-2xl shadow-brand-500/25 flex flex-col justify-between transform lg:-translate-y-2 transition-transform duration-300">
             
             {/* Top Recommended / Most Popular Ribbon */}
-            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-brand-500 via-indigo-500 to-brand-600 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-lg flex items-center gap-1.5 whitespace-nowrap">
+            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-brand-500 via-indigo-500 to-brand-600 text-white text-xs font-extrabold uppercase tracking-wider shadow-lg flex items-center gap-1.5 whitespace-nowrap">
               <Sparkles className="w-3 h-3 text-amber-300" />
               Recommended / Most Popular
             </div>
@@ -123,7 +123,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                       <Award className="w-4 h-4 text-brand-400" />
                       <h3 className="text-xl font-bold text-white tracking-tight">Defense Professional</h3>
                     </div>
-                    <span className="px-2 py-0.5 rounded bg-brand-500/20 text-brand-300 text-[10px] font-extrabold border border-brand-500/30 uppercase tracking-wider">
+                    <span className="px-2 py-0.5 rounded bg-brand-500/20 text-brand-300 text-xs font-extrabold border border-brand-500/30 uppercase tracking-wider">
                       CUI Ready
                     </span>
                   </div>
@@ -139,7 +139,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                     </span>
                     <span className="text-xs text-slate-400 font-medium">/ year flat</span>
                   </div>
-                  <p className="text-[11px] text-emerald-400 font-mono font-semibold mt-1">
+                  <p className="text-xs text-emerald-400 font-mono font-semibold mt-1">
                     Turnkey NIST SP 800-171 & CMMC Level 2 platform
                   </p>
                 </div>
@@ -183,7 +183,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                 <div className="text-center">
                   <a
                     href="mailto:sales@pitchblackcyber.com?subject=Defense%20Professional%20Enclave%20License%20Inquiry"
-                    className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
+                    className="text-xs text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
                   >
                     <Mail className="w-3 h-3 text-cyan-400" />
                     <span>Invoice / PO: sales@pitchblackcyber.com</span>
@@ -205,7 +205,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                       <Building2 className="w-4 h-4 text-purple-400" />
                       <h3 className="text-xl font-bold text-white tracking-tight">Enterprise & Assessor</h3>
                     </div>
-                    <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30 uppercase tracking-wide">
+                    <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-xs font-bold border border-purple-500/30 uppercase tracking-wide">
                       Multi-CAGE
                     </span>
                   </div>
@@ -221,7 +221,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                     </span>
                     <span className="text-xs text-slate-400 font-medium">/ year flat</span>
                   </div>
-                  <p className="text-[11px] text-purple-400 font-mono font-semibold mt-1">
+                  <p className="text-xs text-purple-400 font-mono font-semibold mt-1">
                     Unlimited enclaves • Dedicated isolation & SLA
                   </p>
                 </div>
@@ -261,7 +261,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) 
                 <div className="text-center">
                   <a
                     href="mailto:sales@pitchblackcyber.com?subject=Enterprise%20Enclave%20License%20Inquiry"
-                    className="text-[11px] text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
+                    className="text-xs text-slate-400 hover:text-cyan-300 transition-colors inline-flex items-center gap-1.5"
                   >
                     <Mail className="w-3 h-3 text-cyan-400" />
                     <span>Invoice / PO: sales@pitchblackcyber.com</span>
