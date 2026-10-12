@@ -40,6 +40,9 @@ COPY --from=builder /app/server ./server
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/tsconfig*.json ./
 
+# Operational scripts (e.g. `npm run auth:create-user` for the air-gapped local accounts)
+COPY --from=builder /app/scripts ./scripts
+
 # Install tsx globally for fast, zero-transpile Node ESM execution
 RUN npm install -g tsx
 
