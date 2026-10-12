@@ -271,8 +271,8 @@ const AppContent: React.FC = () => {
                     </span>
                     <span>
                       <strong className="text-cyan-100">Accretion Discovery Engine:</strong>{' '}
-                      Listening for subnet telemetry on{' '}
-                      <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/assets/accretion-sync</code>
+                      Discovery results are ingested at{' '}
+                      <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/tenants/:id/assets/discovery</code>
                     </span>
                   </div>
                   <AssetInventoryManager />
@@ -322,8 +322,8 @@ const AppContent: React.FC = () => {
                       </span>
                       <span>
                         <strong className="text-cyan-100">Accretion Discovery Engine:</strong>{' '}
-                        Listening for subnet telemetry on{' '}
-                        <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/assets/accretion-sync</code>
+                        Discovery results are ingested at{' '}
+                        <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/tenants/:id/assets/discovery</code>
                       </span>
                     </div>
                     <AssetInventoryManager />

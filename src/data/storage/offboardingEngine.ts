@@ -14,6 +14,8 @@ import { CertificateOfDestruction, AuditLogEntry } from '../../types/audit';
 import { StorageService } from '../../services/storageService';
 import { loadLedger, computeSha256, canonicalJson } from '../audit/auditLogger';
 import { compileNistSSP, generatePOAMEntries } from '../reports/documentCompilers';
+import { summarizeScope } from '../telemetry/assetScope';
+import type { EnclaveAsset } from '../../types/telemetry';
 import { getFrameworkControls } from '../frameworks';
 import { purgeTenantData, downloadCertificateOfDestruction } from './retentionPolicy';
 
@@ -102,7 +104,9 @@ function resolveTenant(tenantId: string, tenantData?: Tenant): Tenant {
  */
 export async function generateEnclaveHandoverPackage(
   tenantId: string,
-  tenantData?: Tenant
+  tenantData?: Tenant,
+  /** The enclave's asset inventory, when the caller has it (the server holds it for live tenants): states the CMMC scope in the SSP. */
+  assets?: ReadonlyArray<EnclaveAsset>
 ): Promise<EnclaveHandoverPackage> {
   const tenant = resolveTenant(tenantId, tenantData);
   const state: AssessmentState = StorageService.loadAssessment(tenant);
@@ -128,6 +132,7 @@ export async function generateEnclaveHandoverPackage(
       assessmentDate: new Date().toISOString().split('T')[0],
       version: '1.0.0-OFFBOARDING',
       framework: primaryFw,
+      assetScope: assets ? summarizeScope(assets) : undefined,
     },
     controls,
     state.controls,

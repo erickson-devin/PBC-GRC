@@ -22,7 +22,7 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
   const { isSandboxMode, migrateLocalTenantToServer } = useTenant();
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [moved, setMoved] = useState<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number } | null>(null);
+  const [moved, setMoved] = useState<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number } | null>(null);
 
   const isLegacy = !isSandboxMode && !tenant.serverBacked && tenant.isConfigured !== false;
 
@@ -32,8 +32,10 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
         <span>
           <strong className="text-emerald-300">Moved to the server.</strong> Your assessment
+          {moved.assetsMoved > 0 ? `, ${moved.assetsMoved} asset${moved.assetsMoved === 1 ? '' : 's'}` : ''}
           {moved.evidenceFilesMoved > 0 ? ` and ${moved.evidenceFilesMoved} evidence file${moved.evidenceFilesMoved === 1 ? '' : 's'}` : ''} now live
           under the server-assigned tenant. You can invite your team from Team settings.
+          {moved.assetsFailed > 0 ? ` Warning: ${moved.assetsFailed} asset${moved.assetsFailed === 1 ? ' was' : 's were'} not moved to the server; please add them again in the asset inventory.` : ''}
           {moved.controlsFailed > 0 ? ` Warning: ${moved.controlsFailed} control answer${moved.controlsFailed === 1 ? ' could' : 's could'} not be saved to the server; review them before relying on this assessment.` : ''}
         </span>
       </div>

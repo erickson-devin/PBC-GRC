@@ -1,3 +1,4 @@
+import { assetBackendMode, getAssetBackend } from '../../services/assetService';
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -109,6 +110,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     resendInvitation,
     extendInvitationExpiration,
     refreshAllTeams,
+    isSandboxMode,
   } = useTenant();
 
   const { logout, openAuthModal } = useAuth();
@@ -262,7 +264,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     setExportingTenantId(tenant.id);
     setFloatingMenu(null);
     try {
-      await generateEnclaveHandoverPackage(tenant.id, tenant);
+      // The CMMC scope in the SSP comes from the asset inventory. If it cannot be read, the SSP simply states no counts.
+      const assets = await getAssetBackend(tenant.id, assetBackendMode({ isSandboxMode, serverBacked: tenant.serverBacked })).list().catch(() => undefined);
+      await generateEnclaveHandoverPackage(tenant.id, tenant, assets);
       setNotificationToast({
         type: 'success',
         message: `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,

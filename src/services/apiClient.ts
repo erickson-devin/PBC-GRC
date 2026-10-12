@@ -21,6 +21,14 @@ import {
   parseServerMembers,
 } from '../data/teamSync';
 import type { TenantRole } from '../types/tenant';
+import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
+import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
+
+function requireAsset(raw: unknown): EnclaveAsset {
+  const [asset] = parseServerAssets([raw]);
+  if (!asset) throw new ApiError(502, 'The server sent back an asset this version of the app does not understand.');
+  return asset;
+}
 
 /**
  * A failed API call with an HTTP status and a message that is safe to show to the user.
@@ -139,6 +147,64 @@ export const ApiClient = {
   /** DELETE /api/v1/tenants/:id/members/:userId */
   async removeMember(tenantId: string, userId: string, token?: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { token, tenantId });
+  },
+
+  // ----------------------------------------------------------------------------------------- CMMC asset scoping
+
+  /** GET /api/v1/tenants/:id/assets: the enclave's assets and the scope summary (any member). */
+  async listAssets(tenantId: string, token?: string): Promise<{ assets: EnclaveAsset[]; summary: AssetScopeSummary }> {
+    const data = await authedJson<{ assets?: unknown; summary?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/assets`, { token, tenantId });
+    const assets = parseServerAssets(data?.assets);
+    return { assets, summary: summarizeScope(assets) };
+  },
+
+  /** POST /api/v1/tenants/:id/assets (owner / MSP admin). */
+  async createAsset(tenantId: string, asset: AssetInput, token?: string): Promise<EnclaveAsset> {
+    const data = await authedJson<{ asset?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets`, { token, tenantId, body: asset });
+    return requireAsset(data?.asset);
+  },
+
+  /** PUT /api/v1/tenants/:id/assets/:assetId. Only the fields given change. */
+  async updateAsset(tenantId: string, assetId: string, patch: AssetInput, token?: string): Promise<EnclaveAsset> {
+    const data = await authedJson<{ asset?: unknown }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { token, tenantId, body: patch });
+    return requireAsset(data?.asset);
+  },
+
+  /** DELETE /api/v1/tenants/:id/assets/:assetId. */
+  async deleteAsset(tenantId: string, assetId: string, token?: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { token, tenantId });
+  },
+
+  /** POST /api/v1/tenants/:id/assets/bulk: up to 500 at a time; rows whose name already exists come back in `skipped`. */
+  async createAssetsBulk(
+    tenantId: string,
+    assets: AssetInput[],
+    token?: string
+  ): Promise<{ created: EnclaveAsset[]; skipped: Array<{ index: number; hostName: string; reason: string }> }> {
+    const data = await authedJson<{ created?: unknown; skipped?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets/bulk`, { token, tenantId, body: { assets } });
+    return {
+      created: parseServerAssets(data?.created),
+      skipped: Array.isArray(data?.skipped) ? (data.skipped as Array<{ index: number; hostName: string; reason: string }>) : [],
+    };
+  },
+
+  /** POST /api/v1/tenants/:id/assets/discovery: network-sensor findings, deduplicated by MAC / IP on the server. */
+  async ingestDiscovery(
+    tenantId: string,
+    items: AccretionDiscoveryItem[],
+    token?: string
+  ): Promise<{ totalProcessed: number; newDiscoveredCount: number; updatedExistingCount: number; created: EnclaveAsset[] }> {
+    const data = await authedJson<{ totalProcessed?: number; newDiscoveredCount?: number; updatedExistingCount?: number; created?: unknown }>(
+      'POST',
+      `/tenants/${encodeURIComponent(tenantId)}/assets/discovery`,
+      { token, tenantId, body: { items } }
+    );
+    return {
+      totalProcessed: Number(data?.totalProcessed ?? items.length),
+      newDiscoveredCount: Number(data?.newDiscoveredCount ?? 0),
+      updatedExistingCount: Number(data?.updatedExistingCount ?? 0),
+      created: parseServerAssets(data?.created),
+    };
   },
 
   /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */

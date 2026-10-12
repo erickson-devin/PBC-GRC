@@ -37,7 +37,7 @@ import {
 import { AssetComplianceTable } from './AssetComplianceTable';
 import { AssetInventoryManager } from './AssetInventoryManager';
 import { ingestScanReportToAsset } from '../../data/telemetry/assetTelemetryEngine';
-import { getEnclaveAssets, syncAssetScanResult } from '../../data/telemetry/assetRegistry';
+import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { errorMessage } from '../../utils/errors';
 
 // ---------------------------------------------------------------------------
@@ -143,13 +143,9 @@ export const PhotonScanConsole: React.FC = () => {
   const [stigBenchmark, setStigBenchmark] = useState('DISA_STIG_RHEL9');
 
   // Registered assets from Enclave Inventory
-  const [registeredAssets, setRegisteredAssets] = useState<EnclaveAsset[]>(() => getEnclaveAssets(currentTenant.id));
+  const { assets: registeredAssets, backend: assetBackend } = useEnclaveAssets();
   const [selectedAssetId, setSelectedAssetId] = useState<string>('');
   const [activeConsoleView, setActiveConsoleView] = useState<'SCANNER' | 'INVENTORY' | 'FLEET'>('SCANNER');
-
-  useEffect(() => {
-    setRegisteredAssets(getEnclaveAssets(currentTenant.id));
-  }, [currentTenant.id]);
 
   const handleSelectRegisteredAsset = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const assetId = e.target.value;
@@ -283,8 +279,10 @@ export const PhotonScanConsole: React.FC = () => {
 
       // Sync scan result back to persistent asset inventory registry
       const score = Math.round((lastReport.passedCount / lastReport.results.length) * 100);
-      syncAssetScanResult(currentTenant.id, hostName, targetHost, score);
-      setRegisteredAssets(getEnclaveAssets(currentTenant.id));
+      // The inventory refreshes itself (shared subscription). A read-only role cannot store the score: the scan itself still counts.
+      await assetBackend.recordScan(hostName, targetHost, score).catch((err: unknown) => {
+        console.warn('[PhotonScan] Could not store the scan score on the asset:', err);
+      });
 
       setIngestResult(result);
 

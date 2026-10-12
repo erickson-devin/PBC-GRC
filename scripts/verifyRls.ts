@@ -88,9 +88,49 @@ async function main() {
 
     const stolen = await queryWithTenant(TENANT_X, "SELECT 1 FROM tenant_users WHERE tenant_id = $1", [TENANT_Y]);
     check(stolen.rows.length === 0, 'tenant X cannot read tenant Y rows even by naming the tenant');
+
+    // CMMC asset scoping: enclave_assets is tenant-isolated like every other tenant-bound table
+    const addAsset = (tenant: string, name: string, category = 'CUI_ASSET') =>
+      queryWithTenant(
+        tenant,
+        `INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, $2, $3)`,
+        [tenant, name, category]
+      );
+    await addAsset(TENANT_X, 'rls_verify_asset_x');
+    await addAsset(TENANT_Y, 'rls_verify_asset_y', 'SPECIALIZED_ASSET');
+    const assetsNoCtx = await pool.query("SELECT 1 FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'");
+    check(assetsNoCtx.rowCount === 0, 'enclave_assets: no tenant context => zero rows visible', `saw ${assetsNoCtx.rowCount}`);
+    const assetsX = await queryWithTenant(TENANT_X, "SELECT asset_name FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []);
+    check(assetsX.rows.length === 1 && assetsX.rows[0].asset_name === 'rls_verify_asset_x', 'enclave_assets: tenant X sees only its own asset', JSON.stringify(assetsX.rows));
+    const assetsStolen = await queryWithTenant(TENANT_X, 'SELECT 1 FROM enclave_assets WHERE tenant_id = $1', [TENANT_Y]);
+    check(assetsStolen.rows.length === 0, 'enclave_assets: tenant X cannot read tenant Y assets even by naming the tenant');
+    let assetWriteRejected = false;
+    try {
+      await queryWithTenant(TENANT_X, `INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, 'rls_verify_asset_evil', 'CUI_ASSET')`, [TENANT_Y]);
+    } catch {
+      assetWriteRejected = true;
+    }
+    check(assetWriteRejected, 'enclave_assets: tenant X cannot write an asset for tenant Y (WITH CHECK)');
+    const assetUpdate = await queryWithTenant(TENANT_X, "UPDATE enclave_assets SET owner = 'pwned' WHERE tenant_id = $1", [TENANT_Y]);
+    check((assetUpdate.rowCount ?? 0) === 0, "enclave_assets: tenant X cannot update tenant Y's assets");
+    let badCategory = false;
+    try {
+      await addAsset(TENANT_X, 'rls_verify_asset_bad', 'NOT_A_CATEGORY');
+    } catch {
+      badCategory = true;
+    }
+    check(badCategory, 'enclave_assets: the database refuses a category outside the five CMMC categories');
+    let dupRejected = false;
+    try {
+      await addAsset(TENANT_X, 'RLS_VERIFY_ASSET_X');
+    } catch {
+      dupRejected = true;
+    }
+    check(dupRejected, 'enclave_assets: asset names are unique per tenant, ignoring case');
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined);
     }
   }
 

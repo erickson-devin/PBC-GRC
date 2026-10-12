@@ -197,6 +197,7 @@ export type CmmcAssetCategory =
   | 'CUI_ASSET'
   | 'SECURITY_PROTECTION'
   | 'CONTRACTOR_RISK'
+  | 'SPECIALIZED_ASSET'
   | 'OUT_OF_SCOPE';
 
 export type EnclaveAssetStatus =
@@ -278,8 +279,10 @@ export interface EnclaveAsset {
   lastScannedAt: string | null;
   /** STIG benchmark compliance percentage (0-100), or null */
   complianceScore: number | null;
-  /** Hardware specifications, role, or administrative notes */
+  /** Hardware specifications, role, or administrative notes (the server's ) */
   notes: string;
+  /** Person or team accountable for the asset */
+  owner?: string;
   /** True if registered manually by administrator */
   isManuallyAdded: boolean;
 }

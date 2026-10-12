@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Server,
   Monitor,
@@ -26,15 +26,12 @@ import {
   AssetSourceOrigin,
   AccretionIngestResult,
 } from '../../types/telemetry';
-import {
-  getEnclaveAssets,
-  addEnclaveAsset,
-  updateEnclaveAsset,
-  deleteEnclaveAsset,
-  importAssetsFromCsv,
-  confirmDiscoveredAsset,
-} from '../../data/telemetry/assetRegistry';
+import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES } from '../../data/telemetry/assetScope';
+import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useTenant } from '../../context/TenantContext';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
+import { errorMessage } from '../../utils/errors';
 import { AddAssetModal } from './AddAssetModal';
 import { AccretionIntegrationModal } from './AccretionIntegrationModal';
 
@@ -50,69 +47,80 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   selectedHost,
 }) => {
   const { currentTenant } = useTenant();
-  const [assets, setAssets] = useState<EnclaveAsset[]>([]);
+  // The inventory comes from the server for live tenants (the local store only backs the demo sandbox and tenants that
+  // have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
+  const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedOs, setSelectedOs] = useState<string>('ALL');
-  
+
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingAsset, setEditingAsset] = useState<EnclaveAsset | null>(null);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isAccretionModalOpen, setIsAccretionModalOpen] = useState(false);
   const [classifyingAsset, setClassifyingAsset] = useState<EnclaveAsset | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<EnclaveAsset | null>(null);
   const [csvContent, setCsvContent] = useState('');
+  const [csvIssues, setCsvIssues] = useState<string[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const reloadAssets = () => {
-    const list = getEnclaveAssets(currentTenant.id);
-    setAssets(list);
-  };
-
-  useEffect(() => {
-    reloadAssets();
-  }, [currentTenant.id]);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // CRUD Handlers
-  const handleSaveAsset = (assetData: Omit<EnclaveAsset, 'id'>) => {
+  /** Runs a change, shows its failure inline (never an alert), and refreshes through the shared subscription. */
+  const run = async (action: () => Promise<void>): Promise<boolean> => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await action();
+      return true;
+    } catch (err: unknown) {
+      setActionError(errorMessage(err) || 'That change could not be saved.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // CRUD Handlers (the modal shows the error when a save fails, and stays open)
+  const handleSaveAsset = async (assetData: Omit<EnclaveAsset, 'id'>) => {
     if (editingAsset) {
-      updateEnclaveAsset(editingAsset.id, assetData, currentTenant.id);
-      showNotification(`✓ Endpoint ${assetData.hostName} updated.`);
+      // Only what the form owns: scan results and discovery data may have changed on the server since it opened
+      const { hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner } = assetData;
+      await backend.update(editingAsset.id, { hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner });
+      showNotification(`✓ Asset ${assetData.hostName} updated.`);
     } else {
-      addEnclaveAsset(currentTenant.id, assetData);
-      showNotification(`✓ Endpoint ${assetData.hostName} registered to enclave.`);
+      await backend.create(assetData);
+      showNotification(`✓ Asset ${assetData.hostName} registered to the enclave boundary.`);
     }
     setEditingAsset(null);
-    reloadAssets();
   };
 
-  const handleDeleteAsset = (asset: EnclaveAsset) => {
-    if (confirm(`Remove ${asset.hostName} (${asset.ipAddress}) from enclave inventory?`)) {
-      deleteEnclaveAsset(asset.id, currentTenant.id);
-      showNotification(`Removed endpoint ${asset.hostName}.`);
-      reloadAssets();
-    }
+  const handleDeleteAsset = async (asset: EnclaveAsset) => {
+    const ok = await run(() => backend.remove(asset.id));
+    setPendingDelete(null);
+    if (ok) showNotification(`Removed asset ${asset.hostName}.`);
   };
 
-  const handleImportCsv = () => {
+  const handleImportCsv = async () => {
     if (!csvContent.trim()) return;
-    try {
-      const imported = importAssetsFromCsv(currentTenant.id, csvContent);
-      showNotification(`✓ Successfully imported ${imported.length} endpoints from CSV.`);
-      setCsvContent('');
-      setIsCsvModalOpen(false);
-      reloadAssets();
-    } catch (err) {
-      console.error('CSV import failed:', err);
-      alert('Failed to parse CSV. Please verify column formatting.');
-    }
+    setCsvIssues([]);
+    await run(async () => {
+      const { imported, skipped } = await backend.importCsv(csvContent);
+      if (skipped.length > 0) setCsvIssues(skipped);
+      if (imported > 0) showNotification(`✓ Imported ${imported} asset${imported === 1 ? '' : 's'} from CSV.` + (skipped.length > 0 ? ` ${skipped.length} row${skipped.length === 1 ? '' : 's'} skipped.` : ''));
+      if (skipped.length === 0) {
+        setCsvContent('');
+        setIsCsvModalOpen(false);
+      }
+    });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -124,6 +132,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       const content = event.target?.result as string;
       if (content) {
         setCsvContent(content);
+        setCsvIssues([]);
         setIsCsvModalOpen(true);
       }
     };
@@ -131,16 +140,17 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     e.target.value = '';
   };
 
-  const handleClassifyAsset = (asset: EnclaveAsset, category: CmmcAssetCategory) => {
-    confirmDiscoveredAsset(currentTenant.id, asset.id, category);
-    showNotification(`✓ ${asset.hostName} confirmed as ${category.replace('_', ' ')}.`);
+  const handleClassifyAsset = async (asset: EnclaveAsset, category: CmmcAssetCategory) => {
+    const ok = await run(async () => {
+      await backend.classify(asset.id, category);
+    });
     setClassifyingAsset(null);
-    reloadAssets();
+    if (ok) showNotification(`✓ ${asset.hostName} confirmed as ${CATEGORY_INFO[category].label}.`);
   };
 
   const handleAccretionDiscoveryComplete = (result: AccretionIngestResult) => {
-    showNotification(`✓ Accretion Ingest: ${result.newDiscoveredCount} new rogue endpoints discovered, ${result.updatedExistingCount} updated.`);
-    reloadAssets();
+    showNotification(`✓ Accretion Ingest: ${result.newDiscoveredCount} new endpoints discovered, ${result.updatedExistingCount} updated.`);
+    void reload();
   };
 
   // Unconfirmed Discovered Assets
@@ -152,6 +162,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       a.hostName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       a.ipAddress.includes(searchQuery) ||
       a.notes.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (a.owner ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (a.macAddress && a.macAddress.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesCategory =
@@ -167,13 +178,11 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   });
 
   // Summary Metrics
-  const totalCount = assets.length;
-  const cuiAssetsCount = assets.filter(a => a.cmmcAssetCategory === 'CUI_ASSET').length;
-  const securityProtectionCount = assets.filter(a => a.cmmcAssetCategory === 'SECURITY_PROTECTION').length;
+  const totalCount = summary.total;
   const scoredAssets = assets.filter(a => a.complianceScore !== null);
   const avgComplianceScore = scoredAssets.length > 0
     ? Math.round(scoredAssets.reduce((sum, a) => sum + (a.complianceScore || 0), 0) / scoredAssets.length)
-    : 100;
+    : null; // nothing scanned yet: there is no average to show (never a flattering 100%)
 
   // OS Badge styling helper
   const renderOsBadge = (os: string) => {
@@ -229,37 +238,23 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     }
   };
 
-  // CMMC Category Pill helper
+  // CMMC category styling. The label is always the full, explicit name from CATEGORY_INFO (e.g. CRMA is spelled out).
+  const CATEGORY_STYLE: Record<CmmcAssetCategory, { pill: string; icon: string; text: string; hover: string; card: string; Icon: React.ElementType }> = {
+    CUI_ASSET: { pill: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30', icon: 'text-cyan-400', text: 'text-cyan-300', hover: 'hover:bg-cyan-950', card: 'border-cyan-500/20 bg-cyan-950/20', Icon: Database },
+    SECURITY_PROTECTION: { pill: 'bg-violet-500/15 text-violet-300 border-violet-500/30', icon: 'text-violet-400', text: 'text-violet-300', hover: 'hover:bg-violet-950', card: 'border-violet-500/20 bg-violet-950/20', Icon: Lock },
+    CONTRACTOR_RISK: { pill: 'bg-amber-500/15 text-amber-300 border-amber-500/30', icon: 'text-amber-400', text: 'text-amber-300', hover: 'hover:bg-amber-950', card: 'border-amber-500/20 bg-amber-950/20', Icon: AlertTriangle },
+    SPECIALIZED_ASSET: { pill: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', icon: 'text-emerald-400', text: 'text-emerald-300', hover: 'hover:bg-emerald-950', card: 'border-emerald-500/20 bg-emerald-950/20', Icon: Cpu },
+    OUT_OF_SCOPE: { pill: 'bg-slate-800 text-slate-400 border-slate-700', icon: 'text-slate-500', text: 'text-slate-300', hover: 'hover:bg-slate-800', card: 'border-slate-700 bg-slate-900/60', Icon: Server },
+  };
+
   const renderCategoryPill = (cat: CmmcAssetCategory) => {
-    switch (cat) {
-      case 'CUI_ASSET':
-        return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-            <Database className="w-3 h-3 text-cyan-400" />
-            <span>CUI Asset</span>
-          </span>
-        );
-      case 'SECURITY_PROTECTION':
-        return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-500/15 text-violet-300 border border-violet-500/30">
-            <Lock className="w-3 h-3 text-violet-400" />
-            <span>Security Protection (SPA)</span>
-          </span>
-        );
-      case 'CONTRACTOR_RISK':
-        return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-            <AlertTriangle className="w-3 h-3 text-amber-400" />
-            <span>Contractor Risk</span>
-          </span>
-        );
-      case 'OUT_OF_SCOPE':
-        return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-            <span>Out of Scope</span>
-          </span>
-        );
-    }
+    const style = CATEGORY_STYLE[cat];
+    return (
+      <span className={`badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${style.pill}`}>
+        <style.Icon className={`w-3 h-3 ${style.icon}`} />
+        <span>{CATEGORY_INFO[cat].label}</span>
+      </span>
+    );
   };
 
   return (
@@ -279,7 +274,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
           </p>
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Buttons (changes are limited to Tenant Owners / MSP Admins; everyone else gets a read-only view) */}
         <div className="flex items-center gap-2 flex-wrap">
           <input
             type="file"
@@ -289,23 +284,23 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             className="hidden"
           />
 
-          <button
+          {canEdit && (<button
             onClick={() => setIsAccretionModalOpen(true)}
             className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-950/70 to-indigo-950/70 hover:from-cyan-900/70 hover:to-indigo-900/70 text-cyan-300 border border-cyan-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-cyan-950/40"
           >
             <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
             <span>Accretion Sensor API</span>
-          </button>
+          </button>)}
 
-          <button
+          {canEdit && (<button
             onClick={() => fileInputRef.current?.click()}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
           >
             <Upload className="w-3.5 h-3.5 text-indigo-400" />
             <span>Import CSV</span>
-          </button>
+          </button>)}
 
-          <button
+          {canEdit && (<button
             onClick={() => {
               setEditingAsset(null);
               setIsAddModalOpen(true);
@@ -313,10 +308,28 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add Single Host</span>
-          </button>
+            <span>Add Asset</span>
+          </button>)}
         </div>
       </div>
+
+      {/* Browser-only tenant: its assets live in this browser until it is moved to the server. The notice also stays to confirm the move. */}
+      {canEdit && <LegacyTenantNotice tenant={currentTenant} variant="inline" />}
+
+      {!canEdit && (
+        <div role="status" className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">
+          <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+          <span>Read-only: only a Tenant Owner or MSP Admin can change the asset inventory and the CMMC scoping.</span>
+        </div>
+      )}
+
+      <ErrorNotice message={actionError} />
+      {loadError && (
+        <div className="flex items-center justify-between gap-3">
+          <ErrorNotice message={loadError} className="flex-1" />
+          <button onClick={() => void reload()} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">Retry</button>
+        </div>
+      )}
 
       {/* ─── Unconfirmed Discovered Asset High-Priority Banner ─── */}
       {unconfirmedAssets.length > 0 && (
@@ -330,10 +343,10 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             </div>
             <div>
               <p className="text-xs font-bold text-amber-200">
-                ⚠️ Accretion discovered {unconfirmedAssets.length} new {unconfirmedAssets.length === 1 ? 'endpoint' : 'endpoints'}. Click to review and assign CMMC scope categories.
+                Accretion discovered {unconfirmedAssets.length} new {unconfirmedAssets.length === 1 ? 'endpoint' : 'endpoints'}. Click to review and assign CMMC scope categories.
               </p>
               <p className="text-[11px] text-amber-300/80 mt-0.5">
-                Passive sensor detected active network MAC addresses in enclave subnet. Assign CUI Asset or Security Protection status to enforce STIG baseline.
+                Passive sensor detected active network MAC addresses in the enclave subnet. Until an administrator assigns a CMMC category they are excluded from the SSP boundary counts.
               </p>
             </div>
           </div>
@@ -354,42 +367,38 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         </div>
       )}
 
-      {/* ─── Summary Statistics Header ─── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* ─── Summary Statistics Header: the boundary, by CMMC category ─── */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Total Enclave Fleet</span>
+            <span className="text-xs font-semibold text-slate-400">In-Scope Assets</span>
             <Server className="w-4 h-4 text-cyan-400" />
           </div>
-          <p className="text-2xl font-black text-white mt-1.5">{totalCount}</p>
-          <span className="text-[10px] text-slate-400">Endpoints registered</span>
+          <p className="text-2xl font-black text-white mt-1.5">{summary.inScope}</p>
+          <span className="text-[10px] text-slate-400">{totalCount} registered{summary.unconfirmed > 0 ? `, ${summary.unconfirmed} unclassified` : ''}</span>
         </div>
 
-        <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-cyan-300">CUI Assets</span>
-            <Database className="w-4 h-4 text-cyan-400" />
-          </div>
-          <p className="text-2xl font-black text-cyan-300 mt-1.5">{cuiAssetsCount}</p>
-          <span className="text-[10px] text-cyan-400/70">CMMC Scope Primary</span>
-        </div>
-
-        <div className="rounded-xl border border-violet-500/20 bg-violet-950/20 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-violet-300">Security Protection (SPA)</span>
-            <Lock className="w-4 h-4 text-violet-400" />
-          </div>
-          <p className="text-2xl font-black text-violet-300 mt-1.5">{securityProtectionCount}</p>
-          <span className="text-[10px] text-violet-400/70">Firewall, DC & SIEM</span>
-        </div>
+        {CMMC_ASSET_CATEGORIES.filter(c => c !== 'OUT_OF_SCOPE').map(cat => {
+          const style = CATEGORY_STYLE[cat];
+          return (
+            <div key={cat} className={`rounded-xl border p-4 ${style.card}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-xs font-semibold ${style.text}`}>{CATEGORY_INFO[cat].label}</span>
+                <style.Icon className={`w-4 h-4 shrink-0 ${style.icon}`} />
+              </div>
+              <p className={`text-2xl font-black mt-1.5 ${style.text}`}>{summary.byCategory[cat]}</p>
+              <span className="text-[10px] text-slate-400">{CATEGORY_INFO[cat].short}</span>
+            </div>
+          );
+        })}
 
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/20 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-emerald-300">Fleet Health</span>
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
-          <p className="text-2xl font-black text-emerald-400 mt-1.5">{avgComplianceScore}%</p>
-          <span className="text-[10px] text-emerald-400/70">STIG Pass Average</span>
+          <p className="text-2xl font-black text-emerald-400 mt-1.5">{avgComplianceScore === null ? '—' : `${avgComplianceScore}%`}</p>
+          <span className="text-[10px] text-emerald-400/70">{avgComplianceScore === null ? 'No scans yet' : 'STIG Pass Average'}</span>
         </div>
       </div>
 
@@ -402,26 +411,25 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search by Hostname, IP, MAC, or administrative notes..."
+            placeholder="Search by name, IP, MAC, owner, or notes..."
             className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           />
         </div>
 
         {/* Category Filter */}
-        <div className="relative w-full sm:w-52">
+        <div className="relative w-full sm:w-72">
           <select
             value={selectedCategory}
             onChange={e => setSelectedCategory(e.target.value)}
             className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-8"
           >
-            <option value="ALL">All CMMC Scopes</option>
+            <option value="ALL">All CMMC categories</option>
             {unconfirmedAssets.length > 0 && (
-              <option value="UNCONFIRMED">⚠️ Unconfirmed Discovered ({unconfirmedAssets.length})</option>
+              <option value="UNCONFIRMED">Unconfirmed Discovered ({unconfirmedAssets.length})</option>
             )}
-            <option value="CUI_ASSET">CUI Assets Only</option>
-            <option value="SECURITY_PROTECTION">Security Protection (SPA)</option>
-            <option value="CONTRACTOR_RISK">Contractor Risk</option>
-            <option value="OUT_OF_SCOPE">Out of Scope</option>
+            {CMMC_ASSET_CATEGORIES.map(cat => (
+              <option key={cat} value={cat}>{CATEGORY_INFO[cat].label}</option>
+            ))}
           </select>
           <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
@@ -460,10 +468,18 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
-            {filteredAssets.length === 0 ? (
+            {loading ? (
+              <tr>
+                <td colSpan={7} className="py-8 text-center text-slate-400" role="status">
+                  Loading the asset inventory…
+                </td>
+              </tr>
+            ) : filteredAssets.length === 0 ? (
               <tr>
                 <td colSpan={7} className="py-8 text-center text-slate-400">
-                  No enclave assets match your active filters.
+                  {assets.length === 0
+                    ? 'No assets registered yet. Add the systems that make up your CMMC assessment boundary and give each its category.'
+                    : 'No enclave assets match your active filters.'}
                 </td>
               </tr>
             ) : (
@@ -499,6 +515,9 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                               </span>
                             )}
                           </div>
+                          {asset.owner && (
+                            <p className="text-[10px] text-slate-300 mt-0.5">Owner: {asset.owner}</p>
+                          )}
                           {asset.notes && (
                             <p className="text-[10px] text-slate-400 truncate max-w-xs mt-0.5">
                               {asset.notes}
@@ -528,34 +547,21 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                       {asset.discoveryStatus === 'UNCONFIRMED_DISCOVERY' ? (
                         <div className="relative">
                           {classifyingAsset?.id === asset.id ? (
-                            <div className="flex flex-col gap-1 p-2 rounded-xl bg-slate-900 border border-amber-500/50 shadow-xl z-20 absolute top-0 left-0 min-w-[190px]">
+                            <div className="flex flex-col gap-1 p-2 rounded-xl bg-slate-900 border border-amber-500/50 shadow-xl z-20 absolute top-0 left-0 min-w-[260px]">
                               <span className="text-[10px] font-bold text-amber-300 pb-1 border-b border-slate-800">
-                                Assign CMMC Scope:
+                                Assign CMMC category:
                               </span>
-                              <button
-                                onClick={() => handleClassifyAsset(asset, 'CUI_ASSET')}
-                                className="text-left px-2 py-1 rounded hover:bg-cyan-950 text-cyan-300 text-[10px] font-medium"
-                              >
-                                • CUI Asset (In-Scope)
-                              </button>
-                              <button
-                                onClick={() => handleClassifyAsset(asset, 'SECURITY_PROTECTION')}
-                                className="text-left px-2 py-1 rounded hover:bg-violet-950 text-violet-300 text-[10px] font-medium"
-                              >
-                                • Security Protection (SPA)
-                              </button>
-                              <button
-                                onClick={() => handleClassifyAsset(asset, 'CONTRACTOR_RISK')}
-                                className="text-left px-2 py-1 rounded hover:bg-amber-950 text-amber-300 text-[10px] font-medium"
-                              >
-                                • Contractor Risk Asset
-                              </button>
-                              <button
-                                onClick={() => handleClassifyAsset(asset, 'OUT_OF_SCOPE')}
-                                className="text-left px-2 py-1 rounded hover:bg-slate-800 text-slate-400 text-[10px] font-medium"
-                              >
-                                • Out of Scope
-                              </button>
+                              {CMMC_ASSET_CATEGORIES.map(cat => (
+                                <button
+                                  key={cat}
+                                  disabled={busy}
+                                  onClick={() => void handleClassifyAsset(asset, cat)}
+                                  className={`text-left px-2 py-1 rounded ${CATEGORY_STYLE[cat].hover} ${CATEGORY_STYLE[cat].text} text-[10px] font-medium disabled:opacity-50`}
+                                  title={CATEGORY_INFO[cat].description}
+                                >
+                                  • {CATEGORY_INFO[cat].label}
+                                </button>
+                              ))}
                               <button
                                 onClick={() => setClassifyingAsset(null)}
                                 className="text-center text-[10px] text-slate-400 hover:text-white pt-1"
@@ -566,14 +572,14 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                           ) : (
                             <div className="flex items-center gap-1.5">
                               {renderCategoryPill(asset.cmmcAssetCategory)}
-                              <button
+                              {canEdit && (<button
                                 onClick={() => setClassifyingAsset(asset)}
                                 className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0"
                                 title="Click to assign permanent CMMC scoping category"
                               >
                                 <ShieldCheck className="w-3 h-3 text-amber-400" />
                                 <span>Classify</span>
-                              </button>
+                              </button>)}
                             </div>
                           )}
                         </div>
@@ -642,26 +648,51 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                           <span>Scan</span>
                         </button>
 
-                        {/* Edit Button */}
-                        <button
-                          onClick={() => {
-                            setEditingAsset(asset);
-                            setIsAddModalOpen(true);
-                          }}
-                          className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
-                          title="Edit endpoint metadata"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
+                        {canEdit && pendingDelete?.id === asset.id ? (
+                          <div className="flex items-center gap-1.5" role="group" aria-label={`Confirm removing ${asset.hostName}`}>
+                            <span className="text-[10px] text-rose-300">Remove {asset.hostName}?</span>
+                            <button
+                              disabled={busy}
+                              onClick={() => void handleDeleteAsset(asset)}
+                              className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] disabled:opacity-50"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setPendingDelete(null)}
+                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          canEdit && (
+                            <>
+                              {/* Edit Button */}
+                              <button
+                                onClick={() => {
+                                  setEditingAsset(asset);
+                                  setIsAddModalOpen(true);
+                                }}
+                                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                                title="Edit asset"
+                                aria-label={`Edit ${asset.hostName}`}
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
 
-                        {/* Delete Button */}
-                        <button
-                          onClick={() => handleDeleteAsset(asset)}
-                          className="p-1 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition-colors"
-                          title="Remove endpoint"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                              {/* Delete Button */}
+                              <button
+                                onClick={() => setPendingDelete(asset)}
+                                className="p-1 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition-colors"
+                                title="Remove asset"
+                                aria-label={`Remove ${asset.hostName}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -690,6 +721,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         onClose={() => setIsAccretionModalOpen(false)}
         onDiscoveryComplete={handleAccretionDiscoveryComplete}
         tenantId={currentTenant.id}
+        backend={backend}
       />
 
       {/* ─── CSV Bulk Import Modal ─── */}
@@ -715,9 +747,19 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
               Paste or inspect your CSV records below. Header line expected:
               <br />
               <code className="text-cyan-400 font-mono text-[11px]">
-                hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes
+                hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes,owner
               </code>
             </p>
+
+            <ErrorNotice message={actionError} />
+            {csvIssues.length > 0 && (
+              <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200 space-y-1 max-h-32 overflow-y-auto">
+                <p className="font-semibold">{csvIssues.length} row{csvIssues.length === 1 ? ' was' : 's were'} not imported:</p>
+                {csvIssues.map((issue, i) => (
+                  <p key={i}>{issue}</p>
+                ))}
+              </div>
+            )}
 
             <textarea
               rows={8}
@@ -749,8 +791,9 @@ BASTION-01,10.0.50.10,ubuntu2204,SECURITY_PROTECTION,00:50:56:B2:11,SSH jump hos
                   Cancel
                 </button>
                 <button
-                  onClick={handleImportCsv}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold text-xs transition-all shadow-md"
+                  onClick={() => void handleImportCsv()}
+                  disabled={busy}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold text-xs transition-all shadow-md disabled:opacity-50"
                 >
                   Import Endpoints
                 </button>
@@ -760,13 +803,6 @@ BASTION-01,10.0.50.10,ubuntu2204,SECURITY_PROTECTION,00:50:56:B2:11,SSH jump hos
         </div>
       )}
 
-      {/* ─── Accretion Ingestion & Simulation Modal ─── */}
-      <AccretionIntegrationModal
-        isOpen={isAccretionModalOpen}
-        onClose={() => setIsAccretionModalOpen(false)}
-        tenantId={currentTenant.id}
-        onDiscoveryComplete={handleAccretionDiscoveryComplete}
-      />
 
     </div>
   );

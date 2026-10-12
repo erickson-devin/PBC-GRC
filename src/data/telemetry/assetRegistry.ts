@@ -8,12 +8,12 @@
 
 import {
   EnclaveAsset,
-  EnclaveAssetOsProfile,
   CmmcAssetCategory,
   EnclaveAssetStatus,
   AccretionDiscoveryItem,
   AccretionIngestResult,
 } from '../../types/telemetry';
+import { parseAssetsCsv } from './assetScope';
 import { computeSha256 } from '../audit/cryptoUtils';
 import { recordAuditEvent } from '../audit/auditLogger';
 
@@ -146,7 +146,11 @@ function getStorageKey(tenantId: string): string {
   return `${ASSET_REGISTRY_STORAGE_KEY_PREFIX}${tenantId}`;
 }
 
-export function getEnclaveAssets(tenantId: string): EnclaveAsset[] {
+/**
+ * Browser-local inventory (the demo sandbox, and live tenants that have not been moved to the server yet).
+ * `seed` fills an empty inventory with the demo fleet: only the sandbox wants that. A real tenant starts empty.
+ */
+export function getEnclaveAssets(tenantId: string, seed = true): EnclaveAsset[] {
   try {
     const raw = localStorage.getItem(getStorageKey(tenantId));
     if (raw) {
@@ -163,6 +167,8 @@ export function getEnclaveAssets(tenantId: string): EnclaveAsset[] {
   } catch (err) {
     console.warn('[AssetRegistry] Failed to parse local asset storage:', err);
   }
+
+  if (!seed) return [];
 
   // Populate default seed inventory for new or uninitialized tenants
   const seeds = generateDefaultEnclaveAssets(tenantId);
@@ -184,9 +190,10 @@ export function saveEnclaveAssets(assets: EnclaveAsset[], tenantId: string): voi
 
 export function addEnclaveAsset(
   tenantId: string,
-  assetInput: Omit<EnclaveAsset, 'id'>
+  assetInput: Omit<EnclaveAsset, 'id'>,
+  seed = true
 ): EnclaveAsset {
-  const currentAssets = getEnclaveAssets(tenantId);
+  const currentAssets = getEnclaveAssets(tenantId, seed);
   const newAsset: EnclaveAsset = {
     ...assetInput,
     id: generateUuid(),
@@ -208,9 +215,10 @@ export function addEnclaveAsset(
 export function updateEnclaveAsset(
   assetId: string,
   updates: Partial<EnclaveAsset>,
-  tenantId: string
+  tenantId: string,
+  seed = true
 ): EnclaveAsset {
-  const currentAssets = getEnclaveAssets(tenantId);
+  const currentAssets = getEnclaveAssets(tenantId, seed);
   const targetIdx = currentAssets.findIndex(a => a.id === assetId);
 
   if (targetIdx === -1) {
@@ -229,8 +237,8 @@ export function updateEnclaveAsset(
   return updatedAsset;
 }
 
-export function deleteEnclaveAsset(assetId: string, tenantId: string): void {
-  const currentAssets = getEnclaveAssets(tenantId);
+export function deleteEnclaveAsset(assetId: string, tenantId: string, seed = true): void {
+  const currentAssets = getEnclaveAssets(tenantId, seed);
   const filtered = currentAssets.filter(a => a.id !== assetId);
   saveEnclaveAssets(filtered, tenantId);
 }
@@ -239,77 +247,40 @@ export function deleteEnclaveAsset(assetId: string, tenantId: string): void {
 // 5. Bulk CSV Importer
 // ---------------------------------------------------------------------------
 
-export function importAssetsFromCsv(tenantId: string, csvContent: string): EnclaveAsset[] {
-  const lines = csvContent
-    .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
-
-  if (lines.length === 0) return [];
-
-  // Parse header
-  const headerLine = lines[0].toLowerCase();
-  const headers = headerLine.split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
-
-  const hostIdx = headers.findIndex(h => h.includes('host') || h.includes('name'));
-  const ipIdx = headers.findIndex(h => h.includes('ip') || h.includes('address'));
-  const osIdx = headers.findIndex(h => h.includes('os') || h.includes('platform') || h.includes('profile'));
-  const catIdx = headers.findIndex(h => h.includes('category') || h.includes('cmmc') || h.includes('scope'));
-  const macIdx = headers.findIndex(h => h.includes('mac'));
-  const notesIdx = headers.findIndex(h => h.includes('note') || h.includes('desc'));
-
-  const currentAssets = getEnclaveAssets(tenantId);
-  const importedList: EnclaveAsset[] = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const rawCols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
-    if (rawCols.length < 2) continue;
-
-    const hostName = (hostIdx >= 0 ? rawCols[hostIdx] : rawCols[0]) || `host-node-${i}`;
-    const ipAddress = (ipIdx >= 0 ? rawCols[ipIdx] : rawCols[1]) || `10.0.50.${100 + i}`;
-    const rawOs = (osIdx >= 0 ? rawCols[osIdx] : 'rhel9').toLowerCase();
-    const rawCat = (catIdx >= 0 ? rawCols[catIdx] : 'CUI_ASSET').toUpperCase();
-    const macAddress = (macIdx >= 0 && rawCols[macIdx]) ? rawCols[macIdx] : `52:54:00:${Math.random().toString(16).slice(2, 6).toUpperCase()}:${Math.random().toString(16).slice(2, 4).toUpperCase()}`;
-    const notes = notesIdx >= 0 ? rawCols[notesIdx] : 'Imported via CSV bulk onboarding';
-
-    // Map OS Profile
-    let osProfile: EnclaveAssetOsProfile = 'rhel9';
-    if (rawOs.includes('ubuntu')) osProfile = 'ubuntu2204';
-    else if (rawOs.includes('win11') || rawOs.includes('windows 11')) osProfile = 'win11';
-    else if (rawOs.includes('win') || rawOs.includes('server')) osProfile = 'win2022';
-    else if (rawOs.includes('rhel8')) osProfile = 'rhel8';
-    else if (rawOs.includes('cisco') || rawOs.includes('ios')) osProfile = 'cisco_ios';
-    else if (rawOs.includes('custom')) osProfile = 'custom';
-
-    // Map CMMC Category
-    let cmmcAssetCategory: CmmcAssetCategory = 'CUI_ASSET';
-    if (rawCat.includes('SECURITY') || rawCat.includes('SPA')) cmmcAssetCategory = 'SECURITY_PROTECTION';
-    else if (rawCat.includes('RISK') || rawCat.includes('CONTRACTOR')) cmmcAssetCategory = 'CONTRACTOR_RISK';
-    else if (rawCat.includes('OUT') || rawCat.includes('SCOPE')) cmmcAssetCategory = 'OUT_OF_SCOPE';
-
-    const newAsset: EnclaveAsset = {
+/** Local-store CSV import. Rows with an unrecognised category are skipped and reported (see parseAssetsCsv). */
+export function importAssetsFromCsv(tenantId: string, csvContent: string, seed = true): { imported: EnclaveAsset[]; errors: string[] } {
+  const parsed = parseAssetsCsv(csvContent);
+  const existing = getEnclaveAssets(tenantId, seed);
+  const names = new Set(existing.map(a => a.hostName.toLowerCase()));
+  const errors = [...parsed.errors];
+  const imported: EnclaveAsset[] = [];
+  for (const input of parsed.assets) {
+    const name = (input.hostName ?? '').toLowerCase();
+    if (names.has(name)) {
+      errors.push(`${input.hostName}: an asset with that name already exists.`);
+      continue;
+    }
+    names.add(name);
+    imported.push({
       id: generateUuid(),
       tenantId,
-      hostName,
-      ipAddress,
-      macAddress,
-      osProfile,
-      cmmcAssetCategory,
+      hostName: input.hostName as string,
+      ipAddress: input.ipAddress ?? '',
+      macAddress: input.macAddress || `52:54:00:${Math.random().toString(16).slice(2, 6).toUpperCase()}:${Math.random().toString(16).slice(2, 4).toUpperCase()}`,
+      osProfile: input.osProfile ?? 'custom',
+      cmmcAssetCategory: input.cmmcAssetCategory as CmmcAssetCategory,
       status: 'NEVER_SCANNED',
       sourceOrigin: 'CSV_IMPORT',
       discoveryStatus: 'ACTIVE',
       lastScannedAt: null,
       complianceScore: null,
-      notes,
+      notes: input.notes ?? '',
+      owner: input.owner ?? '',
       isManuallyAdded: true,
-    };
-
-    importedList.push(newAsset);
+    });
   }
-
-  const combined = [...importedList, ...currentAssets];
-  saveEnclaveAssets(combined, tenantId);
-  return importedList;
+  if (imported.length > 0) saveEnclaveAssets([...imported, ...existing], tenantId);
+  return { imported, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -321,9 +292,10 @@ export function syncAssetScanResult(
   hostName: string,
   ipAddress: string,
   score: number,
-  forcedStatus?: EnclaveAssetStatus
+  forcedStatus?: EnclaveAssetStatus,
+  seed = true
 ): void {
-  const currentAssets = getEnclaveAssets(tenantId);
+  const currentAssets = getEnclaveAssets(tenantId, seed);
   const matchIdx = currentAssets.findIndex(
     a => a.hostName.toLowerCase() === hostName.toLowerCase() || a.ipAddress === ipAddress
   );
@@ -355,9 +327,10 @@ export function syncAssetScanResult(
  */
 export async function ingestAccretionDiscoveryPayload(
   tenantId: string,
-  discoveredAssets: AccretionDiscoveryItem[]
+  discoveredAssets: AccretionDiscoveryItem[],
+  seed = true
 ): Promise<AccretionIngestResult> {
-  const currentAssets = getEnclaveAssets(tenantId);
+  const currentAssets = getEnclaveAssets(tenantId, seed);
   const now = new Date().toISOString();
   let newCount = 0;
   let updatedCount = 0;
@@ -465,14 +438,9 @@ export async function ingestAccretionDiscoveryPayload(
 // 8. Accretion Simulation Generator (for evaluation & testing)
 // ---------------------------------------------------------------------------
 
-export async function simulateAccretionDiscovery(tenantId: string): Promise<AccretionIngestResult> {
-  // If simulated accretion assets already exist in this tenant's inventory from a previous test,
-  // clean them out so the simulation always demonstrates fresh unconfirmed rogue asset discovery and deduplication!
-  const current = getEnclaveAssets(tenantId);
-  const cleaned = current.filter(a => a.sourceOrigin !== 'ACCRETION_DISCOVERY');
-  saveEnclaveAssets(cleaned, tenantId);
-
-  const simulatedBatch: AccretionDiscoveryItem[] = [
+/** The sample sensor sweep used by the "simulate discovery" button (two unknown devices and one that already exists). */
+export function buildSimulatedDiscoveryBatch(): AccretionDiscoveryItem[] {
+  return [
     {
       agentId: 'accretion-sensor-vlan50',
       hostName: 'UNMANAGED-DEV-01',
@@ -510,8 +478,14 @@ export async function simulateAccretionDiscovery(tenantId: string): Promise<Accr
       notes: 'Known security workstation beaconing active heartbeat to Accretion sensor.',
     },
   ];
+}
 
-  return await ingestAccretionDiscoveryPayload(tenantId, simulatedBatch);
+/** Local-store simulation (sandbox / browser-only tenants). */
+export async function simulateAccretionDiscovery(tenantId: string, seed = true): Promise<AccretionIngestResult> {
+  // Clear earlier simulated devices so the demo always shows fresh unconfirmed discovery and deduplication.
+  const cleaned = getEnclaveAssets(tenantId, seed).filter(a => a.sourceOrigin !== 'ACCRETION_DISCOVERY');
+  saveEnclaveAssets(cleaned, tenantId);
+  return await ingestAccretionDiscoveryPayload(tenantId, buildSimulatedDiscoveryBatch(), seed);
 }
 
 // ---------------------------------------------------------------------------
@@ -521,7 +495,8 @@ export async function simulateAccretionDiscovery(tenantId: string): Promise<Accr
 export function confirmDiscoveredAsset(
   tenantId: string,
   assetId: string,
-  confirmedCategory: CmmcAssetCategory
+  confirmedCategory: CmmcAssetCategory,
+  seed = true
 ): EnclaveAsset {
   return updateEnclaveAsset(
     assetId,
@@ -529,7 +504,8 @@ export function confirmDiscoveredAsset(
       cmmcAssetCategory: confirmedCategory,
       discoveryStatus: 'ACTIVE',
     },
-    tenantId
+    tenantId,
+    seed
   );
 }
 
@@ -562,7 +538,7 @@ export function getAccretionApiConfig(tenantId: string): { webhookUrl: string; s
   }
 
   return {
-    webhookUrl: 'https://grc.pitchblackcyber.com/api/v1/assets/accretion-sync',
+    webhookUrl: `https://grc.pitchblackcyber.com/api/v1/tenants/${tenantId}/assets/discovery`,
     secretKey: secret,
   };
 }
@@ -576,4 +552,22 @@ export function rotateAccretionSecretKey(tenantId: string): string {
     // Storage fallback
   }
   return newSecret;
+}
+
+// ---------------------------------------------------------------------------
+// 11. Migration helpers (browser-only tenant -> server)
+// ---------------------------------------------------------------------------
+
+/** True for the demo fleet this module seeds into an empty inventory (never a real tenant's asset). */
+export function isDemoSeedAsset(asset: Pick<EnclaveAsset, 'id'>, tenantId: string): boolean {
+  return /^asset-[a-z]+-\d{2}-/.test(asset.id) && asset.id.endsWith(`-${tenantId}`);
+}
+
+/** Forgets a tenant's browser-local inventory (after it has been moved to the server). */
+export function clearLocalEnclaveAssets(tenantId: string): void {
+  try {
+    localStorage.removeItem(getStorageKey(tenantId));
+  } catch {
+    // storage unavailable: the old copy simply stays
+  }
 }

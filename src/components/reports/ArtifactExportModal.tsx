@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
+import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useTenant } from '../../context/TenantContext';
 import {
   ReportDocumentType,
@@ -66,6 +67,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     activeFramework,
     canEdit,
   } = useTenant();
+
+  // The asset inventory defines the SSP boundary summary. Until it has loaded (or if it cannot be loaded) the SSP states
+  // no asset counts rather than a wrong zero.
+  const { summary: assetScope, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
 
   // Document Type selection: default dynamically to the active framework's standard report
   const [selectedDocType, setSelectedDocType] = useState<ReportDocumentType>(() => {
@@ -157,12 +162,12 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const compiledDoc = useMemo(() => {
     return compileReportDocument(
       selectedDocType,
-      formData,
+      { ...formData, assetScope: assetsLoading || assetsError ? undefined : assetScope },
       frameworkControls,
       state.controls,
       state.evidenceIndex
     );
-  }, [selectedDocType, formData, frameworkControls, state.controls, state.evidenceIndex]);
+  }, [selectedDocType, formData, assetScope, assetsLoading, assetsError, frameworkControls, state.controls, state.evidenceIndex]);
 
   // Export handlers
   const handleDownloadHtml = () => {

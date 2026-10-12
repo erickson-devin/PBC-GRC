@@ -12,11 +12,10 @@ import {
   CheckCircle2,
   Loader2,
 } from 'lucide-react';
-import {
-  getAccretionApiConfig,
-  rotateAccretionSecretKey,
-  simulateAccretionDiscovery,
-} from '../../data/telemetry/assetRegistry';
+import { getAccretionApiConfig, rotateAccretionSecretKey } from '../../data/telemetry/assetRegistry';
+import type { AssetBackend } from '../../services/assetService';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { errorMessage } from '../../utils/errors';
 import { AccretionIngestResult } from '../../types/telemetry';
 
 interface AccretionIntegrationModalProps {
@@ -24,6 +23,8 @@ interface AccretionIntegrationModalProps {
   onClose: () => void;
   onDiscoveryComplete?: (result: AccretionIngestResult) => void;
   tenantId: string;
+  /** Where discovered devices are stored (the server for live tenants). */
+  backend: AssetBackend;
 }
 
 export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps> = ({
@@ -31,11 +32,14 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
   onClose,
   onDiscoveryComplete,
   tenantId,
+  backend,
 }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [config, setConfig] = useState(() => getAccretionApiConfig(tenantId));
   const [showSecret, setShowSecret] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<AccretionIngestResult | null>(null);
   const [selectedSnippetTab, setSelectedSnippetTab] = useState<'curl' | 'python' | 'json'>('curl');
 
@@ -43,6 +47,8 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
     if (isOpen) {
       setConfig(getAccretionApiConfig(tenantId));
       setSimulationResult(null);
+      setSimulationError(null);
+      setConfirmRotate(false);
     }
   }, [isOpen, tenantId]);
 
@@ -54,27 +60,32 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
     setTimeout(() => setCopiedField(null), 2500);
   };
 
+  // Two-step inline confirmation: a blocking confirm() dialog is neither accessible nor testable
   const handleRotateKey = () => {
-    if (confirm('Revoke current Accretion API Secret Key? Connected sensors must be re-keyed immediately.')) {
-      const newKey = rotateAccretionSecretKey(tenantId);
-      setConfig(prev => ({ ...prev, secretKey: newKey }));
+    if (!confirmRotate) {
+      setConfirmRotate(true);
+      return;
     }
+    const newKey = rotateAccretionSecretKey(tenantId);
+    setConfig(prev => ({ ...prev, secretKey: newKey }));
+    setConfirmRotate(false);
   };
 
   const handleRunSimulation = async () => {
     setIsSimulating(true);
     setSimulationResult(null);
+    setSimulationError(null);
 
     try {
       // Simulate network sensor telemetry delay
       await new Promise(r => setTimeout(r, 1200));
-      const result = await simulateAccretionDiscovery(tenantId);
+      const result = await backend.simulateDiscovery();
       setSimulationResult(result);
       if (onDiscoveryComplete) {
         onDiscoveryComplete(result);
       }
     } catch (err) {
-      console.error('Simulation failed:', err);
+      setSimulationError(errorMessage(err) || 'The discovery results could not be saved.');
     } finally {
       setIsSimulating(false);
     }
@@ -84,10 +95,9 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
   -H "Authorization: Bearer ${config.secretKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "tenantId": "${tenantId}",
-    "agentId": "accretion-sensor-vlan50",
-    "discoveredAssets": [
+    "items": [
       {
+        "agentId": "accretion-sensor-vlan50",
         "macAddress": "00:1A:2B:3C:4D:5E",
         "ipAddress": "10.0.50.155",
         "hostName": "UNMANAGED-DEV-01",
@@ -107,10 +117,9 @@ headers = {
     "Content-Type": "application/json"
 }
 payload = {
-    "tenantId": "${tenantId}",
-    "agentId": "accretion-sensor-vlan50",
-    "discoveredAssets": [
+    "items": [
         {
+            "agentId": "accretion-sensor-vlan50",
             "macAddress": "00:1A:2B:3C:4D:5E",
             "ipAddress": "10.0.50.155",
             "hostName": "UNMANAGED-DEV-01",
@@ -126,10 +135,9 @@ response = requests.post(url, json=payload, headers=headers)
 print("Accretion Ingest Response:", response.status_code, response.json())`;
 
   const jsonSnippet = `{
-  "tenantId": "${tenantId}",
-  "agentId": "accretion-sensor-vlan50",
-  "discoveredAssets": [
+  "items": [
     {
+      "agentId": "accretion-sensor-vlan50",
       "macAddress": "00:1A:2B:3C:4D:5E",
       "ipAddress": "10.0.50.155",
       "hostName": "UNMANAGED-DEV-01",
@@ -208,6 +216,8 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
           </button>
         </div>
 
+        <ErrorNotice message={simulationError} />
+
         {/* Simulation Feedback */}
         {simulationResult && (
           <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs space-y-2 animate-fadeIn">
@@ -282,12 +292,17 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
             </button>
             <button
               onClick={handleRotateKey}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors shrink-0"
+              className={confirmRotate
+                ? 'px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-500 text-xs font-bold transition-colors shrink-0'
+                : 'p-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors shrink-0'}
               title="Rotate Secret Key"
             >
-              <RotateCcw className="w-4 h-4" />
+              {confirmRotate ? <span>Confirm: sensors must be re-keyed</span> : <RotateCcw className="w-4 h-4" />}
             </button>
           </div>
+          <p className="text-[11px] text-amber-300/90">
+            Sensor API keys are not accepted by the server yet: the endpoint above currently needs a signed-in Tenant Owner / MSP Admin session token.
+          </p>
           <p className="text-[11px] text-slate-400">
             Pass in HTTP Header: <code className="text-cyan-400">Authorization: Bearer {config.secretKey.slice(0, 14)}...</code>
           </p>

@@ -11,6 +11,7 @@ import { FrameworkControlDefinition, ComplianceFramework } from '../../types/fra
 import { ControlState, EvidenceItem, ControlStatus } from '../../types/cmmc';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
+import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
 
 /**
  * Resolves the standard recommended document type for a given compliance framework.
@@ -207,6 +208,19 @@ export function compileNistSSP(
         title: '1.2 Operational Environment & Authorization Boundary',
         content: metadata.boundaryDescription || 'The system boundary encompasses all corporate cloud identity tenants, managed physical and virtual endpoints, boundary gateway firewalls, and cloud services processing, storing, or transmitting Federal Contract Information (FCI) or Controlled Unclassified Information (CUI).',
       },
+      ...(metadata.assetScope
+        ? [
+            {
+              title: '1.2.1 CMMC Asset Scoping Summary',
+              content: boundaryNarrative(metadata.assetScope),
+              items: [
+                ...CMMC_ASSET_CATEGORIES.map((cat) => ({ label: CATEGORY_INFO[cat].label, value: String(metadata.assetScope!.byCategory[cat]) })),
+                { label: 'Total In-Scope Assets', value: String(metadata.assetScope.inScope) },
+                { label: 'Awaiting Classification', value: String(metadata.assetScope.unconfirmed) },
+              ],
+            },
+          ]
+        : []),
       {
         title: '1.3 Cloud Service Providers (CSPs) & Hosting Infrastructure',
         content: metadata.cloudServiceProviders || 'Google Cloud Platform (GCS Enclave Storage & Cloud SQL FedRAMP High equivalent), Microsoft 365 GCC High / Commercial identity enclave, Cloudflare Zero Trust.',

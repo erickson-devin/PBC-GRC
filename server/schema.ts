@@ -1,4 +1,5 @@
 import { TENANT_ROLES } from '../src/utils/roles';
+import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -21,6 +22,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'evidence_metadata', tenantColumn: 'tenant_id' },
   { table: 'ssp_documents', tenantColumn: 'tenant_id' },
   { table: 'tenant_invitations', tenantColumn: 'tenant_id' },
+  { table: 'enclave_assets', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -29,6 +31,7 @@ const tenantPredicate = (column: string): string =>
   `${column} = NULLIF(current_setting('app.current_tenant_id', true), '')`;
 
 const roleList = TENANT_ROLES.map((r) => `'${r}'`).join(', ');
+const assetCategoryList = CMMC_ASSET_CATEGORIES.map((c) => `'${c}'`).join(', ');
 
 /** Tables and columns (idempotent). */
 export const TABLES_SQL = `
@@ -139,6 +142,34 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_tenant_invitations_tenant ON tenant_invitations(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_tenant_invitations_email ON tenant_invitations(tenant_id, email);
+
+  -- CMMC scoping: the assets that make up the assessment boundary, each with its CMMC asset category. Server-owned so the
+  -- SSP boundary summary and scoring do not depend on one person's browser.
+  CREATE TABLE IF NOT EXISTS enclave_assets (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      asset_name VARCHAR(255) NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      cmmc_category VARCHAR(32) NOT NULL,
+      owner VARCHAR(255) NOT NULL DEFAULT '',
+      ip_address VARCHAR(64) NOT NULL DEFAULT '',
+      mac_address VARCHAR(32) NOT NULL DEFAULT '',
+      os_profile VARCHAR(64) NOT NULL DEFAULT 'custom',
+      status VARCHAR(32) NOT NULL DEFAULT 'NEVER_SCANNED',
+      source_origin VARCHAR(32) NOT NULL DEFAULT 'MANUAL_ENTRY',
+      discovery_status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+      accretion_metadata JSONB,
+      last_scanned_at TIMESTAMPTZ,
+      compliance_score INTEGER,
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT enclave_assets_category_check CHECK (cmmc_category IN (${assetCategoryList})),
+      CONSTRAINT enclave_assets_score_check CHECK (compliance_score IS NULL OR (compliance_score BETWEEN 0 AND 100))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_enclave_assets_name ON enclave_assets(tenant_id, lower(asset_name));
+  CREATE INDEX IF NOT EXISTS idx_enclave_assets_tenant_category ON enclave_assets(tenant_id, cmmc_category);
 
   -- Local (air-gapped) identities for AUTH_MODE=local. Global, not tenant-bound: a person logs in first and
   -- belongs to tenants through tenant_users. Passwords are stored only as bcrypt hashes.

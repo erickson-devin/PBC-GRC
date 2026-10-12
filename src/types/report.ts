@@ -1,5 +1,6 @@
 import { ComplianceFramework, BaselineTier } from './framework';
 import { ControlStatus, ComplianceMetrics, DomainStat } from './cmmc';
+import type { AssetScopeSummary } from '../data/telemetry/assetScope';
 
 export type ReportDocumentType =
   | 'NIST_SP_800_18_SSP'
@@ -36,6 +37,11 @@ export interface ReportMetadata {
   version: string;
   framework: ComplianceFramework;
   baselineTier?: BaselineTier;
+  /**
+   * The enclave's CMMC asset scope (counts per category). When present, the SSP states it in the boundary section; when
+   * absent (inventory not loaded) the SSP makes no claim about asset counts.
+   */
+  assetScope?: AssetScopeSummary;
 }
 
 export interface POAMMilestone {

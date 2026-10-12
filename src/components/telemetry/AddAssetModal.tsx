@@ -12,11 +12,14 @@ import {
   CmmcAssetCategory,
   EnclaveAssetStatus,
 } from '../../types/telemetry';
+import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES } from '../../data/telemetry/assetScope';
+import { errorMessage } from '../../utils/errors';
 
 interface AddAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (asset: Omit<EnclaveAsset, 'id'>) => void;
+  /** Resolves when the asset is saved. A rejection is shown in the form, which stays open so nothing typed is lost. */
+  onSave: (asset: Omit<EnclaveAsset, 'id'>) => Promise<void> | void;
   initialAsset?: EnclaveAsset | null;
   tenantId: string;
 }
@@ -35,6 +38,8 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   const [cmmcAssetCategory, setCmmcAssetCategory] = useState<CmmcAssetCategory>('CUI_ASSET');
   const [status, setStatus] = useState<EnclaveAssetStatus>('NEVER_SCANNED');
   const [notes, setNotes] = useState('');
+  const [owner, setOwner] = useState('');
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,6 +51,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setCmmcAssetCategory(initialAsset.cmmcAssetCategory);
       setStatus(initialAsset.status);
       setNotes(initialAsset.notes || '');
+      setOwner(initialAsset.owner || '');
     } else {
       setHostName('');
       setIpAddress('');
@@ -54,16 +60,18 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setCmmcAssetCategory('CUI_ASSET');
       setStatus('NEVER_SCANNED');
       setNotes('');
+      setOwner('');
     }
     setError(null);
+    setSaving(false);
   }, [initialAsset, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!hostName.trim()) {
-      setError('Hostname is required.');
+      setError('Asset name is required.');
       return;
     }
     if (!ipAddress.trim()) {
@@ -71,23 +79,31 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       return;
     }
 
-    onSave({
-      tenantId,
-      hostName: hostName.trim(),
-      ipAddress: ipAddress.trim(),
-      macAddress: macAddress.trim() || `52:54:00:${Math.random().toString(16).slice(2, 6).toUpperCase()}:${Math.random().toString(16).slice(2, 4).toUpperCase()}`,
-      osProfile,
-      cmmcAssetCategory,
-      status: initialAsset ? status : 'NEVER_SCANNED',
-      sourceOrigin: initialAsset?.sourceOrigin || 'MANUAL_ENTRY',
-      discoveryStatus: initialAsset?.discoveryStatus || 'ACTIVE',
-      lastScannedAt: initialAsset?.lastScannedAt || null,
-      complianceScore: initialAsset?.complianceScore !== undefined ? initialAsset.complianceScore : null,
-      notes: notes.trim(),
-      isManuallyAdded: true,
-    });
-
-    onClose();
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        tenantId,
+        hostName: hostName.trim(),
+        ipAddress: ipAddress.trim(),
+        // Left blank when unknown: an invented address would be stored as if it were real
+        macAddress: macAddress.trim(),
+        osProfile,
+        cmmcAssetCategory,
+        status: initialAsset ? status : 'NEVER_SCANNED',
+        sourceOrigin: initialAsset?.sourceOrigin || 'MANUAL_ENTRY',
+        discoveryStatus: initialAsset?.discoveryStatus || 'ACTIVE',
+        lastScannedAt: initialAsset?.lastScannedAt || null,
+        complianceScore: initialAsset?.complianceScore !== undefined ? initialAsset.complianceScore : null,
+        notes: notes.trim(),
+        owner: owner.trim(),
+        isManuallyAdded: true,
+      });
+      onClose();
+    } catch (err: unknown) {
+      setError(errorMessage(err) || 'The asset could not be saved.');
+      setSaving(false);
+    }
   };
 
   return (
@@ -105,10 +121,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-white">
-                {initialAsset ? 'Edit Enclave Endpoint' : 'Register New Enclave Endpoint'}
+                {initialAsset ? 'Edit Enclave Asset' : 'Register Enclave Asset'}
               </h2>
               <p className="text-xs text-slate-400">
-                Configure hardware node & CMMC 2.0 scoping baseline.
+                Describe the asset and assign its CMMC scoping category.
               </p>
             </div>
           </div>
@@ -122,7 +138,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+          <div role="alert" className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
@@ -135,7 +151,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block font-semibold text-slate-300 mb-1.5">
-                Hostname / FQDN <span className="text-rose-400">*</span>
+                Asset name / hostname <span className="text-rose-400">*</span>
               </label>
               <div className="flex items-center gap-2">
                 <Monitor className="w-4 h-4 text-slate-400 shrink-0" />
@@ -206,35 +222,47 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
           {/* CMMC Scope Category */}
           <div>
             <label className="block font-semibold text-slate-300 mb-1.5">
-              CMMC 2.0 Scoping Scope Category
+              CMMC 2.0 asset category
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { id: 'CUI_ASSET', label: 'CUI Asset', desc: 'Processes, stores, or transmits CUI' },
-                { id: 'SECURITY_PROTECTION', label: 'Security Protection', desc: 'Firewall, SIEM, IAM, Bastion' },
-                { id: 'CONTRACTOR_RISK', label: 'Contractor Risk', desc: 'Managed contractor asset' },
-                { id: 'OUT_OF_SCOPE', label: 'Out of Scope', desc: 'Logically separated network' },
-              ].map(cat => (
-                <div
-                  key={cat.id}
-                  onClick={() => setCmmcAssetCategory(cat.id as CmmcAssetCategory)}
-                  className={`p-2.5 rounded-xl border cursor-pointer transition-all ${
-                    cmmcAssetCategory === cat.id
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="CMMC asset category">
+              {CMMC_ASSET_CATEGORIES.map(cat => (
+                <button
+                  type="button"
+                  key={cat}
+                  role="radio"
+                  aria-checked={cmmcAssetCategory === cat}
+                  onClick={() => setCmmcAssetCategory(cat)}
+                  className={`text-left p-2.5 rounded-xl border transition-all ${
+                    cmmcAssetCategory === cat
                       ? 'bg-cyan-950/40 border-cyan-500/60 ring-1 ring-cyan-500/30'
                       : 'bg-slate-800/40 border-slate-800 hover:border-slate-700'
                   }`}
                 >
-                  <p className="font-bold text-white text-xs">{cat.label}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{cat.desc}</p>
-                </div>
+                  <p className="font-bold text-white text-xs">{CATEGORY_INFO[cat].label}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{CATEGORY_INFO[cat].description}</p>
+                </button>
               ))}
             </div>
+          </div>
+
+          {/* Owner */}
+          <div>
+            <label className="block font-semibold text-slate-300 mb-1.5">
+              Owner <span className="text-slate-400 font-normal">(Optional)</span>
+            </label>
+            <input
+              type="text"
+              value={owner}
+              onChange={e => setOwner(e.target.value)}
+              placeholder="e.g. IT Operations, or Jordan Lee"
+              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            />
           </div>
 
           {/* Administrative Notes */}
           <div>
             <label className="block font-semibold text-slate-300 mb-1.5">
-              Hardware Notes & Role Specification
+              Description
             </label>
             <textarea
               rows={2}
@@ -256,9 +284,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold transition-all shadow-md shadow-cyan-950/40"
+              disabled={saving}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold transition-all shadow-md shadow-cyan-950/40 disabled:opacity-60"
             >
-              {initialAsset ? 'Save Changes' : 'Register Endpoint'}
+              {saving ? 'Saving…' : initialAsset ? 'Save Changes' : 'Register Asset'}
             </button>
           </div>
 

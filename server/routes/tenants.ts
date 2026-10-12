@@ -15,6 +15,7 @@ import {
 import { requireWriteRole } from '../middleware/roleGuard';
 import { ensureActiveTenant } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
+import tenantAssetsRouter from './assets';
 import { isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
@@ -206,6 +207,7 @@ router.use(requireWriteRole);
 
 // Invitations: /api/v1/tenants/:tenantId/invites (create / list / revoke / resend / extend / edit)
 router.use('/:tenantId/invites', tenantInvitesRouter);
+router.use('/:tenantId/assets', tenantAssetsRouter);
 
 const USER_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,128}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
