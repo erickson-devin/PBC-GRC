@@ -158,7 +158,7 @@ export function getControlImpactBadge(weight: number): ImpactBadgeInfo {
         label: 'High Impact',
         tagText: '5 PTS // HIGH IMPACT',
         badgeClass: 'bg-rose-500/15 text-rose-300 border border-rose-500/40 ring-1 ring-cyan-400/40 shadow-[0_0_12px_rgba(244,63,94,0.35)]',
-        dotClass: 'bg-rose-400 animate-ping',
+        dotClass: 'bg-rose-400 animate-ping motion-reduce:hidden',
         glowClass: 'shadow-rose-950/40',
       };
     case 3:

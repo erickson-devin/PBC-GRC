@@ -19,7 +19,7 @@ import { remediateAssetRule } from '../../data/telemetry/assetTelemetryEngine';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AssetRemediationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -77,7 +77,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
   };
 
   return (
-    <DialogOverlay label="Asset remediation" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-end bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-end bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       {/* Drawer Overlay Backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
@@ -95,10 +95,10 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                 BOUNDARY: NOT_MET
               </span>
             </div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <DialogTitle as="h2" className="text-base font-bold text-white flex items-center gap-2">
               <Terminal className="w-4 h-4 text-cyan-400" />
               <span>Asset Health & Root-Cause Remediation Drawer</span>
-            </h2>
+            </DialogTitle>
             <p className="text-xs text-slate-400">
               {control.title}
             </p>
@@ -254,7 +254,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                       >
                         {isRemediating ? (
                           <>
-                            <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+                            <RotateCcw className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" />
                             <span>Pushing Fix via Agent...</span>
                           </>
                         ) : (

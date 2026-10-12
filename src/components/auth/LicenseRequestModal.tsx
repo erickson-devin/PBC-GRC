@@ -17,7 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 import { LicenseTier, getLicenseTierBadge } from '../../types/tenant';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
 interface LicenseRequestModalProps {
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
@@ -85,7 +85,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
   };
 
   return (
-    <DialogOverlay label="Request a license" onClose={handleResetAndClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-xl animate-fadeIn overflow-y-auto">
+    <DialogOverlay onClose={handleResetAndClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-xl animate-fadeIn overflow-y-auto">
       {/* Outer Shell (Double-Bezel hardware architecture) */}
       <div className="relative w-full max-w-2xl my-8 p-1.5 sm:p-2 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950/80 ring-1 ring-white/10 shadow-2xl shadow-slate-950/80">
         
@@ -109,9 +109,9 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                   <ShieldCheck className="w-3.5 h-3.5 text-brand-400" />
                   Defense Enclave Licensing & Onboarding
                 </div>
-                <h3 className="text-2xl font-black text-white tracking-tight">
+                <DialogTitle as="h3" className="text-2xl font-black text-white tracking-tight">
                   Request Enclave License & Schedule Sales Call
-                </h3>
+                </DialogTitle>
                 <p className="text-xs sm:text-sm text-slate-400">
                   Fill out your contractor details below. Our CMMC Solutions Architecture team will configure your isolated Microsoft 365 or Google Workspace tenant enclave and coordinate your licensing setup.
                 </p>

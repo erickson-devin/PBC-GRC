@@ -106,6 +106,16 @@
   animation: pulse-subtle 3s ease-in-out infinite;
 }
 
+/* Respect the OS "reduce motion" setting for the custom animations too (Tailwind pulse/spin/ping/bounce are guarded with motion-reduce: at their usage sites) */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-subtle,
+  .animate-fadeIn,
+  .animate-scaleUp,
+  .animate-shake {
+    animation: none;
+  }
+}
+
 /* ==========================================================================
    Stitch Standard Design System Utilities
    ========================================================================== */

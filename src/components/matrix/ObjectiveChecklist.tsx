@@ -222,11 +222,11 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   rollup.calculatedStatus === 'MET'
-                    ? 'bg-emerald-400 animate-pulse'
+                    ? 'bg-emerald-400 animate-pulse motion-reduce:animate-none'
                     : rollup.calculatedStatus === 'NOT_MET'
                     ? 'bg-rose-400'
                     : rollup.calculatedStatus === 'IN_PROGRESS'
-                    ? 'bg-amber-400 animate-pulse'
+                    ? 'bg-amber-400 animate-pulse motion-reduce:animate-none'
                     : 'bg-slate-400'
                 }`}
               />
@@ -267,7 +267,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
             className="btn-accent flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs"
             title="Auto-fills all objective narratives with pre-filled baseline templates and marks all objectives as MET"
           >
-            <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse" />
+            <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse motion-reduce:animate-none" />
             <span>Confirm All Best-Practice Narratives</span>
           </button>
         </div>
@@ -351,7 +351,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                       {/* Telemetry verification badge */}
                       {obj.isAutoVerifiedByTelemetry && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-medium">
-                          <Activity className="w-3 h-3 text-emerald-400 animate-pulse" />
+                          <Activity className="w-3 h-3 text-emerald-400 animate-pulse motion-reduce:animate-none" />
                           <span>Telemetry Verified (OpenSCAP / STIG)</span>
                         </span>
                       )}

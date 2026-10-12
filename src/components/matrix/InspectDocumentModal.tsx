@@ -46,7 +46,7 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
 import { activateOnKey } from '../../utils/a11y';
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface InspectDocumentModalProps {
   controlId?: string | null;
   onClose?: () => void;
@@ -345,7 +345,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   return (
-    <DialogOverlay label="Control details" onClose={handleClose} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+    <DialogOverlay onClose={handleClose} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         {/* ── Top Header ── */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
@@ -408,7 +408,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
         {/* ── Title & Status Strip ── */}
         <div className="px-6 py-4 bg-slate-900 border-b border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
           <div>
-            <h2 className="text-xl font-bold text-white tracking-tight">{control.title}</h2>
+            <DialogTitle as="h2" className="text-xl font-bold text-white tracking-tight">{control.title}</DialogTitle>
             <p className="text-xs text-slate-400 mt-0.5">{control.plainEnglishSummary}</p>
           </div>
 
@@ -441,7 +441,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
         {/* ── MANDATORY C3PAO ASSESSMENT METHOD BANNER ── */}
         <div className="px-6 py-3 bg-gradient-to-r from-cyan-950/70 via-slate-900 to-indigo-950/60 border-b border-cyan-500/30 flex items-center gap-3 shrink-0">
-          <ShieldAlert className="w-5 h-5 text-cyan-400 shrink-0 animate-pulse" />
+          <ShieldAlert className="w-5 h-5 text-cyan-400 shrink-0 animate-pulse motion-reduce:animate-none" />
           <div className="min-w-0">
             <p className="text-xs font-bold text-cyan-200 tracking-wide">
               C3PAO Assessment Method: All objectives must be satisfied for overall control compliance.

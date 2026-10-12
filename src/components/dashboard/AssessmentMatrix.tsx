@@ -219,7 +219,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-between gap-4 text-xs text-amber-300 animate-fadeIn">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
-              <Radio className="w-4 h-4 text-amber-400 animate-pulse" />
+              <Radio className="w-4 h-4 text-amber-400 animate-pulse motion-reduce:animate-none" />
             </div>
             <div>
               <p className="font-bold text-white flex items-center gap-2">
@@ -424,7 +424,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                     : 'bg-slate-950 text-slate-400 hover:text-rose-300 hover:bg-slate-800 border border-slate-800'
                 }`}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse motion-reduce:animate-none" />
                 <span>5-Pt (High Impact)</span>
                 <span className="text-xs font-mono opacity-80">({weightCounts.five})</span>
               </button>

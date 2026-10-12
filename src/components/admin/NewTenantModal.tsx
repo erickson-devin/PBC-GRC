@@ -21,7 +21,7 @@ import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface NewTenantModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -140,7 +140,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   };
 
   return (
-    <DialogOverlay label="Add a client enclave" onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       {/* Double-Bezel Architecture */}
       <div className="w-full max-w-xl p-1.5 rounded-[2.25rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="p-5 sm:p-7 rounded-[calc(2.25rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(94vh-0.75rem)] overflow-y-auto">
@@ -157,9 +157,9 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     SUPER ADMIN CONSOLE
                   </span>
                 </div>
-                <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight mt-0.5">
+                <DialogTitle as="h2" className="text-base sm:text-lg font-extrabold text-white tracking-tight mt-0.5">
                   {createdResult ? 'Tenant Enclave Provisioned' : 'Provision New Defense Tenant'}
-                </h2>
+                </DialogTitle>
               </div>
             </div>
             <button aria-label="Close"
@@ -499,7 +499,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 >
                   {isSubmitting ? (
                     <>
-                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" />
                       <span>Provisioning Enclave...</span>
                     </>
                   ) : (

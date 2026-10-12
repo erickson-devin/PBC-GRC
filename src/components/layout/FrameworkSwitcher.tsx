@@ -177,7 +177,7 @@ export const FrameworkSwitcher: React.FC = () => {
             : 'Click to enable Tactical / Non-Networked System Overlay (hides non-applicable network boundary controls)'
         }
       >
-        <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
+        <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400 animate-pulse motion-reduce:animate-none' : 'text-slate-400'}`} />
         <span className="hidden xl:inline text-xs">
           {activeOverlayFilters.nonNetworkedOnly ? 'Tactical Overlay: ON' : 'Tactical Overlay'}
         </span>

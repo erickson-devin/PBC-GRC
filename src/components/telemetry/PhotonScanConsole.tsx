@@ -332,10 +332,10 @@ export const PhotonScanConsole: React.FC = () => {
   const statusConfig: Record<PhotonScanStatus, { label: string; color: string; icon: React.ReactNode }> = {
     IDLE:        { label: 'Ready',       color: 'text-slate-400',    icon: <Radio className="w-3.5 h-3.5" /> },
     CONFIGURING: { label: 'Configuring', color: 'text-amber-400',    icon: <Cpu className="w-3.5 h-3.5" /> },
-    SCANNING:    { label: 'Scanning...',  color: 'text-cyan-400',    icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> },
+    SCANNING:    { label: 'Scanning...',  color: 'text-cyan-400',    icon: <Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" /> },
     COMPLETED:   { label: 'Completed',   color: 'text-emerald-400',  icon: <CheckCircle2 className="w-3.5 h-3.5" /> },
     ERROR:       { label: 'Error',       color: 'text-red-400',      icon: <XCircle className="w-3.5 h-3.5" /> },
-    SYNCING:     { label: 'Syncing...',  color: 'text-violet-400',   icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> },
+    SYNCING:     { label: 'Syncing...',  color: 'text-violet-400',   icon: <Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" /> },
   };
 
   const currentStatus = statusConfig[scanStatus];
@@ -569,7 +569,7 @@ export const PhotonScanConsole: React.FC = () => {
             >
               {scanStatus === 'SCANNING' ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" />
                   Scanning Target...
                 </>
               ) : (
@@ -593,7 +593,7 @@ export const PhotonScanConsole: React.FC = () => {
             >
               {scanStatus === 'SYNCING' ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" />
                   Syncing to Control Matrix...
                 </>
               ) : (
@@ -661,7 +661,7 @@ export const PhotonScanConsole: React.FC = () => {
 
           {/* Blinking cursor when scanning */}
           {(scanStatus === 'SCANNING' || scanStatus === 'SYNCING') && (
-            <span className="inline-block w-2 h-4 bg-cyan-400 animate-pulse ml-0.5" />
+            <span className="inline-block w-2 h-4 bg-cyan-400 animate-pulse motion-reduce:animate-none ml-0.5" />
           )}
         </div>
       </div>

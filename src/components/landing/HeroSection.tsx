@@ -45,7 +45,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 
           {/* Eyebrow Pill */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 shadow-lg shadow-black/40 backdrop-blur-md">
-            <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse motion-reduce:animate-none" />
             <span className="text-xs font-semibold text-slate-200 tracking-wide">
               Event Horizon: Singularity • DoD CMMC 2.0 & Defense GRC
             </span>

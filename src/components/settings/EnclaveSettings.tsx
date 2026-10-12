@@ -26,7 +26,7 @@ import { EnclaveStackProfile } from '../../types/tenant';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../../hooks/useFipsModules';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
   edrSolution: 'DEFENDER_FOR_ENDPOINT',
@@ -663,7 +663,7 @@ export const EnclaveSettings: React.FC = () => {
       {previewingPolicy && (() => {
         const markdown = generateFamilyPolicyDocument(currentTenant, previewingPolicy.code, previewingPolicy.title, activeFramework, cryptoModules);
         return (
-          <DialogOverlay label="Policy document" onClose={() => setPreviewingPolicy(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <DialogOverlay onClose={() => setPreviewingPolicy(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
             <div className="w-full max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-fadeIn">
               {/* Modal Header */}
               <div className="p-5 border-b border-slate-800 flex items-center justify-between gap-4 bg-slate-950/60 shrink-0">
@@ -672,12 +672,12 @@ export const EnclaveSettings: React.FC = () => {
                     <FileText className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <DialogTitle as="h3" className="text-base font-bold text-white flex items-center gap-2">
                       <span>{previewingPolicy.title}</span>
                       <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
                         {previewingPolicy.code} Living Document
                       </span>
-                    </h3>
+                    </DialogTitle>
                     <p className="text-xs text-slate-400">
                       Compiled for {currentTenant.name} (CAGE: {currentTenant.cageCode || 'N/A'})
                     </p>

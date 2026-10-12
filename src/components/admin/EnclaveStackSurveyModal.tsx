@@ -18,7 +18,7 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { EnclaveStackProfile } from '../../types/tenant';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
 interface EnclaveStackSurveyModalProps {
   isOpen: boolean;
@@ -229,7 +229,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
   const currentTabIndex = tabs.findIndex((t) => t.id === activeTab);
 
   return (
-    <DialogOverlay label="Enclave stack survey" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       <div
         className="relative w-full max-w-5xl rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-scaleUp"
         onClick={(e) => e.stopPropagation()}
@@ -242,9 +242,9 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-lg font-bold text-white tracking-tight">
+                <DialogTitle as="h3" className="text-lg font-bold text-white tracking-tight">
                   Enclave Stack Survey & Objective Engine
-                </h3>
+                </DialogTitle>
                 <span className="badge text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-semibold">
                   {currentTenant.name} ({currentTenant.cageCode || 'CAGE'})
                 </span>

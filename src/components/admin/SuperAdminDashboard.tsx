@@ -51,7 +51,7 @@ import {
 import { CertificateOfDestruction } from '../../types/audit';
 import { errorMessage } from '../../utils/errors';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
   onNavigateToLanding?: () => void;
@@ -535,7 +535,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <div className="flex items-center gap-3">
             {/* Operator Identifier */}
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
               <span className="text-slate-400">Operator:</span>
               <span className="font-bold text-white">{currentUser.name}</span>
               <span className="text-slate-400">({currentUser.email})</span>
@@ -1250,7 +1250,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-200 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
           >
             {exportingTenantId === floatingMenu.tenant.id ? (
-              <span className="w-3.5 h-3.5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
+              <span className="w-3.5 h-3.5 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin motion-reduce:animate-none" />
             ) : (
               <Download className="w-3.5 h-3.5 text-emerald-400" />
             )}
@@ -1334,7 +1334,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
       {/* 4. Add Platform Administrator Modal */}
       {isAddAdminModalOpen && (
-        <DialogOverlay label="Add platform administrator" onClose={() => setIsAddAdminModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+        <DialogOverlay onClose={() => setIsAddAdminModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
           <div className="relative w-full max-w-lg my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-purple-900/40 via-slate-900/60 to-slate-950 ring-1 ring-purple-500/40 shadow-2xl shadow-purple-950/40 animate-scaleUp">
             <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
               
@@ -1344,9 +1344,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     <UserPlus className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                    <DialogTitle as="h2" className="text-lg sm:text-xl font-black text-white tracking-tight">
                       Grant Platform Super Admin Clearance
-                    </h2>
+                    </DialogTitle>
                     <p className="text-xs text-slate-400">
                       Issue global boundary override and operator credentials
                     </p>
@@ -1434,7 +1434,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
       {/* 5. Two-Step NIST SP 800-88 Cryptographic Sanitization & Destruction Modal */}
       {isDestructionModalOpen && selectedTenantForDestruction && (
-        <DialogOverlay label="Cryptographic sanitize and destroy enclave" onClose={isDestroying ? undefined : () => { setIsDestructionModalOpen(false); setSelectedTenantForDestruction(null); }} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+        <DialogOverlay onClose={isDestroying ? undefined : () => { setIsDestructionModalOpen(false); setSelectedTenantForDestruction(null); }} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
           <div className="relative w-full max-w-xl my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-rose-900/40 via-slate-900/60 to-slate-950 ring-1 ring-rose-700/60 shadow-2xl shadow-rose-950/40 animate-scaleUp">
             <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
               
@@ -1447,9 +1447,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     <span className="badge text-xs uppercase font-mono font-extrabold tracking-widest px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20">
                       NIST SP 800-88 PROTOCOL
                     </span>
-                    <h2 className="text-xl font-black text-white tracking-tight pt-1">
+                    <DialogTitle as="h2" className="text-xl font-black text-white tracking-tight pt-1">
                       Cryptographic Sanitize & Destroy
-                    </h2>
+                    </DialogTitle>
                   </div>
                 </div>
 
@@ -1513,7 +1513,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 </div>
               ) : isDestroying ? (
                 <div className="py-8 text-center space-y-4">
-                  <div className="w-14 h-14 mx-auto rounded-full border-4 border-rose-500/20 border-t-rose-500 animate-spin" />
+                  <div className="w-14 h-14 mx-auto rounded-full border-4 border-rose-500/20 border-t-rose-500 animate-spin motion-reduce:animate-none" />
                   <div className="space-y-1">
                     <h3 className="text-base font-bold text-white">
                       Executing 3-Pass Cryptographic Wipe...

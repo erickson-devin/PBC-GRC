@@ -217,7 +217,7 @@ const AppContent: React.FC = () => {
           <div className="bg-gradient-to-r from-amber-500/20 via-brand-600/25 to-indigo-600/20 border-b border-amber-500/30 px-3 sm:px-6 py-2.5 text-xs flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg backdrop-blur-md sticky top-0 z-50">
             <div className="flex items-center gap-2 text-center sm:text-left flex-wrap justify-center sm:justify-start">
               <span className="px-2.5 py-0.5 rounded-full bg-amber-500/25 text-amber-300 font-extrabold border border-amber-500/40 text-[10px] uppercase tracking-wider flex items-center gap-1 shrink-0 shadow-sm">
-                <Sparkles className="w-3 h-3 text-amber-300 animate-pulse" />
+                <Sparkles className="w-3 h-3 text-amber-300 animate-pulse motion-reduce:animate-none" />
                 Live Demo Sandbox
               </span>
               <span className="text-slate-200 text-xs">
@@ -266,7 +266,7 @@ const AppContent: React.FC = () => {
                   {/* Accretion Discovery Engine Banner */}
                   <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-sm">
                     <span className="flex h-2.5 w-2.5 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                      <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
                     </span>
                     <span>
@@ -317,7 +317,7 @@ const AppContent: React.FC = () => {
                     {/* Accretion Discovery Engine Banner */}
                     <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-sm">
                       <span className="flex h-2.5 w-2.5 relative">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                        <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
                         <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
                       </span>
                       <span>

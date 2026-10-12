@@ -15,7 +15,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 import { TenantInvitation } from '../../types/tenant';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
 interface InviteStaffModalProps {
   isOpen: boolean;
@@ -88,7 +88,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   };
 
   return (
-    <DialogOverlay label="Invite a team member" onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
       {/* Double-Bezel Card */}
       <div className="w-full max-w-lg p-1.5 rounded-[2.25rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl">
         <div className="p-6 sm:p-7 rounded-[calc(2.25rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
@@ -103,9 +103,9 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 <span className="text-xs uppercase font-mono tracking-widest font-extrabold px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
                   TEAM INVITATION
                 </span>
-                <h3 className="text-base font-bold text-white tracking-tight mt-0.5">
+                <DialogTitle as="h3" className="text-base font-bold text-white tracking-tight mt-0.5">
                   {createdResult ? 'Staff Invitation Generated' : 'Invite Staff or Auditor'}
-                </h3>
+                </DialogTitle>
               </div>
             </div>
             <button aria-label="Close"
@@ -297,7 +297,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 >
                   {isSubmitting ? (
                     <>
-                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" />
                       <span>Generating Token...</span>
                     </>
                   ) : (

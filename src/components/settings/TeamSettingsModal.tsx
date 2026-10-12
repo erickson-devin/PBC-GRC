@@ -22,7 +22,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface TeamSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -264,9 +264,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       {currentTenant.cageCode ? `CAGE: ${currentTenant.cageCode}` : 'PENDING'}
                     </span>
                   </div>
-                  <h2 className="text-base sm:text-lg font-extrabold text-white tracking-tight mt-0.5">
+                  <DialogTitle as="h2" className="text-base sm:text-lg font-extrabold text-white tracking-tight mt-0.5">
                     Team & Role Permissions — {currentTenant.name}
-                  </h2>
+                  </DialogTitle>
                 </div>
               </div>
 
@@ -481,7 +481,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                             <td className="py-3 px-4">
                               {isPending ? (
                                 <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
                                   Pending Invite
                                 </span>
                               ) : (
@@ -716,7 +716,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       >
                         {isSavingScope ? (
                           <>
-                            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" />
                             <span>Saving Scope...</span>
                           </>
                         ) : (
@@ -751,7 +751,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   // ── Modal mode: wrapped in fixed overlay ──
   return (
     <>
-      <DialogOverlay label="Team settings" onClose={handleModalClose}
+      <DialogOverlay onClose={handleModalClose}
         onClick={handleModalClose}
         className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
       >

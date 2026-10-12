@@ -24,7 +24,7 @@ import {
 } from '../../data/telemetry/fipsValidation';
 import { errorMessage } from '../../utils/errors';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
 interface AddAssetModalProps {
   isOpen: boolean;
@@ -143,7 +143,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   };
 
   return (
-    <DialogOverlay label={initialAsset ? 'Edit enclave asset' : 'Register enclave asset'} onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       {/* Click outside backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
@@ -156,9 +156,9 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               <Server className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
+              <DialogTitle as="h2" className="text-base font-bold text-white">
                 {initialAsset ? 'Edit Enclave Asset' : 'Register Enclave Asset'}
-              </h2>
+              </DialogTitle>
               <p className="text-xs text-slate-400">
                 Describe the asset and assign its CMMC scoping category.
               </p>

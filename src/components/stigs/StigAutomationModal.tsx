@@ -34,7 +34,7 @@ import {
 } from '../../data/stigs/scriptGenerators';
 import { StigProfileId, StigSeverity, StigRule } from '../../types/stig';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface StigAutomationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -212,7 +212,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <DialogOverlay label="STIG automation" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       {/* Outer Glow Double-Bezel Card */}
       <div className="w-full max-w-6xl p-1 rounded-3xl bg-gradient-to-b from-cyan-500/30 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="p-5 sm:p-7 rounded-[calc(1.5rem-0.125rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(94vh-0.5rem)] overflow-hidden space-y-5">
@@ -232,9 +232,9 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                     Enclave: {currentTenant.name} ({currentTenant.cageCode || 'CAGE PENDING'})
                   </span>
                 </div>
-                <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight mt-0.5 flex items-center gap-2">
+                <DialogTitle as="h2" className="text-lg sm:text-xl font-extrabold text-white tracking-tight mt-0.5 flex items-center gap-2">
                   Technical Hardening Baselines & Script Export
-                </h2>
+                </DialogTitle>
               </div>
             </div>
 

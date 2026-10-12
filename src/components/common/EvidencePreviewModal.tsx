@@ -17,7 +17,7 @@ import { EvidenceVault } from '../../services/evidenceVault';
 import { GcsService } from '../../services/gcsService';
 import { findControlDefinition } from '../../data/frameworks';
 
-import { DialogOverlay } from './DialogOverlay';
+import { DialogOverlay, DialogTitle } from './DialogOverlay';
 const EvidencePreviewModalContent: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
   const { currentTenant } = useTenant();
@@ -105,7 +105,7 @@ const EvidencePreviewModalContent: React.FC = () => {
   };
 
   return (
-    <DialogOverlay label="Evidence preview" onClose={() => setPreviewEvidence(null)} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+    <DialogOverlay onClose={() => setPreviewEvidence(null)} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         
         {/* Header */}
@@ -116,7 +116,7 @@ const EvidencePreviewModalContent: React.FC = () => {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-white truncate">{previewEvidence.name}</h3>
+                <DialogTitle as="h3" className="text-sm font-bold text-white truncate">{previewEvidence.name}</DialogTitle>
                 <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                   <Cloud className="w-2.5 h-2.5" /> GCS Cloud Scoped
                 </span>

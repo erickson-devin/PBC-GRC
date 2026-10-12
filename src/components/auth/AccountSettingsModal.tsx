@@ -9,7 +9,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AccountSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -33,7 +33,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     : 'Enterprise Password Credentials';
 
   return (
-    <DialogOverlay label="Account settings" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
       <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl">
         <div className="p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
           
@@ -44,7 +44,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 <User className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Account & Identity Settings</h3>
+                <DialogTitle as="h3" className="text-sm font-bold text-white">Account & Identity Settings</DialogTitle>
                 <p className="text-xs text-slate-400">Defense Enclave User Profile</p>
               </div>
             </div>

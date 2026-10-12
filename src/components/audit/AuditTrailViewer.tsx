@@ -22,7 +22,7 @@ import {
   seedDemoAuditLedgerIfEmpty,
 } from '../../data/audit/auditLogger';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 export const AuditTrailViewer: React.FC = () => {
   const { currentTenant } = useTenant();
 
@@ -151,7 +151,7 @@ export const AuditTrailViewer: React.FC = () => {
             disabled={isVerifying}
             className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
           >
-            <RotateCw className={`w-3.5 h-3.5 ${isVerifying ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
+            <RotateCw className={`w-3.5 h-3.5 ${isVerifying ? 'animate-spin motion-reduce:animate-none text-cyan-400' : 'text-slate-400'}`} />
             <span>{isVerifying ? 'Verifying...' : 'Verify Chain'}</span>
           </button>
 
@@ -186,7 +186,7 @@ export const AuditTrailViewer: React.FC = () => {
                 {verification.isValid ? (
                   <ShieldCheck className="w-6 h-6" />
                 ) : (
-                  <ShieldAlert className="w-6 h-6 animate-pulse" />
+                  <ShieldAlert className="w-6 h-6 animate-pulse motion-reduce:animate-none" />
                 )}
               </div>
               <div className="space-y-0.5">
@@ -387,7 +387,7 @@ export const AuditTrailViewer: React.FC = () => {
 
       {/* Entry Inspector Modal */}
       {selectedEntry && (
-        <DialogOverlay label="Audit entry details" onClose={() => setSelectedEntry(null)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+        <DialogOverlay onClose={() => setSelectedEntry(null)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
           <div className="w-full max-w-2xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
@@ -395,9 +395,9 @@ export const AuditTrailViewer: React.FC = () => {
                   <Hash className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white">
+                  <DialogTitle as="h3" className="text-base font-black text-white">
                     Audit Block #{selectedEntry.sequenceNumber}
-                  </h3>
+                  </DialogTitle>
                   <span className="text-xs font-mono text-slate-400">
                     ID: {selectedEntry.id}
                   </span>

@@ -98,7 +98,7 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
           )}
           {stage === 'moving' && (
             <span className="inline-flex items-center gap-2 text-amber-200" aria-live="polite">
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
               Moving…
             </span>
           )}

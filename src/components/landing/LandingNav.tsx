@@ -99,7 +99,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
               onClick={onEnterApp}
               className="btn-success group relative inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold ring-1 ring-white/20"
             >
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping motion-reduce:hidden" />
               <span>Enter Enclave ({currentTenant.name.split(' ')[0]})</span>
               <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center group-hover:translate-x-0.5 transition-transform duration-200">
                 <ArrowRight className="w-3 h-3 text-white" />

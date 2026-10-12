@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { X, FileText, Copy, Check, Download, ArrowRight, ShieldCheck } from 'lucide-react';
 import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface SampleSspModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -58,7 +58,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
   };
 
   return (
-    <DialogOverlay label="Sample System Security Plan" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-slate-950/80 backdrop-blur-md">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-slate-950/80 backdrop-blur-md">
       <div 
         className="relative w-full max-w-4xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
         onClick={e => e.stopPropagation()}
@@ -71,7 +71,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
               <FileText className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Sample System Security Plan (SSP)</h3>
+              <DialogTitle as="h3" className="text-base font-bold text-white">Sample System Security Plan (SSP)</DialogTitle>
               <p className="text-xs text-slate-400">NIST SP 800-171 / FAR 52.204-21 Pre-compiled Template</p>
             </div>
           </div>

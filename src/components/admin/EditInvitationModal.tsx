@@ -16,7 +16,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 import { Tenant, TenantInvitation, TenantRole } from '../../types/tenant';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface EditInvitationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -126,7 +126,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
   };
 
   return (
-    <DialogOverlay label="Edit invitation" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-xl my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-slate-800/60 via-slate-900/40 to-slate-950 ring-1 ring-slate-700/60 shadow-2xl shadow-cyan-950/20 animate-scaleUp">
         <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
           
@@ -137,9 +137,9 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
                 <Mail className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                <DialogTitle as="h2" className="text-lg sm:text-xl font-black text-white tracking-tight">
                   Edit Staff / Tenant Invitation
-                </h2>
+                </DialogTitle>
                 <p className="text-xs text-slate-400">
                   Modify recipient, assigned boundary, role permissions, or token expiration
                 </p>
@@ -321,12 +321,12 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
               >
                 {showSuccessToast ? (
                   <>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 animate-bounce" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 animate-bounce motion-reduce:animate-none" />
                     <span>Invitation Updated!</span>
                   </>
                 ) : isSubmitting ? (
                   <>
-                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" />
                     <span>Saving...</span>
                   </>
                 ) : (

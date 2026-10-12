@@ -76,7 +76,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
       case 'MET':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 ring-1 ring-emerald-500/20 shadow-sm shadow-emerald-950/40">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             <span>MET</span>
           </span>
@@ -92,7 +92,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
       case 'IN_PROGRESS':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30 ring-1 ring-amber-500/20 shadow-sm shadow-amber-950/40">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
             <Clock className="w-3.5 h-3.5 text-amber-400" />
             <span>IN_PROGRESS</span>
           </span>
@@ -276,7 +276,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <span className="p-1 rounded-lg bg-rose-500/20 text-rose-400">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse" />
+                  <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse motion-reduce:animate-none" />
                 </span>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-bold text-rose-200 group-hover:text-white transition-colors">
@@ -483,7 +483,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                   <div
                     className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
                       isDraggingOver
-                        ? 'bg-cyan-500/25 text-cyan-300 scale-110 animate-bounce'
+                        ? 'bg-cyan-500/25 text-cyan-300 scale-110 animate-bounce motion-reduce:animate-none'
                         : 'bg-slate-800 text-cyan-400'
                     }`}
                   >

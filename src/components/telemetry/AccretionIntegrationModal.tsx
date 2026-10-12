@@ -18,7 +18,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 import { AccretionIngestResult } from '../../types/telemetry';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AccretionIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -153,7 +153,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
 }`;
 
   return (
-    <DialogOverlay label="Accretion sensor integration" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
       {/* Click outside backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
@@ -163,11 +163,11 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
         <div className="flex items-start justify-between pb-4 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-gradient-to-br from-cyan-500/20 via-indigo-500/20 to-violet-500/20 border border-cyan-500/40 text-cyan-400">
-              <Radio className="w-6 h-6 animate-pulse" />
+              <Radio className="w-6 h-6 animate-pulse motion-reduce:animate-none" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black text-white">Event Horizon: Accretion</h2>
+                <DialogTitle as="h2" className="text-lg font-black text-white">Event Horizon: Accretion</DialogTitle>
                 <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
                   NETWORK DISCOVERY API
                 </span>
@@ -205,7 +205,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
           >
             {isSimulating ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" />
                 <span>Scanning Subnets...</span>
               </>
             ) : (

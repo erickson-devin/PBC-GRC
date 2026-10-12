@@ -514,7 +514,7 @@ const PolicyLibraryViewContent: React.FC = () => {
                 className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
                 title="Re-Compile from Enclave Stack"
               >
-                <RefreshCw className={`w-4 h-4 ${recompileNotice ? 'animate-spin text-cyan-400' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${recompileNotice ? 'animate-spin motion-reduce:animate-none text-cyan-400' : ''}`} />
               </button>
 
               {/* Copy */}

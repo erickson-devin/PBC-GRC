@@ -353,7 +353,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   Your identity has been verified and bound with role <strong className="text-emerald-300 font-bold">{invitation?.role}</strong>. Launching your compliance matrix and SSP workbench...
                 </p>
               </div>
-              <div className="w-8 h-8 border-3 border-brand-500/30 border-t-brand-500 rounded-full animate-spin mx-auto" />
+              <div className="w-8 h-8 border-3 border-brand-500/30 border-t-brand-500 rounded-full animate-spin motion-reduce:animate-none mx-auto" />
             </div>
           </div>
         ) : tokenError ? (
@@ -665,7 +665,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                     >
                       {isSubmitting ? (
                         <>
-                          <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin motion-reduce:animate-none" />
                           <span>Validating Credentials & Claiming Enclave...</span>
                         </>
                       ) : (

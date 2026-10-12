@@ -46,7 +46,7 @@ import {
 } from '../../data/reports/sprsCompiler';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface ArtifactExportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -248,9 +248,9 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-extrabold text-white tracking-tight">
+                <DialogTitle as="h2" className="text-lg font-extrabold text-white tracking-tight">
                   Compliance Documentation & Artifact Export Center
-                </h2>
+                </DialogTitle>
                 <span className="badge px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
                   {frameworkDef.shortName}
                 </span>
@@ -1060,7 +1060,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   if (!isOpen) return null;
 
   return (
-    <DialogOverlay label="Compliance artifact export" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       {innerContent}
     </DialogOverlay>
   );

@@ -32,11 +32,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center text-slate-100">
         <div className="relative mb-6">
-          <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-xl shadow-brand-500/25 ring-1 ring-white/20 animate-pulse">
+          <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-xl shadow-brand-500/25 ring-1 ring-white/20 animate-pulse motion-reduce:animate-none">
             <ShieldCheck className="w-8 h-8 text-white" />
           </div>
           <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center">
-            <Loader2 className="w-3.5 h-3.5 text-brand-400 animate-spin" />
+            <Loader2 className="w-3.5 h-3.5 text-brand-400 animate-spin motion-reduce:animate-none" />
           </div>
         </div>
 

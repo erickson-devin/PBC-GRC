@@ -17,7 +17,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { SamStatus } from '../../types/tenant';
 import { errorMessage } from '../../utils/errors';
 
-import { DialogOverlay } from '../common/DialogOverlay';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface OnboardingModalProps {
   isOpen: boolean;
   onClose?: () => void;
@@ -150,7 +150,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   };
 
   return (
-    <DialogOverlay label="Enclave setup" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-fadeIn">
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-slate-800 bg-slate-950/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -160,9 +160,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-white tracking-tight">
+                <DialogTitle as="h3" className="text-lg font-bold text-white tracking-tight">
                   Welcome to Your Live CMMC Enclave
-                </h3>
+                </DialogTitle>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
                   Step {step} of 2
                 </span>

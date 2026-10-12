@@ -12,7 +12,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 
-import { DialogOverlay } from './DialogOverlay';
+import { DialogOverlay, DialogTitle } from './DialogOverlay';
 export type LegalTab = 'privacy' | 'terms';
 
 interface LegalModalProps {
@@ -225,7 +225,7 @@ Website: https://pitchblackcyber.com`,
   };
 
   return (
-    <DialogOverlay label="Legal documents" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-fadeIn">
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -235,9 +235,9 @@ Website: https://pitchblackcyber.com`,
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-white tracking-tight">
+                <DialogTitle as="h3" className="text-lg font-bold text-white tracking-tight">
                   Pitch Black Cyber Legal Center
-                </h3>
+                </DialogTitle>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
                   Effective Sept 2026
                 </span>
