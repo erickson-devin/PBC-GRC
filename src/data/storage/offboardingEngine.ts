@@ -15,6 +15,7 @@ import { StorageService } from '../../services/storageService';
 import { loadLedger, computeSha256, canonicalJson } from '../audit/auditLogger';
 import { compileNistSSP, generatePOAMEntries } from '../reports/documentCompilers';
 import { summarizeScope } from '../telemetry/assetScope';
+import { collectFipsModules } from '../telemetry/fipsValidation';
 import type { EnclaveAsset } from '../../types/telemetry';
 import { getFrameworkControls } from '../frameworks';
 import { purgeTenantData, downloadCertificateOfDestruction } from './retentionPolicy';
@@ -133,6 +134,7 @@ export async function generateEnclaveHandoverPackage(
       version: '1.0.0-OFFBOARDING',
       framework: primaryFw,
       assetScope: assets ? summarizeScope(assets) : undefined,
+      cryptoModules: assets ? collectFipsModules(assets) : undefined,
     },
     controls,
     state.controls,

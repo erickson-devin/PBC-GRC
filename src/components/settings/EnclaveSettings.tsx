@@ -24,6 +24,7 @@ import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { EnclaveStackProfile } from '../../types/tenant';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
+import { useFipsModules } from '../../hooks/useFipsModules';
 
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
@@ -46,6 +47,7 @@ const DEFAULT_STACK: EnclaveStackProfile = {
 
 export const EnclaveSettings: React.FC = () => {
   const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework } = useTenant();
+  const cryptoModules = useFipsModules();
   const { setActiveTab, setSelectedControlId } = useAssessment();
 
   const [previewingPolicy, setPreviewingPolicy] = useState<{ code: string; title: string } | null>(null);
@@ -65,7 +67,7 @@ export const EnclaveSettings: React.FC = () => {
   };
 
   const handleDownloadPolicy = (code: string, title: string) => {
-    const markdown = generateFamilyPolicyDocument(currentTenant, code, title, activeFramework);
+    const markdown = generateFamilyPolicyDocument(currentTenant, code, title, activeFramework, cryptoModules);
     const filename = `${code}_Family_Living_Policy_${currentTenant.cageCode || 'Enclave'}.md`;
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -658,7 +660,7 @@ export const EnclaveSettings: React.FC = () => {
 
       {/* Interactive Policy Document Reader Modal */}
       {previewingPolicy && (() => {
-        const markdown = generateFamilyPolicyDocument(currentTenant, previewingPolicy.code, previewingPolicy.title, activeFramework);
+        const markdown = generateFamilyPolicyDocument(currentTenant, previewingPolicy.code, previewingPolicy.title, activeFramework, cryptoModules);
         return (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
             <div className="w-full max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-fadeIn">

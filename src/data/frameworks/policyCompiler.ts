@@ -1,4 +1,5 @@
 import { EnclaveStackProfile } from '../../types/tenant';
+import { FipsModuleRef, applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
 import {
   NIST_800_171A_REGISTRY,
   normalizeControlNumber,
@@ -8,7 +9,13 @@ import {
 export function getCascadedObjectiveNarrative(
   controlId: string,
   objectiveLetter: string,
-  stack: EnclaveStackProfile
+  stack: EnclaveStackProfile,
+  /**
+   * The validated cryptographic modules recorded in the tenant's asset inventory (collectFipsModules). For 3.13.11 they
+   * replace the generic "FIPS 140-3" wording with the CMVP certificate numbers; an empty list adds a visible gap note.
+   * Omit it (undefined) to keep the generic text.
+   */
+  cryptoModules?: ReadonlyArray<FipsModuleRef>
 ): string {
   const normId = normalizeControlNumber(controlId);
   const controlReg =
@@ -98,6 +105,11 @@ export function getCascadedObjectiveNarrative(
         narrative = narrative.split(targetText).join(stack.odpParams![key]);
       }
     });
+  }
+
+  // Cryptographic Protection (3.13.11): cite the certificates of the modules in the asset inventory
+  if (cryptoModules && isCryptographicProtectionControl(controlId)) {
+    narrative = applyFipsModules(narrative, cryptoModules);
   }
 
   // Fallback for unresolved ODP placeholders: remove the [ODP: ] wrapping to just display the default, or leave it.

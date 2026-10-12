@@ -26,6 +26,7 @@ import { errorMessage } from '../../src/utils/errors';
  *   POST   /bulk        register many (CSV import), max 500            TENANT_OWNER / MSP_ADMIN
  *   POST   /discovery   ingest network-sensor findings                 TENANT_OWNER / MSP_ADMIN
  *   PUT    /:assetId    change fields (including the CMMC category)   TENANT_OWNER / MSP_ADMIN
+ *                       and the FIPS module record (Security Protection / CUI assets only)
  *   DELETE /:assetId    remove an asset                                TENANT_OWNER / MSP_ADMIN
  *
  * The RBAC guard is applied here as well as at the tenants router: VIEWER and ASSESSOR are strictly read-only.
@@ -42,7 +43,7 @@ const actorOf = (req: Request): string => {
 
 function sendAssetError(res: Response, err: unknown, fallback: string): void {
   if (err instanceof AssetError) {
-    const status = err.code === 'not_found' ? 404 : err.code === 'duplicate' ? 409 : 429;
+    const status = err.code === 'not_found' ? 404 : err.code === 'duplicate' ? 409 : err.code === 'invalid' ? 400 : 429;
     res.status(status).json({ error: err.message, code: err.code });
     return;
   }

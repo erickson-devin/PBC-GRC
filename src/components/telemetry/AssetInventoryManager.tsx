@@ -27,6 +27,7 @@ import {
   AccretionIngestResult,
 } from '../../types/telemetry';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES } from '../../data/telemetry/assetScope';
+import { describeFipsModule } from '../../data/telemetry/fipsValidation';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useTenant } from '../../context/TenantContext';
 import { ErrorNotice } from '../common/ErrorNotice';
@@ -94,7 +95,11 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     if (editingAsset) {
       // Only what the form owns: scan results and discovery data may have changed on the server since it opened
       const { hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner } = assetData;
-      await backend.update(editingAsset.id, { hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner });
+      const { fipsValidationStatus, fipsCertificateNumber, fipsModuleName, fipsStandard } = assetData;
+      await backend.update(editingAsset.id, {
+        hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner,
+        fipsValidationStatus, fipsCertificateNumber, fipsModuleName, fipsStandard,
+      });
       showNotification(`✓ Asset ${assetData.hostName} updated.`);
     } else {
       await backend.create(assetData);
@@ -517,6 +522,14 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                           </div>
                           {asset.owner && (
                             <p className="text-[10px] text-slate-300 mt-0.5">Owner: {asset.owner}</p>
+                          )}
+                          {asset.fipsValidationStatus === 'VALIDATED' && asset.fipsCertificateNumber && (
+                            <p className="text-[10px] text-emerald-300 mt-0.5" data-testid="fips-badge">
+                              {describeFipsModule({ standard: asset.fipsStandard ?? null, certificateNumber: asset.fipsCertificateNumber, moduleName: asset.fipsModuleName ?? null })}
+                            </p>
+                          )}
+                          {asset.fipsValidationStatus === 'PENDING' && (
+                            <p className="text-[10px] text-amber-300 mt-0.5">FIPS validation pending</p>
                           )}
                           {asset.notes && (
                             <p className="text-[10px] text-slate-400 truncate max-w-xs mt-0.5">

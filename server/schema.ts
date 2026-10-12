@@ -1,5 +1,6 @@
 import { TENANT_ROLES } from '../src/utils/roles';
 import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
+import { FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -31,6 +32,8 @@ const tenantPredicate = (column: string): string =>
   `${column} = NULLIF(current_setting('app.current_tenant_id', true), '')`;
 
 const roleList = TENANT_ROLES.map((r) => `'${r}'`).join(', ');
+const fipsStatusList = FIPS_STATUSES.map((s) => `'${s}'`).join(', ');
+const fipsStandardList = FIPS_STANDARDS.map((s) => `'${s}'`).join(', ');
 const assetCategoryList = CMMC_ASSET_CATEGORIES.map((c) => `'${c}'`).join(', ');
 
 /** Tables and columns (idempotent). */
@@ -152,6 +155,10 @@ export const TABLES_SQL = `
       description TEXT NOT NULL DEFAULT '',
       cmmc_category VARCHAR(32) NOT NULL,
       owner VARCHAR(255) NOT NULL DEFAULT '',
+      fips_validation_status VARCHAR(16),
+      fips_certificate_number VARCHAR(16),
+      fips_module_name VARCHAR(255),
+      fips_standard VARCHAR(8),
       ip_address VARCHAR(64) NOT NULL DEFAULT '',
       mac_address VARCHAR(32) NOT NULL DEFAULT '',
       os_profile VARCHAR(64) NOT NULL DEFAULT 'custom',
@@ -168,6 +175,17 @@ export const TABLES_SQL = `
       CONSTRAINT enclave_assets_category_check CHECK (cmmc_category IN (${assetCategoryList})),
       CONSTRAINT enclave_assets_score_check CHECK (compliance_score IS NULL OR (compliance_score BETWEEN 0 AND 100))
   );
+  -- Cryptographic module validation (FIPS 140-2/3, CMVP). Added after the first release, so older databases get the columns here.
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_validation_status VARCHAR(16);
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_certificate_number VARCHAR(16);
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_module_name VARCHAR(255);
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_standard VARCHAR(8);
+  ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_status_check;
+  ALTER TABLE enclave_assets ADD CONSTRAINT enclave_assets_fips_status_check CHECK (fips_validation_status IS NULL OR fips_validation_status IN (${fipsStatusList}));
+  ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_standard_check;
+  ALTER TABLE enclave_assets ADD CONSTRAINT enclave_assets_fips_standard_check CHECK (fips_standard IS NULL OR fips_standard IN (${fipsStandardList}));
+  ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_cert_check;
+  ALTER TABLE enclave_assets ADD CONSTRAINT enclave_assets_fips_cert_check CHECK (fips_certificate_number IS NULL OR fips_certificate_number ~ '^[0-9]{1,6}$');
   CREATE UNIQUE INDEX IF NOT EXISTS unq_enclave_assets_name ON enclave_assets(tenant_id, lower(asset_name));
   CREATE INDEX IF NOT EXISTS idx_enclave_assets_tenant_category ON enclave_assets(tenant_id, cmmc_category);
 

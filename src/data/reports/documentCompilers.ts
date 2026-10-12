@@ -12,6 +12,7 @@ import { ControlState, EvidenceItem, ControlStatus } from '../../types/cmmc';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
+import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
 
 /**
  * Resolves the standard recommended document type for a given compliance framework.
@@ -221,6 +222,25 @@ export function compileNistSSP(
             },
           ]
         : []),
+      ...(metadata.cryptoModules
+        ? [
+            {
+              title: '1.2.2 FIPS-Validated Cryptographic Modules',
+              content:
+                metadata.cryptoModules.length > 0
+                  ? 'Cryptographic modules protecting CUI, as recorded on the Security Protection Assets in the asset inventory (NIST CMVP certificates).'
+                  : 'No FIPS-validated cryptographic module is recorded in the asset inventory for the Security Protection Assets.',
+              ...(metadata.cryptoModules.length > 0
+                ? {
+                    table: {
+                      headers: ['CMVP Certificate', 'Cryptographic Module', 'Standard', 'Asset'],
+                      rows: metadata.cryptoModules.map((m) => [`#${m.certificateNumber}`, m.moduleName || 'Not recorded', m.standard ? `FIPS ${m.standard}` : 'FIPS 140', m.assetName]),
+                    },
+                  }
+                : {}),
+            },
+          ]
+        : []),
       {
         title: '1.3 Cloud Service Providers (CSPs) & Hosting Infrastructure',
         content: metadata.cloudServiceProviders || 'Google Cloud Platform (GCS Enclave Storage & Cloud SQL FedRAMP High equivalent), Microsoft 365 GCC High / Commercial identity enclave, Cloudflare Zero Trust.',
@@ -253,7 +273,11 @@ export function compileNistSSP(
     const rows = domainCtrls.map(ctrl => {
       const cState = controlStates[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
-      const narrative = cState?.implementationNotes || 'No implementation narrative documented.';
+      let narrative = cState?.implementationNotes || 'No implementation narrative documented.';
+      // 3.13.11: cite the validated modules from the asset inventory (plain text: this is a table cell)
+      if (metadata.cryptoModules && isCryptographicProtectionControl(ctrl.id)) {
+        narrative = applyFipsModules(narrative, metadata.cryptoModules, { bold: false });
+      }
       const role = cState?.responsibleRole || 'IT / Security Lead';
       const ctrlEvidence = evidence.filter(e => e.controlId === ctrl.id);
       const evidenceSummary = ctrlEvidence.length > 0

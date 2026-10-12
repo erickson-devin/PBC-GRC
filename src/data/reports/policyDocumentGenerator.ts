@@ -2,12 +2,15 @@ import { Tenant, EnclaveStackProfile } from '../../types/tenant';
 import { getCascadedObjectiveNarrative } from '../frameworks/policyCompiler';
 import { getObjectivesForControl } from '../frameworks/assessmentObjectives';
 import { getFrameworkControls } from '../frameworks/frameworkRegistry';
+import type { FipsModuleRef } from '../telemetry/fipsValidation';
 
 export function generatePolicyDocument(
   tenantOrFamily: Tenant | string,
   controlFamilyOrStack?: string | EnclaveStackProfile,
   familyTitleOrFramework?: string,
-  frameworkArg?: string
+  frameworkArg?: string,
+  /** Validated cryptographic modules from the asset inventory (collectFipsModules): cited in 3.13.11. */
+  cryptoModules?: ReadonlyArray<FipsModuleRef>
 ): string {
   let tenant: Tenant;
   let controlFamily: string;
@@ -102,7 +105,7 @@ export function generatePolicyDocument(
       const objectives = getObjectivesForControl(control.id, control.title);
       if (objectives && objectives.length > 0) {
         objectives.forEach((obj) => {
-          const narrative = getCascadedObjectiveNarrative(control.id, obj.letter, stack);
+          const narrative = getCascadedObjectiveNarrative(control.id, obj.letter, stack, cryptoModules);
           markdown += `**Objective ${obj.letter}**: ${obj.text}\n\n`;
           markdown += `**Implementation**: ${narrative}\n\n`;
         });

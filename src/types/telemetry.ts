@@ -3,6 +3,8 @@
  * Defines the schema for OpenSCAP scan reports, rule-level results,
  * and CCE → CMMC / NIST SP 800-171 control mapping records.
  */
+import type { FipsStandard, FipsValidationStatus } from '../data/telemetry/fipsValidation';
+
 
 // ---------------------------------------------------------------------------
 // SCAP Scan Result Types
@@ -283,6 +285,13 @@ export interface EnclaveAsset {
   notes: string;
   /** Person or team accountable for the asset */
   owner?: string;
+  /** Cryptographic module validation (Security Protection and CUI assets only), see data/telemetry/fipsValidation.ts */
+  fipsValidationStatus?: FipsValidationStatus | null;
+  /** CMVP certificate number, digits only */
+  fipsCertificateNumber?: string | null;
+  fipsModuleName?: string | null;
+  /** FIPS 140 revision of the certificate, when known */
+  fipsStandard?: FipsStandard | null;
   /** True if registered manually by administrator */
   isManuallyAdded: boolean;
 }

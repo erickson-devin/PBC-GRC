@@ -999,6 +999,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cmmcAssetCategory: a.cmmcAssetCategory, status: a.status, sourceOrigin: a.sourceOrigin,
       discoveryStatus: a.discoveryStatus, accretionMetadata: a.accretionMetadata, lastScannedAt: a.lastScannedAt,
       complianceScore: a.complianceScore, notes: a.notes, owner: a.owner ?? '',
+      fipsValidationStatus: a.fipsValidationStatus, fipsCertificateNumber: a.fipsCertificateNumber,
+      fipsModuleName: a.fipsModuleName, fipsStandard: a.fipsStandard,
     });
     for (let i = 0; i < legacyAssets.length; i += 500) {
       const chunk = legacyAssets.slice(i, i + 500);

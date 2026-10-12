@@ -1,6 +1,7 @@
 import { ComplianceFramework, BaselineTier } from './framework';
 import { ControlStatus, ComplianceMetrics, DomainStat } from './cmmc';
 import type { AssetScopeSummary } from '../data/telemetry/assetScope';
+import type { FipsModuleRef } from '../data/telemetry/fipsValidation';
 
 export type ReportDocumentType =
   | 'NIST_SP_800_18_SSP'
@@ -42,6 +43,11 @@ export interface ReportMetadata {
    * absent (inventory not loaded) the SSP makes no claim about asset counts.
    */
   assetScope?: AssetScopeSummary;
+  /**
+   * Validated cryptographic modules recorded on the enclave's Security Protection Assets (collectFipsModules). When
+   * present the SSP cites them under 3.13.11; an empty list makes the SSP say that none are recorded.
+   */
+  cryptoModules?: FipsModuleRef[];
 }
 
 export interface POAMMilestone {

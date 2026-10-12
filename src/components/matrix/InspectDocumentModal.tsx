@@ -40,6 +40,7 @@ import { StigRule } from '../../types/stig';
 import { ObjectiveChecklist } from './ObjectiveChecklist';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
+import { useFipsModules } from '../../hooks/useFipsModules';
 import { NIST_800_171A_REGISTRY } from '../../data/frameworks/assessmentObjectives';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
@@ -178,10 +179,13 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
       .sort((a, b) => a.controlNumber.localeCompare(b.controlNumber, undefined, { numeric: true, sensitivity: 'base' }));
   }, [isPolicyControl, familyPrefix]);
 
+  // CMVP certificates recorded on the Security Protection Assets: cited by the 3.13.11 policy text
+  const cryptoModules = useFipsModules();
+
   const compiledPolicyMarkdown = React.useMemo(() => {
     if (!isPolicyControl || !currentTenant || !familyPrefix) return '';
-    return generateFamilyPolicyDocument(currentTenant, familyPrefix, familyTitle, activeFramework);
-  }, [isPolicyControl, currentTenant, familyPrefix, familyTitle, activeFramework, recompileCount]);
+    return generateFamilyPolicyDocument(currentTenant, familyPrefix, familyTitle, activeFramework, cryptoModules);
+  }, [isPolicyControl, currentTenant, familyPrefix, familyTitle, activeFramework, recompileCount, cryptoModules]);
 
   // Guard return ONLY AFTER all useState, useContext, useMemo, and useEffect hooks have been unconditionally initialized
   if (!activeId || !control) return null;
@@ -1127,7 +1131,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                                   mdmSolution: 'INTUNE',
                                   siemSolution: 'SENTINEL',
                                   odpParams: {},
-                                }
+                                },
+                                cryptoModules
                               );
                               return (
                                 <div key={obj.letter} className="text-xs bg-slate-950/70 p-3 rounded-lg border border-slate-800/60 space-y-1.5">

@@ -789,6 +789,20 @@ export const NIST_800_171A_REGISTRY: Record<string, ControlObjectivesTemplate> =
     ],
   },
 
+  '3.13.11': {
+    controlNumber: '3.13.11',
+    family: 'SC',
+    title: 'FIPS-Validated Cryptography',
+    objectives: [
+      {
+        letter: 'a',
+        text: 'FIPS-validated cryptography is employed to protect the confidentiality of CUI',
+        prefilledTemplate: 'The confidentiality of CUI at rest and in transit is protected by cryptographic modules validated under **FIPS 140-3**, and operating systems run in FIPS mode (fips=1 in GRUB on Linux, FIPSMode enabled via Windows GPO).',
+        isAutoVerifiedByTelemetry: false,
+      },
+    ],
+  },
+
   '3.13.8': {
     controlNumber: '3.13.8',
     family: 'SC',

@@ -127,6 +127,29 @@ async function main() {
       dupRejected = true;
     }
     check(dupRejected, 'enclave_assets: asset names are unique per tenant, ignoring case');
+    const rejectsFips = async (sql: string): Promise<boolean> => {
+      try {
+        await queryWithTenant(TENANT_X, sql, [TENANT_X]);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    check(
+      await rejectsFips("INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category, fips_validation_status) VALUES ($1, 'rls_verify_fips_a', 'CUI_ASSET', 'GREAT')"),
+      'enclave_assets: the database refuses a FIPS status outside VALIDATED / PENDING / NOT_APPLICABLE'
+    );
+    check(
+      await rejectsFips("INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category, fips_certificate_number) VALUES ($1, 'rls_verify_fips_b', 'CUI_ASSET', 'abc')"),
+      'enclave_assets: the database refuses a certificate number that is not 1-6 digits'
+    );
+    await queryWithTenant(
+      TENANT_X,
+      "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category, fips_validation_status, fips_certificate_number, fips_module_name, fips_standard) VALUES ($1, 'rls_verify_fips_ok', 'SECURITY_PROTECTION', 'VALIDATED', '4211', 'Module', '140-2')",
+      [TENANT_X]
+    );
+    const fipsRow = await queryWithTenant(TENANT_X, "SELECT fips_certificate_number, fips_module_name FROM enclave_assets WHERE asset_name = 'rls_verify_fips_ok'", []);
+    check(fipsRow.rows[0]?.fips_certificate_number === '4211' && fipsRow.rows[0]?.fips_module_name === 'Module', 'enclave_assets: FIPS module details are stored and read back');
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);

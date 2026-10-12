@@ -2,7 +2,6 @@ import { ApiClient, ApiError } from './apiClient';
 import {
   addEnclaveAsset,
   buildSimulatedDiscoveryBatch,
-  confirmDiscoveredAsset,
   deleteEnclaveAsset,
   getEnclaveAssets,
   importAssetsFromCsv,
@@ -11,6 +10,7 @@ import {
   updateEnclaveAsset,
 } from '../data/telemetry/assetRegistry';
 import { AssetInput, parseAssetsCsv } from '../data/telemetry/assetScope';
+import { NO_FIPS, normalizeFips, resolveFips } from '../data/telemetry/fipsValidation';
 import { computeSha256 } from '../data/audit/cryptoUtils';
 import { recordAuditEvent } from '../data/audit/auditLogger';
 import type {
@@ -162,21 +162,24 @@ function localBackend(tenantId: string, mode: 'local-demo' | 'local-legacy'): As
     list: async () => getEnclaveAssets(tenantId, seed),
     create: async (input) => {
       if (clash(input.hostName)) throw duplicate(input.hostName as string);
-      return changed(addEnclaveAsset(tenantId, withoutId(input) as Omit<EnclaveAsset, 'id'>, seed));
+      // The same FIPS rules the server applies
+      const fips = normalizeFips(input.cmmcAssetCategory as CmmcAssetCategory, { ...NO_FIPS, ...input });
+      if (!fips.ok) throw new ApiError(400, fips.error);
+      return changed(addEnclaveAsset(tenantId, { ...withoutId(input), ...fips.fields } as Omit<EnclaveAsset, 'id'>, seed));
     },
     update: async (id, patch) => {
       if (clash(patch.hostName, id)) throw duplicate(patch.hostName as string);
-      try {
-        return changed(updateEnclaveAsset(id, withoutId(patch) as Partial<EnclaveAsset>, tenantId, seed));
-      } catch {
-        throw new ApiError(404, 'That asset no longer exists.');
-      }
+      const current = getEnclaveAssets(tenantId, seed).find((a) => a.id === id);
+      if (!current) throw new ApiError(404, 'That asset no longer exists.');
+      const fips = resolveFips(current, patch);
+      if (!fips.ok) throw new ApiError(400, fips.error);
+      return changed(updateEnclaveAsset(id, { ...withoutId(patch), ...(fips.value ?? {}) } as Partial<EnclaveAsset>, tenantId, seed));
     },
     remove: async (id) => {
       deleteEnclaveAsset(id, tenantId, seed);
       changed(undefined);
     },
-    classify: async (id, category) => changed(confirmDiscoveredAsset(tenantId, id, category, seed)),
+    classify: (id, category) => backend.update(id, { cmmcAssetCategory: category, discoveryStatus: 'ACTIVE' }),
     importCsv: async (csv) => {
       const { imported, errors } = importAssetsFromCsv(tenantId, csv, seed);
       return changed({ imported: imported.length, skipped: errors });

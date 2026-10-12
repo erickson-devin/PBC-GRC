@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode, pool } from './db';
 import { CMMC_ASSET_CATEGORIES, isCmmcAssetCategory } from '../src/data/telemetry/assetScope';
+import { FipsFields, NO_FIPS, isFipsStandard, isFipsStatus, normalizeFips, resolveFips, FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import type {
   AccretionDiscoveryItem,
   AccretionMetadata,
@@ -23,7 +24,7 @@ import type {
  * another tenant's rows even if the WHERE clause were wrong. The in-memory store (DB_MODE=memory) filters by tenant id.
  */
 
-export type AssetErrorCode = 'not_found' | 'duplicate' | 'limit';
+export type AssetErrorCode = 'not_found' | 'duplicate' | 'limit' | 'invalid';
 
 export class AssetError extends Error {
   readonly code: AssetErrorCode;
@@ -45,7 +46,7 @@ const DISCOVERY: readonly AssetDiscoveryStatus[] = ['ACTIVE', 'STALE', 'UNCONFIR
 // ------------------------------------------------------------------------------------------------ validation
 
 /** The writable fields of an asset (everything else is server-managed). */
-export interface AssetFields {
+export interface AssetFields extends FipsFields {
   hostName: string;
   notes: string;
   cmmcAssetCategory: CmmcAssetCategory;
@@ -172,6 +173,42 @@ export function validateAssetInput(body: unknown, partial: boolean): Validation<
     else return { ok: false, error: 'Discovery metadata must be an object of at most 8 KB' };
   }
 
+  const fips = readFips(body);
+  if (!fips.ok) return fips;
+  Object.assign(out, fips.value);
+  if (!partial) {
+    // A new asset has no earlier state: the whole record is checked now
+    const checked = normalizeFips(out.cmmcAssetCategory as CmmcAssetCategory, { ...NO_FIPS, ...fips.value });
+    if (!checked.ok) return { ok: false, error: checked.error };
+    Object.assign(out, checked.fields);
+  }
+
+  return { ok: true, value: out };
+}
+
+/** Reads the raw FIPS fields of a request body. Combination rules (status vs. certificate, category) are in normalizeFips. */
+function readFips(body: Record<string, unknown>): Validation<Partial<FipsFields>> {
+  const out: Partial<FipsFields> = {};
+  if (body.fipsValidationStatus !== undefined) {
+    const v = body.fipsValidationStatus;
+    if (v !== null && !isFipsStatus(v)) return { ok: false, error: `FIPS validation status must be one of: ${FIPS_STATUSES.join(', ')}` };
+    out.fipsValidationStatus = v;
+  }
+  if (body.fipsStandard !== undefined) {
+    const v = body.fipsStandard;
+    if (v !== null && !isFipsStandard(v)) return { ok: false, error: `FIPS standard must be one of: ${FIPS_STANDARDS.join(', ')}` };
+    out.fipsStandard = v;
+  }
+  if (body.fipsCertificateNumber !== undefined) {
+    const v = body.fipsCertificateNumber;
+    if (v !== null && typeof v !== 'string' && typeof v !== 'number') return { ok: false, error: 'The CMVP certificate number must be digits' };
+    out.fipsCertificateNumber = v === null ? null : String(v);
+  }
+  if (body.fipsModuleName !== undefined) {
+    const v = body.fipsModuleName;
+    if (v !== null && typeof v !== 'string') return { ok: false, error: 'The cryptographic module name must be text' };
+    out.fipsModuleName = v;
+  }
   return { ok: true, value: out };
 }
 
@@ -189,11 +226,15 @@ const withDefaults = (f: Partial<AssetFields>): AssetFields => ({
   accretionMetadata: f.accretionMetadata ?? null,
   lastScannedAt: f.lastScannedAt ?? null,
   complianceScore: f.complianceScore ?? null,
+  fipsValidationStatus: f.fipsValidationStatus ?? null,
+  fipsCertificateNumber: f.fipsCertificateNumber ?? null,
+  fipsModuleName: f.fipsModuleName ?? null,
+  fipsStandard: f.fipsStandard ?? null,
 });
 
 // ------------------------------------------------------------------------------------------------ record shape
 
-export type AssetRecord = EnclaveAsset & { owner: string; createdAt: string; updatedAt: string };
+export type AssetRecord = EnclaveAsset & { owner: string; createdAt: string; updatedAt: string } & FipsFields;
 
 interface MemoryAsset extends AssetFields {
   id: string;
@@ -221,6 +262,10 @@ const toRecord = (m: MemoryAsset): AssetRecord => ({
   complianceScore: m.complianceScore,
   notes: m.notes,
   owner: m.owner,
+  fipsValidationStatus: m.fipsValidationStatus,
+  fipsCertificateNumber: m.fipsCertificateNumber,
+  fipsModuleName: m.fipsModuleName,
+  fipsStandard: m.fipsStandard,
   isManuallyAdded: m.sourceOrigin === 'MANUAL_ENTRY' || m.sourceOrigin === 'CSV_IMPORT',
   createdAt: m.createdAt,
   updatedAt: m.updatedAt,
@@ -235,6 +280,10 @@ function rowToRecord(row: pg.QueryResultRow): AssetRecord {
     notes: row.description ?? '',
     cmmcAssetCategory: row.cmmc_category,
     owner: row.owner ?? '',
+    fipsValidationStatus: row.fips_validation_status ?? null,
+    fipsCertificateNumber: row.fips_certificate_number ?? null,
+    fipsModuleName: row.fips_module_name ?? null,
+    fipsStandard: row.fips_standard ?? null,
     ipAddress: row.ip_address ?? '',
     macAddress: row.mac_address ?? '',
     osProfile: row.os_profile ?? 'custom',
@@ -282,13 +331,14 @@ const duplicate = (name: string): AssetError => new AssetError('duplicate', `An 
 
 const INSERT_SQL = `INSERT INTO enclave_assets
   (tenant_id, asset_name, description, cmmc_category, owner, ip_address, mac_address, os_profile, status, source_origin,
-   discovery_status, accretion_metadata, last_scanned_at, compliance_score, created_by, updated_by)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15) RETURNING *`;
+   discovery_status, accretion_metadata, last_scanned_at, compliance_score, created_by, updated_by,
+   fips_validation_status, fips_certificate_number, fips_module_name, fips_standard)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17,$18,$19) RETURNING *`;
 
 const insertParams = (tenantId: string, f: AssetFields, actor: string): unknown[] => [
   tenantId, f.hostName, f.notes, f.cmmcAssetCategory, f.owner, f.ipAddress, f.macAddress, f.osProfile, f.status,
   f.sourceOrigin, f.discoveryStatus, f.accretionMetadata ? JSON.stringify(f.accretionMetadata) : null,
-  f.lastScannedAt, f.complianceScore, actor,
+  f.lastScannedAt, f.complianceScore, actor, f.fipsValidationStatus, f.fipsCertificateNumber, f.fipsModuleName, f.fipsStandard,
 ];
 
 // ------------------------------------------------------------------------------------------------ operations
@@ -349,31 +399,39 @@ export async function updateAsset(tenantId: string, id: string, patch: Partial<A
       const clash = [...memoryAssets.values()].some((o) => o.tenantId === tenantId && o.id !== id && nameKey(o.hostName) === nameKey(patch.hostName as string));
       if (clash) throw duplicate(patch.hostName);
     }
-    Object.assign(m, patch, { updatedBy: actor, updatedAt: new Date().toISOString() });
+    const fips = resolveFips(m, patch);
+    if (!fips.ok) throw new AssetError('invalid', fips.error);
+    Object.assign(m, patch, fips.value ?? {}, { updatedBy: actor, updatedAt: new Date().toISOString() });
     return toRecord(m);
   }
 
-  const columns: Record<keyof AssetFields, string> = {
+  const columns: Record<Exclude<keyof AssetFields, never>, string> = {
     hostName: 'asset_name', notes: 'description', cmmcAssetCategory: 'cmmc_category', owner: 'owner', ipAddress: 'ip_address',
     macAddress: 'mac_address', osProfile: 'os_profile', status: 'status', sourceOrigin: 'source_origin',
     discoveryStatus: 'discovery_status', accretionMetadata: 'accretion_metadata', lastScannedAt: 'last_scanned_at',
-    complianceScore: 'compliance_score',
+    complianceScore: 'compliance_score', fipsValidationStatus: 'fips_validation_status', fipsCertificateNumber: 'fips_certificate_number',
+    fipsModuleName: 'fips_module_name', fipsStandard: 'fips_standard',
   };
-  const sets: string[] = [];
-  const params: unknown[] = [];
-  for (const key of Object.keys(columns) as Array<keyof AssetFields>) {
-    if (patch[key] === undefined) continue;
-    params.push(key === 'accretionMetadata' && patch[key] ? JSON.stringify(patch[key]) : patch[key]);
-    sets.push(`${columns[key]} = $${params.length}`);
-  }
-  params.push(actor);
-  sets.push(`updated_by = $${params.length}`, 'updated_at = NOW()');
-  params.push(id, tenantId);
-
   return inTenantTx(tenantId, async (client) => {
+    // Lock the stored row so the FIPS rules are checked against what will actually be there
+    const current = await client.query('SELECT * FROM enclave_assets WHERE id = $1 AND tenant_id = $2 FOR UPDATE', [id, tenantId]);
+    if (!current.rows[0]) throw new AssetError('not_found', 'Asset not found');
+    const fips = resolveFips(rowToRecord(current.rows[0]), patch);
+    if (!fips.ok) throw new AssetError('invalid', fips.error);
+    const effective: Partial<AssetFields> = { ...patch, ...(fips.value ?? {}) };
+
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    for (const key of Object.keys(columns) as Array<keyof AssetFields>) {
+      if (effective[key] === undefined) continue;
+      params.push(key === 'accretionMetadata' && effective[key] ? JSON.stringify(effective[key]) : effective[key]);
+      sets.push(`${columns[key]} = $${params.length}`);
+    }
+    params.push(actor);
+    sets.push(`updated_by = $${params.length}`, 'updated_at = NOW()');
+    params.push(id, tenantId);
     try {
       const res = await client.query(`UPDATE enclave_assets SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND tenant_id = $${params.length} RETURNING *`, params);
-      if (!res.rows[0]) throw new AssetError('not_found', 'Asset not found');
       return rowToRecord(res.rows[0]);
     } catch (err) {
       if (isUniqueViolation(err)) throw duplicate(patch.hostName ?? 'that name');

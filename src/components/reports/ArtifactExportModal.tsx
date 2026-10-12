@@ -20,6 +20,7 @@ import {
 import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
+import { collectFipsModules } from '../../data/telemetry/fipsValidation';
 import { useTenant } from '../../context/TenantContext';
 import {
   ReportDocumentType,
@@ -70,7 +71,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   // The asset inventory defines the SSP boundary summary. Until it has loaded (or if it cannot be loaded) the SSP states
   // no asset counts rather than a wrong zero.
-  const { summary: assetScope, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
+  const { assets: inventory, summary: assetScope, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
+  const cryptoModules = useMemo(() => collectFipsModules(inventory), [inventory]);
 
   // Document Type selection: default dynamically to the active framework's standard report
   const [selectedDocType, setSelectedDocType] = useState<ReportDocumentType>(() => {
@@ -162,12 +164,16 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const compiledDoc = useMemo(() => {
     return compileReportDocument(
       selectedDocType,
-      { ...formData, assetScope: assetsLoading || assetsError ? undefined : assetScope },
+      {
+        ...formData,
+        assetScope: assetsLoading || assetsError ? undefined : assetScope,
+        cryptoModules: assetsLoading || assetsError ? undefined : cryptoModules,
+      },
       frameworkControls,
       state.controls,
       state.evidenceIndex
     );
-  }, [selectedDocType, formData, assetScope, assetsLoading, assetsError, frameworkControls, state.controls, state.evidenceIndex]);
+  }, [selectedDocType, formData, assetScope, cryptoModules, assetsLoading, assetsError, frameworkControls, state.controls, state.evidenceIndex]);
 
   // Export handlers
   const handleDownloadHtml = () => {

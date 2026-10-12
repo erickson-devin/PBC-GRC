@@ -1,4 +1,5 @@
 import type { AssetDiscoveryStatus, CmmcAssetCategory, EnclaveAsset } from '../../types/telemetry';
+import { isFipsStandard, isFipsStatus } from './fipsValidation';
 
 /**
  * CMMC 2.0 asset scoping (32 CFR 170.19 / the CMMC Scoping Guides). Pure: shared by the server (validation), the
@@ -167,6 +168,10 @@ export function parseServerAssets(raw: unknown): EnclaveAsset[] {
       complianceScore: typeof a.complianceScore === 'number' ? a.complianceScore : null,
       notes: String(a.notes ?? ''),
       owner: String(a.owner ?? ''),
+      fipsValidationStatus: isFipsStatus(a.fipsValidationStatus) ? a.fipsValidationStatus : null,
+      fipsCertificateNumber: typeof a.fipsCertificateNumber === 'string' ? a.fipsCertificateNumber : null,
+      fipsModuleName: typeof a.fipsModuleName === 'string' ? a.fipsModuleName : null,
+      fipsStandard: isFipsStandard(a.fipsStandard) ? a.fipsStandard : null,
       isManuallyAdded: a.isManuallyAdded === true,
     });
   }

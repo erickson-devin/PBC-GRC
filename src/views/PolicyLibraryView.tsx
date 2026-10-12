@@ -21,6 +21,7 @@ import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { useTenant } from '../context/TenantContext';
 import { useAssessment } from '../context/AssessmentContext';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
+import { useFipsModules } from '../hooks/useFipsModules';
 
 export interface PolicyFamilyItem {
   code: string;
@@ -178,6 +179,7 @@ const CMMC_L2_FAMILIES = ['AC', 'AT', 'AU', 'CA', 'CM', 'IA', 'IR', 'MA', 'MP', 
 
 const PolicyLibraryViewContent: React.FC = () => {
   const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework } = useTenant();
+  const cryptoModules = useFipsModules();
   const { setActiveTab, setSelectedControlId } = useAssessment();
 
   const activeFamilies = useMemo(() => {
@@ -220,9 +222,10 @@ const PolicyLibraryViewContent: React.FC = () => {
       currentTenant,
       selectedFamily.code,
       `${selectedFamily.name} Policy`,
-      activeFramework
+      activeFramework,
+      cryptoModules
     );
-  }, [currentTenant, selectedFamily, activeFramework, recompileCount]);
+  }, [currentTenant, selectedFamily, activeFramework, recompileCount, cryptoModules]);
 
   const filteredFamilies = useMemo(() => {
     if (!searchQuery.trim()) return activeFamilies;

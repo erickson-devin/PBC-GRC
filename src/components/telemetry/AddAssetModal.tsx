@@ -13,6 +13,15 @@ import {
   EnclaveAssetStatus,
 } from '../../types/telemetry';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES } from '../../data/telemetry/assetScope';
+import {
+  FIPS_STANDARDS,
+  FIPS_STATUSES,
+  FIPS_STATUS_LABELS,
+  FipsStandard,
+  FipsValidationStatus,
+  isFipsEligibleCategory,
+  normalizeFips,
+} from '../../data/telemetry/fipsValidation';
 import { errorMessage } from '../../utils/errors';
 
 interface AddAssetModalProps {
@@ -39,6 +48,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   const [status, setStatus] = useState<EnclaveAssetStatus>('NEVER_SCANNED');
   const [notes, setNotes] = useState('');
   const [owner, setOwner] = useState('');
+  const [fipsStatus, setFipsStatus] = useState<FipsValidationStatus | ''>('');
+  const [fipsStandard, setFipsStandard] = useState<FipsStandard | ''>('');
+  const [fipsCert, setFipsCert] = useState('');
+  const [fipsModule, setFipsModule] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +65,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setStatus(initialAsset.status);
       setNotes(initialAsset.notes || '');
       setOwner(initialAsset.owner || '');
+      setFipsStatus(initialAsset.fipsValidationStatus || '');
+      setFipsStandard(initialAsset.fipsStandard || '');
+      setFipsCert(initialAsset.fipsCertificateNumber || '');
+      setFipsModule(initialAsset.fipsModuleName || '');
     } else {
       setHostName('');
       setIpAddress('');
@@ -61,6 +78,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setStatus('NEVER_SCANNED');
       setNotes('');
       setOwner('');
+      setFipsStatus('');
+      setFipsStandard('');
+      setFipsCert('');
+      setFipsModule('');
     }
     setError(null);
     setSaving(false);
@@ -76,6 +97,18 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     }
     if (!ipAddress.trim()) {
       setError('IP address is required.');
+      return;
+    }
+
+    // The same rules the server applies, so a mistake is explained before anything is sent
+    const fips = normalizeFips(cmmcAssetCategory, {
+      fipsValidationStatus: fipsStatus || null,
+      fipsStandard: fipsStandard || null,
+      fipsCertificateNumber: fipsCert || null,
+      fipsModuleName: fipsModule || null,
+    });
+    if (!fips.ok) {
+      setError(fips.error);
       return;
     }
 
@@ -97,6 +130,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         complianceScore: initialAsset?.complianceScore !== undefined ? initialAsset.complianceScore : null,
         notes: notes.trim(),
         owner: owner.trim(),
+        ...fips.fields,
         isManuallyAdded: true,
       });
       onClose();
@@ -244,6 +278,93 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               ))}
             </div>
           </div>
+
+          {/* Cryptography & FIPS: only for assets that protect or process CUI */}
+          {isFipsEligibleCategory(cmmcAssetCategory) && (
+            <fieldset className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3">
+              <legend className="px-1.5 text-xs font-bold text-cyan-300">Cryptography & FIPS</legend>
+              <p className="text-[10px] text-slate-400">
+                NIST SP 800-171 3.13.11 requires FIPS-validated cryptography to protect CUI. Record the CMVP certificate of the
+                cryptographic module this asset relies on; the policy and the SSP cite it.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="fips-status" className="block font-semibold text-slate-300 mb-1.5">Validation status</label>
+                  <select
+                    id="fips-status"
+                    value={fipsStatus}
+                    onChange={e => {
+                      const next = e.target.value as FipsValidationStatus | '';
+                      setFipsStatus(next);
+                      if (next === '' || next === 'NOT_APPLICABLE') {
+                        setFipsCert('');
+                        setFipsModule('');
+                        setFipsStandard('');
+                      }
+                      if (next === 'PENDING') setFipsCert('');
+                    }}
+                    className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  >
+                    <option value="">Not recorded</option>
+                    {FIPS_STATUSES.map(st => (
+                      <option key={st} value={st}>{FIPS_STATUS_LABELS[st]}</option>
+                    ))}
+                  </select>
+                </div>
+                {(fipsStatus === 'VALIDATED' || fipsStatus === 'PENDING') && (
+                  <div>
+                    <label htmlFor="fips-standard" className="block font-semibold text-slate-300 mb-1.5">
+                      FIPS 140 revision <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <select
+                      id="fips-standard"
+                      value={fipsStandard}
+                      onChange={e => setFipsStandard(e.target.value as FipsStandard | '')}
+                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    >
+                      <option value="">Not specified</option>
+                      {FIPS_STANDARDS.map(st => (
+                        <option key={st} value={st}>FIPS {st}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              {(fipsStatus === 'VALIDATED' || fipsStatus === 'PENDING') && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {fipsStatus === 'VALIDATED' && (
+                    <div>
+                      <label htmlFor="fips-cert" className="block font-semibold text-slate-300 mb-1.5">
+                        CMVP certificate number <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        id="fips-cert"
+                        type="text"
+                        inputMode="numeric"
+                        value={fipsCert}
+                        onChange={e => setFipsCert(e.target.value)}
+                        placeholder="e.g. 4211"
+                        className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+                      />
+                    </div>
+                  )}
+                  <div className={fipsStatus === 'VALIDATED' ? '' : 'sm:col-span-2'}>
+                    <label htmlFor="fips-module" className="block font-semibold text-slate-300 mb-1.5">
+                      Cryptographic module name <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      id="fips-module"
+                      type="text"
+                      value={fipsModule}
+                      onChange={e => setFipsModule(e.target.value)}
+                      placeholder="e.g. CrowdStrike Falcon Cryptographic Module"
+                      className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    />
+                  </div>
+                </div>
+              )}
+            </fieldset>
+          )}
 
           {/* Owner */}
           <div>
