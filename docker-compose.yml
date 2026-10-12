@@ -45,9 +45,7 @@ services:
 
   # ── 2. Event Horizon: Singularity Application & Local Storage API ──────────
   singularity-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/erickson-devin/pbc-grc:latest
     container_name: singularity-app
     restart: unless-stopped
     depends_on:
