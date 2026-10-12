@@ -267,7 +267,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
           {/* Tactical Telemetry Warning Banner (Per-Asset Root-Cause Analysis) */}
           {hasFailingAssets && (
-            <button type="button"
+            <button type="button" aria-haspopup="dialog"
               onClick={(e) => {
                 e.stopPropagation();
                 setIsAssetDrawerOpen(true);

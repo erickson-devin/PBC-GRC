@@ -97,7 +97,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
             /* Logged in state: Instant Enclave Link */
             <button
               onClick={onEnterApp}
-              className="group relative inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-emerald-600 via-brand-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-brand-500/25 ring-1 ring-white/20 active:scale-[0.98] transition-all duration-200"
+              className="btn-success group relative inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold ring-1 ring-white/20"
             >
               <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
               <span>Enter Enclave ({currentTenant.name.split(' ')[0]})</span>
@@ -173,7 +173,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
             {isAuthenticated ? (
               <button
                 onClick={() => { setMobileMenuOpen(false); onEnterApp(); }}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 via-brand-600 to-indigo-600 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
+                className="btn-success w-full py-3 rounded-xl font-semibold flex items-center justify-center gap-2"
               >
                 <span>Enter Enclave</span>
                 <ArrowRight className="w-4 h-4" />
@@ -189,7 +189,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({ onEnterApp, onLaunchSand
                 </button>
                 <button
                   onClick={() => { setMobileMenuOpen(false); openLicenseModal('DEFENSE_PRO'); }}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
+                  className="btn-primary w-full py-3 rounded-xl font-semibold flex items-center justify-center gap-2"
                 >
                   <span>Request License & Sales Call</span>
                   <ArrowRight className="w-4 h-4" />

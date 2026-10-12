@@ -51,6 +51,7 @@ import {
 import { CertificateOfDestruction } from '../../types/audit';
 import { errorMessage } from '../../utils/errors';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
   onNavigateToLanding?: () => void;
@@ -1333,7 +1334,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
       {/* 4. Add Platform Administrator Modal */}
       {isAddAdminModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+        <DialogOverlay label="Add platform administrator" onClose={() => setIsAddAdminModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
           <div className="relative w-full max-w-lg my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-purple-900/40 via-slate-900/60 to-slate-950 ring-1 ring-purple-500/40 shadow-2xl shadow-purple-950/40 animate-scaleUp">
             <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
               
@@ -1428,12 +1429,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       )}
 
       {/* 5. Two-Step NIST SP 800-88 Cryptographic Sanitization & Destruction Modal */}
       {isDestructionModalOpen && selectedTenantForDestruction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+        <DialogOverlay label="Cryptographic sanitize and destroy enclave" onClose={isDestroying ? undefined : () => { setIsDestructionModalOpen(false); setSelectedTenantForDestruction(null); }} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
           <div className="relative w-full max-w-xl my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-rose-900/40 via-slate-900/60 to-slate-950 ring-1 ring-rose-700/60 shadow-2xl shadow-rose-950/40 animate-scaleUp">
             <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
               
@@ -1568,7 +1569,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       type="button"
                       disabled={!isDestructionConfirmed || isDestroying}
                       onClick={handleExecuteDestruction}
-                      className="px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30"
+                      className="btn-danger px-5 py-2.5 rounded-xl text-xs flex items-center gap-2"
                     >
                       <Flame className="w-4 h-4" />
                       <span>Execute Cryptographic Wipe & Destroy</span>
@@ -1579,7 +1580,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       )}
 
     </div>

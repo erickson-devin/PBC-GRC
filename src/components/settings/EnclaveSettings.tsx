@@ -26,6 +26,7 @@ import { EnclaveStackProfile } from '../../types/tenant';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../../hooks/useFipsModules';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
   edrSolution: 'DEFENDER_FOR_ENDPOINT',
@@ -285,7 +286,7 @@ export const EnclaveSettings: React.FC = () => {
         <button
           onClick={() => setIsStackSurveyModalOpen(true)}
           disabled={!canEdit}
-          className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition-all shrink-0 self-start md:self-auto disabled:opacity-50"
+          className="btn-primary px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 shrink-0 self-start md:self-auto"
         >
           <Sparkles className="w-4 h-4 text-cyan-200" />
           <span>Configure Enclave Stack & ODP Wizard</span>
@@ -662,7 +663,7 @@ export const EnclaveSettings: React.FC = () => {
       {previewingPolicy && (() => {
         const markdown = generateFamilyPolicyDocument(currentTenant, previewingPolicy.code, previewingPolicy.title, activeFramework, cryptoModules);
         return (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <DialogOverlay label="Policy document" onClose={() => setPreviewingPolicy(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
             <div className="w-full max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-fadeIn">
               {/* Modal Header */}
               <div className="p-5 border-b border-slate-800 flex items-center justify-between gap-4 bg-slate-950/60 shrink-0">
@@ -854,7 +855,7 @@ export const EnclaveSettings: React.FC = () => {
                 </div>
               </div>
             </div>
-          </div>
+          </DialogOverlay>
         );
       })()}
     </div>

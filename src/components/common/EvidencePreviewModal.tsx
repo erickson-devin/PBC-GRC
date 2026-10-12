@@ -17,6 +17,7 @@ import { EvidenceVault } from '../../services/evidenceVault';
 import { GcsService } from '../../services/gcsService';
 import { findControlDefinition } from '../../data/frameworks';
 
+import { DialogOverlay } from './DialogOverlay';
 const EvidencePreviewModalContent: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
   const { currentTenant } = useTenant();
@@ -104,7 +105,7 @@ const EvidencePreviewModalContent: React.FC = () => {
   };
 
   return (
-    <div className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+    <DialogOverlay label="Evidence preview" onClose={() => setPreviewEvidence(null)} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         
         {/* Header */}
@@ -253,7 +254,7 @@ const EvidencePreviewModalContent: React.FC = () => {
         </div>
 
       </div>
-    </div>
+    </DialogOverlay>
   );
 };
 

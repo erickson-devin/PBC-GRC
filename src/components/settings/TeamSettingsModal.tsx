@@ -22,6 +22,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface TeamSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -408,7 +409,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       <button type="button" onClick={() => setPendingAction(null)} className="px-3 py-1.5 font-semibold text-slate-300 hover:text-white">Cancel</button>
-                      <button type="button" onClick={confirmPending} className="rounded-lg bg-rose-600 px-3 py-1.5 font-bold text-white hover:bg-rose-500">
+                      <button type="button" onClick={confirmPending} className="btn-danger rounded-lg px-3 py-1.5">
                         {pendingAction.type === 'revoke' ? 'Revoke' : 'Remove'}
                       </button>
                     </span>
@@ -750,7 +751,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   // ── Modal mode: wrapped in fixed overlay ──
   return (
     <>
-      <div
+      <DialogOverlay label="Team settings" onClose={handleModalClose}
         onClick={handleModalClose}
         className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
       >
@@ -760,7 +761,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
         >
           {innerContent}
         </div>
-      </div>
+      </DialogOverlay>
 
       <InviteStaffModal
         isOpen={isInviteModalOpen}

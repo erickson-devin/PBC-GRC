@@ -13,3 +13,21 @@ export function activateOnKey(e: KeyboardEvent<HTMLElement>): void {
     e.currentTarget.click();
   }
 }
+
+/**
+ * Arrow-key navigation for a role="radiogroup" (put on the group element's onKeyDown). Each option is a role="radio" with
+ * aria-checked and tabIndex 0 only on the checked one (roving tabindex), so the group is a single Tab stop. Arrow keys
+ * move to the next / previous option and select it, wrapping at the ends, as native radio buttons do.
+ */
+export function radioGroupKeyDown(e: KeyboardEvent<HTMLElement>): void {
+  const forward = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+  const backward = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+  if (!forward && !backward) return;
+  const radios = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])')];
+  const current = radios.findIndex((r) => r === document.activeElement || r.contains(document.activeElement));
+  if (radios.length === 0 || current < 0) return;
+  e.preventDefault();
+  const next = radios[(current + (forward ? 1 : -1) + radios.length) % radios.length];
+  next.focus();
+  next.click();
+}

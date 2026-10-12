@@ -14,6 +14,7 @@ import { SamStatus } from '../../types/tenant';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 export const TenantSwitcher: React.FC = () => {
   const {
     tenants,
@@ -268,7 +269,7 @@ export const TenantSwitcher: React.FC = () => {
 
       {/* Modal: Create Client Organization */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+        <DialogOverlay label="Add a client enclave" onClose={closeCreateModal} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
           <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
@@ -395,7 +396,7 @@ export const TenantSwitcher: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </DialogOverlay>
       )}
     </div>
   );

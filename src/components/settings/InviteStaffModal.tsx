@@ -15,6 +15,8 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 import { TenantInvitation } from '../../types/tenant';
 
+import { DialogOverlay } from '../common/DialogOverlay';
+import { radioGroupKeyDown } from '../../utils/a11y';
 interface InviteStaffModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -86,7 +88,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay label="Invite a team member" onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
       {/* Double-Bezel Card */}
       <div className="w-full max-w-lg p-1.5 rounded-[2.25rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl">
         <div className="p-6 sm:p-7 rounded-[calc(2.25rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
@@ -230,9 +232,9 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                   Assigned CMMC Enclave Role <span className="text-rose-400">*</span>
                 </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div role="radiogroup" aria-label="Assigned CMMC enclave role" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* ASSESSOR Option */}
-                  <button type="button"
+                  <button type="button" role="radio" aria-checked={role === 'ASSESSOR'} tabIndex={role === 'ASSESSOR' ? 0 : -1}
                     onClick={() => setRole('ASSESSOR')}
                     className={`w-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all ${
                       role === 'ASSESSOR'
@@ -255,7 +257,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                   </button>
 
                   {/* VIEWER Option */}
-                  <button type="button"
+                  <button type="button" role="radio" aria-checked={role === 'VIEWER'} tabIndex={role === 'VIEWER' ? 0 : -1}
                     onClick={() => setRole('VIEWER')}
                     className={`w-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all ${
                       role === 'VIEWER'
@@ -291,7 +293,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmitting || !email.trim()}
-                  className="px-6 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-brand-500/25 flex items-center gap-2 transition-all disabled:opacity-50 active:scale-[0.98]"
+                  className="btn-primary px-6 py-2.5 text-xs rounded-xl flex items-center gap-2"
                 >
                   {isSubmitting ? (
                     <>
@@ -311,6 +313,6 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
 
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

@@ -46,6 +46,7 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
 import { activateOnKey } from '../../utils/a11y';
+import { DialogOverlay } from '../common/DialogOverlay';
 interface InspectDocumentModalProps {
   controlId?: string | null;
   onClose?: () => void;
@@ -150,20 +151,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const familyPrefix = getFamilyPrefix(control?.id, control?.domain);
   const familyTitle = control?.domainName || control?.domain || familyPrefix;
 
-  // Handle escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (propOnClose) {
-          propOnClose();
-        } else {
-          setSelectedControlId(null);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [propOnClose, setSelectedControlId]);
+  // Escape is handled by the shared <DialogOverlay> (top-most dialog only), not by a window listener here
 
   // Tab sync: reset to 'objectives' if the inspected control is not a -1 policy control
   useEffect(() => {
@@ -357,7 +345,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   return (
-    <div className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+    <DialogOverlay label="Control details" onClose={handleClose} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         {/* ── Top Header ── */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
@@ -965,7 +953,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   {/* Export Policy Markdown Button */}
                   <button
                     onClick={handleExportPolicyMarkdown}
-                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-cyan-600/20 transition-all"
+                    className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5"
                     title="Download living policy as .md file"
                   >
                     <Download className="w-3.5 h-3.5" />
@@ -1239,7 +1227,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           }}
         />
       </div>
-    </div>
+    </DialogOverlay>
   );
 };
 

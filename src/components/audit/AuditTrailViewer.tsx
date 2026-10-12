@@ -22,6 +22,7 @@ import {
   seedDemoAuditLedgerIfEmpty,
 } from '../../data/audit/auditLogger';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 export const AuditTrailViewer: React.FC = () => {
   const { currentTenant } = useTenant();
 
@@ -156,7 +157,7 @@ export const AuditTrailViewer: React.FC = () => {
 
           <button
             onClick={handleExportJson}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-brand-500/20 flex items-center gap-2 transition-all"
+            className="btn-primary px-4 py-2 rounded-xl text-xs flex items-center gap-2"
           >
             <Download className="w-4 h-4 text-brand-200" />
             <span>Export Audit Package (JSON)</span>
@@ -386,7 +387,7 @@ export const AuditTrailViewer: React.FC = () => {
 
       {/* Entry Inspector Modal */}
       {selectedEntry && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+        <DialogOverlay label="Audit entry details" onClose={() => setSelectedEntry(null)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
           <div className="w-full max-w-2xl bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
@@ -480,7 +481,7 @@ export const AuditTrailViewer: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       )}
     </div>
   );

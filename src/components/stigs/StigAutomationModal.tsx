@@ -34,6 +34,7 @@ import {
 } from '../../data/stigs/scriptGenerators';
 import { StigProfileId, StigSeverity, StigRule } from '../../types/stig';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface StigAutomationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -211,7 +212,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay label="STIG automation" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       {/* Outer Glow Double-Bezel Card */}
       <div className="w-full max-w-6xl p-1 rounded-3xl bg-gradient-to-b from-cyan-500/30 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="p-5 sm:p-7 rounded-[calc(1.5rem-0.125rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(94vh-0.5rem)] overflow-hidden space-y-5">
@@ -332,7 +333,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
             <div className="flex items-center gap-2 flex-wrap shrink-0">
               <button
                 onClick={() => setIsConfirmingNarrativeFill(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                className="btn-primary flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs hover:scale-[1.02]"
                 title="Populate compliant policy narratives into mapped controls"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -690,7 +691,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                 </button>
                 <button
                   onClick={handleBulkApplyNarratives}
-                  className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-bold shadow-md shadow-cyan-500/25"
+                  className="btn-primary px-4 py-1.5 rounded-xl text-xs"
                 >
                   Inject Narratives ({mappedToActiveCount} Mapped Controls)
                 </button>
@@ -718,6 +719,6 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
 
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

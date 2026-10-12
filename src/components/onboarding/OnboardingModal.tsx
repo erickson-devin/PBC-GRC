@@ -17,6 +17,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { SamStatus } from '../../types/tenant';
 import { errorMessage } from '../../utils/errors';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface OnboardingModalProps {
   isOpen: boolean;
   onClose?: () => void;
@@ -149,7 +150,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay label="Enclave setup" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-fadeIn">
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-slate-800 bg-slate-950/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -412,7 +413,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 type="submit"
                 form="onboarding-step2"
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-brand-600 hover:from-emerald-400 hover:to-brand-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/25 transition-all disabled:opacity-50"
+                className="btn-success inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs"
               >
                 <CheckCircle2 className="w-4 h-4 text-white" />
                 <span>{isSubmitting ? 'Saving Configuration...' : 'Complete Setup & Launch Enclave'}</span>
@@ -421,6 +422,6 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

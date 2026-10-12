@@ -24,6 +24,8 @@ import {
 } from '../../data/telemetry/fipsValidation';
 import { errorMessage } from '../../utils/errors';
 
+import { DialogOverlay } from '../common/DialogOverlay';
+import { radioGroupKeyDown } from '../../utils/a11y';
 interface AddAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -141,7 +143,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay label={initialAsset ? 'Edit enclave asset' : 'Register enclave asset'} onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       {/* Click outside backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
@@ -258,13 +260,14 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             <label className="block font-semibold text-slate-300 mb-1.5">
               CMMC 2.0 asset category
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="CMMC asset category">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="CMMC asset category" onKeyDown={radioGroupKeyDown}>
               {CMMC_ASSET_CATEGORIES.map(cat => (
                 <button
                   type="button"
                   key={cat}
                   role="radio"
                   aria-checked={cmmcAssetCategory === cat}
+                  tabIndex={cmmcAssetCategory === cat ? 0 : -1}
                   onClick={() => setCmmcAssetCategory(cat)}
                   className={`text-left p-2.5 rounded-xl border transition-all ${
                     cmmcAssetCategory === cat
@@ -406,7 +409,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold transition-all shadow-md shadow-cyan-950/40 disabled:opacity-60"
+              className="btn-primary px-4 py-2 rounded-xl"
             >
               {saving ? 'Saving…' : initialAsset ? 'Save Changes' : 'Register Asset'}
             </button>
@@ -415,6 +418,6 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         </form>
 
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

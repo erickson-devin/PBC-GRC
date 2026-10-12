@@ -199,11 +199,11 @@ export const FrameworkSwitcher: React.FC = () => {
           </div>
 
           {/* Frameworks List (Filtered to Enclave-Enabled Only) */}
-          <div className="space-y-1">
+          <div role="group" aria-label="Active compliance framework" className="space-y-1">
             {availableFrameworks.map((f) => {
               const isSelected = activeFramework === f.id;
               return (
-                <button type="button"
+                <button type="button" aria-pressed={isSelected}
                   key={f.id}
                   onClick={() => {
                     setActiveFramework(f.id);

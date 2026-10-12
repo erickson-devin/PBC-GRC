@@ -19,6 +19,7 @@ import { remediateAssetRule } from '../../data/telemetry/assetTelemetryEngine';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface AssetRemediationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -76,7 +77,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay label="Asset remediation" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-end bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       {/* Drawer Overlay Backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
@@ -249,7 +250,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
                       <button
                         onClick={() => handlePushRemediation(asset)}
                         disabled={isRemediating}
-                        className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+                        className="btn-success px-3 py-1.5 rounded-xl text-xs flex items-center gap-2"
                       >
                         {isRemediating ? (
                           <>
@@ -304,6 +305,6 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
         </div>
 
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

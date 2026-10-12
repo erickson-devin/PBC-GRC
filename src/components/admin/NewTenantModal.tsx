@@ -21,6 +21,7 @@ import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface NewTenantModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -139,7 +140,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay label="Add a client enclave" onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       {/* Double-Bezel Architecture */}
       <div className="w-full max-w-xl p-1.5 rounded-[2.25rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="p-5 sm:p-7 rounded-[calc(2.25rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(94vh-0.75rem)] overflow-y-auto">
@@ -494,7 +495,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmitting || !companyName.trim() || !tenantOwnerEmail.trim()}
-                  className="px-6 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-brand-500/25 flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                  className="btn-primary px-6 py-2.5 text-xs rounded-xl flex items-center gap-2"
                 >
                   {isSubmitting ? (
                     <>
@@ -514,6 +515,6 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
 
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

@@ -9,6 +9,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface AccountSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -32,7 +33,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     : 'Enterprise Password Credentials';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay label="Account settings" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
       <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl">
         <div className="p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
           
@@ -135,6 +136,6 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
 
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

@@ -12,6 +12,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 
+import { DialogOverlay } from './DialogOverlay';
 export type LegalTab = 'privacy' | 'terms';
 
 interface LegalModalProps {
@@ -224,7 +225,7 @@ Website: https://pitchblackcyber.com`,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay label="Legal documents" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-fadeIn">
         {/* Modal Header */}
         <div className="px-6 py-5 border-b border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -392,6 +393,6 @@ Website: https://pitchblackcyber.com`,
           </div>
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

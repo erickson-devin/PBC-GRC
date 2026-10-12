@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, FileText, Copy, Check, Download, ArrowRight, ShieldCheck } from 'lucide-react';
 import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface SampleSspModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -57,7 +58,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-slate-950/80 backdrop-blur-md">
+    <DialogOverlay label="Sample System Security Plan" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto bg-slate-950/80 backdrop-blur-md">
       <div 
         className="relative w-full max-w-4xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
         onClick={e => e.stopPropagation()}
@@ -139,7 +140,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
           </div>
           <button
             onClick={() => { onClose(); onEnterApp(); }}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-full bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
+            className="btn-primary w-full sm:w-auto px-5 py-2.5 rounded-full font-semibold text-xs flex items-center justify-center gap-2"
           >
             <span>Open in Assessment Platform</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -147,6 +148,6 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
         </div>
 
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

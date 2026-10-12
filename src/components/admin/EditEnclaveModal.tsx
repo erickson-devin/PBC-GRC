@@ -16,6 +16,7 @@ import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface EditEnclaveModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -136,7 +137,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay label="Edit enclave" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-2xl my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-slate-800/60 via-slate-900/40 to-slate-950 ring-1 ring-slate-700/60 shadow-2xl shadow-cyan-950/20 animate-scaleUp">
         <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
           
@@ -420,6 +421,6 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
 
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

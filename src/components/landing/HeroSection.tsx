@@ -71,7 +71,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             {/* Primary Sandbox CTA */}
             <button
               onClick={onExploreSandbox}
-              className="w-full sm:w-auto group inline-flex items-center justify-center gap-3 px-7 py-3.5 rounded-full bg-gradient-to-r from-brand-500 via-brand-600 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-semibold text-base shadow-xl shadow-brand-500/25 ring-1 ring-white/20 active:scale-[0.98] transition-all duration-200"
+              className="btn-primary w-full sm:w-auto group inline-flex items-center justify-center gap-3 px-7 py-3.5 rounded-full font-semibold text-base ring-1 ring-white/20"
             >
               <Sparkles className="w-4 h-4 text-brand-200" />
               <span>Launch Live Interactive Sandbox</span>

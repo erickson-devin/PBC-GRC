@@ -160,7 +160,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
             <button
               onClick={() => openExportModal()}
               title="Open Compliance Documentation & Artifact Export Center (SSP, POA&M, System Description)"
-              className="px-2.5 py-1.5 text-xs font-semibold rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white shadow-md shadow-brand-600/25 flex items-center gap-1.5 transition-all"
+              className="btn-primary px-2.5 py-1.5 text-xs font-semibold rounded-xl flex items-center gap-1.5"
             >
               <FileCheck className="w-3.5 h-3.5 text-brand-200" />
               <span className="hidden sm:inline">Export Audit Package</span>
@@ -212,7 +212,7 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
               <button
                 onClick={onRequestLicense}
                 title="Schedule sales onboarding call and configure licensed boundary"
-                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-brand-500/20 flex items-center gap-1.5 transition-all"
+                className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                 <span className="hidden sm:inline">Request Enclave License</span>

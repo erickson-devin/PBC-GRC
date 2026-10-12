@@ -17,6 +17,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 import { LicenseTier, getLicenseTierBadge } from '../../types/tenant';
 
+import { DialogOverlay } from '../common/DialogOverlay';
+import { radioGroupKeyDown } from '../../utils/a11y';
 interface LicenseRequestModalProps {
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
@@ -83,7 +85,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-xl animate-fadeIn overflow-y-auto">
+    <DialogOverlay label="Request a license" onClose={handleResetAndClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-xl animate-fadeIn overflow-y-auto">
       {/* Outer Shell (Double-Bezel hardware architecture) */}
       <div className="relative w-full max-w-2xl my-8 p-1.5 sm:p-2 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950/80 ring-1 ring-white/10 shadow-2xl shadow-slate-950/80">
         
@@ -116,9 +118,9 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
               </div>
 
               {/* Commercial Pricing Selector Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+              <div role="radiogroup" aria-label="License plan" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
                 {/* Foundational Enclave Option */}
-                <button type="button"
+                <button type="button" role="radio" aria-checked={plan === 'FOUNDATIONAL' || plan === 'single-org'} tabIndex={(plan === 'FOUNDATIONAL' || plan === 'single-org') ? 0 : -1}
                   onClick={() => setPlan('FOUNDATIONAL')}
                   className={`w-full text-left cursor-pointer p-3.5 rounded-2xl border transition-all ${
                     plan === 'FOUNDATIONAL' || plan === 'single-org'
@@ -144,7 +146,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                 </button>
 
                 {/* Defense Professional Option (Recommended) */}
-                <button type="button"
+                <button type="button" role="radio" aria-checked={plan === 'DEFENSE_PRO'} tabIndex={(plan === 'DEFENSE_PRO') ? 0 : -1}
                   onClick={() => setPlan('DEFENSE_PRO')}
                   className={`w-full text-left cursor-pointer p-3.5 rounded-2xl border relative transition-all ${
                     plan === 'DEFENSE_PRO'
@@ -173,7 +175,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                 </button>
 
                 {/* Enterprise & Assessor Enclave Option */}
-                <button type="button"
+                <button type="button" role="radio" aria-checked={plan === 'ENTERPRISE'} tabIndex={(plan === 'ENTERPRISE') ? 0 : -1}
                   onClick={() => setPlan('ENTERPRISE')}
                   className={`w-full text-left cursor-pointer p-3.5 rounded-2xl border transition-all ${
                     plan === 'ENTERPRISE' || plan === 'msp-assessor'
@@ -362,7 +364,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="group relative inline-flex items-center gap-2.5 px-6 py-2.5 rounded-full bg-gradient-to-r from-brand-500 via-brand-600 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-brand-500/25 ring-1 ring-white/20 active:scale-[0.98] transition-all disabled:opacity-50"
+                    className="btn-primary group relative inline-flex items-center gap-2.5 px-6 py-2.5 rounded-full text-xs ring-1 ring-white/20"
                   >
                     <span>{isSubmitting ? 'Submitting Request...' : 'Schedule Call & Request Enclave License'}</span>
                     <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center group-hover:translate-x-0.5 transition-transform">
@@ -439,6 +441,6 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
 
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

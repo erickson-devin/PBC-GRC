@@ -264,7 +264,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           <button
             onClick={handleBulkApplyAll}
             disabled={!canEdit}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all bg-gradient-to-r from-cyan-600/30 to-blue-600/30 hover:from-cyan-600/50 hover:to-blue-600/50 text-cyan-200 border border-cyan-500/40 hover:border-cyan-400 disabled:opacity-50 shadow-md shadow-cyan-950/40"
+            className="btn-accent flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs"
             title="Auto-fills all objective narratives with pre-filled baseline templates and marks all objectives as MET"
           >
             <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse" />
@@ -406,7 +406,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
 
               {/* ── Pre-Filled Best-Practice Template Card ── */}
               <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
-                <button type="button"
+                <button type="button" aria-expanded={isTemplateOpen}
                   onClick={() => toggleTemplateExpand(obj.id)}
                   className="w-full text-left px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-900/60 transition-colors"
                 >

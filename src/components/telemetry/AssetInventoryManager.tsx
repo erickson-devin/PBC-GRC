@@ -36,6 +36,7 @@ import { errorMessage } from '../../utils/errors';
 import { AddAssetModal } from './AddAssetModal';
 import { AccretionIntegrationModal } from './AccretionIntegrationModal';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface AssetInventoryManagerProps {
   onTriggerScan?: (asset: EnclaveAsset) => void;
   onSelectAsset?: (asset: EnclaveAsset) => void;
@@ -291,7 +292,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
           {canEdit && (<button
             onClick={() => setIsAccretionModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-950/70 to-indigo-950/70 hover:from-cyan-900/70 hover:to-indigo-900/70 text-cyan-300 border border-cyan-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-cyan-950/40"
+            className="btn-accent px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5"
           >
             <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
             <span>Accretion Sensor API</span>
@@ -310,7 +311,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
               setEditingAsset(null);
               setIsAddModalOpen(true);
             }}
-            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5"
+            className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Asset</span>
@@ -338,7 +339,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
       {/* ─── Unconfirmed Discovered Asset High-Priority Banner ─── */}
       {unconfirmedAssets.length > 0 && (
-        <button type="button"
+        <button type="button" aria-pressed={selectedCategory === 'UNCONFIRMED'}
           onClick={() => setSelectedCategory(selectedCategory === 'UNCONFIRMED' ? 'ALL' : 'UNCONFIRMED')}
           className="w-full text-left rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-950/60 via-amber-900/30 to-slate-900 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-amber-950/30 cursor-pointer hover:border-amber-400 transition-all animate-fadeIn"
         >
@@ -654,7 +655,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                               onSelectAsset(asset);
                             }
                           }}
-                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-xs transition-all flex items-center gap-1 shadow-sm"
+                          className="btn-primary px-2 py-1 rounded-lg text-xs flex items-center gap-1"
                           title="Run automated Photon SCAP Scan on this endpoint"
                         >
                           <Play className="w-3 h-3" />
@@ -667,7 +668,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                             <button
                               disabled={busy}
                               onClick={() => void handleDeleteAsset(asset)}
-                              className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs disabled:opacity-50"
+                              className="btn-danger px-2 py-1 rounded-lg text-xs"
                             >
                               Confirm
                             </button>
@@ -739,7 +740,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
       {/* ─── CSV Bulk Import Modal ─── */}
       {isCsvModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+        <DialogOverlay label="Import assets from CSV" onClose={() => setIsCsvModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
           <div aria-hidden="true" className="absolute inset-0" onClick={() => setIsCsvModalOpen(false)} />
 
           <div className="relative w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-4">
@@ -806,14 +807,14 @@ BASTION-01,10.0.50.10,ubuntu2204,SECURITY_PROTECTION,00:50:56:B2:11,SSH jump hos
                 <button
                   onClick={() => void handleImportCsv()}
                   disabled={busy}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-bold text-xs transition-all shadow-md disabled:opacity-50"
+                  className="btn-primary px-4 py-2 rounded-xl text-xs"
                 >
                   Import Endpoints
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       )}
 
 

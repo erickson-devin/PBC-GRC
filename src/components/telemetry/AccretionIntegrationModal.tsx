@@ -18,6 +18,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 import { AccretionIngestResult } from '../../types/telemetry';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface AccretionIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -152,7 +153,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
 }`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay label="Accretion sensor integration" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
       {/* Click outside backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
@@ -200,7 +201,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
           <button
             onClick={handleRunSimulation}
             disabled={isSimulating}
-            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-cyan-500/20 transition-all flex items-center gap-2 shrink-0 disabled:opacity-60"
+            className="btn-primary px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 shrink-0"
           >
             {isSimulating ? (
               <>
@@ -365,6 +366,6 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
         </div>
 
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

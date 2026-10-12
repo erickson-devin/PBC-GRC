@@ -18,6 +18,8 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { EnclaveStackProfile } from '../../types/tenant';
 
+import { DialogOverlay } from '../common/DialogOverlay';
+import { radioGroupKeyDown } from '../../utils/a11y';
 interface EnclaveStackSurveyModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -227,7 +229,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
   const currentTabIndex = tabs.findIndex((t) => t.id === activeTab);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay label="Enclave stack survey" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       <div
         className="relative w-full max-w-5xl rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-scaleUp"
         onClick={(e) => e.stopPropagation()}
@@ -307,7 +309,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div role="radiogroup" aria-label="Identity and authentication provider" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {stackOptions<EnclaveStackProfile['identityProvider']>([
                   {
                     id: 'ENTRA_ID_GOV',
@@ -344,7 +346,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 ]).map((opt) => {
                   const isSelected = stack.identityProvider === opt.id;
                   return (
-                    <button type="button"
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, identityProvider: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -405,7 +407,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div role="radiogroup" aria-label="Endpoint protection (EDR)" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {stackOptions<EnclaveStackProfile['edrSolution']>([
                   {
                     id: 'DEFENDER_FOR_ENDPOINT',
@@ -442,7 +444,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 ]).map((opt) => {
                   const isSelected = stack.edrSolution === opt.id;
                   return (
-                    <button type="button"
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, edrSolution: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -503,7 +505,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div role="radiogroup" aria-label="Cloud infrastructure" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {stackOptions<EnclaveStackProfile['infrastructure']>([
                   {
                     id: 'AZURE_GOV',
@@ -540,7 +542,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 ]).map((opt) => {
                   const isSelected = stack.infrastructure === opt.id;
                   return (
-                    <button type="button"
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, infrastructure: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -601,7 +603,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div role="radiogroup" aria-label="Device management (MDM)" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {stackOptions<EnclaveStackProfile['mdmSolution']>([
                   {
                     id: 'INTUNE',
@@ -638,7 +640,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 ]).map((opt) => {
                   const isSelected = stack.mdmSolution === opt.id;
                   return (
-                    <button type="button"
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, mdmSolution: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -699,7 +701,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div role="radiogroup" aria-label="SIEM and logging" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {stackOptions<EnclaveStackProfile['siemSolution']>([
                   {
                     id: 'SENTINEL',
@@ -736,7 +738,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 ]).map((opt) => {
                   const isSelected = stack.siemSolution === opt.id;
                   return (
-                    <button type="button"
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, siemSolution: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -958,7 +960,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
               type="button"
               onClick={handleSaveAndCascade}
               disabled={isSaving}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition-all disabled:opacity-50"
+              className="btn-primary px-5 py-2.5 rounded-xl text-xs flex items-center gap-2"
             >
               <Sparkles className="w-4 h-4 text-cyan-200" />
               <span>{isSaving ? 'Cascading to Objectives...' : 'Save Stack & Cascade to All Objectives'}</span>
@@ -966,6 +968,6 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
           </div>
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 };

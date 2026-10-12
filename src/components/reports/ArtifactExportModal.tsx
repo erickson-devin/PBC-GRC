@@ -46,6 +46,7 @@ import {
 } from '../../data/reports/sprsCompiler';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 
+import { DialogOverlay } from '../common/DialogOverlay';
 interface ArtifactExportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -977,7 +978,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                     <button
                       onClick={() => downloadSprsSummaryJson(frameworkControls, state.controls, formData, compiledDoc.poamEntries)}
-                      className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-brand-600 hover:from-cyan-500 hover:to-brand-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md shadow-cyan-500/20"
+                      className="btn-primary flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-2"
                     >
                       <Download className="w-4 h-4" />
                       <span>Download SPRS Record (JSON)</span>
@@ -1038,7 +1039,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             {/* Download Official Document (HTML) */}
             <button
               onClick={handleDownloadHtml}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 flex items-center gap-2 transition-all active:scale-[0.98]"
+              className="btn-primary px-4 py-2 rounded-xl text-xs flex items-center gap-2"
               title="Download official self-contained HTML audit document"
             >
               <Download className="w-4 h-4" />
@@ -1059,8 +1060,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay label="Compliance artifact export" onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
       {innerContent}
-    </div>
+    </DialogOverlay>
   );
 };

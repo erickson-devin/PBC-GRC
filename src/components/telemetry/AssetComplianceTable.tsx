@@ -279,7 +279,7 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
                               });
                             }
                           }}
-                          className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white font-bold text-xs transition-all flex items-center gap-1 shadow-sm"
+                          className="btn-primary px-2 py-1 rounded-lg text-xs flex items-center gap-1"
                           title="Trigger SCAP STIG Scan against this host"
                         >
                           <Play className="w-3 h-3" />

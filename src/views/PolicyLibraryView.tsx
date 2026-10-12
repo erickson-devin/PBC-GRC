@@ -314,7 +314,7 @@ const PolicyLibraryViewContent: React.FC = () => {
             <button
               onClick={() => setIsStackSurveyModalOpen(true)}
               disabled={!canEdit}
-              className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 flex items-center gap-2 transition-all shrink-0 disabled:opacity-50"
+              className="btn-primary px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 shrink-0"
             >
               <Sparkles className="w-4 h-4 text-cyan-200" />
               <span>Configure Enclave Stack & ODP Wizard</span>
