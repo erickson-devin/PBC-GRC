@@ -9,6 +9,7 @@ import type { FakeChatRequest } from './fakeOllama';
  *   [[GAPFAIL]]     (gap analysis) answers with prose           [[BADEVIDENCE]] (gap analysis, narrative) cites evidence that is not there
  *   [[OFFTOPIC]]    attaches a real sentence to an unrelated control   [[ALLSAME]]  (extractive gap) uses one sentence for every objective
  *   [[FABRICATE]]   (extractive gap) invents a sentence that is not in the document
+ *   [[WEAK]]        (extractive gap) picks a real sentence that shares no words with objective a
  *   [[NEARMISS]]    (extractive gap) copies a sentence with a few words changed       [[FAILB]] (extractive gap) fails to answer objective b
  */
 export const sentenceAfterHeading = (section: string): string => {
@@ -54,6 +55,7 @@ export function scriptedModel(req: FakeChatRequest): unknown {
     if (text.includes('[[GAPFAIL]]')) return { __raw: 'no' };
     if (text.includes('[[FAILB]]') && letter === 'b') return { __raw: 'no' };
     const sentence = sentenceAfterHeading(text);
+    if (text.includes('[[WEAK]]') && letter === 'a') return { sentence: 'Accounts are created by the IT lead after manager approval and reviewed every quarter by the security manager.' };
     if (text.includes('[[ALLSAME]]')) return { sentence };
     if (text.includes('[[FABRICATE]]')) return { sentence: letter === 'a' ? 'Every employee completes a security briefing before receiving any laptop' : 'NONE' };
     if (text.includes('[[NEARMISS]]') && letter === 'a') return { sentence: sentence.replace('limited', 'restricted').replace('authorized', 'approved') };

@@ -91,6 +91,11 @@ export interface ObjectiveAssessment {
   status: ObjectiveStatus;
   /** A passage of the document, verbatim, that supports the status (ADDRESSED / PARTIAL only). */
   evidence?: string;
+  /**
+   * AI extractive analysis only: the sentence was found but shares fewer than two distinctive words with the objective, so
+   * the semantic match is weak. The sentence is kept for the reviewer; the flag tells them to check it.
+   */
+  weak?: boolean;
 }
 
 export interface GapAnalysis {
