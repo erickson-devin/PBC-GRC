@@ -110,7 +110,7 @@ const StateBadge: React.FC<{ state: SspReviewState }> = ({ state }) => (
 );
 
 export const SspImportView: React.FC = () => {
-  const { currentTenant, currentRole } = useTenant();
+  const { currentTenant, currentRole, refreshLiveData } = useTenant();
   const tenantId = currentTenant.id;
   const ids = { framework: useId(), file: useId(), filter: useId(), notes: useId() };
 
@@ -256,15 +256,22 @@ export const SspImportView: React.FC = () => {
     if (!detail) return;
     setCommitting(true);
     setError(null);
+    // The Control Matrix, dashboard and SSP read the controls from the shared live-controls state, which is only loaded when
+    // the tenant or framework changes. A commit changes the controls on the server, so that state must be reloaded or those
+    // screens keep showing the old notes until the page is reloaded.
+    let controlsMayHaveChanged = false;
     try {
       const result = await ApiClient.sspCommit(tenantId, detail.job.id);
+      controlsMayHaveChanged = result.committed.length > 0;
       setOutcome(result);
       setConfirmCommit(false);
       await Promise.all([loadJobs(), loadDetail(detail.job.id)]);
     } catch (err: unknown) {
+      controlsMayHaveChanged = true; // a failure part-way may already have written some controls
       setError(errorMessage(err) || 'The commit failed.');
       await loadDetail(detail.job.id);
     } finally {
+      if (controlsMayHaveChanged) await refreshLiveData(tenantId);
       setCommitting(false);
     }
   };
