@@ -54,9 +54,9 @@ function findRefs(foldedChunk: string): Ref[] {
   return refs.sort((a, b) => a.index - b.index);
 }
 
-const numberOf = (controlId: string): string | null => controlId.match(/-(3\.\d+\.\d+)$/)?.[1] ?? null;
+export const numberOf = (controlId: string): string | null => controlId.match(/-(3\.\d+\.\d+)$/)?.[1] ?? null;
 
-function numberToIdMap(framework: SspImportFramework): Map<string, { id: string; title: string }> {
+export function numberToIdMap(framework: SspImportFramework): Map<string, { id: string; title: string }> {
   const map = new Map<string, { id: string; title: string }>();
   for (const c of getFrameworkControls(framework)) {
     const n = numberOf(c.id);
@@ -88,7 +88,7 @@ function paragraphAround(chunkText: string, index: number): string {
   return chunkText.slice(before === -1 ? 0 : before + 2, after === -1 ? chunkText.length : after).trim();
 }
 
-function pageAt(offset: number, pages: readonly PageSpan[]): number | null {
+export function pageAt(offset: number, pages: readonly PageSpan[]): number | null {
   const hit = pages.find((p) => offset >= p.start && offset <= p.end);
   return hit ? hit.page : null;
 }
