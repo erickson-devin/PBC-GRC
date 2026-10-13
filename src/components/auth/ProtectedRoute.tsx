@@ -49,7 +49,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
             Connecting to Defense Enclave...
           </h2>
           <p className="text-xs text-slate-400">
-            Validating Google Cloud Identity Platform session and tenant boundary permissions.
+            Validating session and tenant boundary permissions.
           </p>
         </div>
       </div>

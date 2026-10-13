@@ -63,8 +63,8 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
                 <Key className="w-4 h-4" />
               </div>
               <div>
-                <DialogTitle as="h3" className="text-sm font-bold text-white">API Keys & Cloud Identity Tokens</DialogTitle>
-                <p className="text-xs text-slate-400">Google Cloud Identity & Cloud Run Authentication</p>
+                <DialogTitle as="h3" className="text-sm font-bold text-white">API Keys & Session Tokens</DialogTitle>
+                <p className="text-xs text-slate-400">Bearer token authentication for the platform API</p>
               </div>
             </div>
             <button aria-label="Close"
@@ -80,7 +80,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-slate-300 font-semibold flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                Active Identity Platform JWT (Bearer Token)
+                Active Session JWT (Bearer Token)
               </span>
               <div className="flex items-center gap-1 text-xs text-slate-400">
                 <Clock className="w-3 h-3 text-brand-400" />
@@ -89,7 +89,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </div>
 
             <div className="relative p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono text-xs text-slate-300 break-all select-all">
-              {displayToken || 'No active session token. Sign in with a verified identity provider to obtain one.'}
+              {displayToken || 'No active session token. Sign in to obtain one.'}
             </div>
 
             <div className="flex justify-end">
