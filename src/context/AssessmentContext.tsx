@@ -18,7 +18,7 @@ import {
   getAssessmentObjectivesForControl,
   calculateControlRollup,
 } from '../data/frameworks';
-import { StorageService, createInitialState, createDemoState } from '../services/storageService';
+import { StorageService, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
 import { computeDomainStats } from '../data/frameworks/domainStats';
@@ -85,7 +85,6 @@ interface AssessmentContextType {
   updateSSPMetadata: (metadata: Partial<SSPMetadata>) => void;
   uploadEvidence: (controlId: string, file: File, description?: string) => Promise<EvidenceItem>;
   removeEvidence: (evidenceId: string) => Promise<void>;
-  loadDemoScenario: () => void;
   resetAssessment: () => Promise<void>;
   importAssessmentJSON: (file: File) => Promise<boolean>;
   exportAssessmentJSON: () => void;
@@ -1031,17 +1030,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
   }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles]);
 
-  // Action: Load 100% Demo Scenario
-  const loadDemoScenario = useCallback(() => {
-    if (!canEdit) {
-      alert('Read-Only access: Cannot load demo scenario.');
-      return;
-    }
-    const demo = createDemoState(currentTenant);
-    setState(demo);
-    setTimeout(triggerSprsCelebration, 200);
-  }, [canEdit, currentTenant, triggerSprsCelebration]);
-
   // Action: Reset Assessment
   const resetAssessment = useCallback(async () => {
     if (!canEdit) {
@@ -1143,7 +1131,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateSSPMetadata,
     uploadEvidence,
     removeEvidence,
-    loadDemoScenario,
     resetAssessment,
     importAssessmentJSON,
     exportAssessmentJSON,
@@ -1183,7 +1170,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateSSPMetadata,
     uploadEvidence,
     removeEvidence,
-    loadDemoScenario,
     resetAssessment,
     importAssessmentJSON,
     exportAssessmentJSON,

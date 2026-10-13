@@ -19,7 +19,6 @@ import {
   getAuditLogs,
   verifyAuditChain,
   exportAuditPackageJson,
-  seedDemoAuditLedgerIfEmpty,
 } from '../../data/audit/auditLogger';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
@@ -39,9 +38,8 @@ export const AuditTrailViewer: React.FC = () => {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
-  // Load and seed logs
+  // Load the ledger and verify its hash chain
   const loadData = useCallback(async () => {
-    await seedDemoAuditLedgerIfEmpty(currentTenant.id, currentTenant.systemName);
     const raw = getAuditLogs(currentTenant.id);
     setLogs(raw);
 
@@ -49,7 +47,7 @@ export const AuditTrailViewer: React.FC = () => {
     const res = await verifyAuditChain(raw);
     setVerification(res);
     setIsVerifying(false);
-  }, [currentTenant.id, currentTenant.systemName]);
+  }, [currentTenant.id]);
 
   useEffect(() => {
     loadData();

@@ -4,7 +4,6 @@ import {
   Download,
   Upload,
   RotateCcw,
-  Sparkles,
   CheckCircle2,
   Lock,
   FileCheck,
@@ -26,7 +25,6 @@ export const Header: React.FC<HeaderProps> = () => {
     state,
     metrics,
     frameworkControls,
-    loadDemoScenario,
     resetAssessment,
     exportAssessmentJSON,
     importAssessmentJSON,
@@ -136,18 +134,6 @@ export const Header: React.FC<HeaderProps> = () => {
 
           {/* Quick Action Buttons */}
           <div className="flex items-center gap-1.5">
-            {/* Load Demo */}
-            {canEdit && (
-              <button
-                onClick={loadDemoScenario}
-                title="Populate 100% compliant demo narrative and sample evidence for active tenant"
-                className="px-2.5 py-1.5 text-xs font-medium rounded-xl bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 hover:border-brand-500/50 transition-colors flex items-center gap-1.5"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-brand-400" />
-                <span className="hidden sm:inline">Demo Data</span>
-              </button>
-            )}
-
             {/* Export Audit Package / Compliance Artifacts */}
             <button
               onClick={() => openExportModal()}

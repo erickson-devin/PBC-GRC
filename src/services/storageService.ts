@@ -1,8 +1,8 @@
-import { AssessmentState, ControlState, SSPMetadata, EvidenceItem } from '../types/cmmc';
+import { AssessmentState, ControlState, SSPMetadata } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { getFrameworkControls } from '../data/frameworks';
-import { GcsService, DEFAULT_GCP_CONFIG } from './gcsService';
+import { DEFAULT_GCP_CONFIG } from './gcsService';
 
 const STORAGE_KEY_PREFIX = 'pbc_cmmc_assessment_v3_';
 
@@ -57,127 +57,6 @@ export function createInitialState(tenant: Tenant): AssessmentState {
   };
 }
 
-/**
- * Creates 100% compliant SPRS-ready demo state (17/17 controls MET) with SHA-256 evidence
- */
-export function createDemoState(tenant: Tenant): AssessmentState {
-  const controls: Record<string, ControlState> = {};
-  const evidenceIndex: EvidenceItem[] = [];
-  const cmmcControls = getFrameworkControls('CMMC_L1');
-
-  for (const ctrl of cmmcControls) {
-    const template = ctrl.starterTemplates?.[0];
-    controls[ctrl.id] = {
-      id: ctrl.id,
-      tenantId: tenant.id,
-      status: 'MET', // 100% SPRS Ready for Vanguard Defense Systems
-      implementationNotes: template ? template.narrative : 'Control requirements fully documented and verified in accordance with CMMC Level 1 standards.',
-      responsibleRole: ctrl.domain === 'PE' ? 'Facilities Manager' : 'CISO / IT Director',
-      lastUpdated: new Date().toISOString(),
-      tags: ['Verified', 'Audit-Ready', 'GCP-Backed'],
-      updatedBy: 'Alex Mercer, CMMC CCA (Lead Assessor)',
-    };
-
-    if (template && template.recommendedEvidence) {
-      template.recommendedEvidence.slice(0, 2).forEach((filename: string, idx: number) => {
-        const fileId = `demo_${ctrl.id.replace(/[^a-zA-Z0-9]/g, '_')}_${idx + 1}`;
-        const gcsPath = GcsService.generateGcsPath(tenant.id, ctrl.id, fileId, filename);
-        // Pre-computed representative SHA-256 hash
-        const demoHash = `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8${(idx + 10).toString(16)}`;
-
-        evidenceIndex.push({
-          id: fileId,
-          tenantId: tenant.id,
-          controlId: ctrl.id,
-          name: filename,
-          fileSize: Math.floor(Math.random() * 350000) + 75000,
-          mimeType: filename.endsWith('.pdf') ? 'application/pdf' : filename.endsWith('.png') ? 'image/png' : filename.endsWith('.json') ? 'application/json' : 'application/octet-stream',
-          uploadedAt: new Date(Date.now() - (idx * 86400000 * 3) - 3600000).toISOString(),
-          description: `GCS Audit Artifact verifying ${ctrl.id} implementation statement`,
-          hasBlob: false,
-          gcsPath,
-          fileHash: demoHash,
-          syncStatus: 'gcs_synced',
-          uploadedBy: 'Compliance Assessor',
-        });
-      });
-    }
-  }
-
-  return {
-    version: '2.0.0',
-    tenantId: tenant.id,
-    sspMetadata: {
-      ...createDefaultSspMetadata(tenant),
-      organizationName: tenant.name,
-      cageCode: tenant.cageCode,
-      systemName: tenant.systemName,
-    },
-    controls,
-    evidenceIndex,
-    lastSaved: new Date().toISOString(),
-  };
-}
-
-/**
- * Creates partial in-progress demo state (e.g. 10/17 MET) for Company B
- */
-export function createPartialDemoState(tenant: Tenant): AssessmentState {
-  const controls: Record<string, ControlState> = {};
-  const evidenceIndex: EvidenceItem[] = [];
-  const cmmcControls = getFrameworkControls('CMMC_L1');
-
-  cmmcControls.forEach((ctrl, idx: number) => {
-    const isMet = idx < 10;
-    const isInProgress = idx >= 10 && idx < 14;
-    const template = ctrl.starterTemplates?.[0];
-
-    controls[ctrl.id] = {
-      id: ctrl.id,
-      tenantId: tenant.id,
-      status: isMet ? 'MET' : isInProgress ? 'IN_PROGRESS' : 'NOT_STARTED',
-      implementationNotes: isMet && template
-        ? template.narrative
-        : isInProgress
-        ? `Remediation in progress. Drafting technical procedures for ${ctrl.title}.`
-        : '',
-      responsibleRole: ctrl.domain === 'PE' ? 'Facilities Lead' : 'Security Engineer',
-      lastUpdated: new Date().toISOString(),
-      tags: isMet ? ['In Review'] : isInProgress ? ['Pending Evidence'] : [],
-      updatedBy: 'MSP Consultant',
-    };
-
-    if (isMet && template && template.recommendedEvidence && template.recommendedEvidence.length > 0) {
-      const filename = template.recommendedEvidence[0];
-      const fileId = `b_demo_${ctrl.id.replace(/[^a-zA-Z0-9]/g, '_')}_1`;
-      evidenceIndex.push({
-        id: fileId,
-        tenantId: tenant.id,
-        controlId: ctrl.id,
-        name: filename,
-        fileSize: 124500,
-        mimeType: filename.endsWith('.pdf') ? 'application/pdf' : 'image/png',
-        uploadedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-        description: `Preliminary audit artifact for ${ctrl.id}`,
-        hasBlob: false,
-        gcsPath: GcsService.generateGcsPath(tenant.id, ctrl.id, fileId, filename),
-        fileHash: `7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069`,
-        syncStatus: 'gcs_synced',
-        uploadedBy: 'MSP Consultant',
-      });
-    }
-  });
-
-  return {
-    version: '2.0.0',
-    tenantId: tenant.id,
-    sspMetadata: createDefaultSspMetadata(tenant),
-    controls,
-    evidenceIndex,
-    lastSaved: new Date().toISOString(),
-  };
-}
-
 export const StorageService = {
   getTenantKey(tenantId: string): string {
     return `${STORAGE_KEY_PREFIX}${tenantId}`;
@@ -209,20 +88,6 @@ export const StorageService = {
         }
         parsed.tenantId = tenant.id;
         return parsed;
-      }
-
-      // Check if this is the primary 100% compliant demo tenant
-      if (tenant.id === 'tenant-vanguard-01' || tenant.id === 'tenant-apex-01') {
-        const demoState = createDemoState(tenant);
-        this.saveAssessment(tenant.id, demoState);
-        return demoState;
-      }
-
-      // Check if this is the in-progress secondary tenant
-      if (tenant.id === 'tenant-apex-02' || tenant.id === 'tenant-vanguard-02') {
-        const partialState = createPartialDemoState(tenant);
-        this.saveAssessment(tenant.id, partialState);
-        return partialState;
       }
 
       // Default blank state for new tenants
