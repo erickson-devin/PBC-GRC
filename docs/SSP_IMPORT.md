@@ -138,6 +138,11 @@ The defaults are tuned for a small model such as Llama 3.2 3B with a 4096-token 
   * one sentence supports at most two objectives, so a model that repeats itself cannot claim everything;
   * the sentence is the model's choice of what speaks to the objective. The result is therefore "a supporting sentence was
     found", not "the objective is met"; the reviewer judges whether it is enough;
+  * **weak matches are flagged.** If the sentence shares fewer than two distinctive words with the objective (one for a
+    one-word objective), the objective is still shown with its sentence, but in amber with "Check: shares few words with this
+    objective", and the summary counts how many to check. On a real run this marks the loose pairings (a sentence about guest
+    accounts offered for "devices are identified", a log-retention sentence offered for "logs are created to enable monitoring")
+    and leaves the sound ones alone. It is a cheap warning, not a verdict: a sentence can share words and still miss the point;
   * an objective the model gave no answer for is **not assessed**, which is different from having no supporting sentence. It
     is reported as one note naming the objectives, never as a "nothing documented" gap;
   * the HIGH "no supporting sentence" gap appears only when every objective got a real answer and none has a sentence;

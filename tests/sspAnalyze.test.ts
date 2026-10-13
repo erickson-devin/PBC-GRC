@@ -1,6 +1,6 @@
 import { analyzeDocumentWithAi, explicitControlIds, SECTION_MAX_CHARS } from '../server/ssp/analyze';
 import { mapDocumentToControls } from '../server/ssp/controlMapper';
-import { buildExtractiveGapAnalysis, buildGapAnalysis, objectivesFor, sentencesOf, snapToSentence, termOverlap } from '../server/ssp/gapAnalysis';
+import { buildExtractiveGapAnalysis, buildGapAnalysis, isWeakMatch, objectivesFor, sentencesOf, sharedTerms, snapToSentence, termOverlap } from '../server/ssp/gapAnalysis';
 import { OllamaClient, OllamaError, __resetOllamaCacheForTests, type OllamaConfig } from '../server/ssp/ollama';
 import { candidatesForSection, controlSupport, retrievalOptionsFromEnv } from '../server/ssp/retrieval';
 import { startFakeOllama } from './fakeOllama';
@@ -214,6 +214,12 @@ async function main() {
   const near = await run(nearDoc, { options: { gapMode: 'extractive' } });
   const nearObj = near.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis.objectives![0];
   assert(nearObj.status === 'ADDRESSED' && nearObj.evidence && nearDoc.includes(nearObj.evidence) && /limited to authorized users/.test(nearObj.evidence), 'end to end: a near-miss copy from the model still yields verbatim evidence');
+  const weakDoc = DOC.replace('Access to company systems', '[[WEAK]] Access to company systems');
+  const weakRun = await run(weakDoc, { options: { gapMode: 'extractive' } });
+  const weakObjs = weakRun.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis;
+  assert(weakObjs.objectives![0].status === 'ADDRESSED' && weakObjs.objectives![0].weak === true && /Accounts are created by the IT lead/.test(weakObjs.objectives![0].evidence ?? ''), 'end to end: a real sentence that shares no words with its objective is kept as the evidence, flagged weak');
+  assert(weakObjs.objectives![1].status === 'ADDRESSED' && !weakObjs.objectives![1].weak, 'while a sentence that does share words is not flagged');
+  assert(/The sentence for 1 objective shares few words with it: check it\./.test(weakObjs.summary), 'and the summary says how many to check');
   const gfx = await run(DOC.replace('Access to company systems', '[[GAPFAIL]] Access to company systems'), { options: { gapMode: 'extractive' } });
   assert(gfx.stats.gapAnalysesFailed >= 1 && gfx.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis.source === 'heuristic', 'a failed extractive answer falls back to the simple checks');
 
@@ -244,6 +250,16 @@ async function main() {
   const short = buildExtractiveGapAnalysis({ answers: [{ letter: 'a', sentence: 'Users are identified.' }] }, objDefs.slice(0, 1), 'Authorized users are identified. Other text follows here.');
   assert(short.objectives![0].status === 'UNSUPPORTED' || short.objectives![0].status === 'ADDRESSED', 'a short copied sentence (three words or more) is accepted for checking');
   assert(termOverlap('authorized users are identified', 'Authorized users are identified by badge.') === 1 && termOverlap('authorized users are identified', 'The cafeteria opens.') === 0 && termOverlap('', 'x y z') === 0, 'word overlap: all, none, and an empty objective');
+  console.log('\n--- Weak matches ---');
+  assert(sharedTerms('authorized users are identified', 'Guest accounts are strictly prohibited and disabled at the directory level.').shared === 0 && isWeakMatch('authorized users are identified', 'Guest accounts are strictly prohibited and disabled at the directory level.'), 'a sentence with no words in common with the objective is weak (the guest-accounts sentence for "users are identified")');
+  assert(!isWeakMatch('authorized users are identified', 'Authorized users are identified by a unique account.') && !isWeakMatch('system access is limited to authorized users', 'Access to the system is limited to authorized users by role.'), 'a sentence that shares several words is not');
+  assert(isWeakMatch('Determine if an operational incident-handling capability is established', 'We have a general incident response policy documented on the company intranet wiki.'), 'one shared word is still weak (the vague incident-handling sentence)');
+  assert(!isWeakMatch('encrypted', 'Data is encrypted.') && isWeakMatch('encrypted', 'Data is stored.'), 'an objective with a single distinctive word needs only that word');
+  const weakPure = buildExtractiveGapAnalysis({ answers: [{ letter: 'a', sentence: 'Authorized users are identified by a unique account.' }, { letter: 'c', sentence: 'The cafeteria opens at noon.' }] }, objDefs, EXC);
+  assert(weakPure.objectives!.find((o) => o.letter === 'a')!.weak !== true && weakPure.objectives!.find((o) => o.letter === 'c')!.weak === true && weakPure.objectives!.find((o) => o.letter === 'c')!.evidence === 'The cafeteria opens at noon.', 'the weak sentence stays attached to its objective (the operator can review it) with the flag set');
+  assert(weakPure.objectives!.filter((o) => o.status !== 'ADDRESSED').every((o) => o.weak === undefined), 'only found sentences are ever flagged');
+  assert(nar.mapping.staged.every((s) => !s.gapAnalysis.objectives?.some((o) => o.weak)), 'the narrative comparison never carries the flag');
+
   const dup = buildExtractiveGapAnalysis({ answers: [{ letter: 'a', sentence: 'Authorized users are identified by a unique account.' }, { letter: 'a', sentence: 'NONE' }] }, objDefs.slice(0, 1), EXC);
   assert(dup.objectives![0].status === 'ADDRESSED', 'if the model answers an objective twice the first answer counts');
 

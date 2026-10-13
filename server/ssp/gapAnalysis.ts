@@ -142,6 +142,24 @@ export function termOverlap(objectiveText: string, sentence: string): number {
   return shared / wanted.size;
 }
 
+/** A supporting sentence that shares fewer distinctive words than this with its objective is flagged "check". */
+export const WEAK_MIN_SHARED_WORDS = 2;
+
+/** How many of the objective's distinctive words appear in `sentence`, and how many it has. */
+export function sharedTerms(objectiveText: string, sentence: string): { shared: number; total: number } {
+  const wanted = new Set(tokenize(objectiveText));
+  const have = new Set(tokenize(sentence));
+  let shared = 0;
+  for (const t of wanted) if (have.has(t)) shared++;
+  return { shared, total: wanted.size };
+}
+
+/** True when the sentence shares too few words with the objective to be trusted without a look (a one-word objective needs one). */
+export function isWeakMatch(objectiveText: string, sentence: string): boolean {
+  const { shared, total } = sharedTerms(objectiveText, sentence);
+  return shared < Math.min(WEAK_MIN_SHARED_WORDS, Math.max(1, total));
+}
+
 export interface Sentence {
   start: number;
   end: number;
@@ -228,9 +246,15 @@ export function buildExtractiveGapAnalysis(reply: { answers: ObjectiveAnswer[] }
     }
   }
 
-  const assessed: ObjectiveAssessment[] = pending.map((p) => ({ letter: p.def.letter, text: p.def.text, status: p.status, ...(p.evidence ? { evidence: p.evidence } : {}) }));
+  const assessed: ObjectiveAssessment[] = pending.map((p) => ({
+    letter: p.def.letter,
+    text: p.def.text,
+    status: p.status,
+    ...(p.evidence ? { evidence: p.evidence, ...(isWeakMatch(p.def.text, p.evidence) ? { weak: true } : {}) } : {}),
+  }));
   const count = (s: ObjectiveAssessment['status']) => assessed.filter((o) => o.status === s).length;
   const found = count('ADDRESSED');
+  const weak = assessed.filter((o) => o.status === 'ADDRESSED' && o.weak).length;
   const notAssessed = assessed.filter((o) => o.status === 'NOT_ASSESSED');
   const unsupported = count('UNSUPPORTED');
   const total = assessed.length;
@@ -255,6 +279,7 @@ export function buildExtractiveGapAnalysis(reply: { answers: ObjectiveAnswer[] }
 
   const notes: string[] = [];
   if (notAssessed.length) notes.push(`${notAssessed.length} not assessed by the AI.`);
+  if (weak) notes.push(`${weak === 1 ? 'The sentence for 1 objective shares' : `The sentences for ${weak} objectives share`} few words with ${weak === 1 ? 'it' : 'them'}: check ${weak === 1 ? 'it' : 'them'}.`);
   if (unsupported) notes.push(`${unsupported} answer${unsupported === 1 ? '' : 's'} could not be matched to the document and ${unsupported === 1 ? 'was' : 'were'} ignored.`);
   return {
     source: 'ai',
