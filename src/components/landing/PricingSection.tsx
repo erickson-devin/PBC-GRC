@@ -1,9 +1,9 @@
 import React from 'react';
 import { Check, Sparkles, ArrowRight, Zap, Shield, Building2, Mail, Award } from 'lucide-react';
-import { LicenseTier } from '../../types/tenant';
+import type { PlanId } from '../../data/marketingPlans';
 
 interface PricingSectionProps {
-  onSelectPlan: (planId: LicenseTier) => void;
+  onSelectPlan: (planId: PlanId) => void;
 }
 
 export const PricingSection: React.FC<PricingSectionProps> = ({ onSelectPlan }) => {

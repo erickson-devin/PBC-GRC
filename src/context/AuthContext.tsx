@@ -17,7 +17,8 @@ import {
   isFirebaseConfigured,
   type AuthUserLike,
 } from '../config/firebase';
-import { User, AuthProviderType, LicenseTier } from '../types/tenant';
+import { User, AuthProviderType } from '../types/tenant';
+import type { PlanId } from '../data/marketingPlans';
 import { useTenant, PRESET_USERS } from './TenantContext';
 import { buildDevMockIdToken } from '../config/devAuthToken';
 import { ApiClient, AuthMode } from '../services/apiClient';
@@ -37,7 +38,7 @@ interface AuthContextType {
   isAuthModalOpen: boolean;
   authModalMode: 'signin' | 'magiclink';
   isLicenseModalOpen: boolean;
-  selectedLicensePlan: LicenseTier;
+  selectedLicensePlan: PlanId;
   redirectPath: string | null;
   loginWithMicrosoft: () => Promise<void>;
   loginWithGoogle: () => Promise<void>;
@@ -52,7 +53,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   openAuthModal: (mode?: 'signin' | 'magiclink', redirectUrl?: string) => void;
   closeAuthModal: () => void;
-  openLicenseModal: (plan?: LicenseTier) => void;
+  openLicenseModal: (plan?: PlanId) => void;
   closeLicenseModal: () => void;
   clearAuthError: () => void;
 }
@@ -95,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'magiclink'>('signin');
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState<boolean>(false);
-  const [selectedLicensePlan, setSelectedLicensePlan] = useState<LicenseTier>('DEFENSE_PRO');
+  const [selectedLicensePlan, setSelectedLicensePlan] = useState<PlanId>('DEFENSE_PRO');
   const [redirectPath, setRedirectPath] = useState<string | null>(null);
 
   // Sync user and token to storage
@@ -516,7 +517,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
   }, []);
 
-  const openLicenseModal = useCallback((plan: LicenseTier = 'DEFENSE_PRO') => {
+  const openLicenseModal = useCallback((plan: PlanId = 'DEFENSE_PRO') => {
     setSelectedLicensePlan(plan);
     setIsLicenseModalOpen(true);
     setIsAuthModalOpen(false);

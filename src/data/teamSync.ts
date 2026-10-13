@@ -78,7 +78,7 @@ export function parseServerMembers(raw: unknown): ServerMember[] {
 /** The UI's invitation for a server record. `token` is only known right after create / resend. */
 export function toTenantInvitation(
   inv: ServerInvitation,
-  tenant: Pick<Tenant, 'name' | 'systemName' | 'cageCode' | 'licenseTier'> | undefined,
+  tenant: Pick<Tenant, 'name' | 'systemName' | 'cageCode' | 'primaryFramework' | 'enabledFrameworks'> | undefined,
   token = ''
 ): TenantInvitation {
   return {
@@ -98,7 +98,8 @@ export function toTenantInvitation(
     type: inv.role === 'TENANT_OWNER' ? 'TENANT_ONBOARDING' : 'STAFF_INVITE',
     systemName: tenant?.systemName,
     cageCode: tenant?.cageCode,
-    licenseTier: tenant?.licenseTier,
+    primaryFramework: tenant?.primaryFramework,
+    enabledFrameworks: tenant?.enabledFrameworks,
     serverBacked: true,
   };
 }

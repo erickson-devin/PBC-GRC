@@ -14,6 +14,7 @@ import { useTenant } from '../../context/TenantContext';
 import { buildDevMockIdToken } from '../../config/devAuthToken';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface ApiTokensModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -45,7 +46,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
 
   const handleCopy = () => {
     if (!displayToken) return;
-    navigator.clipboard.writeText(displayToken);
+    copyToClipboard(displayToken);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };

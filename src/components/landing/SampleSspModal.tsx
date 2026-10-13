@@ -3,6 +3,7 @@ import { X, FileText, Copy, Check, Download, ArrowRight, ShieldCheck } from 'luc
 import { CMMC_LEVEL_1_CONTROLS } from '../../data/cmmcLevel1Controls';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface SampleSspModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -40,7 +41,7 @@ ${CMMC_LEVEL_1_CONTROLS.map(c => `### ${c.id}: ${c.title}
 `).join('\n')}`;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(sampleMarkdown);
+    copyToClipboard(sampleMarkdown);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };

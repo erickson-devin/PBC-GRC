@@ -13,6 +13,7 @@ import {
   TenantSettingsPatch,
 } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
+import { isPlatformAdmin } from '../auth/platformAdmin';
 import { ensureActiveTenant } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
@@ -71,7 +72,6 @@ export async function listMyTenantsHandler(req: Request, res: Response): Promise
           industry: '',
           enabledFrameworks: [],
           primaryFramework: 'CMMC_L1',
-          licenseTier: 'FOUNDATIONAL',
           createdAt: null,
           role,
           joinedAt: new Date(0).toISOString(),
@@ -94,7 +94,7 @@ type FieldResult = { error: string } | { value: TenantSettingsPatch };
 
 /**
  * Validates tenant settings from a request body. `create` requires a name; `patch` requires at least one field.
- * Unknown fields (notably licenseTier, id, createdAt) are ignored: they cannot be set through this API.
+ * Unknown fields (notably id, createdAt) are ignored: they cannot be set through this API.
  */
 function parseTenantFields(body: unknown, mode: 'create' | 'patch'): FieldResult {
   const b = (body ?? {}) as Record<string, unknown>;
@@ -144,7 +144,9 @@ function parseTenantFields(body: unknown, mode: 'create' | 'patch'): FieldResult
  * POST /api/v1/tenants   (authenticate-only: the caller does not belong to any tenant yet)
  * Creates a tenant and makes the authenticated user its first TENANT_OWNER, atomically.
  * Body: { name, systemName?, systemOwner?, cageCode?, industry?, primaryFramework?, enabledFrameworks? }.
- * The license tier is never taken from the client: new tenants start on FOUNDATIONAL.
+ * The assessment program (primaryFramework / enabledFrameworks) is decided by platform administrators (see
+ * auth/platformAdmin.ts). Anyone else gets the default program, CMMC Level 1 only: what they send for it is ignored,
+ * so a self-service tenant cannot be created with a wider scope.
  * Set ALLOW_TENANT_CREATION=false to turn self-service creation off (e.g. when provisioning is admin-only).
  */
 export async function createTenantHandler(req: Request, res: Response): Promise<void> {
@@ -160,8 +162,9 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
     return;
   }
   const fields = parsed.value;
-  const primary = fields.primaryFramework ?? 'CMMC_L1';
-  const enabledList = [...new Set([primary, ...(fields.enabledFrameworks ?? [])])];
+  const admin = isPlatformAdmin(user);
+  const primary = admin ? fields.primaryFramework ?? 'CMMC_L1' : 'CMMC_L1';
+  const enabledList = admin ? [...new Set([primary, ...(fields.enabledFrameworks ?? [])])] : [primary];
 
   const orgName = fields.name!;
   const owner = {
@@ -185,7 +188,6 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
           industry: fields.industry,
           enabledFrameworks: enabledList,
           primaryFramework: primary,
-          licenseTier: 'FOUNDATIONAL',
         },
         owner
       );
@@ -337,7 +339,8 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
 /**
  * PATCH /api/v1/tenants/:tenantId
  * Updates the tenant's settings (name, CAGE code, SAM status, system name/owner, industry, frameworks).
- * Owner / MSP admin only (requireWriteRole). The license tier cannot be changed here.
+ * Owner / MSP admin only (requireWriteRole). The assessment program (primaryFramework / enabledFrameworks) can only be
+ * changed by a platform administrator: a tenant owner cannot widen their own tenant's scope.
  */
 router.patch('/:tenantId', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -346,6 +349,11 @@ router.patch('/:tenantId', async (req: Request, res: Response): Promise<void> =>
   const parsed = parseTenantFields(req.body, 'patch');
   if ('error' in parsed) {
     res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  if ((parsed.value.primaryFramework !== undefined || parsed.value.enabledFrameworks !== undefined) && !isPlatformAdmin(req.user)) {
+    res.status(403).json({ error: "Forbidden: only a platform administrator can change a tenant's assessment program (its frameworks)" });
     return;
   }
 

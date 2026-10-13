@@ -8,7 +8,6 @@ import {
   TenantInvitation,
   TeamMember,
   AuthProviderType,
-  LicenseTier,
   EnclaveStackProfile,
 } from '../types/tenant';
 import { errorMessage } from '../utils/errors';
@@ -110,17 +109,12 @@ export function buildInviteUrl(token: string): string {
 }
 
 /**
- * Super Admin check: Grants clearance to Pitch Black Cyber operators or users with explicit isSuperAdmin: true
+ * Platform administrator (the super-admin console). In a live installation this flag comes from the SERVER (GET /api/v1/me,
+ * the PLATFORM_ADMIN_EMAILS list) after every sign-in, so the console is only shown to people the server will let use it.
+ * The demo sandbox user carries the flag locally.
  */
 export function isSuperAdminUser(user?: User | null): boolean {
-  if (!user) return false;
-  if (user.isSuperAdmin === true) return true;
-  const email = (user.email || '').toLowerCase().trim();
-  return (
-    email === 'devin@pitchblackcyber.com' ||
-    email === 'admin@pitchblackcyber.com' ||
-    email.endsWith('@pitchblackcyber.com')
-  );
+  return user?.isSuperAdmin === true;
 }
 
 /**
@@ -203,8 +197,6 @@ export const SEED_TENANTS: Tenant[] = [
     isConfigured: true,
     primaryFramework: 'CMMC_L1',
     enabledFrameworks: ['CMMC_L1', 'CMMC_L2'],
-    licenseTier: 'FOUNDATIONAL',
-    annualPrice: 3500,
   },
   {
     id: 'tenant-apex-02',
@@ -221,8 +213,6 @@ export const SEED_TENANTS: Tenant[] = [
     isConfigured: true,
     primaryFramework: 'CMMC_L2',
     enabledFrameworks: ['CMMC_L2', 'NIST_800_53_REV5'],
-    licenseTier: 'DEFENSE_PRO',
-    annualPrice: 7000,
   },
   {
     id: 'tenant-orbital-03',
@@ -239,8 +229,6 @@ export const SEED_TENANTS: Tenant[] = [
     isConfigured: true,
     primaryFramework: 'NIST_800_53_REV5',
     enabledFrameworks: ['NIST_800_53_REV5', 'SOC_2_TYPE_II'],
-    licenseTier: 'ENTERPRISE',
-    annualPrice: 14000,
   },
 ];
 
@@ -314,7 +302,6 @@ const SEED_INVITATIONS: TenantInvitation[] = [
     type: 'STAFF_INVITE',
     systemName: 'Defense Contracting Information Network (DCIN)',
     cageCode: '8K3R1',
-    licenseTier: 'DEFENSE_PRO',
   },
   {
     id: 'inv-seed-02',
@@ -330,7 +317,6 @@ const SEED_INVITATIONS: TenantInvitation[] = [
     type: 'TENANT_ONBOARDING',
     systemName: 'Corporate Operations Enclave (COE)',
     cageCode: '9X7B4',
-    licenseTier: 'FOUNDATIONAL',
   },
 ];
 
@@ -449,7 +435,6 @@ interface TenantContextType {
     domain?: string;
     isDemo?: boolean;
     isConfigured?: boolean;
-    licenseTier?: LicenseTier;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
   }) => Promise<Tenant>;
@@ -457,7 +442,6 @@ interface TenantContextType {
     companyName: string;
     cageCode?: string;
     systemBoundaryName?: string;
-    licenseTier: LicenseTier;
     tenantOwnerEmail: string;
     primaryFramework?: ComplianceFramework;
     enabledFrameworks?: ComplianceFramework[];
@@ -797,18 +781,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // In sandbox mode, allow prospective customers to test drive switching between client enclaves
       return true;
     }
-    // In live mode, only allow if user has explicit MSP_ADMIN role or MSP license tier
+    // In live mode: an MSP_ADMIN role, a platform administrator, or access to more than one enclave
     const roleInCurrent = currentUser.roles?.[currentTenant.id];
     const hasMspRole =
       roleInCurrent === 'MSP_ADMIN' ||
       Object.values(currentUser.roles || {}).includes('MSP_ADMIN');
-    const isMspTier =
-      currentUser.licenseTier === 'msp-assessor' ||
-      currentUser.licenseTier === 'ENTERPRISE' ||
-      currentTenant.licenseTier === 'msp-assessor' ||
-      currentTenant.licenseTier === 'ENTERPRISE';
 
-    return Boolean(hasMspRole || isMspTier || liveTenants.length > 1);
+    return Boolean(hasMspRole || isSuperAdminUser(currentUser) || liveTenants.length > 1);
   }, [isSandboxMode, currentUser, currentTenant, liveTenants.length]);
 
   const isSuperAdmin = useMemo(() => {
@@ -846,7 +825,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const run = (async (): Promise<Tenant[] | null> => {
       setTenantSync((prev) => ({ ...prev, status: 'syncing', error: null }));
       try {
-        const server = await ApiClient.listMyTenants(token);
+        const [server, platform] = await Promise.all([ApiClient.listMyTenants(token), ApiClient.getPlatformStatus(token)]);
+        // The server decides who administers this platform; an unknown answer never grants rights
+        if (platform) setCurrentUser((prev) => (prev.isSuperAdmin === platform.isPlatformAdmin ? prev : { ...prev, isSuperAdmin: platform.isPlatformAdmin }));
         if (server === null) {
           // The session was not accepted: nothing to reconcile, and nothing server-backed may be trusted.
           setTenantSync((prev) => ({ ...prev, status: 'idle' }));
@@ -893,7 +874,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    */
   const createTenantOnServer = useCallback(async (
     input: ServerTenantPatch & { name: string },
-    browserOnly: Partial<Pick<Tenant, 'domain' | 'licenseTier' | 'isConfigured'>> & { activate?: boolean } = {}
+    browserOnly: Partial<Pick<Tenant, 'domain' | 'isConfigured'>> & { activate?: boolean } = {}
   ): Promise<Tenant> => {
     const token = ApiClient.getToken() ?? undefined;
     const created = await ApiClient.createTenant(input, token);
@@ -971,7 +952,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const base = toServerPatch(target);
     const created = await createTenantOnServer(
       { ...base, ...override, name: (override.name ?? target.name).trim() },
-      { domain: target.domain, licenseTier: target.licenseTier, isConfigured: target.isConfigured ?? true, activate }
+      { domain: target.domain, isConfigured: target.isConfigured ?? true, activate }
     );
     // In live mode the server is the source of truth for control answers, so carry over everything the user filled in
     // (otherwise the new tenant's defaults would replace it on the next sync).
@@ -1345,7 +1326,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     domain?: string;
     isDemo?: boolean;
     isConfigured?: boolean;
-    licenseTier?: LicenseTier;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
   }): Promise<Tenant> => {
@@ -1365,7 +1345,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         domain: data.domain,
         isDemo: true,
         isConfigured: data.isConfigured ?? true,
-        licenseTier: data.licenseTier,
         primaryFramework: primFw,
         enabledFrameworks: enFw,
         createdAt: new Date().toISOString(),
@@ -1394,7 +1373,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         primaryFramework: primFw,
         enabledFrameworks: enFw,
       },
-      { domain: data.domain, licenseTier: data.licenseTier }
+      { domain: data.domain }
     );
   }, [isSandboxMode, createTenantOnServer]);
 
@@ -1849,7 +1828,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     companyName: string;
     cageCode?: string;
     systemBoundaryName?: string;
-    licenseTier: LicenseTier;
     tenantOwnerEmail: string;
     primaryFramework?: ComplianceFramework;
     enabledFrameworks?: ComplianceFramework[];
@@ -1871,7 +1849,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         primaryFramework: primFw,
         enabledFrameworks: enFw,
       },
-      { domain: emailDomain, licenseTier: data.licenseTier, isConfigured: false, activate: false }
+      { domain: emailDomain, isConfigured: false, activate: false }
     );
     const newTenantId = newTenant.id;
 
@@ -1891,7 +1869,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
     }
     inviteTokensRef.current[issued.invitation.id] = issued.token;
-    const invitation = { ...toTenantInvitation(issued.invitation, newTenant, issued.token), licenseTier: data.licenseTier };
+    const invitation = toTenantInvitation(issued.invitation, newTenant, issued.token);
     await refreshTeam(newTenantId, { asAdmin: true });
 
     return { tenant: newTenant, invitation, inviteUrl: buildInviteUrl(issued.token) };
@@ -2080,7 +2058,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       type: 'STAFF_INVITE',
       systemName: targetTenant.systemName,
       cageCode: targetTenant.cageCode,
-      licenseTier: targetTenant.licenseTier,
     };
 
     const newMember: TeamMember = {
@@ -2242,7 +2219,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               updated.tenantName = targetTenant.name;
               updated.systemName = targetTenant.systemName;
               updated.cageCode = targetTenant.cageCode;
-              updated.licenseTier = targetTenant.licenseTier;
             }
           }
 

@@ -1,108 +1,11 @@
 import { ComplianceFramework } from './framework';
+import type { PlanId } from '../data/marketingPlans';
 
 export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
 
 export type SamStatus = 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'NOT_REGISTERED';
 
 export type AuthProviderType = 'microsoft.com' | 'google.com' | 'password' | 'emailLink' | 'demo';
-
-export type CommercialLicenseTier = 'FOUNDATIONAL' | 'DEFENSE_PRO' | 'ENTERPRISE';
-export type LegacyLicenseTier = 'single-org' | 'msp-assessor';
-export type LicenseTier = CommercialLicenseTier | LegacyLicenseTier;
-
-export interface LicenseTierDetails {
-  id: CommercialLicenseTier;
-  name: string;
-  badgeLabel: string;
-  price: number;
-  priceFormatted: string;
-  priceSubtext: string;
-  target: string;
-  features: string[];
-  recommended?: boolean;
-}
-
-export const COMMERCIAL_LICENSE_TIERS: Record<CommercialLicenseTier, LicenseTierDetails> = {
-  FOUNDATIONAL: {
-    id: 'FOUNDATIONAL',
-    name: 'Foundational Enclave',
-    badgeLabel: 'Foundational ($3,500/yr)',
-    price: 3500,
-    priceFormatted: '$3,500',
-    priceSubtext: '/ year',
-    target: 'Small Suppliers & Commercial Organizations (FAR 52.204-21, HIPAA, SOC 2 Type II)',
-    features: [
-      '1 Enclave Boundary (Cloud SQL RLS isolation)',
-      'CMMC Level 1 (17 Controls) or HIPAA / SOC 2',
-      'PDF Artifact Exporter & evidence hashing',
-      'Single-User Owner administrative seat',
-      'Standard Support & Knowledge Base',
-    ],
-  },
-  DEFENSE_PRO: {
-    id: 'DEFENSE_PRO',
-    name: 'Defense Professional',
-    badgeLabel: 'Defense Pro ($7,000/yr)',
-    price: 7000,
-    priceFormatted: '$7,000',
-    priceSubtext: '/ year',
-    recommended: true,
-    target: 'DoD Prime & Sub-Contractors handling CUI (NIST SP 800-171 / CMMC Level 2)',
-    features: [
-      'CMMC Level 2 (110 Controls) & NIST SP 800-171',
-      'NIST SP 800-53 Rev 5 (Low/Mod + Tactical Overlays)',
-      'DISA STIG Library & Ansible/PowerShell Script Generator',
-      'Dynamic NIST SP 800-18 SSP & POA&M Compiler',
-      'Cross-Framework Evidence Inheritance',
-      '5 User Seats included',
-    ],
-  },
-  ENTERPRISE: {
-    id: 'ENTERPRISE',
-    name: 'Enterprise & Assessor Enclave',
-    badgeLabel: 'Enterprise ($14,000/yr)',
-    price: 14000,
-    priceFormatted: '$14,000',
-    priceSubtext: '/ year',
-    target: 'Defense MSPs, Multi-CAGE Enterprise Organizations & C3PAO Assessor Networks',
-    features: [
-      'Unlimited Enclaves / Multi-Boundary Management',
-      'OpenSCAP Engine & Asset Sensor API Integration',
-      'Custom Baseline Overlays & Tailored Control Scopes',
-      'Dedicated Database Isolation & Cloud SQL RLS',
-      'Priority 24/7 Defense Engineering Support',
-      'Unlimited Assessor & Lead Auditor Team Seats',
-    ],
-  },
-};
-
-export function normalizeLicenseTier(tier?: string | null): CommercialLicenseTier {
-  if (!tier) return 'FOUNDATIONAL';
-  if (tier === 'DEFENSE_PRO') return 'DEFENSE_PRO';
-  if (tier === 'ENTERPRISE' || tier === 'msp-assessor') return 'ENTERPRISE';
-  if (tier === 'FOUNDATIONAL' || tier === 'single-org') return 'FOUNDATIONAL';
-  return 'FOUNDATIONAL';
-}
-
-export function getLicenseTierPrice(tier?: string | null): number {
-  const norm = normalizeLicenseTier(tier);
-  return COMMERCIAL_LICENSE_TIERS[norm].price;
-}
-
-export function getLicenseTierLabel(tier?: string | null): string {
-  const norm = normalizeLicenseTier(tier);
-  return COMMERCIAL_LICENSE_TIERS[norm].name;
-}
-
-export function getLicenseTierBadge(tier?: string | null): { label: string; badge: string; priceFormatted: string } {
-  const norm = normalizeLicenseTier(tier);
-  const details = COMMERCIAL_LICENSE_TIERS[norm];
-  return {
-    label: details.name,
-    badge: details.badgeLabel,
-    priceFormatted: details.priceFormatted,
-  };
-}
 
 export interface EnclaveStackProfile {
   identityProvider: 'ENTRA_ID_GOV' | 'ENTRA_ID_COMMERCIAL' | 'OKTA' | 'ACTIVE_DIRECTORY';
@@ -127,8 +30,6 @@ export interface Tenant {
   isDemo?: boolean;
   isConfigured?: boolean; // false if setup wizard / initial onboarding is needed
   systemBoundaryScope?: string;
-  licenseTier?: LicenseTier;
-  annualPrice?: number;
   isSuspended?: boolean; // When true, access to this enclave is frozen while preserving records
   enabledFrameworks?: ComplianceFramework[]; // Enclave-scoped enabled frameworks e.g. ['CMMC_L1', 'CMMC_L2']
   primaryFramework?: ComplianceFramework;   // Default framework to render for this enclave
@@ -149,7 +50,6 @@ export interface User {
   emailVerified?: boolean;
   domain?: string;
   idToken?: string;
-  licenseTier?: LicenseTier;
   isSuperAdmin?: boolean;
 }
 
@@ -169,9 +69,11 @@ export interface TenantInvitation {
   type: 'TENANT_ONBOARDING' | 'STAFF_INVITE';
   systemName?: string;
   cageCode?: string;
-  licenseTier?: LicenseTier;
   /** True when issued and tracked by the server (the token is hashed there; this record is never persisted locally). */
   serverBacked?: boolean;
+  /** The tenant's assessment program as the server holds it (primary framework + every enabled framework). */
+  primaryFramework?: string;
+  enabledFrameworks?: string[];
 }
 
 export interface TeamMember {
@@ -206,7 +108,7 @@ export interface LicenseRequest {
   workEmail: string;
   companyName: string;
   cageCode?: string;
-  selectedPlan: LicenseTier;
+  selectedPlan: PlanId;
   inScopeUsers: string;
   targetTimeline: string;
   phoneNumber?: string;

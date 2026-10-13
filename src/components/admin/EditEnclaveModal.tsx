@@ -3,15 +3,13 @@ import {
   X,
   Building2,
   Mail,
-  Shield,
   Layers,
   Sparkles,
   Check,
   CheckCircle2,
-  Award,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
-import { Tenant, CommercialLicenseTier, normalizeLicenseTier } from '../../types/tenant';
+import { Tenant } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
@@ -43,7 +41,6 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
   const [name, setName] = useState('');
   const [cageCode, setCageCode] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
-  const [licenseTier, setLicenseTier] = useState<CommercialLicenseTier>('DEFENSE_PRO');
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>('CMMC_L1');
   const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,7 +58,6 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
       const extractedEmail = emailMatch ? (emailMatch[1] || emailMatch[2]) : rawOwner.includes('@') ? rawOwner : '';
       setOwnerEmail(extractedEmail || tenant.domain ? `admin@${tenant.domain}` : rawOwner);
 
-      setLicenseTier(normalizeLicenseTier(tenant.licenseTier));
       const prim = tenant.primaryFramework || 'CMMC_L1';
       setPrimaryFramework(prim);
       setEnabledFrameworks(
@@ -101,7 +97,6 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
       const updatedTenant: Partial<Tenant> = {
         name: name.trim(),
         cageCode: cleanCage,
-        licenseTier,
         primaryFramework,
         enabledFrameworks,
       };
@@ -230,88 +225,15 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
               </div>
             </div>
 
-            {/* Row 3: Commercial License Tier */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
-                <span>License Subscription Tier</span>
-                <span className="text-xs text-slate-400 font-mono lowercase">Annual recurring commercial license</span>
-              </label>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* Foundational */}
-                <button
-                  type="button"
-                  onClick={() => setLicenseTier('FOUNDATIONAL')}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
-                    licenseTier === 'FOUNDATIONAL'
-                      ? 'bg-cyan-500/10 border-cyan-500/50 ring-1 ring-cyan-500/40 text-white'
-                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5 text-cyan-400" /> Foundational
-                    </span>
-                    {licenseTier === 'FOUNDATIONAL' && <Check className="w-3.5 h-3.5 text-cyan-400" />}
-                  </div>
-                  <div className="text-base font-black text-cyan-300 font-mono">$3,500<span className="text-xs font-normal text-slate-400">/yr</span></div>
-                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">Small suppliers • CMMC L1 ({FRAMEWORK_REGISTRY.CMMC_L1.totalControls} controls)</p>
-                </button>
-
-                {/* Defense Pro */}
-                <button
-                  type="button"
-                  onClick={() => setLicenseTier('DEFENSE_PRO')}
-                  className={`p-3 rounded-2xl border text-left transition-all relative ${
-                    licenseTier === 'DEFENSE_PRO'
-                      ? 'bg-brand-500/10 border-brand-500/50 ring-1 ring-brand-500/40 text-white'
-                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded-full bg-brand-500 text-xs font-mono font-bold text-white uppercase tracking-wider">
-                    Recommended
-                  </div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <Award className="w-3.5 h-3.5 text-brand-400" /> Defense Pro
-                    </span>
-                    {licenseTier === 'DEFENSE_PRO' && <Check className="w-3.5 h-3.5 text-brand-400" />}
-                  </div>
-                  <div className="text-base font-black text-brand-300 font-mono">$7,000<span className="text-xs font-normal text-slate-400">/yr</span></div>
-                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">DoD Primes & Subs • CMMC L2 ({FRAMEWORK_REGISTRY.CMMC_L2.totalControls} controls)</p>
-                </button>
-
-                {/* Enterprise */}
-                <button
-                  type="button"
-                  onClick={() => setLicenseTier('ENTERPRISE')}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
-                    licenseTier === 'ENTERPRISE'
-                      ? 'bg-purple-500/10 border-purple-500/50 ring-1 ring-purple-500/40 text-white'
-                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <Building2 className="w-3.5 h-3.5 text-purple-400" /> Enterprise
-                    </span>
-                    {licenseTier === 'ENTERPRISE' && <Check className="w-3.5 h-3.5 text-purple-400" />}
-                  </div>
-                  <div className="text-base font-black text-purple-300 font-mono">$14,000<span className="text-xs font-normal text-slate-400">/yr</span></div>
-                  <p className="text-xs text-slate-400 mt-1 line-clamp-2">Multi-CAGE & Assessor MSP Networks</p>
-                </button>
-              </div>
-            </div>
-
-            {/* Row 4: Primary Framework Selection & Enabled Scope Checklist */}
+            {/* Row 3: Assessment program (primary framework + enabled frameworks) */}
             <div className="space-y-3 pt-1 border-t border-slate-800/80">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                   <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Compliance Framework Scope</span>
+                  <span>Assessment Program</span>
                 </label>
                 <span className="text-xs text-slate-400 font-mono">
-                  Primary framework renders on launch
+                  Only these frameworks are served to this enclave
                 </span>
               </div>
 

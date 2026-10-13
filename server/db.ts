@@ -538,7 +538,6 @@ export interface NewTenantInput {
   industry?: string;
   enabledFrameworks: string[];
   primaryFramework: string;
-  licenseTier: string;
 }
 
 export interface TenantRecord {
@@ -551,7 +550,6 @@ export interface TenantRecord {
   industry: string;
   enabledFrameworks: string[];
   primaryFramework: string;
-  licenseTier: string;
   createdAt: string;
 }
 
@@ -575,7 +573,6 @@ function toTenantRecord(t: NewTenantInput, createdAt: string): TenantRecord {
     industry: t.industry ?? 'Defense Industrial Base (DIB)',
     enabledFrameworks: t.enabledFrameworks,
     primaryFramework: t.primaryFramework,
-    licenseTier: t.licenseTier,
     createdAt,
   };
 }
@@ -606,13 +603,13 @@ export async function createTenantWithOwner(
 
     const inserted = await client.query(
       `INSERT INTO tenants (id, name, cage_code, sam_status, system_name, system_owner, industry,
-                            enabled_frameworks, primary_framework, license_tier)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                            enabled_frameworks, primary_framework)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING created_at`,
       [
         tenantId, tenant.name, tenant.cageCode ?? null, tenant.samStatus ?? 'ACTIVE', tenant.systemName,
         tenant.systemOwner, tenant.industry ?? 'Defense Industrial Base (DIB)', tenant.enabledFrameworks,
-        tenant.primaryFramework, tenant.licenseTier,
+        tenant.primaryFramework,
       ]
     );
     const memberRow = await client.query(
@@ -686,7 +683,6 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
           industry: t?.industry ?? '',
           enabledFrameworks: t?.enabledFrameworks ?? [],
           primaryFramework: t?.primaryFramework ?? 'CMMC_L1',
-          licenseTier: t?.licenseTier ?? 'FOUNDATIONAL',
           createdAt: t?.createdAt ?? null,
           role: m.role as TenantRole,
           joinedAt: m.created_at,
@@ -699,7 +695,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
     userId,
     `SELECT tu.tenant_id, tu.role, tu.created_at AS joined_at,
             t.name, t.cage_code, t.sam_status, t.system_name, t.system_owner, t.industry,
-            t.enabled_frameworks, t.primary_framework, t.license_tier, t.created_at AS tenant_created_at
+            t.enabled_frameworks, t.primary_framework, t.created_at AS tenant_created_at
        FROM tenant_users tu
        LEFT JOIN tenants t ON t.id = tu.tenant_id
       WHERE tu.user_id = $1
@@ -719,7 +715,6 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
       industry: r.industry ?? '',
       enabledFrameworks: r.enabled_frameworks ?? [],
       primaryFramework: r.primary_framework ?? 'CMMC_L1',
-      licenseTier: r.license_tier ?? 'FOUNDATIONAL',
       createdAt: r.tenant_created_at ? new Date(r.tenant_created_at).toISOString() : null,
       role: r.role as TenantRole,
       joinedAt: new Date(r.joined_at).toISOString(),
@@ -764,7 +759,6 @@ function rowToTenantRecord(row: pg.QueryResultRow): TenantRecord {
     industry: row.industry ?? '',
     enabledFrameworks: row.enabled_frameworks ?? [],
     primaryFramework: row.primary_framework ?? 'CMMC_L1',
-    licenseTier: row.license_tier ?? 'FOUNDATIONAL',
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
@@ -834,6 +828,31 @@ export async function updateTenantSettings(tenantId: string, patch: TenantSettin
 /** In-memory store only: the display name of a tenant (used by the invitation preview in DB_MODE=memory). */
 export function getMemoryTenantName(tenantId: string): string | null {
   return memoryTenants.get(tenantId)?.name ?? null;
+}
+
+/** The assessment program of a tenant: its primary framework and every framework it may use. */
+export interface TenantProgram {
+  primaryFramework: string;
+  enabledFrameworks: string[];
+}
+
+export function getMemoryTenantProgram(tenantId: string): TenantProgram | null {
+  const t = memoryTenants.get(tenantId);
+  return t ? { primaryFramework: t.primaryFramework, enabledFrameworks: t.enabledFrameworks } : null;
+}
+
+/**
+ * The program of a tenant, or null when there is no tenant record (dev fallback / unknown tenant). Runs under the
+ * tenant's RLS context. Used to enforce framework segregation: a tenant only serves the frameworks it has enabled.
+ */
+export async function getTenantProgram(tenantId: string): Promise<TenantProgram | null> {
+  if (isMemoryMode()) return getMemoryTenantProgram(tenantId);
+  const res = await queryWithTenant(tenantId, 'SELECT primary_framework, enabled_frameworks FROM tenants WHERE id = $1', [tenantId]);
+  const row = res.rows[0];
+  if (!row) return null;
+  const primary = row.primary_framework ?? 'CMMC_L1';
+  const enabled: string[] = row.enabled_frameworks ?? [];
+  return { primaryFramework: primary, enabledFrameworks: enabled.includes(primary) ? enabled : [primary, ...enabled] };
 }
 
 /** Removes a member from a tenant. Returns false if they were not a member. Tenant-scoped (RLS). */

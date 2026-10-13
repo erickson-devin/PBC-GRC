@@ -23,6 +23,7 @@ import { useAssessment } from '../context/AssessmentContext';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../hooks/useFipsModules';
 
+import { copyToClipboard } from '../utils/clipboard';
 export interface PolicyFamilyItem {
   code: string;
   name: string;
@@ -240,7 +241,7 @@ const PolicyLibraryViewContent: React.FC = () => {
   }, [activeFamilies, searchQuery]);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(markdown);
+    copyToClipboard(markdown);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

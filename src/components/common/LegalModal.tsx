@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 export type LegalTab = 'privacy' | 'terms';
 
 interface LegalModalProps {
@@ -170,7 +171,7 @@ Website: https://pitchblackcyber.com`,
   const fullText = currentSections.map((s) => `${s.title}\n\n${s.content}`).join('\n\n---\n\n');
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(fullText);
+    copyToClipboard(fullText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

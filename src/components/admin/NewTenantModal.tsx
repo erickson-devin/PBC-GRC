@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   X,
   Building2,
@@ -15,13 +15,15 @@ import {
   Shield,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
-import { Tenant, TenantInvitation, LicenseTier, getLicenseTierBadge } from '../../types/tenant';
+import { Tenant, TenantInvitation } from '../../types/tenant';
+import { programSummary } from '../../data/programs';
 import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface NewTenantModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -46,13 +48,14 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   const [companyName, setCompanyName] = useState('');
   const [cageCode, setCageCode] = useState('');
   const [systemBoundaryName, setSystemBoundaryName] = useState('');
-  const [licenseTier, setLicenseTier] = useState<LicenseTier>('DEFENSE_PRO');
   const [tenantOwnerEmail, setTenantOwnerEmail] = useState('');
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>('CMMC_L1');
   const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const linkInputRef = useRef<HTMLInputElement>(null);
 
   // Success result state
   const [createdResult, setCreatedResult] = useState<{
@@ -60,6 +63,8 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
     invitation: TenantInvitation;
     inviteUrl: string;
   } | null>(null);
+  // The program that was asked for. The server decides what is recorded: a non-administrator gets the default program.
+  const [requestedProgram, setRequestedProgram] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -67,7 +72,6 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
     setCompanyName('');
     setCageCode('');
     setSystemBoundaryName('');
-    setLicenseTier('DEFENSE_PRO');
     setTenantOwnerEmail('');
     setPrimaryFramework('CMMC_L1');
     setEnabledFrameworks(['CMMC_L1']);
@@ -82,10 +86,12 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   };
 
   const handlePrimaryFrameworkChange = (fw: ComplianceFramework) => {
+    // Nothing extra was ticked yet: the program is just the primary framework, so switching it must not leave the old
+    // one enabled behind (a dedicated CMMC Level 2 enclave should not silently also serve Level 1).
+    const untouched = enabledFrameworks.length === 1 && enabledFrameworks[0] === primaryFramework;
     setPrimaryFramework(fw);
-    if (!enabledFrameworks.includes(fw)) {
-      setEnabledFrameworks([...enabledFrameworks, fw]);
-    }
+    if (untouched) setEnabledFrameworks([fw]);
+    else if (!enabledFrameworks.includes(fw)) setEnabledFrameworks([...enabledFrameworks, fw]);
   };
 
   const handleToggleFramework = (fw: ComplianceFramework) => {
@@ -108,12 +114,12 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
         companyName: companyName.trim(),
         cageCode: cageCode.trim().toUpperCase() || 'PENDING',
         systemBoundaryName: systemBoundaryName.trim() || `${companyName.trim()} Operations Enclave`,
-        licenseTier,
         tenantOwnerEmail: tenantOwnerEmail.trim().toLowerCase(),
         primaryFramework,
         enabledFrameworks,
       });
 
+      setRequestedProgram(programSummary(primaryFramework, enabledFrameworks).text);
       setCreatedResult(result);
       if (onTenantCreated) {
         onTenantCreated(result.tenant, result.invitation, result.inviteUrl);
@@ -131,11 +137,16 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
   const handleCopyInviteLink = async () => {
     if (!createdResult?.inviteUrl) return;
     try {
-      await navigator.clipboard.writeText(createdResult.inviteUrl);
+      await copyToClipboard(createdResult.inviteUrl);
+      setCopyFailed(false);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     } catch (err) {
+      // Never fail silently: leave the whole link selected so Ctrl+C finishes the job
       console.warn('Clipboard write failed:', err);
+      setCopyFailed(true);
+      linkInputRef.current?.focus();
+      linkInputRef.current?.select();
     }
   };
 
@@ -179,7 +190,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <span>Enclave Successfully Isolated & Provisioned!</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Cryptographic enclave <strong className="text-white">{createdResult.tenant.name}</strong> has been initialized with independent Cloud SQL RLS and GCS evidence partition.
+                  Enclave <strong className="text-white">{createdResult.tenant.name}</strong> has been created as its own isolated tenant: separate data under row-level security and its own evidence partition. It serves only the frameworks of its assessment program.
                 </p>
               </div>
 
@@ -194,19 +205,19 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <span className="font-mono text-white font-semibold">{createdResult.tenant.cageCode || 'PENDING'}</span>
                 </div>
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
-                  <span>License Tier:</span>
-                  <span className="font-bold text-amber-300 uppercase">
-                    {getLicenseTierBadge(createdResult.tenant.licenseTier).badge}
+                  <span>Assessment Program:</span>
+                  <span className="font-bold text-brand-300 text-right">
+                    {programSummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text}
                   </span>
                 </div>
+                {requestedProgram && requestedProgram !== programSummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text && (
+                  <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200">
+                    You asked for <strong>{requestedProgram}</strong>, but the server recorded the program above. Only a platform administrator
+                    can set an enclave&apos;s frameworks (the server&apos;s PLATFORM_ADMIN_EMAILS list).
+                  </p>
+                )}
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
-                  <span>Primary Framework:</span>
-                  <span className="font-bold text-brand-300">
-                    {createdResult.tenant.primaryFramework || 'CMMC_L1'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
-                  <span>Enabled Modules:</span>
+                  <span>Enabled Frameworks:</span>
                   <div className="flex flex-wrap gap-1 justify-end max-w-[65%]">
                     {(createdResult.tenant.enabledFrameworks || [createdResult.tenant.primaryFramework || 'CMMC_L1']).map(fw => (
                       <span key={fw} className="px-1.5 py-0.5 text-xs font-mono rounded bg-slate-800 text-slate-200 border border-slate-700">
@@ -229,8 +240,12 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 </label>
                 <div className="flex items-center gap-2">
                   <input
+                    ref={linkInputRef}
                     type="text"
                     readOnly
+                    aria-label="Onboarding claim link"
+                    onFocus={(e) => e.currentTarget.select()}
+                    onClick={(e) => e.currentTarget.select()}
                     value={createdResult.inviteUrl}
                     className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-brand-500/40 rounded-xl text-slate-200 font-mono select-all focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
@@ -255,6 +270,11 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     )}
                   </button>
                 </div>
+                {copyFailed && (
+                  <p role="alert" className="text-xs text-amber-300">
+                    Your browser blocked automatic copying (common on non-HTTPS addresses). The link is selected: press Ctrl+C (Cmd+C on Mac).
+                  </p>
+                )}
                 <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-1">
                   <Lock className="w-3 h-3 text-slate-400" />
                   Token: <span className="font-mono text-slate-400">{createdResult.invitation.token.slice(0, 18)}...</span> (Single-use SHA-256 bound)
@@ -318,8 +338,8 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 </div>
               </div>
 
-              {/* Grid: Primary CAGE Code & License Tier */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Primary CAGE Code */}
+              <div>
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
                     Primary CAGE Code
@@ -334,20 +354,6 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    License Tier <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    value={licenseTier}
-                    onChange={e => setLicenseTier(e.target.value as LicenseTier)}
-                    className="w-full px-3.5 py-2.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-brand-500 transition-colors"
-                  >
-                    <option value="FOUNDATIONAL">Foundational Enclave ($3,500/yr)</option>
-                    <option value="DEFENSE_PRO">Defense Professional ($7,000/yr) - Recommended</option>
-                    <option value="ENTERPRISE">Enterprise & Assessor Enclave ($14,000/yr)</option>
-                  </select>
-                </div>
               </div>
 
               {/* System Boundary Name */}
@@ -373,7 +379,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <div className="flex items-center gap-2">
                     <Shield className="w-4 h-4 text-brand-400" />
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                      Target Framework Scope
+                      Assessment Program
                     </span>
                   </div>
                   <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60">
@@ -384,7 +390,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 {/* Primary Framework Selector */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1">
-                    Primary Baseline Framework <span className="text-rose-400">*</span>
+                    Primary Framework <span className="text-rose-400">*</span>
                   </label>
                   <select
                     value={primaryFramework}
@@ -398,14 +404,14 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     ))}
                   </select>
                   <p className="text-xs text-slate-400 mt-1">
-                    Default compliance baseline loaded upon enclave activation.
+                    The tenant opens on this framework. Only a platform administrator can set the program; for anyone else the server records the default (CMMC Level 1).
                   </p>
                 </div>
 
                 {/* Additional Active Frameworks */}
                 <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
                   <label className="block text-xs font-semibold text-slate-400">
-                    Additional Active Enclave Frameworks
+                    Additional frameworks in this program
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
                     {ALL_FRAMEWORKS.map(fw => {

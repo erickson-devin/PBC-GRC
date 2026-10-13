@@ -7,6 +7,7 @@ import { Storage } from '@google-cloud/storage';
 import { queryWithTenant } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
+import { ensureControlInProgram } from '../middleware/frameworkGuard';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
@@ -127,6 +128,9 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
     res.status(400).json({ error: 'Invalid fileName or fileHash: expected strings' });
     return;
   }
+
+  // Framework segregation: evidence can only be attached to a control inside this tenant's assessment program
+  if (!(await ensureControlInProgram(req, res, controlId))) return;
 
   const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');

@@ -35,6 +35,7 @@ import {
 import { StigProfileId, StigSeverity, StigRule } from '../../types/stig';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface StigAutomationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -128,7 +129,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
 
   const handleCopySnippet = async (id: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       setCopiedSnippetId(id);
       setTimeout(() => setCopiedSnippetId(null), 2000);
     } catch {

@@ -23,6 +23,7 @@ import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks
 import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
 
+import { copyToClipboard } from '../../utils/clipboard';
 export const EvidenceVaultView: React.FC = () => {
   const {
     state,
@@ -129,7 +130,7 @@ export const EvidenceVaultView: React.FC = () => {
 
   const handleCopyHash = (hash?: string) => {
     if (!hash) return;
-    navigator.clipboard.writeText(hash);
+    copyToClipboard(hash);
     setCopiedHash(hash);
     setTimeout(() => setCopiedHash(null), 2000);
   };

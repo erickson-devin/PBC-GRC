@@ -93,7 +93,6 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
         tenantName: targetTenant?.name || invitation.tenantName,
         systemName: targetTenant?.systemName || invitation.systemName,
         cageCode: targetTenant?.cageCode || invitation.cageCode,
-        licenseTier: targetTenant?.licenseTier || invitation.licenseTier,
         role,
         expiresAt: newExpiresAt,
       };

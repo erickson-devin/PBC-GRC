@@ -1,4 +1,6 @@
 import './testEnv';
+// Framework (program) settings are decided by platform administrators: this test's actor is listed as one.
+process.env.PLATFORM_ADMIN_EMAILS = 'u_onb_owner@test.mil';
 // The browser ApiClient resolves its base URL from VITE_API_URL at import time; point it at the test server first.
 process.env.VITE_API_URL = 'http://127.0.0.1:8080';
 
@@ -89,7 +91,7 @@ async function run() {
   assert((await patch(owner, { systemName: 'x'.repeat(300) })).status === 400, 'over-long systemName -> 400');
   const protectedPatch = await patch(owner, { name: 'Still Fine', licenseTier: 'ENTERPRISE', id: 'tenant-hijack', createdAt: '1999-01-01T00:00:00Z' });
   const after = await myTenant(owner, id);
-  assert(protectedPatch.status === 200 && after?.licenseTier === 'FOUNDATIONAL', 'licenseTier cannot be changed through the API', after?.licenseTier);
+  assert(protectedPatch.status === 200 && !('licenseTier' in (after ?? {})), 'there is no license tier any more: the field is neither accepted nor returned', after);
   assert(after?.id === id && after?.createdAt === created.body?.tenant?.createdAt, 'id and createdAt cannot be changed either');
 
   console.log('\n--- Framework consistency ---');

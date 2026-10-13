@@ -1,5 +1,5 @@
 import type { ComplianceFramework } from '../types/framework';
-import type { LicenseTier, SamStatus, Tenant, TenantRole } from '../types/tenant';
+import type { SamStatus, Tenant, TenantRole } from '../types/tenant';
 import { isTenantRole } from '../utils/roles';
 
 /**
@@ -19,7 +19,6 @@ export interface ServerTenant {
   industry: string;
   enabledFrameworks: string[];
   primaryFramework: string;
-  licenseTier: string;
   createdAt: string | null;
   role: TenantRole;
   /** 'claim' entries come from the token only and carry no tenant details. */
@@ -28,7 +27,6 @@ export interface ServerTenant {
 
 const FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
 const SAM_STATUSES: readonly SamStatus[] = ['ACTIVE', 'PENDING', 'EXPIRED', 'NOT_REGISTERED'];
-const LICENSE_TIERS: readonly LicenseTier[] = ['FOUNDATIONAL', 'DEFENSE_PRO', 'ENTERPRISE', 'single-org', 'msp-assessor'];
 
 const isFramework = (v: unknown): v is ComplianceFramework => FRAMEWORKS.includes(v as ComplianceFramework);
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
@@ -51,7 +49,6 @@ export function parseServerTenants(raw: unknown): ServerTenant[] {
       industry: str(t.industry),
       enabledFrameworks: Array.isArray(t.enabledFrameworks) ? t.enabledFrameworks.filter((f): f is string => typeof f === 'string') : [],
       primaryFramework: str(t.primaryFramework, 'CMMC_L1'),
-      licenseTier: str(t.licenseTier, 'FOUNDATIONAL'),
       createdAt: typeof t.createdAt === 'string' ? t.createdAt : null,
       role: t.role,
       source: t.source === 'claim' ? 'claim' : 'membership',
@@ -87,9 +84,6 @@ export function serverTenantToTenant(server: ServerTenant, existing: Tenant | un
         systemName: server.systemName || existing?.systemName || '',
         systemOwner: server.systemOwner || existing?.systemOwner || '',
         industry: server.industry || existing?.industry || '',
-        // The licence tier is commercial metadata the server does not manage yet (it records FOUNDATIONAL for every new
-        // tenant). Keep what the browser already has; only a tenant new to this browser takes the server's value.
-        licenseTier: existing?.licenseTier ?? ((LICENSE_TIERS.includes(server.licenseTier as LicenseTier) ? server.licenseTier : 'FOUNDATIONAL') as LicenseTier),
         primaryFramework: primary,
         enabledFrameworks: enabled.includes(primary) ? enabled : [primary, ...enabled],
       }

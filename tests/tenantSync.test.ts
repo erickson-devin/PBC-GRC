@@ -1,4 +1,6 @@
 import './testEnv';
+// Framework (program) settings are decided by platform administrators: this test's actor is listed as one.
+process.env.PLATFORM_ADMIN_EMAILS = 'u_sync_owner@test.mil';
 import { server } from '../server/index';
 import {
   applyRoleSync,
@@ -40,7 +42,6 @@ const srv = (over: Partial<ServerTenant> & { id: string }): ServerTenant => ({
   industry: 'DIB',
   enabledFrameworks: ['CMMC_L1'],
   primaryFramework: 'CMMC_L1',
-  licenseTier: 'FOUNDATIONAL',
   createdAt: '2025-12-01T00:00:00Z',
   role: 'VIEWER',
   source: 'membership',
@@ -134,10 +135,8 @@ function pureTests() {
   assert(noServer.tenants.length === 1 && noServer.tenants[0].id === placeholder.id, 'with no server tenants the draft stays: the wizard needs it to create the first tenant');
 
   console.log('\n--- Licence tier stays browser-owned (the server does not manage it yet) ---');
-  const tiered = mergeServerTenants([local({ id: 't', licenseTier: 'ENTERPRISE', serverBacked: true })], [srv({ id: 't', licenseTier: 'FOUNDATIONAL' })], NOW).tenants[0];
-  assert(tiered.licenseTier === 'ENTERPRISE', 'a licence tier the admin chose is not reset to the server default on every sync', tiered.licenseTier);
-  const newcomer = mergeServerTenants([], [srv({ id: 'n', licenseTier: 'DEFENSE_PRO' })], NOW).tenants[0];
-  assert(newcomer.licenseTier === 'DEFENSE_PRO', 'a tenant new to this browser takes the server value');
+  const programmed = mergeServerTenants([local({ id: 't', primaryFramework: 'CMMC_L1', enabledFrameworks: ['CMMC_L1'], serverBacked: true })], [srv({ id: 't', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2', 'NIST_800_53_REV5'] })], NOW).tenants[0];
+  assert(programmed.primaryFramework === 'CMMC_L2' && programmed.enabledFrameworks?.join() === 'CMMC_L2,NIST_800_53_REV5', 'the assessment program always comes from the server: an administrator\'s change reaches every browser', programmed);
 
   console.log('\n--- serverTenantToTenant (used when the follow-up listing fails) ---');
   const built = serverTenantToTenant(srv({ id: 'b', name: 'Built Org', role: 'TENANT_OWNER', cageCode: 'AB12C' }), undefined, NOW.toISOString());
@@ -147,8 +146,8 @@ function pureTests() {
   assert(isValidCageCode('AB12C') && isValidCageCode(' ab12c ') && !isValidCageCode('PENDING') && !isValidCageCode('') && !isValidCageCode(undefined), 'CAGE validation matches the server (5 letters/digits; "PENDING" is not one)');
   const p = toServerPatch({ name: ' New Name ', cageCode: 'ab12c', samStatus: 'PENDING', systemName: 'S', systemOwner: 'O', industry: 'I', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2', 'CMMC_L1'] });
   assert(p.name === 'New Name' && p.cageCode === 'AB12C' && p.samStatus === 'PENDING' && p.primaryFramework === 'CMMC_L2' && p.enabledFrameworks?.length === 2, 'valid edits are normalised and sent');
-  const dropped = toServerPatch({ name: '', cageCode: 'PENDING', systemName: '   ', domain: 'x.mil', licenseTier: 'ENTERPRISE', stackProfile: {} as Tenant['stackProfile'], isConfigured: true, isSuspended: true });
-  assert(Object.keys(dropped).length === 0, 'blank values, the PENDING placeholder and browser-only fields (domain, licence, stack profile, flags) are never sent', dropped);
+  const dropped = toServerPatch({ name: '', cageCode: 'PENDING', systemName: '   ', domain: 'x.mil', stackProfile: {} as Tenant['stackProfile'], isConfigured: true, isSuspended: true });
+  assert(Object.keys(dropped).length === 0, 'blank values, the PENDING placeholder and browser-only fields (domain, stack profile, flags) are never sent', dropped);
   assert(Object.keys(toServerPatch({ name: 'A' })).length === 0, 'a name the server would reject (too short) is not sent');
 
   console.log('\n--- pickActiveTenantId ---');

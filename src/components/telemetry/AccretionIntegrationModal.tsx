@@ -19,6 +19,7 @@ import { errorMessage } from '../../utils/errors';
 import { AccretionIngestResult } from '../../types/telemetry';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface AccretionIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -56,7 +57,7 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
   if (!isOpen) return null;
 
   const handleCopy = (text: string, fieldId: string) => {
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopiedField(fieldId);
     setTimeout(() => setCopiedField(null), 2500);
   };

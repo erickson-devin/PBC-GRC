@@ -47,6 +47,7 @@ import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
 import { activateOnKey } from '../../utils/a11y';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface InspectDocumentModalProps {
   controlId?: string | null;
   onClose?: () => void;
@@ -243,7 +244,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handleCopyPolicyMarkdown = () => {
-    navigator.clipboard.writeText(compiledPolicyMarkdown);
+    copyToClipboard(compiledPolicyMarkdown);
     setCopiedPolicy(true);
     setTimeout(() => setCopiedPolicy(false), 2000);
   };
@@ -308,7 +309,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
   const handleCopyHash = (hash?: string) => {
     if (!hash) return;
-    navigator.clipboard.writeText(hash);
+    copyToClipboard(hash);
     setCopiedHash(hash);
     setTimeout(() => setCopiedHash(null), 2000);
   };

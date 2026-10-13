@@ -8,12 +8,11 @@ import {
   Settings,
   Key,
   LogOut,
-  Sparkles,
   Users,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
-import { TenantRole, getLicenseTierPrice } from '../../types/tenant';
+import { TenantRole } from '../../types/tenant';
 import { AccountSettingsModal } from './AccountSettingsModal';
 import { ApiTokensModal } from './ApiTokensModal';
 
@@ -24,7 +23,7 @@ interface UserProfileDropdownProps {
 export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
   onOpenTenantSwitcher,
 }) => {
-  const { currentUser, logout, openLicenseModal } = useAuth();
+  const { currentUser, logout } = useAuth();
   const {
     currentTenant,
     currentRole,
@@ -244,25 +243,6 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* License Request / Sales Call link */}
-            <div className="p-2 border-t border-slate-800 bg-slate-950/20">
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  openLicenseModal('DEFENSE_PRO');
-                }}
-                className="w-full py-1.5 px-2 rounded-lg text-xs font-semibold text-brand-300 hover:bg-brand-500/10 flex items-center justify-between transition-colors"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Sparkles className="w-3 h-3 text-brand-400" />
-                  Request License Upgrade
-                </span>
-                <span className="text-xs font-mono text-emerald-400">
-                  ${getLicenseTierPrice(currentUser.licenseTier).toLocaleString()}/yr
-                </span>
-              </button>
             </div>
 
             {/* Sign Out */}

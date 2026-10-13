@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
-import { AuthProviderType, TenantInvitation, getLicenseTierBadge } from '../types/tenant';
+import { AuthProviderType, TenantInvitation } from '../types/tenant';
+import { programSummary } from '../data/programs';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { errorMessage } from '../utils/errors';
 
@@ -96,7 +97,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
 
   // LIVE: what the server knows about the token (organisation, role, status), fetched with the token alone (it works
   // before sign-in). The demo sandbox still reads its local fake invitations.
-  type InviteView = Pick<TenantInvitation, 'token' | 'tenantName' | 'email' | 'role' | 'status' | 'expiresAt' | 'cageCode' | 'licenseTier'>;
+  type InviteView = Pick<TenantInvitation, 'token' | 'tenantName' | 'email' | 'role' | 'status' | 'expiresAt' | 'cageCode' | 'primaryFramework' | 'enabledFrameworks'>;
   const [liveInvitation, setLiveInvitation] = useState<InviteView | undefined>(undefined);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -113,7 +114,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     previewInvitation(token)
       .then((preview) => {
         if (cancelled) return;
-        setLiveInvitation(preview ? { token, tenantName: preview.tenantName, email: preview.email, role: preview.role, status: preview.status, expiresAt: preview.expiresAt } : undefined);
+        setLiveInvitation(preview ? { token, tenantName: preview.tenantName, email: preview.email, role: preview.role, status: preview.status, expiresAt: preview.expiresAt, primaryFramework: preview.primaryFramework, enabledFrameworks: preview.enabledFrameworks } : undefined);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -475,9 +476,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   </div>
 
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">License Tier</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Assessment Program</span>
                     <span className="font-semibold text-slate-200 mt-0.5 block">
-                      {getLicenseTierBadge(invitation?.licenseTier).badge}
+                      {programSummary(invitation?.primaryFramework, invitation?.enabledFrameworks).text}
                     </span>
                   </div>
                 </div>

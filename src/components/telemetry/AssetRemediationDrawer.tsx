@@ -20,6 +20,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface AssetRemediationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -49,7 +50,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
   const passingCount = Math.max(0, totalEndpoints - failingCount);
 
   const handleCopyScript = (scriptText: string, ruleId: string) => {
-    navigator.clipboard.writeText(scriptText);
+    copyToClipboard(scriptText);
     setCopiedRuleId(ruleId);
     setTimeout(() => setCopiedRuleId(null), 2500);
   };

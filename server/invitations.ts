@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type pg from 'pg';
-import { getDbMode, getMemoryTenantName, getTenantRole, pool, upsertTenantMember } from './db';
+import { getDbMode, getMemoryTenantName, getMemoryTenantProgram, getTenantRole, pool, upsertTenantMember } from './db';
 import { isTenantRole, maxRole } from '../src/utils/roles';
 import type { TenantRole } from '../src/types/tenant';
 
@@ -315,6 +315,9 @@ export interface InvitationPreview {
   expiresAt: string;
   status: InvitationStatus;
   createdBy: string;
+  /** The tenant's assessment program, as the server holds it: what the invitee is being invited into. */
+  primaryFramework: string;
+  enabledFrameworks: string[];
 }
 
 /** What the accept page shows before sign-in. Needs only the token; returns null for an unknown token. */
@@ -324,7 +327,12 @@ export async function previewInvitation(token: string): Promise<InvitationPrevie
   if (isMemory()) {
     const m = [...memoryInvitations.values()].find((i) => i.tokenHash === tokenHash);
     if (!m) return null;
-    return { tenantId: m.tenantId, tenantName: getMemoryTenantName(m.tenantId) ?? m.tenantId, email: m.email, role: m.role, expiresAt: m.expiresAt, status: statusOf(m), createdBy: m.createdBy };
+    const program = getMemoryTenantProgram(m.tenantId);
+    return {
+      tenantId: m.tenantId, tenantName: getMemoryTenantName(m.tenantId) ?? m.tenantId, email: m.email, role: m.role, expiresAt: m.expiresAt,
+      status: statusOf(m), createdBy: m.createdBy,
+      primaryFramework: program?.primaryFramework ?? 'CMMC_L1', enabledFrameworks: program?.enabledFrameworks ?? ['CMMC_L1'],
+    };
   }
 
   const client = await pool.connect();
@@ -332,13 +340,19 @@ export async function previewInvitation(token: string): Promise<InvitationPrevie
     await client.query('BEGIN');
     await client.query('SELECT set_config($1, $2, true)', ['app.invite_token_hash', tokenHash]);
     const res = await client.query(
-      `SELECT i.*, t.name AS tenant_name FROM tenant_invitations i LEFT JOIN tenants t ON t.id = i.tenant_id WHERE i.token_hash = $1`,
+      `SELECT i.*, t.name AS tenant_name, t.primary_framework, t.enabled_frameworks FROM tenant_invitations i LEFT JOIN tenants t ON t.id = i.tenant_id WHERE i.token_hash = $1`,
       [tokenHash]
     );
     await client.query('COMMIT');
     if (res.rows.length === 0) return null;
     const rec = rowToRecord(res.rows[0]);
-    return { tenantId: rec.tenantId, tenantName: res.rows[0].tenant_name ?? rec.tenantId, email: rec.email, role: rec.role, expiresAt: rec.expiresAt, status: rec.status, createdBy: rec.createdBy };
+    const primary: string = res.rows[0].primary_framework ?? 'CMMC_L1';
+    const enabled: string[] = res.rows[0].enabled_frameworks ?? [];
+    return {
+      tenantId: rec.tenantId, tenantName: res.rows[0].tenant_name ?? rec.tenantId, email: rec.email, role: rec.role, expiresAt: rec.expiresAt,
+      status: rec.status, createdBy: rec.createdBy,
+      primaryFramework: primary, enabledFrameworks: enabled.includes(primary) ? enabled : [primary, ...enabled],
+    };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw err;

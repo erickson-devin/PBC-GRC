@@ -20,7 +20,6 @@ import {
   Globe,
   Clock,
   ArrowUpRight,
-  Award,
   ArrowLeft,
   MoreVertical,
   Edit3,
@@ -32,14 +31,15 @@ import {
   Flame,
   FileCheck2,
   X,
-  UserPlus,
   ShieldCheck,
-  BadgeCheck,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
-import { getLicenseTierPrice, normalizeLicenseTier, Tenant, TenantInvitation } from '../../types/tenant';
+import { Tenant, TenantInvitation } from '../../types/tenant';
+import { frameworkLabel, programSummary } from '../../data/programs';
+import { ApiClient } from '../../services/apiClient';
+import { ErrorNotice } from '../common/ErrorNotice';
 import { NewTenantModal } from './NewTenantModal';
 import { EditEnclaveModal } from './EditEnclaveModal';
 import { EditInvitationModal } from './EditInvitationModal';
@@ -52,47 +52,14 @@ import { CertificateOfDestruction } from '../../types/audit';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
   onNavigateToLanding?: () => void;
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
 
-export interface PlatformAdminUser {
-  id: string;
-  name: string;
-  email: string;
-  roleTitle: string;
-  clearanceLevel: 'ROOT_APPLICATION_OWNER' | 'PLATFORM_SUPER_ADMIN' | 'SYSTEM_OPERATOR';
-  permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS';
-  enclaveScope: 'ALL_ENCLAVES';
-  grantedAt: string;
-  isRootOwner?: boolean;
-}
 
-const DEFAULT_PLATFORM_ADMINS: PlatformAdminUser[] = [
-  {
-    id: 'admin-root-01',
-    name: 'Devin (Pitch Black Cyber)',
-    email: 'devin@pitchblackcyber.com',
-    roleTitle: 'Root Application Owner / Platform Super Admin',
-    clearanceLevel: 'ROOT_APPLICATION_OWNER',
-    permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS',
-    enclaveScope: 'ALL_ENCLAVES',
-    grantedAt: '2026-01-01T00:00:00.000Z',
-    isRootOwner: true,
-  },
-  {
-    id: 'admin-ops-02',
-    name: 'Defense Cyber Operations Command',
-    email: 'admin@pitchblackcyber.com',
-    roleTitle: 'Platform Security Operator',
-    clearanceLevel: 'PLATFORM_SUPER_ADMIN',
-    permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS',
-    enclaveScope: 'ALL_ENCLAVES',
-    grantedAt: '2026-01-15T08:00:00.000Z',
-  },
-];
 
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   onNavigateToApp,
@@ -125,24 +92,24 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [selectedInvitationForEdit, setSelectedInvitationForEdit] = useState<TenantInvitation | null>(null);
   const [isEditInvitationModalOpen, setIsEditInvitationModalOpen] = useState(false);
 
-  // Platform Admins state
-  const [platformAdmins, setPlatformAdmins] = useState<PlatformAdminUser[]>(() => {
-    try {
-      const saved = localStorage.getItem('pbc_platform_admins_v2');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return DEFAULT_PLATFORM_ADMINS;
-  });
-
-  const [isAddAdminModalOpen, setIsAddAdminModalOpen] = useState(false);
-  const [newAdminName, setNewAdminName] = useState('');
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [newAdminRole, setNewAdminRole] = useState('Platform Super Admin');
+  // Platform administrators, as configured on the server (read-only here)
+  const [serverAdmins, setServerAdmins] = useState<string[] | null>(null);
+  const [adminsError, setAdminsError] = useState<string | null>(null);
+  useEffect(() => {
+    if (isSandboxMode) {
+      setServerAdmins([currentUser.email]);
+      return undefined;
+    }
+    let cancelled = false;
+    void ApiClient.listPlatformAdmins().then((list) => {
+      if (cancelled) return;
+      setServerAdmins(list);
+      setAdminsError(list === null ? 'The server did not return the list of platform administrators.' : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSandboxMode, currentUser.email]);
 
   // Destruction state
   const [selectedTenantForDestruction, setSelectedTenantForDestruction] = useState<Tenant | null>(null);
@@ -175,13 +142,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   } | null>(null);
 
   const floatingMenuRef = useRef<HTMLDivElement>(null);
-
-  // Sync platform admins to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('pbc_platform_admins_v2', JSON.stringify(platformAdmins));
-    } catch {}
-  }, [platformAdmins]);
 
   // Dismiss floating menu on click outside or window scroll
   useEffect(() => {
@@ -217,7 +177,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
   const handleCopy = async (text: string, id: string, type: 'token' | 'enclave') => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       if (type === 'token') {
         setCopiedTokenId(id);
         setTimeout(() => setCopiedTokenId(null), 2000);
@@ -350,44 +310,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     }
   };
 
-  // Add New Platform Admin
-  const handleAddPlatformAdmin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newAdminName.trim() || !newAdminEmail.trim()) return;
-
-    const newAdmin: PlatformAdminUser = {
-      id: `admin-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      name: newAdminName.trim(),
-      email: newAdminEmail.trim().toLowerCase(),
-      roleTitle: newAdminRole.trim() || 'Platform Super Admin',
-      clearanceLevel: 'PLATFORM_SUPER_ADMIN',
-      permissionBadge: 'FULL_SYSTEM_OVERRIDE / ALL_ENCLAVES_ACCESS',
-      enclaveScope: 'ALL_ENCLAVES',
-      grantedAt: new Date().toISOString(),
-    };
-
-    setPlatformAdmins(prev => [...prev, newAdmin]);
-    setNewAdminName('');
-    setNewAdminEmail('');
-    setNewAdminRole('Platform Super Admin');
-    setIsAddAdminModalOpen(false);
-
-    setNotificationToast({
-      type: 'success',
-      message: `Super Admin clearance granted to ${newAdmin.name} (${newAdmin.email}).`,
-    });
-  };
-
-  const handleRevokePlatformAdmin = (adminId: string, email: string) => {
-    if (confirm(`Revoke platform administrator clearance for ${email}?`)) {
-      setPlatformAdmins(prev => prev.filter(a => a.id !== adminId));
-      setNotificationToast({
-        type: 'info',
-        message: `Platform administrator clearance revoked for ${email}.`,
-      });
-    }
-  };
-
   // -------------------------------------------------------------------------
   // 1. ROUTE GUARD: Unauthorized Screen (Discrete 403 High-Security Gate)
   // -------------------------------------------------------------------------
@@ -467,10 +389,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const pendingInvitesCount = invitations.filter(i => i.status === 'PENDING').length;
   const activeEnclavesCount = tenants.filter(t => !t.isSuspended).length;
   const suspendedEnclavesCount = tenants.filter(t => t.isSuspended).length;
-  const foundationalCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'FOUNDATIONAL').length;
-  const defenseProCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'DEFENSE_PRO').length;
-  const enterpriseCount = tenants.filter(t => normalizeLicenseTier(t.licenseTier) === 'ENTERPRISE').length;
-  const totalArr = tenants.reduce((acc, t) => acc + getLicenseTierPrice(t.licenseTier), 0);
+  // Enclaves per assessment program (their primary framework)
+  const programCounts = tenants.reduce<Record<string, number>>((acc, t) => {
+    const key = t.primaryFramework || 'CMMC_L1';
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+  const programsInUse = Object.keys(programCounts).length;
 
   const destructionExpectedChallenge = selectedTenantForDestruction
     ? (selectedTenantForDestruction.cageCode && selectedTenantForDestruction.cageCode !== 'PENDING'
@@ -615,13 +540,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
           <div className="stitch-card p-5 space-y-1">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Active ARR Run-Rate
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Assessment Programs
             </span>
             <p className="text-3xl font-black text-emerald-400 font-mono mt-1">
-              ${totalArr.toLocaleString()}/yr
+              {programsInUse}
             </p>
             <p className="text-xs text-slate-400">
-              {foundationalCount} Foundational • {defenseProCount} Defense Pro • {enterpriseCount} Enterprise
+              {Object.entries(programCounts).map(([fw, n]) => `${n} ${frameworkLabel(fw)}`).join(' • ') || 'No enclaves yet'}
             </p>
           </div>
 
@@ -713,7 +638,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 <tr>
                   <th className="py-3 px-4">Organization & Boundary</th>
                   <th className="py-3 px-4">CAGE / SAM</th>
-                  <th className="py-3 px-4">License Tier</th>
+                  <th className="py-3 px-4">Assessment Program</th>
                   <th className="py-3 px-4">Framework Scope</th>
                   <th className="py-3 px-4">System Owner</th>
                   <th className="py-3 px-4">Status</th>
@@ -777,28 +702,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        {(() => {
-                          const norm = normalizeLicenseTier(t.licenseTier);
-                          if (norm === 'ENTERPRISE') {
-                            return (
-                              <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-wide">
-                                <Building2 className="w-3 h-3" /> Enterprise ($14k)
-                              </span>
-                            );
-                          }
-                          if (norm === 'DEFENSE_PRO') {
-                            return (
-                              <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/30 uppercase tracking-wide">
-                                <Award className="w-3 h-3" /> Defense Pro ($7k)
-                              </span>
-                            );
-                          }
-                          return (
-                            <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wide">
-                              <Shield className="w-3 h-3" /> Foundational ($3.5k)
-                            </span>
-                          );
-                        })()}
+                        <span
+                          className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/30"
+                          title={programSummary(t.primaryFramework, t.enabledFrameworks).text}
+                        >
+                          <Shield className="w-3 h-3" /> {programSummary(t.primaryFramework, t.enabledFrameworks).primary}
+                          {programSummary(t.primaryFramework, t.enabledFrameworks).additional.length > 0 &&
+                            ` +${programSummary(t.primaryFramework, t.enabledFrameworks).additional.length}`}
+                        </span>
                         {t.isDemo && (
                           <span className="badge ml-1 text-xs font-mono font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
                             DEMO
@@ -890,106 +801,47 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </div>
         </div>
 
-        {/* Section 2: Platform Administrators & System Operators Panel */}
+        {/* Section 2: Platform administrators (configured on the server) */}
         <div className="stitch-card p-6 space-y-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-purple-400" />
-                <span>Platform Administrators & System Operators ({platformAdmins.length})</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Root platform clearance, global boundary override permissions, and multi-enclave administrative credentials
-              </p>
-            </div>
-
-            <button
-              onClick={() => setIsAddAdminModalOpen(true)}
-              className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/40 text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-purple-950/20"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Add Platform Admin</span>
-            </button>
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-purple-400" />
+              <span>Platform Administrators{serverAdmins ? ` (${serverAdmins.length})` : ''}</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              The operators of this installation. Only they can provision enclaves for a specific assessment program and use this console.
+              They are the addresses in the server setting <code className="text-cyan-300 font-mono">PLATFORM_ADMIN_EMAILS</code>: edit it in the
+              server&apos;s <code className="font-mono">.env</code> and restart the app. See <code className="font-mono">docs/ASSESSMENT_PROGRAMS.md</code>.
+            </p>
           </div>
+
+          {adminsError && <ErrorNotice message={adminsError} />}
 
           <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-xs tracking-wider border-b border-slate-800">
                 <tr>
-                  <th className="py-3 px-4">Operator Identity</th>
-                  <th className="py-3 px-4">Email & Authentication</th>
-                  <th className="py-3 px-4">Clearance & Role</th>
-                  <th className="py-3 px-4">System Permissions Badge</th>
-                  <th className="py-3 px-4">Boundary Scope</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">Administrator</th>
+                  <th className="py-3 px-4">Source</th>
+                  <th className="py-3 px-4">Scope</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80 font-sans">
-                {platformAdmins.map(admin => (
-                  <tr
-                    key={admin.id}
-                    className={`even:bg-slate-950/40 odd:bg-slate-900/20 hover:bg-slate-800/60 transition-colors ${
-                      admin.isRootOwner ? 'border-l-2 border-l-purple-500/80' : ''
-                    }`}
-                  >
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white text-xs">{admin.name}</span>
-                        {admin.isRootOwner && (
-                          <span className="badge px-2 py-0.5 rounded-full text-xs font-mono font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/40 uppercase tracking-wider">
-                            ROOT OWNER
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5">{admin.roleTitle}</div>
+                {(serverAdmins ?? []).map((email) => (
+                  <tr key={email} className="even:bg-slate-950/40 odd:bg-slate-900/20">
+                    <td className="py-3.5 px-4 font-mono text-slate-200 font-semibold">
+                      {email}
+                      {email === currentUser.email.toLowerCase() && <span className="ml-2 text-xs font-sans text-cyan-300">(you)</span>}
                     </td>
-
-                    <td className="py-3.5 px-4 font-mono">
-                      <div className="text-slate-200 text-xs font-semibold">{admin.email}</div>
-                      <div className="text-xs text-emerald-400 flex items-center gap-1 mt-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                        <span>Verified Google/Microsoft SSO</span>
-                      </div>
-                    </td>
-
-                    <td className="py-3.5 px-4">
-                      <span className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                        <BadgeCheck className="w-3 h-3 text-purple-400" />
-                        <span>{admin.clearanceLevel}</span>
-                      </span>
-                    </td>
-
-                    <td className="py-3.5 px-4">
-                      <span className="badge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-black bg-purple-950/60 text-purple-200 border border-purple-500/40 uppercase tracking-wide">
-                        <Key className="w-3 h-3 text-purple-400" />
-                        <span>{admin.permissionBadge}</span>
-                      </span>
-                    </td>
-
-                    <td className="py-3.5 px-4 font-mono text-xs text-slate-300">
-                      <div className="text-emerald-400 font-semibold flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                        <span>Global Access</span>
-                      </div>
-                      <div className="text-xs text-slate-400">All Live & Sandbox Enclaves</div>
-                    </td>
-
-                    <td className="py-3.5 px-4 text-right">
-                      {admin.isRootOwner ? (
-                        <span className="text-xs font-mono text-slate-400 italic px-2 py-1">
-                          Immutable
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => handleRevokePlatformAdmin(admin.id, admin.email)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 text-xs font-semibold transition-colors"
-                        >
-                          Revoke
-                        </button>
-                      )}
-                    </td>
+                    <td className="py-3.5 px-4 text-slate-300">{isSandboxMode ? 'Demo sandbox' : 'Server configuration'}</td>
+                    <td className="py-3.5 px-4 text-slate-300">Provision tenants and set their assessment program</td>
                   </tr>
                 ))}
+                {serverAdmins !== null && serverAdmins.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="py-6 px-4 text-center text-slate-400">No platform administrators are configured.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -1331,106 +1183,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           });
         }}
       />
-
-      {/* 4. Add Platform Administrator Modal */}
-      {isAddAdminModalOpen && (
-        <DialogOverlay onClose={() => setIsAddAdminModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
-          <div className="relative w-full max-w-lg my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-purple-900/40 via-slate-900/60 to-slate-950 ring-1 ring-purple-500/40 shadow-2xl shadow-purple-950/40 animate-scaleUp">
-            <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
-              
-              <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-                    <UserPlus className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <DialogTitle as="h2" className="text-lg sm:text-xl font-black text-white tracking-tight">
-                      Grant Platform Super Admin Clearance
-                    </DialogTitle>
-                    <p className="text-xs text-slate-400">
-                      Issue global boundary override and operator credentials
-                    </p>
-                  </div>
-                </div>
-
-                <button aria-label="Close"
-                  onClick={() => setIsAddAdminModalOpen(false)}
-                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <form onSubmit={handleAddPlatformAdmin} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Operator Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newAdminName}
-                    onChange={e => setNewAdminName(e.target.value)}
-                    placeholder="e.g. Sarah Connor, CISSP"
-                    className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-purple-400"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Operator Corporate Email *
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={newAdminEmail}
-                    onChange={e => setNewAdminEmail(e.target.value)}
-                    placeholder="e.g. sconnor@pitchblackcyber.com"
-                    className="w-full px-3 py-2 text-xs font-mono bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-purple-400"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Role Title
-                  </label>
-                  <input
-                    type="text"
-                    value={newAdminRole}
-                    onChange={e => setNewAdminRole(e.target.value)}
-                    placeholder="e.g. Principal GRC Security Engineer"
-                    className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-purple-400"
-                  />
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/30 text-xs text-purple-200 flex items-start gap-2.5">
-                  <Key className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
-                  <p>
-                    Clearance includes <strong>FULL_SYSTEM_OVERRIDE</strong> across all tenant database boundaries, staff onboarding, cryptographic sanitization, and compliance exports.
-                  </p>
-                </div>
-
-                <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddAdminModalOpen(false)}
-                    className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 border border-slate-800 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn-primary text-xs px-5 py-2.5 font-bold shadow-lg shadow-purple-500/20"
-                  >
-                    Grant Clearance
-                  </button>
-                </div>
-              </form>
-
-            </div>
-          </div>
-        </DialogOverlay>
-      )}
 
       {/* 5. Two-Step NIST SP 800-88 Cryptographic Sanitization & Destruction Modal */}
       {isDestructionModalOpen && selectedTenantForDestruction && (

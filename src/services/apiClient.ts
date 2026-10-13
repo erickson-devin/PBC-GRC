@@ -83,6 +83,9 @@ export interface InvitePreview {
   expiresAt: string;
   status: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
   createdBy: string;
+  /** The tenant's assessment program as the server holds it. */
+  primaryFramework: string;
+  enabledFrameworks: string[];
 }
 
 /** Authenticated JSON request that throws ApiError (with a user-safe message) on any failure. */
@@ -306,6 +309,37 @@ export const ApiClient = {
     if (res.status === 401) return null;
     if (!res.ok) throw new Error(`Failed to load your tenants (HTTP ${res.status})`);
     return parseServerTenants(await res.json());
+  },
+
+  /**
+   * GET /api/v1/me: whether the signed-in user is a platform administrator of THIS installation (decided by the server's
+   * PLATFORM_ADMIN_EMAILS list). Resolves null when it cannot be determined, so the UI never assumes administrator rights.
+   */
+  async getPlatformStatus(token?: string): Promise<{ isPlatformAdmin: boolean } | null> {
+    const bearer = token ?? this.getToken();
+    if (!bearer) return null;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/me`, { headers: { Authorization: `Bearer ${bearer}` } });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { isPlatformAdmin?: unknown };
+      return { isPlatformAdmin: data.isPlatformAdmin === true };
+    } catch {
+      return null;
+    }
+  },
+
+  /** GET /api/v1/platform/admins (platform administrators only): the addresses configured on the server. Null if refused. */
+  async listPlatformAdmins(token?: string): Promise<string[] | null> {
+    const bearer = token ?? this.getToken();
+    if (!bearer) return null;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { Authorization: `Bearer ${bearer}` } });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { admins?: Array<{ email?: unknown }> };
+      return (data.admins ?? []).map((a) => String(a.email ?? '')).filter(Boolean);
+    } catch {
+      return null;
+    }
   },
 
   /**

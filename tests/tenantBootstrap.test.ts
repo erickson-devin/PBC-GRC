@@ -53,7 +53,7 @@ async function run() {
   const created = await call('POST', '/tenants', founder, undefined, {
     name: 'Acme Defense Systems',
     cageCode: '1abc2',
-    licenseTier: 'ENTERPRISE', // must be ignored
+    licenseTier: 'ENTERPRISE', // there is no license tier: ignored like any unknown field
     primaryFramework: 'CMMC_L2',
   });
   assert(created.status === 201, 'POST /tenants -> 201 (no x-tenant-id needed: the caller has no tenant yet)', created);
@@ -62,9 +62,9 @@ async function run() {
   assert(created.body?.role === 'TENANT_OWNER' && created.body?.member?.role === 'TENANT_OWNER', 'caller is assigned TENANT_OWNER');
   assert(created.body?.member?.userId === 'u_founder' && created.body?.member?.tenantId === tenantId, 'tenant_users row links the caller to the new tenant');
   assert(created.body?.member?.email === 'founder@acme-defense.com', 'owner email is normalized', created.body?.member?.email);
-  assert(created.body?.tenant?.licenseTier === 'FOUNDATIONAL', 'license tier cannot be chosen by the client', created.body?.tenant?.licenseTier);
+  assert(!('licenseTier' in (created.body?.tenant ?? {})), 'there is no license tier: the field is not stored or returned', created.body?.tenant);
   assert(created.body?.tenant?.cageCode === '1ABC2', 'cage code is normalized to upper case');
-  assert(created.body?.tenant?.primaryFramework === 'CMMC_L2' && created.body?.tenant?.enabledFrameworks?.includes('CMMC_L2'), 'frameworks recorded, primary always enabled');
+  assert(created.body?.tenant?.primaryFramework === 'CMMC_L1' && created.body?.tenant?.enabledFrameworks?.join() === 'CMMC_L1', 'a self-service tenant gets the default program (CMMC Level 1) whatever it asks for: only a platform administrator sets it', created.body?.tenant);
   assert(created.body?.tenant?.systemName === 'Acme Defense Systems Enclave', 'defaults the system name');
 
   console.log('\n--- The founder can really use the tenant (access + role come from tenant_users) ---');

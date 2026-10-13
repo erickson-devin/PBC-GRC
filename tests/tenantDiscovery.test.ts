@@ -1,4 +1,6 @@
 import './testEnv';
+// Framework (program) settings are decided by platform administrators: this test's actor is listed as one.
+process.env.PLATFORM_ADMIN_EMAILS = 'u_alice@test.mil';
 import { server } from '../server/index';
 
 /**

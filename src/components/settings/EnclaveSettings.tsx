@@ -27,6 +27,8 @@ import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentG
 import { useFipsModules } from '../../hooks/useFipsModules';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
+import { programSummary } from '../../data/programs';
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
   edrSolution: 'DEFENDER_FOR_ENDPOINT',
@@ -82,7 +84,7 @@ export const EnclaveSettings: React.FC = () => {
   };
 
   const handleCopyPolicy = (markdown: string) => {
-    navigator.clipboard.writeText(markdown);
+    copyToClipboard(markdown);
     setCopiedPolicy(true);
     setTimeout(() => setCopiedPolicy(false), 2000);
   };
@@ -653,8 +655,8 @@ export const EnclaveSettings: React.FC = () => {
             <span className="text-emerald-400 font-bold">{currentTenant.samStatus}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400 block text-xs">License Tier</span>
-            <span className="text-cyan-300 font-bold">{currentTenant.licenseTier || 'DEFENSE_PRO'}</span>
+            <span className="text-slate-400 block text-xs">Assessment Program</span>
+            <span className="text-cyan-300 font-bold">{programSummary(currentTenant.primaryFramework, currentTenant.enabledFrameworks).text}</span>
           </div>
         </div>
       </div>

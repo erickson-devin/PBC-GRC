@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
-import { LicenseTier, getLicenseTierBadge } from '../../types/tenant';
+import { PlanId, getPlanBadge } from '../../data/marketingPlans';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
@@ -31,7 +31,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
   const [workEmail, setWorkEmail] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [cageCode, setCageCode] = useState('');
-  const [plan, setPlan] = useState<LicenseTier>(selectedLicensePlan || 'DEFENSE_PRO');
+  const [plan, setPlan] = useState<PlanId>(selectedLicensePlan || 'DEFENSE_PRO');
   const [inScopeUsers, setInScopeUsers] = useState('1–15 Users');
   const [targetTimeline, setTargetTimeline] = useState('Within 30 Days (Immediate)');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -415,7 +415,7 @@ export const LicenseRequestModal: React.FC<LicenseRequestModalProps> = ({ onOpen
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                   <span className="text-slate-400">Requested Plan:</span>
                   <span className="font-bold text-white">
-                    {getLicenseTierBadge(plan).badge}
+                    {getPlanBadge(plan).badge}
                   </span>
                 </div>
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">

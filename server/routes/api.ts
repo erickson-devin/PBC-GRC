@@ -6,6 +6,7 @@ import evidenceRouter from './evidence';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { getDatabaseStatus } from '../db';
+import { isPlatformAdmin, platformAdminEmails } from '../auth/platformAdmin';
 
 const router = Router();
 
@@ -27,6 +28,23 @@ router.use('/auth', authRouter);
 
 // Invitation redemption by the invitee: preview (public, token only) and accept (authenticated)
 router.use('/invites', invitesRouter);
+
+// Who the signed-in user is on this platform. `isPlatformAdmin` is decided by the server (PLATFORM_ADMIN_EMAILS), so the
+// UI shows the administration console only to people the server will actually let use it.
+router.get('/me', authOnlyMiddleware, (req, res) => {
+  const user = req.user!;
+  res.json({ user: { id: user.uid, email: user.email ?? null, name: user.name ?? null }, isPlatformAdmin: isPlatformAdmin(user) });
+});
+
+// The platform administrators of this installation, for the administration console. Read-only: they are configured on
+// the server (PLATFORM_ADMIN_EMAILS), not through the API. Visible only to administrators.
+router.get('/platform/admins', authOnlyMiddleware, (req, res) => {
+  if (!isPlatformAdmin(req.user)) {
+    res.status(403).json({ error: 'Forbidden: only a platform administrator can see who the platform administrators are' });
+    return;
+  }
+  res.json({ admins: [...platformAdminEmails()].sort().map((email) => ({ email })) });
+});
 
 // Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
 // tenants they belong to, or creates one and becomes its first TENANT_OWNER.

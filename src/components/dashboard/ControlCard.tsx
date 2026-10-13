@@ -29,6 +29,7 @@ import { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
 import { FailingAssetInfo } from '../../types/telemetry';
 
 import { activateOnKey } from '../../utils/a11y';
+import { copyToClipboard } from '../../utils/clipboard';
 interface ControlCardProps {
   control: FrameworkControlDefinition;
   domainInfo: DomainInfo | FrameworkDomainInfo | any;
@@ -179,7 +180,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
   };
 
   const handleCopyHash = (hash: string) => {
-    navigator.clipboard.writeText(hash);
+    copyToClipboard(hash);
     setCopiedHash(hash);
     setTimeout(() => setCopiedHash(null), 2000);
   };

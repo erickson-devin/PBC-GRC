@@ -57,8 +57,6 @@ export const TABLES_SQL = `
 
   ALTER TABLE tenants ADD COLUMN IF NOT EXISTS enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}';
   ALTER TABLE tenants ADD COLUMN IF NOT EXISTS primary_framework VARCHAR(64) DEFAULT 'CMMC_L1';
-  ALTER TABLE tenants ADD COLUMN IF NOT EXISTS license_tier VARCHAR(64) DEFAULT 'FOUNDATIONAL';
-  ALTER TABLE tenants ADD COLUMN IF NOT EXISTS annual_price NUMERIC DEFAULT 3500;
 
   -- Membership & RBAC: who belongs to which tenant, and with which role.
   CREATE TABLE IF NOT EXISTS tenant_users (

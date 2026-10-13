@@ -23,6 +23,7 @@ import {
 } from '../../data/audit/auditLogger';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard as copyText } from '../../utils/clipboard';
 export const AuditTrailViewer: React.FC = () => {
   const { currentTenant } = useTenant();
 
@@ -76,7 +77,7 @@ export const AuditTrailViewer: React.FC = () => {
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    copyText(text).catch((err) => console.warn('Clipboard write failed:', err));
     setCopiedHash(text);
     setTimeout(() => setCopiedHash(null), 2000);
   };

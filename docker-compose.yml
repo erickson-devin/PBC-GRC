@@ -9,6 +9,11 @@ version: '3.8'
 #   APP_DB_PASSWORD     password of the application's database role
 #   LOCAL_AUTH_SECRET   >= 32 random characters used to sign sessions (e.g. `openssl rand -hex 32`)
 #
+# Optional:
+#   PLATFORM_ADMIN_EMAILS  comma-separated e-mail addresses of the platform administrators of this installation. Only they can
+#                          provision tenants for a specific assessment program (which frameworks a tenant may use) and see the
+#                          administration console. Unset = nobody: every tenant gets the default program (CMMC Level 1).
+#
 # Security model: the app connects as APP_DB_USER, an ordinary role (NOSUPERUSER, NOBYPASSRLS). PostgreSQL
 # superusers bypass row-level security, so using POSTGRES_USER here would silently disable tenant isolation.
 # The init script only runs when the data volume is first created; for an existing volume see docs/ON_PREM_DATABASE.md.
@@ -66,6 +71,8 @@ services:
       # Air-gapped identity: bcrypt passwords + locally signed JWTs. No Firebase / Google / Microsoft required.
       AUTH_MODE: ${AUTH_MODE:-local}
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:?Set LOCAL_AUTH_SECRET (>= 32 random characters)}
+      # Platform administrators (see the note at the top of this file)
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
       # Client-side configuration
       VITE_API_URL: ""
     ports:

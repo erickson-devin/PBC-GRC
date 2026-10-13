@@ -37,7 +37,6 @@ export interface EnclaveHandoverPackage {
     domain?: string;
     primaryFramework: string;
     enabledFrameworks: string[];
-    licenseTier?: string;
     createdAt: string;
     offboardedAt: string;
   };
@@ -162,7 +161,6 @@ export async function generateEnclaveHandoverPackage(
       domain: tenant.domain,
       primaryFramework: primaryFw,
       enabledFrameworks: tenant.enabledFrameworks || [primaryFw],
-      licenseTier: tenant.licenseTier,
       createdAt: tenant.createdAt,
       offboardedAt: now,
     },

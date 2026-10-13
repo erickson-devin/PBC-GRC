@@ -23,6 +23,7 @@ import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 interface TeamSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -119,7 +120,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const handleCopyInvite = async (token: string, memberId: string) => {
     const inviteUrl = buildInviteUrl(token);
     try {
-      await navigator.clipboard.writeText(inviteUrl);
+      await copyToClipboard(inviteUrl);
       setCopiedTokenId(memberId);
       setTimeout(() => setCopiedTokenId(null), 2000);
     } catch (err) {
@@ -152,7 +153,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     runAction(async () => {
       const res = await resendInvitation(invitationId);
       try {
-        await navigator.clipboard.writeText(res.inviteUrl);
+        await copyToClipboard(res.inviteUrl);
         setNotice('New invitation link created and copied to the clipboard. The previous link no longer works.');
       } catch {
         setNotice('New invitation link created: ' + res.inviteUrl);

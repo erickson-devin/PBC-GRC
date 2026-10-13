@@ -45,7 +45,7 @@ const srvInv = (over: Partial<ServerInvitation> & { id: string }): ServerInvitat
   status: 'PENDING',
   ...over,
 });
-const tenant = { name: 'Acme', systemName: 'Sys', cageCode: '1ABC2', licenseTier: 'DEFENSE_PRO' } as Pick<Tenant, 'name' | 'systemName' | 'cageCode' | 'licenseTier'>;
+const tenant = { name: 'Acme', systemName: 'Sys', cageCode: '1ABC2', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2'] } as Pick<Tenant, 'name' | 'systemName' | 'cageCode' | 'primaryFramework' | 'enabledFrameworks'>;
 
 function pureTests() {
   console.log('--- parseServerInvitations / parseServerMembers ---');

@@ -18,6 +18,7 @@ import { GcsService } from '../../services/gcsService';
 import { findControlDefinition } from '../../data/frameworks';
 
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
+import { copyToClipboard } from '../../utils/clipboard';
 const EvidencePreviewModalContent: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
   const { currentTenant } = useTenant();
@@ -93,13 +94,13 @@ const EvidencePreviewModalContent: React.FC = () => {
 
   const handleCopyHash = () => {
     if (!previewEvidence.fileHash) return;
-    navigator.clipboard.writeText(previewEvidence.fileHash);
+    copyToClipboard(previewEvidence.fileHash);
     setCopiedHash(true);
     setTimeout(() => setCopiedHash(false), 2000);
   };
 
   const handleCopyGcs = () => {
-    navigator.clipboard.writeText(gcsUri);
+    copyToClipboard(gcsUri);
     setCopiedGcs(true);
     setTimeout(() => setCopiedGcs(false), 2000);
   };

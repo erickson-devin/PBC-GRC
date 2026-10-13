@@ -14,6 +14,7 @@ import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 import { DEFAULT_GCP_CONFIG } from '../../services/gcsService';
 
+import { copyToClipboard } from '../../utils/clipboard';
 export const SSPBuilder: React.FC = () => {
   const {
     state,
@@ -61,7 +62,7 @@ export const SSPBuilder: React.FC = () => {
       }
     }
 
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

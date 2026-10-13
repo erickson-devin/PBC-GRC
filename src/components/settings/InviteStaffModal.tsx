@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   X,
   Mail,
@@ -17,6 +17,7 @@ import { TenantInvitation } from '../../types/tenant';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
+import { copyToClipboard } from '../../utils/clipboard';
 interface InviteStaffModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -35,6 +36,8 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const linkInputRef = useRef<HTMLInputElement>(null);
 
   const [createdResult, setCreatedResult] = useState<{
     invitation: TenantInvitation;
@@ -79,11 +82,15 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   const handleCopy = async () => {
     if (!createdResult?.inviteUrl) return;
     try {
-      await navigator.clipboard.writeText(createdResult.inviteUrl);
+      await copyToClipboard(createdResult.inviteUrl);
+      setCopyFailed(false);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
     } catch (err) {
       console.warn('Clipboard write failed:', err);
+      setCopyFailed(true);
+      linkInputRef.current?.focus();
+      linkInputRef.current?.select();
     }
   };
 
@@ -143,8 +150,12 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 </label>
                 <div className="flex items-center gap-2">
                   <input
+                    ref={linkInputRef}
                     type="text"
                     readOnly
+                    aria-label="Invitation link"
+                    onFocus={(e) => e.currentTarget.select()}
+                    onClick={(e) => e.currentTarget.select()}
                     value={createdResult.inviteUrl}
                     className="w-full px-3 py-2 text-xs bg-slate-950 border border-brand-500/40 rounded-xl text-slate-200 font-mono select-all focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
@@ -169,6 +180,11 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                     )}
                   </button>
                 </div>
+                {copyFailed && (
+                  <p role="alert" className="text-xs text-amber-300">
+                    Your browser blocked automatic copying (common on non-HTTPS addresses). The link is selected: press Ctrl+C (Cmd+C on Mac).
+                  </p>
+                )}
                 <p className="text-xs text-slate-400 flex items-center gap-1">
                   <Lock className="w-3 h-3 text-slate-400" />
                   Token valid for 14 days • Single-use cryptographic claim

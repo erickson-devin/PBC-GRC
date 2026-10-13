@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type pg from 'pg';
-import { queryWithTenant } from '../db';
+import { getTenantProgram, queryWithTenant } from '../db';
+import { ensureControlInProgram, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
   ComplianceFramework,
@@ -158,9 +159,15 @@ router.get('/mappings', (req: Request, res: Response): void => {
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
-  const { framework, baseline, overlay } = normalizeFrameworkParams(req.query);
 
   try {
+    // Framework segregation: a tenant serves the frameworks of its program. With no framework asked for, its primary one.
+    const program = await getTenantProgram(tenantId);
+    const asked = req.query.framework_id || req.query.framework;
+    const query = !asked && program ? { ...req.query, framework_id: program.primaryFramework } : req.query;
+    const { framework, baseline, overlay } = normalizeFrameworkParams(query);
+    if (!(await ensureFrameworkEnabled(req, res, framework, program))) return;
+
     // 1. Resolve canonical controls for the requested framework and overlay
     const frameworkControls = getFrameworkControls(framework, baseline, overlay);
     const targetControlIds = frameworkControls.map(c => c.id);
@@ -285,6 +292,8 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
   }
 
   const effectiveUser = updatedBy || req.user?.name || req.user?.email || 'Compliance Assessor';
+
+  if (!(await ensureControlInProgram(req, res, String(controlId)))) return;
 
   try {
     const upsertQuery = `
