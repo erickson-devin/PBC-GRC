@@ -8,7 +8,8 @@ import { ensureActiveTenant } from './tenantGuards';
 import { commitReviewedSuggestions } from '../ssp/commit';
 import { MAX_UPLOAD_BYTES, detectDocumentKind } from '../ssp/extract';
 import { deleteUploadedPolicy, readUploadedPolicy, saveUploadedPolicy } from '../ssp/policyVault';
-import { ANALYZER_ID, enqueueImport, hashLiveControl, isJobActive, readLiveControls, recoverStaleJobs } from '../ssp/runner';
+import { OllamaClient } from '../ssp/ollama';
+import { ANALYZER_ID, aiAnalyzerId, cancelJob, enqueueImport, hashLiveControl, isJobActive, readLiveControls, recoverStaleJobs } from '../ssp/runner';
 import { createJob, deleteJob, getJob, getStaged, listJobs, listStaged, newId, updateStaged } from '../ssp/store';
 import {
   SSP_IMPORT_FRAMEWORKS,
@@ -52,9 +53,13 @@ const cleanFileName = (name: string): string => path.basename(name.replace(/\\/g
 router.get('/capabilities', async (req: Request, res: Response): Promise<void> => {
   const program = await getTenantProgram(req.tenantId!);
   const enabled = program?.enabledFrameworks ?? ['CMMC_L1'];
+  const ai = await new OllamaClient().getStatus();
+  const aiAvailable = ai.enabled && ai.reachable && ai.modelPresent;
   res.json({
     analyzer: ANALYZER_ID,
-    ai: false,
+    /** The local language model can be used for an import right now. */
+    ai: aiAvailable,
+    aiStatus: { enabled: ai.enabled, available: aiAvailable, model: ai.model, ...(aiAvailable ? {} : { reason: ai.reason ?? 'The AI analysis is not available.' }) },
     maxUploadBytes: MAX_UPLOAD_BYTES,
     acceptedTypes: ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
     frameworks: SSP_IMPORT_FRAMEWORKS.filter((f) => enabled.includes(f)),
@@ -77,8 +82,10 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * POST /: upload a PDF or DOCX (multipart field "file") and the framework to map it to (field "framework": CMMC_L1 or
- * CMMC_L2, which must be part of the tenant's assessment program). Responds 202 with the job; the work happens in the
- * background and the job is polled until READY_FOR_REVIEW.
+ * CMMC_L2, which must be part of the tenant's assessment program). Field "analysis" is "rules" (default) or "ai": with "ai"
+ * the local model must be reachable and have its model installed, which is checked BEFORE the upload is accepted (409
+ * ai_unavailable otherwise). Responds 202 with the job; the work happens in the background and the job is polled until
+ * READY_FOR_REVIEW.
  */
 router.post('/', (req: Request, res: Response): void => {
   if (uploadsInFlight >= MAX_CONCURRENT_UPLOADS) {
@@ -106,6 +113,20 @@ router.post('/', (req: Request, res: Response): void => {
         return;
       }
       if (!(await ensureFrameworkEnabled(req, res, framework))) return;
+
+      const analysis = req.body?.analysis ?? 'rules';
+      if (analysis !== 'rules' && analysis !== 'ai') {
+        res.status(400).json({ error: 'analysis must be "rules" or "ai"' });
+        return;
+      }
+      const ollama = new OllamaClient();
+      if (analysis === 'ai') {
+        const status = await ollama.getStatus(true);
+        if (!status.enabled || !status.reachable || !status.modelPresent) {
+          res.status(409).json({ error: `The AI analysis is not available: ${status.reason ?? 'unknown reason'}`, code: 'ai_unavailable', reason: status.code });
+          return;
+        }
+      }
 
       const running = (await listJobs(tenantId)).find((j) => !SSP_JOB_TERMINAL.includes(j.status) && isJobActive(j.id));
       if (running) {
@@ -135,7 +156,7 @@ router.post('/', (req: Request, res: Response): void => {
         framework,
         storedProvider: stored.provider,
         storedPath: stored.path,
-        analyzer: ANALYZER_ID,
+        analyzer: analysis === 'ai' ? aiAnalyzerId(ollama.config.model) : ANALYZER_ID,
       });
       enqueueImport(tenantId, job.id);
       console.log(`[SSP Import] ${reviewerName(req)} uploaded "${fileName}" (${file.size} bytes) for ${framework} in ${tenantId}: job ${job.id}`);
@@ -147,6 +168,22 @@ router.post('/', (req: Request, res: Response): void => {
       uploadsInFlight--;
     }
   });
+});
+
+/** POST /:jobId/cancel: stops an import that has not finished (a running AI analysis is aborted and nothing is staged). */
+router.post('/:jobId/cancel', async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.tenantId!;
+  const job = await getJob(tenantId, String(req.params.jobId));
+  if (!job) {
+    res.status(404).json({ error: 'Import not found' });
+    return;
+  }
+  if (!(await cancelJob(tenantId, job.id))) {
+    res.status(409).json({ error: 'This import has already finished.' });
+    return;
+  }
+  console.log(`[SSP Import] ${reviewerName(req)} cancelled ${job.id}`);
+  res.status(202).json({ job: await getJob(tenantId, job.id) });
 });
 
 /** GET /:jobId */

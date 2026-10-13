@@ -172,6 +172,7 @@ export async function listJobs(tenantId: string): Promise<SspImportJob[]> {
 
 export interface JobPatch {
   status?: SspJobStatus;
+  analyzer?: string;
   stageProgress?: SspImportJob['stageProgress'];
   pageCount?: number | null;
   charCount?: number | null;
@@ -197,6 +198,7 @@ export async function updateJob(tenantId: string, id: string, patch: JobPatch): 
     sets.push(`${col} = $${vals.length}${json ? '::jsonb' : ''}`);
   };
   if (patch.status !== undefined) add('status', patch.status);
+  if (patch.analyzer !== undefined) add('analyzer', patch.analyzer);
   if (patch.stageProgress !== undefined) add('stage_progress', patch.stageProgress, true);
   if (patch.pageCount !== undefined) add('page_count', patch.pageCount);
   if (patch.charCount !== undefined) add('char_count', patch.charCount);

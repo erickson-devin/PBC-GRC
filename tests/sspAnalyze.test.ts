@@ -3,7 +3,8 @@ import { mapDocumentToControls } from '../server/ssp/controlMapper';
 import { buildGapAnalysis, objectivesFor } from '../server/ssp/gapAnalysis';
 import { OllamaClient, OllamaError, __resetOllamaCacheForTests, type OllamaConfig } from '../server/ssp/ollama';
 import { candidatesForSection } from '../server/ssp/retrieval';
-import { startFakeOllama, type FakeChatRequest } from './fakeOllama';
+import { startFakeOllama } from './fakeOllama';
+import { scriptedModel } from './fakeSspModel';
 
 /**
  * The AI analysis: retrieval of candidate controls, extraction with a (fake) local model, grounding, and gap analysis.
@@ -40,56 +41,6 @@ const DOC = [
   '[[HALLUCINATE]] Badge readers control entry to the server room and the readers are audited every month by the security manager.',
 ].join('\n');
 
-// ---------------------------------------------------------------------------------------------- the scripted model
-
-const sentenceAfterHeading = (section: string): string => {
-  const body = section.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
-  return (body.match(/[^.!?]+[.!?]/)?.[0] ?? body).trim();
-};
-const grab = (user: string, from: string, to: string): string => user.slice(user.indexOf(from) + from.length, user.lastIndexOf(to)).trim();
-
-function scripted(req: FakeChatRequest): unknown {
-  if (req.system.startsWith('You read one section')) {
-    const controls = [...req.user.matchAll(/^- ([A-Z]{2}\.L[12]-3\.\d+\.\d+):/gm)].map((m) => m[1]);
-    const section = grab(req.user, '<<<\n', '\n>>>');
-    const quote = sentenceAfterHeading(section);
-    if (section.includes('[[BADJSON]]')) return { __raw: 'Sure, here you go' };
-    if (section.includes('[[SHAPE]]')) return { findings: 'many' };
-    if (section.includes('[[BADID]]')) return { findings: [{ controlId: 'ZZ.L9-9.9.9', implementation: 'Made up.', quote, coverage: 'FULL', confidence: 0.9 }] };
-    if (section.includes('[[NOTOFFERED]]')) return { findings: [{ controlId: controls.includes('MP.L1-3.8.3') ? 'PE.L1-3.10.5' : 'MP.L1-3.8.3', implementation: 'Not asked about.', quote, coverage: 'FULL', confidence: 0.9 }] };
-    const findings: unknown[] = [];
-    for (const id of controls) {
-      const number = id.slice(id.lastIndexOf('-') + 1);
-      const named = section.includes(id) || section.includes(number);
-      const keyword = id === 'MP.L1-3.8.3' && /sanitized/.test(section);
-      if (!named && !keyword) continue;
-      if (section.includes('[[HALLUCINATE]]')) {
-        findings.push({ controlId: id, implementation: 'Badge readers are audited.', quote: 'Every visitor is escorted and the escort signs the visitor log at the front desk', coverage: 'FULL', confidence: 0.95 });
-      } else if (section.includes('[[PARAPHRASE]]')) {
-        findings.push({ controlId: id, implementation: 'Paraphrased.', quote: 'Users may only reach systems after their manager signs off', coverage: 'FULL', confidence: 0.9 });
-      } else {
-        const q = keyword ? (section.match(/[^.]*sanitized[^.]*\./)?.[0] ?? quote).trim() : quote;
-        findings.push({ controlId: id, implementation: `The plan says: ${q.slice(0, 90)}`, quote: q, coverage: 'FULL', confidence: 0.9 });
-      }
-    }
-    return { findings };
-  }
-  // gap analysis
-  const letters = [...req.user.matchAll(/^\[([a-z])\] /gm)].map((m) => m[1]);
-  const excerpts = grab(req.user, 'DOCUMENT EXCERPTS\n<<<\n', '\n>>>');
-  if (excerpts.includes('[[GAPFAIL]]')) return { __raw: 'no' };
-  const first = sentenceAfterHeading(excerpts);
-  return {
-    summary: 'The excerpts describe who may have access and how it is reviewed.',
-    objectives: letters.map((l, i) => ({
-      letter: l.toUpperCase(),
-      status: i === 0 ? 'ADDRESSED' : i === 1 ? 'PARTIAL' : 'NOT_ADDRESSED',
-      evidence: i === 0 ? first : i === 1 ? (excerpts.includes('[[BADEVIDENCE]]') ? 'The organisation maintains a perfect list of every authorised user at all times' : first) : '',
-    })),
-    gaps: [{ severity: 'HIGH', objective: letters[letters.length - 1] ?? '', missingElement: 'Device identification', recommendation: 'Say how devices are identified and authenticated.' }],
-  };
-}
-
 async function main() {
   console.log('--- Explicit references and retrieval ---');
   assert(JSON.stringify(explicitControlIds('See AC.L2-3.1.5 and 3.5.1 and 3.99.1', 'CMMC_L2').sort()) === JSON.stringify(['AC.L2-3.1.5', 'IA.L1-3.5.1']), 'identifiers and numbers in a section become control ids of the framework');
@@ -102,7 +53,7 @@ async function main() {
   assert(objectivesFor('AC.L1-3.1.1', 'CMMC_L1').length >= 3 && objectivesFor('AC.L1-3.1.1', 'CMMC_L1')[0].letter === 'a', 'the official 800-171A objectives (a, b, c...) are used for the comparison');
 
   const fake = await startFakeOllama();
-  fake.onChat = scripted;
+  fake.onChat = scriptedModel;
   const cfg: OllamaConfig = { enabled: true, baseUrl: fake.url, model: 'llama3.1:8b', numCtx: 8192, timeoutMs: 5000, allowRemote: false };
   const client = new OllamaClient(cfg);
   const run = (text: string, over: Partial<Parameters<typeof analyzeDocumentWithAi>[0]> = {}) =>
