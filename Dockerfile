@@ -1,10 +1,10 @@
 # ==============================================================================
 # Event Horizon: Singularity — Air-Gapped & On-Premises Enclave Dockerfile
-# Multi-Stage Build: Vite Frontend Builder + Node 20-Alpine Express API Host
+# Multi-Stage Build: Vite Frontend Builder + Node 22-Alpine Express API Host
 # ==============================================================================
 
 # ── Stage 1: Build Frontend Vite Application ──────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy dependency manifests and install full development dependencies
@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Production Air-Gapped / On-Premises Runtime ──────────────────────
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 # Set default production environment variables
