@@ -8,11 +8,9 @@ import {
   AlertCircle,
   Building2,
   CheckCircle2,
-  UserCheck,
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { PRESET_USERS } from '../../context/TenantContext';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AuthModalProps {
@@ -24,14 +22,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
     isAuthModalOpen,
     closeAuthModal,
     authModalMode,
-    openLicenseModal,
     authMode,
     loginWithMicrosoft,
     loginWithGoogle,
     loginWithEmailPassword,
     sendMagicLink,
     sendPasswordReset,
-    loginAsPreset,
     loading,
     authError,
     clearAuthError,
@@ -347,59 +343,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
               )}
             </form>
           )}
-
-          {/* New Contractor Onboarding Pathway (License Request / Sales Call) */}
-          <div className="mt-6 pt-5 border-t border-slate-800">
-            <div className="p-3 rounded-2xl bg-gradient-to-br from-brand-950/40 via-slate-900/60 to-slate-950 border border-brand-500/25 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-brand-300 uppercase tracking-wide">
-                  New Defense Contractor?
-                </span>
-                <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                  From $3,500 / yr
-                </span>
-              </div>
-              <p className="text-xs text-slate-300">
-                Purchase an enclave license and schedule your onboarding call with our CMMC solutions architects.
-              </p>
-              <button
-                type="button"
-                onClick={() => openLicenseModal('DEFENSE_PRO')}
-                className="w-full py-2 px-3 rounded-xl bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/40 text-brand-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <span>Request Enclave License & Sales Call</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Evaluator Demo Personas (Instant Test-Drive) */}
-          <div className="mt-4 pt-3 border-t border-slate-800/80">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                <UserCheck className="w-3 h-3 text-brand-400" />
-                Evaluator Demo Personas:
-              </span>
-              <span className="text-xs text-slate-400">1-Click Sandbox Login</span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-1.5">
-              {PRESET_USERS.map((preset) => (
-                <button
-                  key={preset.id}
-                  onClick={() => loginAsPreset(preset)}
-                  className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-left transition-colors group"
-                >
-                  <span className="block text-xs font-bold text-slate-200 group-hover:text-brand-300 truncate">
-                    {preset.name.split(' ')[0]}
-                  </span>
-                  <span className="block text-xs text-slate-400 truncate">
-                    {preset.roles['tenant-vanguard-01'] === 'TENANT_OWNER' ? 'Owner' : 'Assessor'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* Legal Links */}
           <div className="mt-3 text-center text-xs text-slate-400">

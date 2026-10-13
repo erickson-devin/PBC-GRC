@@ -18,7 +18,6 @@ import {
   type AuthUserLike,
 } from '../config/firebase';
 import { User, AuthProviderType } from '../types/tenant';
-import type { PlanId } from '../data/marketingPlans';
 import { useTenant, PRESET_USERS } from './TenantContext';
 import { buildDevMockIdToken } from '../config/devAuthToken';
 import { ApiClient, AuthMode } from '../services/apiClient';
@@ -37,8 +36,6 @@ interface AuthContextType {
   authError: string | null;
   isAuthModalOpen: boolean;
   authModalMode: 'signin' | 'magiclink';
-  isLicenseModalOpen: boolean;
-  selectedLicensePlan: PlanId;
   redirectPath: string | null;
   loginWithMicrosoft: () => Promise<void>;
   loginWithGoogle: () => Promise<void>;
@@ -49,12 +46,9 @@ interface AuthContextType {
   sendMagicLink: (email: string) => Promise<void>;
   signInWithMagicLink: (email: string) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
-  loginAsPreset: (presetUser: User) => void;
   logout: () => Promise<void>;
   openAuthModal: (mode?: 'signin' | 'magiclink', redirectUrl?: string) => void;
   closeAuthModal: () => void;
-  openLicenseModal: (plan?: PlanId) => void;
-  closeLicenseModal: () => void;
   clearAuthError: () => void;
 }
 
@@ -95,8 +89,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Modals & Navigation
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'magiclink'>('signin');
-  const [isLicenseModalOpen, setIsLicenseModalOpen] = useState<boolean>(false);
-  const [selectedLicensePlan, setSelectedLicensePlan] = useState<PlanId>('DEFENSE_PRO');
   const [redirectPath, setRedirectPath] = useState<string | null>(null);
 
   // Sync user and token to storage
@@ -356,7 +348,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: unknown) {
       console.error('Email login failed:', err);
       if (errorCode(err) === 'auth/user-not-found' || errorCode(err) === 'auth/wrong-password' || errorCode(err) === 'auth/invalid-credential') {
-        setAuthError('Invalid credentials. If you are a new contractor, please request an enclave license.');
+        setAuthError('Invalid credentials. If you do not have an account yet, ask your platform administrator for an invitation.');
       } else if (errorCode(err) === 'auth/configuration-not-found' || errorCode(err) === 'auth/invalid-api-key') {
         // Fallback simulation
         await handleUserSession(email, null, 'password');
@@ -467,21 +459,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [authMode]);
 
   /**
-   * One-Click Demo Persona Switcher
-   */
-  const loginAsPreset = useCallback((presetUser: User) => {
-    setCurrentUser(presetUser);
-    setIdToken(buildDevMockIdToken({ sub: presetUser.id, email: presetUser.email }, 7200));
-    setIsAuthenticated(true);
-    setAuthError(null);
-    setIsAuthModalOpen(false);
-    const tenantIds = Object.keys(presetUser.roles);
-    if (tenantIds.length > 0) {
-      syncAuthUser(presetUser, tenantIds[0]);
-    }
-  }, [syncAuthUser]);
-
-  /**
    * Sign Out
    */
   const logout = useCallback(async () => {
@@ -497,7 +474,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem(AUTH_USER_KEY);
       localStorage.removeItem(AUTH_TOKEN_KEY);
       setLoading(false);
-      // Route back to public site
+      // Back to the login screen (the router resolves an empty hash)
       if (typeof window !== 'undefined') {
         window.location.hash = '';
       }
@@ -517,16 +494,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
   }, []);
 
-  const openLicenseModal = useCallback((plan: PlanId = 'DEFENSE_PRO') => {
-    setSelectedLicensePlan(plan);
-    setIsLicenseModalOpen(true);
-    setIsAuthModalOpen(false);
-  }, []);
-
-  const closeLicenseModal = useCallback(() => {
-    setIsLicenseModalOpen(false);
-  }, []);
-
   const clearAuthError = useCallback(() => {
     setAuthError(null);
   }, []);
@@ -541,8 +508,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authError,
     isAuthModalOpen,
     authModalMode,
-    isLicenseModalOpen,
-    selectedLicensePlan,
     redirectPath,
     loginWithMicrosoft,
     loginWithGoogle,
@@ -551,12 +516,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sendMagicLink,
     signInWithMagicLink,
     sendPasswordReset,
-    loginAsPreset,
     logout,
     openAuthModal,
     closeAuthModal,
-    openLicenseModal,
-    closeLicenseModal,
     clearAuthError,
   }), [
     authMode,
@@ -568,8 +530,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     authError,
     isAuthModalOpen,
     authModalMode,
-    isLicenseModalOpen,
-    selectedLicensePlan,
     redirectPath,
     loginWithMicrosoft,
     loginWithGoogle,
@@ -578,12 +538,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sendMagicLink,
     signInWithMagicLink,
     sendPasswordReset,
-    loginAsPreset,
     logout,
     openAuthModal,
     closeAuthModal,
-    openLicenseModal,
-    closeLicenseModal,
     clearAuthError,
   ]);
 

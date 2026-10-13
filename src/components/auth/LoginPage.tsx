@@ -1,21 +1,17 @@
 import React, { useEffect } from 'react';
 import {
   Lock,
-  ArrowLeft,
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
-import { PRESET_USERS } from '../../context/TenantContext';
 
 interface LoginPageProps {
   onSuccessRedirect?: (path?: string) => void;
-  onExitToLanding?: () => void;
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onSuccessRedirect,
-  onExitToLanding,
   onOpenLegal,
 }) => {
   const {
@@ -25,8 +21,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     loginWithGoogle,
     loginWithEmailPassword,
     sendMagicLink,
-    loginAsPreset,
-    openLicenseModal,
     loading,
     authError,
     clearAuthError,
@@ -78,26 +72,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       {/* Top Bar */}
       <header className="px-6 py-4 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md flex items-center justify-between z-10">
-        <button type="button" 
-          onClick={onExitToLanding}
-          className="text-left flex items-center gap-2.5 cursor-pointer group"
-        >
+        <div className="text-left flex items-center gap-2.5">
           <BrandLogo size="sm" />
           <div>
             <span className="font-extrabold text-sm text-white tracking-tight">Event Horizon: Singularity</span>
             <span className="text-xs text-cyan-400 block font-mono">Pitch Black Cyber</span>
           </div>
-        </button>
-
-        {onExitToLanding && (
-          <button
-            onClick={onExitToLanding}
-            className="text-xs font-semibold text-slate-400 hover:text-white flex items-center gap-1.5 transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Public Site & Pricing</span>
-          </button>
-        )}
+        </div>
       </header>
 
       {/* Main Authentication Container */}
@@ -252,46 +233,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </button>
               </form>
             )}
-
-            {/* License Request / Sales Call Onboarding Card */}
-            <div className="mt-6 pt-5 border-t border-slate-800 text-xs">
-              <div className="p-3 rounded-2xl bg-brand-950/30 border border-brand-500/20 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-brand-300 font-bold uppercase tracking-wider text-xs">
-                    Need Enclave Licensing?
-                  </span>
-                  <span className="font-mono text-xs text-emerald-400 font-semibold">
-                    From $3,500 / yr
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400">
-                  Acquire an enclave license for your team and schedule an onboarding session with our defense CISO architects.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => openLicenseModal('DEFENSE_PRO')}
-                  className="w-full py-2 px-3 rounded-xl bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/40 font-bold text-xs transition-colors"
-                >
-                  Request License & Schedule Call
-                </button>
-              </div>
-            </div>
-
-            {/* Demo Presets */}
-            <div className="mt-4 pt-3 border-t border-slate-800 text-xs">
-              <span className="text-slate-400 block mb-1 font-mono">1-Click Test Personas:</span>
-              <div className="grid grid-cols-3 gap-1">
-                {PRESET_USERS.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => loginAsPreset(p)}
-                    className="p-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 font-medium truncate"
-                  >
-                    {p.name.split(' ')[0]}
-                  </button>
-                ))}
-              </div>
-            </div>
 
           </div>
         </div>

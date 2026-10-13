@@ -7,7 +7,6 @@ import {
   Sparkles,
   CheckCircle2,
   Lock,
-  Globe,
   FileCheck,
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
@@ -20,12 +19,9 @@ import { FrameworkSwitcher } from './FrameworkSwitcher';
 import { UserProfileDropdown } from '../auth/UserProfileDropdown';
 
 interface HeaderProps {
-  onExitToLanding?: () => void;
-  isSandboxMode?: boolean;
-  onRequestLicense?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, onRequestLicense }) => {
+export const Header: React.FC<HeaderProps> = () => {
   const {
     state,
     metrics,
@@ -83,12 +79,8 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold text-sm sm:text-base text-white tracking-tight">Event Horizon: Singularity</span>
-                <span className={`text-xs uppercase font-bold px-1.5 py-0.5 rounded-full border ${
-                  isSandboxMode
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                }`}>
-                  {isSandboxMode ? 'SANDBOX' : 'LIVE ENCLAVE'}
+                <span className="text-xs uppercase font-bold px-1.5 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+                  LIVE ENCLAVE
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-medium">
@@ -207,33 +199,9 @@ export const Header: React.FC<HeaderProps> = ({ onExitToLanding, isSandboxMode, 
               </button>
             )}
 
-            {/* Request License Callout in Sandbox Mode */}
-            {isSandboxMode && onRequestLicense && (
-              <button
-                onClick={onRequestLicense}
-                title="Schedule sales onboarding call and configure licensed boundary"
-                className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span className="hidden sm:inline">Request Enclave License</span>
-                <span className="sm:hidden">License</span>
-              </button>
-            )}
-
             {/* User Profile & Identity Dropdown */}
             <UserProfileDropdown />
 
-            {/* Exit to Landing Page */}
-            {onExitToLanding && (
-              <button
-                onClick={onExitToLanding}
-                title="Exit to Public Landing Page"
-                className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors flex items-center gap-1.5 text-xs"
-              >
-                <Globe className="w-4 h-4 text-slate-400" />
-                <span className="hidden xl:inline">Public Site</span>
-              </button>
-            )}
           </div>
         </div>
 

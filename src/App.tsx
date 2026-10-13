@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Sparkles, ArrowRight } from 'lucide-react';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AssessmentProvider, useAssessment } from './context/AssessmentContext';
 import { Header } from './components/layout/Header';
-import { getFrameworkTitle } from './data/frameworks';
 import { Sidebar } from './components/layout/Sidebar';
 import { ComplianceOverview } from './components/dashboard/ComplianceOverview';
 import { ControlsList } from './components/controls/ControlsList';
@@ -13,10 +11,8 @@ import { EvidenceVaultView } from './components/vault/EvidenceVaultView';
 import { AssessmentGuidanceView } from './components/guidance/AssessmentGuidanceView';
 import { InspectDocumentModal } from './components/matrix/InspectDocumentModal';
 import { EvidencePreviewModal } from './components/common/EvidencePreviewModal';
-import { LandingPage } from './components/landing/LandingPage';
 import { LoginPage } from './components/auth/LoginPage';
 import { AuthModal } from './components/auth/AuthModal';
-import { LicenseRequestModal } from './components/auth/LicenseRequestModal';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LegalModal, LegalTab } from './components/common/LegalModal';
 import { OnboardingModal } from './components/onboarding/OnboardingModal';
@@ -32,15 +28,12 @@ import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
-type AppRoute = 'landing' | 'login' | 'app' | 'demo' | 'admin' | 'accept-invite';
 
+import { AppRoute, resolveRoot, routeFromUrl } from './utils/appRoute';
 const AppContent: React.FC = () => {
-  const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen, metrics } = useAssessment();
-  const { openLicenseModal } = useAuth();
+  const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const {
-    currentTenant,
-    activeFramework,
-    switchTenant,
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
     needsOnboarding,
@@ -73,41 +66,10 @@ const AppContent: React.FC = () => {
     }
   }, []);
 
-  const getRouteFromUrl = (): AppRoute => {
-    if (typeof window === 'undefined') return 'landing';
-    const path = window.location.pathname.toLowerCase();
-    const hash = window.location.hash.toLowerCase();
-    const search = window.location.search.toLowerCase();
-
-    if (path === '/admin' || hash.startsWith('#admin') || search.includes('view=admin')) {
-      return 'admin';
-    }
-    if (path === '/accept-invite' || hash.startsWith('#accept-invite') || search.includes('view=accept-invite')) {
-      return 'accept-invite';
-    }
-    if (path === '/login' || hash.startsWith('#login') || search.includes('view=login')) {
-      return 'login';
-    }
-    if (
-      path === '/demo' ||
-      path === '/sandbox' ||
-      hash.startsWith('#demo') ||
-      hash.startsWith('#sandbox') ||
-      search.includes('mode=sandbox') ||
-      search.includes('view=demo')
-    ) {
-      return 'demo';
-    }
-    if (
-      path === '/app' ||
-      path === '/dashboard' ||
-      hash.startsWith('#app') ||
-      search.includes('view=app')
-    ) {
-      return 'app';
-    }
-    return 'landing';
-  };
+  const getRouteFromUrl = (): AppRoute =>
+    typeof window === 'undefined'
+      ? 'root'
+      : routeFromUrl({ pathname: window.location.pathname, hash: window.location.hash, search: window.location.search });
 
   const [currentRoute, setCurrentRoute] = useState<AppRoute>(getRouteFromUrl);
 
@@ -128,12 +90,6 @@ const AppContent: React.FC = () => {
 
       const nextRoute = getRouteFromUrl();
       setCurrentRoute(nextRoute);
-      if (nextRoute === 'demo') {
-        // Enforce clean sandbox mode guard
-        setIsOnboardingModalOpen(false);
-        // Automatically ensure primary demo tenant is active
-        switchTenant('tenant-vanguard-01');
-      }
     };
 
 
@@ -154,31 +110,21 @@ const AppContent: React.FC = () => {
       window.removeEventListener('hashchange', handleNavigation);
       window.removeEventListener('popstate', handleNavigation);
     };
-  }, [switchTenant, openLegalModal, setIsOnboardingModalOpen]);
+  }, [openLegalModal, setIsTeamModalOpen]);
+
+  // Unknown paths (and /) never show a page of their own: they go to the app when signed in, to the login page otherwise.
+  useEffect(() => {
+    if (currentRoute !== 'root' || authLoading) return;
+    const next = resolveRoot(isAuthenticated);
+    window.history.replaceState(null, '', next === 'app' ? '/#app' : '/#login');
+    setCurrentRoute(next);
+  }, [currentRoute, authLoading, isAuthenticated]);
 
   const navigateToApp = useCallback(() => {
     if (typeof window !== 'undefined') {
       window.location.hash = 'app';
     }
     setCurrentRoute('app');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
-
-  const navigateToSandbox = useCallback((tenantId: string = 'tenant-vanguard-01') => {
-    setIsOnboardingModalOpen(false);
-    switchTenant(tenantId);
-    if (typeof window !== 'undefined') {
-      window.location.hash = 'demo';
-    }
-    setCurrentRoute('demo');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [switchTenant, setIsOnboardingModalOpen]);
-
-  const navigateToLanding = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.location.hash = '';
-    }
-    setCurrentRoute('landing');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
@@ -192,108 +138,19 @@ const AppContent: React.FC = () => {
 
   return (
     <>
+      {/* 0. Resolving /, or an unknown path, to the app or the login page */}
+      {currentRoute === 'root' && (
+        <div role="status" aria-live="polite" className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center text-sm">
+          Loading…
+        </div>
+      )}
+
       {/* 1. Standalone Login Page Route */}
       {currentRoute === 'login' && (
         <LoginPage
           onSuccessRedirect={navigateToApp}
-          onExitToLanding={navigateToLanding}
           onOpenLegal={openLegalModal}
         />
-      )}
-
-      {/* 2. Public B2B Landing Page Route */}
-      {currentRoute === 'landing' && (
-        <LandingPage
-          onEnterApp={navigateToApp}
-          onLaunchSandbox={navigateToSandbox}
-          onOpenLegal={openLegalModal}
-        />
-      )}
-
-      {/* 3. Direct 1-Click Interactive Sandbox Demo Route (/demo or /sandbox) - Zero Auth Guards */}
-      {currentRoute === 'demo' && (
-        <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500 selection:text-white">
-          {/* Persistent Live Demo Sandbox Top Banner */}
-          <div className="bg-gradient-to-r from-amber-500/20 via-brand-600/25 to-indigo-600/20 border-b border-amber-500/30 px-3 sm:px-6 py-2.5 text-xs flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg backdrop-blur-md sticky top-0 z-50">
-            <div className="flex items-center gap-2 text-center sm:text-left flex-wrap justify-center sm:justify-start">
-              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/25 text-amber-300 font-extrabold border border-amber-500/40 text-[10px] uppercase tracking-wider flex items-center gap-1 shrink-0 shadow-sm">
-                <Sparkles className="w-3 h-3 text-amber-300 animate-pulse motion-reduce:animate-none" />
-                Live Demo Sandbox
-              </span>
-              <span className="text-slate-200 text-xs">
-                LIVE DEMO SANDBOX — Exploring <strong className="text-white">{currentTenant.name}</strong> ({getFrameworkTitle(activeFramework)} Readiness:{' '}
-                <strong className={metrics.isSprsReady ? 'text-emerald-400' : 'text-amber-300'}>
-                  {metrics.completionPercentage}% Met • {metrics.metCount}/{metrics.totalControls} Controls
-                </strong>)
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => openLicenseModal('DEFENSE_PRO')}
-                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-400 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-brand-500/25 flex items-center gap-1.5 transition-all active:scale-[0.98]"
-              >
-                <Sparkles className="w-3 h-3 text-amber-300" />
-                <span>Request Enclave License</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-              <button
-                onClick={navigateToLanding}
-                className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition-colors"
-              >
-                Exit Sandbox
-              </button>
-            </div>
-          </div>
-
-          {/* Top Application Header */}
-          <Header 
-            onExitToLanding={navigateToLanding}
-            isSandboxMode={true}
-            onRequestLicense={() => openLicenseModal('DEFENSE_PRO')}
-          />
-
-          {/* Main Workspace Layout */}
-          <div className="flex-1 flex flex-col md:flex-row max-w-7xl w-full mx-auto">
-            {/* Navigation Sidebar */}
-            <Sidebar />
-
-            {/* Dynamic Tab Content Area */}
-            <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0">
-              {activeTab === 'dashboard' && <ComplianceOverview />}
-              {(activeTab === 'matrix' || activeTab === 'controls') && <ControlsList />}
-              {activeTab === 'assets' && (
-                <div className="space-y-4">
-                  {/* Accretion Discovery Engine Banner */}
-                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-sm">
-                    <span className="flex h-2.5 w-2.5 relative">
-                      <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500" />
-                    </span>
-                    <span>
-                      <strong className="text-cyan-100">Accretion Discovery Engine:</strong>{' '}
-                      Discovery results are ingested at{' '}
-                      <code className="px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-300 font-mono text-xs">/api/v1/tenants/:id/assets/discovery</code>
-                    </span>
-                  </div>
-                  <AssetInventoryManager />
-                </div>
-              )}
-              {activeTab === 'ssp' && <SSPBuilder />}
-              {activeTab === 'policies' && <PolicyLibraryView />}
-              {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
-              {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
-              {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
-              {activeTab === 'rbac' && <TeamSettingsModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
-              {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}
-              {activeTab === 'guidance' && <AssessmentGuidanceView />}
-              {activeTab === 'settings' && <EnclaveSettings />}
-            </main>
-          </div>
-
-          {/* Enclave Modals */}
-          <InspectDocumentModal />
-          <EvidencePreviewModal />
-        </div>
       )}
 
       {/* 4. Protected Production CMMC Defense Enclave Route (/app or /dashboard) */}
@@ -301,7 +158,7 @@ const AppContent: React.FC = () => {
         <ProtectedRoute onRedirectToLogin={navigateToLogin}>
           <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500 selection:text-white">
             {/* Top Application Header */}
-            <Header onExitToLanding={navigateToLanding} />
+            <Header />
 
             {/* Main Workspace Layout */}
             <div className="flex-1 flex flex-col md:flex-row max-w-7xl w-full mx-auto">
@@ -348,27 +205,26 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       )}
 
-      {/* 5. Super Admin Tenant Provisioning Dashboard (/admin) */}
+      {/* 5. Platform administration: tenant provisioning (/admin) */}
       {currentRoute === 'admin' && (
         <SuperAdminDashboard
           onNavigateToApp={navigateToApp}
-          onNavigateToLanding={navigateToLanding}
+          onNavigateToLogin={navigateToLogin}
           onOpenLegal={openLegalModal}
         />
       )}
 
-      {/* 6. Token Acceptance & Onboarding Public Route (/accept-invite) */}
+      {/* 6. Token Acceptance & Onboarding Route (/invite or /accept-invite) */}
       {currentRoute === 'accept-invite' && (
         <AcceptInvitePage
           onSuccessNavigate={navigateToApp}
-          onExitToLanding={navigateToLanding}
+          onNavigateToLogin={navigateToLogin}
           onOpenLegal={openLegalModal}
         />
       )}
 
       {/* Global Authentication, Onboarding, Team Management & Legal Modals */}
       <AuthModal onOpenLegal={openLegalModal} />
-      <LicenseRequestModal onOpenLegal={openLegalModal} />
       <LegalModal
         isOpen={legalModalState.isOpen}
         initialTab={legalModalState.tab}

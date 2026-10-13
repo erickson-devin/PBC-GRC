@@ -21,20 +21,19 @@ import { errorMessage } from '../utils/errors';
 
 interface AcceptInvitePageProps {
   onSuccessNavigate?: () => void;
-  onExitToLanding?: () => void;
+  onNavigateToLogin?: () => void;
   onOpenLegal?: (tab: 'privacy' | 'terms') => void;
 }
 
 export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   onSuccessNavigate,
-  onExitToLanding,
+  onNavigateToLogin,
   onOpenLegal,
 }) => {
   const {
     getInvitationByToken,
     previewInvitation,
     claimInviteToken,
-    invitations,
     isSandboxMode,
   } = useTenant();
 
@@ -323,14 +322,6 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
           </div>
         </div>
 
-        {onExitToLanding && (
-          <button
-            onClick={onExitToLanding}
-            className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-semibold border border-slate-800 transition-colors"
-          >
-            Public Site
-          </button>
-        )}
       </header>
 
       {/* Main Container */}
@@ -402,33 +393,13 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   </button>
                 ) : (
                   <button
-                    onClick={onExitToLanding}
+                    onClick={onNavigateToLogin}
                     className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition-colors"
                   >
-                    Return to Pitch Black Cyber Portal
+                    Go to sign in
                   </button>
                 )}
 
-                {/* Developer / Evaluator Sample Links Helper */}
-                {invitations.length > 0 && (
-                  <div className="pt-3 border-t border-slate-800/80 text-left">
-                    <p className="text-[10px] uppercase font-bold text-slate-400 mb-1.5">
-                      Available Test Invitation Tokens:
-                    </p>
-                    <div className="space-y-1">
-                      {invitations.filter(i => i.status === 'PENDING').slice(0, 2).map(inv => (
-                        <button
-                          key={inv.id}
-                          onClick={() => setToken(inv.token)}
-                          className="w-full p-2 rounded-lg bg-slate-900 hover:bg-slate-850 text-left border border-slate-800 text-[11px] flex items-center justify-between text-slate-300 hover:text-white transition-colors"
-                        >
-                          <span className="truncate">{inv.tenantName} ({inv.role})</span>
-                          <span className="font-mono text-[10px] text-brand-400 shrink-0">Use Token</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
             </div>

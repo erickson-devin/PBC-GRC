@@ -11,29 +11,13 @@
 
 These Terms of Service ("Agreement") constitute a legally binding agreement between **Pitch Black Cyber, LLC** and the organization, company, or individual ("Customer", "you", or "your") accessing or using the PBC-GRC platform, website, API, or related compliance services (collectively, the "Service").
 
-BY ACCESSING THE SERVICE, EXECUTING AN ORDER FORM, SUBMITTING A LICENSE REQUEST, OR LOGGING IN VIA SINGLE SIGN-ON (SSO), YOU AGREE TO BE BOUND BY THIS AGREEMENT. IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF A COMPANY OR OTHER LEGAL ENTITY, YOU REPRESENT THAT YOU HAVE THE AUTHORITY TO BIND SUCH ENTITY TO THESE TERMS.
+BY ACCESSING THE SERVICE, EXECUTING AN ORDER FORM, OR SIGNING IN, YOU AGREE TO BE BOUND BY THIS AGREEMENT. IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF A COMPANY OR OTHER LEGAL ENTITY, YOU REPRESENT THAT YOU HAVE THE AUTHORITY TO BIND SUCH ENTITY TO THESE TERMS.
 
 ---
 
-## 2. Subscription Licenses & Tiers
+## 2. Licensing
 
-PBC-GRC is licensed on a predictable, flat annual subscription model across three commercial tiers:
-
-### A. Foundational Enclave ($3,500 / year flat)
-- Target: Small Suppliers & Commercial Organizations (FAR 52.204-21, HIPAA, SOC 2 Type II).
-- Features: 1 Enclave Boundary (Cloud SQL RLS isolation), CMMC Level 1 (17 Controls) or HIPAA/SOC 2, PDF Artifact Exporter, Single-User Owner, Standard Support.
-
-### B. Defense Professional ($7,000 / year flat)
-- Target: DoD Prime & Sub-Contractors handling CUI (NIST SP 800-171 / CMMC Level 2).
-- Features: CMMC Level 2 (110 Controls), NIST SP 800-53 Rev 5 (Low/Mod + Tactical Overlays), DISA STIG Library & Ansible/PowerShell Script Generator, Dynamic NIST SP 800-18 SSP & POA&M Compiler, Cross-Framework Evidence Inheritance, 5 User Seats.
-
-### C. Enterprise & Assessor Enclave ($14,000 / year flat)
-- Target: Defense MSPs, Multi-CAGE Enterprise Organizations & C3PAO Assessor Networks.
-- Features: Unlimited Enclaves / Multi-Boundary Management, OpenSCAP Engine & Asset Sensor API Integration, Custom Baseline Overlays, Dedicated Database Isolation, Priority 24/7 Defense Engineering Support.
-
-Annual licenses renew automatically at the end of each twelve (12) month term unless either party provides written notice of non-renewal at least thirty (30) days prior to the expiration of the current term.
-
----
+PBC-GRC is licensed to Customer under the terms of the order form or written agreement between Customer and Pitch Black Cyber, LLC. Unless that agreement says otherwise, the license is non-exclusive, non-transferable and limited to Customer's internal compliance use, for the number of tenants, users and assessment programs the agreement provides for.
 
 ## 3. CMMC Regulatory Disclaimer & Advisory Nature
 

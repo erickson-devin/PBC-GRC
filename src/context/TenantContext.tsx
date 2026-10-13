@@ -4,7 +4,6 @@ import {
   TenantRole,
   User,
   SamStatus,
-  LicenseRequest,
   TenantInvitation,
   TeamMember,
   AuthProviderType,
@@ -54,7 +53,6 @@ const LIVE_ACTIVE_TENANT_ID_KEY = 'pbc_live_active_tenant_v4';
 const DEMO_TENANTS_STORAGE_KEY = 'pbc_demo_tenants_v4';
 const DEMO_ACTIVE_TENANT_ID_KEY = 'pbc_demo_active_tenant_v4';
 const CURRENT_USER_KEY = 'pbc_active_user_v4';
-const LICENSE_REQUESTS_STORAGE_KEY = 'pbc_license_requests_v4';
 const INVITATIONS_STORAGE_KEY = 'pbc_tenant_invitations_v4';
 const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
 const ACTIVE_FRAMEWORK_KEY = 'pbc_active_framework_v1';
@@ -63,6 +61,7 @@ const ACTIVE_OVERLAY_FILTERS_KEY = 'pbc_active_overlay_filters_v1';
 
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [
+  'pbc_license_requests_v4', // lead capture of the removed public site
   'pbc_tenants',
   'pbc_active_tenant',
   'pbc_tenants_registry_v1',
@@ -380,21 +379,6 @@ export const DEFAULT_BLANK_TENANT: Tenant = {
 };
 
 // Check if current URL route is sandbox demo
-const checkIsSandboxRoute = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  const hash = window.location.hash.toLowerCase();
-  const path = window.location.pathname.toLowerCase();
-  const search = window.location.search.toLowerCase();
-  return (
-    hash.startsWith('#demo') ||
-    hash.startsWith('#sandbox') ||
-    path === '/demo' ||
-    path === '/sandbox' ||
-    search.includes('mode=sandbox') ||
-    search.includes('view=demo')
-  );
-};
-
 export interface TenantSyncState {
   status: 'idle' | 'syncing' | 'synced' | 'error';
   lastSyncedAt: string | null;
@@ -421,7 +405,6 @@ interface TenantContextType {
   isStackSurveyModalOpen: boolean;
   setIsStackSurveyModalOpen: (open: boolean) => void;
   updateStackProfile: (profile: EnclaveStackProfile) => void;
-  licenseRequests: LicenseRequest[];
   invitations: TenantInvitation[];
   teamMembers: Record<string, TeamMember[]>;
   switchTenant: (tenantId: string) => void;
@@ -500,7 +483,6 @@ interface TenantContextType {
   switchUser: (user: User) => void;
   syncAuthUser: (user: User, preferredTenantId?: string) => void;
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
-  submitLicenseRequest: (requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>) => Promise<LicenseRequest>;
   // Cloud SQL Live Sync Engine
   liveControls: Record<string, ControlState> | null;
   liveEvidence: EvidenceItem[] | null;
@@ -546,20 +528,8 @@ interface TenantContextType {
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
 export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Mode detection: Sandbox (/demo) vs Live Enclave (/app)
-  const [isSandboxMode, setIsSandboxMode] = useState<boolean>(() => checkIsSandboxRoute());
-
-  useEffect(() => {
-    const handleLocationChange = () => {
-      setIsSandboxMode(checkIsSandboxRoute());
-    };
-    window.addEventListener('hashchange', handleLocationChange);
-    window.addEventListener('popstate', handleLocationChange);
-    return () => {
-      window.removeEventListener('hashchange', handleLocationChange);
-      window.removeEventListener('popstate', handleLocationChange);
-    };
-  }, []);
+  // There is no demo sandbox any more: the application is always a live installation.
+  const isSandboxMode = false;
 
   // 1. LIVE TENANTS: Strictly non-demo organizations created or assigned to real users
   const [liveTenants, setLiveTenants] = useState<Tenant[]>(() => {
@@ -668,19 +638,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return PRESET_USERS[0];
   });
 
-  // Inbound License Requests
-  const [licenseRequests, setLicenseRequests] = useState<LicenseRequest[]>(() => {
-    try {
-      const saved = localStorage.getItem(LICENSE_REQUESTS_STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved) as LicenseRequest[];
-      }
-    } catch {
-      // ignore
-    }
-    return [];
-  });
-
   // Tenant Invitations
   const [invitations, setInvitations] = useState<TenantInvitation[]>(() => {
     try {
@@ -738,10 +695,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
   }, [currentUser]);
-
-  useEffect(() => {
-    localStorage.setItem(LICENSE_REQUESTS_STORAGE_KEY, JSON.stringify(licenseRequests));
-  }, [licenseRequests]);
 
   useEffect(() => {
     // Server-issued invitations are owned by the server (and their tokens are secrets): never persisted here
@@ -1807,20 +1760,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [isSandboxMode, demoTenants, liveTenants, refreshLiveData, syncTenantsFromServer]);
 
-  const submitLicenseRequest = useCallback(async (
-    requestData: Omit<LicenseRequest, 'id' | 'createdAt' | 'status'>
-  ): Promise<LicenseRequest> => {
-    const newRequest: LicenseRequest = {
-      id: `req-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      ...requestData,
-      status: 'PENDING_CONTACT',
-      createdAt: new Date().toISOString(),
-    };
-
-    setLicenseRequests(prev => [newRequest, ...prev]);
-    return newRequest;
-  }, []);
-
   /**
    * Provision a brand-new defense enclave with isolated database boundary and onboarding token
    */
@@ -2389,7 +2328,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isStackSurveyModalOpen,
     setIsStackSurveyModalOpen,
     updateStackProfile,
-    licenseRequests,
     invitations,
     teamMembers,
     switchTenant,
@@ -2416,7 +2354,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchUser,
     syncAuthUser,
     resolveTenantForEmail,
-    submitLicenseRequest,
     liveControls,
     liveEvidence,
     isSyncing,
@@ -2462,7 +2399,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isStackSurveyModalOpen,
     setIsStackSurveyModalOpen,
     updateStackProfile,
-    licenseRequests,
     invitations,
     teamMembers,
     switchTenant,
@@ -2489,7 +2425,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchUser,
     syncAuthUser,
     resolveTenantForEmail,
-    submitLicenseRequest,
     liveControls,
     liveEvidence,
     isSyncing,

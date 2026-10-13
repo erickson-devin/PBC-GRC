@@ -100,16 +100,11 @@ Website: https://pitchblackcyber.com`,
       title: '1. Acceptance of Terms',
       content: `These Terms of Service ("Agreement") constitute a legally binding agreement between Pitch Black Cyber, LLC and the organization, company, or individual ("Customer", "you", or "your") accessing or using the PBC-GRC platform, website, API, or related compliance services (collectively, the "Service").
 
-BY ACCESSING THE SERVICE, EXECUTING AN ORDER FORM, SUBMITTING A LICENSE REQUEST, OR LOGGING IN VIA SINGLE SIGN-ON (SSO), YOU AGREE TO BE BOUND BY THIS AGREEMENT.`,
+BY ACCESSING THE SERVICE, EXECUTING AN ORDER FORM, OR SIGNING IN, YOU AGREE TO BE BOUND BY THIS AGREEMENT.`,
     },
     {
-      title: '2. Subscription Licenses & Tiers',
-      content: `PBC-GRC is licensed on a predictable, flat annual subscription model across three commercial tiers:
-• Foundational Enclave ($3,500 / year flat): Grants a dedicated, isolated compliance enclave for small suppliers and commercial organizations. Includes 1 enclave boundary (Cloud SQL RLS isolation), CMMC Level 1 (17 controls) or HIPAA/SOC 2 Type II, PDF artifact exporter, SHA-256 evidence vault, single-user owner administrative seat, and standard support.
-• Defense Professional ($7,000 / year flat): Designed for DoD prime & sub-contractors handling Controlled Unclassified Information (CUI). Includes full CMMC Level 2 (110 controls), NIST SP 800-53 Rev 5 baselines with tactical overlays, DISA STIG script generator (Ansible & PowerShell), dynamic NIST SP 800-18 SSP & POA&M compiler, cross-framework evidence inheritance, and 5 user seats with RBAC.
-• Enterprise & Assessor Enclave ($14,000 / year flat): Designed for defense MSPs, multi-CAGE enterprise conglomerates, and C3PAO assessor networks. Includes unlimited enclave boundaries, multi-tenant administrative switcher, OpenSCAP engine & asset sensor API integration, custom baseline overlays, dedicated database isolation, and priority 24/7 defense engineering support.
-
-Annual licenses renew automatically at the end of each twelve (12) month term unless written notice of non-renewal is provided at least thirty (30) days prior to the expiration of the current term.`,
+      title: '2. Licensing',
+      content: `PBC-GRC is licensed to Customer under the terms of the order form or written agreement between Customer and Pitch Black Cyber, LLC. Unless that agreement says otherwise, the license is non-exclusive, non-transferable and limited to Customer's internal compliance use, for the number of tenants, users and assessment programs the agreement provides for.`,
     },
     {
       title: '3. CMMC Regulatory Disclaimer & Advisory Nature',
