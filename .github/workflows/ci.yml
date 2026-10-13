@@ -1,0 +1,47 @@
+name: CI
+
+# Pull requests only run the checks: typecheck, build and tests. Nothing here builds or pushes a Docker image, and it has
+# no access to the container registry (read-only permissions).
+# The publish workflow (docker-publish.yml) calls this one too, so an image is only ever published from a commit on
+# main that passed the same checks.
+on:
+  pull_request:
+    branches: [ "main" ]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Node 20 matches the Dockerfile
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # The suites run against the in-memory store (DB_MODE=memory set by tests/testEnv.ts): no database or secrets needed
+      - name: Test
+        run: npm run test:all
