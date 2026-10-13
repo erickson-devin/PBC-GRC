@@ -82,6 +82,9 @@ function sectionNotes(chunk: DocChunk, foldedChunk: string, refs: Ref[], title: 
   return [first, ...lines.slice(1)].join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+/** A PDF breaks lines where the page ends, not where a thought does: join the lines of a paragraph (blank lines stay). */
+export const reflowPdfLines = (text: string): string => text.replace(/([^\n])[ \t]*\n(?!\n)[ \t]*/g, '$1 ').replace(/ {2,}/g, ' ');
+
 function paragraphAround(chunkText: string, index: number): string {
   const before = chunkText.lastIndexOf('\n\n', index);
   const after = chunkText.indexOf('\n\n', index);
@@ -220,7 +223,7 @@ export function mapDocumentToControls(
       matchKind: kind,
       origin: 'RULES',
       sectionHeading: heading,
-      suggestedNotes: notes,
+      suggestedNotes: pages.length > 0 ? reflowPdfLines(notes) : notes,
       confidence,
       sourceQuotes: quotes,
       gapAnalysis: heuristicGaps(kind, notes, f.number),

@@ -9,6 +9,7 @@ import type { FakeChatRequest } from './fakeOllama';
  *   [[GAPFAIL]]     (gap analysis) answers with prose           [[BADEVIDENCE]] (gap analysis, narrative) cites evidence that is not there
  *   [[OFFTOPIC]]    attaches a real sentence to an unrelated control   [[ALLSAME]]  (extractive gap) uses one sentence for every objective
  *   [[FABRICATE]]   (extractive gap) invents a sentence that is not in the document
+ *   [[NEARMISS]]    (extractive gap) copies a sentence with a few words changed       [[FAILB]] (extractive gap) fails to answer objective b
  */
 export const sentenceAfterHeading = (section: string): string => {
   const body = section.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
@@ -46,16 +47,18 @@ export function scriptedModel(req: FakeChatRequest): unknown {
     }
     return { findings };
   }
-  // gap analysis, extractive (the small-model variant): copy one sentence per objective, or NONE
-  if (req.system.startsWith('You find sentences')) {
-    const objectiveLetters = [...req.user.matchAll(/^\[([a-z])\] /gm)].map((m) => m[1]);
+  // gap analysis, extractive (the small-model variant): one question per objective, answer with one sentence or NONE
+  if (req.system.startsWith('You find one sentence')) {
+    const letter = req.user.match(/^OBJECTIVE \[([a-z])\]/)?.[1] ?? 'a';
     const text = grab(req.user, 'EXCERPTS\n<<<\n', '\n>>>');
     if (text.includes('[[GAPFAIL]]')) return { __raw: 'no' };
+    if (text.includes('[[FAILB]]') && letter === 'b') return { __raw: 'no' };
     const sentence = sentenceAfterHeading(text);
-    if (text.includes('[[ALLSAME]]')) return { answers: objectiveLetters.map((l) => ({ letter: l, sentence })) };
-    if (text.includes('[[FABRICATE]]')) return { answers: objectiveLetters.map((l, i) => ({ letter: l, sentence: i === 0 ? 'Every employee completes a security briefing before receiving any laptop' : 'NONE' })) };
+    if (text.includes('[[ALLSAME]]')) return { sentence };
+    if (text.includes('[[FABRICATE]]')) return { sentence: letter === 'a' ? 'Every employee completes a security briefing before receiving any laptop' : 'NONE' };
+    if (text.includes('[[NEARMISS]]') && letter === 'a') return { sentence: sentence.replace('limited', 'restricted').replace('authorized', 'approved') };
     // a competent model: the first objective is spoken to by the first sentence, the second repeats it, the rest are not covered
-    return { answers: objectiveLetters.map((l, i) => ({ letter: l, sentence: i <= 1 ? sentence : 'NONE' })) };
+    return { sentence: letter === 'a' || letter === 'b' ? sentence : 'NONE' };
   }
   // gap analysis, narrative
   const letters = [...req.user.matchAll(/^\[([a-z])\] /gm)].map((m) => m[1]);

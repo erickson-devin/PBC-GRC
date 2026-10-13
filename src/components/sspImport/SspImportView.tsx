@@ -77,6 +77,17 @@ const OBJECTIVE_LABEL: Record<ObjectiveStatus, string> = {
   NOT_ASSESSED: 'Not assessed',
 };
 
+// Extractive results (small models) mean "a sentence that may support this was found", not "the objective is met"
+const EXTRACTIVE_LABEL: Record<ObjectiveStatus, string> = {
+  ADDRESSED: 'Sentence found',
+  PARTIAL: 'Partly',
+  NOT_ADDRESSED: 'No sentence found',
+  UNSUPPORTED: 'Could not be checked',
+  NOT_ASSESSED: 'Not assessed',
+};
+const objectiveLabel = (status: ObjectiveStatus, mode: 'extractive' | 'narrative' | undefined): string =>
+  mode === 'extractive' ? EXTRACTIVE_LABEL[status] : OBJECTIVE_LABEL[status];
+
 const OBJECTIVE_CLASS: Record<ObjectiveStatus, string> = {
   ADDRESSED: 'bg-emerald-950/50 text-emerald-300 border-emerald-800/60',
   PARTIAL: 'bg-amber-950/40 text-amber-300 border-amber-800/60',
@@ -640,14 +651,14 @@ export const SspImportView: React.FC = () => {
                                 <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
                                   <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
                                     {current.gapAnalysis.source === 'ai' ? 'AI comparison with NIST SP 800-171A' : 'Automated checks'}{' '}
-                                    <span className="normal-case font-normal text-slate-500">{current.gapAnalysis.source === 'ai' ? '(AI-generated: what the document says, not whether it is true)' : '(simple text checks, not an assessment)'}</span>
+                                    <span className="normal-case font-normal text-slate-500">{current.gapAnalysis.source === 'ai' ? (current.gapAnalysis.mode === 'extractive' ? '(the AI picks the sentence that may support each objective; you judge whether it does)' : '(AI-generated: what the document says, not whether it is true)') : '(simple text checks, not an assessment)'}</span>
                                   </h5>
                                   <p className="text-sm text-slate-300">{current.gapAnalysis.summary}</p>
                                   {current.gapAnalysis.objectives && current.gapAnalysis.objectives.length > 0 && (
                                     <ul aria-label="Assessment objectives" className="mt-2 space-y-2">
                                       {current.gapAnalysis.objectives.map((o) => (
                                         <li key={o.letter} className="text-sm text-slate-200">
-                                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold mr-1.5 ${OBJECTIVE_CLASS[o.status]}`}>{OBJECTIVE_LABEL[o.status]}</span>
+                                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold mr-1.5 ${OBJECTIVE_CLASS[o.status]}`}>{objectiveLabel(o.status, current.gapAnalysis.mode)}</span>
                                           <span className="font-mono text-xs text-slate-400">[{o.letter}]</span> {o.text}
                                           {o.evidence && <q className="block mt-0.5 text-xs italic text-slate-400">{o.evidence.replace(/\s+/g, ' ')}</q>}
                                         </li>

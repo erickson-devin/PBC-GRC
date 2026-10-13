@@ -96,6 +96,8 @@ export interface ObjectiveAssessment {
 export interface GapAnalysis {
   /** 'heuristic': simple text checks (rules). 'ai': a language model compared the document with the objectives. */
   source: 'heuristic' | 'ai';
+  /** AI only. 'extractive': the model copied supporting sentences and the program wrote the rest; 'narrative': the model wrote the comparison. */
+  mode?: 'extractive' | 'narrative';
   summary: string;
   gaps: GapItem[];
   /** Per-objective result of the comparison with NIST SP 800-171A (AI analysis only). */

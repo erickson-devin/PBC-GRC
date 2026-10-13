@@ -6,7 +6,7 @@ import path from 'path';
 import { makeDocx, makePdf } from './sspFixtures';
 import { server } from '../server/index';
 import { chunkDocument } from '../server/ssp/chunk';
-import { mapDocumentToControls } from '../server/ssp/controlMapper';
+import { mapDocumentToControls, reflowPdfLines } from '../server/ssp/controlMapper';
 import { detectDocumentKind, extractDocument, ExtractionError } from '../server/ssp/extract';
 import { getFrameworkControls } from '../src/data/frameworks';
 
@@ -119,6 +119,13 @@ function unitTests() {
 
   const mention = mapDocumentToControls('Intro\nThe boundary is described under AC.L1-3.1.20 in the appendix diagram.\nEnd', [], 'CMMC_L1');
   assert(mention.staged.length === 1 && mention.staged[0].matchKind === 'MENTION' && mention.staged[0].gapAnalysis.gaps[0]?.missingElement === 'Implementation description', 'a reference with no section of its own is a mention with a gap');
+  // PDF line wraps are not paragraph breaks
+  assert(reflowPdfLines('All employees sign in with MFA.\nGuest accounts are disabled at the directory\nlevel.\n\nSecond paragraph.') === 'All employees sign in with MFA. Guest accounts are disabled at the directory level.\n\nSecond paragraph.', 'reflow joins the lines of a paragraph and keeps paragraph breaks');
+  const pdfText = 'Plan\nAC.L1-3.1.1 Authorized Access Control\nAccess is limited to authorized users and\nreviewed every quarter by the IT lead.';
+  const fromPdfPages = mapDocumentToControls(pdfText, [{ page: 1, start: 0, end: pdfText.length }], 'CMMC_L1').staged[0];
+  const fromDocxNoPages = mapDocumentToControls(pdfText, [], 'CMMC_L1').staged[0];
+  assert(!fromPdfPages.suggestedNotes.includes('\n') && fromDocxNoPages.suggestedNotes.includes('\n'), 'notes from a PDF are reflowed, notes from a DOCX (one paragraph per line) are not');
+  assert(fromPdfPages.sourceQuotes.every((q) => pdfText.slice(q.start, q.end) === q.quote), 'but quotations stay exactly the document\'s text, line breaks included');
   const none = mapDocumentToControls('Nothing relevant here at all, only prose.', [], 'CMMC_L1');
   assert(none.staged.length === 0 && none.coverage.foundControls === 0 && none.coverage.missing.length === 17, 'a document that names no control stages nothing');
   const fake = mapDocumentToControls('Plan\nAC.L2-3.1.99 Imaginary Practice\nSome text.', [], 'CMMC_L2');
@@ -138,6 +145,53 @@ async function extractionTests() {
   const fromDocx = await extractDocument(docx, 'docx');
   assert(fromDocx.text.includes('3.1.2 Limit User Function Access') && fromDocx.pageCount === 0, 'a DOCX yields its text');
   assert(mapDocumentToControls(fromDocx.text, [], 'CMMC_L1').staged.length === 3, 'mapping a DOCX works');
+  // A real-world SSP (a demo plan for this platform): labels written as "AC.L2-3.1.1 -" and as a bare "3.1.2 -", a body that
+  // begins "Implementation:", lines wrapped at the page edge, and a heading with no text under it at the end of page 1.
+  const REAL_PAGE_1 = [
+    'System Security Plan (SSP)',
+    'Organization: Pitch Black Cyber System Name: Event Horizon Enclave Framework: CMMC',
+    '2.0 Level 2 / NIST 800-171',
+    '1. System Environment',
+    'The Event Horizon Enclave is an isolated, on-premise infrastructure environment used to',
+    'process and store Controlled Unclassified Information (CUI). The boundary includes local',
+    'Unraid servers, PostgreSQL databases, and authorized endpoint devices.',
+    '2. Access Control (AC)',
+    'AC.L2-3.1.1 - Authorized Access Control',
+    'Implementation: All Pitch Black Cyber employees authenticate to the enclave using Entra ID',
+    'with phishing-resistant MFA. Guest accounts are strictly prohibited and disabled at the directory',
+    'level. Non-interactive service accounts are managed by the IT administration team and their',
+    'credentials are automatically rotated every 90 days.',
+    '3.1.2 - Transaction and Function Control',
+    'Implementation: Role-Based Access Control (RBAC) is implemented via Entra ID security',
+    'groups. Users are assigned to specific security groups based on their authorized job functions',
+    '(e.g., Engineering, Assessors, Administrators). The system enforces the principle of least',
+    'privilege by ensuring users can only access the specific database tables and UI views required',
+    'for their documented role.',
+    '3. Audit and Accountability (AU)',
+    'AU.L2-3.3.1 - System Auditing',
+    'Implementation: The Event Horizon platform logs all user login attempts, failed authentication',
+    "events, and application crashes. These logs are stored locally on the Unraid host server's NVMe",
+    'cache drive and are retained for a period of 7 days before being automatically overwritten to',
+    'save disk space.',
+    '4. Incident Response (IR)',
+  ];
+  const REAL_PAGE_2 = [
+    'IR.L2-3.6.1 - Incident Handling',
+    'Implementation: We have a general incident response policy documented on the company',
+    'intranet wiki. New employees are told during onboarding to email the standard IT helpdesk if',
+    'they see a virus or something suspicious on their workstation.',
+  ];
+  const real = await extractDocument(makePdf([REAL_PAGE_1, REAL_PAGE_2]), 'pdf');
+  const realMap = mapDocumentToControls(real.text, real.pages, 'CMMC_L2');
+  const realIds = realMap.staged.map((x) => x.controlId).join();
+  assert(realIds === 'AC.L1-3.1.1,AC.L1-3.1.2,AU.L2-3.3.1,IR.L2-3.6.1', 'the real SSP yields exactly its four controls against Level 2, and nothing else', realIds);
+  assert(realMap.staged.every((x) => x.matchKind !== 'MENTION' && x.sourceQuotes.every((q) => q.verified && real.text.slice(q.start, q.end) === q.quote)), 'each is a section (not a mention) with a verbatim quotation');
+  const realNotes = new Map(realMap.staged.map((x) => [x.controlId, x.suggestedNotes]));
+  assert(!realNotes.get('AC.L1-3.1.1')!.includes('\n') && /^Implementation: All Pitch Black Cyber employees authenticate to the enclave using Entra ID with phishing-resistant MFA\./.test(realNotes.get('AC.L1-3.1.1')!), 'the notes read as paragraphs: the PDF\'s line wraps are gone', realNotes.get('AC.L1-3.1.1'));
+  assert(/directory level\. Non-interactive/.test(realNotes.get('AC.L1-3.1.1')!) && /^Implementation: Role-Based Access Control \(RBAC\)/.test(realNotes.get('AC.L1-3.1.2')!), 'a wrapped sentence is rejoined ("directory level.") and the bare "3.1.2 -" section is found');
+  assert(realMap.staged.find((x) => x.controlId === 'IR.L2-3.6.1')!.sourceQuotes[0].page === 2 && realMap.staged.find((x) => x.controlId === 'AU.L2-3.3.1')!.sourceQuotes[0].page === 1, 'page numbers are right (the last control is on page 2)');
+  assert(realMap.coverage.totalControls === 110 && realMap.coverage.foundControls === 4 && realMap.unmapped.length === 0, 'coverage: 4 of 110 found, no stray references');
+
   const blank = await extractDocument(makePdf([['', '']]), 'pdf').then(() => null, (e) => e);
   assert(blank instanceof ExtractionError && blank.code === 'no_text', 'a PDF with no text layer (a scan) is reported as needing OCR', blank?.message);
   const corrupt = await extractDocument(Buffer.from('%PDF-1.4\nthis is not a pdf'), 'pdf').then(() => null, (e) => e);

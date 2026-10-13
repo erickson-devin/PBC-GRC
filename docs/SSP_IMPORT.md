@@ -129,11 +129,22 @@ The defaults are tuned for a small model such as Llama 3.2 3B with a 4096-token 
 * **Confidence is mostly computed, not reported.** A small model's own confidence is nearly always high, so it counts for 15%.
   The rest is how well the quotation fits the control (35%), whether the section names the control (30%) and FULL/PARTIAL
   coverage (20%). Suggestions below 0.5 never reach the review screen (`LOW_CONFIDENCE`).
-* **Extractive gap analysis (default).** The model is only asked to copy one supporting sentence per objective, or answer NONE.
-  A sentence counts only if it is verbatim in the document and shares at least half of the objective's distinctive words; one
-  sentence supports at most two objectives. Everything the reviewer reads besides those sentences (which objectives are covered,
-  the gaps, their severity, the recommendations, the summary) is written by the program from those results, so it cannot be
-  invented or repetitive. Verdicts are only *addressed* / *not addressed* / *could not be checked*; there is no "partly".
+* **Extractive gap analysis (default).** For each assessment objective the model gets one small question: copy the one sentence
+  of the control's own text that shows how the objective is met, or answer NONE. (One question per objective, because a small
+  model skips items when asked for a list.) The program then does the rest:
+  * a copied sentence counts if it is verbatim in the document, or if it is a near-miss of exactly one sentence of it (a word
+    or two changed, and clearly closer to that sentence than to any other); the evidence shown is always the document's own
+    sentence;
+  * one sentence supports at most two objectives, so a model that repeats itself cannot claim everything;
+  * the sentence is the model's choice of what speaks to the objective. The result is therefore "a supporting sentence was
+    found", not "the objective is met"; the reviewer judges whether it is enough;
+  * an objective the model gave no answer for is **not assessed**, which is different from having no supporting sentence. It
+    is reported as one note naming the objectives, never as a "nothing documented" gap;
+  * the HIGH "no supporting sentence" gap appears only when every objective got a real answer and none has a sentence;
+  * which objectives have a sentence, the gaps, their severity, the recommendations and the summary are all written by the
+    program from those results, so they cannot be invented or repetitive.
+
+  Verdicts are only *sentence found* / *no sentence found* / *could not be checked* / *not assessed*; there is no "partly".
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -147,7 +158,8 @@ count (and the reasons, kept with each import's statistics) shows what the filte
 
 ### Limits and expectations
 
-* The model only reports what the document **says**. It cannot tell whether the organisation really does it.
+* The model only reports what the document **says**. It cannot tell whether the organisation really does it, and a sentence it
+  picks for an objective is a candidate for you to judge, not a finding that the objective is met.
 * Every suggestion shows the model's summary next to the document's own quotation; review one against the other.
 * A long document takes minutes (one model call per relevant section, plus one per control for the gap analysis). Progress is
   shown, and a running import can be cancelled; nothing is staged for a cancelled import. `SSP_AI_MAX_SECTIONS` caps the work,
