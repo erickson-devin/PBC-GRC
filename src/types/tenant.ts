@@ -1,5 +1,4 @@
 import { ComplianceFramework } from './framework';
-import type { PlanId } from '../data/marketingPlans';
 
 export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
 
@@ -100,20 +99,5 @@ export interface GcpServiceConfig {
   cloudSqlInstance: string;
   databaseName: string;
   identityDomain: string;
-}
-
-export interface LicenseRequest {
-  id: string;
-  fullName: string;
-  workEmail: string;
-  companyName: string;
-  cageCode?: string;
-  selectedPlan: PlanId;
-  inScopeUsers: string;
-  targetTimeline: string;
-  phoneNumber?: string;
-  notes?: string;
-  status: 'PENDING_CONTACT' | 'CALL_SCHEDULED' | 'PROVISIONED';
-  createdAt: string;
 }
 
