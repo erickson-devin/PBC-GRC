@@ -21,6 +21,7 @@ import {
   parseServerMembers,
 } from '../data/teamSync';
 import type { TenantRole } from '../types/tenant';
+import type { SspAnalysisMode, SspCapabilities, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 
@@ -181,6 +182,85 @@ export const ApiClient = {
     const data = await res.json().catch(() => null);
     if (!res.ok) throw apiErrorFromResponse(res.status, data);
     return data as SetupResult;
+  },
+
+  // ---------------------------------------------------------------- SSP import
+
+  /** GET /api/v1/tenants/:id/ssp-imports/capabilities */
+  async sspCapabilities(tenantId: string): Promise<SspCapabilities> {
+    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/capabilities`, { tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/ssp-imports */
+  async sspListJobs(tenantId: string): Promise<SspImportJob[]> {
+    const data = await authedJson<{ jobs?: SspImportJob[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, { tenantId });
+    return Array.isArray(data?.jobs) ? data.jobs : [];
+  },
+
+  /** POST /api/v1/tenants/:id/ssp-imports (multipart). Owner / MSP admin only. */
+  async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules'): Promise<SspImportJob> {
+    const bearer = ApiClient.getToken();
+    if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
+    const form = new FormData();
+    form.append('framework', framework);
+    form.append('analysis', analysis);
+    form.append('file', file, file.name);
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId }, // no Content-Type: the browser sets the multipart boundary
+      body: form,
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw apiErrorFromResponse(res.status, data);
+    return (data as { job: SspImportJob }).job;
+  },
+
+  /** GET /api/v1/tenants/:id/ssp-imports/:jobId/staged: the suggestions next to the controls' current answers. */
+  async sspGetStaged(tenantId: string, jobId: string): Promise<{ job: SspImportJob; staged: StagedControlView[] }> {
+    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/staged`, { tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/ssp-imports/:jobId */
+  async sspGetJob(tenantId: string, jobId: string): Promise<SspImportJob> {
+    const data = await authedJson<{ job: SspImportJob }>('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}`, { tenantId });
+    return data.job;
+  },
+
+  /** PATCH .../staged/:id: records a review decision. Nothing is written to the controls until the commit. */
+  async sspReview(tenantId: string, jobId: string, stagedId: string, decision: { reviewState: SspReviewState; editedNotes?: string }): Promise<StagedControl> {
+    const data = await authedJson<{ staged: StagedControl }>(
+      'PATCH',
+      `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/staged/${encodeURIComponent(stagedId)}`,
+      { tenantId, body: decision }
+    );
+    return data.staged;
+  },
+
+  /** POST .../commit: applies the accepted and edited suggestions to the controls. */
+  async sspCommit(tenantId: string, jobId: string): Promise<SspCommitOutcome> {
+    return authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/commit`, { tenantId, body: {} });
+  },
+
+  /** POST .../:jobId/cancel: stops an import that has not finished. */
+  async sspCancel(tenantId: string, jobId: string): Promise<void> {
+    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/cancel`, { tenantId, body: {} });
+  },
+
+  /** DELETE .../:jobId */
+  async sspDelete(tenantId: string, jobId: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}`, { tenantId });
+  },
+
+  /** The uploaded document, as a blob URL the caller must revoke. */
+  async sspDownloadUrl(tenantId: string, jobId: string): Promise<string> {
+    const bearer = ApiClient.getToken();
+    if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/file`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId },
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
+    return URL.createObjectURL(await res.blob());
   },
 
   // ---------------------------------------------------------------- team: members and invitations

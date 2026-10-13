@@ -16,11 +16,13 @@ import {
   Settings,
   Lock,
   Scroll,
+  FileUp,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { BrandLogo } from '../common/BrandLogo';
+import { canRoleReviewSspImports } from '../../utils/roles';
 
 // ─── Badge Design System ────────────────────────────────────────────────────
 type BadgeVariant = 'neutral' | 'status' | 'accent';
@@ -169,6 +171,10 @@ export const Sidebar: React.FC = () => {
           badge: metrics.isSprsReady ? 'Audit Ready' : `${metrics.completionPercentage}%`,
           badgeVariant: metrics.isSprsReady ? 'status' : 'neutral',
         },
+        // Imported plans can contain CUI: not offered to viewers
+        ...(canRoleReviewSspImports(currentRole)
+          ? [{ id: 'sspimport' as const, label: 'SSP Import', icon: FileUp }]
+          : []),
         {
           id: 'poam',
           label: 'Plan of Action & Milestones (POA&M)',

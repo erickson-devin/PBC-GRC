@@ -1,18 +1,24 @@
 name: Build and Publish Docker Image
 
+# The image is published ONLY from a push to main (that is, a merged pull request). Pull requests never reach this
+# workflow: they run ci.yml, which only tests. There is deliberately no tag or manual trigger, so no other branch or
+# ref can publish an image.
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*.*.*" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
+  # The same checks as on the pull request, run again on the merged commit before anything is published
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build-and-push-image:
+    needs: test
+    # Belt and braces: even if the triggers above are edited later, only main may publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,9 +37,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Log in to GitHub Container Registry (skip on external PRs)
       - name: Log in to the Container registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -47,9 +51,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
             type=sha
 
       # Build and push Docker image with GitHub Actions layer caching
@@ -57,7 +59,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

@@ -24,6 +24,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'ssp_documents', tenantColumn: 'tenant_id' },
   { table: 'tenant_invitations', tenantColumn: 'tenant_id' },
   { table: 'enclave_assets', tenantColumn: 'tenant_id' },
+  { table: 'ssp_import_jobs', tenantColumn: 'tenant_id' },
+  { table: 'staged_controls', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -201,6 +203,68 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT unq_local_users_email UNIQUE (email)
   );
+
+  -- SSP import (see server/ssp): an uploaded System Security Plan is extracted and mapped to controls, and the result is
+  -- held HERE, in a staging area. Nothing in these tables is ever a compliance answer: control_assessments changes only
+  -- through an explicit, reviewed commit, so these tables deliberately have no foreign key into it.
+  CREATE TABLE IF NOT EXISTS ssp_import_jobs (
+      id VARCHAR(64) PRIMARY KEY,
+      tenant_id VARCHAR(64) NOT NULL,
+      created_by VARCHAR(255) NOT NULL,
+      created_by_user_id VARCHAR(64),
+      file_name VARCHAR(255) NOT NULL,
+      mime_type VARCHAR(128) NOT NULL,
+      file_size BIGINT NOT NULL,
+      file_sha256 VARCHAR(64) NOT NULL,
+      framework VARCHAR(32) NOT NULL,
+      status VARCHAR(24) NOT NULL DEFAULT 'QUEUED',
+      stage_progress JSONB NOT NULL DEFAULT '{}'::jsonb,
+      stored_provider VARCHAR(8) NOT NULL,
+      stored_path TEXT NOT NULL,
+      page_count INTEGER,
+      char_count INTEGER,
+      chunk_count INTEGER,
+      analyzer VARCHAR(32) NOT NULL DEFAULT 'regex-v1',
+      coverage_report JSONB,
+      unmapped_findings JSONB NOT NULL DEFAULT '[]'::jsonb,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      started_at TIMESTAMPTZ,
+      finished_at TIMESTAMPTZ,
+      CONSTRAINT ssp_import_jobs_status_check CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED','CANCELLED')),
+      CONSTRAINT ssp_import_jobs_framework_check CHECK (framework IN ('CMMC_L1','CMMC_L2'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_tenant ON ssp_import_jobs (tenant_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS staged_controls (
+      id VARCHAR(64) PRIMARY KEY,
+      tenant_id VARCHAR(64) NOT NULL,
+      job_id VARCHAR(64) NOT NULL REFERENCES ssp_import_jobs(id) ON DELETE CASCADE,
+      control_id VARCHAR(64) NOT NULL,
+      framework VARCHAR(32) NOT NULL,
+      match_kind VARCHAR(24) NOT NULL,
+      origin VARCHAR(8) NOT NULL DEFAULT 'RULES',
+      section_heading TEXT NOT NULL DEFAULT '',
+      suggested_notes TEXT NOT NULL DEFAULT '',
+      confidence NUMERIC(3,2) NOT NULL DEFAULT 0,
+      source_quotes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      gap_analysis JSONB NOT NULL DEFAULT '{}'::jsonb,
+      base_hash VARCHAR(64),
+      review_state VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+      edited_notes TEXT,
+      reviewed_by VARCHAR(255),
+      reviewed_at TIMESTAMPTZ,
+      committed_at TIMESTAMPTZ,
+      CONSTRAINT unq_staged_job_control UNIQUE (job_id, control_id),
+      CONSTRAINT staged_controls_state_check CHECK (review_state IN ('PENDING','ACCEPTED','EDITED','REJECTED','COMMITTED','CONFLICT'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_staged_controls_job ON staged_controls (job_id);
+
+  -- Tables created by an earlier version of the SSP import: bring them up to date
+  ALTER TABLE staged_controls ADD COLUMN IF NOT EXISTS origin VARCHAR(8) NOT NULL DEFAULT 'RULES';
+  ALTER TABLE ssp_import_jobs DROP CONSTRAINT IF EXISTS ssp_import_jobs_status_check;
+  ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_status_check
+    CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED','CANCELLED'));
 
   -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
   -- server/platformSetup.ts). Global, not tenant-bound.
