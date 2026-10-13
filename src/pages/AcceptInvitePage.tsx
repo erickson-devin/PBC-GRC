@@ -31,10 +31,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   onOpenLegal,
 }) => {
   const {
-    getInvitationByToken,
     previewInvitation,
     claimInviteToken,
-    isSandboxMode,
   } = useTenant();
 
   const {
@@ -94,15 +92,15 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     };
   }, []);
 
-  // LIVE: what the server knows about the token (organisation, role, status), fetched with the token alone (it works
-  // before sign-in). The demo sandbox still reads its local fake invitations.
+  // What the server knows about the token (organisation, role, status), fetched with the token alone (it works
+  // before sign-in).
   type InviteView = Pick<TenantInvitation, 'token' | 'tenantName' | 'email' | 'role' | 'status' | 'expiresAt' | 'cageCode' | 'primaryFramework' | 'enabledFrameworks'>;
   const [liveInvitation, setLiveInvitation] = useState<InviteView | undefined>(undefined);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isSandboxMode || !token) {
+    if (!token) {
       setLiveInvitation(undefined);
       setPreviewLoading(false);
       return;
@@ -126,9 +124,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [token, isSandboxMode, previewInvitation]);
+  }, [token, previewInvitation]);
 
-  const invitation: InviteView | undefined = isSandboxMode ? (token ? getInvitationByToken(token) : undefined) : liveInvitation;
+  const invitation = liveInvitation;
 
   // Auto-fill full name from email if invitation is present
   useEffect(() => {
@@ -228,7 +226,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     const credentials = { name, email: invitation.email, authProvider: 'password' as AuthProviderType };
 
     try {
-      if (isLocalAuth && !isSandboxMode) {
+      if (isLocalAuth) {
         // Air-gapped: the server creates the account for the invited address, accepts the invitation and signs us in.
         try {
           await registerWithInvite(invitation.token, name, password);

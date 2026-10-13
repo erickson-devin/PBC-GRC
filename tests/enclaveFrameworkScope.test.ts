@@ -3,7 +3,7 @@
  * Validates tenant-scoped framework isolation and provisioning for Event Horizon GRC
  */
 
-import { SEED_TENANTS, DEFAULT_BLANK_TENANT } from '../src/context/TenantContext';
+import { DEFAULT_BLANK_TENANT } from '../src/context/TenantContext';
 import { ComplianceFramework } from '../src/types/framework';
 import { Tenant } from '../src/types/tenant';
 import { FRAMEWORK_REGISTRY } from '../src/data/frameworks';
@@ -46,28 +46,6 @@ async function runTests() {
       `Got ${JSON.stringify(DEFAULT_BLANK_TENANT.enabledFrameworks)}`
     );
 
-    const vanguard = SEED_TENANTS.find(t => t.id === 'tenant-vanguard-01');
-    assert(
-      Boolean(vanguard && vanguard.primaryFramework === 'CMMC_L1' && vanguard.enabledFrameworks?.includes('CMMC_L1')),
-      'Seed Vanguard tenant has CMMC_L1 primary and enabled scope'
-    );
-
-    const apex = SEED_TENANTS.find(t => t.id === 'tenant-apex-02');
-    assert(
-      Boolean(apex && apex.primaryFramework === 'CMMC_L2' && apex.enabledFrameworks?.includes('CMMC_L2')),
-      'Seed Apex tenant has CMMC_L2 primary and enabled scope'
-    );
-
-    const orbital = SEED_TENANTS.find(t => t.id === 'tenant-orbital-03');
-    assert(
-      Boolean(
-        orbital &&
-        orbital.primaryFramework === 'NIST_800_53_REV5' &&
-        orbital.enabledFrameworks?.includes('NIST_800_53_REV5') &&
-        orbital.enabledFrameworks?.includes('SOC_2_TYPE_II')
-      ),
-      'Seed Orbital tenant has multi-framework scope (NIST_800_53_REV5 + SOC_2_TYPE_II)'
-    );
   }
 
   // Test Group 2: Enclave Provisioning Scope Simulation

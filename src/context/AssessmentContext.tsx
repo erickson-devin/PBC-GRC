@@ -114,7 +114,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     currentTenant,
     canEdit,
     currentUser,
-    isSandboxMode,
     liveControls,
     liveEvidence,
     updateLiveControl,
@@ -187,7 +186,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Synchronize live backend data into assessment state when received from Cloud SQL
   useEffect(() => {
-    if (liveControls && !isSandboxMode && !currentTenant.isDemo) {
+    if (liveControls) {
       setState(prev => ({
         ...prev,
         tenantId: currentTenant.id,
@@ -198,7 +197,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         evidenceIndex: liveEvidence ? liveEvidence : prev.evidenceIndex,
       }));
     }
-  }, [liveControls, liveEvidence, isSandboxMode, currentTenant.isDemo, currentTenant.id]);
+  }, [liveControls, liveEvidence, currentTenant.id]);
 
   // Auto-save state changes under tenant partition
   useEffect(() => {
@@ -268,10 +267,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
-    // Sync to Cloud SQL for live non-demo tenants
-    if (!isSandboxMode && !currentTenant.isDemo) {
-      updateLiveControl(controlId, { status, updatedBy: currentUser.name });
-    }
+    // Sync to the server
+    updateLiveControl(controlId, { status, updatedBy: currentUser.name });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -331,10 +328,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
-    // Sync to Cloud SQL for live non-demo tenants
-    if (!isSandboxMode && !currentTenant.isDemo) {
-      updateLiveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
-    }
+    // Sync to the server
+    updateLiveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -372,7 +367,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, isSandboxMode, currentTenant.isDemo, updateLiveControl]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
@@ -506,9 +501,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           updatedBy: currentUser.name,
         };
 
-        if (!isSandboxMode && !currentTenant.isDemo) {
-          updateLiveControl(id, { implementationNotes: newNotes, updatedBy: currentUser.name });
-        }
+        updateLiveControl(id, { implementationNotes: newNotes, updatedBy: currentUser.name });
 
         appliedCount++;
       });
@@ -520,7 +513,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
 
     return appliedCount;
-  }, [canEdit, currentTenant.id, currentTenant.isDemo, isSandboxMode, currentUser.name, updateLiveControl]);
+  }, [canEdit, currentTenant.id, currentUser.name, updateLiveControl]);
 
   // -------------------------------------------------------------------------
   // NIST SP 800-171A Objective-Level Evaluation & Rollup Engine
@@ -908,56 +901,54 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const fileHash = await GcsService.computeSha256(file);
 
-    // If live tenant, upload via GCS Signed URL and store in Cloud SQL evidence_metadata
-    if (!isSandboxMode && !currentTenant.isDemo) {
-      try {
-        const uploadResp = await createLiveEvidenceUploadUrl({
-          controlId,
-          fileName: file.name,
+    // Upload via the server (signed URL) and record it in evidence_metadata
+    try {
+      const uploadResp = await createLiveEvidenceUploadUrl({
+        controlId,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        fileHash,
+        description: description || `Audit evidence for control ${controlId}`,
+      });
+
+      if (uploadResp) {
+        // Upload binary to Local Enclave Storage or GCS via Signed URL
+        await ApiClient.uploadFileToGcs(uploadResp.uploadUrl, file, file.type, currentTenant.id);
+        // Save in local IndexedDB vault for client-side preview
+        await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
+
+        // Cross-Framework Evidence Inheritance:
+        // Associate upload with mapped controls in local state
+        const mappedControlIds = getEquivalentControlIds(controlId);
+        const inheritedItems: EvidenceItem[] = mappedControlIds.map(mappedId => ({
+          id: `${uploadResp.evidence.id}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+          tenantId: currentTenant.id,
+          controlId: mappedId,
+          name: file.name,
           fileSize: file.size,
           mimeType: file.type || 'application/octet-stream',
+          uploadedAt: new Date().toISOString(),
+          description: `[Inherited from ${controlId}] ${description || `Audit evidence for ${controlId}`}`,
+          hasBlob: true,
+          gcsPath: uploadResp.gcsPath,
           fileHash,
-          description: description || `Audit evidence for control ${controlId}`,
-        });
+          syncStatus: 'gcs_synced',
+          uploadedBy: currentUser.name,
+        }));
 
-        if (uploadResp) {
-          // Upload binary to Local Enclave Storage or GCS via Signed URL
-          await ApiClient.uploadFileToGcs(uploadResp.uploadUrl, file, file.type, currentTenant.id);
-          // Save in local IndexedDB vault for client-side preview
-          await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
+        setState(prev => ({
+          ...prev,
+          evidenceIndex: [uploadResp.evidence, ...inheritedItems, ...prev.evidenceIndex],
+        }));
 
-          // Cross-Framework Evidence Inheritance:
-          // Associate upload with mapped controls in local state
-          const mappedControlIds = getEquivalentControlIds(controlId);
-          const inheritedItems: EvidenceItem[] = mappedControlIds.map(mappedId => ({
-            id: `${uploadResp.evidence.id}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-            tenantId: currentTenant.id,
-            controlId: mappedId,
-            name: file.name,
-            fileSize: file.size,
-            mimeType: file.type || 'application/octet-stream',
-            uploadedAt: new Date().toISOString(),
-            description: `[Inherited from ${controlId}] ${description || `Audit evidence for ${controlId}`}`,
-            hasBlob: true,
-            gcsPath: uploadResp.gcsPath,
-            fileHash,
-            syncStatus: 'gcs_synced',
-            uploadedBy: currentUser.name,
-          }));
-
-          setState(prev => ({
-            ...prev,
-            evidenceIndex: [uploadResp.evidence, ...inheritedItems, ...prev.evidenceIndex],
-          }));
-
-          return uploadResp.evidence;
-        }
-      } catch {
-        // Fallback to local vault
+        return uploadResp.evidence;
       }
+    } catch {
+      // Fallback to local vault
     }
 
-    // Local sandbox / offline fallback
+    // Offline fallback: keep the file in the local vault
     const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const gcsPath = GcsService.generateGcsPath(currentTenant.id, controlId, evidenceId, file.name);
 
@@ -1014,7 +1005,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }).catch(() => {});
 
     return newItem;
-  }, [canEdit, currentTenant.id, currentTenant.isDemo, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, isSandboxMode, createLiveEvidenceUploadUrl]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, createLiveEvidenceUploadUrl]);
 
   // Action: Remove Evidence
   const removeEvidence = useCallback(async (evidenceId: string) => {

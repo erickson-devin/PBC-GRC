@@ -23,14 +23,12 @@ import type {
 /**
  * Where an enclave's asset inventory lives.
  *  - 'server'       a tenant that exists on the server: the API is the source of truth (RLS-isolated, role-checked).
- *  - 'local-demo'   the demo sandbox: a browser-local, pre-seeded fake fleet.
  *  - 'local-legacy' a live tenant that has not been moved to the server yet: browser-local and empty until used.
  *                   "Move to server" carries its assets over.
  */
-export type AssetBackendMode = 'server' | 'local-demo' | 'local-legacy';
+export type AssetBackendMode = 'server' | 'local-legacy';
 
-export function assetBackendMode(tenant: { isSandboxMode: boolean; serverBacked?: boolean }): AssetBackendMode {
-  if (tenant.isSandboxMode) return 'local-demo';
+export function assetBackendMode(tenant: { serverBacked?: boolean }): AssetBackendMode {
   return tenant.serverBacked ? 'server' : 'local-legacy';
 }
 
@@ -147,51 +145,50 @@ function serverBackend(tenantId: string): AssetBackend {
 
 // ---------------------------------------------------------------------------------------------- local backend
 
-function localBackend(tenantId: string, mode: 'local-demo' | 'local-legacy'): AssetBackend {
-  const seed = mode === 'local-demo';
+function localBackend(tenantId: string): AssetBackend {
   const changed = <T>(value: T): T => {
     notifyAssetsChanged(tenantId);
     return value;
   };
   const clash = (name: string | undefined, exceptId?: string): boolean =>
-    !!name && getEnclaveAssets(tenantId, seed).some((a) => a.id !== exceptId && nameKey(a.hostName) === nameKey(name));
+    !!name && getEnclaveAssets(tenantId).some((a) => a.id !== exceptId && nameKey(a.hostName) === nameKey(name));
   const duplicate = (name: string) => new ApiError(409, `An asset named "${name}" already exists in this enclave.`);
 
   const backend: AssetBackend = {
-    mode,
-    list: async () => getEnclaveAssets(tenantId, seed),
+    mode: 'local-legacy',
+    list: async () => getEnclaveAssets(tenantId),
     create: async (input) => {
       if (clash(input.hostName)) throw duplicate(input.hostName as string);
       // The same FIPS rules the server applies
       const fips = normalizeFips(input.cmmcAssetCategory as CmmcAssetCategory, { ...NO_FIPS, ...input });
       if (!fips.ok) throw new ApiError(400, fips.error);
-      return changed(addEnclaveAsset(tenantId, { ...withoutId(input), ...fips.fields } as Omit<EnclaveAsset, 'id'>, seed));
+      return changed(addEnclaveAsset(tenantId, { ...withoutId(input), ...fips.fields } as Omit<EnclaveAsset, 'id'>));
     },
     update: async (id, patch) => {
       if (clash(patch.hostName, id)) throw duplicate(patch.hostName as string);
-      const current = getEnclaveAssets(tenantId, seed).find((a) => a.id === id);
+      const current = getEnclaveAssets(tenantId).find((a) => a.id === id);
       if (!current) throw new ApiError(404, 'That asset no longer exists.');
       const fips = resolveFips(current, patch);
       if (!fips.ok) throw new ApiError(400, fips.error);
-      return changed(updateEnclaveAsset(id, { ...withoutId(patch), ...(fips.value ?? {}) } as Partial<EnclaveAsset>, tenantId, seed));
+      return changed(updateEnclaveAsset(id, { ...withoutId(patch), ...(fips.value ?? {}) } as Partial<EnclaveAsset>, tenantId));
     },
     remove: async (id) => {
-      deleteEnclaveAsset(id, tenantId, seed);
+      deleteEnclaveAsset(id, tenantId);
       changed(undefined);
     },
     classify: (id, category) => backend.update(id, { cmmcAssetCategory: category, discoveryStatus: 'ACTIVE' }),
     importCsv: async (csv) => {
-      const { imported, errors } = importAssetsFromCsv(tenantId, csv, seed);
+      const { imported, errors } = importAssetsFromCsv(tenantId, csv);
       return changed({ imported: imported.length, skipped: errors });
     },
-    ingest: async (items) => changed(await ingestAccretionDiscoveryPayload(tenantId, items, seed)),
+    ingest: async (items) => changed(await ingestAccretionDiscoveryPayload(tenantId, items)),
     simulateDiscovery: async () => {
-      const cleaned = getEnclaveAssets(tenantId, seed).filter((a) => a.sourceOrigin !== 'ACCRETION_DISCOVERY');
-      for (const gone of getEnclaveAssets(tenantId, seed)) if (!cleaned.includes(gone)) deleteEnclaveAsset(gone.id, tenantId, seed);
+      const cleaned = getEnclaveAssets(tenantId).filter((a) => a.sourceOrigin !== 'ACCRETION_DISCOVERY');
+      for (const gone of getEnclaveAssets(tenantId)) if (!cleaned.includes(gone)) deleteEnclaveAsset(gone.id, tenantId);
       return backend.ingest(buildSimulatedDiscoveryBatch());
     },
     recordScan: async (hostName, ipAddress, score) => {
-      syncAssetScanResult(tenantId, hostName, ipAddress, score, undefined, seed);
+      syncAssetScanResult(tenantId, hostName, ipAddress, score);
       notifyAssetsChanged(tenantId);
     },
   };
@@ -199,5 +196,5 @@ function localBackend(tenantId: string, mode: 'local-demo' | 'local-legacy'): As
 }
 
 export function getAssetBackend(tenantId: string, mode: AssetBackendMode): AssetBackend {
-  return mode === 'server' ? serverBackend(tenantId) : localBackend(tenantId, mode);
+  return mode === 'server' ? serverBackend(tenantId) : localBackend(tenantId);
 }

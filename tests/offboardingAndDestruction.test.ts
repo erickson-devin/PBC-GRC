@@ -3,7 +3,7 @@
  * Validates Super Admin offboarding export, 3-pass cryptographic wipe, and certificate generation.
  */
 
-import { SEED_TENANTS } from '../src/context/TenantContext';
+import type { Tenant } from '../src/types/tenant';
 import {
   generateEnclaveHandoverPackage,
   executeCryptographicDestruction,
@@ -45,7 +45,21 @@ async function runTests() {
   console.log('🧪 EVENT HORIZON: ENCLAVE OFFBOARDING & NIST SP 800-88 TEST SUITE');
   console.log('====================================================================\n');
 
-  const testTenant = SEED_TENANTS[0]; // Vanguard Defense Systems
+  const testTenant: Tenant = {
+    id: 'tenant-vanguard-01',
+    name: 'Vanguard Defense Systems LLC',
+    cageCode: '8K3R1',
+    samStatus: 'ACTIVE',
+    systemName: 'Defense Contracting Information Network (DCIN)',
+    systemOwner: 'Alex Mercer, CMMC CCA',
+    industry: 'Defense IT & Systems Integration',
+    domain: 'vanguard-defense.us',
+    createdAt: '2026-01-15T08:00:00.000Z',
+    updatedAt: '2026-01-15T08:00:00.000Z',
+    isConfigured: true,
+    primaryFramework: 'CMMC_L1',
+    enabledFrameworks: ['CMMC_L1', 'CMMC_L2'],
+  };
 
   // Test Group 1: Offboarding Handover Package Compilation
   console.log('📦 Test Group 1: Compliance Offboarding Handover Package Compilation');

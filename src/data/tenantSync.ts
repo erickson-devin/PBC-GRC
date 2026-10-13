@@ -106,7 +106,6 @@ export function serverTenantToTenant(server: ServerTenant, existing: Tenant | un
     }),
     ...authoritative,
     id: server.id,
-    isDemo: false,
     isConfigured: existing?.isConfigured ?? true, // a tenant that exists on the server must not trigger first-run onboarding
     serverBacked: true,
   };

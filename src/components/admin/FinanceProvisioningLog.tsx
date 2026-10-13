@@ -76,7 +76,6 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
         inviteStatus,
         ownerEmail,
         inviteUrl,
-        isDemo: tenant.isDemo,
       };
     });
   }, [tenants, invitations]);
@@ -257,11 +256,6 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
                         <div className="font-semibold text-white flex items-center gap-1.5">
                           <Building2 className="w-3.5 h-3.5 text-brand-400 shrink-0" />
                           <span>{rec.clientName}</span>
-                          {rec.isDemo && (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-mono">
-                              SANDBOX
-                            </span>
-                          )}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-slate-400">
                           <span className="font-mono text-cyan-400">CAGE: {rec.cageCode}</span>

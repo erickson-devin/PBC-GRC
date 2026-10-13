@@ -23,7 +23,6 @@ export const TenantSwitcher: React.FC = () => {
     switchTenant,
     createTenant,
     isMspUser,
-    isSandboxMode,
   } = useTenant();
 
   const { metrics } = useAssessment();
@@ -147,7 +146,7 @@ export const TenantSwitcher: React.FC = () => {
     );
   }
 
-  // MSP MODE or SANDBOX DEMO: Interactive Multi-Tenant Switcher
+  // MSP mode: interactive multi-tenant switcher
   return (
     <div className="flex items-center gap-2">
       {/* Organization / Tenant Switcher Dropdown */}
@@ -190,7 +189,7 @@ export const TenantSwitcher: React.FC = () => {
                   Client Organizations ({tenants.length})
                 </span>
                 <span className="text-xs text-slate-400 font-mono">
-                  {isSandboxMode ? 'Sandbox Enclaves' : 'Isolated Data Boundaries'}
+                  Isolated Data Boundaries
                 </span>
               </div>
               

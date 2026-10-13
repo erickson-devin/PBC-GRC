@@ -81,7 +81,7 @@ function pureTests() {
   console.log('\n--- mergeServerTenants: server wins ---');
   const fresh = mergeServerTenants([], [srv({ id: 'a', name: 'Alpha', role: 'TENANT_OWNER', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2'], cageCode: '1ABC2' })], NOW);
   const a = fresh.tenants[0];
-  assert(fresh.tenants.length === 1 && a.name === 'Alpha' && a.serverBacked === true && a.isDemo === false, 'a new server tenant is added and marked serverBacked');
+  assert(fresh.tenants.length === 1 && a.name === 'Alpha' && a.serverBacked === true, 'a new server tenant is added and marked serverBacked');
   assert(a.isConfigured === true, 'a tenant that exists on the server does not trigger first-run onboarding');
   assert(a.primaryFramework === 'CMMC_L2' && a.cageCode === '1ABC2', 'server settings are applied');
   assert(fresh.roleUpdates.a === 'TENANT_OWNER' && fresh.removedTenantIds.length === 0, 'the server role is reported');

@@ -57,7 +57,6 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     updateTenantFrameworkScope,
     refreshTeam,
     teamError,
-    isSandboxMode,
   } = useTenant();
 
   const [activeModalTab, setActiveModalTab] = useState<'team' | 'scope'>('team');
@@ -82,7 +81,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   }, [isOpen, currentTenant.id, refreshTeam]);
 
   // Invitations are issued by the server, so a browser-only tenant has to be moved there first
-  const isBrowserOnlyTenant = !isSandboxMode && !currentTenant.serverBacked;
+  const isBrowserOnlyTenant = !currentTenant.serverBacked;
 
   // Framework Scope Local State
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>(

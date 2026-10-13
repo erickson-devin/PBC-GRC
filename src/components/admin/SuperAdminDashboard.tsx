@@ -77,7 +77,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     resendInvitation,
     extendInvitationExpiration,
     refreshAllTeams,
-    isSandboxMode,
   } = useTenant();
 
   const { logout, openAuthModal } = useAuth();
@@ -95,10 +94,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [serverAdmins, setServerAdmins] = useState<string[] | null>(null);
   const [adminsError, setAdminsError] = useState<string | null>(null);
   useEffect(() => {
-    if (isSandboxMode) {
-      setServerAdmins([currentUser.email]);
-      return undefined;
-    }
     let cancelled = false;
     void ApiClient.listPlatformAdmins().then((list) => {
       if (cancelled) return;
@@ -108,7 +103,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isSandboxMode, currentUser.email]);
+  }, []);
 
   // Destruction state
   const [selectedTenantForDestruction, setSelectedTenantForDestruction] = useState<Tenant | null>(null);
@@ -225,7 +220,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     setFloatingMenu(null);
     try {
       // The CMMC scope in the SSP comes from the asset inventory. If it cannot be read, the SSP simply states no counts.
-      const assets = await getAssetBackend(tenant.id, assetBackendMode({ isSandboxMode, serverBacked: tenant.serverBacked })).list().catch(() => undefined);
+      const assets = await getAssetBackend(tenant.id, assetBackendMode({ serverBacked: tenant.serverBacked })).list().catch(() => undefined);
       await generateEnclaveHandoverPackage(tenant.id, tenant, assets);
       setNotificationToast({
         type: 'success',
@@ -524,7 +519,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 ({activeEnclavesCount} active{suspendedEnclavesCount > 0 ? `, ${suspendedEnclavesCount} suspended` : ''})
               </span>
             </div>
-            <p className="text-xs text-slate-400">Live & sandbox boundaries</p>
+            <p className="text-xs text-slate-400">Isolated data boundaries</p>
           </div>
 
           <div className="stitch-card p-5 space-y-1">
@@ -699,11 +694,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                           {programSummary(t.primaryFramework, t.enabledFrameworks).additional.length > 0 &&
                             ` +${programSummary(t.primaryFramework, t.enabledFrameworks).additional.length}`}
                         </span>
-                        {t.isDemo && (
-                          <span className="badge ml-1 text-xs font-mono font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
-                            DEMO
-                          </span>
-                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -822,7 +812,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       {email}
                       {email === currentUser.email.toLowerCase() && <span className="ml-2 text-xs font-sans text-cyan-300">(you)</span>}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-300">{isSandboxMode ? 'Demo sandbox' : 'Server configuration'}</td>
+                    <td className="py-3.5 px-4 text-slate-300">Server configuration</td>
                     <td className="py-3.5 px-4 text-slate-300">Provision tenants and set their assessment program</td>
                   </tr>
                 ))}

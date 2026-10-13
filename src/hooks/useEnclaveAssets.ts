@@ -20,13 +20,13 @@ export interface UseEnclaveAssets {
 }
 
 /**
- * The active tenant's asset inventory, from the server (live, server-backed tenants) or the local store (demo sandbox and
- * tenants not yet moved to the server). Refreshes when the tenant changes and whenever any component changes an asset.
+ * The active tenant's asset inventory, from the server (server-backed tenants) or the local store (tenants not yet moved
+ * to the server). Refreshes when the tenant changes and whenever any component changes an asset.
  */
 export function useEnclaveAssets(): UseEnclaveAssets {
-  const { currentTenant, isSandboxMode, canEdit } = useTenant();
+  const { currentTenant, canEdit } = useTenant();
   const tenantId = currentTenant.id;
-  const mode = assetBackendMode({ isSandboxMode, serverBacked: currentTenant.serverBacked });
+  const mode = assetBackendMode({ serverBacked: currentTenant.serverBacked });
   const backend = useMemo(() => getAssetBackend(tenantId, mode), [tenantId, mode]);
 
   const [assets, setAssets] = useState<EnclaveAsset[]>([]);

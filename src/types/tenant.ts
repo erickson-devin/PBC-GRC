@@ -26,7 +26,6 @@ export interface Tenant {
   domain?: string; // Associated corporate domain e.g. "apexdefense.us"
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
-  isDemo?: boolean;
   isConfigured?: boolean; // false if setup wizard / initial onboarding is needed
   systemBoundaryScope?: string;
   isSuspended?: boolean; // When true, access to this enclave is frozen while preserving records

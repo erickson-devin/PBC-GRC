@@ -18,7 +18,7 @@ import {
   type AuthUserLike,
 } from '../config/firebase';
 import { User, AuthProviderType } from '../types/tenant';
-import { useTenant, PRESET_USERS } from './TenantContext';
+import { useTenant, ANONYMOUS_USER } from './TenantContext';
 import { buildDevMockIdToken } from '../config/devAuthToken';
 import { ApiClient, AuthMode, SetupInput, SetupResult } from '../services/apiClient';
 import { errorMessage, errorCode } from '../utils/errors';
@@ -72,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       console.warn('Failed to load saved user session:', e);
     }
-    return tenantUser || PRESET_USERS[0];
+    return tenantUser || ANONYMOUS_USER;
   });
 
   const [idToken, setIdToken] = useState<string | null>(() => {

@@ -54,6 +54,8 @@ const source = [...walk(path.join(root, 'src')), ...walk(path.join(root, 'server
 const offenders = (re: RegExp) => source.filter((f) => re.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f));
 assert(offenders(/components\/landing|marketingPlans|LicenseRequestModal|PricingSection|LandingPage|SampleSspModal/).length === 0, 'no source file imports a removed marketing module', offenders(/components\/landing|marketingPlans|LicenseRequestModal|PricingSection|LandingPage|SampleSspModal/));
 assert(offenders(/submitLicenseRequest|openLicenseModal|licenseRequests/).length === 0, 'the lead-capture state and its callers are gone', offenders(/submitLicenseRequest|openLicenseModal|licenseRequests/));
+const sandboxRe = /isSandboxMode|SEED_TENANTS|PRESET_USERS|SEED_INVITATIONS|SEED_TEAM_MEMBERS|local-demo|generateDefaultEnclaveAssets|getInvitationByToken|\.isDemo\b/;
+assert(offenders(sandboxRe).length === 0, 'no source file refers to the removed demo sandbox (mode flag, demo tenants/users/seeds, local demo backends)', offenders(sandboxRe));
 const nginx = fs.readFileSync(path.join(root, 'nginx.conf'), 'utf8');
 assert(/location \^~ \/api\//.test(nginx) && /try_files \$uri \$uri\/ \/index\.html/.test(nginx) && !/privacy|terms/i.test(nginx.replace(/#[^\n]*/g, '')), 'nginx.conf is the SPA plus an /api/ proxy, with no routes of the public site');
 const serverIndex = fs.readFileSync(path.join(root, 'server/index.ts'), 'utf8');

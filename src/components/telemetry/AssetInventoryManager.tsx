@@ -49,8 +49,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   selectedHost,
 }) => {
   const { currentTenant } = useTenant();
-  // The inventory comes from the server for live tenants (the local store only backs the demo sandbox and tenants that
-  // have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
+  // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');

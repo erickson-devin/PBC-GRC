@@ -144,7 +144,7 @@ export function buildTeam(
 
 /**
  * Replaces the server-backed invitations of ONE tenant with the server's current list; everything else (other
- * tenants, sandbox / legacy browser-only invitations) is left untouched.
+ * tenants, legacy browser-only invitations) is left untouched.
  */
 export function mergeServerInvitations(
   current: readonly TenantInvitation[],
@@ -154,5 +154,3 @@ export function mergeServerInvitations(
   return [...fromServer, ...current.filter((i) => !(i.tenantId === tenantId && i.serverBacked))];
 }
 
-/** localStorage must never hold server-issued invitation data: the server owns it (and tokens are secrets). */
-export const persistableInvitations = (all: readonly TenantInvitation[]): TenantInvitation[] => all.filter((i) => !i.serverBacked);

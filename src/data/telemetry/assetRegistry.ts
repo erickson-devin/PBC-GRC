@@ -32,114 +32,7 @@ function generateUuid(): string {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Default Seed Assets for Enclave Boundary
-// ---------------------------------------------------------------------------
-
-export function generateDefaultEnclaveAssets(tenantId: string): EnclaveAsset[] {
-  const now = new Date().toISOString();
-
-  return [
-    {
-      id: `asset-cui-01-${tenantId}`,
-      tenantId,
-      hostName: 'enclave-node-01',
-      ipAddress: '10.0.50.12',
-      macAddress: '52:54:00:8C:92:4F',
-      osProfile: 'rhel9',
-      cmmcAssetCategory: 'CUI_ASSET',
-      status: 'ACTIVE',
-      sourceOrigin: 'PHOTON_AGENT',
-      discoveryStatus: 'ACTIVE',
-      lastScannedAt: now,
-      complianceScore: 100,
-      notes: 'Primary CUI processing node with automated OpenSCAP STIG evaluation daemon.',
-      isManuallyAdded: false,
-    },
-    {
-      id: `asset-sec-04-${tenantId}`,
-      tenantId,
-      hostName: 'WS-SEC-04',
-      ipAddress: '192.168.1.142',
-      macAddress: '00:50:56:B3:4A:19',
-      osProfile: 'ubuntu2204',
-      cmmcAssetCategory: 'SECURITY_PROTECTION',
-      status: 'NON_COMPLIANT',
-      sourceOrigin: 'PHOTON_AGENT',
-      discoveryStatus: 'ACTIVE',
-      lastScannedAt: now,
-      complianceScore: 91,
-      notes: 'Security analyst workstation. Root cause for boundary failure on AC.L1-3.1.1 & AC.L1-3.1.10.',
-      isManuallyAdded: false,
-    },
-    {
-      id: `asset-dc-01-${tenantId}`,
-      tenantId,
-      hostName: 'DC-ENCLAVE-01',
-      ipAddress: '10.0.50.5',
-      macAddress: '00:15:5D:01:AF:22',
-      osProfile: 'win2022',
-      cmmcAssetCategory: 'SECURITY_PROTECTION',
-      status: 'ACTIVE',
-      sourceOrigin: 'PHOTON_AGENT',
-      discoveryStatus: 'ACTIVE',
-      lastScannedAt: now,
-      complianceScore: 100,
-      notes: 'Enclave Domain Controller & Active Directory root identity provider for Kerberos MFA.',
-      isManuallyAdded: false,
-    },
-    {
-      id: `asset-app-02-${tenantId}`,
-      tenantId,
-      hostName: 'APP-PROD-02',
-      ipAddress: '10.0.50.28',
-      macAddress: '52:54:00:3E:11:9B',
-      osProfile: 'rhel9',
-      cmmcAssetCategory: 'CUI_ASSET',
-      status: 'ACTIVE',
-      sourceOrigin: 'PHOTON_AGENT',
-      discoveryStatus: 'ACTIVE',
-      lastScannedAt: now,
-      complianceScore: 100,
-      notes: 'Production container host running defense microservices with FIPS 140-3 cryptography.',
-      isManuallyAdded: false,
-    },
-    {
-      id: `asset-fw-01-${tenantId}`,
-      tenantId,
-      hostName: 'FW-GATEWAY-01',
-      ipAddress: '10.0.50.1',
-      macAddress: '00:0C:29:4F:88:1A',
-      osProfile: 'cisco_ios',
-      cmmcAssetCategory: 'SECURITY_PROTECTION',
-      status: 'ACTIVE',
-      sourceOrigin: 'MANUAL_ENTRY',
-      discoveryStatus: 'ACTIVE',
-      lastScannedAt: null,
-      complianceScore: null,
-      notes: 'Perimeter next-generation firewall / IPsec VPN boundary router.',
-      isManuallyAdded: true,
-    },
-    {
-      id: `asset-contractor-01-${tenantId}`,
-      tenantId,
-      hostName: 'QA-LAB-CLIENT',
-      ipAddress: '10.0.50.99',
-      macAddress: 'A4:83:E7:22:90:BB',
-      osProfile: 'win11',
-      cmmcAssetCategory: 'CONTRACTOR_RISK',
-      status: 'NEVER_SCANNED',
-      sourceOrigin: 'MANUAL_ENTRY',
-      discoveryStatus: 'ACTIVE',
-      lastScannedAt: null,
-      complianceScore: null,
-      notes: 'Contractor testing laptop temporarily connected to enclave evaluation VLAN.',
-      isManuallyAdded: true,
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
-// 3. Storage Persistence
+// 2. Storage Persistence
 // ---------------------------------------------------------------------------
 
 function getStorageKey(tenantId: string): string {
@@ -147,10 +40,10 @@ function getStorageKey(tenantId: string): string {
 }
 
 /**
- * Browser-local inventory (the demo sandbox, and live tenants that have not been moved to the server yet).
- * `seed` fills an empty inventory with the demo fleet: only the sandbox wants that. A real tenant starts empty.
+ * Browser-local inventory of a tenant that has not been moved to the server yet. It starts empty: assets come from the
+ * user, a CSV import or a discovery ingest, never from a built-in sample fleet.
  */
-export function getEnclaveAssets(tenantId: string, seed = true): EnclaveAsset[] {
+export function getEnclaveAssets(tenantId: string): EnclaveAsset[] {
   try {
     const raw = localStorage.getItem(getStorageKey(tenantId));
     if (raw) {
@@ -168,12 +61,7 @@ export function getEnclaveAssets(tenantId: string, seed = true): EnclaveAsset[] 
     console.warn('[AssetRegistry] Failed to parse local asset storage:', err);
   }
 
-  if (!seed) return [];
-
-  // Populate default seed inventory for new or uninitialized tenants
-  const seeds = generateDefaultEnclaveAssets(tenantId);
-  saveEnclaveAssets(seeds, tenantId);
-  return seeds;
+  return [];
 }
 
 export function saveEnclaveAssets(assets: EnclaveAsset[], tenantId: string): void {
@@ -185,15 +73,14 @@ export function saveEnclaveAssets(assets: EnclaveAsset[], tenantId: string): voi
 }
 
 // ---------------------------------------------------------------------------
-// 4. CRUD Operations
+// 3. CRUD Operations
 // ---------------------------------------------------------------------------
 
 export function addEnclaveAsset(
   tenantId: string,
-  assetInput: Omit<EnclaveAsset, 'id'>,
-  seed = true
+  assetInput: Omit<EnclaveAsset, 'id'>
 ): EnclaveAsset {
-  const currentAssets = getEnclaveAssets(tenantId, seed);
+  const currentAssets = getEnclaveAssets(tenantId);
   const newAsset: EnclaveAsset = {
     ...assetInput,
     id: generateUuid(),
@@ -215,10 +102,9 @@ export function addEnclaveAsset(
 export function updateEnclaveAsset(
   assetId: string,
   updates: Partial<EnclaveAsset>,
-  tenantId: string,
-  seed = true
+  tenantId: string
 ): EnclaveAsset {
-  const currentAssets = getEnclaveAssets(tenantId, seed);
+  const currentAssets = getEnclaveAssets(tenantId);
   const targetIdx = currentAssets.findIndex(a => a.id === assetId);
 
   if (targetIdx === -1) {
@@ -237,20 +123,20 @@ export function updateEnclaveAsset(
   return updatedAsset;
 }
 
-export function deleteEnclaveAsset(assetId: string, tenantId: string, seed = true): void {
-  const currentAssets = getEnclaveAssets(tenantId, seed);
+export function deleteEnclaveAsset(assetId: string, tenantId: string): void {
+  const currentAssets = getEnclaveAssets(tenantId);
   const filtered = currentAssets.filter(a => a.id !== assetId);
   saveEnclaveAssets(filtered, tenantId);
 }
 
 // ---------------------------------------------------------------------------
-// 5. Bulk CSV Importer
+// 4. Bulk CSV Importer
 // ---------------------------------------------------------------------------
 
 /** Local-store CSV import. Rows with an unrecognised category are skipped and reported (see parseAssetsCsv). */
-export function importAssetsFromCsv(tenantId: string, csvContent: string, seed = true): { imported: EnclaveAsset[]; errors: string[] } {
+export function importAssetsFromCsv(tenantId: string, csvContent: string): { imported: EnclaveAsset[]; errors: string[] } {
   const parsed = parseAssetsCsv(csvContent);
-  const existing = getEnclaveAssets(tenantId, seed);
+  const existing = getEnclaveAssets(tenantId);
   const names = new Set(existing.map(a => a.hostName.toLowerCase()));
   const errors = [...parsed.errors];
   const imported: EnclaveAsset[] = [];
@@ -284,7 +170,7 @@ export function importAssetsFromCsv(tenantId: string, csvContent: string, seed =
 }
 
 // ---------------------------------------------------------------------------
-// 6. Real-Time Scan Synchronization
+// 5. Real-Time Scan Synchronization
 // ---------------------------------------------------------------------------
 
 export function syncAssetScanResult(
@@ -292,10 +178,9 @@ export function syncAssetScanResult(
   hostName: string,
   ipAddress: string,
   score: number,
-  forcedStatus?: EnclaveAssetStatus,
-  seed = true
+  forcedStatus?: EnclaveAssetStatus
 ): void {
-  const currentAssets = getEnclaveAssets(tenantId, seed);
+  const currentAssets = getEnclaveAssets(tenantId);
   const matchIdx = currentAssets.findIndex(
     a => a.hostName.toLowerCase() === hostName.toLowerCase() || a.ipAddress === ipAddress
   );
@@ -313,7 +198,7 @@ export function syncAssetScanResult(
 }
 
 // ---------------------------------------------------------------------------
-// 7. Accretion Discovery Ingestion & Deduplication Pipeline
+// 6. Accretion Discovery Ingestion & Deduplication Pipeline
 // ---------------------------------------------------------------------------
 
 /**
@@ -327,10 +212,9 @@ export function syncAssetScanResult(
  */
 export async function ingestAccretionDiscoveryPayload(
   tenantId: string,
-  discoveredAssets: AccretionDiscoveryItem[],
-  seed = true
+  discoveredAssets: AccretionDiscoveryItem[]
 ): Promise<AccretionIngestResult> {
-  const currentAssets = getEnclaveAssets(tenantId, seed);
+  const currentAssets = getEnclaveAssets(tenantId);
   const now = new Date().toISOString();
   let newCount = 0;
   let updatedCount = 0;
@@ -435,7 +319,7 @@ export async function ingestAccretionDiscoveryPayload(
 }
 
 // ---------------------------------------------------------------------------
-// 8. Accretion Simulation Generator (for evaluation & testing)
+// 7. Accretion Simulation Generator (for evaluation & testing)
 // ---------------------------------------------------------------------------
 
 /** The sample sensor sweep used by the "simulate discovery" button (two unknown devices and one that already exists). */
@@ -480,23 +364,14 @@ export function buildSimulatedDiscoveryBatch(): AccretionDiscoveryItem[] {
   ];
 }
 
-/** Local-store simulation (sandbox / browser-only tenants). */
-export async function simulateAccretionDiscovery(tenantId: string, seed = true): Promise<AccretionIngestResult> {
-  // Clear earlier simulated devices so the demo always shows fresh unconfirmed discovery and deduplication.
-  const cleaned = getEnclaveAssets(tenantId, seed).filter(a => a.sourceOrigin !== 'ACCRETION_DISCOVERY');
-  saveEnclaveAssets(cleaned, tenantId);
-  return await ingestAccretionDiscoveryPayload(tenantId, buildSimulatedDiscoveryBatch(), seed);
-}
-
 // ---------------------------------------------------------------------------
-// 9. Confirm Discovered Asset Classification
+// 8. Confirm Discovered Asset Classification
 // ---------------------------------------------------------------------------
 
 export function confirmDiscoveredAsset(
   tenantId: string,
   assetId: string,
-  confirmedCategory: CmmcAssetCategory,
-  seed = true
+  confirmedCategory: CmmcAssetCategory
 ): EnclaveAsset {
   return updateEnclaveAsset(
     assetId,
@@ -504,13 +379,12 @@ export function confirmDiscoveredAsset(
       cmmcAssetCategory: confirmedCategory,
       discoveryStatus: 'ACTIVE',
     },
-    tenantId,
-    seed
+    tenantId
   );
 }
 
 // ---------------------------------------------------------------------------
-// 10. Accretion Webhook & API Secret Key Configuration
+// 9. Accretion Webhook & API Secret Key Configuration
 // ---------------------------------------------------------------------------
 
 export function getAccretionApiConfig(tenantId: string): { webhookUrl: string; secretKey: string } {
@@ -555,10 +429,13 @@ export function rotateAccretionSecretKey(tenantId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 11. Migration helpers (browser-only tenant -> server)
+// 10. Migration helpers (browser-only tenant -> server)
 // ---------------------------------------------------------------------------
 
-/** True for the demo fleet this module seeds into an empty inventory (never a real tenant's asset). */
+/**
+ * True for the sample fleet that older versions seeded into an empty browser-local inventory (never a real tenant's
+ * asset), so that moving a tenant to the server does not carry it over.
+ */
 export function isDemoSeedAsset(asset: Pick<EnclaveAsset, 'id'>, tenantId: string): boolean {
   return /^asset-[a-z]+-\d{2}-/.test(asset.id) && asset.id.endsWith(`-${tenantId}`);
 }

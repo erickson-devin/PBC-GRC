@@ -9,7 +9,6 @@ import {
   parseServerInvitations,
   parseServerMembers,
   pendingMemberId,
-  persistableInvitations,
   toTenantInvitation,
   ServerInvitation,
 } from '../src/data/teamSync';
@@ -84,15 +83,13 @@ function pureTests() {
   assert(team[1].invitationToken === 'inv_known', 'the token shows only for a link created in this session');
   assert(buildTeam('t1', [], [srvInv({ id: 'p2' })]).at(0)?.invitationToken === undefined, 'otherwise a pending row has no token (use Resend)');
 
-  console.log('\n--- mergeServerInvitations / persistence ---');
+  console.log('\n--- mergeServerInvitations ---');
   const legacy: TenantInvitation = { ...toTenantInvitation(srvInv({ id: 'L1', tenantId: 't1' }), tenant, 'legacy-token'), serverBacked: false };
   const otherTenant = toTenantInvitation(srvInv({ id: 'O1', tenantId: 't2' }), tenant);
   const staleServer = toTenantInvitation(srvInv({ id: 'S1', tenantId: 't1' }), tenant);
   const merged = mergeServerInvitations([legacy, otherTenant, staleServer], 't1', [toTenantInvitation(srvInv({ id: 'N1', tenantId: 't1' }), tenant)]);
   assert(merged.map((i) => i.id).sort().join() === 'L1,N1,O1', "replaces ONLY this tenant's server-backed invitations; legacy and other tenants' are kept", merged.map((i) => i.id));
   assert(mergeServerInvitations([staleServer], 't1', []).length === 0, 'a revoked/removed invitation disappears when the server stops listing it');
-  const toStore = persistableInvitations([legacy, otherTenant, staleServer]);
-  assert(toStore.length === 1 && toStore[0].id === 'L1', 'localStorage never receives server-issued invitations (and so never a token)', toStore.map((i) => i.id));
 }
 
 // ------------------------------------------------------------------------------------------------ contract

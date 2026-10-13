@@ -19,12 +19,12 @@ interface LegacyTenantNoticeProps {
  * invitations and access from other devices. Two-step inline confirmation; no blocking dialogs.
  */
 export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, variant = 'banner', onMoved }) => {
-  const { isSandboxMode, migrateLocalTenantToServer } = useTenant();
+  const { migrateLocalTenantToServer } = useTenant();
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [moved, setMoved] = useState<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number } | null>(null);
 
-  const isLegacy = !isSandboxMode && !tenant.serverBacked && tenant.isConfigured !== false;
+  const isLegacy = !tenant.serverBacked && tenant.isConfigured !== false;
 
   if (stage === 'done' && moved) {
     return (

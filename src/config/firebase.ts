@@ -14,7 +14,7 @@ import { buildDevMockIdToken } from './devAuthToken';
 
 /**
  * Google Cloud Identity Platform / Firebase Configuration
- * Reads from Vite environment variables with graceful fallback for dev & demo sandbox
+ * Reads from Vite environment variables with graceful fallback for development without an identity provider
  */
 const getEnv = (key: string, fallback: string = ''): string => {
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
@@ -53,7 +53,7 @@ try {
     authInstance = getAuth(appInstance);
   }
 } catch (err) {
-  console.warn('Firebase initialization notice: Running in resilient defense sandbox mode.', err);
+  console.warn('Firebase initialization notice: Continuing without an external identity provider.', err);
 }
 
 export const app = appInstance;

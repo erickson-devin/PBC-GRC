@@ -33,7 +33,6 @@ import {
   ServerInvitation,
   buildTeam,
   mergeServerInvitations,
-  persistableInvitations,
   toTenantInvitation,
 } from '../data/teamSync';
 import { getCascadedObjectiveNarrative } from '../data/frameworks/policyCompiler';
@@ -47,13 +46,10 @@ import {
   ImpactLevel,
 } from '../types/framework';
 
-// Storage Version 4 Keys (Strict separation of Live vs Sandbox)
+// Storage Version 4 Keys
 const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
 const LIVE_ACTIVE_TENANT_ID_KEY = 'pbc_live_active_tenant_v4';
-const DEMO_TENANTS_STORAGE_KEY = 'pbc_demo_tenants_v4';
-const DEMO_ACTIVE_TENANT_ID_KEY = 'pbc_demo_active_tenant_v4';
 const CURRENT_USER_KEY = 'pbc_active_user_v4';
-const INVITATIONS_STORAGE_KEY = 'pbc_tenant_invitations_v4';
 const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
 const ACTIVE_FRAMEWORK_KEY = 'pbc_active_framework_v1';
 const ACTIVE_BASELINE_TIER_KEY = 'pbc_active_baseline_tier_v1';
@@ -62,6 +58,9 @@ const ACTIVE_OVERLAY_FILTERS_KEY = 'pbc_active_overlay_filters_v1';
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [
   'pbc_license_requests_v4', // lead capture of the removed public site
+  'pbc_demo_tenants_v4', // the removed demo sandbox
+  'pbc_demo_active_tenant_v4',
+  'pbc_tenant_invitations_v4', // invitations are issued and held by the server
   'pbc_tenants',
   'pbc_active_tenant',
   'pbc_tenants_registry_v1',
@@ -71,9 +70,6 @@ const LEGACY_STORAGE_KEYS = [
   'pbc_active_user_v3',
 ];
 
-/**
- * Generate a cryptographically secure token for tenant and staff onboarding invites
- */
 /**
  * Right after a sign-in the session token is saved to localStorage by an effect, a moment after the sign-in promise
  * resolves. Wait briefly for it instead of failing a claim that is made straight away.
@@ -86,14 +82,6 @@ async function waitForSessionToken(timeoutMs = 3000): Promise<string | null> {
     if (Date.now() > deadline) return null;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-}
-
-function generateCryptoToken(): string {
-  // Invitation tokens are bearer secrets: use the platform CSPRNG, never Math.random().
-  const bytes = new Uint8Array(24);
-  globalThis.crypto.getRandomValues(bytes);
-  const random = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `pbc_inv_${Date.now().toString(36)}_${random}`;
 }
 
 /**
@@ -110,7 +98,6 @@ export function buildInviteUrl(token: string): string {
 /**
  * Platform administrator (the super-admin console). In a live installation this flag comes from the SERVER (GET /api/v1/me,
  * the PLATFORM_ADMIN_EMAILS list) after every sign-in, so the console is only shown to people the server will let use it.
- * The demo sandbox user carries the flag locally.
  */
 export function isSuperAdminUser(user?: User | null): boolean {
   return user?.isSuperAdmin === true;
@@ -177,188 +164,14 @@ function deduplicateTenants(tenantList: Tenant[]): Tenant[] {
   return result;
 }
 
-/**
- * Sandbox Demo Tenants (Evaluator testing and unauthenticated /demo test drive)
- */
-export const SEED_TENANTS: Tenant[] = [
-  {
-    id: 'tenant-vanguard-01',
-    name: 'Vanguard Defense Systems LLC',
-    cageCode: '8K3R1',
-    samStatus: 'ACTIVE',
-    systemName: 'Defense Contracting Information Network (DCIN)',
-    systemOwner: 'Alex Mercer, CMMC CCA',
-    industry: 'Defense IT & Systems Integration',
-    domain: 'vanguard-defense.us',
-    createdAt: '2026-01-15T08:00:00.000Z',
-    updatedAt: '2026-01-15T08:00:00.000Z',
-    isDemo: true,
-    isConfigured: true,
-    primaryFramework: 'CMMC_L1',
-    enabledFrameworks: ['CMMC_L1', 'CMMC_L2'],
-  },
-  {
-    id: 'tenant-apex-02',
-    name: 'Apex Aerospace Enclave',
-    cageCode: '9X7B4',
-    samStatus: 'ACTIVE',
-    systemName: 'Corporate Operations Enclave (COE)',
-    systemOwner: 'Cyber Ops Administrator',
-    industry: 'Aerospace & Defense Hardware',
-    domain: 'apex-aerospace.us',
-    createdAt: '2026-02-01T10:30:00.000Z',
-    updatedAt: '2026-02-01T10:30:00.000Z',
-    isDemo: true,
-    isConfigured: true,
-    primaryFramework: 'CMMC_L2',
-    enabledFrameworks: ['CMMC_L2', 'NIST_800_53_REV5'],
-  },
-  {
-    id: 'tenant-orbital-03',
-    name: 'Orbital Dynamics Aerospace LLC',
-    cageCode: '7M2P9',
-    samStatus: 'PENDING',
-    systemName: 'Orbital Flight Mission Systems (OFMS)',
-    systemOwner: 'Dr. Elena Rostova, Director of Mission Assurance',
-    industry: 'Satellite Systems & Propulsion R&D',
-    domain: 'orbitaldynamics.com',
-    createdAt: '2026-02-20T14:15:00.000Z',
-    updatedAt: '2026-02-20T14:15:00.000Z',
-    isDemo: true,
-    isConfigured: true,
-    primaryFramework: 'NIST_800_53_REV5',
-    enabledFrameworks: ['NIST_800_53_REV5', 'SOC_2_TYPE_II'],
-  },
-];
-
-export const PRESET_USERS: User[] = [
-  {
-    id: 'user-alex-lead',
-    name: 'Alex Mercer, CMMC CCA',
-    email: 'alex.mercer@vanguard-defense.us',
-    organization: 'Vanguard Defense Systems / Lead Assessor',
-    googleWorkspaceEmail: 'alex.mercer@vanguard-defense.us',
-    authProvider: 'microsoft.com',
-    roles: {
-      'tenant-vanguard-01': 'TENANT_OWNER',
-      'tenant-apex-02': 'ASSESSOR',
-      'tenant-orbital-03': 'TENANT_OWNER',
-    },
-  },
-  {
-    id: 'user-cyber-admin',
-    name: 'Cyber Ops Administrator',
-    email: 'ops.admin@vanguard-defense.us',
-    organization: 'Defense Cyber Operations Command',
-    googleWorkspaceEmail: 'ops.admin@vanguard-defense.us',
-    authProvider: 'google.com',
-    roles: {
-      'tenant-vanguard-01': 'ASSESSOR',
-      'tenant-apex-02': 'ASSESSOR',
-      'tenant-orbital-03': 'ASSESSOR',
-    },
-  },
-  {
-    id: 'user-morgan-observer',
-    name: 'Morgan Vance (Observer)',
-    email: 'm.vance@defense-observer.org',
-    organization: 'Third-Party Assessment Org (C3PAO)',
-    googleWorkspaceEmail: 'm.vance@defense-observer.org',
-    authProvider: 'emailLink',
-    roles: {
-      'tenant-vanguard-01': 'VIEWER',
-      'tenant-apex-02': 'VIEWER',
-      'tenant-orbital-03': 'VIEWER',
-    },
-  },
-  {
-    id: 'user-devin-superadmin',
-    name: 'Devin (Pitch Black Cyber)',
-    email: 'devin@pitchblackcyber.com',
-    organization: 'Pitch Black Cyber LLC (Super Admin)',
-    authProvider: 'google.com',
-    isSuperAdmin: true,
-    roles: {
-      'tenant-vanguard-01': 'TENANT_OWNER',
-      'tenant-apex-02': 'TENANT_OWNER',
-      'tenant-orbital-03': 'TENANT_OWNER',
-    },
-  },
-];
-
-const SEED_INVITATIONS: TenantInvitation[] = [
-  {
-    id: 'inv-seed-01',
-    token: 'pbc_inv_7f4d1e9a3b8c2d5e0f1a4b7c8d9e2f3a',
-    tenantId: 'tenant-vanguard-01',
-    tenantName: 'Vanguard Defense Systems LLC',
-    email: 'auditor@defense-c3pao.org',
-    role: 'ASSESSOR',
-    invitedBy: 'alex.mercer@vanguard-defense.us',
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    expiresAt: new Date(Date.now() + 12 * 24 * 60 * 60 * 1000).toISOString(),
-    status: 'PENDING',
-    type: 'STAFF_INVITE',
-    systemName: 'Defense Contracting Information Network (DCIN)',
-    cageCode: '8K3R1',
-  },
-  {
-    id: 'inv-seed-02',
-    token: 'pbc_inv_9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d',
-    tenantId: 'tenant-apex-02',
-    tenantName: 'Apex Aerospace Enclave',
-    email: 'ciso@apex-aerospace.us',
-    role: 'TENANT_OWNER',
-    invitedBy: 'devin@pitchblackcyber.com',
-    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    expiresAt: new Date(Date.now() + 13 * 24 * 60 * 60 * 1000).toISOString(),
-    status: 'PENDING',
-    type: 'TENANT_ONBOARDING',
-    systemName: 'Corporate Operations Enclave (COE)',
-    cageCode: '9X7B4',
-  },
-];
-
-const SEED_TEAM_MEMBERS: Record<string, TeamMember[]> = {
-  'tenant-vanguard-01': [
-    {
-      id: 'mem-alex-01',
-      tenantId: 'tenant-vanguard-01',
-      email: 'alex.mercer@vanguard-defense.us',
-      name: 'Alex Mercer, CMMC CCA',
-      role: 'TENANT_OWNER',
-      status: 'ACTIVE',
-      joinedAt: '2026-01-15T08:00:00.000Z',
-    },
-    {
-      id: 'mem-ops-02',
-      tenantId: 'tenant-vanguard-01',
-      email: 'ops.admin@vanguard-defense.us',
-      name: 'Cyber Ops Administrator',
-      role: 'ASSESSOR',
-      status: 'ACTIVE',
-      joinedAt: '2026-01-16T10:00:00.000Z',
-    },
-    {
-      id: 'mem-vance-03',
-      tenantId: 'tenant-vanguard-01',
-      email: 'm.vance@defense-observer.org',
-      name: 'Morgan Vance (Observer)',
-      role: 'VIEWER',
-      status: 'ACTIVE',
-      joinedAt: '2026-01-20T14:30:00.000Z',
-    },
-    {
-      id: 'mem-auditor-04',
-      tenantId: 'tenant-vanguard-01',
-      email: 'auditor@defense-c3pao.org',
-      name: 'External C3PAO Lead',
-      role: 'ASSESSOR',
-      status: 'PENDING_INVITE',
-      invitedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-      invitationToken: 'pbc_inv_7f4d1e9a3b8c2d5e0f1a4b7c8d9e2f3a',
-    },
-  ],
+/** The user before anyone has signed in: no identity and no access to any tenant. */
+export const ANONYMOUS_USER: User = {
+  id: 'anonymous',
+  name: '',
+  email: '',
+  organization: '',
+  authProvider: 'password',
+  roles: {},
 };
 
 export const DEFAULT_BLANK_TENANT: Tenant = {
@@ -372,13 +185,11 @@ export const DEFAULT_BLANK_TENANT: Tenant = {
   domain: 'pitchblackcyber.com',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
-  isDemo: false,
   isConfigured: false,
   primaryFramework: 'CMMC_L1',
   enabledFrameworks: ['CMMC_L1'],
 };
 
-// Check if current URL route is sandbox demo
 export interface TenantSyncState {
   status: 'idle' | 'syncing' | 'synced' | 'error';
   lastSyncedAt: string | null;
@@ -392,7 +203,6 @@ interface TenantContextType {
   currentRole: TenantRole;
   canEdit: boolean;
   canManageTenant: boolean;
-  isSandboxMode: boolean;
   isMspUser: boolean;
   isSuperAdmin: boolean;
   needsOnboarding: boolean;
@@ -416,7 +226,6 @@ interface TenantContextType {
     systemOwner: string;
     industry: string;
     domain?: string;
-    isDemo?: boolean;
     isConfigured?: boolean;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
@@ -449,7 +258,6 @@ interface TenantContextType {
   updateMemberRole: (tenantId: string, memberId: string, newRole: TenantRole) => Promise<void>;
   removeMember: (tenantId: string, memberId: string) => Promise<void>;
   getTenantMembers: (tenantId: string) => TeamMember[];
-  getInvitationByToken: (token: string) => TenantInvitation | undefined;
   /** Re-fetches the members and invitations of a server-backed tenant (default: the active one). */
   refreshTeam: (tenantId?: string) => Promise<void>;
   /** Same for every server-backed tenant the user administers (used by the super-admin console). */
@@ -492,7 +300,7 @@ interface TenantContextType {
   tenantSync: TenantSyncState;
   /**
    * Re-fetches the tenants this user belongs to, and their roles, from the server. Resolves the new tenant list,
-   * or null if there is nothing to sync (sandbox, not signed in, or the session was rejected). `force` waits for a
+   * or null if there is nothing to sync (not signed in, or the session was rejected). `force` waits for a
    * sync already in flight and then runs a fresh one.
    */
   syncTenantsFromServer: (token?: string, options?: { force?: boolean }) => Promise<Tenant[] | null>;
@@ -528,10 +336,8 @@ interface TenantContextType {
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
 export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // There is no demo sandbox any more: the application is always a live installation.
-  const isSandboxMode = false;
-
-  // 1. LIVE TENANTS: Strictly non-demo organizations created or assigned to real users
+  // Tenants known to this browser: the cache of what the server says (see syncTenantsFromServer), plus drafts and
+  // legacy browser-only tenants that have not been moved to the server yet.
   const [liveTenants, setLiveTenants] = useState<Tenant[]>(() => {
     try {
       // Check v4 key
@@ -540,7 +346,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const parsed = JSON.parse(savedLive) as Tenant[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           const clean = parsed
-            .filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id))
             .map(t => ({
               ...t,
               primaryFramework: t.primaryFramework || 'CMMC_L1',
@@ -552,19 +357,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // Migration: migrate any non-demo tenants from legacy storage
+      // Migration: tenants from legacy storage
       const legacySaved = localStorage.getItem('pbc_tenants_registry_v3');
       if (legacySaved) {
         const parsed = JSON.parse(legacySaved) as Tenant[];
         if (Array.isArray(parsed)) {
-          const nonDemo = parsed
-            .filter(t => !t.isDemo && !SEED_TENANTS.some(st => st.id === t.id))
+          const legacyTenants = parsed
             .map(t => ({
               ...t,
               primaryFramework: t.primaryFramework || 'CMMC_L1',
               enabledFrameworks: (t.enabledFrameworks && t.enabledFrameworks.length > 0) ? t.enabledFrameworks : [t.primaryFramework || 'CMMC_L1'],
             }));
-          const deduplicated = deduplicateTenants(nonDemo);
+          const deduplicated = deduplicateTenants(legacyTenants);
           if (deduplicated.length > 0) {
             return deduplicated;
           }
@@ -582,47 +386,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return [DEFAULT_BLANK_TENANT];
   });
 
-  // 2. DEMO TENANTS: Strictly sample demo organizations for testing
-  const [demoTenants, setDemoTenants] = useState<Tenant[]>(() => {
-    try {
-      const savedDemo = localStorage.getItem(DEMO_TENANTS_STORAGE_KEY);
-      if (savedDemo) {
-        const parsed = JSON.parse(savedDemo) as Tenant[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const migrated = parsed.map(t => {
-            const seedMatch = SEED_TENANTS.find(st => st.id === t.id);
-            return {
-              ...t,
-              primaryFramework: t.primaryFramework || seedMatch?.primaryFramework || 'CMMC_L1',
-              enabledFrameworks: (t.enabledFrameworks && t.enabledFrameworks.length > 0)
-                ? t.enabledFrameworks
-                : (seedMatch?.enabledFrameworks || [t.primaryFramework || 'CMMC_L1']),
-            };
-          });
-          return deduplicateTenants(migrated);
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return SEED_TENANTS;
-  });
-
-  // Active Tenant IDs per mode
+  // Active tenant
   const [liveActiveTenantId, setLiveActiveTenantId] = useState<string>(() => {
     const saved = localStorage.getItem(LIVE_ACTIVE_TENANT_ID_KEY);
     if (saved && liveTenants.some(t => t.id === saved)) {
       return saved;
     }
     return liveTenants[0]?.id || DEFAULT_BLANK_TENANT.id;
-  });
-
-  const [demoActiveTenantId, setDemoActiveTenantId] = useState<string>(() => {
-    const saved = localStorage.getItem(DEMO_ACTIVE_TENANT_ID_KEY);
-    if (saved && demoTenants.some(t => t.id === saved)) {
-      return saved;
-    }
-    return demoTenants[0]?.id || SEED_TENANTS[0].id;
   });
 
   // Active User Profile
@@ -635,24 +405,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {
       // storage user load fallback
     }
-    return PRESET_USERS[0];
+    return ANONYMOUS_USER;
   });
 
-  // Tenant Invitations
-  const [invitations, setInvitations] = useState<TenantInvitation[]>(() => {
-    try {
-      const saved = localStorage.getItem(INVITATIONS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as TenantInvitation[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {
-      // invitations storage load fallback
-    }
-    return SEED_INVITATIONS;
-  });
+  // The server issues and holds invitations (their tokens are secrets): this is only the list last loaded from it.
+  const [invitations, setInvitations] = useState<TenantInvitation[]>([]);
 
   // Tenant Team Members
   const [teamMembers, setTeamMembers] = useState<Record<string, TeamMember[]>>(() => {
@@ -667,7 +424,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {
       // team members storage load fallback
     }
-    return SEED_TEAM_MEMBERS;
+    return {};
   });
 
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
@@ -685,21 +442,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [liveActiveTenantId]);
 
   useEffect(() => {
-    localStorage.setItem(DEMO_TENANTS_STORAGE_KEY, JSON.stringify(deduplicateTenants(demoTenants)));
-  }, [demoTenants]);
-
-  useEffect(() => {
-    localStorage.setItem(DEMO_ACTIVE_TENANT_ID_KEY, demoActiveTenantId);
-  }, [demoActiveTenantId]);
-
-  useEffect(() => {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
   }, [currentUser]);
-
-  useEffect(() => {
-    // Server-issued invitations are owned by the server (and their tokens are secrets): never persisted here
-    localStorage.setItem(INVITATIONS_STORAGE_KEY, JSON.stringify(persistableInvitations(invitations)));
-  }, [invitations]);
 
   useEffect(() => {
     // Teams of server-backed tenants come from the server on every load; only browser-only tenants keep a local copy
@@ -711,37 +455,23 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [teamMembers]);
 
 
-  // Current active tenant list based strictly on mode
-  const tenants = useMemo(() => {
-    if (isSandboxMode) {
-      return demoTenants;
-    }
-    // LIVE MODE: Render ONLY real, non-demo organizations!
-    return liveTenants;
-  }, [isSandboxMode, demoTenants, liveTenants]);
+  const tenants = liveTenants;
 
-  // Current active tenant entity
-  const currentTenant = useMemo(() => {
-    if (isSandboxMode) {
-      return demoTenants.find(t => t.id === demoActiveTenantId) || demoTenants[0] || SEED_TENANTS[0];
-    }
-    return liveTenants.find(t => t.id === liveActiveTenantId) || liveTenants[0] || DEFAULT_BLANK_TENANT;
-  }, [isSandboxMode, demoTenants, demoActiveTenantId, liveTenants, liveActiveTenantId]);
+  const currentTenant = useMemo(
+    () => liveTenants.find(t => t.id === liveActiveTenantId) || liveTenants[0] || DEFAULT_BLANK_TENANT,
+    [liveTenants, liveActiveTenantId]
+  );
 
-  // Determine if active user holds an MSP role or has multi-tenant management rights
+  // Does the active user hold an MSP role or have multi-tenant management rights: an MSP_ADMIN role, a platform
+  // administrator, or access to more than one enclave
   const isMspUser = useMemo(() => {
-    if (isSandboxMode) {
-      // In sandbox mode, allow prospective customers to test drive switching between client enclaves
-      return true;
-    }
-    // In live mode: an MSP_ADMIN role, a platform administrator, or access to more than one enclave
     const roleInCurrent = currentUser.roles?.[currentTenant.id];
     const hasMspRole =
       roleInCurrent === 'MSP_ADMIN' ||
       Object.values(currentUser.roles || {}).includes('MSP_ADMIN');
 
     return Boolean(hasMspRole || isSuperAdminUser(currentUser) || liveTenants.length > 1);
-  }, [isSandboxMode, currentUser, currentTenant, liveTenants.length]);
+  }, [currentUser, currentTenant, liveTenants.length]);
 
   const isSuperAdmin = useMemo(() => {
     return isSuperAdminUser(currentUser);
@@ -765,7 +495,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [teamError, setTeamError] = useState<string | null>(null);
 
   const syncTenantsFromServer = useCallback(async (tokenOverride?: string, options?: { force?: boolean }): Promise<Tenant[] | null> => {
-    if (isSandboxMode) return null; // the /demo sandbox has no server-side tenants
     const token = tokenOverride ?? ApiClient.getToken();
     if (!token) return null;
     if (syncInFlight.current) {
@@ -809,14 +538,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       if (syncInFlight.current === run) syncInFlight.current = null;
     }
-  }, [isSandboxMode]);
+  }, []);
 
   // Reload with an existing session: refresh the cache from the server straight away.
   useEffect(() => {
-    if (!isSandboxMode && ApiClient.getToken()) {
+    if (ApiClient.getToken()) {
       void syncTenantsFromServer();
     }
-  }, [isSandboxMode, syncTenantsFromServer]);
+  }, [syncTenantsFromServer]);
 
   /**
    * Creates a tenant ON THE SERVER (POST /api/v1/tenants) and then pulls the authoritative record back with the
@@ -862,7 +591,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    * them in the team list. Anyone may see who is on the team; invitations are administrative, so only admins fetch them.
    */
   const refreshTeam = useCallback(async (tenantIdArg?: string, options: { asAdmin?: boolean } = {}): Promise<void> => {
-    if (isSandboxMode) return;
     const tenantId = tenantIdArg ?? currentTenantIdRef.current;
     const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!tenant?.serverBacked) return;
@@ -883,14 +611,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.warn('[Team] Could not load the team from the server:', errorMessage(err));
       setTeamError(errorMessage(err) || 'Could not load the team');
     }
-  }, [isSandboxMode]);
+  }, []);
 
   const refreshAllTeams = useCallback(async (): Promise<void> => {
-    if (isSandboxMode) return;
     for (const t of liveTenantsRef.current) {
       if (t.serverBacked && canRoleWrite(currentUserRef.current.roles?.[t.id])) await refreshTeam(t.id);
     }
-  }, [isSandboxMode, refreshTeam]);
+  }, [refreshTeam]);
 
   /**
    * Moves a browser-only tenant to the server: creates it there (the server assigns the id), ports its assessment and
@@ -924,8 +651,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
     const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
 
-    // The CMMC asset inventory is server-owned too. The demo fleet is never carried over (it is not this tenant's data).
-    const legacyAssets = getEnclaveAssets(target.id, false).filter(a => !isDemoSeedAsset(a, target.id));
+    // The CMMC asset inventory is server-owned too. A demo fleet that an older version seeded into this browser is never
+    // carried over (it is not this tenant's data).
+    const legacyAssets = getEnclaveAssets(target.id).filter(a => !isDemoSeedAsset(a, target.id));
     let assetsMoved = 0;
     let assetsFailed = 0;
     const toInput = (a: EnclaveAsset): AssetInput => ({
@@ -976,14 +704,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   /** "Move to server": the user-facing action for tenants that only exist in this browser. */
   const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number }> => {
-    if (isSandboxMode) throw new ApiError(409, 'The demo sandbox has no server to move tenants to.');
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!target) throw new ApiError(404, 'That tenant was not found.');
     if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, controlsFailed: 0, assetsMoved: 0, assetsFailed: 0 };
     if (target.isConfigured === false) throw new ApiError(409, 'Finish this tenant\'s setup wizard first; it creates the tenant on the server.');
     const moved = await migrateTenantToServer(target, {}, target.id === currentTenantIdRef.current);
     return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, controlsFailed: moved.controlsFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed };
-  }, [isSandboxMode, migrateTenantToServer]);
+  }, [migrateTenantToServer]);
 
 
   // Multi-Framework & Baseline State
@@ -1122,13 +849,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   ) => {
     const targetTenantId = tenantToFetch || currentTenant.id;
 
-    // Sandbox / Demo Fallback: Do not make API calls for demo/sandbox tenants
-    if (isSandboxMode || currentTenant.isDemo || targetTenantId.startsWith('tenant-vanguard-') || targetTenantId.startsWith('tenant-apex-')) {
-      setLiveControls(null);
-      setLiveEvidence(null);
-      return;
-    }
-
     // A tenant that exists only in this browser (a draft, or legacy data) has nothing on the server to load
     const serverTenant = liveTenantsRef.current.find(t => t.id === targetTenantId);
     if (serverTenant && !serverTenant.serverBacked) {
@@ -1168,25 +888,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } finally {
       setIsSyncing(false);
     }
-  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly]);
+  }, [currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly]);
 
   // Automatically pull live controls & evidence when tenant, framework, or overlay changes
   useEffect(() => {
-    if (!isSandboxMode && !currentTenant.isDemo && ApiClient.getToken()) {
+    if (ApiClient.getToken()) {
       refreshLiveData(currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
     } else {
       setLiveControls(null);
       setLiveEvidence(null);
     }
-  }, [currentTenant.id, isSandboxMode, currentTenant.isDemo, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
+  }, [currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
 
   const updateLiveControl = useCallback(async (
     controlId: string,
     updates: Partial<ControlState>
   ): Promise<ControlState | null> => {
-    if (isSandboxMode || currentTenant.isDemo) {
-      return null;
-    }
     try {
       const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates);
       setLiveControls(prev => ({
@@ -1197,7 +914,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {
       return null;
     }
-  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
+  }, [currentTenant.id]);
 
   const createLiveEvidenceUploadUrl = useCallback(async (payload: {
     controlId: string;
@@ -1207,9 +924,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fileHash: string;
     description?: string;
   }): Promise<UploadUrlResponse | null> => {
-    if (isSandboxMode || currentTenant.isDemo) {
-      return null;
-    }
     try {
       const resp = await ApiClient.requestUploadUrl(currentTenant.id, payload);
       setLiveEvidence(prev => [resp.evidence, ...(prev || [])]);
@@ -1217,21 +931,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {
       return null;
     }
-  }, [isSandboxMode, currentTenant.id, currentTenant.isDemo]);
+  }, [currentTenant.id]);
 
 
   // Check if active tenant requires initial setup wizard
-  const needsOnboarding = useMemo(() => {
-    if (isSandboxMode) return false;
-    return currentTenant.isConfigured === false;
-  }, [isSandboxMode, currentTenant.isConfigured]);
+  const needsOnboarding = useMemo(() => currentTenant.isConfigured === false, [currentTenant.isConfigured]);
 
   // Automatically trigger onboarding modal if active live tenant requires setup
   useEffect(() => {
-    if (!isSandboxMode && needsOnboarding) {
+    if (needsOnboarding) {
       setIsOnboardingModalOpen(true);
     }
-  }, [isSandboxMode, needsOnboarding]);
+  }, [needsOnboarding]);
 
   // Current role in active tenant
   // Fail closed: a user with no explicit role in this tenant is a read-only VIEWER.
@@ -1251,20 +962,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // A server-backed tenant's team and invitations live on the server: load them when it becomes active (or the role changes)
   useEffect(() => {
-    if (!isSandboxMode && currentTenant.serverBacked) void refreshTeam(currentTenant.id);
-  }, [isSandboxMode, currentTenant.id, currentTenant.serverBacked, currentRole, refreshTeam]);
+    if (currentTenant.serverBacked) void refreshTeam(currentTenant.id);
+  }, [currentTenant.id, currentTenant.serverBacked, currentRole, refreshTeam]);
 
   const switchTenant = useCallback((tenantId: string) => {
-    if (isSandboxMode) {
-      if (demoTenants.some(t => t.id === tenantId)) {
-        setDemoActiveTenantId(tenantId);
-      }
-    } else {
-      if (liveTenants.some(t => t.id === tenantId)) {
-        setLiveActiveTenantId(tenantId);
-      }
+    if (liveTenants.some(t => t.id === tenantId)) {
+      setLiveActiveTenantId(tenantId);
     }
-  }, [isSandboxMode, demoTenants, liveTenants]);
+  }, [liveTenants]);
 
   /**
    * Create a new organization with strict deduplication
@@ -1277,40 +982,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     systemOwner: string;
     industry: string;
     domain?: string;
-    isDemo?: boolean;
     isConfigured?: boolean;
     enabledFrameworks?: ComplianceFramework[];
     primaryFramework?: ComplianceFramework;
   }): Promise<Tenant> => {
-    if (isSandboxMode) {
-      const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-      const newTenantId = `tenant-demo-${slug}-${Date.now().toString(36).substring(2, 6)}`;
-      const primFw = data.primaryFramework || 'CMMC_L1';
-      const enFw = data.enabledFrameworks && data.enabledFrameworks.length > 0 ? data.enabledFrameworks : [primFw];
-      const newDemoTenant: Tenant = {
-        id: newTenantId,
-        name: data.name.trim(),
-        cageCode: data.cageCode.trim().toUpperCase() || 'PENDING',
-        samStatus: data.samStatus || 'ACTIVE',
-        systemName: data.systemName.trim() || `${data.name} Operations Boundary`,
-        systemOwner: data.systemOwner.trim(),
-        industry: data.industry || 'Defense Industrial Base (DIB)',
-        domain: data.domain,
-        isDemo: true,
-        isConfigured: data.isConfigured ?? true,
-        primaryFramework: primFw,
-        enabledFrameworks: enFw,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      setDemoTenants(prev => deduplicateTenants([...prev, newDemoTenant]));
-      setDemoActiveTenantId(newTenantId);
-      setActiveFramework(primFw);
-      return newDemoTenant;
-    }
-
-    // Live mode: the server creates the tenant and assigns the caller as TENANT_OWNER. There is no local fallback.
+    // The server creates the tenant and assigns the caller as TENANT_OWNER. There is no local fallback.
     // (Failures surface to the caller as ApiError; a tenant that exists only in this browser could not be used.)
     const cage = data.cageCode.trim().toUpperCase();
     const primFw = data.primaryFramework || 'CMMC_L1';
@@ -1328,7 +1004,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       },
       { domain: data.domain }
     );
-  }, [isSandboxMode, createTenantOnServer]);
+  }, [createTenantOnServer]);
 
   /**
    * Initializes a brand-new blank tenant state for an authenticated contractor
@@ -1410,12 +1086,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
     let finalId = tenantId;
 
-    if (!isSandboxMode && target && !target.serverBacked) {
+    if (target && !target.serverBacked) {
       // A first-run draft, or a tenant that only ever existed in this browser: create the real tenant on the server and
       // move its local data under the server-assigned id (see migrateTenantToServer).
       const migrated = await migrateTenantToServer(target, { ...settings, name: data.organizationName.trim() });
       finalId = migrated.tenant.id;
-    } else if (!isSandboxMode && target?.serverBacked) {
+    } else if (target?.serverBacked) {
       // Already on the server: persist the changes there first, so a refused update (403 etc.) is reported
       await ApiClient.updateTenant(tenantId, settings);
     }
@@ -1430,7 +1106,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       systemOwner: data.systemOwner.trim(),
       systemBoundaryScope: data.systemBoundaryScope?.trim(),
       isConfigured: true,
-      isDemo: false,
       updatedAt: new Date().toISOString(),
     } : t));
     setLiveTenants(prev => deduplicateTenants(applyLocal(prev)));
@@ -1446,7 +1121,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       industry: 'Defense Industrial Base (DIB)',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      isDemo: false,
       isConfigured: true,
     });
 
@@ -1465,14 +1139,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     StorageService.saveAssessment(finalId, currentAssessment);
     setIsOnboardingModalOpen(false);
     return finalId;
-  }, [isSandboxMode, migrateTenantToServer]);
+  }, [migrateTenantToServer]);
 
   const updateTenant = useCallback((tenantId: string, updates: Partial<Tenant>) => {
-    if (isSandboxMode) {
-      setDemoTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
-      return;
-    }
-
     // Optimistic local update...
     setLiveTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
 
@@ -1489,7 +1158,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
       }
     }
-  }, [isSandboxMode, syncTenantsFromServer]);
+  }, [syncTenantsFromServer]);
 
   const updateTenantFrameworkScope = useCallback((
     tenantId: string,
@@ -1551,7 +1220,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [currentTenant.id, updateTenant]);
 
   const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
-    const updateFn = (prev: Tenant[]) =>
+    setLiveTenants(prev =>
       prev.map(t => {
         if (t.id === tenantId) {
           const nextSuspended = suspend !== undefined ? suspend : !t.isSuspended;
@@ -1562,14 +1231,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           };
         }
         return t;
-      });
-
-    if (isSandboxMode) {
-      setDemoTenants(updateFn);
-    } else {
-      setLiveTenants(updateFn);
-    }
-  }, [isSandboxMode]);
+      })
+    );
+  }, []);
 
   const updateTenantOwner = useCallback((tenantId: string, newOwnerEmail: string, newOwnerName?: string) => {
     const cleanEmail = newOwnerEmail.trim().toLowerCase();
@@ -1644,23 +1308,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       } catch {}
     }
 
-    // 4. Remove tenant from live or demo list
-    if (isSandboxMode) {
-      const filtered = demoTenants.filter(t => t.id !== tenantId);
-      const nextDemo = filtered.length > 0 ? filtered : SEED_TENANTS;
-      setDemoTenants(nextDemo);
-      if (demoActiveTenantId === tenantId) {
-        setDemoActiveTenantId(nextDemo[0].id);
-      }
-    } else {
-      const filtered = liveTenants.filter(t => t.id !== tenantId);
-      const nextLive = filtered.length > 0 ? filtered : [DEFAULT_BLANK_TENANT];
-      setLiveTenants(nextLive);
-      if (liveActiveTenantId === tenantId) {
-        setLiveActiveTenantId(nextLive[0].id);
-      }
+    // 4. Remove the tenant from the list
+    const filtered = liveTenants.filter(t => t.id !== tenantId);
+    const nextLive = filtered.length > 0 ? filtered : [DEFAULT_BLANK_TENANT];
+    setLiveTenants(nextLive);
+    if (liveActiveTenantId === tenantId) {
+      setLiveActiveTenantId(nextLive[0].id);
     }
-  }, [isSandboxMode, demoTenants, demoActiveTenantId, liveTenants, liveActiveTenantId]);
+  }, [liveTenants, liveActiveTenantId]);
 
   const switchUserRole = useCallback((role: TenantRole) => {
     setCurrentUser(prev => ({
@@ -1676,14 +1331,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCurrentUser(user);
     const accessibleTenants = Object.keys(user.roles || {});
     if (accessibleTenants.length > 0) {
-      const targetId = accessibleTenants[0];
-      if (isSandboxMode) {
-        setDemoActiveTenantId(targetId);
-      } else {
-        setLiveActiveTenantId(targetId);
-      }
+      setLiveActiveTenantId(accessibleTenants[0]);
     }
-  }, [isSandboxMode]);
+  }, []);
 
   /**
    * Domain-based auto-tenant matching with deduplication
@@ -1698,18 +1348,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const domainPrefix = domain.split('.')[0]; // e.g. "pitchblackcyber"
     const normalizedPrefix = normalizeOrgName(domainPrefix);
 
-    // 1. In sandbox mode, check preset demo users
-    if (isSandboxMode) {
-      const preset = PRESET_USERS.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (preset) {
-        const tenantIds = Object.keys(preset.roles);
-        const targetTenant = demoTenants.find(t => tenantIds.includes(t.id)) || demoTenants[0];
-        const role = preset.roles[targetTenant.id] || 'TENANT_OWNER';
-        return { tenant: targetTenant, role };
-      }
-    }
-
-    // 2. LIVE MODE DEDUPLICATION: Match existing live tenants by domain or normalized name
+    // 1. Match existing tenants by domain or normalized name
     const matchedLive = liveTenants.find(t =>
       (t.domain && t.domain.toLowerCase() === domain) ||
       normalizeOrgName(t.name) === normalizedPrefix ||
@@ -1723,42 +1362,30 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return { tenant: matchedLive, role };
     }
 
-    // 3. Initialize single blank tenant enclave for first-time defense contractor domain
+    // 2. Initialize single blank tenant enclave for first-time defense contractor domain
     const formattedTitle = domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' LLC';
     const newBlankTenant = initializeBlankTenant(email, domain, formattedTitle);
 
     return { tenant: newBlankTenant, role: 'TENANT_OWNER' };
-  }, [isSandboxMode, demoTenants, liveTenants, currentTenant, currentRole, initializeBlankTenant]);
+  }, [liveTenants, currentTenant, currentRole, initializeBlankTenant]);
 
   /**
    * Synchronize authenticated user with Tenant state
    */
   const syncAuthUser = useCallback((user: User, preferredTenantId?: string) => {
     setCurrentUser(user);
-    const targetList = isSandboxMode ? demoTenants : liveTenants;
-    if (preferredTenantId && targetList.some(t => t.id === preferredTenantId)) {
-      if (isSandboxMode) {
-        setDemoActiveTenantId(preferredTenantId);
-      } else {
-        setLiveActiveTenantId(preferredTenantId);
-      }
+    if (preferredTenantId && liveTenants.some(t => t.id === preferredTenantId)) {
+      setLiveActiveTenantId(preferredTenantId);
     } else {
-      const userTenantIds = Object.keys(user.roles || {});
-      const matched = userTenantIds.find(id => targetList.some(t => t.id === id));
-      if (matched) {
-        if (isSandboxMode) {
-          setDemoActiveTenantId(matched);
-        } else {
-          setLiveActiveTenantId(matched);
-        }
-      }
+      const matched = Object.keys(user.roles || {}).find(id => liveTenants.some(t => t.id === id));
+      if (matched) setLiveActiveTenantId(matched);
     }
 
     // Reconcile tenants and roles with the server, then load live data for the active tenant
-    if (!isSandboxMode && (user.idToken || ApiClient.getToken())) {
+    if (user.idToken || ApiClient.getToken()) {
       void syncTenantsFromServer(user.idToken || undefined).then(() => refreshLiveData(preferredTenantId));
     }
-  }, [isSandboxMode, demoTenants, liveTenants, refreshLiveData, syncTenantsFromServer]);
+  }, [liveTenants, refreshLiveData, syncTenantsFromServer]);
 
   /**
    * Provision a brand-new defense enclave with isolated database boundary and onboarding token
@@ -1822,138 +1449,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     token: string,
     userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; idToken?: string }
   ): Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }> => {
-    // LIVE: the server consumes the token and adds the signed-in user to the tenant. (The demo sandbox keeps its local fake.)
-    if (!isSandboxMode) {
-      const bearer = userCredentials.idToken ?? (await waitForSessionToken());
-      if (!bearer) return { success: false, error: 'Please sign in first, then open the invitation link again.' };
-      try {
-        const accepted = await ApiClient.acceptInvite(token, bearer);
-        const synced = await syncTenantsFromServer(bearer, { force: true });
-        const tenant = synced?.find(t => t.id === accepted.tenantId);
-        setLiveActiveTenantId(accepted.tenantId);
-        return { success: true, tenant, role: accepted.role };
-      } catch (err: unknown) {
-        return { success: false, error: errorMessage(err) || 'Could not accept the invitation.' };
-      }
+    // The server consumes the token and adds the signed-in user to the tenant.
+    const bearer = userCredentials.idToken ?? (await waitForSessionToken());
+    if (!bearer) return { success: false, error: 'Please sign in first, then open the invitation link again.' };
+    try {
+      const accepted = await ApiClient.acceptInvite(token, bearer);
+      const synced = await syncTenantsFromServer(bearer, { force: true });
+      const tenant = synced?.find(t => t.id === accepted.tenantId);
+      setLiveActiveTenantId(accepted.tenantId);
+      return { success: true, tenant, role: accepted.role };
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err) || 'Could not accept the invitation.' };
     }
-
-    const invite = invitations.find(inv => inv.token === token);
-    if (!invite) {
-      return { success: false, error: 'Invitation token was not found or is invalid.' };
-    }
-
-    if (invite.status === 'ACCEPTED') {
-      return { success: false, error: 'This invitation has already been claimed.' };
-    }
-
-    if (invite.status === 'REVOKED') {
-      return { success: false, error: 'This invitation has been revoked by the security administrator.' };
-    }
-
-    if (new Date(invite.expiresAt).getTime() < Date.now()) {
-      return { success: false, error: 'This invitation has expired. Please contact your administrator.' };
-    }
-
-    const now = new Date().toISOString();
-
-    // 1. Mark invitation as ACCEPTED
-    setInvitations(prev =>
-      prev.map(inv =>
-        inv.id === invite.id
-          ? {
-              ...inv,
-              status: 'ACCEPTED' as const,
-              acceptedAt: now,
-              acceptedByUserId: userCredentials.id || userCredentials.email,
-            }
-          : inv
-      )
-    );
-
-    // 2. Find target tenant
-    const targetTenant =
-      liveTenants.find(t => t.id === invite.tenantId) ||
-      demoTenants.find(t => t.id === invite.tenantId) ||
-      DEFAULT_BLANK_TENANT;
-
-    // 3. If initial onboarding, update system owner
-    if (!targetTenant.isConfigured && invite.type === 'TENANT_ONBOARDING') {
-      setLiveTenants(prev =>
-        prev.map(t =>
-          t.id === targetTenant.id
-            ? {
-                ...t,
-                systemOwner: userCredentials.name || userCredentials.email,
-                updatedAt: now,
-              }
-            : t
-        )
-      );
-    }
-
-    // 4. Assign role to user profile
-    const assignedRole = invite.role;
-    setCurrentUser(prevUser => ({
-      ...prevUser,
-      id: userCredentials.id || prevUser.id,
-      name: userCredentials.name || prevUser.name,
-      email: userCredentials.email || prevUser.email,
-      authProvider: userCredentials.authProvider || prevUser.authProvider,
-      roles: {
-        ...prevUser.roles,
-        [invite.tenantId]: assignedRole,
-      },
-    }));
-
-    // 5. Update team members list
-    setTeamMembers(prev => {
-      const currentList = prev[invite.tenantId] || [];
-      const matchIdx = currentList.findIndex(
-        m => m.email.toLowerCase() === userCredentials.email.toLowerCase() || m.invitationToken === token
-      );
-
-      let updatedList: TeamMember[];
-      if (matchIdx >= 0) {
-        updatedList = currentList.map((m, idx) =>
-          idx === matchIdx
-            ? {
-                ...m,
-                name: userCredentials.name || m.name,
-                email: userCredentials.email || m.email,
-                role: assignedRole,
-                status: 'ACTIVE' as const,
-                joinedAt: now,
-              }
-            : m
-        );
-      } else {
-        const newMember: TeamMember = {
-          id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          tenantId: invite.tenantId,
-          email: userCredentials.email.toLowerCase(),
-          name: userCredentials.name,
-          role: assignedRole,
-          status: 'ACTIVE',
-          joinedAt: now,
-        };
-        updatedList = [...currentList, newMember];
-      }
-
-      return {
-        ...prev,
-        [invite.tenantId]: updatedList,
-      };
-    });
-
-    // 6. Set active tenant
-    if (isSandboxMode) {
-      setDemoActiveTenantId(invite.tenantId);
-    } else {
-      setLiveActiveTenantId(invite.tenantId);
-    }
-
-    return { success: true, tenant: targetTenant, role: assignedRole };
-  }, [invitations, liveTenants, demoTenants, isSandboxMode, syncTenantsFromServer]);
+  }, [syncTenantsFromServer]);
 
   /**
    * Invite an assessor or viewer staff member to the specified tenant enclave
@@ -1963,66 +1471,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     email: string,
     role: 'ASSESSOR' | 'VIEWER'
   ): Promise<{ invitation: TenantInvitation; inviteUrl: string }> => {
-    // LIVE: invitations are issued and verified by the server. A browser-only tenant must be moved to the server first.
-    if (!isSandboxMode) {
-      const target = liveTenantsRef.current.find(t => t.id === tenantId);
-      if (!target?.serverBacked) {
-        throw new ApiError(409, 'Move this tenant to the server before inviting people: invitations are issued and verified by the server.');
-      }
-      const issued = await ApiClient.createInvite(tenantId, { email: email.trim(), role });
-      inviteTokensRef.current[issued.invitation.id] = issued.token;
-      await refreshTeam(tenantId, { asAdmin: true });
-      return { invitation: toTenantInvitation(issued.invitation, target, issued.token), inviteUrl: buildInviteUrl(issued.token) };
+    // Invitations are issued and verified by the server. A browser-only tenant must be moved to the server first.
+    const target = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (!target?.serverBacked) {
+      throw new ApiError(409, 'Move this tenant to the server before inviting people: invitations are issued and verified by the server.');
     }
-
-    const targetTenant =
-      liveTenants.find(t => t.id === tenantId) ||
-      demoTenants.find(t => t.id === tenantId) ||
-      currentTenant;
-
-    const token = generateCryptoToken();
-    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-
-    const invitation: TenantInvitation = {
-      id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      token,
-      tenantId,
-      tenantName: targetTenant.name,
-      email: email.trim().toLowerCase(),
-      role,
-      invitedBy: currentUser.name ? `${currentUser.name} (${currentUser.email})` : currentUser.email,
-      createdAt: new Date().toISOString(),
-      expiresAt,
-      status: 'PENDING',
-      type: 'STAFF_INVITE',
-      systemName: targetTenant.systemName,
-      cageCode: targetTenant.cageCode,
-    };
-
-    const newMember: TeamMember = {
-      id: `mem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      tenantId,
-      email: email.trim().toLowerCase(),
-      name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      role,
-      status: 'PENDING_INVITE',
-      invitedAt: new Date().toISOString(),
-      invitationToken: token,
-    };
-
-    setInvitations(prev => [invitation, ...prev]);
-    setTeamMembers(prev => {
-      const currentList = prev[tenantId] || [];
-      const filtered = currentList.filter(m => m.email.toLowerCase() !== email.trim().toLowerCase());
-      return {
-        ...prev,
-        [tenantId]: [...filtered, newMember],
-      };
-    });
-
-    const inviteUrl = buildInviteUrl(token);
-    return { invitation, inviteUrl };
-  }, [isSandboxMode, refreshTeam, liveTenants, demoTenants, currentTenant, currentUser]);
+    const issued = await ApiClient.createInvite(tenantId, { email: email.trim(), role });
+    inviteTokensRef.current[issued.invitation.id] = issued.token;
+    await refreshTeam(tenantId, { asAdmin: true });
+    return { invitation: toTenantInvitation(issued.invitation, target, issued.token), inviteUrl: buildInviteUrl(issued.token) };
+  }, [refreshTeam]);
 
   /**
    * Revoke an active or pending invitation
@@ -2036,24 +1494,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    setInvitations(prev =>
-      prev.map(inv =>
-        inv.id === invitationId
-          ? { ...inv, status: 'REVOKED' as const }
-          : inv
-      )
-    );
-
-    const targetInvite = invitations.find(i => i.id === invitationId);
-    if (targetInvite) {
-      setTeamMembers(prev => {
-        const list = prev[targetInvite.tenantId] || [];
-        return {
-          ...prev,
-          [targetInvite.tenantId]: list.filter(m => m.invitationToken !== targetInvite.token),
-        };
-      });
-    }
+    throw new ApiError(404, 'That invitation no longer exists. Refresh the team list and try again.');
   }, [invitations, refreshTeam]);
 
   /**
@@ -2069,25 +1510,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return { inviteUrl: buildInviteUrl(reissued.token) };
     }
 
-    let token = '';
-    const now = new Date();
-    const newExpiresAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString();
-
-    setInvitations(prev =>
-      prev.map(inv => {
-        if (inv.id === invitationId) {
-          token = inv.token;
-          return {
-            ...inv,
-            status: 'PENDING' as const,
-            expiresAt: newExpiresAt,
-          };
-        }
-        return inv;
-      })
-    );
-
-    return { inviteUrl: buildInviteUrl(token) };
+    throw new ApiError(404, 'That invitation no longer exists. Refresh the team list and try again.');
   }, [invitations, refreshTeam]);
 
   /**
@@ -2101,23 +1524,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return { expiresAt: extended.expiresAt };
     }
 
-    let newExpiresAt = '';
-    setInvitations(prev =>
-      prev.map(inv => {
-        if (inv.id === invitationId) {
-          const currentExp = new Date(inv.expiresAt).getTime();
-          const baseTime = currentExp > Date.now() ? currentExp : Date.now();
-          newExpiresAt = new Date(baseTime + days * 24 * 60 * 60 * 1000).toISOString();
-          return {
-            ...inv,
-            status: 'PENDING' as const,
-            expiresAt: newExpiresAt,
-          };
-        }
-        return inv;
-      })
-    );
-    return { expiresAt: newExpiresAt };
+    throw new ApiError(404, 'That invitation no longer exists. Refresh the team list and try again.');
   }, [invitations, refreshTeam]);
 
   /**
@@ -2134,86 +1541,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    let targetToken = '';
-    let oldTenantId = '';
-    let newTenantId = '';
-
-    setInvitations(prev =>
-      prev.map(inv => {
-        if (inv.id === invitationId) {
-          targetToken = inv.token;
-          oldTenantId = inv.tenantId;
-          newTenantId = updates.tenantId || oldTenantId;
-
-          const updated: TenantInvitation = {
-            ...inv,
-            ...updates,
-          };
-
-          if (updates.tenantId && updates.tenantId !== inv.tenantId) {
-            const targetTenant =
-              liveTenants.find(t => t.id === updates.tenantId) ||
-              demoTenants.find(t => t.id === updates.tenantId);
-            if (targetTenant) {
-              updated.tenantName = targetTenant.name;
-              updated.systemName = targetTenant.systemName;
-              updated.cageCode = targetTenant.cageCode;
-            }
-          }
-
-          return updated;
-        }
-        return inv;
-      })
-    );
-
-    // Synchronize team member entry if present
-    if (targetToken) {
-      setTeamMembers(prev => {
-        const destTenantId = newTenantId || oldTenantId;
-        if (destTenantId !== oldTenantId) {
-          const oldList = (prev[oldTenantId] || []).filter(m => m.invitationToken !== targetToken);
-          const movingMember = (prev[oldTenantId] || []).find(m => m.invitationToken === targetToken);
-          const newList = [...(prev[destTenantId] || [])];
-          if (movingMember) {
-            newList.push({
-              ...movingMember,
-              tenantId: destTenantId,
-              email: (updates.email || movingMember.email).trim().toLowerCase(),
-              role: updates.role || movingMember.role,
-            });
-          }
-          return {
-            ...prev,
-            [oldTenantId]: oldList,
-            [destTenantId]: newList,
-          };
-        } else {
-          const currentList = prev[oldTenantId] || [];
-          return {
-            ...prev,
-            [oldTenantId]: currentList.map(m => {
-              if (m.invitationToken === targetToken) {
-                return {
-                  ...m,
-                  email: (updates.email || m.email).trim().toLowerCase(),
-                  role: updates.role || m.role,
-                };
-              }
-              return m;
-            }),
-          };
-        }
-      });
-    }
-  }, [invitations, refreshTeam, liveTenants, demoTenants]);
+    throw new ApiError(404, 'That invitation no longer exists. Refresh the team list and try again.');
+  }, [invitations, refreshTeam]);
 
   /**
    * Update role for an active team member
    */
   const updateMemberRole = useCallback(async (tenantId: string, memberId: string, newRole: TenantRole): Promise<void> => {
     const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
-    if (!isSandboxMode && tenant?.serverBacked) {
+    if (tenant?.serverBacked) {
       const member = teamMembers[tenantId]?.find(m => m.id === memberId);
       if (!member?.userId) throw new ApiError(400, 'This member\'s role cannot be changed.');
       await ApiClient.setMemberRole(tenantId, { userId: member.userId, email: member.email, name: member.name, role: newRole });
@@ -2240,14 +1576,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         },
       }));
     }
-  }, [isSandboxMode, refreshTeam, teamMembers, currentUser.email]);
+  }, [refreshTeam, teamMembers, currentUser.email]);
 
   /**
    * Remove a member from the organization
    */
   const removeMember = useCallback(async (tenantId: string, memberId: string): Promise<void> => {
     const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
-    if (!isSandboxMode && tenant?.serverBacked) {
+    if (tenant?.serverBacked) {
       const member = teamMembers[tenantId]?.find(m => m.id === memberId);
       if (member?.invitationId) {
         // A pending row is an invitation: removing it revokes it
@@ -2269,7 +1605,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         [tenantId]: list.filter(m => m.id !== memberId),
       };
     });
-  }, [isSandboxMode, refreshTeam, teamMembers]);
+  }, [refreshTeam, teamMembers]);
 
   /**
    * Query team members for active or specified tenant
@@ -2299,13 +1635,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return synthesized;
   }, [teamMembers, tenants, currentTenant, currentUser, currentRole]);
 
-  /**
-   * Lookup invitation by token string
-   */
-  const getInvitationByToken = useCallback((token: string): TenantInvitation | undefined => {
-    return invitations.find(inv => inv.token === token);
-  }, [invitations]);
-
   const previewInvitation = useCallback((token: string): Promise<InvitePreview | null> => ApiClient.previewInvite(token), []);
 
   const value = useMemo(() => ({
@@ -2315,7 +1644,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
-    isSandboxMode,
     isMspUser,
     isSuperAdmin,
     needsOnboarding,
@@ -2342,7 +1670,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateMemberRole,
     removeMember,
     getTenantMembers,
-    getInvitationByToken,
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,
@@ -2386,7 +1713,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
-    isSandboxMode,
     isMspUser,
     isSuperAdmin,
     needsOnboarding,
@@ -2413,7 +1739,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateMemberRole,
     removeMember,
     getTenantMembers,
-    getInvitationByToken,
     initializeBlankTenant,
     completeTenantOnboarding,
     updateTenant,

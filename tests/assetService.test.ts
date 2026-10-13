@@ -113,13 +113,12 @@ function sspTests() {
 async function backendTests() {
   await new Promise((r) => setTimeout(r, 500));
   const { assetBackendMode, getAssetBackend, subscribeAssets } = await import('../src/services/assetService');
-  const { isDemoSeedAsset, generateDefaultEnclaveAssets } = await import('../src/data/telemetry/assetRegistry');
+  const { isDemoSeedAsset } = await import('../src/data/telemetry/assetRegistry');
 
   console.log('\n--- Backend selection ---');
-  assert(assetBackendMode({ isSandboxMode: true, serverBacked: true }) === 'local-demo', 'the demo sandbox is always local');
-  assert(assetBackendMode({ isSandboxMode: false, serverBacked: true }) === 'server', 'a server-backed live tenant uses the API');
-  assert(assetBackendMode({ isSandboxMode: false, serverBacked: false }) === 'local-legacy' && assetBackendMode({ isSandboxMode: false }) === 'local-legacy', 'a browser-only live tenant stays local until moved');
-  assert(generateDefaultEnclaveAssets('tenant-x').every((a) => isDemoSeedAsset(a, 'tenant-x')) && !isDemoSeedAsset({ id: 'abc' }, 'tenant-x') && !isDemoSeedAsset(generateDefaultEnclaveAssets('tenant-x')[0], 'tenant-y'), 'the demo fleet is recognised (so migration never uploads it)');
+  assert(assetBackendMode({ serverBacked: true }) === 'server', 'a server-backed tenant uses the API');
+  assert(assetBackendMode({ serverBacked: false }) === 'local-legacy' && assetBackendMode({}) === 'local-legacy', 'a browser-only tenant stays local until moved');
+  assert(isDemoSeedAsset({ id: 'asset-cui-01-tenant-x' }, 'tenant-x') && !isDemoSeedAsset({ id: 'abc' }, 'tenant-x') && !isDemoSeedAsset({ id: 'asset-cui-01-tenant-x' }, 'tenant-y'), 'the sample fleet an older version seeded is still recognised (so migration does not carry it over)');
 
   console.log('\n--- Server backend (real API) ---');
   const ownerToken = person('u_asv_owner');
@@ -176,13 +175,11 @@ async function backendTests() {
   assert((await rejection(be.list()))?.status === 401, 'without a session the backend says "sign in" (401)');
   unsubscribe();
 
-  console.log('\n--- Local backends (demo sandbox, browser-only tenants) ---');
-  const demo = getAssetBackend('tenant-demo-1', 'local-demo');
-  assert((await demo.list()).length === generateDefaultEnclaveAssets('tenant-demo-1').length && (await demo.list()).length > 0, 'the sandbox shows the demo fleet');
+  console.log('\n--- Local backend (browser-only tenants) ---');
   const legacy = getAssetBackend('tenant-legacy-1', 'local-legacy');
-  assert((await legacy.list()).length === 0, 'a browser-only live tenant starts empty (no fake fleet)');
+  assert((await legacy.list()).length === 0, 'a browser-only tenant starts empty (no fake fleet)');
   const l1 = await legacy.create({ hostName: 'LOCAL-1', cmmcAssetCategory: 'CUI_ASSET', ipAddress: '10.1.1.1' });
-  assert((await legacy.list()).length === 1 && !(await legacy.list()).some((a) => isDemoSeedAsset(a, 'tenant-legacy-1')), 'adding the first asset does not seed the demo fleet either');
+  assert((await legacy.list()).length === 1 && !(await legacy.list()).some((a) => isDemoSeedAsset(a, 'tenant-legacy-1')), 'adding the first asset does not seed a sample fleet either');
   assert((await rejection(legacy.create({ hostName: 'local-1', cmmcAssetCategory: 'CUI_ASSET' })))?.status === 409, 'duplicates are refused locally too');
   assert((await legacy.update(l1.id, { cmmcAssetCategory: 'SPECIALIZED_ASSET' })).cmmcAssetCategory === 'SPECIALIZED_ASSET', 'local update');
   const lcsv = await legacy.importCsv('hostName,cmmcAssetCategory\nL-2,CUI_ASSET\nL-3,wrong');
