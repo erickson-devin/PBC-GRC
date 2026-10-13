@@ -175,3 +175,23 @@ count (and the reasons, kept with each import's statistics) shows what the filte
 
 Tests: `npm run test:ollama` (client), `test:ssp-grounding`, `test:ssp-analyze` (pipeline against a scripted fake model) and
 `test:ssp-import-ai` (through the API). None of them needs a GPU or a model.
+
+## Organization-defined parameters and "Suggest Parameter Wording"
+
+Under the implementation narrative of each control, the editor shows an **Organization-defined parameters** panel when it finds
+blanks an assessor must be able to test:
+
+- parameters from the control text (`[Assignment: ...]` / `[Selection (one|one or more): a; b]` tags, parsed by
+  `src/data/frameworks/parameters.ts` into `ControlParameter` on `FrameworkControlDefinition`);
+- the platform's own objective-level ODPs (the 800-171A registry), with their baseline values;
+- tags pasted into the narrative itself, and vague wording ("periodically", "as needed", "promptly").
+
+A value is recorded in the narrative as a line `Parameter: <label> = <value>` (a tag in the narrative is replaced by its value),
+so it is saved, exported and assessed with the rest of the text. The panel never saves anything itself.
+
+**Suggest Parameter Wording** asks the local model (`OLLAMA_MODEL`, default `llama3.2:3b`; needs `SSP_AI_ENABLED=true`) for up to
+three explicit options, e.g. "reviewed periodically" -> "reviewed every 90 days". Only the control's public text and the one
+sentence or parameter go to the model. Every option is checked by the server first (no vague words, an explicit value, a
+Selection answered with its own listed choices, a rewrite that keeps the sentence's facts); failures are dropped. A person
+applies an option with one click and can undo it. Endpoint: `POST /api/v1/tenants/:id/ai-assist/parameter-wording` (owner/MSP
+roles; 20 requests a minute per person); `GET .../ai-assist/status` tells the editor whether to offer it.

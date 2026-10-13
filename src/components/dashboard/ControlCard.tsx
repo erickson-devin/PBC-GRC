@@ -25,6 +25,7 @@ import { useTenant } from '../../context/TenantContext';
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { getControlImpactBadge } from '../../data/frameworks';
+import { OdpPanel } from '../matrix/OdpPanel';
 import { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
 import { FailingAssetInfo } from '../../types/telemetry';
 
@@ -446,6 +447,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               <span>FAR 52.204-21 audit evidence reference</span>
               <span className="font-mono">{notes.length} characters</span>
             </div>
+            <OdpPanel control={control} notes={notes} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
           </div>
 
           {/* Evidence Upload Drop-Zone with Clear Drop Indicators */}
