@@ -1,8 +1,6 @@
-version: '3.8'
-
 # ==============================================================================
 # Event Horizon: Singularity — Air-Gapped & On-Premises Orchestration
-# Services: PostgreSQL 16 Database + Singularity Enclave App & API
+# Services: PostgreSQL 16 Database + Singularity Enclave App & API + Ollama AI (optional profile)
 #
 # Required secrets (put them in a .env file next to this file, or export them):
 #   POSTGRES_PASSWORD   password of the database ADMIN account (used only to bootstrap; the app never uses it)
@@ -16,6 +14,15 @@ version: '3.8'
 #   SETUP_TOKEN            a secret the first-time setup wizard asks for. Open the app in a browser to create the first
 #                          administrator and tenant; the wizard locks itself for good once used. Set a token if the server is
 #                          reachable by others before you have run it.
+#   COMPOSE_PROFILES=ai    also run the local Ollama server (needs an NVIDIA GPU and the NVIDIA Container Toolkit), used for
+#                          the AI analysis of imported System Security Plans (docs/SSP_IMPORT.md). Put it in .env, or run
+#                          `docker compose --profile ai up -d`. Without it the platform starts without Ollama (it is not a
+#                          dependency, so a host with no GPU still comes up) and imports use rule-based matching.
+#                          Load the model once:  docker compose exec ollama ollama pull llama3.1:8b
+#                          (needs internet once; for an air-gapped host copy the model volume or `ollama create` from a GGUF).
+#   OLLAMA_MODEL / OLLAMA_NUM_CTX / OLLAMA_IMAGE_TAG   model (default llama3.1:8b), context window (8192), Ollama image tag
+#                          (default latest: pin a version tag for reproducible installs).
+#   SSP_AI_ENABLED=false   switch the AI analysis off even if Ollama is running.
 #
 # Security model: the app connects as APP_DB_USER, an ordinary role (NOSUPERUSER, NOBYPASSRLS). PostgreSQL
 # superusers bypass row-level security, so using POSTGRES_USER here would silently disable tenant isolation.
@@ -43,7 +50,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - /mnt/user/appdata/singularity/docker/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-cmmc_compliance_db}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d${POSTGRES_DB:-cmmc_compliance_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -56,6 +63,9 @@ services:
     image: ghcr.io/erickson-devin/pbc-grc:latest
     container_name: singularity-app
     restart: unless-stopped
+    healthcheck:
+      disable: true
+    # Ollama is deliberately NOT listed here: the platform must start (and fall back to rule-based matching) without it.
     depends_on:
       singularity-db:
         condition: service_healthy
@@ -74,11 +84,16 @@ services:
       # Air-gapped identity: bcrypt passwords + locally signed JWTs. No Firebase / Google / Microsoft required.
       AUTH_MODE: ${AUTH_MODE:-local}
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:?Set LOCAL_AUTH_SECRET (>= 32 random characters)}
-      # Platform administrators (see the note at the top of this file)
+      # Platform administrators and the first-time setup wizard (see the notes at the top of this file)
       PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
       SETUP_TOKEN: ${SETUP_TOKEN:-}
       # Client-side configuration
       VITE_API_URL: ""
+      # Local AI analysis of imported SSPs. If Ollama is not running the import screen says so and rule-based matching is used.
+      SSP_AI_ENABLED: ${SSP_AI_ENABLED:-true}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
     ports:
       - "3000:3000"
     volumes:
@@ -87,9 +102,31 @@ services:
     networks:
       - singularity-network
 
+  # ── 3. Local Ollama Server (AI analysis with GPU): optional, enabled by the "ai" profile ──
+  ollama:
+    profiles: ["ai"]
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    container_name: singularity-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # No published port: only the app container (same network) can reach it
+    networks:
+      - singularity-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      OLLAMA_KEEP_ALIVE: 15m
+
 volumes:
   postgres_data:
     driver: local
+  ollama-models:
 
 networks:
   singularity-network:

@@ -75,9 +75,12 @@ Tests: `npm run test:ssp-import`.
 
 ## AI analysis (local model)
 
-Off by default. To use it, run Ollama on this machine or the private network (`docker-compose.ollama.yml` adds one with GPU
-support, or point `OLLAMA_BASE_URL` at an Ollama already on the host), load the model, and set `SSP_AI_ENABLED=true`. The
-variables are in `.env.example`.
+Needs a local Ollama server. `docker-compose.yml` includes one with GPU support as an optional profile: add
+`COMPOSE_PROFILES=ai` to `.env` (or run `docker compose --profile ai up -d`), then load the model once with
+`docker compose exec ollama ollama pull llama3.1:8b`. Ollama is not a dependency of the app, so a host without a GPU still
+starts and imports use rule-based matching. To use an Ollama already running on the host instead, set
+`OLLAMA_BASE_URL=http://host.docker.internal:11434` (on Linux add `extra_hosts: ["host.docker.internal:host-gateway"]` to the
+app service). The variables are in `.env.example`; outside Docker, set `SSP_AI_ENABLED=true`.
 
 **Documents never leave your network.** The base URL comes from server configuration only. A host that is not on this machine
 or a private network (loopback, RFC 1918, a bare Docker service name, `*.local` / `*.internal`) is refused, unless an operator
