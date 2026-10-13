@@ -21,7 +21,7 @@ import {
   parseServerMembers,
 } from '../data/teamSync';
 import type { TenantRole } from '../types/tenant';
-import type { SspCapabilities, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
+import type { SspAnalysisMode, SspCapabilities, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 
@@ -198,11 +198,12 @@ export const ApiClient = {
   },
 
   /** POST /api/v1/tenants/:id/ssp-imports (multipart). Owner / MSP admin only. */
-  async sspUpload(tenantId: string, file: File, framework: SspImportFramework): Promise<SspImportJob> {
+  async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules'): Promise<SspImportJob> {
     const bearer = ApiClient.getToken();
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
     const form = new FormData();
     form.append('framework', framework);
+    form.append('analysis', analysis);
     form.append('file', file, file.name);
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, {
       method: 'POST',
@@ -238,6 +239,11 @@ export const ApiClient = {
   /** POST .../commit: applies the accepted and edited suggestions to the controls. */
   async sspCommit(tenantId: string, jobId: string): Promise<SspCommitOutcome> {
     return authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/commit`, { tenantId, body: {} });
+  },
+
+  /** POST .../:jobId/cancel: stops an import that has not finished. */
+  async sspCancel(tenantId: string, jobId: string): Promise<void> {
+    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/cancel`, { tenantId, body: {} });
   },
 
   /** DELETE .../:jobId */

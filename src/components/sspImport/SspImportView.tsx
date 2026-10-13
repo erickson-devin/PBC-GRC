@@ -22,6 +22,7 @@ import {
   type SspImportFramework,
   type SspImportJob,
   type SspJobStatus,
+  type ObjectiveStatus,
   type SspMatchKind,
   type SspReviewState,
   type StagedControlView,
@@ -68,6 +69,22 @@ const MATCH_HELP: Record<SspMatchKind, string> = {
   AI_EXTRACTED: 'The AI model read a section of the document and found this control described there. Its quotation was checked against the document.',
 };
 
+const OBJECTIVE_LABEL: Record<ObjectiveStatus, string> = {
+  ADDRESSED: 'Addressed',
+  PARTIAL: 'Partly',
+  NOT_ADDRESSED: 'Not addressed',
+  UNSUPPORTED: 'Not supported by the text',
+  NOT_ASSESSED: 'Not assessed',
+};
+
+const OBJECTIVE_CLASS: Record<ObjectiveStatus, string> = {
+  ADDRESSED: 'bg-emerald-950/50 text-emerald-300 border-emerald-800/60',
+  PARTIAL: 'bg-amber-950/40 text-amber-300 border-amber-800/60',
+  NOT_ADDRESSED: 'bg-rose-950/50 text-rose-300 border-rose-800/60',
+  UNSUPPORTED: 'bg-rose-950/30 text-rose-200 border-rose-800/40 border-dashed',
+  NOT_ASSESSED: 'bg-slate-800 text-slate-300 border-slate-700',
+};
+
 type Filter = 'all' | 'pending' | 'accepted' | 'rejected' | 'attention';
 type Tab = 'suggestions' | 'missing' | 'unmapped';
 
@@ -106,6 +123,7 @@ export const SspImportView: React.FC = () => {
 
   const [framework, setFramework] = useState<SspImportFramework>('CMMC_L1');
   const [uploading, setUploading] = useState(false);
+  const [useAi, setUseAi] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<Tab>('suggestions');
@@ -194,7 +212,7 @@ export const SspImportView: React.FC = () => {
     setOutcome(null);
     setUploading(true);
     try {
-      const job = await ApiClient.sspUpload(tenantId, file, framework);
+      const job = await ApiClient.sspUpload(tenantId, file, framework, caps?.aiStatus.available && useAi ? 'ai' : 'rules');
       await loadJobs();
       setSelectedJobId(job.id);
       setTab('suggestions');
@@ -248,6 +266,16 @@ export const SspImportView: React.FC = () => {
       await loadDetail(detail.job.id);
     } finally {
       setCommitting(false);
+    }
+  };
+
+  const cancel = async (jobId: string) => {
+    setError(null);
+    try {
+      await ApiClient.sspCancel(tenantId, jobId);
+      await Promise.all([loadJobs(), loadDetail(jobId)]);
+    } catch (err: unknown) {
+      setError(errorMessage(err) || 'Could not cancel the import.');
     }
   };
 
@@ -315,7 +343,7 @@ export const SspImportView: React.FC = () => {
         </h2>
         <p className="text-sm text-slate-400 mt-1 max-w-3xl">
           Upload an existing System Security Plan to see which controls it describes. Suggestions are held here for review: <strong className="text-slate-200">nothing changes in your controls until suggestions you accepted are committed.</strong>{' '}
-          Matching is rule-based (it looks for control identifiers); it does not judge whether a practice is met.
+          Controls are matched by their identifiers and, if you choose, read by a local AI model (nothing leaves this server). Neither judges whether a practice is actually met.
         </p>
       </header>
 
@@ -358,6 +386,16 @@ export const SspImportView: React.FC = () => {
               />
             </div>
           </div>
+          {caps.aiStatus.available ? (
+            <label className="flex items-start gap-2 mt-3 text-sm text-slate-200">
+              <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} className="mt-1" />
+              <span>
+                Also read it with the local AI model <span className="font-mono text-cyan-300">{caps.aiStatus.model}</span>. Slower (minutes for a long document), and it can find controls the document describes without naming them. Every quotation it gives is checked against the document.
+              </span>
+            </label>
+          ) : caps.aiStatus.enabled ? (
+            <p role="note" className="mt-3 text-xs text-amber-200">The AI analysis is unavailable right now: {caps.aiStatus.reason} Rule-based matching still works.</p>
+          ) : null}
           <p className="text-xs text-slate-400 mt-2" aria-live="polite">
             {uploading ? 'Uploading…' : 'The original is kept in the evidence vault under policies/uploaded. Scanned documents (images of text) cannot be read yet.'}
           </p>
@@ -409,7 +447,7 @@ export const SspImportView: React.FC = () => {
                     <p className="text-sm font-semibold text-white truncate">{detail.job.fileName}</p>
                     <p className="text-xs text-slate-400">
                       Uploaded by {detail.job.createdBy} · SHA-256 <span className="font-mono">{detail.job.fileSha256.slice(0, 12)}…</span>
-                      {detail.job.pageCount ? ` · ${detail.job.pageCount} pages` : ''} · {detail.job.analyzer} (rule-based)
+                      {detail.job.pageCount ? ` · ${detail.job.pageCount} pages` : ''} · {detail.job.analyzer.startsWith('ollama:') ? `AI analysis (${detail.job.analyzer.slice(7)})` : 'Rule-based matching'}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -426,8 +464,27 @@ export const SspImportView: React.FC = () => {
                 </div>
 
                 {!isTerminal(detail.job.status) && (
-                  <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-cyan-300">
-                    <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> {STATUS_LABEL[detail.job.status]}…
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-cyan-300">
+                      <Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                      {detail.job.stageProgress.stage ?? STATUS_LABEL[detail.job.status]}
+                      {detail.job.stageProgress.chunksTotal ? ` (${detail.job.stageProgress.chunksDone ?? 0}/${detail.job.stageProgress.chunksTotal})` : ''}…
+                    </p>
+                    {canWrite && <button type="button" onClick={() => void cancel(detail.job.id)} className="btn-base btn-secondary px-3 py-1 text-xs">Cancel</button>}
+                  </div>
+                )}
+                {detail.job.status === 'CANCELLED' && (
+                  <p role="status" className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-sm">This import was cancelled. Nothing was staged.</p>
+                )}
+                {detail.job.stageProgress.warning && (
+                  <p role="note" className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" /> {detail.job.stageProgress.warning}
+                  </p>
+                )}
+                {detail.job.stageProgress.ai && (
+                  <p className="text-xs text-slate-400">
+                    AI analysis: {detail.job.stageProgress.ai.sectionsAnalyzed} sections read, {detail.job.stageProgress.ai.findingsGrounded} of {detail.job.stageProgress.ai.findingsProposed} findings verified against the document
+                    {detail.job.stageProgress.ai.findingsProposed > detail.job.stageProgress.ai.findingsGrounded ? ' (the rest were discarded)' : ''} · {Math.round(detail.job.stageProgress.ai.durationMs / 1000)} s
                   </p>
                 )}
                 {detail.job.status === 'FAILED' && (
@@ -515,7 +572,7 @@ export const SspImportView: React.FC = () => {
                                     </span>
                                     <span className="block text-xs text-slate-400 truncate">{CONTROL_TITLES.get(s.controlId)}</span>
                                     <span className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-                                      {Math.round(s.confidence * 100)}% match
+                                      {Math.round(s.confidence * 100)}% match · {s.origin === 'AI' ? 'AI' : 'rules'}
                                       {(s.changedSinceStaged || s.reviewState === 'CONFLICT') && <AlertTriangle className="w-3 h-3 text-amber-400" aria-label="The control changed since this was staged" />}
                                     </span>
                                   </button>
@@ -528,6 +585,9 @@ export const SspImportView: React.FC = () => {
                                 <div>
                                   <h4 className="text-base font-bold text-white"><span className="font-mono text-cyan-300">{current.controlId}</span> {CONTROL_TITLES.get(current.controlId)}</h4>
                                   <p className="text-xs text-slate-400 mt-0.5">{MATCH_HELP[current.matchKind]}</p>
+                                  {current.origin === 'AI' && (
+                                    <p role="note" className="mt-1.5 text-xs text-brand-200">AI-generated suggestion: the summary is the model’s wording; the quotation below is the document’s own text. Check one against the other before accepting.</p>
+                                  )}
                                 </div>
 
                                 {(current.reviewState === 'CONFLICT' || current.changedSinceStaged) && current.reviewState !== 'COMMITTED' && (
@@ -571,8 +631,22 @@ export const SspImportView: React.FC = () => {
                                 </div>
 
                                 <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                                  <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Automated checks <span className="normal-case font-normal text-slate-500">(simple text checks, not an assessment)</span></h5>
+                                  <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                                    {current.gapAnalysis.source === 'ai' ? 'AI comparison with NIST SP 800-171A' : 'Automated checks'}{' '}
+                                    <span className="normal-case font-normal text-slate-500">{current.gapAnalysis.source === 'ai' ? '(AI-generated: what the document says, not whether it is true)' : '(simple text checks, not an assessment)'}</span>
+                                  </h5>
                                   <p className="text-sm text-slate-300">{current.gapAnalysis.summary}</p>
+                                  {current.gapAnalysis.objectives && current.gapAnalysis.objectives.length > 0 && (
+                                    <ul aria-label="Assessment objectives" className="mt-2 space-y-2">
+                                      {current.gapAnalysis.objectives.map((o) => (
+                                        <li key={o.letter} className="text-sm text-slate-200">
+                                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold mr-1.5 ${OBJECTIVE_CLASS[o.status]}`}>{OBJECTIVE_LABEL[o.status]}</span>
+                                          <span className="font-mono text-xs text-slate-400">[{o.letter}]</span> {o.text}
+                                          {o.evidence && <q className="block mt-0.5 text-xs italic text-slate-400">{o.evidence.replace(/\s+/g, ' ')}</q>}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
                                   {current.gapAnalysis.gaps.length > 0 && (
                                     <ul className="mt-2 space-y-1.5">
                                       {current.gapAnalysis.gaps.map((g, i) => (
