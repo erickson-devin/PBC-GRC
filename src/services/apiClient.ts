@@ -21,6 +21,7 @@ import {
   parseServerMembers,
 } from '../data/teamSync';
 import type { TenantRole } from '../types/tenant';
+import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
@@ -182,6 +183,18 @@ export const ApiClient = {
     const data = await res.json().catch(() => null);
     if (!res.ok) throw apiErrorFromResponse(res.status, data);
     return data as SetupResult;
+  },
+
+  // ---------------------------------------------------------------- AI wording helper
+
+  /** GET /api/v1/tenants/:id/ai-assist/status */
+  async aiAssistStatus(tenantId: string): Promise<AiAssistStatus> {
+    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ai-assist/status`, { tenantId });
+  },
+
+  /** POST /api/v1/tenants/:id/ai-assist/parameter-wording. Suggestions only: nothing is saved. */
+  async suggestParameterWording(tenantId: string, body: WordingSuggestionRequest): Promise<WordingSuggestions> {
+    return authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ai-assist/parameter-wording`, { tenantId, body });
   },
 
   // ---------------------------------------------------------------- SSP import

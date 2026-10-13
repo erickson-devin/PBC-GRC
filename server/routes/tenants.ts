@@ -18,6 +18,7 @@ import { ensureActiveTenant } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
 import sspImportsRouter from './sspImports';
+import aiAssistRouter from './aiAssist';
 import { isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
@@ -212,6 +213,7 @@ router.use(requireWriteRole);
 router.use('/:tenantId/invites', tenantInvitesRouter);
 router.use('/:tenantId/assets', tenantAssetsRouter);
 router.use('/:tenantId/ssp-imports', sspImportsRouter);
+router.use('/:tenantId/ai-assist', aiAssistRouter);
 
 const USER_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,128}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;

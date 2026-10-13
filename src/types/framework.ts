@@ -43,9 +43,47 @@ export interface FrameworkDomainInfo {
   color: string;
 }
 
+/**
+ * An organization-defined parameter (ODP) of a control: a blank the organisation must fill in before the control can be
+ * assessed ("review accounts [Assignment: organization-defined frequency]"), or a choice it must make
+ * ("[Selection (one or more): change password; ...]"). NIST SP 800-53 writes these as bracketed tags in the control text.
+ */
+export interface ControlParameter {
+  /** Stable within its source: "<controlId>#1" for a tag in the control statement, the registry id for an objective ODP. */
+  id: string;
+  kind: 'ASSIGNMENT' | 'SELECTION';
+  /** Short name for the parameter. */
+  label: string;
+  /** What has to be decided, e.g. "organization-defined frequency". */
+  prompt: string;
+  /** SELECTION only: the options. */
+  choices?: string[];
+  /** SELECTION only: pick exactly one, or one or more. */
+  selectionMode?: 'ONE' | 'ONE_OR_MORE';
+  /**
+   * Where it was found. STATEMENT: a tag in the control's official text. OBJECTIVE: an ODP defined on an assessment
+   * objective (the platform's own parameter registry). NOTES: a tag in the narrative a person wrote or pasted.
+   */
+  source: 'STATEMENT' | 'OBJECTIVE' | 'NOTES';
+  /** The text of the whole tag and its character range in the text it was found in (STATEMENT and NOTES). */
+  raw?: string;
+  start?: number;
+  end?: number;
+  /** A baseline value suggested by the catalog (OBJECTIVE ODPs). */
+  defaultValue?: string;
+}
+
 export interface FrameworkControlDefinition {
   id: string; // e.g. "AC.L1-3.1.1", "AC-2", "CC6.1", "164.312(a)(1)"
   title: string;
+  /**
+   * The control's official statement WITH its [Assignment: ...] and [Selection: ...] tags, when the catalog carries it. The
+   * catalogs shipped today hold paraphrased text without tags; a catalog that supplies the statement gets its parameters
+   * extracted automatically (see data/frameworks/parameters.ts).
+   */
+  statement?: string;
+  /** The parameters in `statement`, filled in by attachParameters() (optional cache: resolveParameters() computes them if absent). */
+  parameters?: ControlParameter[];
   framework: ComplianceFramework;
   domain: string; // Domain or Family code (e.g., 'AC', 'CC6', 'TECH')
   domainName: string;

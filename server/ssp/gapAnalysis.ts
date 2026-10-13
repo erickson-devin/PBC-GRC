@@ -25,6 +25,9 @@ export interface ObjectiveDef {
   text: string;
 }
 
+/** "1 assessment objective" / "2 assessment objectives". */
+export const objectivesNoun = (n: number): string => (n === 1 ? 'assessment objective' : 'assessment objectives');
+
 /** The 800-171A objectives of a control (falling back to the catalog's own list, lettered a, b, c...). */
 export function objectivesFor(controlId: string, framework: SspImportFramework): ObjectiveDef[] {
   const number = numberOf(controlId);
@@ -111,7 +114,7 @@ export function buildGapAnalysis(
   const total = assessed.length;
   const addressed = assessed.filter((o) => o.status === 'ADDRESSED').length;
   const partial = assessed.filter((o) => o.status === 'PARTIAL').length;
-  const tally = total === 0 ? 'No assessment objectives are defined for this control.' : `${addressed} of ${total} assessment objectives addressed${partial ? `, ${partial} partly` : ''}.`;
+  const tally = total === 0 ? 'No assessment objectives are defined for this control.' : `${addressed} of ${total} ${objectivesNoun(total)} addressed${partial ? `, ${partial} partly` : ''}.`;
   const modelSummary = reply.summary.trim().slice(0, 400);
   return {
     source: 'ai',
@@ -262,11 +265,11 @@ export function buildExtractiveGapAnalysis(reply: { answers: ObjectiveAnswer[] }
   const gaps: GapItem[] = [];
   // Only when EVERY objective got a real answer and none has a supporting sentence is the control itself undocumented
   if (total > 0 && found === 0 && notAssessed.length === 0 && unsupported === 0) {
-    gaps.push({ severity: 'HIGH', missingElement: 'No supporting sentence found', recommendation: 'None of this control’s assessment objectives has a supporting sentence in the text found for it. Describe how the control is implemented.' });
+    gaps.push({ severity: 'HIGH', missingElement: 'The AI found no supporting sentence for any objective', recommendation: 'The AI found no supporting sentence for any of this control’s assessment objectives. That is what it found, not proof the document lacks one: check the document, and if it really is missing, describe how the control is implemented.' });
   }
   for (const o of assessed) {
     if (o.status === 'NOT_ADDRESSED') {
-      gaps.push({ severity: 'MEDIUM', objective: o.letter, missingElement: `Objective [${o.letter}] has no supporting sentence`, recommendation: `State how the organisation meets: ${o.text}.` });
+      gaps.push({ severity: 'MEDIUM', objective: o.letter, missingElement: `The AI found no supporting sentence for objective [${o.letter}]`, recommendation: `Check the document for it, and if it is missing, state how the organisation meets: ${o.text}.` });
     } else if (o.status === 'UNSUPPORTED') {
       gaps.push({ severity: 'LOW', objective: o.letter, missingElement: `Objective [${o.letter}] could not be checked`, recommendation: `The model’s answer did not match any sentence of the document, so it was ignored. Check the document for: ${o.text}.` });
     }
@@ -284,7 +287,7 @@ export function buildExtractiveGapAnalysis(reply: { answers: ObjectiveAnswer[] }
   return {
     source: 'ai',
     mode: 'extractive',
-    summary: [total === 0 ? 'No assessment objectives are defined for this control.' : `${found} of ${total} assessment objectives have a supporting sentence in the document.`, ...notes].join(' '),
+    summary: [total === 0 ? 'No assessment objectives are defined for this control.' : `${found} of ${total} ${objectivesNoun(total)} ${total === 1 ? 'has' : 'have'} a supporting sentence in the document.`, ...notes].join(' '),
     gaps: gaps.slice(0, MAX_GAPS),
     objectives: assessed,
   };
