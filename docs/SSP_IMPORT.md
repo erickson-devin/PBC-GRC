@@ -117,6 +117,34 @@ The model has no tools and no network, and the document is passed as delimited d
 that looks like an instruction. Whatever a document says, an AI suggestion cannot reach the review screen without a verified
 quotation, and nothing reaches a control without a person committing it.
 
+### Small models (3B) and tuning
+
+The defaults are tuned for a small model such as Llama 3.2 3B with a 4096-token context, which is fast but weak at judgement:
+
+* **Few, clear candidates.** At most 4 controls are offered per section, and only ones that score at least 9 and at least half
+  of the best match. On realistic text the right control scores 10-25 and unrelated ones 0-6.
+* **A control the section does not name must be earned.** The model's quotation is ranked against the whole catalog (the
+  same keyword ranking, not the model); the claimed control must be in the top 3 and score at least 4, otherwise the finding is
+  discarded (`LOW_SUPPORT`). A real sentence attached to the wrong control is exactly what a small model produces.
+* **Confidence is mostly computed, not reported.** A small model's own confidence is nearly always high, so it counts for 15%.
+  The rest is how well the quotation fits the control (35%), whether the section names the control (30%) and FULL/PARTIAL
+  coverage (20%). Suggestions below 0.5 never reach the review screen (`LOW_CONFIDENCE`).
+* **Extractive gap analysis (default).** The model is only asked to copy one supporting sentence per objective, or answer NONE.
+  A sentence counts only if it is verbatim in the document and shares at least half of the objective's distinctive words; one
+  sentence supports at most two objectives. Everything the reviewer reads besides those sentences (which objectives are covered,
+  the gaps, their severity, the recommendations, the summary) is written by the program from those results, so it cannot be
+  invented or repetitive. Verdicts are only *addressed* / *not addressed* / *could not be checked*; there is no "partly".
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SSP_AI_MAX_CANDIDATES` | 4 | controls offered per section |
+| `SSP_AI_RETRIEVAL_MIN_SCORE` | 9 | minimum keyword score to be offered |
+| `SSP_AI_MIN_CONFIDENCE` | 0.5 | suggestions below this are discarded |
+| `SSP_AI_GAP_MODE` | extractive | `narrative` lets the model write the comparison itself: for 8B and larger |
+
+Raise the first two and lower the confidence floor if a larger model misses real controls; the review screen's "discarded"
+count (and the reasons, kept with each import's statistics) shows what the filters are removing.
+
 ### Limits and expectations
 
 * The model only reports what the document **says**. It cannot tell whether the organisation really does it.

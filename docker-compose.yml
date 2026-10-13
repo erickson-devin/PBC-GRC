@@ -94,6 +94,11 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
       OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
+      # Tuning for small models (docs/SSP_IMPORT.md); empty means the built-in default
+      SSP_AI_MAX_CANDIDATES: ${SSP_AI_MAX_CANDIDATES:-}
+      SSP_AI_RETRIEVAL_MIN_SCORE: ${SSP_AI_RETRIEVAL_MIN_SCORE:-}
+      SSP_AI_MIN_CONFIDENCE: ${SSP_AI_MIN_CONFIDENCE:-}
+      SSP_AI_GAP_MODE: ${SSP_AI_GAP_MODE:-}
     ports:
       - "3000:3000"
     volumes:

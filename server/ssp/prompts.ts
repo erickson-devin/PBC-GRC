@@ -139,3 +139,45 @@ export function gapUserMessage(input: {
   const objectives = input.objectives.map((o) => `[${o.letter}] ${o.text}`).join('\n');
   return `REQUIREMENT ${input.controlId}: ${input.title}\n${clip(input.requirement, 700)}\n\nASSESSMENT OBJECTIVES (NIST SP 800-171A)\n${objectives}\n\nDOCUMENT EXCERPTS\n<<<\n${input.excerpts}\n>>>`;
 }
+
+// ------------------------------------------------------------------------------------------------ gap analysis, extractive
+//
+// For small models (3B) the full comparison above is too much to ask: they claim objectives are met without being able to
+// cite text, and their free-text feedback is repetitive. The extractive variant asks for the one thing they do well: copy a
+// sentence. Whether it is a real sentence is checked by grounding.ts, whether it speaks to the objective by word overlap, and
+// everything a reader sees besides the copied sentences (statuses, gaps, severities, recommendations, the summary) is written
+// by this program, not by the model.
+
+export const GAP_EXTRACT_SYSTEM = `You find sentences in a document. For each OBJECTIVE, copy ONE sentence from the EXCERPTS that says how that objective is met.
+
+Rules:
+- Copy the sentence exactly, word for word. Do not change, shorten or combine sentences.
+- If no sentence in the EXCERPTS speaks to the objective, answer NONE for it.
+- Do not use the same sentence for objectives it does not fit.
+- Use only the EXCERPTS. Do not explain anything.
+Answer with JSON only.`;
+
+export const GAP_EXTRACT_SCHEMA = {
+  type: 'object',
+  properties: {
+    answers: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { letter: { type: 'string' }, sentence: { type: 'string' } },
+        required: ['letter', 'sentence'],
+      },
+    },
+  },
+  required: ['answers'],
+} as const;
+
+export const gapExtractReply = z.object({
+  answers: z.array(z.object({ letter: z.string().max(10), sentence: z.string().max(MAX_QUOTE_CLAIM_CHARS) })).max(40),
+});
+export type GapExtractReply = z.infer<typeof gapExtractReply>;
+
+export function gapExtractUserMessage(input: { objectives: Array<{ letter: string; text: string }>; excerpts: string }): string {
+  const objectives = input.objectives.map((o) => `[${o.letter}] ${clip(o.text, 200)}`).join('\n');
+  return `OBJECTIVES\n${objectives}\n\nEXCERPTS\n<<<\n${input.excerpts}\n>>>`;
+}

@@ -23,7 +23,7 @@ const STOPWORDS = new Set(
   'the and for are was were that this with from have has had not but all any can will shall may must should would could into onto upon such than then them they their there these those its our out who whom whose which what when where while how also been being both each other more most some only own same very just over under between through during before after above below again further once here about against because does did doing done get got per via use used using'.split(' ')
 );
 
-const tokenize = (text: string): string[] =>
+export const tokenize = (text: string): string[] =>
   (text.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? [])
     .filter((t) => !STOPWORDS.has(t))
     .map((t) => (t.length > 4 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t)); // crude plural folding
@@ -74,8 +74,42 @@ export interface RetrievalOptions {
   minScore?: number;
 }
 
-export const DEFAULT_MAX_CANDIDATES = 6;
-export const DEFAULT_MIN_SCORE = 6;
+// Deliberately strict. A small model (3B) offered many loosely related controls will attach real sentences to the wrong ones,
+// so few controls are offered and only clear matches: on realistic text the right control scores 10-25 and unrelated
+// controls 0-6. The relative cut-off drops anything not at least half as strong as the best match.
+export const DEFAULT_MAX_CANDIDATES = 4;
+export const DEFAULT_MIN_SCORE = 9;
+export const RELATIVE_CUTOFF = 0.5;
+
+/** Operators can tune retrieval without a code change: SSP_AI_MAX_CANDIDATES and SSP_AI_RETRIEVAL_MIN_SCORE. */
+export function retrievalOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): Required<RetrievalOptions> {
+  const num = (v: string | undefined, fallback: number, min: number, max: number): number => {
+    const n = Number.parseFloat(v ?? '');
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  };
+  return {
+    max: Math.round(num(env.SSP_AI_MAX_CANDIDATES, DEFAULT_MAX_CANDIDATES, 1, 12)),
+    minScore: num(env.SSP_AI_RETRIEVAL_MIN_SCORE, DEFAULT_MIN_SCORE, 0, 100),
+  };
+}
+
+export interface ControlSupport {
+  /** 0 = the best-matching control for this text. */
+  rank: number;
+  score: number;
+  topScore: number;
+}
+
+/**
+ * How well does `text` (a quotation and the model's summary of it) fit `controlId`? Used to check a model's claim that a
+ * passage shows a control being implemented, without asking the model: on realistic text the right control ranks first with a
+ * score above 10, and a wrong pairing ranks 6th or lower with a score under 3.
+ */
+export function controlSupport(text: string, controlId: string, framework: SspImportFramework): ControlSupport {
+  const ranked = rankControls(text, framework);
+  const rank = ranked.findIndex((r) => r.id === controlId);
+  return { rank: rank === -1 ? ranked.length : rank, score: rank === -1 ? 0 : ranked[rank].score, topScore: ranked[0]?.score ?? 0 };
+}
 const QUERY_CHARS = 4000;
 
 /** Score of every control against `text`, highest first. */
@@ -116,8 +150,8 @@ export function candidatesForSection(
   };
   for (const id of explicitIds) add(id, true);
   let byKeywords = 0;
-  // Besides the absolute floor, a control must score at least a third of the best match, so one clear topic is not diluted by noise
-  const cutoff = Math.max(minScore, (ranked[0]?.score ?? 0) * 0.35);
+  // Besides the absolute floor, a control must score at least half of the best match, so one clear topic is not diluted by noise
+  const cutoff = Math.max(minScore, (ranked[0]?.score ?? 0) * RELATIVE_CUTOFF);
   for (const r of ranked) {
     if (byKeywords >= max || r.score < cutoff) break;
     if (!picked.has(r.id)) {

@@ -1,8 +1,8 @@
 import { analyzeDocumentWithAi, explicitControlIds, SECTION_MAX_CHARS } from '../server/ssp/analyze';
 import { mapDocumentToControls } from '../server/ssp/controlMapper';
-import { buildGapAnalysis, objectivesFor } from '../server/ssp/gapAnalysis';
+import { buildExtractiveGapAnalysis, buildGapAnalysis, objectivesFor, termOverlap } from '../server/ssp/gapAnalysis';
 import { OllamaClient, OllamaError, __resetOllamaCacheForTests, type OllamaConfig } from '../server/ssp/ollama';
-import { candidatesForSection } from '../server/ssp/retrieval';
+import { candidatesForSection, controlSupport, retrievalOptionsFromEnv } from '../server/ssp/retrieval';
 import { startFakeOllama } from './fakeOllama';
 import { scriptedModel } from './fakeSspModel';
 
@@ -57,7 +57,8 @@ async function main() {
   const cfg: OllamaConfig = { enabled: true, baseUrl: fake.url, model: 'llama3.1:8b', numCtx: 8192, timeoutMs: 5000, allowRemote: false };
   const client = new OllamaClient(cfg);
   const run = (text: string, over: Partial<Parameters<typeof analyzeDocumentWithAi>[0]> = {}) =>
-    analyzeDocumentWithAi({ text, pages: [], framework: 'CMMC_L1', client, rules: mapDocumentToControls(text, [], 'CMMC_L1'), ...over });
+    // the existing checks below exercise the narrative comparison; the extractive default has its own section further down
+    analyzeDocumentWithAi({ text, pages: [], framework: 'CMMC_L1', client, rules: mapDocumentToControls(text, [], 'CMMC_L1'), options: { gapMode: 'narrative' }, ...over });
 
   console.log('\n--- A normal run ---');
   const progress: string[] = [];
@@ -107,7 +108,7 @@ async function main() {
   const pe = new Map(hall.mapping.staged.map((s) => [s.controlId, s])).get('PE.L1-3.10.1');
   assert((hall.stats.rejected.QUOTE_NOT_FOUND ?? 0) >= 1, 'a quotation that is not in the document is rejected (QUOTE_NOT_FOUND)', hall.stats.rejected);
   assert(pe?.origin === 'RULES' && pe.matchKind !== 'AI_EXTRACTED', 'the control with the invented quotation is NOT an AI suggestion: only the rule-based match (found by its identifier) remains');
-  assert(hall.warnings.some((w) => /discarded because/.test(w)), 'the reviewer is told that findings were discarded');
+  assert(hall.warnings.some((w) => /discarded: the quotation/.test(w)), 'the reviewer is told that findings were discarded');
   const lies = (t: string) => run(t);
   const bad = await lies(DOC.replace('[[HALLUCINATE]]', '[[BADID]]'));
   assert((bad.stats.rejected.UNKNOWN_CONTROL ?? 0) >= 1 && bad.mapping.staged.every((s) => !s.controlId.startsWith('ZZ')), 'an invented control id is rejected (UNKNOWN_CONTROL) and never staged');
@@ -154,6 +155,79 @@ async function main() {
   fake.chats.length = 0;
   await run(longDoc);
   assert(fake.chats.filter((c) => c.system.startsWith('You read')).every((c) => c.user.length < SECTION_MAX_CHARS + 2500), 'a long section is split so that no request exceeds the context budget');
+
+  console.log('\n--- Strict retrieval and support (tuned for a 3B model) ---');
+  const strict = candidatesForSection('Access to company systems is limited to authorized users. Accounts are created by the IT lead after manager approval and reviewed every quarter.', 'CMMC_L1');
+  assert(strict.length <= 3 && strict[0].id === 'AC.L1-3.1.1' && !strict.some((c) => c.id === 'SC.L1-3.13.5'), 'an access-control paragraph is offered only the few controls that clearly match, and not the unrelated SC control a small model once invented', strict.map((c) => c.id));
+  assert(candidatesForSection('The boundary is described below.', 'CMMC_L1').length === 0, 'text that matches nothing clearly offers nothing');
+  const loose = candidatesForSection('Access to company systems is limited to authorized users. Accounts are reviewed.', 'CMMC_L1', [], { max: 12, minScore: 0 });
+  assert(loose.length > strict.length, 'the limits are options: loosening them offers more (so the default is what is strict)');
+  const env = retrievalOptionsFromEnv({ SSP_AI_MAX_CANDIDATES: '2', SSP_AI_RETRIEVAL_MIN_SCORE: '12.5' } as unknown as NodeJS.ProcessEnv);
+  assert(env.max === 2 && env.minScore === 12.5 && retrievalOptionsFromEnv({} as NodeJS.ProcessEnv).max === 4 && retrievalOptionsFromEnv({ SSP_AI_MAX_CANDIDATES: 'x' } as unknown as NodeJS.ProcessEnv).max === 4, 'SSP_AI_MAX_CANDIDATES and SSP_AI_RETRIEVAL_MIN_SCORE tune retrieval; nonsense falls back to the strict defaults');
+  const right = controlSupport('Hard drives are sanitized using NIST 800-88 methods before disposal or reuse.', 'MP.L1-3.8.3', 'CMMC_L1');
+  const wrong = controlSupport('Hard drives are sanitized using NIST 800-88 methods before disposal or reuse.', 'SC.L1-3.13.5', 'CMMC_L1');
+  assert(right.rank === 0 && right.score >= 10 && wrong.rank > 2 && wrong.score < 4, 'a quotation fits its own control (rank 0) and does not fit an unrelated one', { right, wrong });
+
+  const offTopicDoc = DOC.replace('2. MEDIA PROTECTION', '2. GENERAL NOTES').replace('Removable media is encrypted', '[[OFFTOPIC]] Staff are reminded each year that visitors must always be accompanied on site and their access must be recorded in the log. Removable media is encrypted');
+  const off = await run(offTopicDoc, { options: { gapMode: 'narrative', retrieval: { max: 12, minScore: 0 } } });
+  assert((off.stats.rejected.LOW_SUPPORT ?? 0) >= 1, 'a real sentence attached to an unrelated control is rejected (LOW_SUPPORT), even though its quotation is verbatim', off.stats.rejected);
+  assert(off.stats.findingsProposed === off.stats.findingsGrounded + Object.values(off.stats.rejected).reduce((a, b) => a + b, 0), 'and the accounting still adds up');
+
+  const strictConf = await run(DOC, { options: { gapMode: 'narrative', minConfidence: 0.99 } });
+  assert(strictConf.mapping.staged.every((s) => s.origin !== 'AI') && (strictConf.stats.rejected.LOW_CONFIDENCE ?? 0) >= 2, 'suggestions below the confidence floor never reach the review screen (LOW_CONFIDENCE)', strictConf.stats.rejected);
+  assert(strictConf.stats.findingsProposed === strictConf.stats.findingsGrounded + Object.values(strictConf.stats.rejected).reduce((a, b) => a + b, 0), 'and the accounting still adds up with the confidence floor');
+  const confs = res.mapping.staged.filter((s) => s.origin === 'AI').map((s) => s.confidence);
+  assert(confs.length >= 2 && confs.every((c) => c >= 0.5 && c <= 0.95), 'confidence is between 0.5 and 0.95 for every suggestion shown', confs);
+  const named = res.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.confidence;
+  const unnamed = res.mapping.staged.find((s) => s.controlId === 'MP.L1-3.8.3')!.confidence;
+  assert(named > unnamed, 'a control the section names outright is more confident than one found by meaning, whatever number the model reports', { named, unnamed });
+
+  const biggest = fake.chats.filter((c) => c.system.startsWith('You read one section')).reduce((m, c) => Math.max(m, c.system.length + c.user.length), 0);
+  assert(biggest / 3 < 4096 - 1400, 'the largest extraction prompt leaves room to answer inside a 4096-token context', Math.round(biggest / 3));
+
+  console.log('\n--- Extractive gap analysis (the default, for small models) ---');
+  const ex = await run(DOC, { options: { gapMode: 'extractive' } });
+  const exAc = ex.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!;
+  const exObjs = exAc.gapAnalysis.objectives!;
+  assert(ex.stats.gapMode === 'extractive' && exAc.gapAnalysis.source === 'ai', 'the stats say which gap mode ran');
+  assert(exObjs[0].status === 'ADDRESSED' && exObjs[0].evidence && DOC.includes(exObjs[0].evidence), 'the first objective is addressed, with a sentence copied from the document');
+  assert(exObjs.every((o) => ['ADDRESSED', 'NOT_ADDRESSED', 'UNSUPPORTED', 'NOT_ASSESSED'].includes(o.status)) && !exObjs.some((o) => o.status === 'PARTIAL'), 'only simple verdicts: a small model is never asked to judge "partly"');
+  assert(exAc.gapAnalysis.gaps.every((g, i, all) => all.findIndex((x) => x.missingElement === g.missingElement) === i), 'no gap is listed twice');
+  assert(exAc.gapAnalysis.gaps.every((g) => !/device identification/i.test(g.missingElement)) && /objectives have supporting text in the document\.$/.test(exAc.gapAnalysis.summary.replace(/^\d+ of \d+ /, '')), 'every gap and the summary are generated by the program, not written by the model');
+  assert(exAc.gapAnalysis.gaps.some((g) => g.objective === 'c' && g.severity === 'MEDIUM' && /State how the organisation meets/.test(g.recommendation)), 'an objective without supporting text becomes a MEDIUM gap with a recommendation built from the objective itself');
+  const exCalls = fake.chats.filter((c) => c.system.startsWith('You find sentences'));
+  assert(exCalls.length >= 2 && exCalls.every((c) => c.user.length < 3000 && /Answer with JSON only/.test(c.system) && c.system.length < 700), 'the extractive prompt is short and simple (a few rules, no free-text output)');
+  const fab = await run(DOC.replace('Access to company systems', '[[FABRICATE]] Access to company systems'), { options: { gapMode: 'extractive' } });
+  const fabObjs = fab.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis;
+  assert(fabObjs.objectives![0].status === 'UNSUPPORTED' && /could not be matched to the document/.test(fabObjs.summary), 'a sentence the model invented is UNSUPPORTED and the summary says it was ignored');
+  const same = await run(DOC.replace('Access to company systems', '[[ALLSAME]] Access to company systems'), { options: { gapMode: 'extractive' } });
+  const sameObjs = same.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis.objectives!;
+  assert(sameObjs.filter((o) => o.status === 'ADDRESSED').length <= 2, 'one sentence repeated for every objective supports at most two of them', sameObjs.map((o) => o.status));
+  const nar = await run(DOC, { options: { gapMode: 'narrative' } });
+  assert(nar.stats.gapMode === 'narrative' && nar.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis.objectives!.some((o) => o.status === 'PARTIAL'), 'the narrative comparison is still available for larger models');
+  const gfx = await run(DOC.replace('Access to company systems', '[[GAPFAIL]] Access to company systems'), { options: { gapMode: 'extractive' } });
+  assert(gfx.stats.gapAnalysesFailed >= 1 && gfx.mapping.staged.find((s) => s.controlId === 'AC.L1-3.1.1')!.gapAnalysis.source === 'heuristic', 'a failed extractive answer falls back to the simple checks');
+
+  console.log('\n--- buildExtractiveGapAnalysis, pure ---');
+  const objDefs = [
+    { letter: 'a', text: 'authorized users are identified' },
+    { letter: 'b', text: 'devices are identified' },
+    { letter: 'c', text: 'system access is limited to authorized users' },
+    { letter: 'd', text: 'remote sessions are encrypted' },
+  ];
+  const EXC = 'Authorized users are identified by a unique account. Access to the system is limited to authorized users by role. The cafeteria opens at noon.';
+  const pure = buildExtractiveGapAnalysis({ answers: [{ letter: 'A', sentence: 'Authorized users are identified by a unique account.' }, { letter: '[b]', sentence: 'NONE' }, { letter: 'c', sentence: 'Access to the system is limited to authorized users by role.' }] }, objDefs, EXC);
+  assert(pure.objectives!.map((o) => o.status).join() === 'ADDRESSED,NOT_ADDRESSED,ADDRESSED,NOT_ASSESSED', 'copied sentences are ADDRESSED, NONE is NOT_ADDRESSED, a missing answer is NOT_ASSESSED (letters are read as A, [b], c)', pure.objectives!.map((o) => o.status));
+  assert(/^2 of 4 assessment objectives have supporting text/.test(pure.summary) && pure.gaps.length === 2 && pure.gaps.every((g) => g.severity !== 'HIGH'), 'the summary is a count and there is no HIGH gap while something is addressed');
+  const irrelevant = buildExtractiveGapAnalysis({ answers: [{ letter: 'a', sentence: 'The cafeteria opens at noon.' }] }, objDefs.slice(0, 1), EXC);
+  assert(irrelevant.objectives![0].status === 'NOT_ADDRESSED' && !irrelevant.objectives![0].evidence, 'a real sentence that does not speak to the objective is not evidence for it');
+  const none = buildExtractiveGapAnalysis({ answers: objDefs.map((d) => ({ letter: d.letter, sentence: 'NONE' })) }, objDefs, EXC);
+  assert(none.gaps[0].severity === 'HIGH' && none.gaps.length === 5 && none.gaps.slice(1).every((g) => g.severity === 'MEDIUM'), 'nothing addressed: one HIGH gap for the control and a MEDIUM gap per objective');
+  const short = buildExtractiveGapAnalysis({ answers: [{ letter: 'a', sentence: 'Users are identified.' }] }, objDefs.slice(0, 1), 'Authorized users are identified. Other text follows here.');
+  assert(short.objectives![0].status === 'UNSUPPORTED' || short.objectives![0].status === 'ADDRESSED', 'a short copied sentence (three words or more) is accepted for checking');
+  assert(termOverlap('authorized users are identified', 'Authorized users are identified by badge.') === 1 && termOverlap('authorized users are identified', 'The cafeteria opens.') === 0 && termOverlap('', 'x y z') === 0, 'word overlap: all, none, and an empty objective');
+  const dup = buildExtractiveGapAnalysis({ answers: [{ letter: 'a', sentence: 'Authorized users are identified by a unique account.' }, { letter: 'a', sentence: 'NONE' }] }, objDefs.slice(0, 1), EXC);
+  assert(dup.objectives![0].status === 'ADDRESSED', 'if the model answers an objective twice the first answer counts');
 
   __resetOllamaCacheForTests();
   await fake.close();

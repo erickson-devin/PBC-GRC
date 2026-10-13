@@ -147,6 +147,8 @@ export interface SspAiStats {
   rejected: Record<string, number>;
   gapAnalyses: number;
   gapAnalysesFailed: number;
+  /** How the objectives were assessed: the model copies supporting sentences (small models) or writes the comparison. */
+  gapMode?: 'extractive' | 'narrative';
   durationMs: number;
 }
 
