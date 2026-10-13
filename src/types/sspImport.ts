@@ -1,0 +1,173 @@
+/**
+ * SSP import: shared types.
+ *
+ * An uploaded System Security Plan is extracted to text, split into sections, and mapped to the controls of ONE
+ * requested framework. The result is only ever written to the staging tables (ssp_import_jobs, staged_controls);
+ * the live control answers (control_assessments) change only through an explicit, reviewed commit.
+ */
+
+/** Phase 1 supports the CMMC levels only. */
+export const SSP_IMPORT_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2'] as const;
+export type SspImportFramework = (typeof SSP_IMPORT_FRAMEWORKS)[number];
+export const isSspImportFramework = (v: unknown): v is SspImportFramework =>
+  typeof v === 'string' && (SSP_IMPORT_FRAMEWORKS as readonly string[]).includes(v);
+
+export type SspDocumentKind = 'pdf' | 'docx';
+
+export type SspJobStatus = 'QUEUED' | 'EXTRACTING' | 'ANALYZING' | 'READY_FOR_REVIEW' | 'COMMITTED' | 'FAILED';
+export const SSP_JOB_TERMINAL: readonly SspJobStatus[] = ['READY_FOR_REVIEW', 'COMMITTED', 'FAILED'];
+
+export type SspReviewState = 'PENDING' | 'ACCEPTED' | 'EDITED' | 'REJECTED' | 'COMMITTED' | 'CONFLICT';
+/** States a reviewer may set. COMMITTED and CONFLICT are set by the commit step only. */
+export const SSP_SETTABLE_STATES: readonly SspReviewState[] = ['PENDING', 'ACCEPTED', 'EDITED', 'REJECTED'];
+
+/** How a control was found in the document. */
+export type SspMatchKind =
+  | 'CMMC_ID_SECTION' // a section headed by the CMMC identifier (AC.L2-3.1.1): the strongest signal
+  | 'NIST_NUMBER_SECTION' // a section that starts with the NIST SP 800-171 number (3.1.1): could be the document's own numbering
+  | 'MENTION'; // referred to inside another section; no section of its own
+
+export interface PageSpan {
+  page: number;
+  start: number;
+  end: number;
+}
+
+export interface ExtractedDocument {
+  text: string;
+  /** Character ranges of each page (PDF); empty for DOCX, which has no fixed pages. */
+  pages: PageSpan[];
+  pageCount: number;
+}
+
+export interface DocChunk {
+  index: number;
+  /** Offsets into the extracted text. */
+  start: number;
+  end: number;
+  /** First line of the section (its heading), trimmed. */
+  heading: string;
+  /** 1-based page the section starts on (PDF), or null. */
+  page: number | null;
+  text: string;
+}
+
+export interface SourceQuote {
+  quote: string;
+  page: number | null;
+  start: number;
+  end: number;
+  /** True when `quote` is exactly text[start..end] of the extracted document. */
+  verified: boolean;
+}
+
+export interface GapItem {
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  missingElement: string;
+  recommendation: string;
+}
+
+export interface GapAnalysis {
+  /** Phase 1 findings are simple automated checks, not AI judgement. */
+  source: 'heuristic';
+  summary: string;
+  gaps: GapItem[];
+}
+
+export interface StagedControlDraft {
+  controlId: string;
+  framework: SspImportFramework;
+  matchKind: SspMatchKind;
+  sectionHeading: string;
+  suggestedNotes: string;
+  confidence: number;
+  sourceQuotes: SourceQuote[];
+  gapAnalysis: GapAnalysis;
+}
+
+export interface UnmappedFinding {
+  reference: string;
+  reason: 'NOT_IN_CATALOG' | 'OUT_OF_SCOPE';
+  page: number | null;
+  excerpt: string;
+}
+
+export interface CoverageReport {
+  framework: SspImportFramework;
+  totalControls: number;
+  foundControls: number;
+  /** In-scope control ids the document never mentions. */
+  missing: string[];
+}
+
+export interface MappingResult {
+  staged: StagedControlDraft[];
+  unmapped: UnmappedFinding[];
+  coverage: CoverageReport;
+}
+
+export interface SspImportJob {
+  id: string;
+  tenantId: string;
+  createdBy: string;
+  createdByUserId: string | null;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  fileSha256: string;
+  framework: SspImportFramework;
+  status: SspJobStatus;
+  stageProgress: { stage?: string; chunksTotal?: number; controlsFound?: number };
+  storedProvider: 'local' | 'gcs';
+  storedPath: string;
+  pageCount: number | null;
+  charCount: number | null;
+  chunkCount: number | null;
+  analyzer: string;
+  coverage: CoverageReport | null;
+  unmapped: UnmappedFinding[];
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface StagedControl extends StagedControlDraft {
+  id: string;
+  jobId: string;
+  tenantId: string;
+  /** Hash of the live notes + status when this suggestion was staged; null when the control had no row yet. */
+  baseHash: string | null;
+  reviewState: SspReviewState;
+  editedNotes: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  committedAt: string | null;
+}
+
+// ---------------------------------------------------------------------------------------------- API shapes
+
+export interface SspCapabilities {
+  analyzer: string;
+  /** False in Phase 1: the mapping is rule-based. */
+  ai: boolean;
+  maxUploadBytes: number;
+  acceptedTypes: string[];
+  /** The supported frameworks that are part of this tenant's assessment program. */
+  frameworks: SspImportFramework[];
+  canUpload: boolean;
+  canCommit: boolean;
+}
+
+/** A staged suggestion together with the control's current answer. */
+export interface StagedControlView extends StagedControl {
+  current: { status: string; notes: string; updatedAt: string | null } | null;
+  /** The control's answer is not what it was when this suggestion was staged. */
+  changedSinceStaged: boolean;
+}
+
+export interface SspCommitOutcome {
+  committed: string[];
+  conflicts: string[];
+  job: SspImportJob | null;
+}

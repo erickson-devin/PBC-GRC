@@ -45,6 +45,7 @@ export type NavigationTab =
   | 'vault'       // Legacy alias → renders same as 'evidence'
   | 'policies'    // Living Policy Library
   | 'ssp'         // System Security Plan
+  | 'sspimport'   // SSP import: upload an existing plan and review the controls it maps to
   | 'poam'        // Plan of Action & Milestones
   | 'export'      // Export Audit Package
   | 'rbac'        // Team & Role RBAC

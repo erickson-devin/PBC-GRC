@@ -13,6 +13,14 @@ export function isTenantRole(value: unknown): value is TenantRole {
   return typeof value === 'string' && (TENANT_ROLES as readonly string[]).includes(value);
 }
 
+/**
+ * Roles that may SEE SSP imports (the suggestions and the uploaded document, which can contain CUI): the write roles, and
+ * Assessors, who review but cannot change or commit anything. Viewers see none of it.
+ */
+export function canRoleReviewSspImports(role: TenantRole | null | undefined): boolean {
+  return role === 'ASSESSOR' || canRoleWrite(role);
+}
+
 export function canRoleWrite(role: TenantRole | null | undefined): boolean {
   return role != null && (WRITE_ROLES as readonly string[]).includes(role);
 }

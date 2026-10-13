@@ -28,6 +28,7 @@ import { AssetInventoryManager } from './components/telemetry/AssetInventoryMana
 import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
+import { SspImportView } from './components/sspImport/SspImportView';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 
@@ -229,6 +230,7 @@ const AppContent: React.FC = () => {
                   </div>
                 )}
                 {activeTab === 'ssp' && <SSPBuilder />}
+                {activeTab === 'sspimport' && <SspImportView />}
                 {activeTab === 'policies' && <PolicyLibraryView />}
                 {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
                 {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
