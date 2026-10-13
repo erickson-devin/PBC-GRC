@@ -38,20 +38,8 @@ const distPath = path.resolve(__dirname, '../dist');
 // Static assets
 app.use(express.static(distPath));
 
-// Clean URLs for Legal Documents
-app.get('/privacy', (_req, res) => {
-  res.sendFile(path.join(distPath, 'privacy.html'), (err) => {
-    if (err) res.sendFile(path.join(distPath, 'index.html'));
-  });
-});
-
-app.get('/terms', (_req, res) => {
-  res.sendFile(path.join(distPath, 'terms.html'), (err) => {
-    if (err) res.sendFile(path.join(distPath, 'index.html'));
-  });
-});
-
-// SPA Fallback for non-API requests (Express 5 compatible)
+// SPA fallback for every non-API request: the app itself decides (login page or app) what an unknown path shows.
+// (Express 5 compatible)
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
     return next();
