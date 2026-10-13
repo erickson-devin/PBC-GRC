@@ -1,7 +1,7 @@
 import { getFrameworkControls } from '../../src/data/frameworks';
 import { CMMC_ID_RE, NIST_NUMBER_RE, chunkDocument, foldForMatching } from './chunk';
 import { numberToIdMap } from './controlMapper';
-import { analyzeGaps } from './gapAnalysis';
+import { analyzeGaps, analyzeGapsExtractive } from './gapAnalysis';
 import { groundQuote, resolveControlId } from './grounding';
 import { OllamaClient, OllamaError } from './ollama';
 import {
@@ -13,7 +13,7 @@ import {
   extractionReply,
   extractionUserMessage,
 } from './prompts';
-import { candidatesForSection, type Candidate } from './retrieval';
+import { candidatesForSection, controlSupport, retrievalOptionsFromEnv, type Candidate, type RetrievalOptions } from './retrieval';
 import type {
   DocChunk,
   MappingResult,
@@ -46,11 +46,26 @@ const MAX_QUOTES_PER_CONTROL = 3;
 const MAX_EXCERPT_CHARS = 3500;
 const EARLY_ABORT_AFTER = 5; // this many sections in a row, all failing: the model is not usable
 
+// A control the section does not name has to be earned: the model's quotation must fit the control (checked by keyword
+// ranking, not by asking the model). On realistic text the right control ranks first with a score above 10; a wrong pairing,
+// which is what a small model produces when it sees a real sentence and a loosely related control, ranks 6th or lower
+// with a score under 3.
+const SUPPORT_MAX_RANK = 2;
+const SUPPORT_MIN_SCORE = 4;
+/** Suggestions below this confidence never reach the review screen (SSP_AI_MIN_CONFIDENCE overrides). */
+export const DEFAULT_MIN_CONFIDENCE = 0.5;
+
 export interface AnalyzeOptions {
   /** Upper bound on sections sent to the model (a long document is limited to its most relevant sections). */
   maxSections?: number;
   /** Compare each suggestion with the 800-171A objectives (one more model call per control). */
   gapAnalysis?: boolean;
+  /** 'extractive' (default): the model only copies supporting sentences and the program writes the findings: for small
+   *  models. 'narrative': the model writes the comparison itself: for larger models (SSP_AI_GAP_MODE=narrative). */
+  gapMode?: 'extractive' | 'narrative';
+  /** Which controls are offered per section (SSP_AI_MAX_CANDIDATES, SSP_AI_RETRIEVAL_MIN_SCORE). */
+  retrieval?: RetrievalOptions;
+  minConfidence?: number;
 }
 
 export interface AnalyzeInput {
@@ -98,6 +113,8 @@ interface GroundedFinding {
   quote: SourceQuote;
   chunk: DocChunk;
   explicit: boolean;
+  /** How well the quotation fits the control, 0 to 1 (1 when the section names the control). */
+  support: number;
 }
 
 interface Planned {
@@ -109,12 +126,12 @@ interface Planned {
 
 const clip = (s: string, n: number): string => (s.length <= n ? s : s.slice(0, n - 1).trimEnd() + '…');
 
-function plan(chunks: DocChunk[], framework: SspImportFramework): Planned[] {
+function plan(chunks: DocChunk[], framework: SspImportFramework, retrieval: RetrievalOptions): Planned[] {
   const out: Planned[] = [];
   for (const chunk of chunks) {
     if (chunk.text.length < MIN_SECTION_CHARS) continue;
     const explicitIds = explicitControlIds(chunk.text, framework);
-    const candidates = candidatesForSection(chunk.text, framework, explicitIds);
+    const candidates = candidatesForSection(chunk.text, framework, explicitIds, retrieval);
     if (candidates.length === 0) continue;
     out.push({ chunk, candidates, explicitIds, priority: explicitIds.length * 100 + Math.max(...candidates.map((c) => c.score)) });
   }
@@ -149,7 +166,7 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
 
   // ---- 1-2. sections and what each could be about
   const chunks = chunkDocument(input.text, input.pages, { maxChars: SECTION_MAX_CHARS });
-  let planned = plan(chunks, framework);
+  let planned = plan(chunks, framework, input.options?.retrieval ?? retrievalOptionsFromEnv());
   stats.sectionsSkipped = chunks.length - planned.length;
   if (planned.length > maxSections) {
     planned = [...planned].sort((a, b) => b.priority - a.priority).slice(0, maxSections).sort((a, b) => a.chunk.index - b.chunk.index);
@@ -190,6 +207,16 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
           reject(grounded.reason);
           continue;
         }
+        const explicit = explicitIds.includes(id.controlId);
+        let support = 1;
+        if (!explicit) {
+          const fit = controlSupport(grounded.quote.quote, id.controlId, framework);
+          if (fit.rank > SUPPORT_MAX_RANK || fit.score < SUPPORT_MIN_SCORE) {
+            reject('LOW_SUPPORT');
+            continue;
+          }
+          support = fit.topScore > 0 ? Math.min(1, fit.score / fit.topScore) : 0;
+        }
         stats.findingsGrounded++;
         findings.push({
           controlId: id.controlId,
@@ -198,7 +225,8 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
           confidence: f.confidence,
           quote: grounded.quote,
           chunk,
-          explicit: explicitIds.includes(id.controlId),
+          explicit,
+          support,
         });
       }
     } catch (err: unknown) {
@@ -213,9 +241,10 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
   }
   if (stats.sectionsFailed > 0) warnings.push(`${stats.sectionsFailed} of ${planned.length} sections could not be analysed by the AI (the rule-based result is used for them).`);
   const dropped = stats.findingsProposed - stats.findingsGrounded;
-  if (dropped > 0) warnings.push(`${dropped} AI finding${dropped === 1 ? ' was' : 's were'} discarded because the control or the quotation could not be verified against the document.`);
+  if (dropped > 0) warnings.push(`${dropped} AI finding${dropped === 1 ? ' was' : 's were'} discarded: the quotation was not in the document, the control did not fit it, or the match was too weak.`);
 
   // ---- 5. one suggestion per control
+  const minConfidence = input.options?.minConfidence ?? (Number.parseFloat(process.env.SSP_AI_MIN_CONFIDENCE ?? '') || DEFAULT_MIN_CONFIDENCE);
   const byControl = new Map<string, GroundedFinding[]>();
   for (const f of findings) byControl.set(f.controlId, [...(byControl.get(f.controlId) ?? []), f]);
 
@@ -248,7 +277,13 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
     }
     if (!excerpts) excerpts = best.chunk.text.slice(0, MAX_EXCERPT_CHARS);
 
-    const confidence = Math.min(0.95, Math.max(0.05, +(0.5 * best.confidence + (best.explicit ? 0.3 : 0) + (best.coverage === 'FULL' ? 0.2 : 0.1)).toFixed(2)));
+    // Mostly deterministic: a small model's own confidence number is nearly always high, so it counts for little
+    const confidence = Math.min(0.95, Math.max(0.05, +(0.35 * best.support + (best.explicit ? 0.3 : 0) + (best.coverage === 'FULL' ? 0.2 : 0.1) + 0.15 * best.confidence).toFixed(2)));
+    if (confidence < minConfidence) {
+      stats.findingsGrounded -= list.length;
+      for (let n = 0; n < list.length; n++) reject('LOW_CONFIDENCE');
+      continue;
+    }
     drafts.push({
       controlId,
       framework,
@@ -266,6 +301,8 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
 
   // ---- 6. gap analysis against the 800-171A objectives
   const wantGaps = input.options?.gapAnalysis !== false;
+  const gapMode = input.options?.gapMode ?? (process.env.SSP_AI_GAP_MODE?.trim().toLowerCase() === 'narrative' ? 'narrative' : 'extractive');
+  stats.gapMode = gapMode;
   const heuristic = new Map(input.rules.staged.map((s) => [s.controlId, s.gapAnalysis]));
   for (let i = 0; i < drafts.length; i++) {
     const d = drafts[i];
@@ -276,7 +313,7 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
     check();
     await input.onProgress?.({ stage: `Comparing with the objectives: ${d.controlId} (${i + 1} of ${drafts.length})`, chunksTotal: planned.length, chunksDone: planned.length });
     try {
-      d.gapAnalysis = await analyzeGaps(client, { controlId: d.controlId, framework, excerpts: d.excerpts }, signal);
+      d.gapAnalysis = await (gapMode === 'narrative' ? analyzeGaps : analyzeGapsExtractive)(client, { controlId: d.controlId, framework, excerpts: d.excerpts }, signal);
       stats.gapAnalyses++;
     } catch (err: unknown) {
       if (err instanceof OllamaError && FATAL.has(err.code)) throw err;

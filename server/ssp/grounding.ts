@@ -100,14 +100,15 @@ export function groundQuote(
   sectionText: string,
   sectionStart: number,
   claimed: string,
-  pages: readonly PageSpan[] = []
+  pages: readonly PageSpan[] = [],
+  options: { minWords?: number } = {}
 ): QuoteGrounding | GroundingFailed {
   let candidate = cleanQuote(claimed);
   if (/(\.{3}|…)/.test(candidate)) {
     const parts = candidate.split(/\s*(?:\.{3}|…)\s*/).map((p) => p.trim()).filter(Boolean);
     candidate = parts.sort((a, b) => b.length - a.length)[0] ?? '';
   }
-  if (wordCount(candidate) < MIN_QUOTE_WORDS) return { ok: false, reason: 'QUOTE_TOO_SHORT' };
+  if (wordCount(candidate) < (options.minWords ?? MIN_QUOTE_WORDS)) return { ok: false, reason: 'QUOTE_TOO_SHORT' };
 
   const hit = locateQuote(sectionText, candidate);
   if (!hit) return { ok: false, reason: 'QUOTE_NOT_FOUND' };

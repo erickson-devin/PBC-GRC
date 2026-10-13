@@ -6,7 +6,9 @@ import type { FakeChatRequest } from './fakeOllama';
  *   [[HALLUCINATE]] quotes text that is not in the document     [[PARAPHRASE]] "quotes" a paraphrase
  *   [[BADID]]       names a control that does not exist         [[NOTOFFERED]]  names a control it was not offered
  *   [[BADJSON]]     answers with prose                          [[SHAPE]]       answers with the wrong JSON shape
- *   [[GAPFAIL]]     (gap analysis) answers with prose           [[BADEVIDENCE]] (gap analysis) cites evidence that is not there
+ *   [[GAPFAIL]]     (gap analysis) answers with prose           [[BADEVIDENCE]] (gap analysis, narrative) cites evidence that is not there
+ *   [[OFFTOPIC]]    attaches a real sentence to an unrelated control   [[ALLSAME]]  (extractive gap) uses one sentence for every objective
+ *   [[FABRICATE]]   (extractive gap) invents a sentence that is not in the document
  */
 export const sentenceAfterHeading = (section: string): string => {
   const body = section.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim();
@@ -24,6 +26,10 @@ export function scriptedModel(req: FakeChatRequest): unknown {
     if (section.includes('[[BADID]]')) return { findings: [{ controlId: 'ZZ.L9-9.9.9', implementation: 'Made up.', quote, coverage: 'FULL', confidence: 0.9 }] };
     if (section.includes('[[NOTOFFERED]]')) return { findings: [{ controlId: controls.includes('MP.L1-3.8.3') ? 'PE.L1-3.10.5' : 'MP.L1-3.8.3', implementation: 'Not asked about.', quote, coverage: 'FULL', confidence: 0.9 }] };
     const findings: unknown[] = [];
+    // [[OFFTOPIC]]: a real sentence of the document attached to the least relevant of the controls it was offered
+    if (section.includes('[[OFFTOPIC]]') && controls.length > 0) {
+      return { findings: [{ controlId: controls[controls.length - 1], implementation: 'Looks related.', quote, coverage: 'FULL', confidence: 1 }] };
+    }
     for (const id of controls) {
       const number = id.slice(id.lastIndexOf('-') + 1);
       const named = section.includes(id) || section.includes(number);
@@ -40,7 +46,18 @@ export function scriptedModel(req: FakeChatRequest): unknown {
     }
     return { findings };
   }
-  // gap analysis
+  // gap analysis, extractive (the small-model variant): copy one sentence per objective, or NONE
+  if (req.system.startsWith('You find sentences')) {
+    const objectiveLetters = [...req.user.matchAll(/^\[([a-z])\] /gm)].map((m) => m[1]);
+    const text = grab(req.user, 'EXCERPTS\n<<<\n', '\n>>>');
+    if (text.includes('[[GAPFAIL]]')) return { __raw: 'no' };
+    const sentence = sentenceAfterHeading(text);
+    if (text.includes('[[ALLSAME]]')) return { answers: objectiveLetters.map((l) => ({ letter: l, sentence })) };
+    if (text.includes('[[FABRICATE]]')) return { answers: objectiveLetters.map((l, i) => ({ letter: l, sentence: i === 0 ? 'Every employee completes a security briefing before receiving any laptop' : 'NONE' })) };
+    // a competent model: the first objective is spoken to by the first sentence, the second repeats it, the rest are not covered
+    return { answers: objectiveLetters.map((l, i) => ({ letter: l, sentence: i <= 1 ? sentence : 'NONE' })) };
+  }
+  // gap analysis, narrative
   const letters = [...req.user.matchAll(/^\[([a-z])\] /gm)].map((m) => m[1]);
   const excerpts = grab(req.user, 'DOCUMENT EXCERPTS\n<<<\n', '\n>>>');
   if (excerpts.includes('[[GAPFAIL]]')) return { __raw: 'no' };
