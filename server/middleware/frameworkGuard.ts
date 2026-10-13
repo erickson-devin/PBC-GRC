@@ -19,14 +19,11 @@ export function frameworksDefiningControl(controlId: string): Set<string> {
   if (!controlIndex) {
     controlIndex = new Map();
     for (const fw of PROGRAM_FRAMEWORKS) {
-      // NIST SP 800-53 has several baselines with different control sets: index them all so none is "unknown"
-      const baselines = fw === 'NIST_800_53_REV5' ? (['LOW_LOW_LOW', 'LOW_LOW_MOD', 'MOD_MOD_MOD'] as const) : ([undefined] as const);
-      for (const baseline of baselines) {
-        for (const c of getFrameworkControls(fw, baseline)) {
-          const key = c.id.toUpperCase();
-          if (!controlIndex.has(key)) controlIndex.set(key, new Set());
-          controlIndex.get(key)!.add(fw);
-        }
+      // The whole catalog, whatever baseline a tenant has chosen: a control outside it is still a known control
+      for (const c of getFrameworkControls(fw)) {
+        const key = c.id.toUpperCase();
+        if (!controlIndex.has(key)) controlIndex.set(key, new Set());
+        controlIndex.get(key)!.add(fw);
       }
     }
   }

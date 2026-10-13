@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Search,
   Filter,
@@ -54,6 +54,10 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
   const [selectedBaselineFilter, setSelectedBaselineFilter] = useState<'ALL' | 'LOW' | 'MODERATE' | 'HIGH'>('ALL');
+  const [selectedKindFilter, setSelectedKindFilter] = useState<'ALL' | 'BASE' | 'ENHANCEMENT'>('ALL');
+  // The SP 800-53 catalog has hundreds of controls: draw a page at a time
+  const PAGE_SIZE = 60;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const currentFrameworkDef = useMemo(() => {
     return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -87,6 +91,11 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         return false;
       }
 
+      // Base controls and control enhancements (SP 800-53)
+      if (selectedKindFilter !== 'ALL' && ctrl.controlKind && ctrl.controlKind !== selectedKindFilter) {
+        return false;
+      }
+
       // Status filter
       const ctrlState = state.controls[ctrl.id];
       const status = ctrlState?.status || 'NOT_STARTED';
@@ -95,7 +104,10 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       }
 
       // Baseline impact filter (per NIST SP 800-53B guidelines)
-      if (selectedBaselineFilter !== 'ALL') {
+      if (selectedBaselineFilter !== 'ALL' && ctrl.baselines) {
+        // SP 800-53B baseline membership, exactly (SP 800-53 controls carry it)
+        if (!ctrl.baselines[selectedBaselineFilter.toLowerCase() as 'low' | 'moderate' | 'high']) return false;
+      } else if (selectedBaselineFilter !== 'ALL') {
         if (selectedBaselineFilter === 'LOW') {
           const isLow = ctrl.baselineImpact === 'LOW' || ctrl.baselineTiers?.includes('LOW_LOW_LOW');
           if (!isLow) return false;
@@ -132,7 +144,13 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
       return true;
     });
-  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls]);
+  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls]);
+
+  // A new filter starts again at the first page
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, frameworkControls]);
+  const shownControls = useMemo(() => filteredControls.slice(0, visibleCount), [filteredControls, visibleCount]);
 
   const handleControlClick = (id: string) => {
     if (onSelectControl) {
@@ -400,6 +418,23 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             </select>
           </div>
 
+          {/* SP 800-53: base controls and control enhancements */}
+          {activeFramework === 'NIST_800_53_REV5' && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-semibold text-slate-400 mr-1">Show:</span>
+              <select
+                aria-label="Base controls or enhancements"
+                value={selectedKindFilter}
+                onChange={(e) => setSelectedKindFilter(e.target.value as typeof selectedKindFilter)}
+                className="bg-slate-950 text-cyan-300 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-medium focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer"
+              >
+                <option value="ALL">Controls and enhancements</option>
+                <option value="BASE">Base controls only</option>
+                <option value="ENHANCEMENT">Enhancements only</option>
+              </select>
+            </div>
+          )}
+
           {/* CMMC Level 2 Impact Weight Filter */}
           {activeFramework === 'CMMC_L2' && (
             <div className="w-full pt-3 border-t border-slate-800/60 flex items-center gap-1.5 flex-wrap">
@@ -480,7 +515,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       ) : viewMode === 'cards' ? (
         /* Cards View using ControlCard component */
         <div className="grid grid-cols-1 gap-4">
-          {filteredControls.map((ctrl) => {
+          {shownControls.map((ctrl) => {
             const domainInfo = currentFrameworkDef.domains[ctrl.domain] || {
               code: ctrl.domain,
               name: ctrl.domainName || ctrl.domain,
@@ -515,7 +550,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-sans">
-              {filteredControls.map((ctrl) => {
+              {shownControls.map((ctrl) => {
                 const ctrlState = state.controls[ctrl.id];
                 const status = ctrlState?.status || 'NOT_STARTED';
                 const domainInfo = currentFrameworkDef.domains[ctrl.domain] || {
@@ -649,6 +684,17 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {filteredControls.length > shownControls.length && (
+        <div className="flex flex-col items-center gap-1 py-2" role="status">
+          <p className="text-xs text-slate-400">
+            Showing {shownControls.length} of {filteredControls.length} controls
+          </p>
+          <button type="button" onClick={() => setVisibleCount((n) => n + PAGE_SIZE)} className="btn-secondary text-xs px-3.5 py-2">
+            Show {Math.min(PAGE_SIZE, filteredControls.length - shownControls.length)} more
+          </button>
         </div>
       )}
 

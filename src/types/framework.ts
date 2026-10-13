@@ -8,6 +8,15 @@ export type ComplianceFramework =
   | 'SOC_2_TYPE_II'
   | 'HIPAA_SECURITY';
 
+export type ControlKind = 'BASE' | 'ENHANCEMENT';
+
+export interface ControlBaselines {
+  low: boolean;
+  moderate: boolean;
+  high: boolean;
+  privacy: boolean;
+}
+
 export type ImpactLevel = 'LOW' | 'MODERATE' | 'HIGH';
 export type BaselineImpactFilter = 'ALL' | 'LOW' | 'MODERATE' | 'HIGH';
 
@@ -18,7 +27,7 @@ export interface CiaTriadSelection {
   isAllControlsApplied?: boolean;
 }
 
-export type BaselineTier = 'LOW_LOW_LOW' | 'MOD_MOD_MOD' | 'LOW_LOW_MOD' | 'ALL_CONTROLS';
+export type BaselineTier = 'LOW_LOW_LOW' | 'MOD_MOD_MOD' | 'LOW_LOW_MOD' | 'HIGH_HIGH_HIGH' | 'ALL_CONTROLS';
 
 export type OverlayParameter = 'NONE' | 'NON_NETWORKED';
 
@@ -95,7 +104,15 @@ export interface FrameworkControlDefinition {
   auditorChecklist: string[];
   starterTemplates?: StarterTemplate[];
   baselineTiers?: BaselineTier[];
-  baselineImpact?: 'LOW' | 'MODERATE' | 'HIGH'; // NIST SP 800-53B baseline allocation (LOW, MODERATE, HIGH)
+  baselineImpact?: 'LOW' | 'MODERATE' | 'HIGH'; // lowest NIST SP 800-53B baseline that includes the control
+  /** NIST SP 800-53 only. A base control (AC-2) or a control enhancement (AC-2(1)). */
+  controlKind?: ControlKind;
+  /** NIST SP 800-53 enhancements only: the base control it enhances ("AC-2"). */
+  parentControlId?: string;
+  /** NIST SP 800-53 only: the SP 800-53B baselines (Low, Moderate, High, Privacy) that include the control. */
+  baselines?: ControlBaselines;
+  /** NIST SP 800-53 only: controls NIST lists as related to this one. */
+  relatedControls?: string[];
   nonNetworkedApplicable: boolean; // false for network/boundary specific controls (SC-7, AC-17, etc.)
   requiresWireless?: boolean; // true for wireless-specific controls (AC-18, etc.)
   requiresMobile?: boolean; // true for mobile device controls (AC-19, MP-7, etc.)

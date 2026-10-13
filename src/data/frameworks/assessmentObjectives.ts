@@ -8,6 +8,7 @@
  */
 
 import { AssessmentObjective, ObjectiveStatus, ControlObjectiveRollup } from '../../types/assessment';
+import { nist80053ObjectiveTemplate } from './nist80053/objectives';
 
 export interface ObjectiveDefinitionTemplate {
   letter: string;
@@ -3937,7 +3938,9 @@ export function getAssessmentObjectivesForControl(
     NIST_800_171A_REGISTRY[upper] ||
     NIST_800_171A_REGISTRY[lower] ||
     NIST_800_171A_REGISTRY[normNum] ||
-    NIST_800_171A_REGISTRY[normNum.toUpperCase()];
+    NIST_800_171A_REGISTRY[normNum.toUpperCase()] ||
+    // every SP 800-53 control and enhancement: the official SP 800-53A objectives, once loaded
+    nist80053ObjectiveTemplate(trimmed);
 
   // 1. If explicit NIST SP 800-171A determination statements exist in registry
   if (registered && registered.objectives.length > 0) {

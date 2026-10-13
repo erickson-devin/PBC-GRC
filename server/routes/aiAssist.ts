@@ -54,11 +54,8 @@ router.get('/status', async (req: Request, res: Response): Promise<void> => {
 
 function findControl(controlId: string): FrameworkControlDefinition | null {
   for (const fw of frameworksDefiningControl(controlId)) {
-    // NIST SP 800-53 has several baselines with different control sets
-    for (const baseline of fw === 'NIST_800_53_REV5' ? (['MOD_MOD_MOD', 'LOW_LOW_LOW', 'LOW_LOW_MOD'] as const) : ([undefined] as const)) {
-      const hit = getFrameworkControls(fw as ComplianceFramework, baseline).find((c) => c.id.toUpperCase() === controlId.toUpperCase());
-      if (hit) return hit;
-    }
+    const hit = getFrameworkControls(fw as ComplianceFramework).find((c) => c.id.toUpperCase() === controlId.toUpperCase());
+    if (hit) return hit;
   }
   return null;
 }
