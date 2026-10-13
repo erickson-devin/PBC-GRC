@@ -86,6 +86,7 @@ function rowToStaged(r: pg.QueryResultRow): StagedControl {
     controlId: r.control_id,
     framework: r.framework as SspImportFramework,
     matchKind: r.match_kind as SspMatchKind,
+    origin: (r.origin ?? 'RULES') as StagedControl['origin'],
     sectionHeading: r.section_heading ?? '',
     suggestedNotes: r.suggested_notes ?? '',
     confidence: Number(r.confidence),
@@ -257,10 +258,10 @@ export async function replaceStaged(
     await c.query('DELETE FROM staged_controls WHERE job_id = $1 AND tenant_id = $2', [jobId, tenantId]);
     for (const d of drafts) {
       await c.query(
-        `INSERT INTO staged_controls (id, tenant_id, job_id, control_id, framework, match_kind, section_heading, suggested_notes,
+        `INSERT INTO staged_controls (id, tenant_id, job_id, control_id, framework, match_kind, origin, section_heading, suggested_notes,
                                       confidence, source_quotes, gap_analysis, base_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)`,
-        [newId('stg'), tenantId, jobId, d.controlId, d.framework, d.matchKind, d.sectionHeading, d.suggestedNotes, d.confidence,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13)`,
+        [newId('stg'), tenantId, jobId, d.controlId, d.framework, d.matchKind, d.origin, d.sectionHeading, d.suggestedNotes, d.confidence,
          JSON.stringify(d.sourceQuotes), JSON.stringify(d.gapAnalysis), d.baseHash]
       );
     }

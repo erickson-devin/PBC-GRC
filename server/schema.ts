@@ -231,7 +231,7 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       started_at TIMESTAMPTZ,
       finished_at TIMESTAMPTZ,
-      CONSTRAINT ssp_import_jobs_status_check CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED')),
+      CONSTRAINT ssp_import_jobs_status_check CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED','CANCELLED')),
       CONSTRAINT ssp_import_jobs_framework_check CHECK (framework IN ('CMMC_L1','CMMC_L2'))
   );
   CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_tenant ON ssp_import_jobs (tenant_id, created_at DESC);
@@ -243,6 +243,7 @@ export const TABLES_SQL = `
       control_id VARCHAR(64) NOT NULL,
       framework VARCHAR(32) NOT NULL,
       match_kind VARCHAR(24) NOT NULL,
+      origin VARCHAR(8) NOT NULL DEFAULT 'RULES',
       section_heading TEXT NOT NULL DEFAULT '',
       suggested_notes TEXT NOT NULL DEFAULT '',
       confidence NUMERIC(3,2) NOT NULL DEFAULT 0,
@@ -258,6 +259,12 @@ export const TABLES_SQL = `
       CONSTRAINT staged_controls_state_check CHECK (review_state IN ('PENDING','ACCEPTED','EDITED','REJECTED','COMMITTED','CONFLICT'))
   );
   CREATE INDEX IF NOT EXISTS idx_staged_controls_job ON staged_controls (job_id);
+
+  -- Tables created by an earlier version of the SSP import: bring them up to date
+  ALTER TABLE staged_controls ADD COLUMN IF NOT EXISTS origin VARCHAR(8) NOT NULL DEFAULT 'RULES';
+  ALTER TABLE ssp_import_jobs DROP CONSTRAINT IF EXISTS ssp_import_jobs_status_check;
+  ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_status_check
+    CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED','CANCELLED'));
 
   -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
   -- server/platformSetup.ts). Global, not tenant-bound.

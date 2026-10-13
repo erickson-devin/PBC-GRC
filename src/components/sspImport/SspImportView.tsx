@@ -40,6 +40,7 @@ const STATUS_LABEL: Record<SspJobStatus, string> = {
   READY_FOR_REVIEW: 'Ready for review',
   COMMITTED: 'Committed',
   FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
 };
 
 const STATE_LABEL: Record<SspReviewState, string> = {
@@ -64,6 +65,7 @@ const MATCH_HELP: Record<SspMatchKind, string> = {
   CMMC_ID_SECTION: 'A section of the document is headed by this control’s CMMC identifier.',
   NIST_NUMBER_SECTION: 'A section starts with this control’s NIST SP 800-171 number. Check that it is not just the document’s own numbering.',
   MENTION: 'The control is only referred to inside another section; the document has no section describing it.',
+  AI_EXTRACTED: 'The AI model read a section of the document and found this control described there. Its quotation was checked against the document.',
 };
 
 type Filter = 'all' | 'pending' | 'accepted' | 'rejected' | 'attention';

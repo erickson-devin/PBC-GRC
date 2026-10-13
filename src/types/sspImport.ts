@@ -14,8 +14,13 @@ export const isSspImportFramework = (v: unknown): v is SspImportFramework =>
 
 export type SspDocumentKind = 'pdf' | 'docx';
 
-export type SspJobStatus = 'QUEUED' | 'EXTRACTING' | 'ANALYZING' | 'READY_FOR_REVIEW' | 'COMMITTED' | 'FAILED';
-export const SSP_JOB_TERMINAL: readonly SspJobStatus[] = ['READY_FOR_REVIEW', 'COMMITTED', 'FAILED'];
+export type SspJobStatus = 'QUEUED' | 'EXTRACTING' | 'ANALYZING' | 'READY_FOR_REVIEW' | 'COMMITTED' | 'FAILED' | 'CANCELLED';
+export const SSP_JOB_TERMINAL: readonly SspJobStatus[] = ['READY_FOR_REVIEW', 'COMMITTED', 'FAILED', 'CANCELLED'];
+
+/** How a document is analysed: by rules alone (identifiers), or by a local language model as well. */
+export type SspAnalysisMode = 'rules' | 'ai';
+/** Where a suggestion came from. AI suggestions are only ever kept if their quotes were verified against the document. */
+export type SspSuggestionOrigin = 'RULES' | 'AI';
 
 export type SspReviewState = 'PENDING' | 'ACCEPTED' | 'EDITED' | 'REJECTED' | 'COMMITTED' | 'CONFLICT';
 /** States a reviewer may set. COMMITTED and CONFLICT are set by the commit step only. */
@@ -25,7 +30,8 @@ export const SSP_SETTABLE_STATES: readonly SspReviewState[] = ['PENDING', 'ACCEP
 export type SspMatchKind =
   | 'CMMC_ID_SECTION' // a section headed by the CMMC identifier (AC.L2-3.1.1): the strongest signal
   | 'NIST_NUMBER_SECTION' // a section that starts with the NIST SP 800-171 number (3.1.1): could be the document's own numbering
-  | 'MENTION'; // referred to inside another section; no section of its own
+  | 'MENTION' // referred to inside another section; no section of its own
+  | 'AI_EXTRACTED'; // a language model read a section and found the control implemented there; the quote was verified
 
 export interface PageSpan {
   page: number;
@@ -63,21 +69,44 @@ export interface SourceQuote {
 
 export interface GapItem {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  /** The NIST SP 800-171A objective this concerns (a, b, c...), when it concerns one. */
+  objective?: string;
   missingElement: string;
   recommendation: string;
 }
 
+/**
+ * How the document stands against one NIST SP 800-171A assessment objective.
+ *  ADDRESSED     the document says how the objective is met, and the passage cited was verified
+ *  PARTIAL       only part of it
+ *  NOT_ADDRESSED nothing in the document speaks to it
+ *  UNSUPPORTED   the model said it was addressed but could not point to a passage that exists in the document
+ *  NOT_ASSESSED  the model gave no answer for it
+ */
+export type ObjectiveStatus = 'ADDRESSED' | 'PARTIAL' | 'NOT_ADDRESSED' | 'UNSUPPORTED' | 'NOT_ASSESSED';
+
+export interface ObjectiveAssessment {
+  letter: string;
+  text: string;
+  status: ObjectiveStatus;
+  /** A passage of the document, verbatim, that supports the status (ADDRESSED / PARTIAL only). */
+  evidence?: string;
+}
+
 export interface GapAnalysis {
-  /** Phase 1 findings are simple automated checks, not AI judgement. */
-  source: 'heuristic';
+  /** 'heuristic': simple text checks (rules). 'ai': a language model compared the document with the objectives. */
+  source: 'heuristic' | 'ai';
   summary: string;
   gaps: GapItem[];
+  /** Per-objective result of the comparison with NIST SP 800-171A (AI analysis only). */
+  objectives?: ObjectiveAssessment[];
 }
 
 export interface StagedControlDraft {
   controlId: string;
   framework: SspImportFramework;
   matchKind: SspMatchKind;
+  origin: SspSuggestionOrigin;
   sectionHeading: string;
   suggestedNotes: string;
   confidence: number;
@@ -106,6 +135,31 @@ export interface MappingResult {
   coverage: CoverageReport;
 }
 
+export interface SspAiStats {
+  model: string;
+  promptVersion: string;
+  sectionsAnalyzed: number;
+  sectionsSkipped: number;
+  sectionsFailed: number;
+  findingsProposed: number;
+  findingsGrounded: number;
+  /** Why proposed findings were thrown away, by reason (e.g. QUOTE_NOT_FOUND). */
+  rejected: Record<string, number>;
+  gapAnalyses: number;
+  gapAnalysesFailed: number;
+  durationMs: number;
+}
+
+export interface SspStageProgress {
+  stage?: string;
+  chunksTotal?: number;
+  chunksDone?: number;
+  controlsFound?: number;
+  /** Something the reviewer should know, e.g. the AI analysis was skipped. */
+  warning?: string;
+  ai?: SspAiStats;
+}
+
 export interface SspImportJob {
   id: string;
   tenantId: string;
@@ -117,7 +171,7 @@ export interface SspImportJob {
   fileSha256: string;
   framework: SspImportFramework;
   status: SspJobStatus;
-  stageProgress: { stage?: string; chunksTotal?: number; controlsFound?: number };
+  stageProgress: SspStageProgress;
   storedProvider: 'local' | 'gcs';
   storedPath: string;
   pageCount: number | null;

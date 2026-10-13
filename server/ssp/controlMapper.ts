@@ -29,7 +29,7 @@ const MAX_MENTION_PARAGRAPHS = 3;
 const MAX_UNMAPPED = 50;
 const BRIEF_NOTES_CHARS = 120;
 
-const CONFIDENCE: Record<SspMatchKind, number> = { CMMC_ID_SECTION: 0.9, NIST_NUMBER_SECTION: 0.7, MENTION: 0.3 };
+const CONFIDENCE: Record<SspMatchKind, number> = { CMMC_ID_SECTION: 0.9, NIST_NUMBER_SECTION: 0.7, MENTION: 0.3, AI_EXTRACTED: 0.8 };
 
 interface Ref {
   /** NIST number, e.g. 3.1.5 */
@@ -218,6 +218,7 @@ export function mapDocumentToControls(
       controlId: f.controlId,
       framework,
       matchKind: kind,
+      origin: 'RULES',
       sectionHeading: heading,
       suggestedNotes: notes,
       confidence,
