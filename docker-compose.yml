@@ -12,7 +12,10 @@ version: '3.8'
 # Optional:
 #   PLATFORM_ADMIN_EMAILS  comma-separated e-mail addresses of the platform administrators of this installation. Only they can
 #                          provision tenants for a specific assessment program (which frameworks a tenant may use) and see the
-#                          administration console. Unset = nobody: every tenant gets the default program (CMMC Level 1).
+#                          administration console. Setting it also closes the first-time setup wizard (see below).
+#   SETUP_TOKEN            a secret the first-time setup wizard asks for. Open the app in a browser to create the first
+#                          administrator and tenant; the wizard locks itself for good once used. Set a token if the server is
+#                          reachable by others before you have run it.
 #
 # Security model: the app connects as APP_DB_USER, an ordinary role (NOSUPERUSER, NOBYPASSRLS). PostgreSQL
 # superusers bypass row-level security, so using POSTGRES_USER here would silently disable tenant isolation.
@@ -73,6 +76,7 @@ services:
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:?Set LOCAL_AUTH_SECRET (>= 32 random characters)}
       # Platform administrators (see the note at the top of this file)
       PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+      SETUP_TOKEN: ${SETUP_TOKEN:-}
       # Client-side configuration
       VITE_API_URL: ""
     ports:

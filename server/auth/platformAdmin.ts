@@ -24,3 +24,13 @@ export function isPlatformAdmin(user: { email?: string } | null | undefined, env
   const email = user?.email?.trim().toLowerCase();
   return Boolean(email) && platformAdminEmails(env).has(email as string);
 }
+
+/**
+ * Is this signed-in user a platform administrator: configured in PLATFORM_ADMIN_EMAILS, or created by the first-time
+ * setup wizard (stored in the database). Use this on the server; the synchronous check above only knows the configuration.
+ */
+export async function isPlatformAdminUser(user: { uid?: string; email?: string } | null | undefined): Promise<boolean> {
+  if (isPlatformAdmin(user)) return true;
+  const { isStoredPlatformAdmin } = await import('../platformSetup');
+  return isStoredPlatformAdmin(user);
+}

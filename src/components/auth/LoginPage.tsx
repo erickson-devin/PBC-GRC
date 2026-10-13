@@ -98,9 +98,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <h2 className="text-2xl font-black text-white tracking-tight">
                 Enterprise Sign In
               </h2>
-              <p className="text-xs text-slate-400">
-                Event Horizon: Singularity • Google Cloud Identity & Microsoft Entra ID
-              </p>
             </div>
 
             {/* Error Banner */}

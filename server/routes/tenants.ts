@@ -13,7 +13,7 @@ import {
   TenantSettingsPatch,
 } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
-import { isPlatformAdmin } from '../auth/platformAdmin';
+import { isPlatformAdminUser } from '../auth/platformAdmin';
 import { ensureActiveTenant } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
@@ -162,7 +162,7 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
     return;
   }
   const fields = parsed.value;
-  const admin = isPlatformAdmin(user);
+  const admin = await isPlatformAdminUser(user);
   const primary = admin ? fields.primaryFramework ?? 'CMMC_L1' : 'CMMC_L1';
   const enabledList = admin ? [...new Set([primary, ...(fields.enabledFrameworks ?? [])])] : [primary];
 
@@ -352,7 +352,7 @@ router.patch('/:tenantId', async (req: Request, res: Response): Promise<void> =>
     return;
   }
 
-  if ((parsed.value.primaryFramework !== undefined || parsed.value.enabledFrameworks !== undefined) && !isPlatformAdmin(req.user)) {
+  if ((parsed.value.primaryFramework !== undefined || parsed.value.enabledFrameworks !== undefined) && !(await isPlatformAdminUser(req.user))) {
     res.status(403).json({ error: "Forbidden: only a platform administrator can change a tenant's assessment program (its frameworks)" });
     return;
   }

@@ -18,6 +18,8 @@ import { LegalModal, LegalTab } from './components/common/LegalModal';
 import { OnboardingModal } from './components/onboarding/OnboardingModal';
 import { SuperAdminDashboard } from './components/admin/SuperAdminDashboard';
 import { AcceptInvitePage } from './pages/AcceptInvitePage';
+import { SetupPage } from './pages/SetupPage';
+import { ApiClient } from './services/apiClient';
 import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
@@ -73,6 +75,21 @@ const AppContent: React.FC = () => {
 
   const [currentRoute, setCurrentRoute] = useState<AppRoute>(getRouteFromUrl);
 
+  // First-time setup. On boot the server says whether this installation still has no administrator; if so EVERY route
+  // is the setup wizard, and once an administrator exists the wizard route does not exist any more (it resolves like
+  // any unknown path). The server enforces the same rule, so this is only the user-facing half of the lockdown.
+  const [setup, setSetup] = useState<{ state: 'checking' | 'required' | 'done'; tokenRequired: boolean }>({ state: 'checking', tokenRequired: false });
+  useEffect(() => {
+    let cancelled = false;
+    ApiClient.getSetupStatus().then((status) => {
+      if (cancelled) return;
+      setSetup({ state: status?.setupRequired ? 'required' : 'done', tokenRequired: Boolean(status?.tokenRequired) });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Sync route on popstate and hashchange
   useEffect(() => {
     const handleNavigation = () => {
@@ -112,41 +129,66 @@ const AppContent: React.FC = () => {
     };
   }, [openLegalModal, setIsTeamModalOpen]);
 
+  useEffect(() => {
+    if (setup.state === 'required' && currentRoute !== 'setup') {
+      window.history.replaceState(null, '', '/#setup');
+      setCurrentRoute('setup');
+    } else if (setup.state === 'done' && currentRoute === 'setup') {
+      setCurrentRoute('root'); // no wizard once an administrator exists: resolved like any unknown path
+    }
+  }, [setup.state, currentRoute]);
+
+  const finishSetup = useCallback(() => {
+    setSetup({ state: 'done', tokenRequired: false });
+    window.history.replaceState(null, '', '/#app');
+    setCurrentRoute('app');
+    window.scrollTo({ top: 0 });
+  }, []);
+
   // Unknown paths (and /) never show a page of their own: they go to the app when signed in, to the login page otherwise.
   useEffect(() => {
-    if (currentRoute !== 'root' || authLoading) return;
+    if (currentRoute !== 'root' || authLoading || setup.state === 'checking') return;
     const next = resolveRoot(isAuthenticated);
     window.history.replaceState(null, '', next === 'app' ? '/#app' : '/#login');
     setCurrentRoute(next);
-  }, [currentRoute, authLoading, isAuthenticated]);
+  }, [currentRoute, authLoading, isAuthenticated, setup.state]);
 
   const navigateToApp = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.location.hash = 'app';
-    }
+    // Always back to the site root: with a path like /login still in the URL, "/login#app" would resolve to the login page
+    if (typeof window !== 'undefined') window.history.pushState(null, '', '/#app');
     setCurrentRoute('app');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   const navigateToLogin = useCallback((redirectUrl: string = '/app') => {
-    if (typeof window !== 'undefined') {
-      window.location.hash = `login?redirectUrl=${encodeURIComponent(redirectUrl)}`;
-    }
+    if (typeof window !== 'undefined') window.history.pushState(null, '', `/#login?redirectUrl=${encodeURIComponent(redirectUrl)}`);
     setCurrentRoute('login');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   return (
     <>
+      {/* 0a. Waiting for the server to say whether this installation still needs its first administrator */}
+      {setup.state === 'checking' && (
+        <div role="status" aria-live="polite" className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center text-sm">
+          Loading…
+        </div>
+      )}
+
+      {/* 0b. First-time setup wizard (/setup): only exists while there is no administrator */}
+      {setup.state === 'required' && currentRoute === 'setup' && (
+        <SetupPage tokenRequired={setup.tokenRequired} onFinished={finishSetup} onOpenLegal={openLegalModal} />
+      )}
+
       {/* 0. Resolving /, or an unknown path, to the app or the login page */}
-      {currentRoute === 'root' && (
+      {setup.state === 'done' && currentRoute === 'root' && (
         <div role="status" aria-live="polite" className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center text-sm">
           Loading…
         </div>
       )}
 
       {/* 1. Standalone Login Page Route */}
-      {currentRoute === 'login' && (
+      {setup.state === 'done' && currentRoute === 'login' && (
         <LoginPage
           onSuccessRedirect={navigateToApp}
           onOpenLegal={openLegalModal}
@@ -154,7 +196,7 @@ const AppContent: React.FC = () => {
       )}
 
       {/* 4. Protected Production CMMC Defense Enclave Route (/app or /dashboard) */}
-      {currentRoute === 'app' && (
+      {setup.state === 'done' && currentRoute === 'app' && (
         <ProtectedRoute onRedirectToLogin={navigateToLogin}>
           <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500 selection:text-white">
             {/* Top Application Header */}
@@ -206,7 +248,7 @@ const AppContent: React.FC = () => {
       )}
 
       {/* 5. Platform administration: tenant provisioning (/admin) */}
-      {currentRoute === 'admin' && (
+      {setup.state === 'done' && currentRoute === 'admin' && (
         <SuperAdminDashboard
           onNavigateToApp={navigateToApp}
           onNavigateToLogin={navigateToLogin}
@@ -215,7 +257,7 @@ const AppContent: React.FC = () => {
       )}
 
       {/* 6. Token Acceptance & Onboarding Route (/invite or /accept-invite) */}
-      {currentRoute === 'accept-invite' && (
+      {setup.state === 'done' && currentRoute === 'accept-invite' && (
         <AcceptInvitePage
           onSuccessNavigate={navigateToApp}
           onNavigateToLogin={navigateToLogin}

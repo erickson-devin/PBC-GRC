@@ -24,6 +24,7 @@ assert(route('/login') === 'login' && route('/', '#login') === 'login' && route(
 assert(route('/invite') === 'accept-invite' && route('/accept-invite', '', '?token=inv_x') === 'accept-invite' && route('/', '#accept-invite?token=inv_x') === 'accept-invite' && route('/', '#invite') === 'accept-invite', 'invitation: /invite and /accept-invite (existing links keep working), also by hash');
 assert(route('/app') === 'app' && route('/dashboard') === 'app' && route('/', '#app') === 'app', 'app: /app, /dashboard, #app');
 assert(route('/admin') === 'admin' && route('/', '#admin') === 'admin', 'administration: /admin, #admin');
+assert(route('/setup') === 'setup' && route('/', '#setup') === 'setup' && route('/', '', '?view=setup') === 'setup', 'setup: /setup, #setup (the page itself only renders while the server says setup is required)');
 assert(route('/LOGIN') === 'login' && route('/Invite') === 'accept-invite', 'matching is case-insensitive');
 
 console.log('\n--- "/" and unknown paths never show a page of their own ---');

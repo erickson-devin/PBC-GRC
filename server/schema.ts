@@ -202,6 +202,24 @@ export const TABLES_SQL = `
       CONSTRAINT unq_local_users_email UNIQUE (email)
   );
 
+  -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
+  -- server/platformSetup.ts). Global, not tenant-bound.
+  CREATE TABLE IF NOT EXISTS platform_admins (
+      user_id VARCHAR(64) PRIMARY KEY,
+      email VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_platform_admins_email UNIQUE (email)
+  );
+
+  -- The first-time setup lock. At most ONE row can ever exist (id is pinned to 1), so "claim the setup" is an atomic
+  -- INSERT that only one caller can win. It is never deleted by the application once setup completed.
+  CREATE TABLE IF NOT EXISTS platform_setup (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      admin_user_id VARCHAR(64) NOT NULL,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT platform_setup_singleton CHECK (id = 1)
+  );
+
   -- Global reference data (not tenant-bound, no RLS)
   CREATE TABLE IF NOT EXISTS control_mappings (
       id VARCHAR(64) PRIMARY KEY,

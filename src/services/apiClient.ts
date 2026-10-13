@@ -119,6 +119,26 @@ export interface LocalLoginResponse {
   user: { id: string; email: string; name: string };
 }
 
+export interface SetupStatus {
+  setupRequired: boolean;
+  tokenRequired: boolean;
+}
+
+export interface SetupInput {
+  companyName: string;
+  adminName?: string;
+  email: string;
+  password: string;
+  invites?: string[];
+  inviteRole?: TenantRole;
+  setupToken?: string;
+}
+
+export interface SetupResult extends LocalLoginResponse {
+  tenant: { id: string; name: string };
+  invites: Array<{ email: string; role: TenantRole; token?: string; expiresAt?: string; error?: string }>;
+}
+
 export const ApiClient = {
   /**
    * GET /api/v1/auth/config
@@ -133,6 +153,34 @@ export const ApiClient = {
     } catch {
       return null;
     }
+  },
+
+  /**
+   * GET /api/v1/setup/status
+   * Does this installation still need its first administrator? Resolves null when the server cannot be reached, which
+   * callers treat as "no": an unreachable server must never send people to the setup wizard.
+   */
+  async getSetupStatus(): Promise<SetupStatus | null> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/setup/status`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { setupRequired?: unknown; tokenRequired?: unknown };
+      return { setupRequired: data.setupRequired === true, tokenRequired: data.tokenRequired === true };
+    } catch {
+      return null;
+    }
+  },
+
+  /** POST /api/v1/setup: the first-time setup wizard. Throws ApiError (409 once setup has been completed). */
+  async runSetup(input: SetupInput): Promise<SetupResult> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw apiErrorFromResponse(res.status, data);
+    return data as SetupResult;
   },
 
   // ---------------------------------------------------------------- team: members and invitations

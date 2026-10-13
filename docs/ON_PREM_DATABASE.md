@@ -15,17 +15,33 @@ Required settings (in a `.env` file next to `docker-compose.yml`, or exported):
 | `APP_DB_PASSWORD` | password of the application role |
 | `LOCAL_AUTH_SECRET` | 32+ random characters that sign sessions: `openssl rand -hex 32` |
 
-## First user
+## First-time setup
 
-Air-gapped mode (`AUTH_MODE=local`) has no self-registration. Create the first account on the server:
+On a new installation there is no account yet. Open the application in a browser: with `AUTH_MODE=local` and no administrator,
+every address shows the **setup wizard** (`/#setup`) instead of the sign-in page. It asks for
+
+1. your company name (this creates the first tenant),
+2. the application owner's email and password (12+ characters): this account becomes the platform administrator and owns the tenant,
+3. optionally, the email addresses of teammates to invite.
+
+When it finishes you are signed in, and the wizard shows one invitation link per teammate to copy and hand out (an air-gapped
+server sends no email; the links are shown once, and new ones can be issued later under Team settings).
+
+**The wizard locks itself permanently the moment it completes.** From then on `/setup` is an unknown path (it goes to the
+sign-in page) and `POST /api/v1/setup` answers `409`. The lock is a database row that no code path deletes, so it stays closed
+even if the administrator is later removed, and it is taken with one atomic insert, so two simultaneous requests cannot both
+succeed. Setup is also closed whenever `PLATFORM_ADMIN_EMAILS` is set.
+
+A fresh install is open until someone completes the wizard, so do that before exposing the server to a wider network. To make
+that safe by construction, set `SETUP_TOKEN` (any secret string) in the app container's environment: the wizard then asks for
+it, and a request without it is refused.
+
+Recovery (a forgotten password, or an account that must exist before the wizard runs) is still possible on the server:
 
 ```bash
 docker compose exec -e LOCAL_USER_PASSWORD='a long passphrase, 12+ chars' singularity-app \
   npx tsx scripts/createLocalUser.ts you@example.mil "Your Name"
 ```
-
-Sign in with that email and password. The first thing a signed-in user can do is create their organisation
-(`POST /api/v1/tenants`), which makes them its `TENANT_OWNER`.
 
 ## Existing data volume (already initialised before this change)
 

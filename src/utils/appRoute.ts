@@ -4,10 +4,11 @@
  *   accept-invite  /invite, /accept-invite   the page an invited person opens with their token
  *   app            /app, /dashboard  the enclave (requires a session)
  *   admin          /admin            platform administration
+ *   setup          /setup            the first-time setup wizard (only while the installation has no administrator)
  * Anything else, including "/", is 'root': it never shows a page of its own but is sent to the app when signed in and to
  * the login page otherwise (see resolveRoot). The app navigates with the URL hash (#app, #login, ...), which is honoured too.
  */
-export type AppRoute = 'root' | 'login' | 'app' | 'admin' | 'accept-invite';
+export type AppRoute = 'root' | 'login' | 'app' | 'admin' | 'accept-invite' | 'setup';
 
 export interface UrlParts {
   pathname: string;
@@ -20,6 +21,7 @@ export function routeFromUrl({ pathname, hash, search }: UrlParts): AppRoute {
   const h = hash.toLowerCase();
   const q = search.toLowerCase();
 
+  if (path === '/setup' || h.startsWith('#setup') || q.includes('view=setup')) return 'setup';
   if (path === '/admin' || h.startsWith('#admin') || q.includes('view=admin')) return 'admin';
   if (path === '/accept-invite' || path === '/invite' || h.startsWith('#accept-invite') || h.startsWith('#invite') || q.includes('view=accept-invite')) {
     return 'accept-invite';

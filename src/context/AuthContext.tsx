@@ -20,7 +20,7 @@ import {
 import { User, AuthProviderType } from '../types/tenant';
 import { useTenant, PRESET_USERS } from './TenantContext';
 import { buildDevMockIdToken } from '../config/devAuthToken';
-import { ApiClient, AuthMode } from '../services/apiClient';
+import { ApiClient, AuthMode, SetupInput, SetupResult } from '../services/apiClient';
 import { errorMessage, errorCode } from '../utils/errors';
 
 const LOCAL_MODE_SSO_MESSAGE = 'Single sign-on is not available on this air-gapped installation. Sign in with your local account.';
@@ -43,6 +43,8 @@ interface AuthContextType {
   loginWithEmailPassword: (email: string, pass: string) => Promise<boolean>;
   /** Air-gapped installs: creates the account for an invitation's email, accepts it and signs in. Throws ApiError. */
   registerWithInvite: (inviteToken: string, name: string, password: string) => Promise<void>;
+  /** First-time setup: creates the administrator, the primary tenant and the team invitations, and signs the administrator in. */
+  completeSetup: (input: SetupInput) => Promise<SetupResult>;
   sendMagicLink: (email: string) => Promise<void>;
   signInWithMagicLink: (email: string) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -379,6 +381,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [handleUserSession]);
 
+  const completeSetup = useCallback(async (input: SetupInput): Promise<SetupResult> => {
+    setAuthError(null);
+    const session = await ApiClient.runSetup(input);
+    await handleUserSession(session.user.email, session.user.name, 'password', session.token);
+    return session;
+  }, [handleUserSession]);
+
   /**
    * Passwordless Magic Link for Defense Assessors
    */
@@ -513,6 +522,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loginWithGoogle,
     loginWithEmailPassword,
     registerWithInvite,
+    completeSetup,
     sendMagicLink,
     signInWithMagicLink,
     sendPasswordReset,
@@ -535,6 +545,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loginWithGoogle,
     loginWithEmailPassword,
     registerWithInvite,
+    completeSetup,
     sendMagicLink,
     signInWithMagicLink,
     sendPasswordReset,

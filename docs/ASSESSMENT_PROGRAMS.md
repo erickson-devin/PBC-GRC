@@ -17,8 +17,9 @@ Only **platform administrators** can set a tenant's program, when provisioning i
 own people and settings but cannot widen their tenant's scope. Anyone else who creates a tenant (the first-run wizard) gets
 the default program, CMMC Level 1, whatever the request says.
 
-Platform administrators are the e-mail addresses in the server setting `PLATFORM_ADMIN_EMAILS` (comma-separated,
-case-insensitive), matched against the verified identity of the signed-in user:
+The first platform administrator is created by the first-time setup wizard (see docs/ON_PREM_DATABASE.md). More can be named in the
+server setting `PLATFORM_ADMIN_EMAILS` (comma-separated, case-insensitive), matched against the verified identity of the
+signed-in user; setting it before the first start also replaces the wizard:
 
 ```
 PLATFORM_ADMIN_EMAILS=ciso@example.mil,ops@example.mil
