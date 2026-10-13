@@ -145,8 +145,10 @@ The defaults are tuned for a small model such as Llama 3.2 3B with a 4096-token 
     and leaves the sound ones alone. It is a cheap warning, not a verdict: a sentence can share words and still miss the point;
   * an objective the model gave no answer for is **not assessed**, which is different from having no supporting sentence. It
     is reported as one note naming the objectives, never as a "nothing documented" gap;
-  * the HIGH "no supporting sentence" gap appears only when every objective got a real answer and none has a sentence;
-  * which objectives have a sentence, the gaps, their severity, the recommendations and the summary are all written by the
+  * the HIGH "The AI found no supporting sentence for any objective" gap appears only when every objective got a real answer and none has a sentence;
+  * gaps are worded as what the AI found ("The AI found no supporting sentence for objective [d]"), never as a finding about the
+    document: the model can miss a sentence that is there, so every one of them says to check the document. Which objectives have
+    a sentence, the gaps, their severity, the recommendations and the summary are all written by the
     program from those results, so they cannot be invented or repetitive.
 
   Verdicts are only *sentence found* / *no sentence found* / *could not be checked* / *not assessed*; there is no "partly".
