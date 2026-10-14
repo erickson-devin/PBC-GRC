@@ -11,6 +11,29 @@ interface Props {
   canEdit: boolean;
   tenantId: string;
   onNotesChange: (notes: string) => void;
+  /**
+   * Show only these statement parameters (the ones of one SSP item) instead of all of the control's. The narrative's own tags and
+   * its vague wording are then left to the panel that has no `params`.
+   */
+  params?: ControlParameter[];
+  /** Only the narrative's own tags and vague wording (the SSP item editor shows the parameters beside each item). */
+  narrativeOnly?: boolean;
+  /** Where a new "Parameter: label = value" line goes (default: the end of the narrative). */
+  placeValue?: (notes: string, p: ControlParameter, value: string) => string;
+  /** No frame and heading: the panel sits inside something that has its own. */
+  bare?: boolean;
+}
+
+// One status request per tenant for all panels on the page (an SSP with twelve items would otherwise ask twelve times)
+const statusCache = new Map<string, Promise<AiAssistStatus>>();
+function loadStatus(tenantId: string): Promise<AiAssistStatus> {
+  let p = statusCache.get(tenantId);
+  if (!p) {
+    p = ApiClient.aiAssistStatus(tenantId).catch((): AiAssistStatus => ({ enabled: false, available: false, model: '', canUse: false, reason: 'The AI helper status could not be read.' }));
+    statusCache.set(tenantId, p);
+    setTimeout(() => statusCache.delete(tenantId), 30_000); // the model may be started or stopped meanwhile
+  }
+  return p;
 }
 
 type Suggestion = { state: 'loading' } | { state: 'error'; message: string } | { state: 'done'; result: WordingSuggestions };
@@ -30,10 +53,11 @@ function tagSentence(notes: string, p: ControlParameter): string | undefined {
   return (notes.slice(from, p.start) + `<<${p.prompt}>>` + notes.slice(p.end, to)).replace(/\s+/g, ' ').trim();
 }
 
-export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange }) => {
-  const catalogParams = useMemo(() => resolveParameters(control), [control]);
-  const tagParams = useMemo(() => parseParameterTags(notes, `${control.id}:notes`, 'NOTES'), [notes, control.id]);
-  const vague = useMemo(() => findVagueWording(notes), [notes]);
+export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange, params, narrativeOnly, placeValue, bare }) => {
+  const catalogParams = useMemo(() => (narrativeOnly ? [] : params ?? resolveParameters(control)), [control, params, narrativeOnly]);
+  const scoped = params !== undefined;
+  const tagParams = useMemo(() => (scoped ? [] : parseParameterTags(notes, `${control.id}:notes`, 'NOTES')), [notes, control.id, scoped]);
+  const vague = useMemo(() => (scoped ? [] : findVagueWording(notes)), [notes, scoped]);
   const [status, setStatus] = useState<AiAssistStatus | null>(null);
   const [suggestions, setSuggestions] = useState<Record<string, Suggestion>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -45,9 +69,7 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
   useEffect(() => {
     if (!canEdit || !hasAnything || status) return;
     let alive = true;
-    ApiClient.aiAssistStatus(tenantId)
-      .then((s) => alive && setStatus(s))
-      .catch(() => alive && setStatus({ enabled: false, available: false, model: '', canUse: false, reason: 'The AI helper status could not be read.' }));
+    loadStatus(tenantId).then((s) => alive && setStatus(s));
     return () => {
       alive = false;
     };
@@ -62,7 +84,7 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
     return true;
   };
   const setValue = (p: ControlParameter, value: string) => {
-    apply(p.source === 'NOTES' ? replaceTag(notes, p, value) : setParameterValue(notes, p, value));
+    apply(p.source === 'NOTES' ? replaceTag(notes, p, value) : (placeValue ?? setParameterValue)(notes, p, value));
   };
 
   const ask = async (key: string, body: WordingSuggestionRequest) => {
@@ -174,9 +196,9 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
   };
 
   return (
-    <section aria-label="Organization-defined parameters" className="rounded-xl border border-slate-700/80 bg-slate-950/40 p-3 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-300">
+    <section aria-label="Organization-defined parameters" className={bare ? 'space-y-2' : 'rounded-xl border border-slate-700/80 bg-slate-950/40 p-3 space-y-3'}>
+      <div className={`flex items-center justify-between gap-2 ${bare && !(undo && notes === undo.after) ? 'hidden' : ''}`}>
+        <h4 className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-300 ${bare ? 'sr-only' : ''}`}>
           <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" /> Organization-defined parameters
         </h4>
         <div className="flex items-center gap-2">
@@ -185,14 +207,16 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
               <Undo2 className="w-3.5 h-3.5" aria-hidden="true" /> Undo
             </button>
           )}
-          <button type="button" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)} className="text-xs text-slate-400 hover:text-slate-200">
-            {expanded ? 'Hide' : 'Show'}
-          </button>
+          {!bare && (
+            <button type="button" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)} className="text-xs text-slate-400 hover:text-slate-200">
+              {expanded ? 'Hide' : 'Show'}
+            </button>
+          )}
         </div>
       </div>
-      {expanded && (
+      {(expanded || bare) && (
         <>
-          <p className="text-xs text-slate-400">An assessor must be able to test every value. Fill in the blanks below with explicit values. {aiHint && <span className="text-slate-500">{aiHint}</span>}</p>
+          {!bare && <p className="text-xs text-slate-400">An assessor must be able to test every value. Fill in the blanks below with explicit values. {aiHint && <span className="text-slate-500">{aiHint}</span>}</p>}
           {(catalogParams.length > 0 || tagParams.length > 0) && <ul className="space-y-2">{[...catalogParams, ...tagParams].map(paramRow)}</ul>}
           {vague.length > 0 && (
             <div className="space-y-2">
