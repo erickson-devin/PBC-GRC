@@ -1,5 +1,8 @@
 import { getFrameworkControls } from '../../src/data/frameworks';
 import { NIST_800_171A_REGISTRY } from '../../src/data/frameworks/assessmentObjectives';
+import '../../src/data/frameworks/nist80053/objectivesNode'; // loads the SP 800-53A objectives
+import { nist80053GapObjectives } from '../../src/data/frameworks/nist80053/objectives';
+import { collapseTags } from '../../src/data/frameworks/parameters';
 import { groundQuote } from './grounding';
 import { numberOf } from './controlMapper';
 import { OllamaError, type OllamaClient } from './ollama';
@@ -28,8 +31,13 @@ export interface ObjectiveDef {
 /** "1 assessment objective" / "2 assessment objectives". */
 export const objectivesNoun = (n: number): string => (n === 1 ? 'assessment objective' : 'assessment objectives');
 
-/** The 800-171A objectives of a control (falling back to the catalog's own list, lettered a, b, c...). */
+/** The assessment objectives of a control: 800-171A for CMMC, 800-53A for SP 800-53 (falling back to the catalog's own list, lettered a, b, c...). */
 export function objectivesFor(controlId: string, framework: SspImportFramework): ObjectiveDef[] {
+  if (framework === 'NIST_800_53_REV5') {
+    // SP 800-53A: one objective per top-level item of the control, its organization-defined parameters written as plain words
+    const official = nist80053GapObjectives(controlId).map((o) => ({ letter: o.letter, text: collapseTags(o.text).replace(/\s+/g, ' ').trim() }));
+    if (official.length > 0) return official;
+  }
   const number = numberOf(controlId);
   const official = number ? NIST_800_171A_REGISTRY[number]?.objectives : undefined;
   if (official && official.length > 0) return official.map((o) => ({ letter: o.letter.toLowerCase(), text: o.text }));
@@ -57,8 +65,8 @@ export async function analyzeGaps(client: OllamaClient, input: GapInput, signal?
   const requirement = [def.plainEnglishSummary, def.discussion].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
   const reply = await client.chatJson({
-    system: GAP_SYSTEM,
-    user: gapUserMessage({ controlId: def.id, title: def.title, requirement, objectives, excerpts: input.excerpts }),
+    system: input.framework === 'NIST_800_53_REV5' ? GAP_SYSTEM.replace('800-171A', '800-53A') : GAP_SYSTEM,
+    user: gapUserMessage({ controlId: def.id, title: def.title, requirement, objectives, excerpts: input.excerpts, source: input.framework === 'NIST_800_53_REV5' ? 'NIST SP 800-53A' : undefined }),
     schema: GAP_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 1500,
     signal,

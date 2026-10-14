@@ -13,10 +13,14 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { ApiClient } from '../../services/apiClient';
 import { getFrameworkControls } from '../../data/frameworks';
+import { frameworkLabel } from '../../data/programs';
 import { canRoleReviewSspImports } from '../../utils/roles';
 import { errorMessage } from '../../utils/errors';
 import {
+  SSP_BASELINES,
+  SSP_DEFAULT_BASELINE,
   SSP_JOB_TERMINAL,
+  type SspBaseline,
   type SspCapabilities,
   type SspCommitOutcome,
   type SspImportFramework,
@@ -64,6 +68,7 @@ const STATE_CLASS: Record<SspReviewState, string> = {
 
 const MATCH_HELP: Record<SspMatchKind, string> = {
   CMMC_ID_SECTION: 'A section of the document is headed by this control’s CMMC identifier.',
+  NIST53_ID_SECTION: 'A section of the document is headed by this control’s NIST SP 800-53 identifier.',
   NIST_NUMBER_SECTION: 'A section starts with this control’s NIST SP 800-171 number. Check that it is not just the document’s own numbering.',
   MENTION: 'The control is only referred to inside another section; the document has no section describing it.',
   AI_EXTRACTED: 'The AI model read a section of the document and found this control described there. Its quotation was checked against the document.',
@@ -112,7 +117,7 @@ const FILTERS: Array<{ id: Filter; label: string }> = [
 
 const CONTROL_TITLES: Map<string, string> = (() => {
   const m = new Map<string, string>();
-  for (const fw of ['CMMC_L2', 'CMMC_L1'] as const) for (const c of getFrameworkControls(fw)) m.set(c.id, c.title);
+  for (const fw of ['CMMC_L2', 'CMMC_L1', 'NIST_800_53_REV5'] as const) for (const c of getFrameworkControls(fw)) m.set(c.id, c.title);
   return m;
 })();
 
@@ -126,7 +131,7 @@ const StateBadge: React.FC<{ state: SspReviewState }> = ({ state }) => (
 export const SspImportView: React.FC = () => {
   const { currentTenant, currentRole, refreshLiveData } = useTenant();
   const tenantId = currentTenant.id;
-  const ids = { framework: useId(), file: useId(), filter: useId(), notes: useId() };
+  const ids = { framework: useId(), baseline: useId(), file: useId(), filter: useId(), notes: useId() };
 
   const [caps, setCaps] = useState<SspCapabilities | null>(null);
   const [jobs, setJobs] = useState<SspImportJob[]>([]);
@@ -136,6 +141,7 @@ export const SspImportView: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const [framework, setFramework] = useState<SspImportFramework>('CMMC_L1');
+  const [baseline, setBaseline] = useState<SspBaseline>(SSP_DEFAULT_BASELINE);
   const [uploading, setUploading] = useState(false);
   const [useAi, setUseAi] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -226,7 +232,7 @@ export const SspImportView: React.FC = () => {
     setOutcome(null);
     setUploading(true);
     try {
-      const job = await ApiClient.sspUpload(tenantId, file, framework, caps?.aiStatus.available && useAi ? 'ai' : 'rules');
+      const job = await ApiClient.sspUpload(tenantId, file, framework, caps?.aiStatus.available && useAi ? 'ai' : 'rules', framework === 'NIST_800_53_REV5' ? baseline : undefined);
       await loadJobs();
       setSelectedJobId(job.id);
       setTab('suggestions');
@@ -390,10 +396,20 @@ export const SspImportView: React.FC = () => {
               <label htmlFor={ids.framework} className="block text-xs font-semibold text-slate-300 mb-1.5">Map it to</label>
               <select id={ids.framework} value={framework} onChange={(e) => setFramework(e.target.value as SspImportFramework)} className="px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60">
                 {caps.frameworks.map((f) => (
-                  <option key={f} value={f}>{f === 'CMMC_L1' ? 'CMMC Level 1' : 'CMMC Level 2'}</option>
+                  <option key={f} value={f}>{frameworkLabel(f)}</option>
                 ))}
               </select>
             </div>
+            {framework === 'NIST_800_53_REV5' && (
+              <div>
+                <label htmlFor={ids.baseline} className="block text-xs font-semibold text-slate-300 mb-1.5">Baseline</label>
+                <select id={ids.baseline} value={baseline} onChange={(e) => setBaseline(e.target.value as SspBaseline)} className="px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60">
+                  {SSP_BASELINES.map((b) => (
+                    <option key={b} value={b}>{b === 'LOW' ? 'Low' : b === 'MODERATE' ? 'Moderate' : 'High'}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="flex-1">
               <label htmlFor={ids.file} className="block text-xs font-semibold text-slate-300 mb-1.5">PDF or Word (.docx), up to {Math.round(caps.maxUploadBytes / 1024 / 1024)} MB</label>
               <input
@@ -442,7 +458,7 @@ export const SspImportView: React.FC = () => {
                   >
                     <span className="block text-sm font-semibold text-white truncate">{j.fileName}</span>
                     <span className="block text-xs text-slate-400 mt-0.5">
-                      {j.framework === 'CMMC_L1' ? 'Level 1' : 'Level 2'} · {formatDate(j.createdAt)}
+                      {j.framework === 'CMMC_L1' ? 'Level 1' : j.framework === 'CMMC_L2' ? 'Level 2' : `SP 800-53 ${j.baseline ? j.baseline.charAt(0) + j.baseline.slice(1).toLowerCase() : ''}`.trim()} · {formatDate(j.createdAt)}
                     </span>
                     <span className="mt-1.5 flex items-center gap-1.5 text-xs">
                       {!isTerminal(j.status) && <Loader2 className="w-3 h-3 animate-spin motion-reduce:animate-none text-cyan-400" aria-hidden="true" />}

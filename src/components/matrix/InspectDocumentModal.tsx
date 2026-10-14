@@ -38,6 +38,7 @@ import {
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { StigRule } from '../../types/stig';
 import { ObjectiveChecklist } from './ObjectiveChecklist';
+import { CrosswalkPanel } from './CrosswalkPanel';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
 import { useFipsModules } from '../../hooks/useFipsModules';
@@ -823,6 +824,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           {/* 5. Cross-Framework Mappings Tab */}
           {activeTab === 'mappings' && (
             <div className="space-y-4">
+              <CrosswalkPanel controlId={control.id} />
               <h4 className="text-xs font-bold text-white uppercase tracking-wider">
                 Cross-Framework Harmonization ({rawMappings.length})
               </h4>

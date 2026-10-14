@@ -400,6 +400,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
         target_control_id: m.targetControlId,
         mapping_type: m.mappingType,
         notes: m.notes || '',
+        provenance: m.provenance || '',
       })),
       command: 'SELECT',
       rowCount: CANONICAL_CONTROL_MAPPINGS.length,
@@ -429,10 +430,11 @@ export async function initDb(): Promise<void> {
     // Seed canonical control mappings if not present
     for (const m of CANONICAL_CONTROL_MAPPINGS) {
       await client.query(
-        `INSERT INTO control_mappings (id, source_framework, source_control_id, target_framework, target_control_id, mapping_type, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (source_framework, source_control_id, target_framework, target_control_id) DO NOTHING`,
-        [m.id, m.sourceFramework, m.sourceControlId, m.targetFramework, m.targetControlId, m.mappingType, m.notes || '']
+        `INSERT INTO control_mappings (id, source_framework, source_control_id, target_framework, target_control_id, mapping_type, notes, provenance)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (source_framework, source_control_id, target_framework, target_control_id) DO UPDATE
+           SET mapping_type = EXCLUDED.mapping_type, notes = EXCLUDED.notes, provenance = EXCLUDED.provenance`,
+        [m.id, m.sourceFramework, m.sourceControlId, m.targetFramework, m.targetControlId, m.mappingType, m.notes || '', m.provenance || '']
       );
     }
 

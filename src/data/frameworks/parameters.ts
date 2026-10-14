@@ -91,7 +91,45 @@ export function parseParameterTags(text: string, idPrefix: string, source: Contr
       });
     }
   }
+  // Several tags of one control often share a label ("time period" three times): a value is recorded under its label, so make them distinct
+  const seenLabels = new Map<string, number>();
+  for (const p of found) {
+    const n = (seenLabels.get(p.label) ?? 0) + 1;
+    seenLabels.set(p.label, n);
+  }
+  const used = new Map<string, number>();
+  for (const p of found) {
+    if ((seenLabels.get(p.label) ?? 0) < 2) continue;
+    const n = (used.get(p.label) ?? 0) + 1;
+    used.set(p.label, n);
+    p.label = `${p.label} (${n})`;
+  }
   return found;
+}
+
+/**
+ * The text with each [Assignment: ...] / [Selection: ...] tag reduced to what it asks for, so it reads as a sentence:
+ * "reviewed [Assignment: organization-defined frequency]" -> "reviewed organization-defined frequency";
+ * "[Selection (one or more): a; b]" -> "a or b". Nested tags are reduced too.
+ */
+export function collapseTags(text: string): string {
+  let out = '';
+  let from = 0;
+  for (;;) {
+    TAG_START.lastIndex = from;
+    const m = TAG_START.exec(text);
+    if (!m) break;
+    const end = matchingBracket(text, m.index);
+    if (end === -1) break;
+    const inner = text.slice(m.index + 1, end);
+    const colon = inner.indexOf(':');
+    out += text.slice(from, m.index);
+    if (colon === -1) out += text.slice(m.index, end + 1);
+    else if (/^\s*assignment/i.test(inner)) out += collapseTags(inner.slice(colon + 1)).replace(/\s+/g, ' ').trim();
+    else out += splitChoices(inner.slice(colon + 1)).map((c) => collapseTags(c)).join(' or ');
+    from = end + 1;
+  }
+  return out + text.slice(from);
 }
 
 /** Fills `parameters` for every control that supplies a `statement` (a no-op for the catalogs shipped today). */
@@ -103,7 +141,8 @@ export function attachParameters(controls: FrameworkControlDefinition[]): Framew
 /** The parameters of a control: tags in its statement, plus the ODPs the platform's objective registry defines for it. */
 export function resolveParameters(control: Pick<FrameworkControlDefinition, 'id' | 'statement' | 'parameters'>): ControlParameter[] {
   const fromStatement = control.parameters ?? (control.statement ? parseParameterTags(control.statement, control.id) : []);
-  const registry = NIST_800_171A_REGISTRY[normalizeControlNumber(control.id)];
+  // A control whose official text carries its parameters as tags needs no second list from the objective registry
+  const registry = fromStatement.length > 0 ? undefined : NIST_800_171A_REGISTRY[normalizeControlNumber(control.id)];
   const seen = new Set<string>();
   const fromObjectives: ControlParameter[] = [];
   for (const objective of registry?.objectives ?? []) {

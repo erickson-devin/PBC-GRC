@@ -130,8 +130,8 @@ async function processJob(tenantId: string, jobId: string): Promise<void> {
     if (signal?.aborted) throw new OllamaError('cancelled', 'Cancelled.');
 
     await updateJob(tenantId, jobId, { status: 'ANALYZING', stageProgress: { stage: 'Mapping to controls' }, pageCount: doc.pageCount || null, charCount: doc.text.length });
-    const chunks = chunkDocument(doc.text, doc.pages);
-    const rules = mapDocumentToControls(doc.text, doc.pages, job.framework, chunks);
+    const chunks = chunkDocument(doc.text, doc.pages, { refStyle: job.framework === 'NIST_800_53_REV5' ? 'nist53' : 'cmmc' });
+    const rules = mapDocumentToControls(doc.text, doc.pages, job.framework, chunks, job.baseline);
 
     // ---- the local language model, if the job asked for it
     let mapping: MappingResult = rules;
@@ -145,6 +145,7 @@ async function processJob(tenantId: string, jobId: string): Promise<void> {
           text: doc.text,
           pages: doc.pages,
           framework: job.framework,
+          baseline: job.baseline,
           client,
           rules,
           signal,

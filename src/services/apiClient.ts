@@ -22,7 +22,7 @@ import {
 } from '../data/teamSync';
 import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
-import type { SspAnalysisMode, SspCapabilities, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
+import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 
@@ -211,12 +211,13 @@ export const ApiClient = {
   },
 
   /** POST /api/v1/tenants/:id/ssp-imports (multipart). Owner / MSP admin only. */
-  async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules'): Promise<SspImportJob> {
+  async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules', baseline?: SspBaseline): Promise<SspImportJob> {
     const bearer = ApiClient.getToken();
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
     const form = new FormData();
     form.append('framework', framework);
     form.append('analysis', analysis);
+    if (baseline) form.append('baseline', baseline); // NIST SP 800-53 imports only
     form.append('file', file, file.name);
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, {
       method: 'POST',

@@ -1,3 +1,5 @@
+import { canonical80053Id } from '../../src/data/frameworks/nist80053/objectives';
+import { NIST53_ID_RE } from './chunk';
 import { numberOf, numberToIdMap, pageAt } from './controlMapper';
 import type { PageSpan, SourceQuote, SspImportFramework } from './types';
 
@@ -141,6 +143,18 @@ export function resolveControlId(
 ): { ok: true; controlId: string } | GroundingFailed {
   if (typeof raw !== 'string') return { ok: false, reason: 'UNKNOWN_CONTROL' };
   const folded = raw.trim().replace(/[‐-―−]/g, '-').toUpperCase();
+  if (framework === 'NIST_800_53_REV5') {
+    // "AC-2(1)", "ac-2 (1)", "AC-02(01)" and "NIST AC-2(1)" all mean the enhancement AC-2(1)
+    const written = folded.match(new RegExp(NIST53_ID_RE.source));
+    const id = written ? canonical80053Id(written[0]) : '';
+    const found = id ? catalog(framework).get(id) : undefined;
+    if (!found) {
+      const cmmc = folded.match(/\b3\.\d{1,2}\.\d{1,2}\b/)?.[0] ?? numberOf(folded);
+      return { ok: false, reason: cmmc && catalog('CMMC_L2').has(cmmc) ? 'OUT_OF_SCOPE' : 'UNKNOWN_CONTROL' };
+    }
+    if (offered && !offered.has(found.id)) return { ok: false, reason: 'NOT_OFFERED' };
+    return { ok: true, controlId: found.id };
+  }
   const number = folded.match(/\b3\.\d{1,2}\.\d{1,2}\b/)?.[0] ?? numberOf(folded);
   if (!number) return { ok: false, reason: 'UNKNOWN_CONTROL' };
   const hit = catalog(framework).get(number);

@@ -1,5 +1,9 @@
 import { getFrameworkControls } from '../../src/data/frameworks';
+import { Index, buildIndexFrom, scoreIndex } from './bm25';
+import { candidates53, rank53, support53 } from './retrieval53';
 import type { SspImportFramework } from './types';
+
+export { tokenize } from './bm25';
 
 /**
  * Which controls should the model be asked about for a section of the document?
@@ -8,6 +12,8 @@ import type { SspImportFramework } from './types';
  * section is first matched against the control catalog with BM25 (a standard keyword ranking: no model, no embeddings, no
  * extra download), and only the best few controls are offered. A control the section names outright (by identifier) is always
  * offered. A section that matches nothing well (a cover page, a glossary) is not sent to the model at all.
+ *
+ * The NIST SP 800-53 catalog (about a thousand controls and enhancements) is searched in two tiers instead, see retrieval53.ts.
  */
 export interface Candidate {
   id: string;
@@ -19,46 +25,17 @@ export interface Candidate {
   explicit: boolean;
 }
 
-const STOPWORDS = new Set(
-  'the and for are was were that this with from have has had not but all any can will shall may must should would could into onto upon such than then them they their there these those its our out who whom whose which what when where while how also been being both each other more most some only own same very just over under between through during before after above below again further once here about against because does did doing done get got per via use used using'.split(' ')
-);
-
-export const tokenize = (text: string): string[] =>
-  (text.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? [])
-    .filter((t) => !STOPWORDS.has(t))
-    .map((t) => (t.length > 4 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t)); // crude plural folding
-
-interface IndexedControl {
-  id: string;
-  title: string;
-  requirement: string;
-  tf: Map<string, number>;
-  length: number;
-}
-interface Index {
-  controls: IndexedControl[];
-  idf: Map<string, number>;
-  avgLength: number;
-}
-
 const indexes = new Map<SspImportFramework, Index>();
-const K1 = 1.5;
-const B = 0.75;
 
 function buildIndex(framework: SspImportFramework): Index {
-  const controls: IndexedControl[] = getFrameworkControls(framework).map((c) => {
-    const text = [c.title, c.title, c.title, c.plainEnglishSummary, ...(c.assessmentObjectives ?? []), (c.discussion ?? '').slice(0, 400)].join(' ');
-    const tokens = tokenize(text);
-    const tf = new Map<string, number>();
-    for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
-    return { id: c.id, title: c.title, requirement: (c.plainEnglishSummary || c.title).replace(/\s+/g, ' ').trim(), tf, length: tokens.length };
-  });
-  const df = new Map<string, number>();
-  for (const c of controls) for (const t of c.tf.keys()) df.set(t, (df.get(t) ?? 0) + 1);
-  const n = controls.length;
-  const idf = new Map<string, number>();
-  for (const [t, d] of df) idf.set(t, Math.log(1 + (n - d + 0.5) / (d + 0.5)));
-  return { controls, idf, avgLength: controls.reduce((s, c) => s + c.length, 0) / Math.max(1, n) };
+  return buildIndexFrom(
+    getFrameworkControls(framework).map((c) => ({
+      id: c.id,
+      title: c.title,
+      requirement: (c.plainEnglishSummary || c.title).replace(/\s+/g, ' ').trim(),
+      text: [c.title, c.title, c.title, c.plainEnglishSummary, ...(c.assessmentObjectives ?? []), (c.discussion ?? '').slice(0, 400)].join(' '),
+    }))
+  );
 }
 
 const indexFor = (framework: SspImportFramework): Index => {
@@ -106,27 +83,16 @@ export interface ControlSupport {
  * score above 10, and a wrong pairing ranks 6th or lower with a score under 3.
  */
 export function controlSupport(text: string, controlId: string, framework: SspImportFramework): ControlSupport {
+  if (framework === 'NIST_800_53_REV5') return support53(text, controlId);
   const ranked = rankControls(text, framework);
   const rank = ranked.findIndex((r) => r.id === controlId);
   return { rank: rank === -1 ? ranked.length : rank, score: rank === -1 ? 0 : ranked[rank].score, topScore: ranked[0]?.score ?? 0 };
 }
-const QUERY_CHARS = 4000;
 
 /** Score of every control against `text`, highest first. */
 export function rankControls(text: string, framework: SspImportFramework): Array<{ id: string; score: number }> {
-  const idx = indexFor(framework);
-  const query = new Set(tokenize(text.slice(0, QUERY_CHARS)));
-  return idx.controls
-    .map((c) => {
-      let score = 0;
-      for (const term of query) {
-        const f = c.tf.get(term);
-        if (!f) continue;
-        score += (idx.idf.get(term) ?? 0) * ((f * (K1 + 1)) / (f + K1 * (1 - B + (B * c.length) / idx.avgLength)));
-      }
-      return { id: c.id, score };
-    })
-    .sort((a, b) => b.score - a.score);
+  if (framework === 'NIST_800_53_REV5') return rank53(text);
+  return scoreIndex(indexFor(framework), text);
 }
 
 export function candidatesForSection(
@@ -137,6 +103,8 @@ export function candidatesForSection(
 ): Candidate[] {
   const max = options.max ?? DEFAULT_MAX_CANDIDATES;
   const minScore = options.minScore ?? DEFAULT_MIN_SCORE;
+  if (framework === 'NIST_800_53_REV5') return candidates53(text, explicitIds, { max, minScore, relativeCutoff: RELATIVE_CUTOFF });
+
   const idx = indexFor(framework);
   const byId = new Map(idx.controls.map((c) => [c.id, c]));
   const ranked = rankControls(text, framework);

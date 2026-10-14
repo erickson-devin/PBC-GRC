@@ -729,7 +729,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [activeBaselineTier, setActiveBaselineTierState] = useState<BaselineTier>(() => {
     try {
       const saved = localStorage.getItem(ACTIVE_BASELINE_TIER_KEY);
-      if (saved && ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD'].includes(saved)) {
+      if (saved && ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD', 'HIGH_HIGH_HIGH', 'ALL_CONTROLS'].includes(saved)) {
         return saved as BaselineTier;
       }
     } catch {

@@ -1,6 +1,6 @@
-import { getFrameworkControls } from '../../src/data/frameworks';
-import { CMMC_ID_RE, NIST_NUMBER_RE, chunkDocument, foldForMatching } from './chunk';
-import { numberToIdMap } from './controlMapper';
+import { canonical80053Id } from '../../src/data/frameworks/nist80053/objectives';
+import { CMMC_ID_RE, NIST53_ID_RE, NIST_NUMBER_RE, chunkDocument, foldForMatching } from './chunk';
+import { coverageFor, numberToIdMap } from './controlMapper';
 import { analyzeGaps, analyzeGapsExtractive } from './gapAnalysis';
 import { groundQuote, resolveControlId } from './grounding';
 import { OllamaClient, OllamaError } from './ollama';
@@ -20,6 +20,7 @@ import type {
   PageSpan,
   SourceQuote,
   SspAiStats,
+  SspBaseline,
   SspImportFramework,
   SspStageProgress,
   StagedControlDraft,
@@ -72,6 +73,8 @@ export interface AnalyzeInput {
   text: string;
   pages: readonly PageSpan[];
   framework: SspImportFramework;
+  /** NIST SP 800-53 only: the baseline the coverage report is measured against. */
+  baseline?: SspBaseline | null;
   client: OllamaClient;
   /** The rule-based result: AI suggestions are merged with it. */
   rules: MappingResult;
@@ -94,6 +97,13 @@ export function explicitControlIds(text: string, framework: SspImportFramework):
   const folded = foldForMatching(text);
   const numbers = numberToIdMap(framework);
   const ids = new Set<string>();
+  if (framework === 'NIST_800_53_REV5') {
+    for (const m of folded.matchAll(new RegExp(NIST53_ID_RE.source, 'g'))) {
+      const hit = numbers.get(canonical80053Id(m[0]));
+      if (hit) ids.add(hit.id);
+    }
+    return [...ids];
+  }
   for (const m of folded.matchAll(new RegExp(CMMC_ID_RE.source, 'g'))) {
     const hit = numbers.get(m[3]);
     if (hit) ids.add(hit.id);
@@ -165,7 +175,7 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
   };
 
   // ---- 1-2. sections and what each could be about
-  const chunks = chunkDocument(input.text, input.pages, { maxChars: SECTION_MAX_CHARS });
+  const chunks = chunkDocument(input.text, input.pages, { maxChars: SECTION_MAX_CHARS, refStyle: framework === 'NIST_800_53_REV5' ? 'nist53' : 'cmmc' });
   let planned = plan(chunks, framework, input.options?.retrieval ?? retrievalOptionsFromEnv());
   stats.sectionsSkipped = chunks.length - planned.length;
   if (planned.length > maxSections) {
@@ -248,7 +258,6 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
   const byControl = new Map<string, GroundedFinding[]>();
   for (const f of findings) byControl.set(f.controlId, [...(byControl.get(f.controlId) ?? []), f]);
 
-  const catalog = new Map(getFrameworkControls(framework).map((c) => [c.id, c]));
   const drafts: Array<StagedControlDraft & { excerpts: string }> = [];
   for (const [controlId, list] of byControl) {
     const ranked = [...list].sort((a, b) => (a.coverage === b.coverage ? 0 : a.coverage === 'FULL' ? -1 : 1) || b.confidence - a.confidence);
@@ -337,12 +346,7 @@ export async function analyzeDocumentWithAi(input: AnalyzeInput): Promise<Analyz
     mapping: {
       staged,
       unmapped: input.rules.unmapped,
-      coverage: {
-        framework,
-        totalControls: catalog.size,
-        foundControls: foundIds.size,
-        missing: [...catalog.keys()].filter((id) => !foundIds.has(id)),
-      },
+      coverage: coverageFor(framework, input.baseline, foundIds),
     },
     stats,
     warnings,

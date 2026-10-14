@@ -14,12 +14,14 @@ import { SOC_2_CONTROLS, SOC_2_DOMAINS } from './soc2Controls';
 import { HIPAA_CONTROLS, HIPAA_DOMAINS } from './hipaaControls';
 import {
   getCrossFrameworkMappings,
+  isEquivalentMapping,
 } from './controlMappings';
 
 // Adapt CMMC L1 controls into FrameworkControlDefinition
 export const CMMC_L1_FRAMEWORK_CONTROLS: FrameworkControlDefinition[] = CMMC_LEVEL_1_CONTROLS.map(ctrl => {
   const isNetworkBoundary = ctrl.id === 'SC.L1-3.13.1' || ctrl.id === 'SC.L1-3.13.5';
-  const mappings = getCrossFrameworkMappings(ctrl.id).map(m => ({
+  // "Equivalencies" only: the SP 800-171 -> SP 800-53 crosswalk (SUBSET) is shown by the Crosswalk panel instead.
+  const mappings = getCrossFrameworkMappings(ctrl.id).filter(isEquivalentMapping).map(m => ({
     targetFramework: m.targetFramework === 'CMMC_L1' ? m.sourceFramework : m.targetFramework,
     targetControlId: m.targetControlId === ctrl.id ? m.sourceControlId : m.targetControlId,
     targetTitle: m.notes,
@@ -75,7 +77,8 @@ const NIST_800_53_DEF: FrameworkDefinition = {
     { id: 'LOW_LOW_LOW', label: 'Low Baseline', description: 'Low confidentiality, integrity, and availability impact (standard low baseline per NIST SP 800-53B).' },
     { id: 'MOD_MOD_MOD', label: 'Moderate Baseline', description: 'Moderate confidentiality, integrity, and availability impact (FedRAMP Moderate standard).' },
     { id: 'LOW_LOW_MOD', label: 'Low-Mod Mixed', description: 'Low confidentiality/integrity with Moderate availability.' },
-    { id: 'ALL_CONTROLS', label: 'All Controls / High Baseline', description: 'Complete security control catalog including High Baseline impact allocations.' },
+    { id: 'HIGH_HIGH_HIGH', label: 'High Baseline', description: 'High confidentiality, integrity, and availability impact (SP 800-53B high baseline).' },
+    { id: 'ALL_CONTROLS', label: 'Entire Catalog', description: 'Every control and control enhancement in SP 800-53 Rev. 5, including those in no baseline.' },
   ],
   supportsNonNetworkedOverlay: true,
   domains: NIST_800_53_DOMAINS,
@@ -150,6 +153,28 @@ export function normalizeFrameworkId(frameworkId: string): ComplianceFramework {
 }
 
 /**
+ * Which SP 800-53B baseline a baseline selector means: 'low' | 'moderate' | 'high', or null for the whole catalog.
+ * Accepts the tier ids (LOW_LOW_LOW, MOD_MOD_MOD, ...), the plain impact names, and a CIA triad (the high-water mark decides).
+ * LOW_LOW_MOD (low confidentiality and integrity, moderate availability) has no baseline of its own and is read as Moderate.
+ */
+export function nistBaselineLevel(baseline: unknown): 'low' | 'moderate' | 'high' | null {
+  if (typeof baseline === 'string') {
+    const b = baseline.trim().toUpperCase();
+    if (b === 'LOW' || b === 'LOW BASELINE' || b === 'LOW_LOW_LOW') return 'low';
+    if (b === 'MODERATE' || b === 'MODERATE BASELINE' || b === 'MOD_MOD_MOD' || b === 'LOW_LOW_MOD') return 'moderate';
+    if (b === 'HIGH' || b === 'HIGH BASELINE' || b === 'HIGH_HIGH_HIGH') return 'high';
+    return null;
+  }
+  if (baseline && typeof baseline === 'object') {
+    const t = baseline as { confidentiality?: string; integrity?: string; availability?: string; isAllControlsApplied?: boolean };
+    if (t.isAllControlsApplied) return null;
+    const impacts = [t.confidentiality, t.integrity, t.availability];
+    return impacts.includes('HIGH') ? 'high' : impacts.includes('MODERATE') ? 'moderate' : 'low';
+  }
+  return null;
+}
+
+/**
  * Dynamic Filtered Control Retrieval
  * Filters controls by framework, baseline impact/tier, and operational overlay parameters.
  */
@@ -181,50 +206,10 @@ export function getFrameworkControls(
       controls = [...CMMC_L1_FRAMEWORK_CONTROLS];
   }
 
-  // 1. Baseline filtering (for NIST 800-53 / RMF baselines)
+  // 1. Baseline filtering (for NIST 800-53 / RMF baselines): SP 800-53B baseline membership, per control
   if (canonicalFramework === 'NIST_800_53_REV5') {
-    if (typeof baseline === 'string') {
-      if (baseline === 'LOW' || baseline === 'Low Baseline') {
-        controls = controls.filter(c => c.baselineImpact === 'LOW' || c.baselineTiers?.includes('LOW_LOW_LOW'));
-      } else if (baseline === 'MODERATE' || baseline === 'Moderate Baseline') {
-        controls = controls.filter(c =>
-          c.baselineImpact === 'LOW' ||
-          c.baselineImpact === 'MODERATE' ||
-          c.baselineTiers?.some(t => ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD'].includes(t))
-        );
-      } else if (baseline === 'HIGH' || baseline === 'High Baseline') {
-        // High baseline encompasses Low, Moderate, and High controls
-      } else if (baseline !== 'ALL_CONTROLS' && baseline !== 'ALL') {
-        controls = controls.filter(c => {
-          if (!c.baselineTiers || c.baselineTiers.length === 0) return true;
-          return c.baselineTiers.includes(baseline as BaselineTier);
-        });
-      }
-    } else if (baseline && typeof baseline === 'object') {
-      // CIA Triad object: { confidentiality, integrity, availability, isAllControlsApplied }
-      if (!baseline.isAllControlsApplied) {
-        const impacts = [baseline.confidentiality, baseline.integrity, baseline.availability];
-        const isHigh = impacts.includes('HIGH');
-        const isMod = impacts.includes('MODERATE');
-
-        if (!isHigh) {
-          if (isMod) {
-            controls = controls.filter(c => {
-              if (c.baselineImpact) return c.baselineImpact === 'LOW' || c.baselineImpact === 'MODERATE';
-              if (!c.baselineTiers || c.baselineTiers.length === 0) return true;
-              return c.baselineTiers.includes('MOD_MOD_MOD') || c.baselineTiers.includes('LOW_LOW_MOD') || c.baselineTiers.includes('LOW_LOW_LOW');
-            });
-          } else {
-            // All Low Impact
-            controls = controls.filter(c => {
-              if (c.baselineImpact) return c.baselineImpact === 'LOW';
-              if (!c.baselineTiers || c.baselineTiers.length === 0) return true;
-              return c.baselineTiers.includes('LOW_LOW_LOW');
-            });
-          }
-        }
-      }
-    }
+    const level = nistBaselineLevel(baseline);
+    if (level) controls = controls.filter(c => c.baselines?.[level] ?? true);
   }
 
   // 2. Operational Overlays (Air-gapped, No Wireless, No Mobile, No PII)
@@ -275,17 +260,15 @@ export function getFrameworkControls(
 /**
  * Universal lookup across all frameworks by Control ID
  */
+let definitionIndex: Map<string, FrameworkControlDefinition> | null = null;
 export function findControlDefinition(controlId: string): FrameworkControlDefinition | undefined {
   if (!controlId) return undefined;
-  const cleanId = controlId.trim().toUpperCase();
-
-  const allControls = [
-    ...CMMC_L1_FRAMEWORK_CONTROLS,
-    ...CMMC_LEVEL_2_CONTROLS,
-    ...NIST_800_53_CONTROLS,
-    ...SOC_2_CONTROLS,
-    ...HIPAA_CONTROLS,
-  ];
-
-  return allControls.find(c => c.id.toUpperCase() === cleanId);
+  if (!definitionIndex) {
+    definitionIndex = new Map();
+    for (const c of [...CMMC_L1_FRAMEWORK_CONTROLS, ...CMMC_LEVEL_2_CONTROLS, ...NIST_800_53_CONTROLS, ...SOC_2_CONTROLS, ...HIPAA_CONTROLS]) {
+      const key = c.id.toUpperCase();
+      if (!definitionIndex.has(key)) definitionIndex.set(key, c); // the first framework that defines an id wins, as before
+    }
+  }
+  return definitionIndex.get(controlId.trim().toUpperCase());
 }

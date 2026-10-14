@@ -20,6 +20,15 @@ export const CMMC_ID_RE = /\b([A-Z]{2})\.L([12])-(3\.\d{1,2}\.\d{1,2})\b/g;
 /** A NIST SP 800-171 requirement number, e.g. 3.1.5 (not part of a longer dotted number or a word). */
 export const NIST_NUMBER_RE = /(?<![\w.])(3\.(?:[1-9]|1[0-4])\.(?:[1-9]|1\d|2\d))(?![\w]|\.\d)/g;
 
+/**
+ * A NIST SP 800-53 control or control enhancement identifier, e.g. AC-2, AC-02, AC-2(1), AC-2 (1): one of the twenty family
+ * codes, a number, and an optional enhancement number. (Never part of a longer word, number or hyphenated token.)
+ */
+export const NIST53_ID_RE = /\b(AC|AT|AU|CA|CM|CP|IA|IR|MA|MP|PE|PL|PM|PS|PT|RA|SA|SC|SI|SR)-(\d{1,2})(?:[ \t]?\([ \t]?(\d{1,2})[ \t]?\))?(?![\w-])/g;
+
+/** Which kind of control reference starts a section: CMMC / NIST SP 800-171 numbers (default), or NIST SP 800-53 identifiers. */
+export type RefStyle = 'cmmc' | 'nist53';
+
 /** How far into a line a control reference may start and still make it a section anchor. */
 const ANCHOR_WINDOW = 40;
 const GENERIC_HEADING_MAX = 100;
@@ -31,8 +40,16 @@ const NUMBERED_HEADING_RE = /^\d+(?:\.\d+){0,3}[.)]?\s+[A-Z][^.!?]*$/;
  */
 export const NIST_ANCHOR_PREFIX_RE = /^[\s|•*-]*(?:(?:control|requirement|practice|nist(?:\s+sp)?\s*800-171)\s*[:#-]?\s*)?$/i;
 
+/** The same for a bare SP 800-53 identifier: bullets, table pipes, or a label such as "Control" or "NIST SP 800-53". */
+export const NIST53_ANCHOR_PREFIX_RE = /^[\s|•*-]*(?:(?:control|enhancement|requirement|nist(?:\s+sp)?\s*800-53)\s*[:#-]?\s*)?$/i;
+
 /** True when a reference found at `index` in a folded line makes that line the start of a control's section. */
-export function isAnchorRef(foldedLine: string, ref: { kind: 'CMMC' | 'NIST'; index: number }): boolean {
+export function isAnchorRef(foldedLine: string, ref: { kind: 'CMMC' | 'NIST' | 'NIST53'; index: number }): boolean {
+  if (ref.kind === 'NIST53') {
+    // "AC-2 Account Management" or "| AC-2(1) | ..." starts a section; "see AC-2 for details." does not
+    const line = foldedLine.trim();
+    return NIST53_ANCHOR_PREFIX_RE.test(foldedLine.slice(0, ref.index)) || (ref.index <= ANCHOR_WINDOW && line.length <= GENERIC_HEADING_MAX && !/[.;!?]$/.test(line));
+  }
   const labelled = NIST_ANCHOR_PREFIX_RE.test(foldedLine.slice(0, ref.index));
   if (ref.kind === 'NIST') return labelled;
   // A CMMC identifier is explicit enough to anchor a heading that puts the title first ("Authorized Access (AC.L1-3.1.1)"),
@@ -41,9 +58,13 @@ export function isAnchorRef(foldedLine: string, ref: { kind: 'CMMC' | 'NIST'; in
   return labelled || (ref.index <= ANCHOR_WINDOW && line.length <= GENERIC_HEADING_MAX && !/[.;!?]$/.test(line));
 }
 
-export function isAnchorLine(foldedLine: string): boolean {
+export function isAnchorLine(foldedLine: string, style: RefStyle = 'cmmc'): boolean {
   const line = foldedLine.trim();
   if (!line) return false;
+  if (style === 'nist53') {
+    const m = new RegExp(NIST53_ID_RE.source, 'g').exec(line);
+    if (m && isAnchorRef(line, { kind: 'NIST53', index: m.index })) return true;
+  }
   const cmmc = new RegExp(CMMC_ID_RE.source, 'g');
   const cm = cmmc.exec(line);
   if (cm && isAnchorRef(line, { kind: 'CMMC', index: cm.index })) return true;
@@ -75,6 +96,8 @@ function pageOf(offset: number, pages: readonly PageSpan[]): number | null {
 export interface ChunkOptions {
   /** Split a section longer than this on paragraph boundaries (the pieces share the section's heading). */
   maxChars?: number;
+  /** 'nist53': a line that starts with an SP 800-53 identifier (AC-2, AC-2(1)) also starts a section. Default 'cmmc'. */
+  refStyle?: RefStyle;
 }
 
 export function chunkDocument(text: string, pages: readonly PageSpan[] = [], options: ChunkOptions = {}): DocChunk[] {
@@ -95,7 +118,7 @@ export function chunkDocument(text: string, pages: readonly PageSpan[] = [], opt
   const boundaries: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     const f = folded.slice(lines[i].start, lines[i].end);
-    if (isAnchorLine(f) || isGenericHeading(f)) boundaries.push(lines[i].start);
+    if (isAnchorLine(f, options.refStyle) || isGenericHeading(f)) boundaries.push(lines[i].start);
   }
   if (boundaries[0] !== 0) boundaries.unshift(0);
 

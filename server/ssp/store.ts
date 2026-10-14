@@ -5,6 +5,7 @@ import type {
   CoverageReport,
   GapAnalysis,
   SourceQuote,
+  SspBaseline,
   SspImportFramework,
   SspImportJob,
   SspJobStatus,
@@ -61,6 +62,7 @@ function rowToJob(r: pg.QueryResultRow): SspImportJob {
     fileSize: Number(r.file_size),
     fileSha256: r.file_sha256,
     framework: r.framework as SspImportFramework,
+    baseline: (r.baseline as SspBaseline | null) ?? null,
     status: r.status as SspJobStatus,
     stageProgress: r.stage_progress ?? {},
     storedProvider: r.stored_provider,
@@ -113,6 +115,8 @@ export interface NewJob {
   fileSize: number;
   fileSha256: string;
   framework: SspImportFramework;
+  /** NIST SP 800-53 imports only. */
+  baseline?: SspBaseline | null;
   storedProvider: 'local' | 'gcs';
   storedPath: string;
   analyzer: string;
@@ -122,6 +126,7 @@ export async function createJob(input: NewJob): Promise<SspImportJob> {
   if (isMemory()) {
     const job: SspImportJob = {
       ...input,
+      baseline: input.baseline ?? null,
       status: 'QUEUED',
       stageProgress: {},
       pageCount: null,
@@ -140,10 +145,10 @@ export async function createJob(input: NewJob): Promise<SspImportJob> {
   return inTenantTx(input.tenantId, async (c) => {
     const res = await c.query(
       `INSERT INTO ssp_import_jobs (id, tenant_id, created_by, created_by_user_id, file_name, mime_type, file_size, file_sha256,
-                                    framework, stored_provider, stored_path, analyzer)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+                                    framework, stored_provider, stored_path, analyzer, baseline)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [input.id, input.tenantId, input.createdBy, input.createdByUserId, input.fileName, input.mimeType, input.fileSize,
-       input.fileSha256, input.framework, input.storedProvider, input.storedPath, input.analyzer]
+       input.fileSha256, input.framework, input.storedProvider, input.storedPath, input.analyzer, input.baseline ?? null]
     );
     return rowToJob(res.rows[0]);
   });

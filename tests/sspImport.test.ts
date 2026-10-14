@@ -232,7 +232,7 @@ async function apiTests() {
   const pdf = makePdf([SSP_LINES.slice(0, 5), SSP_LINES.slice(5)]);
   assert((await upload(owner, tenant, null, { framework: 'CMMC_L1' })).status === 400, 'no file: 400');
   assert((await upload(owner, tenant, { data: pdf, name: 'ssp.pdf' }, {})).status === 400, 'no framework: 400');
-  assert((await upload(owner, tenant, { data: pdf, name: 'ssp.pdf' }, { framework: 'NIST_800_53_REV5' })).status === 400, 'a framework other than CMMC L1 / L2: 400 (Phase 1 scope)');
+  assert((await upload(owner, tenant, { data: pdf, name: 'ssp.pdf' }, { framework: 'SOC_2_TYPE_II' })).status === 400, 'a framework the import does not support: 400');
   const notEnabled = await upload(owner, tenant, { data: pdf, name: 'ssp.pdf' }, { framework: 'CMMC_L2' });
   assert(notEnabled.status === 403 && notEnabled.body?.code === 'framework_not_enabled', 'a framework outside the tenant\'s program is refused (403)', notEnabled.body);
   const disguised = await upload(owner, tenant, { data: Buffer.from('MZ not really a document'), name: 'ssp.pdf', type: 'application/pdf' }, { framework: 'CMMC_L1' });

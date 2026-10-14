@@ -22,6 +22,8 @@ import { StorageService, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { GcsService } from '../services/gcsService';
 import { computeDomainStats } from '../data/frameworks/domainStats';
+import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives';
+import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
 import { ApiClient } from '../services/apiClient';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent } from '../data/audit/auditLogger';
@@ -519,6 +521,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // NIST SP 800-171A Objective-Level Evaluation & Rollup Engine
   // -------------------------------------------------------------------------
 
+  // The SP 800-53A objectives (1.3 MB) are fetched only once an SP 800-53 program is open
+  const [nistObjectivesReady, setNistObjectivesReady] = useState(hasNist80053Objectives());
+  useEffect(() => {
+    if (nistObjectivesReady || (activeFramework !== 'NIST_800_53_REV5' && activeFramework !== 'nist-800-53-r5')) return;
+    let alive = true;
+    loadNist80053Objectives().then(() => alive && setNistObjectivesReady(true)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [activeFramework, nistObjectivesReady]);
+
   const getObjectivesForControl = useCallback((controlId: string): AssessmentObjective[] => {
     const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
     return getAssessmentObjectivesForControl(
@@ -527,7 +540,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       ctrl?.assessmentObjectives,
       state.objectives
     );
-  }, [frameworkControls, state.objectives]);
+  }, [frameworkControls, state.objectives, nistObjectivesReady]);
 
   const recalculateControlStatusFromObjectives = useCallback((controlId: string): ControlStatus => {
     const objectives = getObjectivesForControl(controlId);

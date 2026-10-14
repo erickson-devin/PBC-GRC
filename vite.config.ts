@@ -23,7 +23,7 @@ export default defineConfig({
     },
   },
   build: {
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 1500, // the generated NIST SP 800-53 catalog is one 1.2 MB file by nature
     rollupOptions: {
       output: {
         manualChunks: (id: string) => {
@@ -76,6 +76,12 @@ export default defineConfig({
           // ── STIG catalog data (large static asset) ──────────────────────
           if (id.includes('/src/data/stigs/stigCatalog')) {
             return 'stig-catalog';
+          }
+
+          // ── NIST SP 800-53 Rev. 5 generated data (~1,000 controls): its own file, so it is cached apart from the app ──
+          if (id.includes('/src/data/frameworks/nist80053/') && id.endsWith('.json')) {
+            // the SP 800-53A objectives are fetched on demand, so they must not share a file with the catalog
+            return id.includes('objectives.generated') ? 'nist-80053a-objectives' : 'nist-80053-catalog';
           }
 
           // ── Framework & Control Catalog definitions ─────────────────────

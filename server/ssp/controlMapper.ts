@@ -1,5 +1,7 @@
 import { getFrameworkControls } from '../../src/data/frameworks';
-import { CMMC_ID_RE, NIST_NUMBER_RE, chunkDocument, foldForMatching, isAnchorRef } from './chunk';
+import { canonical80053Id } from '../../src/data/frameworks/nist80053/objectives';
+import { CMMC_ID_RE, NIST53_ID_RE, NIST_NUMBER_RE, chunkDocument, foldForMatching, isAnchorRef } from './chunk';
+import { baselineControls } from './scope';
 import type {
   CoverageReport,
   DocChunk,
@@ -8,6 +10,7 @@ import type {
   MappingResult,
   PageSpan,
   SourceQuote,
+  SspBaseline,
   SspImportFramework,
   SspMatchKind,
   StagedControlDraft,
@@ -29,20 +32,26 @@ const MAX_MENTION_PARAGRAPHS = 3;
 const MAX_UNMAPPED = 50;
 const BRIEF_NOTES_CHARS = 120;
 
-const CONFIDENCE: Record<SspMatchKind, number> = { CMMC_ID_SECTION: 0.9, NIST_NUMBER_SECTION: 0.7, MENTION: 0.3, AI_EXTRACTED: 0.8 };
+const CONFIDENCE: Record<SspMatchKind, number> = { CMMC_ID_SECTION: 0.9, NIST53_ID_SECTION: 0.85, NIST_NUMBER_SECTION: 0.7, MENTION: 0.3, AI_EXTRACTED: 0.8 };
 
 interface Ref {
-  /** NIST number, e.g. 3.1.5 */
+  /** The catalog key: the NIST SP 800-171 number (3.1.5), or for NIST SP 800-53 the canonical id (AC-2(1)). */
   number: string;
-  kind: 'CMMC' | 'NIST';
+  kind: 'CMMC' | 'NIST' | 'NIST53';
   /** The text as written, e.g. AC.L2-3.1.5 */
   text: string;
   /** Offset inside the chunk text */
   index: number;
 }
 
-function findRefs(foldedChunk: string): Ref[] {
+function findRefs(foldedChunk: string, framework: SspImportFramework): Ref[] {
   const refs: Ref[] = [];
+  if (framework === 'NIST_800_53_REV5') {
+    for (const m of foldedChunk.matchAll(new RegExp(NIST53_ID_RE.source, 'g'))) {
+      const id = canonical80053Id(m[0]);
+      if (id) refs.push({ number: id, kind: 'NIST53', text: m[0], index: m.index ?? 0 });
+    }
+  }
   const cmmc = new RegExp(CMMC_ID_RE.source, 'g');
   for (let m = cmmc.exec(foldedChunk); m; m = cmmc.exec(foldedChunk)) refs.push({ number: m[3], kind: 'CMMC', text: m[0], index: m.index });
   const nist = new RegExp(NIST_NUMBER_RE.source, 'g');
@@ -56,8 +65,13 @@ function findRefs(foldedChunk: string): Ref[] {
 
 export const numberOf = (controlId: string): string | null => controlId.match(/-(3\.\d+\.\d+)$/)?.[1] ?? null;
 
+/** The controls a document can name, by the key it names them with: the 800-171 number (3.1.5) or the SP 800-53 id (AC-2(1)). */
 export function numberToIdMap(framework: SspImportFramework): Map<string, { id: string; title: string }> {
   const map = new Map<string, { id: string; title: string }>();
+  if (framework === 'NIST_800_53_REV5') {
+    for (const c of getFrameworkControls(framework)) map.set(c.id, { id: c.id, title: c.title });
+    return map;
+  }
   for (const c of getFrameworkControls(framework)) {
     const n = numberOf(c.id);
     if (n) map.set(n, { id: c.id, title: c.title });
@@ -140,12 +154,29 @@ interface Found {
   mentions: Array<{ chunk: DocChunk; paragraph: string; offset: number }>;
 }
 
+/**
+ * What the import covers: every control of a CMMC level, or for NIST SP 800-53 the controls and enhancements of the chosen
+ * SP 800-53B baseline. A control found outside the baseline (an enhancement the document describes, say) is still staged; it
+ * just does not count toward the baseline's coverage.
+ */
+export function coverageFor(framework: SspImportFramework, baseline: SspBaseline | null | undefined, foundIds: ReadonlySet<string>): CoverageReport {
+  const catalog = baselineControls(framework, baseline);
+  return {
+    framework,
+    ...(framework === 'NIST_800_53_REV5' ? { baseline: baseline ?? 'MODERATE' } : {}),
+    totalControls: catalog.length,
+    foundControls: catalog.filter((c) => foundIds.has(c.id)).length,
+    missing: catalog.map((c) => c.id).filter((id) => !foundIds.has(id)),
+  };
+}
+
 /** Maps an extracted document to the controls of `framework`. Pure and deterministic. */
 export function mapDocumentToControls(
   text: string,
   pages: readonly PageSpan[],
   framework: SspImportFramework,
-  chunks: DocChunk[] = chunkDocument(text, pages)
+  chunks: DocChunk[] = chunkDocument(text, pages, { refStyle: framework === 'NIST_800_53_REV5' ? 'nist53' : 'cmmc' }),
+  baseline?: SspBaseline | null
 ): MappingResult {
   const inScope = numberToIdMap(framework);
   const universe = numberToIdMap('CMMC_L2'); // every CMMC practice: tells "out of scope" from "does not exist"
@@ -161,7 +192,7 @@ export function mapDocumentToControls(
 
   for (const chunk of chunks) {
     const folded = foldForMatching(chunk.text);
-    const refs = findRefs(folded);
+    const refs = findRefs(folded, framework);
     if (refs.length === 0) continue;
     const firstLineEnd = folded.indexOf('\n') === -1 ? folded.length : folded.indexOf('\n');
     const headRefs = refs.filter((r) => r.index < firstLineEnd && isAnchorRef(folded.slice(0, firstLineEnd), r));
@@ -169,12 +200,12 @@ export function mapDocumentToControls(
     for (const r of refs) {
       if (!inScope.has(r.number)) {
         // Referenced, but not a control of this framework
-        if (r.kind === 'CMMC' || universe.has(r.number)) {
+        if (r.kind === 'CMMC' || r.kind === 'NIST53' || universe.has(r.number)) {
           const key = r.text;
           if (!unmapped.has(key) && unmapped.size < MAX_UNMAPPED) {
             unmapped.set(key, {
               reference: r.text,
-              reason: universe.has(r.number) ? 'OUT_OF_SCOPE' : 'NOT_IN_CATALOG',
+              reason: r.kind !== 'NIST53' && universe.has(r.number) ? 'OUT_OF_SCOPE' : 'NOT_IN_CATALOG',
               page: chunk.page,
               excerpt: chunk.text.slice(Math.max(0, r.index - 40), r.index + 100).replace(/\s+/g, ' ').trim(),
             });
@@ -185,7 +216,7 @@ export function mapDocumentToControls(
       const f = entry(r.number);
       const isHead = headRefs.includes(r);
       if (isHead) {
-        const kind: SspMatchKind = headRefs.some((h) => h.number === r.number && h.kind === 'CMMC') ? 'CMMC_ID_SECTION' : 'NIST_NUMBER_SECTION';
+        const kind: SspMatchKind = r.kind === 'NIST53' ? 'NIST53_ID_SECTION' : headRefs.some((h) => h.number === r.number && h.kind === 'CMMC') ? 'CMMC_ID_SECTION' : 'NIST_NUMBER_SECTION';
         if (!f.sections.some((s) => s.chunk.index === chunk.index)) {
           f.sections.push({ kind, chunk, notes: sectionNotes(chunk, folded, headRefs, f.title) });
         }
@@ -204,7 +235,7 @@ export function mapDocumentToControls(
     let heading: string;
 
     if (sections.length > 0) {
-      kind = sections.some((s) => s.kind === 'CMMC_ID_SECTION') ? 'CMMC_ID_SECTION' : 'NIST_NUMBER_SECTION';
+      kind = sections.some((s) => s.kind === 'CMMC_ID_SECTION') ? 'CMMC_ID_SECTION' : sections.some((s) => s.kind === 'NIST53_ID_SECTION') ? 'NIST53_ID_SECTION' : 'NIST_NUMBER_SECTION';
       notes = sections.map((s) => s.notes).filter(Boolean).join('\n\n').slice(0, MAX_NOTES_CHARS).trim();
       quotes = sections.slice(0, 3).map((s) => makeQuote(text, s.chunk.start, pages, s.chunk.end));
       heading = sections[0].chunk.heading;
@@ -231,14 +262,8 @@ export function mapDocumentToControls(
   }
   staged.sort((a, b) => a.controlId.localeCompare(b.controlId, undefined, { numeric: true }));
 
-  const catalog = getFrameworkControls(framework);
   const foundIds = new Set(staged.map((s) => s.controlId));
-  const coverage: CoverageReport = {
-    framework,
-    totalControls: catalog.length,
-    foundControls: foundIds.size,
-    missing: catalog.map((c) => c.id).filter((id) => !foundIds.has(id)),
-  };
+  const coverage = coverageFor(framework, baseline, foundIds);
 
   return { staged, unmapped: [...unmapped.values()], coverage };
 }

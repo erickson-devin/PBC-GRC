@@ -195,3 +195,42 @@ sentence or parameter go to the model. Every option is checked by the server fir
 Selection answered with its own listed choices, a rewrite that keeps the sentence's facts); failures are dropped. A person
 applies an option with one click and can undo it. Endpoint: `POST /api/v1/tenants/:id/ai-assist/parameter-wording` (owner/MSP
 roles; 20 requests a minute per person); `GET .../ai-assist/status` tells the editor whether to offer it.
+
+## NIST SP 800-53 Rev. 5 (Phase 3)
+
+The platform carries the whole of NIST SP 800-53 Rev. 5 next to the CMMC / SP 800-171 catalogs, and an SSP can be imported against it.
+
+### Data and where it comes from
+
+`scripts/generateNist80053.ts` builds three files in `src/data/frameworks/nist80053/` from NIST's public data (OSCAL catalog and
+baseline profiles, pinned to a commit of `usnistgov/oscal-content`, and SP 800-171 Rev. 2 Appendix D). Run it only when NIST
+publishes a new release; `npx tsx scripts/generateNist80053.ts --check` fails if the committed files differ from the sources.
+
+| File | Contents |
+| --- | --- |
+| `catalog.generated.json` | 1,014 controls: 300 base controls and 714 enhancements (`AC-2`, `AC-2(1)`), official statement with `[Assignment: ...]` / `[Selection: ...]` tags, guidance, Low / Moderate / High / Privacy baseline membership (149 / 287 / 370 as in SP 800-53B) |
+| `objectives.generated.json` | SP 800-53A assessment objectives and assessment methods for every control (loaded on demand in the browser) |
+| `crosswalk171.generated.json` | SP 800-171 Rev. 2 requirement -> SP 800-53 Rev. 5 controls |
+
+Each control is a `FrameworkControlDefinition` with `controlKind` (`BASE` / `ENHANCEMENT`), `parentControlId`, `baselines`, and its
+`statement`, so the organization-defined parameters are found by the same parser as in Phase 2 (AC-2 has ten). The Control Matrix
+filters by baseline membership and by base / enhancement, and draws long lists a page at a time.
+
+Appendix D of SP 800-171 Rev. 2 names Rev. 4 controls. Each was carried to Rev. 5 through the `incorporated-into` / `moved-to`
+links NIST records on withdrawn controls (e.g. 3.8.6 `MP-5(4)` -> `SC-28(1)`). 3.13.14 names SC-19, withdrawn in Rev. 5 with no successor, so it has no counterpart.
+
+### Importing against SP 800-53
+
+Choose "NIST SP 800-53 Rev. 5" and a baseline (Low, Moderate or High; default Moderate) when uploading; the framework must be part of the
+tenant's program. The baseline only decides what the coverage report is measured against: a control found outside it is still staged.
+
+* A heading that starts with an identifier (`AC-2`, `AC-02`, `AC-2(1)`) is a section of its own; an identifier inside a sentence is a mention. Identifiers that do not exist are reported as not in the catalog, CMMC ones as out of scope.
+* **Two-tier candidate search** (`server/ssp/retrieval53.ts`): the section is ranked against the base controls only, the families whose best controls score together are kept (at most three), and only the enhancements of the few best base controls (or of controls the section names) are then ranked. Both lists share one limit (`SSP_AI_MAX_CANDIDATES`, default 4). Scores run higher than in the CMMC search because the statements are long, so the floor is 18 (`SSP_AI_RETRIEVAL_MIN_SCORE` can raise it, not lower it); a cover page or table of contents matches nothing.
+* A quotation must fit the control it is claimed for (ranked among the base controls or among the enhancements); for an enhancement its base control must fit too. The 0.5 confidence floor and the verbatim-quote check are unchanged.
+* The gap analysis asks about the control's SP 800-53A items (a, b, c ... at most twelve, their sub-objectives joined) with the same per-objective extractive method and weak-match warning as for CMMC.
+
+Database: `ssp_import_jobs` gets a `baseline` column and its framework check accepts `NIST_800_53_REV5` (idempotent DDL in `server/schema.ts`).
+
+### Crosswalk
+
+`CANONICAL_CONTROL_MAPPINGS` now also holds the generated 800-171 -> 800-53 rows (type `SUBSET`: only the part of the 800-53 control relevant to the requirement applies), with their provenance. Only `EXACT` / `EQUIVALENT` mappings make evidence inherit across frameworks. The Control Matrix shows a read-only Crosswalk panel: for a CMMC / 800-171 control its 800-53 counterparts, for an 800-53 control the requirements that map to it (an enhancement also through its base control), each with the status, a notes excerpt and the evidence count recorded there when that framework is part of the tenant's program. Nothing is copied.
