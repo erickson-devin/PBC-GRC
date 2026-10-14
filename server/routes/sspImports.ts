@@ -12,7 +12,10 @@ import { OllamaClient } from '../ssp/ollama';
 import { ANALYZER_ID, aiAnalyzerId, cancelJob, enqueueImport, hashLiveControl, isJobActive, readLiveControls, recoverStaleJobs } from '../ssp/runner';
 import { createJob, deleteJob, getJob, getStaged, listJobs, listStaged, newId, updateStaged } from '../ssp/store';
 import {
+  SSP_DEFAULT_BASELINE,
+  SSP_BASELINES,
   SSP_IMPORT_FRAMEWORKS,
+  isSspBaseline,
   SSP_JOB_TERMINAL,
   SSP_SETTABLE_STATES,
   isSspImportFramework,
@@ -113,6 +116,16 @@ router.post('/', (req: Request, res: Response): void => {
         return;
       }
       if (!(await ensureFrameworkEnabled(req, res, framework))) return;
+      // NIST SP 800-53 only: the baseline the coverage is measured against (Moderate unless chosen)
+      let baseline: (typeof SSP_BASELINES)[number] | null = null;
+      if (framework === 'NIST_800_53_REV5') {
+        const asked = req.body?.baseline ?? SSP_DEFAULT_BASELINE;
+        if (!isSspBaseline(asked)) {
+          res.status(400).json({ error: `baseline must be one of: ${SSP_BASELINES.join(', ')}` });
+          return;
+        }
+        baseline = asked;
+      }
 
       const analysis = req.body?.analysis ?? 'rules';
       if (analysis !== 'rules' && analysis !== 'ai') {
@@ -154,6 +167,7 @@ router.post('/', (req: Request, res: Response): void => {
         fileSize: file.size,
         fileSha256: crypto.createHash('sha256').update(file.buffer).digest('hex'),
         framework,
+        baseline,
         storedProvider: stored.provider,
         storedPath: stored.path,
         analyzer: analysis === 'ai' ? aiAnalyzerId(ollama.config.model) : ANALYZER_ID,

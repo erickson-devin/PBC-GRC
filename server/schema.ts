@@ -232,7 +232,7 @@ export const TABLES_SQL = `
       started_at TIMESTAMPTZ,
       finished_at TIMESTAMPTZ,
       CONSTRAINT ssp_import_jobs_status_check CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED','CANCELLED')),
-      CONSTRAINT ssp_import_jobs_framework_check CHECK (framework IN ('CMMC_L1','CMMC_L2'))
+      CONSTRAINT ssp_import_jobs_framework_check CHECK (framework IN ('CMMC_L1','CMMC_L2','NIST_800_53_REV5'))
   );
   CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_tenant ON ssp_import_jobs (tenant_id, created_at DESC);
 
@@ -266,6 +266,16 @@ export const TABLES_SQL = `
   ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_status_check
     CHECK (status IN ('QUEUED','EXTRACTING','ANALYZING','READY_FOR_REVIEW','COMMITTED','FAILED','CANCELLED'));
 
+  -- Phase 3 (NIST SP 800-53 Rev. 5): imports can target the 800-53 catalog, measured against one SP 800-53B baseline.
+  -- A control id such as AC-2(1) fits staged_controls.control_id (VARCHAR(64)) unchanged.
+  ALTER TABLE ssp_import_jobs ADD COLUMN IF NOT EXISTS baseline VARCHAR(16);
+  ALTER TABLE ssp_import_jobs DROP CONSTRAINT IF EXISTS ssp_import_jobs_framework_check;
+  ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_framework_check
+    CHECK (framework IN ('CMMC_L1','CMMC_L2','NIST_800_53_REV5'));
+  ALTER TABLE ssp_import_jobs DROP CONSTRAINT IF EXISTS ssp_import_jobs_baseline_check;
+  ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_baseline_check
+    CHECK (baseline IS NULL OR baseline IN ('LOW','MODERATE','HIGH'));
+
   -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
   -- server/platformSetup.ts). Global, not tenant-bound.
   CREATE TABLE IF NOT EXISTS platform_admins (
@@ -296,6 +306,17 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT unq_source_target_mapping UNIQUE (source_framework, source_control_id, target_framework, target_control_id)
   );
+
+  -- Dual-framework crosswalk (SP 800-171 Rev. 2 / CMMC <-> SP 800-53 Rev. 5), idempotent.
+  -- provenance: where a row comes from (empty for the hand-curated rows).
+  ALTER TABLE control_mappings ADD COLUMN IF NOT EXISTS provenance TEXT DEFAULT '';
+  -- Lookups run from either side of a mapping.
+  CREATE INDEX IF NOT EXISTS idx_control_mappings_target ON control_mappings (target_framework, target_control_id);
+  CREATE INDEX IF NOT EXISTS idx_control_mappings_source ON control_mappings (source_framework, source_control_id);
+  -- Only EXACT / EQUIVALENT mappings carry evidence between frameworks; SUBSET / SUPERSET are references.
+  UPDATE control_mappings SET mapping_type = 'EQUIVALENT' WHERE mapping_type IS NULL OR mapping_type NOT IN ('EXACT', 'EQUIVALENT', 'SUBSET', 'SUPERSET');
+  ALTER TABLE control_mappings DROP CONSTRAINT IF EXISTS control_mappings_mapping_type_check;
+  ALTER TABLE control_mappings ADD CONSTRAINT control_mappings_mapping_type_check CHECK (mapping_type IN ('EXACT', 'EQUIVALENT', 'SUBSET', 'SUPERSET'));
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

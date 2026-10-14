@@ -14,12 +14,14 @@ import { SOC_2_CONTROLS, SOC_2_DOMAINS } from './soc2Controls';
 import { HIPAA_CONTROLS, HIPAA_DOMAINS } from './hipaaControls';
 import {
   getCrossFrameworkMappings,
+  isEquivalentMapping,
 } from './controlMappings';
 
 // Adapt CMMC L1 controls into FrameworkControlDefinition
 export const CMMC_L1_FRAMEWORK_CONTROLS: FrameworkControlDefinition[] = CMMC_LEVEL_1_CONTROLS.map(ctrl => {
   const isNetworkBoundary = ctrl.id === 'SC.L1-3.13.1' || ctrl.id === 'SC.L1-3.13.5';
-  const mappings = getCrossFrameworkMappings(ctrl.id).map(m => ({
+  // "Equivalencies" only: the SP 800-171 -> SP 800-53 crosswalk (SUBSET) is shown by the Crosswalk panel instead.
+  const mappings = getCrossFrameworkMappings(ctrl.id).filter(isEquivalentMapping).map(m => ({
     targetFramework: m.targetFramework === 'CMMC_L1' ? m.sourceFramework : m.targetFramework,
     targetControlId: m.targetControlId === ctrl.id ? m.sourceControlId : m.targetControlId,
     targetTitle: m.notes,

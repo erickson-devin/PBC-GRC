@@ -41,6 +41,8 @@ export interface ControlMapping {
   targetControlId: string;
   mappingType: MappingType;
   notes?: string;
+  /** Where the mapping comes from, e.g. "NIST SP 800-171 Rev. 2 Appendix D". Empty for the hand-curated rows. */
+  provenance?: string;
 }
 
 export interface FrameworkDomainInfo {

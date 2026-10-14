@@ -26,6 +26,7 @@ import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { getControlImpactBadge } from '../../data/frameworks';
 import { OdpPanel } from '../matrix/OdpPanel';
+import { CrosswalkPanel } from '../matrix/CrosswalkPanel';
 import { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
 import { FailingAssetInfo } from '../../types/telemetry';
 
@@ -448,6 +449,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               <span className="font-mono">{notes.length} characters</span>
             </div>
             <OdpPanel control={control} notes={notes} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
+            <CrosswalkPanel controlId={control.id} />
           </div>
 
           {/* Evidence Upload Drop-Zone with Clear Drop Indicators */}

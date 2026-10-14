@@ -290,7 +290,8 @@ async function main(): Promise<void> {
     const file = path.join(OUT, name);
     const text = stable(value);
     if (check) {
-      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== text) {
+      // a Windows checkout may have converted the line endings of the committed file
+      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') !== text) {
         console.error(`DIFFERS: ${name}`);
         differs = true;
       }

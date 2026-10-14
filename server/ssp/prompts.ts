@@ -135,9 +135,11 @@ export function gapUserMessage(input: {
   requirement: string;
   objectives: Array<{ letter: string; text: string }>;
   excerpts: string;
+  /** Where the objectives come from; NIST SP 800-171A unless the control is an SP 800-53 one. */
+  source?: string;
 }): string {
   const objectives = input.objectives.map((o) => `[${o.letter}] ${o.text}`).join('\n');
-  return `REQUIREMENT ${input.controlId}: ${input.title}\n${clip(input.requirement, 700)}\n\nASSESSMENT OBJECTIVES (NIST SP 800-171A)\n${objectives}\n\nDOCUMENT EXCERPTS\n<<<\n${input.excerpts}\n>>>`;
+  return `REQUIREMENT ${input.controlId}: ${input.title}\n${clip(input.requirement, 700)}\n\nASSESSMENT OBJECTIVES (${input.source ?? 'NIST SP 800-171A'})\n${objectives}\n\nDOCUMENT EXCERPTS\n<<<\n${input.excerpts}\n>>>`;
 }
 
 // ------------------------------------------------------------------------------------------------ gap analysis, extractive

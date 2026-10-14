@@ -6,11 +6,17 @@
  * the live control answers (control_assessments) change only through an explicit, reviewed commit.
  */
 
-/** Phase 1 supports the CMMC levels only. */
-export const SSP_IMPORT_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2'] as const;
+/** The frameworks a document can be mapped to: the CMMC levels (NIST SP 800-171) and NIST SP 800-53 Rev. 5. */
+export const SSP_IMPORT_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5'] as const;
 export type SspImportFramework = (typeof SSP_IMPORT_FRAMEWORKS)[number];
 export const isSspImportFramework = (v: unknown): v is SspImportFramework =>
   typeof v === 'string' && (SSP_IMPORT_FRAMEWORKS as readonly string[]).includes(v);
+
+/** NIST SP 800-53B baseline a 800-53 import is measured against (its coverage report); matching itself spans the whole catalog. */
+export const SSP_BASELINES = ['LOW', 'MODERATE', 'HIGH'] as const;
+export type SspBaseline = (typeof SSP_BASELINES)[number];
+export const isSspBaseline = (v: unknown): v is SspBaseline => typeof v === 'string' && (SSP_BASELINES as readonly string[]).includes(v);
+export const SSP_DEFAULT_BASELINE: SspBaseline = 'MODERATE';
 
 export type SspDocumentKind = 'pdf' | 'docx';
 
@@ -30,6 +36,7 @@ export const SSP_SETTABLE_STATES: readonly SspReviewState[] = ['PENDING', 'ACCEP
 export type SspMatchKind =
   | 'CMMC_ID_SECTION' // a section headed by the CMMC identifier (AC.L2-3.1.1): the strongest signal
   | 'NIST_NUMBER_SECTION' // a section that starts with the NIST SP 800-171 number (3.1.1): could be the document's own numbering
+  | 'NIST53_ID_SECTION' // a section headed by the NIST SP 800-53 identifier (AC-2, AC-2(1)): explicit, like a CMMC identifier
   | 'MENTION' // referred to inside another section; no section of its own
   | 'AI_EXTRACTED'; // a language model read a section and found the control implemented there; the quote was verified
 
@@ -69,7 +76,7 @@ export interface SourceQuote {
 
 export interface GapItem {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
-  /** The NIST SP 800-171A objective this concerns (a, b, c...), when it concerns one. */
+  /** The NIST SP 800-171A / 800-53A objective this concerns (a, b, c...), when it concerns one. */
   objective?: string;
   missingElement: string;
   recommendation: string;
@@ -105,7 +112,7 @@ export interface GapAnalysis {
   mode?: 'extractive' | 'narrative';
   summary: string;
   gaps: GapItem[];
-  /** Per-objective result of the comparison with NIST SP 800-171A (AI analysis only). */
+  /** Per-objective result of the comparison with NIST SP 800-171A or 800-53A (AI analysis only). */
   objectives?: ObjectiveAssessment[];
 }
 
@@ -130,6 +137,8 @@ export interface UnmappedFinding {
 
 export interface CoverageReport {
   framework: SspImportFramework;
+  /** NIST SP 800-53 only: the baseline the counts below are measured against. */
+  baseline?: SspBaseline;
   totalControls: number;
   foundControls: number;
   /** In-scope control ids the document never mentions. */
@@ -179,6 +188,8 @@ export interface SspImportJob {
   fileSize: number;
   fileSha256: string;
   framework: SspImportFramework;
+  /** NIST SP 800-53 imports only. */
+  baseline: SspBaseline | null;
   status: SspJobStatus;
   stageProgress: SspStageProgress;
   storedProvider: 'local' | 'gcs';

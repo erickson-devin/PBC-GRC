@@ -1,10 +1,14 @@
-import { ControlMapping } from '../../types/framework';
+import { ControlMapping, MappingType } from '../../types/framework';
+import { buildCrosswalkMappingRows } from './nist80053/crosswalk';
 
 /**
  * Cross-Framework Control Mappings
  * Connects CMMC Level 1 & 2, NIST SP 800-53 Rev 5, SOC 2 Type II, and HIPAA Security Rule.
+ *
+ * HAND_CURATED_CONTROL_MAPPINGS are the reviewed, EQUIVALENT rows. The SP 800-171 Rev. 2 -> SP 800-53 Rev. 5 crosswalk
+ * (SUBSET rows, see nist80053/crosswalk.ts) is appended after them in CANONICAL_CONTROL_MAPPINGS.
  */
-export const CANONICAL_CONTROL_MAPPINGS: ControlMapping[] = [
+export const HAND_CURATED_CONTROL_MAPPINGS: ControlMapping[] = [
   // -------------------------------------------------------------
   // ACCESS CONTROL (CMMC AC.L1 / NIST AC / SOC 2 CC6 / HIPAA 164.312)
   // -------------------------------------------------------------
@@ -502,9 +506,27 @@ export const CANONICAL_CONTROL_MAPPINGS: ControlMapping[] = [
   },
 ];
 
+const pairKey = (m: ControlMapping) => `${m.sourceFramework}|${m.sourceControlId}|${m.targetFramework}|${m.targetControlId}`.toUpperCase();
+const curatedPairs = new Set(HAND_CURATED_CONTROL_MAPPINGS.map(pairKey));
+
+/** The generated crosswalk rows that add something: a pair a hand-curated mapping already covers is skipped (the DB has UNIQUE on the pair). */
+export const CROSSWALK_MAPPINGS: ControlMapping[] = buildCrosswalkMappingRows().filter((m) => !curatedPairs.has(pairKey(m)));
+
+export const CANONICAL_CONTROL_MAPPINGS: ControlMapping[] = [...HAND_CURATED_CONTROL_MAPPINGS, ...CROSSWALK_MAPPINGS];
+
+/**
+ * Mapping types that mean "the same requirement": only these carry evidence (and notes) across frameworks. A SUBSET or SUPERSET
+ * row says the controls overlap, not that satisfying one satisfies the other, so it is shown as a reference and never inherited.
+ */
+export const EVIDENCE_INHERITING_MAPPING_TYPES: ReadonlySet<MappingType> = new Set<MappingType>(['EXACT', 'EQUIVALENT']);
+
+export function isEquivalentMapping(m: ControlMapping | { mappingType?: MappingType }): boolean {
+  return !!m.mappingType && EVIDENCE_INHERITING_MAPPING_TYPES.has(m.mappingType);
+}
+
 /**
  * Returns all mapped control definitions for a given source or target control ID
- * Bidirectional lookup supported!
+ * Bidirectional lookup supported! Includes every mapping type; use getEquivalentControlIds for inheritance.
  */
 export function getCrossFrameworkMappings(controlId: string): ControlMapping[] {
   const cleanId = controlId.trim().toUpperCase();
@@ -514,10 +536,10 @@ export function getCrossFrameworkMappings(controlId: string): ControlMapping[] {
 }
 
 /**
- * Returns a list of equivalent control IDs across other frameworks
+ * Returns a list of equivalent control IDs across other frameworks (EXACT / EQUIVALENT mappings only: this drives evidence inheritance)
  */
 export function getEquivalentControlIds(controlId: string): string[] {
-  const mappings = getCrossFrameworkMappings(controlId);
+  const mappings = getCrossFrameworkMappings(controlId).filter(isEquivalentMapping);
   const ids = new Set<string>();
   const cleanId = controlId.trim().toUpperCase();
 
