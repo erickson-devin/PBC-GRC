@@ -39,6 +39,7 @@ import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { StigRule } from '../../types/stig';
 import { ObjectiveChecklist } from './ObjectiveChecklist';
 import { CrosswalkPanel } from './CrosswalkPanel';
+import { OdpPanel } from './OdpPanel';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
 import { useFipsModules } from '../../hooks/useFipsModules';
@@ -585,6 +586,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   placeholder="Detail your organizational implementation for this requirement across people, processes, and technology..."
                   className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 transition-all font-mono leading-relaxed disabled:opacity-60"
                 />
+                <OdpPanel control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
               </div>
 
               {/* Starter Templates */}

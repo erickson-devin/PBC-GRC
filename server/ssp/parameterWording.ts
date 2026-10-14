@@ -14,7 +14,7 @@ import { tokenize } from './retrieval';
  * else. So each option is validated by this program before anyone sees it: no vague words, an explicit value, a Selection
  * answered with its own listed choices, and a rewrite that keeps what the sentence said. Options that fail are dropped.
  */
-export const WORDING_PROMPT_VERSION = 'odp-ai-1';
+export const WORDING_PROMPT_VERSION = 'odp-ai-2';
 const MAX_OPTIONS = 3;
 const MAX_VALUE_CHARS = 120;
 const MAX_SENTENCE_CHARS = 600;
@@ -28,7 +28,13 @@ export interface WordingControl {
 }
 
 export type WordingRequest =
-  | { mode: 'PARAMETER'; control: WordingControl; parameter: Pick<ControlParameter, 'kind' | 'label' | 'prompt' | 'choices' | 'selectionMode'> }
+  | {
+      mode: 'PARAMETER';
+      control: WordingControl;
+      parameter: Pick<ControlParameter, 'kind' | 'label' | 'prompt' | 'choices' | 'selectionMode'>;
+      /** Where the blank sits: the sentence of the control (or of the objective) that holds it, the blank marked <<like this>>. */
+      context?: string;
+    }
   | { mode: 'SENTENCE'; control: WordingControl; sentence: string; terms: string[] };
 
 export interface WordingOption {
@@ -52,15 +58,16 @@ const oneLine = (s: string): string => s.replace(/[\u0000-\u001f]+/g, ' ').repla
 
 // ------------------------------------------------------------------------------------------------ prompts
 
-export const PARAMETER_SYSTEM = `You help a defense contractor write audit-ready wording for a security control.
-An assessor must be able to test the wording, so every value must be explicit: a number with a unit (every 90 days, within 24 hours, 14 characters), a named role, or a named tool.
-Never use vague words such as periodically, regularly, as needed, promptly or appropriate.
+export const PARAMETER_SYSTEM = `You help a defense contractor fill in one organization-defined parameter of a NIST security control with audit-ready wording.
+An assessor must be able to test the value, so it must be explicit and specific: a number with a unit (every 90 days, within 24 hours, 14 characters), a named job title (the IT Security Manager, the system owner), a named document or tool, or a concrete list of items.
+Never use vague words (periodically, regularly, as needed, promptly, appropriate) and never generic filler such as "specific roles", "designated personnel", "relevant criteria" or "as defined by the organization".
 
-Give 1 to 3 different options for the PARAMETER. Rules:
-- Each "value" is short (a few words) and ready to put into a sentence.
-- Make it realistic for a small defense contractor and in line with common CMMC, NIST and DISA practice.
-- If the PARAMETER lists CHOICES, "value" must be copied exactly from the CHOICES.
-- "note" says in one short sentence why the value is reasonable. Do not invent standards or citations.
+You are given the CONTROL, the SENTENCE in which the parameter appears (the blank is marked <<like this>>) and what the PARAMETER is. Every option must read naturally in place of the marked blank in that sentence.
+- Give 1 to 3 different options. Each "value" is short (a few words), ready to drop into the sentence.
+- Realistic for a small defense contractor and in line with common CMMC, NIST and DISA practice.
+- If CHOICES are listed, "value" must be copied exactly from the CHOICES.
+- Match what the blank asks for: a frequency or time period needs a number and a unit; "personnel or roles" needs job titles; "criteria", "policy" or "procedures" need concrete items or named documents; "attributes" needs concrete attributes (department, project, clearance level).
+- "note" is one short sentence on why the value is reasonable. Do not invent standards or citations.
 Answer with JSON only.`;
 
 export const SENTENCE_SYSTEM = `You rewrite one sentence of a security control narrative so that it can be audited.
@@ -93,7 +100,8 @@ export function userMessage(req: WordingRequest): string {
   if (req.mode === 'SENTENCE') return `${head}\nSENTENCE: ${JSON.stringify(clip(oneLine(req.sentence), MAX_SENTENCE_CHARS))}\nVAGUE WORDS: ${req.terms.join(', ')}`;
   const p = req.parameter;
   const choices = p.kind === 'SELECTION' && p.choices?.length ? `\nCHOICES:\n${p.choices.map((c) => `- ${c}`).join('\n')}` : '';
-  return `${head}\nPARAMETER (${p.kind.toLowerCase()}): ${oneLine(p.prompt)}${choices}`;
+  const where = req.context ? `\nSENTENCE: ${JSON.stringify(clip(oneLine(req.context), 400))}` : '';
+  return `${head}${where}\nPARAMETER (${p.kind.toLowerCase()}): ${oneLine(p.prompt)}${choices}`;
 }
 
 // ------------------------------------------------------------------------------------------------ validation
@@ -104,6 +112,8 @@ export const isExplicitValue = (text: string): boolean => /\d/.test(text) || PER
 /** Parameters about an amount of time or a quantity need a number or a named period; others (roles, tools) just must not be empty or evasive. */
 const NEEDS_QUANTITY = /(frequency|period|time|interval|duration|number|count|length|days|hours|minutes|window|threshold|attempts|retention|size|age|limit)/i;
 const EVASIVE = /^(n\/?a|none|tbd|as defined|the organi[sz]ation|organization-defined|to be determined|unknown)\.?$/i;
+/** Filler that sounds like an answer and is not one: "specific organizational roles", "designated personnel", "relevant criteria". */
+const GENERIC = /\b(specific|designated|relevant|applicable|appropriate|certain|various|organizational|organisational)\s+(organi[sz]ational\s+)?(roles?|personnel|staff|individuals?|people|criteria|policy|policies|procedures?|attributes?|requirements?|mechanisms?|items?)\b/i;
 
 const norm = (s: string): string => oneLine(s).toLowerCase();
 
@@ -122,7 +132,7 @@ export function validateParameterOptions(
   for (const r of raw) {
     let value = oneLine(r.value);
     const note = clip(oneLine(r.note), 200);
-    let ok = value.length > 0 && value.length <= MAX_VALUE_CHARS && !containsVagueWording(value) && !EVASIVE.test(value);
+    let ok = value.length > 0 && value.length <= MAX_VALUE_CHARS && !containsVagueWording(value) && !EVASIVE.test(value) && !GENERIC.test(value);
     if (ok && param.kind === 'SELECTION') {
       const picked = value.split(/\s*;\s*/).map((v) => byNorm.get(norm(v))).filter((v): v is string => Boolean(v));
       const pieces = value.split(/\s*;\s*/).filter(Boolean);

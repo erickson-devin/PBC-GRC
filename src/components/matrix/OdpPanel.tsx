@@ -21,6 +21,15 @@ type Suggestion = { state: 'loading' } | { state: 'error'; message: string } | {
  * use the baseline, or ask the local model to suggest wording. Suggestions are only ever applied by a click, as an ordinary
  * edit of the narrative that can be undone; nothing is saved by this panel.
  */
+/** The sentence of the narrative that holds a tag, the tag marked <<like this>> (what the model is told about where the blank sits). */
+function tagSentence(notes: string, p: ControlParameter): string | undefined {
+  if (p.start === undefined || p.end === undefined) return undefined;
+  const from = Math.max(notes.lastIndexOf('.', p.start - 1), notes.lastIndexOf('\n', p.start - 1)) + 1;
+  const stop = notes.slice(p.end).search(/[.\n]/);
+  const to = stop === -1 ? notes.length : p.end + stop + 1;
+  return (notes.slice(from, p.start) + `<<${p.prompt}>>` + notes.slice(p.end, to)).replace(/\s+/g, ' ').trim();
+}
+
 export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange }) => {
   const catalogParams = useMemo(() => resolveParameters(control), [control]);
   const tagParams = useMemo(() => parseParameterTags(notes, `${control.id}:notes`, 'NOTES'), [notes, control.id]);
@@ -118,7 +127,7 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
     const key = `p:${p.id}`;
     const body: WordingSuggestionRequest =
       p.source === 'NOTES'
-        ? { controlId: control.id, parameter: { kind: p.kind, label: p.label, prompt: p.prompt, choices: p.choices, selectionMode: p.selectionMode } }
+        ? { controlId: control.id, parameter: { kind: p.kind, label: p.label, prompt: p.prompt, choices: p.choices, selectionMode: p.selectionMode }, context: tagSentence(notes, p) }
         : { controlId: control.id, parameterId: p.id };
     return (
       <li key={p.id} className="rounded-xl bg-slate-900/70 border border-slate-700/70 p-3 space-y-2">
