@@ -1,7 +1,9 @@
 import './testEnv';
 import './localAuthEnv';
 import { server } from '../server/index';
-import { __resetAiAssistThrottleForTests } from '../server/routes/aiAssist';
+import { __resetAiAssistThrottleForTests, sentenceAround } from '../server/routes/aiAssist';
+import { getFrameworkControls } from '../src/data/frameworks';
+import { resolveParameters } from '../src/data/frameworks/parameters';
 import { __resetOllamaCacheForTests } from '../server/ssp/ollama';
 import { isExplicitValue, userMessage, validateParameterOptions, validateSentenceOptions } from '../server/ssp/parameterWording';
 import { startFakeOllama } from './fakeOllama';
@@ -72,11 +74,29 @@ function unitTests() {
   assert(sentence.options.map((o) => o.text).join('|') === 'Accounts are reviewed every 90 days by the IT lead.|Accounts are reviewed quarterly by the IT lead.' && sentence.rejected === 5, 'only faithful rewrites with an explicit value survive', sentence);
   assert(validateSentenceOptions(original, ['periodically'], [{ rewrite: 'x'.repeat(700), note: '' }]).options.length === 0, 'an over-long rewrite is dropped');
 
+  const generic = validateParameterOptions({ kind: 'ASSIGNMENT', prompt: 'organization-defined personnel or roles' }, [
+    { value: 'specific organizational roles', note: '' },
+    { value: 'designated personnel', note: '' },
+    { value: 'relevant criteria', note: '' },
+    { value: 'the IT Security Manager', note: 'Owns the control.' },
+  ]);
+  assert(generic.options.length === 1 && generic.options[0].text === 'the IT Security Manager', 'generic filler ("specific organizational roles", "designated personnel") is dropped; a named role stays', generic);
+
+  const ac2 = getFrameworkControls('NIST_800_53_REV5').find((c) => c.id === 'AC-2')!;
+  const params = resolveParameters(ac2);
+  const approvals = params.find((p) => p.prompt === 'organization-defined personnel or roles')!;
+  const around = sentenceAround(ac2, approvals) ?? '';
+  assert(/^Require approvals by <<organization-defined personnel or roles>> for requests to create accounts;$/.test(around), 'an 800-53 parameter is sent with the line of the control that holds it, the blank marked', around);
+  const nested = sentenceAround(ac2, params.find((p) => p.prompt === 'organization-defined time period')!) ?? '';
+  assert(nested.includes('<<organization-defined time period>>') && nested.startsWith('Notify account managers'), 'a short list item is sent with the line that introduces it', nested);
+
   console.log('\n--- What is sent to the model ---');
   const msg = userMessage({ mode: 'SENTENCE', control: { id: 'AC.L1-3.1.1', title: 'Authorized Access', requirement: 'Limit system access.' }, sentence: original, terms: ['periodically'] });
   assert(msg.includes('AC.L1-3.1.1') && msg.includes(JSON.stringify(original)) && msg.includes('VAGUE WORDS: periodically') && msg.split('\n').length === 4, 'a sentence request is the control, the one sentence and the vague words: nothing else');
   const pm = userMessage({ mode: 'PARAMETER', control: { id: 'IA-5', title: 'Authenticators', requirement: 'Manage authenticators.' }, parameter: { kind: 'SELECTION', label: 'Selection', prompt: 'Select one', choices: ['a', 'b'] } });
   assert(/CHOICES:\n- a\n- b$/.test(pm), 'a Selection request lists its choices');
+  const ctxMsg = userMessage({ mode: 'PARAMETER', control: { id: 'AC-2', title: 'Account Management', requirement: 'Manage accounts.' }, parameter: { kind: 'ASSIGNMENT', label: 'time period', prompt: 'organization-defined time period' }, context: 'Disable accounts within <<organization-defined time period>> when users are terminated.' });
+  assert(ctxMsg.includes('SENTENCE: "Disable accounts within <<organization-defined time period>> when users are terminated."'), 'a parameter request carries the sentence the blank sits in, the blank marked');
 }
 
 // ---------------------------------------------------------------------------------------------- API
@@ -139,7 +159,7 @@ async function apiTests() {
   console.log('\n--- A vague sentence ---');
   const sres = await ask(owner, { controlId: 'AC.L1-3.1.1', sentence: SENT, notes: 'SECRET-CUI: the rest of the narrative must never be sent' });
   assert(sres.status === 200 && sres.body?.mode === 'SENTENCE' && sres.body.options.length === 1 && sres.body.options[0].text === 'Accounts are reviewed every 90 days by the IT lead.', 'one good rewrite comes back; the drifting and still-vague ones were dropped', sres.body);
-  assert(sres.body?.rejected === 2 && sres.body?.model === 'llama3.2:3b' && sres.body?.promptVersion === 'odp-ai-1', 'with how many were dropped, the model and the prompt version');
+  assert(sres.body?.rejected === 2 && sres.body?.model === 'llama3.2:3b' && sres.body?.promptVersion === 'odp-ai-2', 'with how many were dropped, the model and the prompt version');
   const sent = fake.chats[0];
   assert(sent.user.includes('AC.L1-3.1.1') && sent.user.includes(JSON.stringify(SENT)) && !sent.user.includes('SECRET-CUI') && !sent.system.includes('SECRET-CUI'), 'only the control and the one sentence reached the model: other fields (the rest of the narrative) never do');
   assert(sent.format?.required?.includes('options') && sent.options.temperature === 0, 'the answer is schema-constrained and deterministic');
@@ -151,6 +171,9 @@ async function apiTests() {
   const registry = await ask(owner, { controlId: 'AC.L2-3.1.8', parameterId: 'ac_3_1_8_window' });
   assert(registry.status === 200 && registry.body?.mode === 'PARAMETER' && registry.body.options.map((o: Json) => o.text).join() === 'every 90 days', 'a registry parameter (AC 3.1.8 observation window) is answered with explicit values only', registry.body);
   assert(/Observation Window/.test(fake.chats[fake.chats.length - 1].user) && /REQUIREMENT:/.test(fake.chats[fake.chats.length - 1].user), 'the control and the parameter are in the prompt');
+  assert(/SENTENCE: "[^"]*\(the blank is: Observation Window\)"/.test(fake.chats[fake.chats.length - 1].user), 'a registry parameter is sent with the objective it belongs to', fake.chats[fake.chats.length - 1].user);
+  const withCtx = await ask(owner, { controlId: 'AC.L1-3.1.1', parameter: { kind: 'ASSIGNMENT', prompt: 'organization-defined frequency' }, context: 'Accounts are reviewed <<organization-defined frequency>> by the IT lead.' });
+  assert(withCtx.status === 200 && fake.chats[fake.chats.length - 1].user.includes('SENTENCE: "Accounts are reviewed <<organization-defined frequency>> by the IT lead."'), 'the editor may pass the one sentence of the narrative that holds a tag');
   const inlineSel = await ask(owner, { controlId: 'AC.L1-3.1.1', parameter: { kind: 'SELECTION', label: 'Selection', prompt: 'Select one', choices: ['lock the account', 'notify the administrator'] } });
   assert(inlineSel.status === 200 && inlineSel.body.options.length === 1 && inlineSel.body.options[0].text === 'lock the account', 'a Selection found in the narrative is answered with one of its choices (the made-up one is dropped)', inlineSel.body);
   const inlineAssign = await ask(owner, { controlId: 'AC.L1-3.1.1', parameter: { kind: 'ASSIGNMENT', prompt: 'organization-defined frequency' } });

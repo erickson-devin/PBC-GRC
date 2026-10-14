@@ -12,7 +12,7 @@ export interface AiAssistStatus {
 
 export type WordingSuggestionRequest =
   | { controlId: string; parameterId: string }
-  | { controlId: string; parameter: Pick<ControlParameter, 'kind' | 'label' | 'prompt' | 'choices' | 'selectionMode'> }
+  | { controlId: string; parameter: Pick<ControlParameter, 'kind' | 'label' | 'prompt' | 'choices' | 'selectionMode'>; /** The sentence of the narrative that holds the tag, with the tag marked <<like this>> */ context?: string }
   | { controlId: string; sentence: string };
 
 export interface WordingSuggestions {

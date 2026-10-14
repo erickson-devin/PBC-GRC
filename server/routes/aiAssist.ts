@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getFrameworkControls } from '../../src/data/frameworks';
+import { NIST_800_171A_REGISTRY, normalizeControlNumber } from '../../src/data/frameworks/assessmentObjectives';
 import { findVagueWording, resolveParameters } from '../../src/data/frameworks/parameters';
 import type { ComplianceFramework, ControlParameter, FrameworkControlDefinition } from '../../src/types/framework';
 import { frameworksDefiningControl, ensureControlInProgram } from '../middleware/frameworkGuard';
@@ -60,6 +61,36 @@ function findControl(controlId: string): FrameworkControlDefinition | null {
   return null;
 }
 
+const MAX_CONTEXT = 400;
+
+/**
+ * The sentence of the control's own text that holds a parameter, with the blank marked <<like this>>: without it the model only
+ * sees "organization-defined prerequisites and criteria" and has to guess what they are prerequisites OF.
+ */
+export function sentenceAround(control: FrameworkControlDefinition, p: ControlParameter): string | undefined {
+  if (p.source === 'STATEMENT' && control.statement && p.start !== undefined && p.end !== undefined) {
+    const text = control.statement;
+    const lines = text.split('\n');
+    let at = 0;
+    let n = 0;
+    while (n < lines.length - 1 && at + lines[n].length < p.start) at += lines[n++].length + 1;
+    const indent = (l: string): number => l.length - l.trimStart().length;
+    const tidy = (l: string): string => l.replace(/^\s*\(?[a-z0-9]{1,3}[.)]\s+/i, '').replace(/\s+/g, ' ').trim(); // "e. Require ..." -> "Require ..."
+    const own = lines[n];
+    const line = tidy(own.slice(0, p.start - at) + `<<${p.prompt}>>` + own.slice(p.end - at));
+    // A nested item ("1. <<time period>> when accounts are no longer required;") means little without the line that introduces it
+    let intro = '';
+    if (indent(own) > 0) for (let k = n - 1; k >= 0; k--) if (indent(lines[k]) < indent(own)) { intro = tidy(lines[k]); break; }
+    return `${intro ? intro + ' ' : ''}${line}`.slice(0, MAX_CONTEXT);
+  }
+  if (p.source === 'OBJECTIVE') {
+    const objectives = NIST_800_171A_REGISTRY[normalizeControlNumber(control.id)]?.objectives ?? [];
+    const hit = objectives.find((o) => o.odpParameters?.some((x) => x.id === p.id));
+    return hit ? `${hit.text} (the blank is: ${p.prompt})`.slice(0, MAX_CONTEXT) : undefined;
+  }
+  return undefined;
+}
+
 type Parsed = { ok: true; request: WordingRequest } | { ok: false; status: number; error: string };
 
 function parseRequest(body: unknown, control: FrameworkControlDefinition): Parsed {
@@ -79,7 +110,7 @@ function parseRequest(body: unknown, control: FrameworkControlDefinition): Parse
     if (typeof b.parameterId !== 'string') return { ok: false, status: 400, error: 'parameterId must be text' };
     const found = resolveParameters(control).find((p) => p.id === b.parameterId);
     if (!found) return { ok: false, status: 400, error: 'This control has no such parameter.' };
-    return { ok: true, request: { mode: 'PARAMETER', control: ctl, parameter: found } };
+    return { ok: true, request: { mode: 'PARAMETER', control: ctl, parameter: found, context: sentenceAround(control, found) } };
   }
 
   // A parameter found as a tag in the person's own narrative: not in the catalog, so it is validated strictly here
@@ -90,11 +121,14 @@ function parseRequest(body: unknown, control: FrameworkControlDefinition): Parse
     const choices = p.choices;
     if (!Array.isArray(choices) || choices.length === 0 || choices.length > MAX_CHOICES || choices.some((c) => typeof c !== 'string' || !c.trim() || c.length > MAX_CHOICE_CHARS)) return { ok: false, status: 400, error: `a Selection needs 1 to ${MAX_CHOICES} choices of at most ${MAX_CHOICE_CHARS} characters` };
   }
+  // The sentence of the narrative that holds the tag (sent by the editor): one sentence, never the whole narrative
+  const context = typeof b.context === 'string' && b.context.trim() ? b.context.replace(/\s+/g, ' ').trim().slice(0, MAX_CONTEXT) : undefined;
   return {
     ok: true,
     request: {
       mode: 'PARAMETER',
       control: ctl,
+      context,
       parameter: {
         kind: p.kind,
         label: typeof p.label === 'string' ? p.label.slice(0, 100) : 'parameter',

@@ -39,6 +39,9 @@ import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { StigRule } from '../../types/stig';
 import { ObjectiveChecklist } from './ObjectiveChecklist';
 import { CrosswalkPanel } from './CrosswalkPanel';
+import { OdpPanel } from './OdpPanel';
+import { SspStatementEditor, hasStatementItems } from './SspStatementEditor';
+import { ImportAnalysisPanel } from './ImportAnalysisPanel';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
 import { useFipsModules } from '../../hooks/useFipsModules';
@@ -449,7 +452,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               C3PAO Assessment Method: All objectives must be satisfied for overall control compliance.
             </p>
             <p className="text-xs text-slate-400">
-              Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as MET or N/A. Any NOT_MET objective drops the parent control to NOT_MET.
+              {control.framework === 'NIST_800_53_REV5'
+                ? 'Under NIST SP 800-53A, each determination statement of the control must be evaluated and verified as MET or N/A. Any NOT_MET objective drops the parent control to NOT_MET.'
+                : 'Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as MET or N/A. Any NOT_MET objective drops the parent control to NOT_MET.'}
             </p>
           </div>
         </div>
@@ -555,7 +560,14 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
         <div className="p-6 overflow-y-auto flex-1 min-h-[420px]">
           {/* 1. PRIMARY TAB: Objective-Level Evaluation */}
           {activeTab === 'objectives' && (
-            <ObjectiveChecklist controlId={control.id} />
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400">
+                <strong className="text-slate-200">Audit view.</strong> Assess each determination statement and see what an SSP import found for this control.
+                To write how the control is implemented, use the <button type="button" onClick={() => setActiveTab('narrative')} className="underline text-cyan-300 hover:text-cyan-200">System Security Plan (SSP)</button> tab.
+              </p>
+              <ImportAnalysisPanel controlId={control.id} tenantId={currentTenant.id} />
+              <ObjectiveChecklist controlId={control.id} />
+            </div>
           )}
 
           {/* 2. Implementation Narrative & SSP Tab */}
@@ -568,6 +580,15 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 </div>
               )}
 
+              {hasStatementItems(control) ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-400">
+                    <strong className="text-slate-200">Authoring view.</strong> Describe how each item of this control is met. The answers are saved in the control&apos;s implementation narrative, under a &quot;Statement a:&quot; line for each item.
+                    To assess objectives or review an SSP import, use the <button type="button" onClick={() => setActiveTab('objectives')} className="underline text-cyan-300 hover:text-cyan-200">Assessment Objectives</button> tab.
+                  </p>
+                  <SspStatementEditor control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
+                </div>
+              ) : (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
@@ -585,7 +606,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   placeholder="Detail your organizational implementation for this requirement across people, processes, and technology..."
                   className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 transition-all font-mono leading-relaxed disabled:opacity-60"
                 />
+                <OdpPanel control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
               </div>
+              )}
 
               {/* Starter Templates */}
               {starterTemplates.length > 0 && (

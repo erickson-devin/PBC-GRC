@@ -3932,15 +3932,16 @@ export function getAssessmentObjectivesForControl(
     FAR_L1_TO_800_171_MAP[normNum.toLowerCase()];
 
   const upper = trimmed.toUpperCase();
+  // SP 800-53 controls and enhancements: the official SP 800-53A objectives (once loaded) come before the older hand-written ones
+  const official = nist80053ObjectiveTemplate(trimmed);
   const registered =
+    official ||
     (mappedKey ? NIST_800_171A_REGISTRY[mappedKey] : undefined) ||
     NIST_800_171A_REGISTRY[trimmed] ||
     NIST_800_171A_REGISTRY[upper] ||
     NIST_800_171A_REGISTRY[lower] ||
     NIST_800_171A_REGISTRY[normNum] ||
-    NIST_800_171A_REGISTRY[normNum.toUpperCase()] ||
-    // every SP 800-53 control and enhancement: the official SP 800-53A objectives, once loaded
-    nist80053ObjectiveTemplate(trimmed);
+    NIST_800_171A_REGISTRY[normNum.toUpperCase()];
 
   // 1. If explicit NIST SP 800-171A determination statements exist in registry
   if (registered && registered.objectives.length > 0) {
