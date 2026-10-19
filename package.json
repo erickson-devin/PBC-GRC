@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"tsx server/index.ts\"",
     "dev:server": "tsx watch server/index.ts",
-    "dev:full": "concurrently \"vite\" \"tsx server/index.ts\" \"python3 scanner-agent/runner.py --daemon\"",
+    "dev:full": "concurrently \"vite\" \"tsx server/index.ts\"",
     "start": "tsx server/index.ts",
     "start:server": "tsx server/index.ts",
     "build": "tsc && vite build",
@@ -60,7 +60,8 @@
     "test:policy": "tsx tests/enclaveStackPolicy.test.ts",
     "test:offboarding": "tsx tests/offboardingAndDestruction.test.ts",
     "test:all": "tsx tests/tenantIsolation.test.ts && tsx tests/multiFramework.test.ts && tsx tests/stigAutomation.test.ts && tsx tests/artifactGenerator.test.ts && tsx tests/enclaveFrameworkScope.test.ts && tsx tests/cmmcComplianceSafeguards.test.ts && tsx tests/enclaveStackPolicy.test.ts && tsx tests/offboardingAndDestruction.test.ts && tsx tests/storageConfig.test.ts && tsx tests/rbac.test.ts && tsx tests/sprsScoring.test.ts && tsx tests/dbSchema.test.ts && tsx tests/vmSchema.test.ts && tsx tests/vmIngestSchema.test.ts && tsx tests/vmNormalize.test.ts && tsx tests/tenantMembers.test.ts && tsx tests/tenantBootstrap.test.ts && tsx tests/localAuth.test.ts && tsx tests/dbMode.test.ts && tsx tests/tenantDiscovery.test.ts && tsx tests/tenantSync.test.ts && tsx tests/tenantOnboarding.test.ts && tsx tests/invitations.test.ts && tsx tests/teamSync.test.ts && tsx tests/assets.test.ts && tsx tests/assetService.test.ts && tsx tests/fipsValidation.test.ts && tsx tests/programs.test.ts && tsx tests/appRoute.test.ts && tsx tests/setupWizard.test.ts && tsx tests/sspImport.test.ts && tsx tests/ollama.test.ts && tsx tests/sspGrounding.test.ts && tsx tests/sspAnalyze.test.ts && tsx tests/sspImportAi.test.ts && tsx tests/controlParameters.test.ts && tsx tests/parameterWording.test.ts && tsx tests/crosswalk.test.ts && tsx tests/sspNist80053.test.ts && tsx tests/narrativeItems.test.ts && tsx tests/sspStatementEditor.test.ts && tsx tests/vmIngest.test.ts",
-    "scanner:test": "python3 scanner-agent/runner.py --test-scan",
+    "scanner:test": "cd exporters/pbc-vm-exporter && python -m pbc_vm_exporter --dry-run --sample",
+    "test:exporter": "cd exporters/pbc-vm-exporter && python -m pytest -q",
     "preview": "vite preview"
   },
   "dependencies": {

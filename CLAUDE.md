@@ -1,20 +1,21 @@
 # CLAUDE.md: PBC-GRC ("Event Horizon: Singularity")
 
-On-prem CMMC / NIST compliance platform: React + Vite client (`src/`), Express 5 + pg server (`server/`), tsx script tests (`tests/`), shipped catalogs in `src/data/frameworks/`. `scanner-agent/` is a **separate repository** (a nested git repo with its own CLAUDE.md and Python tooling); nothing below applies to it.
+On-prem CMMC / NIST compliance platform: React + Vite client (`src/`), Express 5 + pg server (`server/`), tsx script tests (`tests/`), shipped catalogs in `src/data/frameworks/`. The push-side vulnerability exporter lives in `exporters/pbc-vm-exporter/` (Python 3.11, `requests` only; its tests run with `npm run test:exporter` inside a venv, `npm run scanner:test` is its offline dry run). `scanner-agent/` is gitignored and unrelated.
 
 ## Commands & gates
 
 Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>=22.13`). Run from the repo root.
 
-| Gate | Command | Baseline (2026-10-18, branch `feature/ssp-phase-3-nist80053`) |
+| Gate | Command | Baseline (2026-10-19, branch `feature/vm-phase-1-wazuh`) |
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) | exit 0 |
 | Build | `npm run build` (`tsc && vite build`) | exit 0 |
-| Tests | `npm run test:all` (about 1m25s) | exit 0: 37 suites, 1718 of 1718 assertions |
+| Tests | `npm run test:all` (about 2m) | exit 0: 38 suites, 2406 of 2406 assertions |
 | One suite | `npx tsx tests/<name>.test.ts` (or `npm run test:<name>`) | each prints a final `📊 TEST RESULTS: n / n` line |
 | Node 22 (what CI runs) | `npx -y -p node@22 -- npm run test:all` | passes |
+| Exporter (Python) | `cd exporters/pbc-vm-exporter && python -m pytest -q` (venv: `python -m venv .venv`, then `pip install -e ".[dev]"`) | 227 passed, 1 skipped (POSIX-only); CI job "exporter" |
 
-* These three gates (typecheck, build, tests) are exactly what `.github/workflows/ci.yml` runs on every PR to `main`; `docker-publish.yml` repeats them on `main` before publishing an image. There is no lint, format, locale or spec-parity gate, and no linter or formatter is configured: **match the surrounding style by hand**. `/test` runs all of the above.
+* CI (`.github/workflows/ci.yml`) runs two jobs on every PR to `main`: `test` (the three gates: typecheck, build, tests) and `exporter` (pytest plus the offline dry run); `docker-publish.yml` repeats them on `main` before publishing an image. There is no lint, format, locale or spec-parity gate, and no linter or formatter is configured: **match the surrounding style by hand**. `/test` runs all of the above.
 * Suites run against the in-memory store (`DB_MODE=memory`, set by `tests/testEnv.ts`): no database or secrets. Suites that boot the server share **port 8080**, so **never run two of them at the same time**.
 * `npx tsx scripts/generateNist80053.ts --check` verifies the generated NIST data (`src/data/frameworks/nist80053/*.generated.json`) against NIST's sources (needs network the first time).
 * `git remote`: only `origin` (https://github.com/erickson-devin/PBC-GRC.git). The GitHub CLI (`gh`) is **not installed** on this machine; if it is installed later, pass `--repo erickson-devin/PBC-GRC` to every `gh` command.

@@ -1,0 +1,9 @@
+{
+  "data": {
+    "affected_items": [
+      { "id": "001", "name": "web-01", "ip": "10.0.0.5", "status": "active", "os": { "name": "Ubuntu", "version": "22.04" } },
+      { "id": "002", "name": "db-01", "ip": "10.0.0.6", "status": "disconnected", "os": { "name": "RHEL", "version": "9.3" } }
+    ],
+    "total_affected_items": 3
+  }
+}

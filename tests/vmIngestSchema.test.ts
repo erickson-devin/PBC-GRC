@@ -250,6 +250,9 @@ async function main() {
   assert(props(defs.finding).vuln_id.pattern === p.vulnId, 'pattern vulnId');
   assert(props(defs.finding).refs.items.pattern === p.ref, 'pattern ref');
   assert(doc.properties.schema_version.const === 1, 'schema_version const 1');
+  const vendored = fileURLToPath(new URL('../exporters/pbc-vm-exporter/pbc_vm_exporter/contract/ingest.schema.json', import.meta.url));
+  assert(fs.existsSync(vendored), 'exporter vendors the contract', vendored);
+  assert(fs.existsSync(vendored) && fs.readFileSync(vendored).equals(fs.readFileSync(schemaFile)), 'vendored contract is byte-identical to server/vm/ingest.schema.json');
 
   // ---------------------------------------------------------------------------------------------- formatJsonPath
   console.log('\n--- formatJsonPath ---');

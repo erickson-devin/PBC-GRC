@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]          # 64+ for PEP 660 editable installs; no plugins
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pbc-vm-exporter"
+dynamic = ["version"]
+description = "Pushes Wazuh vulnerability state to PBC-GRC (POST /api/v1/vm/ingest)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+pbc-vm-exporter = "pbc_vm_exporter.cli:main"
+
+[tool.setuptools]
+packages = ["pbc_vm_exporter"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pbc_vm_exporter.__version__" }
+
+[tool.setuptools.package-data]
+pbc_vm_exporter = ["contract/*.json", "samples/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

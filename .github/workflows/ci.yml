@@ -45,3 +45,31 @@ jobs:
       # The suites run against the in-memory store (DB_MODE=memory set by tests/testEnv.ts): no database or secrets needed
       - name: Test
         run: npm run test:all
+
+  exporter:
+    name: Exporter (Python) tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: exporters/pbc-vm-exporter/pyproject.toml
+
+      - name: Install the exporter and pytest
+        run: python -m pip install -e "exporters/pbc-vm-exporter[dev]"
+
+      # No test makes a network call: Wazuh and PBC-GRC are faked in the tests
+      - name: Test
+        working-directory: exporters/pbc-vm-exporter
+        run: python -m pytest -q
+
+      - name: Offline smoke (dry run on the bundled sample)
+        working-directory: exporters/pbc-vm-exporter
+        run: python -m pbc_vm_exporter --dry-run --sample
