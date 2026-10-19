@@ -33,6 +33,21 @@ export function resolveTenantLocalPath(tenantId: string, candidate: unknown): st
   return resolveWithin(path.join(localStorageRoot(), 'tenants', tenantId), candidate);
 }
 
+/**
+ * Reads a file the tenant's vault holds. `candidate` must be an absolute path that already sits inside
+ * <root>/tenants/<tenantId>/ (the same confinement the VM worker applies to a recorded path); anything else, and a missing
+ * file, returns null.
+ */
+export async function readTenantFile(tenantId: string, candidate: unknown): Promise<Buffer | null> {
+  const resolved = resolveTenantLocalPath(tenantId, candidate);
+  if (!resolved || resolved !== path.resolve(candidate as string)) return null;
+  try {
+    return await fs.promises.readFile(resolved);
+  } catch {
+    return null;
+  }
+}
+
 const TENANT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
