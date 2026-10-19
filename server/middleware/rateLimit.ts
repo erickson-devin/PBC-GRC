@@ -3,13 +3,13 @@ import { Request, Response, NextFunction } from 'express';
 /**
  * Small in-memory fixed-window limiter, keyed by client address. It is a speed bump for unauthenticated endpoints
  * (invitation preview / accept); the real protection for those is that tokens carry 256 bits of entropy.
- * `reset()` exists for tests.
+ * `key` overrides the bucket (default: the client address), e.g. to limit per service token. `reset()` exists for tests.
  */
-export function createRateLimiter(options: { windowMs: number; max: number }) {
+export function createRateLimiter(options: { windowMs: number; max: number; key?: (req: Request) => string }) {
   const hits = new Map<string, number[]>();
 
   const middleware = (req: Request, res: Response, next: NextFunction): void => {
-    const key = req.ip || 'unknown';
+    const key = options.key ? options.key(req) : req.ip || 'unknown';
     const now = Date.now();
     const recent = (hits.get(key) ?? []).filter((t) => now - t < options.windowMs);
     recent.push(now);

@@ -1,4 +1,4 @@
-import { buildPoolConfig } from '../server/db';
+import { assertSupportedPostgresVersion, buildPoolConfig } from '../server/db';
 import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql, rlsPolicyName } from '../server/schema';
 
 /**
@@ -109,6 +109,23 @@ assert((ssl.config.ssl as { rejectUnauthorized: boolean }).rejectUnauthorized ==
 const sslLoose = buildPoolConfig({ DATABASE_URL: 'postgres://a@h/d', DB_SSL: 'true', DB_SSL_REJECT_UNAUTHORIZED: 'false' } as NodeJS.ProcessEnv);
 assert((sslLoose.config.ssl as { rejectUnauthorized: boolean }).rejectUnauthorized === false, 'verification can be disabled explicitly (self-signed on-prem)');
 assert(url.config.max === 10, 'pool size is unchanged');
+
+console.log('\n--- PostgreSQL version check ---');
+function versionError(num: unknown, text: unknown): string | null {
+  try {
+    assertSupportedPostgresVersion(num, text);
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+assert(versionError('160004', '16.4') === null, 'PostgreSQL 16.4 is accepted');
+assert(versionError('150000', '15.0') === null, 'PostgreSQL 15.0 is accepted');
+assert(versionError('140011', '14.11') === 'PBC-GRC requires PostgreSQL 15 or later; found 14.11', 'PostgreSQL 14.11 is refused with a clear message', versionError('140011', '14.11'));
+assert(versionError('90624', '9.6.24') !== null, 'PostgreSQL 9.6.24 is refused');
+const unknownVersion = versionError(undefined, undefined);
+assert(unknownVersion !== null && unknownVersion.endsWith('found unknown'), 'an unreadable version is refused as unknown', unknownVersion);
+assert(versionError('abc', 'x') !== null, 'a non-numeric version number is refused');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

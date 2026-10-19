@@ -1,7 +1,7 @@
 import { TENANT_ROLES } from '../src/utils/roles';
 import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
 import { FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
-import { VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES } from '../src/types/vm';
+import { VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -50,6 +50,7 @@ const vmRunStatusList = VM_RUN_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
 const vmFindingStatusList = VM_FINDING_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmPoamStatusList = VM_POAM_STATUSES.map((s) => `'${s}'`).join(', ');
+const vmVulnSourceList = VM_VULN_SOURCES.map((s) => `'${s}'`).join(', ');
 
 /** Tables and columns (idempotent). */
 export const TABLES_SQL = `
@@ -363,8 +364,10 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vm_runs_source ON vm_runs (tenant_id, source_id, received_at DESC);
   CREATE INDEX IF NOT EXISTS idx_vm_runs_status ON vm_runs (tenant_id, status);
 
-  -- Global reference data (not tenant-bound, no RLS), like control_mappings. Ingest fills in blanks only
-  -- (COALESCE on conflict); the optional KEV / EPSS feeds are the authority for kev, kev_added_at, epss, epss_percentile.
+  -- Global reference data (not tenant-bound, no RLS), like control_mappings. Tenant ingest may only INSERT a
+  -- missing vuln_id (source INGEST) and never UPDATEs one. title, cvss_v3, severity, published_at, kev and epss are written only
+  -- by the feed job or a platform administrator, which overwrite INGEST rows. Exporter-reported details live in
+  -- vm_sightings.detail and vm_findings.severity.
   CREATE TABLE IF NOT EXISTS vm_vulns (
       vuln_id VARCHAR(64) PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
@@ -376,11 +379,13 @@ export const TABLES_SQL = `
       epss NUMERIC(5,4),
       epss_percentile NUMERIC(5,4),
       refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+      source VARCHAR(16) NOT NULL DEFAULT 'INGEST',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT vm_vulns_id_check CHECK (vuln_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$'),
       CONSTRAINT vm_vulns_cvss_check CHECK (cvss_v3 IS NULL OR (cvss_v3 BETWEEN 0 AND 10)),
       CONSTRAINT vm_vulns_severity_check CHECK (severity IS NULL OR severity IN (${vmSeverityList})),
-      CONSTRAINT vm_vulns_epss_check CHECK ((epss IS NULL OR epss BETWEEN 0 AND 1) AND (epss_percentile IS NULL OR epss_percentile BETWEEN 0 AND 1))
+      CONSTRAINT vm_vulns_epss_check CHECK ((epss IS NULL OR epss BETWEEN 0 AND 1) AND (epss_percentile IS NULL OR epss_percentile BETWEEN 0 AND 1)),
+      CONSTRAINT vm_vulns_source_check CHECK (source IN (${vmVulnSourceList}))
   );
 
   CREATE TABLE IF NOT EXISTS vm_findings (

@@ -24,6 +24,14 @@ export type VmFindingStatus = (typeof VM_FINDING_STATUSES)[number];
 export const VM_HUMAN_DECISIONS = ['RISK_ACCEPTED', 'FALSE_POSITIVE'] as const;
 export type VmHumanDecision = (typeof VM_HUMAN_DECISIONS)[number];
 
+/**
+ * Who wrote a vm_vulns row. Tenant ingest may only INSERT a missing vuln_id, with source INGEST, and never UPDATEs one. title, cvss_v3,
+ * severity, published_at, kev and epss are written only by the feed job (FEED) or a platform administrator (ADMIN), which overwrite INGEST rows.
+ * Append-only: the CHECK on vm_vulns.source is re-created from this list on every boot.
+ */
+export const VM_VULN_SOURCES = ['INGEST', 'FEED', 'ADMIN'] as const;
+export type VmVulnSource = (typeof VM_VULN_SOURCES)[number];
+
 export const VM_POAM_STATUSES = ['OPEN', 'IN_PROGRESS', 'COMPLETED', 'RISK_ACCEPTED'] as const;
 export type VmPoamStatus = (typeof VM_POAM_STATUSES)[number];
 
@@ -87,6 +95,7 @@ export interface VmVuln {
   epss: number | null;
   epssPercentile: number | null;
   refs: unknown[];
+  source: VmVulnSource;
   updatedAt: string;
 }
 

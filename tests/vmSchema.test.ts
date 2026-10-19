@@ -8,6 +8,7 @@ import {
   VM_RUN_STATUSES,
   VM_SEVERITIES,
   VM_SOURCE_KINDS,
+  VM_VULN_SOURCES,
 } from '../src/types/vm';
 
 /**
@@ -146,6 +147,10 @@ assert(poam.includes('ON DELETE SET NULL (finding_id)'), 'deleting a finding cle
 const vulns = block('vm_vulns');
 assert(vulns.includes('epss NUMERIC(5,4)') && vulns.includes('kev BOOLEAN NOT NULL DEFAULT FALSE') && vulns.includes('refs JSONB') && vulns.includes('cvss_v3 NUMERIC(3,1)'), 'vulnerability reference columns exist');
 assert(!vulns.includes('uuid_generate_v4'), 'vuln_id is the natural key, not a generated id');
+const vulnSources = parseEnum(vulns, 'vm_vulns_source_check');
+assert(vulns.includes("source VARCHAR(16) NOT NULL DEFAULT 'INGEST'"), 'vm_vulns.source is an inline column, NOT NULL DEFAULT INGEST');
+assert(same(vulnSources, VM_VULN_SOURCES) && same(vulnSources, ['INGEST', 'FEED', 'ADMIN']), 'vm_vulns source list equals VM_VULN_SOURCES (INGEST, FEED, ADMIN)', vulnSources);
+assert(!TABLES_SQL.includes('ALTER TABLE vm_vulns'), 'vm_vulns is never ALTERed on boot: an inline CHECK avoids rescanning the global CVE table under an exclusive lock at every start');
 
 console.log('\n--- enclave_assets additions and ordering ---');
 assert(TABLES_SQL.includes("ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS agent_ids JSONB NOT NULL DEFAULT '{}'::jsonb"), 'enclave_assets.agent_ids is added');
