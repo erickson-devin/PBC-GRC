@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { getDbMode, pool } from './db';
 import { CMMC_ASSET_CATEGORIES, isCmmcAssetCategory } from '../src/data/telemetry/assetScope';
 import { FipsFields, NO_FIPS, isFipsStandard, isFipsStatus, normalizeFips, resolveFips, FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
+import type { AgentAssetCandidate, AgentAssetDraft } from './vm/storeTypes';
 import type {
   AccretionDiscoveryItem,
   AccretionMetadata,
@@ -243,6 +244,9 @@ interface MemoryAsset extends AssetFields {
   createdAt: string;
   updatedBy: string;
   updatedAt: string;
+  /** Vulnerability-management bookkeeping (internal; not part of the asset API). */
+  agentIds?: Record<string, string>;
+  lastVulnSeenAt?: string | null;
 }
 const memoryAssets = new Map<string, MemoryAsset>(); // key: id
 
@@ -568,4 +572,146 @@ export async function ingestDiscovery(tenantId: string, items: AccretionDiscover
     result.newDiscoveredCount += 1;
   }
   return result;
+}
+
+// ------------------------------------------------------------------------------------------------ vulnerability-management worker
+// Internal, non-HTTP operations used by the VM worker. Each takes the worker's open transaction (`client`); without one,
+// the statement runs in its own tenant transaction. Memory mode ignores `client`.
+
+const withTenantClient = <T>(tenantId: string, client: pg.PoolClient | undefined, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> =>
+  client ? fn(client) : inTenantTx(tenantId, fn);
+
+const AGENT_ASSET_COLUMNS = 'id, asset_name, mac_address, agent_ids, discovery_status, last_vuln_seen_at';
+
+function rowToAgentCandidate(row: pg.QueryResultRow): AgentAssetCandidate {
+  return {
+    id: row.id,
+    hostName: row.asset_name,
+    macAddress: row.mac_address ?? '',
+    agentIds: (row.agent_ids ?? {}) as Record<string, string>,
+    discoveryStatus: row.discovery_status,
+    lastVulnSeenAt: row.last_vuln_seen_at ? new Date(row.last_vuln_seen_at).toISOString() : null,
+  };
+}
+
+const memoryToAgentCandidate = (m: MemoryAsset): AgentAssetCandidate => ({
+  id: m.id,
+  hostName: m.hostName,
+  macAddress: m.macAddress,
+  agentIds: { ...(m.agentIds ?? {}) },
+  discoveryStatus: m.discoveryStatus,
+  lastVulnSeenAt: m.lastVulnSeenAt ?? null,
+});
+
+/** Every asset of the tenant with the fields asset matching needs. Locks the rows (FOR UPDATE) so two workers serialize. */
+export async function listAgentAssetCandidates(tenantId: string, client?: pg.PoolClient): Promise<AgentAssetCandidate[]> {
+  if (isMemory()) return [...memoryAssets.values()].filter((m) => m.tenantId === tenantId).map(memoryToAgentCandidate);
+  return withTenantClient(tenantId, client, async (c) => {
+    const res = await c.query(`SELECT ${AGENT_ASSET_COLUMNS} FROM enclave_assets WHERE tenant_id = $1 FOR UPDATE`, [tenantId]);
+    return res.rows.map(rowToAgentCandidate);
+  });
+}
+
+export async function countAssets(tenantId: string, client?: pg.PoolClient): Promise<number> {
+  if (isMemory()) return [...memoryAssets.values()].filter((m) => m.tenantId === tenantId).length;
+  return withTenantClient(tenantId, client, async (c) => {
+    const res = await c.query('SELECT count(*)::int AS n FROM enclave_assets WHERE tenant_id = $1', [tenantId]);
+    return res.rows[0].n as number;
+  });
+}
+
+/**
+ * Creates an asset reported by a vulnerability agent (Contractor Risk Managed + UNCONFIRMED_DISCOVERY until a person
+ * classifies it). Returns null when the name is already taken (a concurrent insert), so the caller can pick another name.
+ */
+export async function createAgentReportedAsset(
+  tenantId: string,
+  draft: AgentAssetDraft,
+  seenAt: string,
+  actor: string,
+  client?: pg.PoolClient,
+): Promise<AgentAssetCandidate | null> {
+  if (isMemory()) {
+    const mine = [...memoryAssets.values()].filter((m) => m.tenantId === tenantId);
+    if (mine.length >= MAX_ASSETS_PER_TENANT) throw new AssetError('limit', 'This enclave has reached the maximum number of assets');
+    if (mine.some((m) => nameKey(m.hostName) === nameKey(draft.hostName))) return null;
+    const fields = withDefaults({
+      hostName: draft.hostName,
+      notes: draft.notes,
+      cmmcAssetCategory: draft.cmmcAssetCategory,
+      ipAddress: draft.ipAddress,
+      macAddress: draft.macAddress,
+      osProfile: draft.osProfile,
+      sourceOrigin: draft.sourceOrigin,
+      discoveryStatus: draft.discoveryStatus,
+    });
+    const now = new Date().toISOString();
+    const record: MemoryAsset = {
+      ...fields,
+      id: crypto.randomUUID(),
+      tenantId,
+      createdBy: actor,
+      createdAt: now,
+      updatedBy: actor,
+      updatedAt: now,
+      agentIds: { ...draft.agentIds },
+      lastVulnSeenAt: seenAt,
+    };
+    memoryAssets.set(record.id, record);
+    return memoryToAgentCandidate(record);
+  }
+  return withTenantClient(tenantId, client, async (c) => {
+    const res = await c.query(
+      `INSERT INTO enclave_assets
+         (tenant_id, asset_name, description, cmmc_category, ip_address, mac_address, os_profile, source_origin, discovery_status,
+          agent_ids, last_vuln_seen_at, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $12)
+       ON CONFLICT DO NOTHING
+       RETURNING ${AGENT_ASSET_COLUMNS}`,
+      [
+        tenantId, draft.hostName, draft.notes, draft.cmmcAssetCategory, draft.ipAddress, draft.macAddress, draft.osProfile,
+        draft.sourceOrigin, draft.discoveryStatus, JSON.stringify(draft.agentIds), seenAt, actor,
+      ],
+    );
+    return res.rows[0] ? rowToAgentCandidate(res.rows[0]) : null;
+  });
+}
+
+/**
+ * Records that an agent of kind `key` reported this asset: stores (or replaces) the agent id and moves last_vuln_seen_at
+ * forward. updated_by / updated_at change only when the agent id itself changes. Never touches the name, category, ip, mac,
+ * os or discovery status.
+ */
+export async function recordAgentReport(
+  tenantId: string,
+  assetId: string,
+  key: string,
+  agentId: string,
+  seenAt: string,
+  actor: string,
+  client?: pg.PoolClient,
+): Promise<void> {
+  if (isMemory()) {
+    const m = memoryAssets.get(assetId);
+    if (!m || m.tenantId !== tenantId) return;
+    const changed = (m.agentIds ?? {})[key] !== agentId;
+    m.agentIds = { ...(m.agentIds ?? {}), [key]: agentId };
+    if (!m.lastVulnSeenAt || seenAt > m.lastVulnSeenAt) m.lastVulnSeenAt = seenAt;
+    if (changed) {
+      m.updatedBy = actor;
+      m.updatedAt = new Date().toISOString();
+    }
+    return;
+  }
+  await withTenantClient(tenantId, client, async (c) => {
+    await c.query(
+      `UPDATE enclave_assets SET
+         agent_ids = COALESCE(agent_ids, $7::jsonb) || jsonb_build_object($3::text, $4::text),
+         last_vuln_seen_at = GREATEST(COALESCE(last_vuln_seen_at, $5::timestamptz), $5::timestamptz),
+         updated_by = CASE WHEN agent_ids->>$3 IS DISTINCT FROM $4 THEN $6 ELSE updated_by END,
+         updated_at = CASE WHEN agent_ids->>$3 IS DISTINCT FROM $4 THEN NOW() ELSE updated_at END
+       WHERE id = $1 AND tenant_id = $2`,
+      [assetId, tenantId, key, agentId, seenAt, actor, '{}'],
+    );
+  });
 }

@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { VmTokenError, createVmToken, listVmTokens, revokeVmToken } from '../vm/tokens';
-import { listRuns, listSources } from '../vm/store';
+import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
+import { listFindings } from '../vm/findingsStore';
+import { enqueueVmRun, isVmRunActive, recoverStaleRuns } from '../vm/worker';
 import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
-import { VM_TOKEN_SCOPES } from '../../src/types/vm';
-import type { VmTokenScope } from '../../src/types/vm';
+import { VM_FINDING_STATUSES, VM_SEVERITIES, VM_TOKEN_SCOPES } from '../../src/types/vm';
+import type { VmFindingStatus, VmSeverity, VmTokenScope } from '../../src/types/vm';
 
 /**
  * Tenant-scoped vulnerability management, mounted at /api/v1/tenants/:tenantId/vm by the tenants router, AFTER
@@ -122,10 +124,80 @@ router.get('/runs', async (req: Request, res: Response): Promise<void> => {
     limit = n;
   }
   try {
-    const runs = (await listRuns(req.tenantId!, { limit })).map(({ rawPath: _rawPath, ...rest }) => rest);
+    const all = await listRuns(req.tenantId!, { limit });
+    void recoverStaleRuns(req.tenantId!);
+    const runs = all.map(({ rawPath: _rawPath, ...rest }) => rest);
     res.json({ tenantId: req.tenantId, totalCount: runs.length, runs });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the runs');
+  }
+});
+
+/**
+ * POST .../vm/runs/:id/reprocess (owner / admin, by requireWriteRole): puts the run back to RECEIVED and normalizes it again.
+ * The worker re-verifies the stored payload against its recorded checksum first; sightings and the reducer are idempotent.
+ */
+router.post('/runs/:id/reprocess', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const id = String(req.params.id);
+  if (!TOKEN_ID_PATTERN.test(id)) {
+    res.status(404).json({ error: 'Run not found' });
+    return;
+  }
+  try {
+    const run = await getRun(req.tenantId!, id);
+    if (!run) {
+      res.status(404).json({ error: 'Run not found' });
+      return;
+    }
+    if ((run.status === 'RECEIVED' || run.status === 'NORMALIZING') && isVmRunActive(id)) {
+      res.status(409).json({ error: 'vm_run_in_progress' });
+      return;
+    }
+    await resetRunForReprocess(req.tenantId!, id);
+    enqueueVmRun(req.tenantId!, id);
+    console.log('[VM API] ' + req.user?.uid + ' reprocessed run ' + id + ' in ' + req.tenantId);
+    res.status(202).json({ run_id: id, status: 'RECEIVED' });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to reprocess the run');
+  }
+});
+
+/** GET .../vm/findings?assetId=&severity=&status=&limit=: most severe first, then earliest deadline. */
+router.get('/findings', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const { assetId, severity, status, limit: rawLimit } = req.query;
+  if (assetId !== undefined && (typeof assetId !== 'string' || !TOKEN_ID_PATTERN.test(assetId))) {
+    res.status(400).json({ error: 'Invalid assetId' });
+    return;
+  }
+  if (severity !== undefined && !(typeof severity === 'string' && (VM_SEVERITIES as readonly string[]).includes(severity))) {
+    res.status(400).json({ error: 'Invalid severity: ' + VM_SEVERITIES.join(', ') });
+    return;
+  }
+  if (status !== undefined && !(typeof status === 'string' && (VM_FINDING_STATUSES as readonly string[]).includes(status))) {
+    res.status(400).json({ error: 'Invalid status: ' + VM_FINDING_STATUSES.join(', ') });
+    return;
+  }
+  let limit = 500;
+  if (rawLimit !== undefined) {
+    const n = typeof rawLimit === 'string' && /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
+    if (!Number.isInteger(n) || n < 1 || n > 1000) {
+      res.status(400).json({ error: 'Invalid limit: between 1 and 1000' });
+      return;
+    }
+    limit = n;
+  }
+  try {
+    const findings = await listFindings(req.tenantId!, {
+      assetId: assetId as string | undefined,
+      severity: severity as VmSeverity | undefined,
+      status: status as VmFindingStatus | undefined,
+      limit,
+    });
+    res.json({ tenantId: req.tenantId, totalCount: findings.length, findings });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the findings');
   }
 });
 

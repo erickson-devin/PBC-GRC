@@ -363,6 +363,7 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_vm_runs_source ON vm_runs (tenant_id, source_id, received_at DESC);
   CREATE INDEX IF NOT EXISTS idx_vm_runs_status ON vm_runs (tenant_id, status);
+  ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT;
 
   -- Global reference data (not tenant-bound, no RLS), like control_mappings. Tenant ingest may only INSERT a
   -- missing vuln_id (source INGEST) and never UPDATEs one. title, cvss_v3, severity, published_at, kev and epss are written only
@@ -458,6 +459,8 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_tenant ON vm_poam_items (tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_finding ON vm_poam_items (tenant_id, finding_id);
+  -- Makes the worker's auto-created POA&M item unique per finding even across processes.
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_auto ON vm_poam_items (tenant_id, finding_id) WHERE created_by = 'system:vm-worker' AND finding_id IS NOT NULL;
 
   -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
   -- server/platformSetup.ts). Global, not tenant-bound.

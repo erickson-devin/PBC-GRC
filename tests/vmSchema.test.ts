@@ -169,6 +169,8 @@ const vmBlock = TABLES_SQL.slice(placeStart, TABLES_SQL.indexOf('CREATE TABLE IF
 assert(!/CREATE TABLE (?!IF NOT EXISTS)/.test(vmBlock), 'every CREATE TABLE is IF NOT EXISTS');
 assert(!/CREATE (UNIQUE )?INDEX (?!IF NOT EXISTS)/.test(vmBlock), 'every CREATE INDEX is IF NOT EXISTS');
 assert((vmBlock.match(/ADD COLUMN/g) || []).length === (vmBlock.match(/ADD COLUMN IF NOT EXISTS/g) || []).length, 'every ADD COLUMN is IF NOT EXISTS');
+assert(TABLES_SQL.includes('ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT'), 'vm_runs.warning is added idempotently');
+assert(TABLES_SQL.includes("unq_vm_poam_items_auto ON vm_poam_items (tenant_id, finding_id) WHERE created_by = 'system:vm-worker' AND finding_id IS NOT NULL"), 'the auto-created POA&M item is unique per finding');
 const adds = [...vmBlock.matchAll(/ADD CONSTRAINT (\w+)/g)].map((m) => m[1]);
 assert(adds.every((n) => vmBlock.includes(`DROP CONSTRAINT IF EXISTS ${n}`) && vmBlock.indexOf(`DROP CONSTRAINT IF EXISTS ${n}`) < vmBlock.indexOf(`ADD CONSTRAINT ${n}`)), 'every ADD CONSTRAINT is preceded by DROP CONSTRAINT IF EXISTS of the same name', adds);
 assert(!/ADD CONSTRAINT (fk_|unq_)/.test(vmBlock), 'foreign and unique keys are inline only (dropping a referenced key would need CASCADE)');

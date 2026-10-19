@@ -10,6 +10,8 @@ import { vmIngestRateLimiter, vmTokenRateLimiter } from '../server/routes/vmInge
 import { serviceTokenMiddleware } from '../server/middleware/serviceTokenMiddleware';
 import { __expireVmTokenForTests, clampTokenDays, generateVmToken, sha256Hex, shouldTouchLastUsed, VM_TOKEN_PATTERN } from '../server/vm/tokens';
 import { vmIngestMaxBytes } from '../server/vm/ingestSchema';
+import { __drainVmWorkerForTests, __setVmWorkerFaultForTests, enqueueVmRun } from '../server/vm/worker';
+import { recordReceivedRun } from '../server/vm/store';
 
 /**
  * Vulnerability-management Phase 2 over HTTP: service tokens (create / list / revoke, transport rule), the scanner push
@@ -91,8 +93,9 @@ const runFiles = (tenant: string): string[] => {
   return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
 };
 
-function shutdown(code: number) {
+async function shutdown(code: number) {
   process.exitCode = code;
+  await __drainVmWorkerForTests().catch(() => undefined);
   try { fs.rmSync(VM_TEST_VAULT, { recursive: true, force: true }); } catch { /* best effort */ }
   server.closeAllConnections();
   server.close();
@@ -293,10 +296,12 @@ async function run() {
   const stored = path.join(VM_TEST_VAULT, 'tenants', A, 'vm', 'runs', `${ok.body?.run_id}.json`);
   assert(fs.existsSync(stored) && fs.readFileSync(stored).equals(body1), 'the file under <vault>/tenants/<A>/vm/runs/<run_id>.json is byte-identical');
   assert(runFiles(A).length === filesBefore + 1, 'exactly one new file');
+  await __drainVmWorkerForTests();
   const runs = (await call('GET', `/tenants/${A}/vm/runs`, ownerA, A)).body as Json;
   const stat = (runs.runs as Json[]).find((r) => r.id === ok.body?.run_id) as Json;
   assert(runs.tenantId === A && runs.totalCount === (runs.runs as Json[]).length && Boolean(stat), 'the run appears in the runs list', runs);
-  assert(stat.status === 'RECEIVED' && stat.hostCount === 2 && stat.findingCount === 3 && stat.rawSha256 === expectedSha && stat.rawBytes === body1.length && stat.exporterName === 'pbc-wazuh-exporter' && stat.exporterVersion === '1.0.0' && stat.collectedAt === '2026-10-18T12:00:00.000Z' && Boolean(stat.sourceId) && Boolean(stat.receivedAt), 'run fields: status, counts, sha, bytes, exporter, collectedAt', stat);
+  assert(stat.status === 'NORMALIZED' && stat.hostCount === 2 && stat.findingCount === 3 && stat.rawSha256 === expectedSha && stat.rawBytes === body1.length && stat.exporterName === 'pbc-wazuh-exporter' && stat.exporterVersion === '1.0.0' && stat.collectedAt === '2026-10-18T12:00:00.000Z' && Boolean(stat.sourceId) && Boolean(stat.receivedAt), 'run fields: status, counts, sha, bytes, exporter, collectedAt', stat);
+  assert(stat.startedAt !== null && stat.finishedAt !== null && stat.error === null && stat.warning === null, 'the worker normalized the run: startedAt and finishedAt set, no error, no warning (T64)', stat);
   assert(!('rawPath' in stat) && !JSON.stringify(runs).includes(VM_TEST_VAULT), 'the runs list does not expose rawPath or the vault location');
   const sources = (await call('GET', `/tenants/${A}/vm/sources`, ownerA, A)).body as Json;
   const src = (sources.sources as Json[]).find((s) => s.label === 'wazuh-main') as Json;
@@ -306,6 +311,20 @@ async function run() {
   assert((await call('GET', `/tenants/${A}/vm/runs?limit=1`, ownerA, A)).body?.runs.length === 1, '?limit=1 returns one run');
   assert((await call('GET', `/tenants/${A}/vm/runs?limit=0`, ownerA, A)).status === 400 && (await call('GET', `/tenants/${A}/vm/runs?limit=501`, ownerA, A)).status === 400, '?limit outside 1..500 -> 400');
   assert((await call('GET', `/tenants/${A}/vm/runs`, viewer, A)).status === 200 && (await call('GET', `/tenants/${A}/vm/sources`, viewer, A)).status === 200, 'a VIEWER can read runs and sources (200)');
+
+  console.log('\n--- Worker: findings and assets after the first run (tenant A) ---');
+  const happyFindings = ((await call('GET', `/tenants/${A}/vm/findings`, ownerA, A)).body ?? {}) as Json;
+  const hf = (happyFindings.findings ?? []) as Json[];
+  assert(happyFindings.tenantId === A && happyFindings.totalCount === 3 && hf.length === 3, 'the first run yields three findings (two hosts: 2 + 1)', happyFindings);
+  assert(hf.every((f) => f.status === 'OPEN' && Boolean(f.slaDueAt) && f.tenantId === A), 'each finding is OPEN with an SLA deadline');
+  assert(hf.filter((f) => f.vulnId === 'CVE-2024-0001' && f.severity === 'HIGH').length === 2 && hf.filter((f) => f.vulnId === 'CVE-2024-0002' && f.severity === 'LOW').length === 1, 'two HIGH CVE-2024-0001 findings and one LOW CVE-2024-0002 finding', hf.map((f) => [f.vulnId, f.severity]));
+  const days = (f: Json) => (Date.parse(f.slaDueAt) - Date.parse(f.firstSeenAt)) / 86_400_000;
+  assert(hf.every((f) => days(f) === (f.severity === 'HIGH' ? 30 : 180)), 'default SLA: HIGH 30 days, LOW 180 days after first sight', hf.map((f) => [f.severity, days(f)]));
+  assert(hf[0].severity === 'HIGH' && hf[2].severity === 'LOW', 'findings are listed most severe first', hf.map((f) => f.severity));
+  assert(new Set(hf.map((f) => f.assetId)).size === 2, 'the findings belong to two assets');
+  const agentAssets = (((await call('GET', `/tenants/${A}/assets`, ownerA, A)).body?.assets ?? []) as Json[]).filter((a) => a.hostName === 'host-001' || a.hostName === 'host-002');
+  assert(agentAssets.length === 2 && agentAssets.every((a) => a.sourceOrigin === 'AGENT_REPORT' && a.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && a.cmmcAssetCategory === 'CONTRACTOR_RISK'), 'the agent hosts exist as AGENT_REPORT / UNCONFIRMED_DISCOVERY / CONTRACTOR_RISK assets (T50)', agentAssets);
+  assert(hf.every((f) => agentAssets.some((a) => a.id === f.assetId)), 'every finding points at one of those assets');
 
   console.log('\n--- Ingest: duplicates, variants, labels, kinds, tenants ---');
   const dup = await ingest(tokenA, body1);
@@ -383,6 +402,150 @@ async function run() {
   assert(bSources.length === 1 && bSources[0].tenantId === B, 'tenant B sees only its own source', bSources);
   assert((await call('GET', `/tenants/${A}/vm/runs`, ownerB, B)).status === 403 && (await call('GET', `/tenants/${A}/vm/sources`, ownerB, B)).status === 403, "tenant B's owner cannot read tenant A's runs or sources (403)");
   assert((await call('GET', `/tenants/${A}/vm/runs`, ownerB, A)).status === 403, 'even with x-tenant-id set to A (403)');
+
+  console.log('\n--- Worker: other agents, closure, re-sighting, filters (tenant A) ---');
+  await __drainVmWorkerForTests();
+  const findingsOf = async (tenant: string, who: string, query = '') => ((await call('GET', `/tenants/${tenant}/vm/findings${query}`, who, tenant)).body?.findings ?? []) as Json[];
+  const assetIdByName = async (name: string) => ((((await call('GET', `/tenants/${A}/assets`, ownerA, A)).body?.assets ?? []) as Json[]).find((a) => a.hostName === name)?.id ?? '') as string;
+  const runById = async (id: string) => ((((await call('GET', `/tenants/${A}/vm/runs`, ownerA, A)).body?.runs ?? []) as Json[]).find((r) => r.id === id) ?? {}) as Json;
+  const host1 = await assetIdByName('host-001');
+  const host2 = await assetIdByName('host-002');
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const afterUpper = await findingsOf(A, ownerA, `?assetId=${host1}`);
+  assert(afterUpper.length === 2 && afterUpper.every((f) => f.status === 'OPEN'), "a run of the same source that reports another host (009) leaves host-001's findings OPEN (T11)", afterUpper);
+  assert((await findingsOf(A, ownerA, `?assetId=${await assetIdByName('host-009')}`)).length === 2, 'the other agent produced its own two findings');
+  const firstSeenBefore = new Map(afterUpper.map((f) => [f.vulnId, f.firstSeenAt as string]));
+
+  const closureRun = await ingest(tokenA, Buffer.from(JSON.stringify({
+    ...payloadOf({ label: 'wazuh-main' }),
+    collected_at: '2026-10-19T12:00:00Z',
+    hosts: [
+      { agent_id: '001', hostname: 'host-001', findings: [{ vuln_id: 'CVE-2024-0001', severity: 'HIGH' }] },
+      { agent_id: '002', hostname: 'host-002', findings: [{ vuln_id: 'CVE-2024-0001', severity: 'HIGH' }] },
+    ],
+  })));
+  assert(closureRun.status === 202, 'a run that omits CVE-2024-0002 on host-001 is accepted (202)', closureRun.body);
+  await __drainVmWorkerForTests();
+  const closed = await findingsOf(A, ownerA, `?assetId=${host1}`);
+  const omitted = closed.find((f) => f.vulnId === 'CVE-2024-0002') as Json;
+  assert(omitted?.status === 'RESOLVED' && omitted.resolvedRunId === closureRun.body?.run_id && Boolean(omitted.resolvedAt), 'the omitted finding is RESOLVED by that run (T10)', omitted);
+  assert(closed.find((f) => f.vulnId === 'CVE-2024-0001')?.status === 'OPEN', 'the other finding on that host stays OPEN');
+  assert((await findingsOf(A, ownerA, `?assetId=${host2}`)).every((f) => f.status === 'OPEN'), "the other host's finding stays OPEN (T11)");
+  assert((await findingsOf(A, ownerA, `?assetId=${await assetIdByName('host-009')}`)).every((f) => f.status === 'OPEN'), "a host the run did not report keeps its findings OPEN (T11)");
+
+  const resolvedOnly = await findingsOf(A, ownerA, '?status=RESOLVED');
+  assert(resolvedOnly.length === 1 && resolvedOnly.every((f) => f.status === 'RESOLVED'), '?status=RESOLVED returns only the resolved finding', resolvedOnly);
+  const lowOnly = await findingsOf(A, ownerA, '?severity=LOW');
+  assert(lowOnly.length >= 2 && lowOnly.every((f) => f.severity === 'LOW'), '?severity=LOW returns only LOW findings', lowOnly.map((f) => f.severity));
+  assert((await findingsOf(A, ownerA, '?limit=1')).length === 1, '?limit=1 returns one finding');
+  const badQueries: Array<[string, string]> = [['severity=SEVERE', 'an unknown severity'], ['status=GONE', 'an unknown status'], ['limit=0', 'limit 0'], ['limit=1001', 'limit 1001'], ['limit=abc', 'a non-numeric limit'], ['assetId=a.b', 'an assetId with characters outside the pattern']];
+  for (const [q, label] of badQueries) {
+    assert((await call('GET', `/tenants/${A}/vm/findings?${q}`, ownerA, A)).status === 400, `${label} -> 400`);
+  }
+
+  await sleep(10);
+  const resight = await ingest(tokenA, Buffer.from(JSON.stringify({ ...payloadOf({ label: 'wazuh-main' }), collected_at: '2026-10-20T12:00:00Z' })));
+  assert(resight.status === 202, 'a run that reports the omitted CVE again is accepted (202)', resight.body);
+  await __drainVmWorkerForTests();
+  const reopened = (await findingsOf(A, ownerA, `?assetId=${host1}`)).find((f) => f.vulnId === 'CVE-2024-0002') as Json;
+  assert(reopened?.status === 'OPEN' && reopened.resolvedAt === null && reopened.resolvedRunId === null, 're-sighting reopens the finding (T17)', reopened);
+  assert(Date.parse(reopened.firstSeenAt) > Date.parse(firstSeenBefore.get('CVE-2024-0002') as string), 'and restarts its clock (first_seen_at is later)', [reopened.firstSeenAt, firstSeenBefore.get('CVE-2024-0002')]);
+  assert((await findingsOf(A, ownerA, '?status=RESOLVED')).length === 0, 'no finding is resolved afterwards');
+
+  console.log('\n--- Worker: findings access ---');
+  assert((await call('GET', `/tenants/${A}/vm/findings`, viewer, A)).status === 200 && (await call('GET', `/tenants/${A}/vm/findings`, assessor, A)).status === 200, 'a VIEWER and an ASSESSOR can read findings (200)');
+  assert((await call('GET', `/tenants/${A}/vm/findings`, ownerB, B)).status === 403 && (await call('GET', `/tenants/${A}/vm/findings`, ownerB, A)).status === 403, "tenant B's owner cannot read tenant A's findings (403)");
+  assert((await call('GET', `/tenants/${A}/vm/findings`, null, A)).status === 401, 'no session => 401');
+  const bFindings = await findingsOf(B, ownerB);
+  assert(bFindings.length === 3 && bFindings.every((f) => f.tenantId === B) && !bFindings.some((f) => hf.some((h) => h.id === f.id)), "tenant B's list holds only its own three findings", bFindings.length);
+
+  console.log('\n--- Worker: failures, terminal runs, reprocess ---');
+  const runsDir = path.join(VM_TEST_VAULT, 'tenants', A, 'vm', 'runs');
+  const receivedInput = (label: string, rawPath: string, rawSha256: string, rawBytes = 0) => ({ id: crypto.randomUUID(), kind: 'WAZUH' as const, label, collectedAt: null, exporterName: 'x', exporterVersion: '1', hostCount: 0, findingCount: 0, rawPath, rawSha256, rawBytes });
+
+  const missing = await recordReceivedRun(A, receivedInput('fail-src', path.join(runsDir, 'missing.json'), 'a'.repeat(64)));
+  enqueueVmRun(A, missing.run.id);
+  await __drainVmWorkerForTests();
+  const missingRun = await runById(missing.run.id);
+  assert(missingRun.status === 'FAILED' && missingRun.error === 'The stored payload could not be read.' && missingRun.finishedAt !== null, 'a missing stored payload -> FAILED "The stored payload could not be read." (T65)', missingRun);
+
+  fs.mkdirSync(runsDir, { recursive: true });
+  const badSumId = crypto.randomUUID();
+  const badSumFile = path.join(runsDir, `${badSumId}.json`);
+  fs.writeFileSync(badSumFile, bytesOf({ label: 'sum-src', agents: ['q1'] }));
+  const badSum = await recordReceivedRun(A, { ...receivedInput('sum-src', badSumFile, '0'.repeat(64)), id: badSumId });
+  enqueueVmRun(A, badSum.run.id);
+  await __drainVmWorkerForTests();
+  const badSumRun = await runById(badSumId);
+  assert(badSumRun.status === 'FAILED' && badSumRun.error === 'The stored payload does not match its recorded checksum.', 'a checksum mismatch -> FAILED with the checksum message (T66)', badSumRun);
+
+  const invalidBytes = Buffer.from('{"schema_version":1}');
+  const invalidId = crypto.randomUUID();
+  const invalidFile = path.join(runsDir, `${invalidId}.json`);
+  fs.writeFileSync(invalidFile, invalidBytes);
+  await recordReceivedRun(A, { ...receivedInput('invalid-src', invalidFile, crypto.createHash('sha256').update(invalidBytes).digest('hex'), invalidBytes.length), id: invalidId });
+  enqueueVmRun(A, invalidId);
+  await __drainVmWorkerForTests();
+  const invalidRun = await runById(invalidId);
+  assert(invalidRun.status === 'FAILED' && String(invalidRun.error).startsWith('$.'), 'a stored payload that fails validation -> FAILED with the "$." message (T67)', invalidRun);
+
+  const outsideId = crypto.randomUUID();
+  const outsideFile = path.join(VM_TEST_VAULT, `${outsideId}.json`);
+  fs.writeFileSync(outsideFile, bytesOf({ label: 'outside-src', agents: ['o1'] }));
+  const outside = await recordReceivedRun(A, { ...receivedInput('outside-src', outsideFile, crypto.createHash('sha256').update(fs.readFileSync(outsideFile)).digest('hex')), id: outsideId });
+  enqueueVmRun(A, outside.run.id);
+  await __drainVmWorkerForTests();
+  const outsideRun = await runById(outsideId);
+  assert(outsideRun.status === 'FAILED' && outsideRun.error === 'The stored payload could not be read.', 'a recorded path outside the tenant directory is not read (FAILED unreadable)', outsideRun);
+
+  const s1 = await ingest(tokenA, bytesOf({ label: 's1-src', kind: 'SENTINELONE', agents: ['s1'] }));
+  await __drainVmWorkerForTests();
+  const s1Run = await runById(s1.body?.run_id);
+  assert(s1.status === 202 && s1Run.status === 'FAILED' && s1Run.error === 'No normalizer for SENTINELONE yet.', 'a kind without an adapter -> FAILED "No normalizer for SENTINELONE yet." (T68)', s1Run);
+
+  const happyId = ok.body?.run_id as string;
+  const happyBefore = await runById(happyId);
+  assert(happyBefore.status === 'NORMALIZED', 'the first run is NORMALIZED', happyBefore);
+  enqueueVmRun(A, happyId);
+  await __drainVmWorkerForTests();
+  const happyAfter = await runById(happyId);
+  assert(happyAfter.status === 'NORMALIZED' && happyAfter.finishedAt === happyBefore.finishedAt, 'enqueueing a finished run is a no-op (finishedAt unchanged) (T71)', [happyBefore.finishedAt, happyAfter.finishedAt]);
+
+  const beforeReprocess = await findingsOf(A, ownerA);
+  await sleep(10);
+  const re1 = await call('POST', `/tenants/${A}/vm/runs/${happyId}/reprocess`, ownerA, A);
+  assert(re1.status === 202 && re1.body?.run_id === happyId && re1.body?.status === 'RECEIVED', 'the owner reprocesses a run (202 RECEIVED)', re1.body);
+  await __drainVmWorkerForTests();
+  const afterReprocess = await findingsOf(A, ownerA);
+  const reRun = await runById(happyId);
+  assert(reRun.status === 'NORMALIZED' && reRun.error === null && reRun.finishedAt !== happyBefore.finishedAt, 'the run is NORMALIZED again with a new finishedAt', reRun);
+  assert(afterReprocess.length === beforeReprocess.length && afterReprocess.every((f) => beforeReprocess.find((b) => b.id === f.id)?.firstSeenAt === f.firstSeenAt), 'reprocessing is idempotent: same findings, same first_seen_at', [beforeReprocess.length, afterReprocess.length]);
+  assert((await call('POST', `/tenants/${A}/vm/runs/${happyId}/reprocess`, viewer, A)).status === 403 && (await call('POST', `/tenants/${A}/vm/runs/${happyId}/reprocess`, assessor, A)).status === 403, 'a VIEWER and an ASSESSOR cannot reprocess (403)');
+  assert((await call('POST', `/tenants/${A}/vm/runs/${happyId}/reprocess`, ownerB, B)).status === 403, "another tenant's owner cannot reprocess (403)");
+  assert((await call('POST', `/tenants/${A}/vm/runs/no-such-run/reprocess`, ownerA, A)).status === 404 && (await call('POST', `/tenants/${A}/vm/runs/a.b/reprocess`, ownerA, A)).status === 404, 'an unknown or malformed run id -> 404');
+  assert((await call('POST', `/tenants/${B}/vm/runs/${happyId}/reprocess`, ownerB, B)).status === 404, "a run of another tenant -> 404");
+  const re2 = await call('POST', `/tenants/${A}/vm/runs/${s1.body?.run_id}/reprocess`, ownerA, A);
+  await __drainVmWorkerForTests();
+  const s1Again = await runById(s1.body?.run_id);
+  assert(re2.status === 202 && s1Again.status === 'FAILED' && s1Again.error === 'No normalizer for SENTINELONE yet.', 'reprocessing the SENTINELONE run -> 202 and FAILED again with the same message', [re2.body, s1Again]);
+
+  console.log('\n--- Worker: fault after save (in memory there is no rollback) ---');
+  __setVmWorkerFaultForTests('after_save');
+  const faulty = await ingest(tokenA, bytesOf({ label: 'fault-src', agents: ['f1'] }));
+  await __drainVmWorkerForTests();
+  __setVmWorkerFaultForTests(null);
+  const faultyRun = await runById(faulty.body?.run_id);
+  assert(faulty.status === 202 && faultyRun.status === 'FAILED' && faultyRun.error === 'Normalization failed unexpectedly. Check the server log.', 'a failure part-way -> FAILED with the generic message', faultyRun);
+  assert(!JSON.stringify(faultyRun).includes('host-f1') && !JSON.stringify(faultyRun).includes('fault injected'), 'the run error carries no payload value and no internal message');
+  // The in-memory store has no transactions: what was saved before the fault stays (PostgreSQL rolls it back: scripts/verifyVmLive.ts).
+  const faultAsset = await assetIdByName('host-f1');
+  assert(Boolean(faultAsset) && (await findingsOf(A, ownerA, `?assetId=${faultAsset}`)).length === 2, 'in memory mode the findings saved before the fault remain');
+  const re3 = await call('POST', `/tenants/${A}/vm/runs/${faulty.body?.run_id}/reprocess`, ownerA, A);
+  await __drainVmWorkerForTests();
+  const faultyAgain = await runById(faulty.body?.run_id);
+  assert(re3.status === 202 && faultyAgain.status === 'NORMALIZED' && faultyAgain.error === null, 'after clearing the fault, reprocessing the run -> NORMALIZED', faultyAgain);
+  assert((await findingsOf(A, ownerA, `?assetId=${faultAsset}`)).length === 2, 'and adds no duplicate findings');
 
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();

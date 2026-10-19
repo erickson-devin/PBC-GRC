@@ -5,6 +5,7 @@ import { createRateLimiter } from '../middleware/rateLimit';
 import { serviceTokenMiddleware } from '../middleware/serviceTokenMiddleware';
 import { validateIngestPayload, vmIngestMaxBytes } from '../vm/ingestSchema';
 import { findRunBySha, recordReceivedRun, VmStoreError } from '../vm/store';
+import { enqueueVmRun, recoverStaleRuns } from '../vm/worker';
 import { storageProvider, writeTenantFile } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -94,7 +95,8 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
       rawBytes: stored.size,
     });
     console.log(`[VM Ingest] ${actor} -> run ${run.id} in ${tenantId}: ${run.hostCount} hosts, ${run.findingCount} findings`);
-    // Phase 3: enqueueVmRun(tenantId, run.id)
+    enqueueVmRun(tenantId, run.id);
+    void recoverStaleRuns(tenantId);
     res.status(202).json({ run_id: run.id, status: 'RECEIVED', sha256 });
   } catch (err: unknown) {
     await fs.promises.rm(stored.absPath, { force: true }).catch(() => undefined);

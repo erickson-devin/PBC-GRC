@@ -79,6 +79,8 @@ export interface VmRun {
   rawBytes: number;
   status: VmRunStatus;
   error: string | null;
+  /** Non-fatal note on a NORMALIZED run (for example hosts skipped at the asset limit). */
+  warning: string | null;
   startedAt: string | null;
   finishedAt: string | null;
 }

@@ -79,6 +79,7 @@ function rowToRun(r: pg.QueryResultRow): VmRun {
     rawBytes: Number(r.raw_bytes),
     status: r.status as VmRunStatus,
     error: r.error ?? null,
+    warning: r.warning ?? null,
     startedAt: iso(r.started_at),
     finishedAt: iso(r.finished_at),
   };
@@ -101,6 +102,7 @@ export interface ReceivedRunInput {
 export interface RunPatch {
   status?: VmRunStatus;
   error?: string | null;
+  warning?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
 }
@@ -162,6 +164,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
       rawBytes: input.rawBytes,
       status: 'RECEIVED',
       error: null,
+      warning: null,
       startedAt: null,
       finishedAt: null,
     };
@@ -256,6 +259,7 @@ export async function updateRun(tenantId: string, id: string, patch: RunPatch): 
     if (!run || run.tenantId !== tenantId) throw new VmStoreError('not_found');
     if (patch.status !== undefined) run.status = patch.status;
     if (patch.error !== undefined) run.error = patch.error;
+    if (patch.warning !== undefined) run.warning = patch.warning;
     if (patch.startedAt !== undefined) run.startedAt = iso(patch.startedAt);
     if (patch.finishedAt !== undefined) run.finishedAt = iso(patch.finishedAt);
     return { ...run };
@@ -268,6 +272,7 @@ export async function updateRun(tenantId: string, id: string, patch: RunPatch): 
   };
   if (patch.status !== undefined) add('status', patch.status);
   if (patch.error !== undefined) add('error', patch.error);
+  if (patch.warning !== undefined) add('warning', patch.warning);
   if (patch.startedAt !== undefined) add('started_at', patch.startedAt);
   if (patch.finishedAt !== undefined) add('finished_at', patch.finishedAt);
   return inTenantTx(tenantId, async (client) => {
@@ -278,6 +283,28 @@ export async function updateRun(tenantId: string, id: string, patch: RunPatch): 
     if (!rows[0]) throw new VmStoreError('not_found');
     return rowToRun(rows[0]);
   });
+}
+
+/** Runs the worker has not finished (RECEIVED or NORMALIZING), oldest first. Used to recover after a restart. */
+export async function listUnfinishedRuns(tenantId: string): Promise<VmRun[]> {
+  if (isMemory()) {
+    return [...memoryRuns.values()]
+      .filter((r) => r.tenantId === tenantId && (r.status === 'RECEIVED' || r.status === 'NORMALIZING'))
+      .sort((a, b) => (a.receivedAt < b.receivedAt ? -1 : a.receivedAt > b.receivedAt ? 1 : 0))
+      .map((r) => ({ ...r }));
+  }
+  return inTenantTx(tenantId, async (client) => {
+    const { rows } = await client.query(
+      "SELECT * FROM vm_runs WHERE tenant_id = $1 AND status IN ('RECEIVED', 'NORMALIZING') ORDER BY received_at",
+      [tenantId],
+    );
+    return rows.map(rowToRun);
+  });
+}
+
+/** Puts a run back to RECEIVED with its error, warning and timestamps cleared, so the worker normalizes it again. */
+export async function resetRunForReprocess(tenantId: string, id: string): Promise<VmRun> {
+  return updateRun(tenantId, id, { status: 'RECEIVED', error: null, warning: null, startedAt: null, finishedAt: null });
 }
 
 // ------------------------------------------------------------------------------------------------ sources
