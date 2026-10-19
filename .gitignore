@@ -38,3 +38,5 @@ lerna-debug.log*
 Thumbs.db
 desktop.ini
 .cache/
+
+scanner-agent/
