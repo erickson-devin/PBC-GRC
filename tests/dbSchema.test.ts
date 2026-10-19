@@ -65,7 +65,9 @@ assert(Boolean(selfPolicy) && selfPolicy!.table === 'tenant_users', 'tenant_user
 assert(tenantsPolicy?.using === `id IN (SELECT tenant_id FROM tenant_users WHERE user_id = ${userCtx})`, 'tenants are visible only where the user has a tenant_users row', tenantsPolicy?.using);
 assert(selfPolicy?.using === `user_id = ${userCtx}`, 'tenant_users: a user sees only their own rows', selfPolicy?.using);
 const tokenCtx = "NULLIF(current_setting('app.invite_token_hash', true), '')";
-assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx) || p.using.includes(tokenCtx)), "an unset or empty user / invite context matches nothing (NULLIF, so '' never equals an id or hash)");
+const vmTokenCtx = "NULLIF(current_setting('app.vm_token_hash', true), '')";
+const vmSchedulerCtx = "NULLIF(current_setting('app.vm_scheduler', true), '')";
+assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx) || p.using.includes(tokenCtx) || p.using.includes(vmTokenCtx) || p.using.includes(vmSchedulerCtx)), "an unset or empty user / invite / vm-token / vm-scheduler context matches nothing (NULLIF, so '' never equals an id or hash)");
 
 console.log('\n--- Invitations ---');
 assert(schema.includes('CREATE TABLE IF NOT EXISTS tenant_invitations'), 'tenant_invitations is created by initDb');

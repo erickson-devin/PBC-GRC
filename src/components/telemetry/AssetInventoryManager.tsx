@@ -226,6 +226,13 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             <span>PHOTON AGENT</span>
           </span>
         );
+      case 'AGENT_REPORT':
+        return (
+          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
+            <Zap className="w-2.5 h-2.5 text-violet-400" />
+            <span>AGENT REPORT</span>
+          </span>
+        );
       case 'CSV_IMPORT':
         return (
           <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/40">

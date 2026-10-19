@@ -40,7 +40,7 @@ export const MAX_BULK_ASSETS = 500;
 export const MAX_DISCOVERY_ITEMS = 500;
 
 const STATUSES: readonly EnclaveAssetStatus[] = ['ACTIVE', 'INACTIVE', 'NON_COMPLIANT', 'NEVER_SCANNED'];
-const ORIGINS: readonly AssetSourceOrigin[] = ['MANUAL_ENTRY', 'ACCRETION_DISCOVERY', 'PHOTON_AGENT', 'CSV_IMPORT'];
+const ORIGINS: readonly AssetSourceOrigin[] = ['MANUAL_ENTRY', 'ACCRETION_DISCOVERY', 'PHOTON_AGENT', 'CSV_IMPORT', 'AGENT_REPORT'];
 const DISCOVERY: readonly AssetDiscoveryStatus[] = ['ACTIVE', 'STALE', 'UNCONFIRMED_DISCOVERY', 'DECOMMISSIONED'];
 
 // ------------------------------------------------------------------------------------------------ validation
