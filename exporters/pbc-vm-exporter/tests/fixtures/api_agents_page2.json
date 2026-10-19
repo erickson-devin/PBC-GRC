@@ -1,0 +1,8 @@
+{
+  "data": {
+    "affected_items": [
+      { "id": "003", "name": "new-01", "status": "never_connected" }
+    ],
+    "total_affected_items": 3
+  }
+}

@@ -212,7 +212,8 @@ export type AssetSourceOrigin =
   | 'MANUAL_ENTRY'
   | 'ACCRETION_DISCOVERY'
   | 'PHOTON_AGENT'
-  | 'CSV_IMPORT';
+  | 'CSV_IMPORT'
+  | 'AGENT_REPORT';
 
 export type AssetDiscoveryStatus =
   | 'ACTIVE'

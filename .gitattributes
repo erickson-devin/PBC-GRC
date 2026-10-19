@@ -1,3 +1,6 @@
 # Shell scripts run inside Linux containers: they must keep LF line endings even when checked out on Windows
 # (a CRLF shebang line fails with "/bin/sh^M: bad interpreter").
 *.sh text eol=lf
+
+# The ingest contract is vendored byte-for-byte into the exporter: both copies must hash identically on every platform.
+*.schema.json text eol=lf

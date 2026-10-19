@@ -412,6 +412,14 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
   return { rows: [], command: 'SELECT', rowCount: 0, oid: 0, fields: [] };
 }
 
+/** The schema uses ON DELETE SET NULL (column list), which needs PostgreSQL 15+. Throws a clear message on anything older or unreadable. */
+export function assertSupportedPostgresVersion(num: unknown, text: unknown): void {
+  const n = parseInt(String(num), 10);
+  if (!Number.isFinite(n) || n < 150000) {
+    throw new Error('PBC-GRC requires PostgreSQL 15 or later; found ' + (typeof text === 'string' && text ? text : 'unknown'));
+  }
+}
+
 /**
  * Initializes database schema with RLS policies if connected to a live PostgreSQL database
  */
@@ -424,6 +432,9 @@ export async function initDb(): Promise<void> {
 
   const client = await pool.connect();
   try {
+    const ver = await client.query("SELECT current_setting('server_version_num') AS num, current_setting('server_version') AS version");
+    assertSupportedPostgresVersion(ver.rows[0]?.num, ver.rows[0]?.version);
+
     // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts)
     await client.query(buildSchemaSql());
 

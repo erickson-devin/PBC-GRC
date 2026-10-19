@@ -11,7 +11,8 @@
  *      and a write for a different tenant is rejected.
  *   4. tenant DISCOVERY: in user context a user sees only the tenants they belong to (and only their own
  *      membership rows), and that context can never write.
- * It inserts and removes a few rows prefixed "rls_verify_" in tenants and tenant_users. Exit code 0 = all checks passed.
+ *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
+ * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets and the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns). Exit code 0 = all checks passed.
  */
 export {};
 
@@ -150,7 +151,232 @@ async function main() {
     );
     const fipsRow = await queryWithTenant(TENANT_X, "SELECT fips_certificate_number, fips_module_name FROM enclave_assets WHERE asset_name = 'rls_verify_fips_ok'", []);
     check(fipsRow.rows[0]?.fips_certificate_number === '4211' && fipsRow.rows[0]?.fips_module_name === 'Module', 'enclave_assets: FIPS module details are stored and read back');
+
+    console.log('\n--- 3b. Vulnerability management ---');
+    let lastRejection = '';
+    // True only when the statement fails with the expected SQLSTATE and/or constraint, so a stray error (a NULL id hitting
+    // NOT NULL, a typo) cannot masquerade as the refusal under test. On a mismatch the detail names what was actually thrown.
+    const rejectsWith = async (tenant: string, sql: string, params: (string | number | null)[], want: { code?: string; constraint?: string }): Promise<boolean> => {
+      try {
+        await queryWithTenant(tenant, sql, params);
+        lastRejection = 'no error';
+        return false;
+      } catch (err) {
+        const e = err as { code?: string; constraint?: string };
+        lastRejection = `code ${e.code}, constraint ${e.constraint}`;
+        return (want.code === undefined || e.code === want.code) && (want.constraint === undefined || e.constraint === want.constraint);
+      }
+    };
+    const assetIdX = (await queryWithTenant(TENANT_X, "SELECT id FROM enclave_assets WHERE asset_name = 'rls_verify_asset_x'", [])).rows[0]?.id;
+    const assetIdY = (await queryWithTenant(TENANT_Y, "SELECT id FROM enclave_assets WHERE asset_name = 'rls_verify_asset_y'", [])).rows[0]?.id;
+    check(Boolean(assetIdX) && Boolean(assetIdY), 'vm: the two verification assets can be read back by their owners');
+
+    // 1. vm_vulns is global reference data
+    const vulnsFlags = await pool.query("SELECT relrowsecurity FROM pg_class WHERE relname = 'vm_vulns'");
+    check(vulnsFlags.rows.length === 1 && vulnsFlags.rows[0].relrowsecurity === false, 'vm_vulns is global reference data: no RLS');
+
+    // 2. WITH CHECK on vm_sources
+    check(
+      await rejectsWith(TENANT_X, "INSERT INTO vm_sources (tenant_id, kind, label) VALUES ($1, 'WAZUH', 'rls_verify_src_evil')", [TENANT_Y], { code: '42501' }),
+      'vm_sources: tenant X cannot write a source for tenant Y (WITH CHECK)', lastRejection
+    );
+
+    // 3. isolation
+    const srcIdX = (await queryWithTenant(TENANT_X, "INSERT INTO vm_sources (tenant_id, kind, label) VALUES ($1, 'WAZUH', 'rls_verify_src_x') RETURNING id", [TENANT_X])).rows[0]?.id;
+    const srcIdY = (await queryWithTenant(TENANT_Y, "INSERT INTO vm_sources (tenant_id, kind, label) VALUES ($1, 'WAZUH', 'rls_verify_src_y') RETURNING id", [TENANT_Y])).rows[0]?.id;
+    const srcNoCtx = await pool.query("SELECT 1 FROM vm_sources WHERE label LIKE 'rls_verify_%'");
+    check(srcNoCtx.rowCount === 0, 'vm_sources: no tenant context => zero rows visible', `saw ${srcNoCtx.rowCount}`);
+    const srcAsX = await queryWithTenant(TENANT_X, "SELECT label FROM vm_sources WHERE label LIKE 'rls_verify_%'", []);
+    check(srcAsX.rows.length === 1 && srcAsX.rows[0].label === 'rls_verify_src_x', 'vm_sources: tenant X sees only its own source', JSON.stringify(srcAsX.rows));
+
+    // 4. scheduler discovery policy
+    const schedulerSelect = "SELECT tenant_id, id FROM vm_sources WHERE label LIKE 'rls_verify_%' ORDER BY tenant_id";
+    const underScheduler = async (value: string): Promise<number> => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.vm_scheduler', $1, true)", [value]);
+        const res = await client.query(schedulerSelect);
+        return res.rows.length;
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    const schedulerOn = await underScheduler('on');
+    check(schedulerOn === 2, "vm_sources: app.vm_scheduler = 'on' enumerates the sources of both tenants", `saw ${schedulerOn}`);
+    let schedulerWriteRejected = false;
+    let schedulerWriteCode = 'no error';
+    {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.vm_scheduler', 'on', true)");
+        await client.query("INSERT INTO vm_sources (tenant_id, kind, label) VALUES ($1, 'WAZUH', 'rls_verify_src_sched')", [TENANT_X]);
+      } catch (err) {
+        schedulerWriteCode = String((err as { code?: string }).code);
+        schedulerWriteRejected = schedulerWriteCode === '42501';
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    }
+    check(schedulerWriteRejected, 'vm_sources: the scheduler GUC is SELECT-only (an INSERT under it alone is refused)', `error code: ${schedulerWriteCode}`);
+    const schedulerOff = await underScheduler('off');
+    check(schedulerOff === 0, "vm_sources: app.vm_scheduler = 'off' sees nothing", `saw ${schedulerOff}`);
+    const schedulerEmpty = await underScheduler('');
+    check(schedulerEmpty === 0, 'vm_sources: an empty app.vm_scheduler sees nothing', `saw ${schedulerEmpty}`);
+    const schedulerUpper = await underScheduler('ON');
+    check(schedulerUpper === 0, "vm_sources: app.vm_scheduler = 'ON' sees nothing (the match is exact)", `saw ${schedulerUpper}`);
+    const schedulerUnset = await pool.query(schedulerSelect);
+    check(schedulerUnset.rows.length === 0, "scheduler policy sees nothing without app.vm_scheduler = 'on'", `saw ${schedulerUnset.rows.length}`);
+
+    // 5. token discovery policy
+    const tokenHash = 'a'.repeat(64);
+    await queryWithTenant(
+      TENANT_X,
+      `INSERT INTO vm_service_tokens (tenant_id, name, token_hash, token_prefix, scopes, created_by, expires_at)
+       VALUES ($1, 'rls_verify_token', $2, 'pbcvm_rlsvfy', ARRAY['vm:ingest'], 'rls_verify', NOW() + interval '1 day')`,
+      [TENANT_X, tokenHash]
+    );
+    const tokenNoCtx = await pool.query('SELECT 1 FROM vm_service_tokens WHERE token_hash = $1', [tokenHash]);
+    check(tokenNoCtx.rowCount === 0, 'vm_service_tokens: no tenant context and no app.vm_token_hash => zero rows visible', `saw ${tokenNoCtx.rowCount}`);
+    await queryWithTenant(
+      TENANT_Y,
+      `INSERT INTO vm_service_tokens (tenant_id, name, token_hash, token_prefix, scopes, created_by, expires_at)
+       VALUES ($1, 'rls_verify_token_y', $2, 'pbcvm_rlsvfy', ARRAY['vm:ingest'], 'rls_verify', NOW() + interval '1 day')`,
+      [TENANT_Y, 'c'.repeat(64)]
+    );
+    // No hash filter in the SELECT: the policy, not the WHERE clause, must narrow the result to the one token.
+    const tokenSelect = "SELECT tenant_id, token_hash FROM vm_service_tokens WHERE name LIKE 'rls_verify_%'";
+    const underTokenHash = async (value: string): Promise<{ tenant_id: string; token_hash: string }[]> => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.vm_token_hash', $1, true)", [value]);
+        return (await client.query(tokenSelect)).rows;
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    const tokenFound = await underTokenHash(tokenHash);
+    check(
+      tokenFound.length === 1 && tokenFound[0].tenant_id === TENANT_X && tokenFound[0].token_hash === tokenHash,
+      'vm_service_tokens: app.vm_token_hash exposes exactly that token row (not the other tenant\'s), with its tenant',
+      JSON.stringify(tokenFound)
+    );
+    const tokenOther = await underTokenHash('f'.repeat(64));
+    check(tokenOther.length === 0, 'vm_service_tokens: app.vm_token_hash matching no token sees nothing', `saw ${tokenOther.length}`);
+    const tokenEmpty = await underTokenHash('');
+    check(tokenEmpty.length === 0, 'vm_service_tokens: an empty app.vm_token_hash sees nothing', `saw ${tokenEmpty.length}`);
+    {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.vm_token_hash', $1, true)", [tokenHash]);
+        const touched = await client.query('UPDATE vm_service_tokens SET last_used_at = NOW() WHERE token_hash = $1', [tokenHash]);
+        check(touched.rowCount === 0, 'vm_service_tokens: the token discovery policy grants no write (the middleware must switch to tenant context first)', `updated ${touched.rowCount}`);
+      } catch (err) {
+        check(false, 'vm_service_tokens: token discovery transaction ran', String(err));
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    }
+    check(
+      await rejectsWith(
+        TENANT_X,
+        `INSERT INTO vm_service_tokens (tenant_id, name, token_hash, scopes, created_by, expires_at)
+         VALUES ($1, 'rls_verify_token_bad_hash', 'abc', ARRAY['vm:ingest'], 'rls_verify', NOW() + interval '1 day')`,
+        [TENANT_X],
+        { code: '23514', constraint: 'vm_service_tokens_hash_check' }
+      ),
+      'vm_service_tokens: the database refuses a token hash that is not 64 lowercase hex characters', lastRejection
+    );
+    check(
+      await rejectsWith(
+        TENANT_X,
+        `INSERT INTO vm_service_tokens (tenant_id, name, token_hash, scopes, created_by, expires_at)
+         VALUES ($1, 'rls_verify_token_bad_scope', $2, ARRAY['vm:admin'], 'rls_verify', NOW() + interval '1 day')`,
+        [TENANT_X, 'd'.repeat(64)],
+        { code: '23514', constraint: 'vm_service_tokens_scopes_check' }
+      ),
+      'vm_service_tokens: the database refuses a scope outside the allowed list', lastRejection
+    );
+
+    // 6. composite foreign key refuses another tenant's asset
+    await pool.query("INSERT INTO vm_vulns (vuln_id) VALUES ('RLS-VERIFY-0001') ON CONFLICT DO NOTHING");
+    const insertFinding = "INSERT INTO vm_findings (tenant_id, asset_id, vuln_id, severity) VALUES ($1, $2, 'RLS-VERIFY-0001', 'HIGH') RETURNING id";
+    check(
+      await rejectsWith(TENANT_X, insertFinding, [TENANT_X, assetIdY], { code: '23503', constraint: 'fk_vm_findings_asset' }),
+      "tenant X cannot attach a finding to tenant Y's asset: the composite foreign key refuses it even though RLS cannot see the difference", lastRejection
+    );
+
+    // 7. own asset works, duplicates do not
+    const findingX = await queryWithTenant(TENANT_X, insertFinding, [TENANT_X, assetIdX]);
+    const findingIdX = findingX.rows[0]?.id;
+    check(Boolean(findingIdX), "vm_findings: tenant X can attach a finding to its own asset");
+    check(await rejectsWith(TENANT_X, insertFinding, [TENANT_X, assetIdX], { code: '23505', constraint: 'unq_vm_finding' }), 'vm_findings: the same (tenant, asset, vuln) twice is refused (unq_vm_finding)', lastRejection);
+
+    // 8. machine-confirmed closure and justified human decisions
+    await pool.query("INSERT INTO vm_vulns (vuln_id) VALUES ('RLS-VERIFY-0002') ON CONFLICT DO NOTHING");
+    check(
+      await rejectsWith(TENANT_X, "INSERT INTO vm_findings (tenant_id, asset_id, vuln_id, severity, status) VALUES ($1, $2, 'RLS-VERIFY-0002', 'HIGH', 'RESOLVED')", [TENANT_X, assetIdX], { code: '23514', constraint: 'vm_findings_resolved_check' }),
+      'vm_findings: RESOLVED without resolved_at and the confirming run is refused', lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, "INSERT INTO vm_findings (tenant_id, asset_id, vuln_id, severity, status) VALUES ($1, $2, 'RLS-VERIFY-0002', 'HIGH', 'RISK_ACCEPTED')", [TENANT_X, assetIdX], { code: '23514', constraint: 'vm_findings_decision_check' }),
+      'vm_findings: human decisions need a justification, decided_by and decided_at', lastRejection
+    );
+
+    // 9. runs and sightings
+    const runX = await queryWithTenant(
+      TENANT_X,
+      "INSERT INTO vm_runs (tenant_id, source_id, raw_path, raw_sha256) VALUES ($1, $2, 'rls_verify', $3) RETURNING id",
+      [TENANT_X, srcIdX, 'b'.repeat(64)]
+    );
+    const runIdX = runX.rows[0]?.id;
+    check(Boolean(runIdX), 'vm_runs: tenant X can record a run for its own source');
+    let sightingOk = false;
+    try {
+      await queryWithTenant(TENANT_X, 'INSERT INTO vm_sightings (tenant_id, finding_id, run_id, source_id) VALUES ($1, $2, $3, $4)', [TENANT_X, findingIdX, runIdX, srcIdX]);
+      sightingOk = true;
+    } catch {
+      sightingOk = false;
+    }
+    check(sightingOk, 'vm_sightings: tenant X can record a sighting for its own finding, run and source');
+    // a second run, so the unique (run_id, finding_id) cannot refuse the insert before the source key is checked
+    const runX2 = await queryWithTenant(
+      TENANT_X,
+      "INSERT INTO vm_runs (tenant_id, source_id, raw_path, raw_sha256) VALUES ($1, $2, 'rls_verify', $3) RETURNING id",
+      [TENANT_X, srcIdX, 'e'.repeat(64)]
+    );
+    const runIdX2 = runX2.rows[0]?.id;
+    check(
+      await rejectsWith(
+        TENANT_X,
+        'INSERT INTO vm_sightings (tenant_id, finding_id, run_id, source_id) VALUES ($1, $2, $3, $4)',
+        [TENANT_X, findingIdX, runIdX2, srcIdY],
+        { code: '23503', constraint: 'fk_vm_sightings_source' }
+      ),
+      "vm_sightings: a sighting naming tenant Y's source is refused (composite foreign key)", lastRejection
+    );
+
+    // 10. tenant Y cannot see or change tenant X's findings
+    const findingsStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_findings WHERE tenant_id = $1', [TENANT_X]);
+    check(findingsStolen.rows.length === 0, 'vm_findings: tenant Y cannot read tenant X findings even by naming the tenant');
+    const findingsUpdate = await queryWithTenant(TENANT_Y, "UPDATE vm_findings SET status = 'FALSE_POSITIVE' WHERE tenant_id = $1", [TENANT_X]);
+    check((findingsUpdate.rowCount ?? 0) === 0, "vm_findings: tenant Y cannot update tenant X's findings");
   } finally {
+    for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM vm_sightings WHERE source_id IN (SELECT id FROM vm_sources WHERE label LIKE 'rls_verify_%')", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_findings WHERE vuln_id LIKE 'RLS-VERIFY-%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path = 'rls_verify'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_sources WHERE label LIKE 'rls_verify_%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_service_tokens WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
+    }
+    await pool.query("DELETE FROM vm_vulns WHERE vuln_id LIKE 'RLS-VERIFY-%'").catch(() => undefined);
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined);

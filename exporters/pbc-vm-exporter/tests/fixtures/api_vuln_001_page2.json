@@ -1,0 +1,8 @@
+{
+  "data": {
+    "affected_items": [
+      { "cve": "CVE-2023-38545", "name": "curl", "version": "7.81.0", "severity": "Critical", "cvss3_score": 9.8, "title": "Example two", "detection_time": "2026-10-17T00:00:00Z", "published": "2023-10-18T00:00:00Z", "external_references": ["https://example.com/c"] }
+    ],
+    "total_affected_items": 2
+  }
+}

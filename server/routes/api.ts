@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import authRouter from './auth';
 import invitesRouter from './invites';
+import vmIngestRouter from './vmIngest';
 import controlsRouter from './controls';
 import evidenceRouter from './evidence';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
@@ -33,6 +34,9 @@ router.use('/setup', setupRouter);
 
 // Invitation redemption by the invitee: preview (public, token only) and accept (authenticated)
 router.use('/invites', invitesRouter);
+
+// Scanner push (vulnerability management): authenticated by a service token, not a user session, so it sits before authMiddleware
+router.use('/vm', vmIngestRouter);
 
 // Who the signed-in user is on this platform. `isPlatformAdmin` is decided by the server (PLATFORM_ADMIN_EMAILS), so the
 // UI shows the administration console only to people the server will actually let use it.

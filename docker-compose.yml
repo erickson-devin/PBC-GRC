@@ -99,6 +99,15 @@ services:
       SSP_AI_RETRIEVAL_MIN_SCORE: ${SSP_AI_RETRIEVAL_MIN_SCORE:-}
       SSP_AI_MIN_CONFIDENCE: ${SSP_AI_MIN_CONFIDENCE:-}
       SSP_AI_GAP_MODE: ${SSP_AI_GAP_MODE:-}
+      # Vulnerability management ingest (docs/VULNERABILITY_MANAGEMENT.md); empty means the built-in default. Compose passes no env_file, so list each one.
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      VM_ALLOW_INSECURE_TOKENS: ${VM_ALLOW_INSECURE_TOKENS:-}
+      VM_INGEST_MAX_BYTES: ${VM_INGEST_MAX_BYTES:-}
+      VM_SLA_DAYS_CRITICAL: ${VM_SLA_DAYS_CRITICAL:-}
+      VM_SLA_DAYS_HIGH: ${VM_SLA_DAYS_HIGH:-}
+      VM_SLA_DAYS_MEDIUM: ${VM_SLA_DAYS_MEDIUM:-}
+      VM_SLA_DAYS_LOW: ${VM_SLA_DAYS_LOW:-}
+      VM_POAM_AUTOCREATE: ${VM_POAM_AUTOCREATE:-}
     ports:
       - "3000:3000"
     volumes:
