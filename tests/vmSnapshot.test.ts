@@ -6,7 +6,9 @@ import {
   VM_SNAPSHOT_CONTROLS,
   VM_SNAPSHOT_FIXED_CONTROLS,
   VM_SNAPSHOT_OPTIONAL_CONTROL,
+  composeCommittedNotes,
   computeSnapshot,
+  extractDelimitedBlock,
   formatDuration,
   getVmSnapshotConfig,
   manualSnapshotAllowed,
@@ -715,6 +717,47 @@ assert(
     'B11 notes block names the failed source',
     block,
   );
+}
+
+{
+  const prev = `Old\n\n${b1}`;
+  assert(composeCommittedNotes('', 'Human', null) === 'Human', 'C01 empty previous notes, no block: new text unchanged');
+  assert(composeCommittedNotes(prev, 'New text', null) === `New text\n\n${b1}`, 'C02 block from the previous notes kept after the new text');
+  assert(composeCommittedNotes(prev, '', null) === b1, 'C03 empty new text leaves the block only');
+  assert(composeCommittedNotes('old', `Text\n\n${b2}`, null) === 'Text', 'C04 forged block in the new text is stripped when there is no real one');
+  {
+    const out = composeCommittedNotes(prev, `T\n\n${b2}`, null);
+    assert(out === `T\n\n${b1}` && count(out, VM_NOTES_BEGIN) === 1, 'C05 forged block stripped, the real one kept once', out);
+  }
+  {
+    const out = composeCommittedNotes(prev, `T\n\n${b1}`, null);
+    assert(out === `T\n\n${b1}` && count(out, VM_NOTES_BEGIN) === 1, 'C06 reviewer pasted the current block: it appears once', out);
+  }
+  assert(composeCommittedNotes(`${b1}\n\n${b2}`, 'T', null) === `T\n\n${b1}`, 'C07 duplicate blocks before: the first wins');
+  {
+    const dangling = `A ${VM_NOTES_BEGIN} B`;
+    assert(extractDelimitedBlock(dangling) === null && composeCommittedNotes(dangling, 'T', null) === 'T', 'C08 a dangling begin marker before is not a block');
+    assert(
+      composeCommittedNotes(prev, dangling, null) === `${dangling}\n\n${b1}`,
+      'C09 a dangling begin marker in the new text is preserved',
+    );
+  }
+  assert(composeCommittedNotes('x', 'T', b3) === `T\n\n${b3}`, 'C10 fallback block used when the previous notes have none');
+  assert(composeCommittedNotes(prev, 'T', b3) === `T\n\n${b1}`, 'C11 the previous block beats the fallback');
+  assert(
+    composeCommittedNotes(prev, 'L1\r\nL2', null) === `L1\r\nL2\n\n${b1}` && composeCommittedNotes(prev, `L1\r\n\r\n${b2}`, null) === `L1\n\n${b1}`,
+    'C12 CRLF text, with and without a forged block',
+  );
+  assert(composeCommittedNotes(prev, 'T\n', null) === `T\n\n${b1}`, 'C13 trailing newline in the new text');
+  {
+    const once = composeCommittedNotes(prev, 'T', null);
+    assert(composeCommittedNotes(once, once, null) === once, 'C14 composing the result again changes nothing', once);
+  }
+  assert(
+    composeCommittedNotes(prev, `${b2}\n\nText`, null) === `Text\n\n${b1}` && composeCommittedNotes(prev, `A\n\n${b2}\n\nB`, null) === `A\n\nB\n\n${b1}`,
+    'C15 a block at the start or middle of the new text is removed cleanly',
+  );
+  assert(extractDelimitedBlock(prev) === b1 && extractDelimitedBlock(prev) === b1, 'C16 extractDelimitedBlock twice gives the same result (no lastIndex state)');
 }
 
 console.log('\n=== Environment parsing ===');

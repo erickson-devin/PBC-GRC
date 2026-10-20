@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type pg from 'pg';
 import { getTenantProgram, queryWithTenant } from '../db';
+import { CONTROL_STATUSES, listControlAssessmentEvents, writeControlAssessment } from '../controlAssessments';
 import { ensureControlInProgram, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
@@ -276,18 +277,27 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 /**
  * PUT /api/v1/controls/:controlId
  * Updates implementation notes, status (MET / NOT_MET / IN_PROGRESS / NOT_STARTED), and timestamp.
+ * A field left out (or null) keeps its stored value; an empty status or role also keeps it; an empty string for the notes clears them.
+ * The change is recorded in the control's history under the signed-in user, never under the name in the body.
  */
 router.put('/:controlId', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
   const { controlId } = req.params;
-  const { status, implementationNotes, responsibleRole, updatedBy } = req.body;
+  const { status, implementationNotes, responsibleRole, updatedBy } = req.body ?? {};
 
   // Validate status if provided
-  const validStatuses = ['NOT_STARTED', 'IN_PROGRESS', 'MET', 'NOT_MET'];
-  if (status && !validStatuses.includes(status)) {
+  if (status !== undefined && status !== null && status !== '' && !(CONTROL_STATUSES as readonly unknown[]).includes(status)) {
     res.status(400).json({
-      error: `Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`,
+      error: `Invalid status: ${status}. Must be one of: ${CONTROL_STATUSES.join(', ')}`,
     });
+    return;
+  }
+  if (implementationNotes !== undefined && implementationNotes !== null && typeof implementationNotes !== 'string') {
+    res.status(400).json({ error: 'implementationNotes must be text' });
+    return;
+  }
+  if (responsibleRole !== undefined && responsibleRole !== null && typeof responsibleRole !== 'string') {
+    res.status(400).json({ error: 'responsibleRole must be text' });
     return;
   }
 
@@ -296,37 +306,24 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
   if (!(await ensureControlInProgram(req, res, String(controlId)))) return;
 
   try {
-    const upsertQuery = `
-      INSERT INTO control_assessments (
-        tenant_id, control_id, status, implementation_notes, responsible_role, updated_by
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6
-      )
-      ON CONFLICT (tenant_id, control_id)
-      DO UPDATE SET
-        status = COALESCE($3, control_assessments.status),
-        implementation_notes = COALESCE($4, control_assessments.implementation_notes),
-        responsible_role = COALESCE($5, control_assessments.responsible_role),
-        updated_by = $6,
-        updated_at = NOW()
-      RETURNING *;
-    `;
-
-    const result = await queryWithTenant(tenantId, upsertQuery, [
+    const written = await writeControlAssessment(
       tenantId,
-      controlId,
-      status || 'NOT_STARTED',
-      implementationNotes ?? '',
-      responsibleRole || 'IT / Security Lead',
-      effectiveUser,
-    ]);
+      String(controlId),
+      () => ({
+        status: status || null,
+        notes: implementationNotes ?? null,
+        role: responsibleRole || null,
+        updatedBy: effectiveUser,
+      }),
+      { source: 'human', actor: req.user?.name || req.user?.email || 'Compliance Assessor', userId: req.user?.uid ?? null }
+    );
 
-    if (!result.rows.length) {
+    if (!written) {
       res.status(404).json({ error: `Control ${controlId} not found or RLS restricted` });
       return;
     }
 
-    const updated = mapRowToControl(result.rows[0]);
+    const updated = mapRowToControl(written);
     res.json({
       message: `Control ${controlId} updated successfully`,
       control: updated,
@@ -337,6 +334,26 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
       error: `Failed to update control ${controlId}`,
       details: errorMessage(err),
     });
+  }
+});
+
+/**
+ * GET /api/v1/controls/:controlId/history?limit=
+ * Who changed the control and when, newest first. Carries the SHA-256 and length of the notes, never their text. Every role may read it.
+ */
+router.get('/:controlId/history', async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.tenantId!;
+  const controlId = String(req.params.controlId);
+  if (!(await ensureControlInProgram(req, res, controlId))) return;
+
+  const rawLimit = typeof req.query.limit === 'string' ? req.query.limit : '';
+  const limit = /^\d+$/.test(rawLimit) ? Math.min(200, Math.max(1, Number(rawLimit))) : 50;
+  try {
+    const events = await listControlAssessmentEvents(tenantId, controlId, limit);
+    res.json({ tenantId, controlId, totalCount: events.length, events });
+  } catch (err: unknown) {
+    console.error(`[Controls API] Error reading the history of ${controlId} for tenant ${tenantId}:`, err);
+    res.status(500).json({ error: 'Failed to load the control history' });
   }
 });
 

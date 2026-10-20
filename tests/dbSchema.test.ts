@@ -1,4 +1,5 @@
 import { assertSupportedPostgresVersion, buildPoolConfig } from '../server/db';
+import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql, rlsPolicyName } from '../server/schema';
 
 /**
@@ -54,6 +55,35 @@ assert(tenantBound.length >= 4, `found tenant-bound tables in the DDL (${tenantB
 assert(tenantBound.every((t) => protectedTables.has(t)), 'every table with a tenant_id column is covered by RLS', tenantBound.filter((t) => !protectedTables.has(t)));
 assert(!protectedTables.has('control_mappings'), 'global reference data (control_mappings) is intentionally not RLS-bound');
 assert(!protectedTables.has('local_users') && !tenantBound.includes('local_users'), 'local_users is global identity data (login happens before any tenant exists), not tenant-bound');
+
+console.log('\n--- Control assessment history ---');
+const eventsStart = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS control_assessment_events (');
+const eventsBlock = eventsStart < 0 ? '' : TABLES_SQL.slice(eventsStart, TABLES_SQL.indexOf('\n  );', eventsStart));
+assert(eventsStart >= 0, 'control_assessment_events is created');
+assert(RLS_TENANT_TABLES.some((r) => r.table === 'control_assessment_events' && r.tenantColumn === 'tenant_id'), 'control_assessment_events is in RLS_TENANT_TABLES on tenant_id');
+assert(
+  rls.includes('ALTER TABLE control_assessment_events FORCE ROW LEVEL SECURITY;') && rls.includes(`CREATE POLICY ${rlsPolicyName('control_assessment_events')} ON control_assessment_events`),
+  'control_assessment_events: FORCE ROW LEVEL SECURITY and the tenant-isolation policy are in buildRlsSql()'
+);
+const eventSources = [...(/control_assessment_events_source_check CHECK \(source IN \(([^)]*)\)\)/.exec(TABLES_SQL)?.[1] ?? '').matchAll(/'([^']*)'/g)].map((x) => x[1]);
+assert(
+  JSON.stringify(eventSources) === JSON.stringify(['human', 'ssp-commit', 'vm-snapshot']) && JSON.stringify(eventSources) === JSON.stringify(CONTROL_CHANGE_SOURCES),
+  'the event source CHECK lists human, ssp-commit, vm-snapshot and equals CONTROL_CHANGE_SOURCES', eventSources
+);
+assert(
+  TABLES_SQL.includes('DROP CONSTRAINT IF EXISTS control_assessment_events_source_check') &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS control_assessment_events_source_check') < TABLES_SQL.indexOf('ADD CONSTRAINT control_assessment_events_source_check'),
+  'the source CHECK is dropped before it is added, so a new source reaches existing databases'
+);
+assert(
+  eventsBlock.length > 0 && !/\bimplementation_notes\b/.test(eventsBlock) && !/\bnotes\s+TEXT\b/i.test(eventsBlock),
+  'an event has no notes text column (notes may hold CUI: only the SHA-256 and length are kept)'
+);
+assert(eventsBlock.length > 0 && !/\bREFERENCES\b/i.test(eventsBlock), 'no foreign key: the history outlives the control_assessments row');
+assert(
+  TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_assessment_events_control ON control_assessment_events (tenant_id, control_id, created_at DESC);'),
+  'the history is indexed by (tenant, control, newest first)'
+);
 
 console.log('\n--- Tenant discovery policies ("list my tenants") ---');
 const byName = (name: string) => DISCOVERY_POLICIES.find((p) => p.name === name);

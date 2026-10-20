@@ -1,4 +1,5 @@
-import { queryWithTenant } from '../db';
+import { writeControlAssessment } from '../controlAssessments';
+import { VM_SNAPSHOT_CONTROLS, composeCommittedNotes } from '../vm/snapshot';
 import { hashLiveControl, readLiveControls } from './runner';
 import { listStaged, updateJob, updateStaged } from './store';
 import type { SspImportJob } from './types';
@@ -8,6 +9,8 @@ import type { SspImportJob } from './types';
  *
  *  - It never changes a control's status: the document's text is not evidence that a practice is met. Only the
  *    implementation notes change (a control with no answer yet starts as NOT_STARTED).
+ *    On the vulnerability-management snapshot controls the existing snapshot block is kept; status and role are passed
+ *    as NULL and therefore never changed.
  *  - A suggestion is committed only if the control still looks the way it did when the suggestion was staged. If someone
  *    changed it meanwhile the item becomes CONFLICT and nothing is written for it.
  *  - Items that were rejected, are still pending or are in conflict are left alone.
@@ -17,27 +20,12 @@ export interface CommitResult {
   conflicts: string[];
 }
 
-const UPSERT = `
-  INSERT INTO control_assessments (
-    tenant_id, control_id, status, implementation_notes, responsible_role, updated_by
-  ) VALUES (
-    $1, $2, $3, $4, $5, $6
-  )
-  ON CONFLICT (tenant_id, control_id)
-  DO UPDATE SET
-    status = COALESCE($3, control_assessments.status),
-    implementation_notes = COALESCE($4, control_assessments.implementation_notes),
-    responsible_role = COALESCE($5, control_assessments.responsible_role),
-    updated_by = $6,
-    updated_at = NOW()
-  RETURNING *;
-`;
-
 export async function commitReviewedSuggestions(
   tenantId: string,
   job: SspImportJob,
   reviewer: string,
-  onlyIds?: string[]
+  onlyIds?: string[],
+  reviewerUserId: string | null = null
 ): Promise<CommitResult> {
   const result: CommitResult = { committed: [], conflicts: [] };
   const staged = (await listStaged(tenantId, job.id)).filter(
@@ -56,15 +44,23 @@ export async function commitReviewedSuggestions(
       continue;
     }
     const notes = item.reviewState === 'EDITED' ? (item.editedNotes ?? '') : item.suggestedNotes;
-    const written = await queryWithTenant(tenantId, UPSERT, [
+    // A vulnerability-management snapshot control keeps its snapshot block (docs/VULNERABILITY_MANAGEMENT.md, section 7.3):
+    // the block is machine-owned, so any block inside the reviewed text is dropped and the one the control carried is re-appended.
+    const keepsBlock = (VM_SNAPSHOT_CONTROLS as readonly string[]).includes(item.controlId);
+    const written = await writeControlAssessment(
       tenantId,
       item.controlId,
-      current?.status ?? 'NOT_STARTED',
-      notes,
-      current?.role ?? 'IT / Security Lead',
-      updatedBy,
-    ]);
-    if (!written.rows.length) throw new Error(`Control ${item.controlId} could not be written`);
+      (locked) =>
+        hashLiveControl(locked) !== item.baseHash
+          ? null // changed between the check above and this locked read: the same CONFLICT rule, applied once more
+          : { status: null, notes: keepsBlock ? composeCommittedNotes(locked?.notes ?? '', notes, null) : notes, role: null, updatedBy },
+      { source: 'ssp-commit', actor: reviewer, userId: reviewerUserId },
+    );
+    if (!written) {
+      await updateStaged(tenantId, job.id, item.id, { reviewState: 'CONFLICT' });
+      result.conflicts.push(item.id);
+      continue;
+    }
     await updateStaged(tenantId, job.id, item.id, { reviewState: 'COMMITTED', committedAt: new Date().toISOString() });
     result.committed.push(item.id);
   }

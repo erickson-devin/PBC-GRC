@@ -13,7 +13,7 @@
  * throttled last_used_at / list / cap / revoke, and run-store receive / dedupe / source resolution / list / update, each
  * under two tenants to prove isolation, then the normalization worker end to end (findings, closure, assets, a forced failure that
  * must roll the whole run back, reprocess idempotence), and finally the scheduler (section 14: the cross-tenant enumeration
- * policy, stale_since, the snapshot evidence files and rows, the control notes block). It inserts and removes rows named
+ * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history). It inserts and removes rows named
  * "vm_verify..." / "vm-verify..." (and "VM-VERIFY-" and "CVE-2099-" rows in vm_vulns), the snapshot evidence and control
  * rows of the two verify tenants, and payload and snapshot files under the tenant's vault directory.
  * Exit code 0 = all checks passed.
@@ -37,7 +37,7 @@ const { listFindings } = await import('../server/vm/findingsStore');
 const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = await import('../server/vm/worker');
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
 const { runVmSnapshot, latestSnapshotAt } = await import('../server/vm/snapshotWriter');
-const { upsertControlAssessment, readControlAssessments } = await import('../server/controlAssessments');
+const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
 const { VM_NOTES_BEGIN } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
@@ -335,7 +335,7 @@ async function main() {
 
     // h. A human answer survives the next snapshot.
     const block = live.get('SI.L1-3.14.1')?.notes ?? '';
-    await upsertControlAssessment(TENANT_X, { controlId: 'SI.L1-3.14.1', status: 'MET', notes: `Human text\n\n${block}`, role: 'IT / Security Lead', updatedBy: 'vm_verify' });
+    await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: 'MET', notes: `Human text\n\n${block}`, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
     await runVmSnapshot(TENANT_X, { trigger: 'manual' });
     const afterHuman = (await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1');
     check(
@@ -348,6 +348,45 @@ async function main() {
     // i. Tenant isolation of the evidence rows.
     const ofY = await queryWithTenant(TENANT_Y, "SELECT * FROM evidence_metadata WHERE uploaded_by = 'system:vm-snapshot'", []);
     check(ofY.rows.every((r) => r.tenant_id === TENANT_Y) && ofY.rows.length === 0, "tenant Y sees none of tenant X's snapshot evidence", String(ofY.rows.length));
+
+    console.log('\n--- 15. Control assessment history ---');
+    const events = await listControlAssessmentEvents(TENANT_X, 'SI.L1-3.14.1', 50);
+    check(
+      events.length === 3 && events.map((e) => e.source).join(',') === 'vm-snapshot,human,vm-snapshot',
+      'SI.L1-3.14.1 has 3 events, newest first: vm-snapshot, human, vm-snapshot',
+      JSON.stringify(events.map((e) => e.source)),
+    );
+    check(
+      events[2]?.oldStatus === null && events[2].newStatus === 'NOT_STARTED' && events[2].notesChanged === true,
+      'the oldest event is the creation: null -> NOT_STARTED, notes changed',
+      JSON.stringify(events[2]),
+    );
+    check(events[1]?.oldStatus === 'NOT_STARTED' && events[1].newStatus === 'MET', 'the human event is NOT_STARTED -> MET', JSON.stringify(events[1]));
+    check(
+      events[0]?.oldStatus === 'MET' && events[0].newStatus === 'MET' && events[0].notesChanged === true,
+      'the newest event is the second snapshot: MET -> MET, notes changed',
+      JSON.stringify(events[0]),
+    );
+    const eventCount = async (): Promise<number> =>
+      Number((await queryWithTenant(TENANT_X, 'SELECT count(*)::int AS n FROM control_assessment_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n);
+    check((await eventCount()) === 7, 'tenant X holds 7 events (3 from the first tick, 1 human, 3 from the second snapshot)', String(await eventCount()));
+
+    await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: null, notes: 'x', role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
+    check((await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1')?.status === 'MET', 'a write with a null status keeps MET');
+    const beforeRollback = await eventCount();
+    const txClient = await pool.connect();
+    try {
+      await txClient.query('BEGIN');
+      await txClient.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', TENANT_X]);
+      await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: 'NOT_MET', notes: null, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null }, txClient);
+    } finally {
+      await txClient.query('ROLLBACK').catch(() => undefined);
+      txClient.release();
+    }
+    check((await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1')?.status === 'MET', 'a write inside a rolled-back caller transaction leaves the status MET');
+    check((await eventCount()) === beforeRollback, 'and its event was rolled back with it (the event count is unchanged)', `${beforeRollback} -> ${await eventCount()}`);
+    const noContextEvents = await pool.query('SELECT count(*)::int AS n FROM control_assessment_events');
+    check(Number(noContextEvents.rows[0].n) === 0, 'without a tenant context no control_assessment_events row is visible', String(noContextEvents.rows[0].n));
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, 'DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
@@ -359,6 +398,7 @@ async function main() {
       await queryWithTenant(t, "DELETE FROM vm_sources WHERE label ILIKE 'vm_verify%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_service_tokens WHERE name LIKE 'vm_verify%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [t]).catch(() => undefined);
+      await queryWithTenant(t, 'DELETE FROM control_assessment_events WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM control_assessments WHERE tenant_id = $1 AND control_id IN ('RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1', 'CA.L2-3.12.3')", [t]).catch(() => undefined);
       fs.rmSync(path.join(localStorageRoot(), 'tenants', t, 'vm', 'snapshots'), { recursive: true, force: true });
     }
