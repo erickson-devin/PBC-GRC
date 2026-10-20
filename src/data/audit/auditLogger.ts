@@ -166,6 +166,96 @@ export async function recordAuditEvent(params: {
   return newEntry;
 }
 
+export const LEDGER_REDACTION_MARKER = '[redacted 2026-10-19]';
+
+// What describeNotesForLedger writes: an optional digest plus the length, never text.
+const NOTES_DESCRIPTOR_RE = /^(sha256:[0-9a-f]{64} )?\(\d+ chars\)$/;
+
+function needsRedaction(value: unknown): boolean {
+  return typeof value === 'string' && value !== '' && value !== LEDGER_REDACTION_MARKER && !NOTES_DESCRIPTOR_RE.test(value);
+}
+
+/**
+ * Removes implementation-notes excerpts that older builds wrote into CONTROL_NOTES_UPDATED entries (the notes may
+ * contain CUI and the ledger lives in localStorage). Redacting changes the hashed payload, so the chain is re-hashed
+ * from the first redacted entry and one LEDGER_REDACTED entry is appended (count and the old head hash). Returns the
+ * same array and 0 when nothing needed redaction; never mutates its input.
+ */
+export async function redactLedgerNotesExcerpts(
+  entries: AuditLogEntry[]
+): Promise<{ entries: AuditLogEntry[]; redacted: number }> {
+  let firstIndex = -1;
+  let redacted = 0;
+  const next = entries.map((entry, i) => {
+    if (!entry || entry.actionType !== 'CONTROL_NOTES_UPDATED') return entry;
+    const hitPrev = needsRedaction(entry.previousState);
+    const hitNew = needsRedaction(entry.newState);
+    if (!hitPrev && !hitNew) return entry;
+    if (firstIndex < 0) firstIndex = i;
+    redacted += (hitPrev ? 1 : 0) + (hitNew ? 1 : 0);
+    return {
+      ...entry,
+      previousState: hitPrev ? LEDGER_REDACTION_MARKER : entry.previousState,
+      newState: hitNew ? LEDGER_REDACTION_MARKER : entry.newState,
+    };
+  });
+  if (firstIndex < 0) return { entries, redacted: 0 };
+
+  const oldHead = entries[entries.length - 1].sha256Hash;
+  for (let i = firstIndex; i < next.length; i++) {
+    const previousHash = i === 0 ? GENESIS_HASH : next[i - 1].sha256Hash;
+    const e = next[i];
+    const canonical = createCanonicalEntryPayload(
+      e.sequenceNumber,
+      e.timestamp,
+      e.tenantId,
+      e.actorEmail,
+      e.actionType,
+      e.targetEntity,
+      e.previousState,
+      e.newState,
+      e.metadata,
+      previousHash
+    );
+    next[i] = { ...e, previousHash, sha256Hash: await computeSha256(canonical) };
+  }
+
+  const last = next[next.length - 1];
+  const sequenceNumber = next.length + 1;
+  const timestamp = new Date().toISOString();
+  // LEDGER_REDACTED is written only here (see AuditActionType in src/types/audit.ts)
+  const actionType: AuditActionType = 'LEDGER_REDACTED';
+  const newState = `redacted ${redacted} notes excerpt(s) and re-chained`;
+  const canonical = createCanonicalEntryPayload(
+    sequenceNumber,
+    timestamp,
+    last.tenantId,
+    'system',
+    actionType,
+    'audit-ledger',
+    oldHead,
+    newState,
+    undefined,
+    last.sha256Hash
+  );
+  next.push({
+    id: `audit_${last.tenantId}_${Date.now()}_${sequenceNumber}`,
+    sequenceNumber,
+    timestamp,
+    tenantId: last.tenantId,
+    actorId: 'system',
+    actorEmail: 'system',
+    actorRole: 'System',
+    actionType,
+    targetEntity: 'audit-ledger',
+    previousState: oldHead,
+    newState,
+    previousHash: last.sha256Hash,
+    sha256Hash: await computeSha256(canonical),
+  });
+  return { entries: next, redacted };
+}
+
 /**
  * Traverses and verifies the cryptographic integrity of an audit chain.
  * Detects any data tampering, payload modification, or broken hash sequence.

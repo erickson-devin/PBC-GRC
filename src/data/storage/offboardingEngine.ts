@@ -8,7 +8,7 @@
  */
 
 import { Tenant } from '../../types/tenant';
-import { AssessmentState, EvidenceItem } from '../../types/cmmc';
+import { AssessmentState, ControlState, EvidenceItem } from '../../types/cmmc';
 import { CompiledDocument, POAMEntry } from '../../types/report';
 import { CertificateOfDestruction, AuditLogEntry } from '../../types/audit';
 import { StorageService } from '../../services/storageService';
@@ -106,7 +106,9 @@ export async function generateEnclaveHandoverPackage(
   tenantId: string,
   tenantData?: Tenant,
   /** The enclave's asset inventory, when the caller has it (the server holds it for live tenants): states the CMMC scope in the SSP. */
-  assets?: ReadonlyArray<EnclaveAsset>
+  assets?: ReadonlyArray<EnclaveAsset>,
+  /** The server's control states (the source of truth for live tenants, including implementation notes the browser cache may lack). Overrides the cached controls per id. */
+  controlStates?: Record<string, ControlState>
 ): Promise<EnclaveHandoverPackage> {
   const tenant = resolveTenant(tenantId, tenantData);
   const state: AssessmentState = StorageService.loadAssessment(tenant);
@@ -114,6 +116,7 @@ export async function generateEnclaveHandoverPackage(
 
   const primaryFw = tenant.primaryFramework || 'CMMC_L1';
   const controls = getFrameworkControls(primaryFw);
+  const controlsForReport = { ...state.controls, ...controlStates };
 
   // Compile official NIST SP 800-18 / NIST SP 800-171 System Security Plan
   const sspDocument = compileNistSSP(
@@ -136,12 +139,12 @@ export async function generateEnclaveHandoverPackage(
       cryptoModules: assets ? collectFipsModules(assets) : undefined,
     },
     controls,
-    state.controls,
+    controlsForReport,
     state.evidenceIndex
   );
 
   // Generate structured POA&M entries
-  const poamMatrix = generatePOAMEntries(controls, state.controls);
+  const poamMatrix = generatePOAMEntries(controls, controlsForReport);
 
   const now = new Date().toISOString();
   const rawPayload = {

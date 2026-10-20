@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   AssessmentState,
@@ -6,6 +6,7 @@ import {
   EvidenceItem,
   SSPMetadata,
   ComplianceMetrics,
+  ControlState,
 } from '../types/cmmc';
 import { AssessmentObjective, ObjectiveStatus } from '../types/assessment';
 import { FrameworkControlDefinition } from '../types/framework';
@@ -25,6 +26,7 @@ import { computeDomainStats } from '../data/frameworks/domainStats';
 import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives';
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
 import { ApiClient } from '../services/apiClient';
+import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import {
@@ -59,6 +61,10 @@ export type NavigationTab =
 
 interface AssessmentContextType {
   state: AssessmentState;
+  /** Where this tenant's implementation notes come from right now (browser, loading / loaded from the server, or unavailable). */
+  notesStatus: NotesStatus;
+  /** False while a server-backed tenant's notes are not loaded: editing them would overwrite the server copy blindly. */
+  notesEditable: boolean;
   metrics: ComplianceMetrics;
   frameworkControls: FrameworkControlDefinition[];
   activeTab: NavigationTab;
@@ -117,7 +123,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     canEdit,
     currentUser,
     liveControls,
+    liveControlsTenantId,
     liveEvidence,
+    syncError,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
     activeFramework,
@@ -125,6 +133,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     activeOverlayFilters,
     ciaTriad,
   } = useTenant();
+
+  const notesStatus = computeNotesStatus({
+    serverBacked: Boolean(currentTenant.serverBacked),
+    liveControlsTenantId,
+    tenantId: currentTenant.id,
+    syncError,
+    hasToken: Boolean(ApiClient.getToken()),
+  });
+  const notesEditable = notesStatus === 'browser' || notesStatus === 'loaded';
+  const NOTES_NOT_EDITABLE_MESSAGE =
+    'Implementation notes are not loaded from the server, so they cannot be edited right now. They are not kept in this browser.';
 
   // Dynamically resolve controls for the currently selected framework, baseline/CIA triad, and overlay filters
   const frameworkControls = useMemo(() => {
@@ -139,6 +158,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Load tenant-isolated assessment state
   const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment(currentTenant));
+  // Latest state for actions that must read it without a state dependency (import diff)
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
   const [selectedDomainFilter, setSelectedDomainFilter] = useState<string>('ALL');
@@ -204,9 +226,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Auto-save state changes under tenant partition
   useEffect(() => {
     if (state.tenantId === currentTenant.id) {
-      StorageService.saveAssessment(currentTenant.id, state);
+      // Server-backed tenants never keep implementation notes in this browser (Phase 5.6)
+      StorageService.saveAssessment(currentTenant.id, state, { keepNotes: !currentTenant.serverBacked });
     }
-  }, [state, currentTenant.id]);
+  }, [state, currentTenant.id, currentTenant.serverBacked]);
 
   // Calculate Real-time Compliance Metrics dynamically for active framework controls
   const metrics: ComplianceMetrics = useMemo(() => {
@@ -329,6 +352,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
       return;
     }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return;
+    }
 
     // Sync to the server
     updateLiveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
@@ -373,11 +400,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
     if (!canEdit) return;
+
+    // Sync to the server (the audited writer records the change)
+    updateLiveControl(controlId, { responsibleRole: role, updatedBy: currentUser.name });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -414,7 +444,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name]);
+  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Apply Starter Template
   const applyStarterTemplate = useCallback((controlId: string, narrative: string) => {
@@ -422,7 +452,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Read-Only access: You do not have permission to apply templates.');
       return;
     }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return;
+    }
 
+    // StrictMode runs updaters twice: send the change to the server once per call
+    let sent = false;
     setState(prev => {
       const current = prev.controls[controlId] || {
         id: controlId,
@@ -444,6 +480,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         newState: { status: 'IN_PROGRESS', templateLength: narrative.length },
       }).catch(() => {});
 
+      // Save through the audited server writer; only the fields that change
+      if (!sent) {
+        sent = true;
+        const serverUpdate: Partial<ControlState> = { implementationNotes: narrative, updatedBy: currentUser.name };
+        if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
+        updateLiveControl(controlId, serverUpdate);
+      }
+
       return {
         ...prev,
         controls: {
@@ -458,12 +502,16 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name]);
+  }, [canEdit, notesEditable, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Bulk Apply STIG Policy Narratives across mapped controls
   const bulkApplyStigNarratives = useCallback((narratives: Record<string, string>): number => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
+      return 0;
+    }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
       return 0;
     }
 
@@ -507,7 +555,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           updatedBy: currentUser.name,
         };
 
-        updateLiveControl(id, { implementationNotes: newNotes, updatedBy: currentUser.name });
+        const serverUpdate: Partial<ControlState> = { implementationNotes: newNotes, updatedBy: currentUser.name };
+        if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
+        updateLiveControl(id, serverUpdate);
 
         appliedCount++;
       });
@@ -519,7 +569,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
 
     return appliedCount;
-  }, [canEdit, currentTenant.id, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentUser.name, updateLiveControl]);
 
   // -------------------------------------------------------------------------
   // NIST SP 800-171A Objective-Level Evaluation & Rollup Engine
@@ -695,9 +745,16 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return;
+    }
+
     const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
     const controlId = match ? match[1] : objectiveId;
 
+    // StrictMode runs updaters twice: send the change to the server once per call
+    let sent = false;
     setState(prev => {
       const existingObjectives = prev.objectives || {};
       const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
@@ -756,6 +813,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         combinedNotes = combinedNotes ? `${combinedNotes}\n\n${sectionHeader}` : sectionHeader;
       }
 
+      // Save through the audited server writer; only the fields that change
+      if (!sent) {
+        sent = true;
+        const serverUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
+        if (combinedNotes !== (currentCtrl.implementationNotes || '')) serverUpdate.implementationNotes = combinedNotes;
+        if (rolledStatus !== currentCtrl.status) serverUpdate.status = rolledStatus;
+        if (serverUpdate.implementationNotes !== undefined || serverUpdate.status !== undefined) {
+          updateLiveControl(controlId, serverUpdate);
+        }
+      }
+
       return {
         ...prev,
         objectives: nextObjectives,
@@ -771,14 +839,20 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, frameworkControls, currentUser, currentTenant.id]);
+  }, [canEdit, notesEditable, frameworkControls, currentUser, currentTenant.id, updateLiveControl]);
 
   const applyAllObjectiveTemplatesForControl = useCallback((controlId: string) => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
       return;
     }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return;
+    }
 
+    // StrictMode runs updaters twice: send the change to the server once per call
+    let sent = false;
     setState(prev => {
       const existingObjectives = prev.objectives || {};
       const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
@@ -833,13 +907,25 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setTimeout(triggerSprsCelebration, 150);
       }
 
+      // Save through the audited server writer; only the fields that change
+      if (!sent) {
+        sent = true;
+        const newNotes = narrativeSections.join('\n\n');
+        const serverUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
+        if (newNotes !== (currentCtrl.implementationNotes || '')) serverUpdate.implementationNotes = newNotes;
+        if (currentCtrl.status !== 'MET') serverUpdate.status = 'MET';
+        if (serverUpdate.implementationNotes !== undefined || serverUpdate.status !== undefined) {
+          updateLiveControl(controlId, serverUpdate);
+        }
+      }
+
       return {
         ...prev,
         objectives: nextObjectives,
         controls: updatedControls,
       };
     });
-  }, [canEdit, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration]);
+  }, [canEdit, notesEditable, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration, updateLiveControl]);
 
   const linkEvidenceToObjective = useCallback((objectiveId: string, evidenceId: string) => {
     if (!canEdit) return;
@@ -1075,6 +1161,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Read-Only access: Cannot import data.');
       return false;
     }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return false;
+    }
 
     try {
       const text = await file.text();
@@ -1102,13 +1192,41 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       imported.tenantId = currentTenant.id;
       imported.lastSaved = new Date().toISOString();
+
+      // A server-backed tenant's notes, status and roles live on the server: send each control that differs from the
+      // current state through the audited writer (one PUT per control, sequential, only the changed fields)
+      const serverUpdates: Array<[string, Partial<ControlState>]> = [];
+      if (currentTenant.serverBacked) {
+        for (const [id, next] of Object.entries(imported.controls)) {
+          const cur = stateRef.current.controls[id];
+          const curNotes = cur?.implementationNotes || '';
+          const curStatus = cur?.status || 'NOT_STARTED';
+          const curRole = cur?.responsibleRole || 'IT / Security Lead';
+          const update: Partial<ControlState> = {};
+          if ((next.implementationNotes || '') !== curNotes) update.implementationNotes = next.implementationNotes || '';
+          if (next.status && next.status !== curStatus) update.status = next.status;
+          if (next.responsibleRole && next.responsibleRole !== curRole) update.responsibleRole = next.responsibleRole;
+          if (Object.keys(update).length > 0) serverUpdates.push([id, { ...update, updatedBy: currentUser.name }]);
+        }
+      }
       setState(imported);
+      if (serverUpdates.length > 0) {
+        const IMPORT_PUT_CAP = 1000;
+        if (serverUpdates.length > IMPORT_PUT_CAP) {
+          console.warn(`Import changes ${serverUpdates.length} controls; only the first ${IMPORT_PUT_CAP} are saved to the server.`);
+        }
+        void (async () => {
+          for (const [id, update] of serverUpdates.slice(0, IMPORT_PUT_CAP)) {
+            await updateLiveControl(id, update);
+          }
+        })();
+      }
       return true;
     } catch {
       alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
       return false;
     }
-  }, [canEdit, currentTenant.id, frameworkControls, activeFramework]);
+  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, currentUser.name, frameworkControls, activeFramework, updateLiveControl]);
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
@@ -1122,6 +1240,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const value = useMemo(() => ({
     state,
+    notesStatus,
+    notesEditable,
     metrics,
     frameworkControls,
     activeTab,
@@ -1169,6 +1289,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     recalculateControlStatusFromObjectives,
   }), [
     state,
+    notesStatus,
+    notesEditable,
     metrics,
     frameworkControls,
     activeTab,

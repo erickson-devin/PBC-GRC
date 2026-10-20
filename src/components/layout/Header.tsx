@@ -9,6 +9,7 @@ import {
   FileCheck,
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
+import { BrowserOnlyNotesBanner } from '../common/BrowserOnlyNotesBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle } from '../../data/frameworks';
@@ -192,6 +193,9 @@ export const Header: React.FC<HeaderProps> = () => {
         </div>
 
       </div>
+
+      {/* Browser-only tenants: their notes have no other copy (persistent, not dismissable) */}
+      <BrowserOnlyNotesBanner />
     </header>
   );
 };

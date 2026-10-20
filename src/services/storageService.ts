@@ -3,8 +3,9 @@ import { Tenant } from '../types/tenant';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { getFrameworkControls } from '../data/frameworks';
 import { DEFAULT_GCP_CONFIG } from './gcsService';
+import { ASSESSMENT_KEY_PREFIX, stripImplementationNotesForCache } from './browserStorageScrub';
 
-const STORAGE_KEY_PREFIX = 'pbc_cmmc_assessment_v3_';
+const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
 export function createInitialControlsState(
   tenantId?: string,
@@ -86,6 +87,11 @@ export const StorageService = {
             };
           }
         }
+        // Server-backed tenants keep notes on the server only: the cache never holds them, so the editors start empty
+        // until the server copy loads. Browser-only tenants keep their (only) copy.
+        for (const ctrl of Object.values(parsed.controls)) {
+          ctrl.implementationNotes = tenant.serverBacked ? '' : typeof ctrl.implementationNotes === 'string' ? ctrl.implementationNotes : '';
+        }
         parsed.tenantId = tenant.id;
         return parsed;
       }
@@ -126,12 +132,14 @@ export const StorageService = {
   },
 
   /**
-   * Save assessment state under strict tenant namespace
+   * Save assessment state under strict tenant namespace. Implementation notes (possible CUI) are stripped from the
+   * cache unless `keepNotes` is set, which only browser-only tenants may do (their cache is the only copy).
    */
-  saveAssessment(tenantId: string, state: AssessmentState): void {
+  saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean } = {}): void {
     try {
+      const base: AssessmentState = options.keepNotes ? state : stripImplementationNotesForCache(state);
       const payload: AssessmentState = {
-        ...state,
+        ...base,
         tenantId,
         lastSaved: new Date().toISOString(),
       };

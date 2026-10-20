@@ -37,7 +37,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
 import { Tenant, TenantInvitation } from '../../types/tenant';
 import { frameworkLabel, programSummary } from '../../data/programs';
-import { ApiClient } from '../../services/apiClient';
+import { ApiClient, ApiError } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { NewTenantModal } from './NewTenantModal';
 import { EditEnclaveModal } from './EditEnclaveModal';
@@ -48,6 +48,7 @@ import {
   executeCryptographicDestruction,
 } from '../../data/storage/offboardingEngine';
 import { CertificateOfDestruction } from '../../types/audit';
+import type { ControlState } from '../../types/cmmc';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
@@ -221,7 +222,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     try {
       // The CMMC scope in the SSP comes from the asset inventory. If it cannot be read, the SSP simply states no counts.
       const assets = await getAssetBackend(tenant.id, assetBackendMode({ serverBacked: tenant.serverBacked })).list().catch(() => undefined);
-      await generateEnclaveHandoverPackage(tenant.id, tenant, assets);
+      // A live tenant's implementation notes live on the server; the browser cache may be empty or stale. Never hand over a package with missing notes.
+      let controlStates: Record<string, ControlState> | undefined;
+      if (tenant.serverBacked) {
+        try {
+          const list = await ApiClient.getControls(tenant.id, { framework: tenant.primaryFramework });
+          controlStates = Object.fromEntries(list.map(c => [c.id, c]));
+        } catch (err: unknown) {
+          // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.
+          const notMember = err instanceof ApiError && err.status === 403;
+          setNotificationToast({
+            type: 'error',
+            message: notMember
+              ? 'You are not a member of this tenant, so its implementation notes cannot be read. Add yourself to the tenant (or ask an owner to export) before generating the handover package.'
+              : 'Implementation notes could not be loaded from the server; the handover package was not generated.',
+          });
+          return;
+        }
+      }
+      await generateEnclaveHandoverPackage(tenant.id, tenant, assets, controlStates);
       setNotificationToast({
         type: 'success',
         message: `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,

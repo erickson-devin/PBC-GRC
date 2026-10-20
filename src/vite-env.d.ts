@@ -24,3 +24,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+declare const __BUILD_COMMIT__: string;
+declare const __BUILD_DATE__: string;

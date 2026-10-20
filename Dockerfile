@@ -13,6 +13,9 @@ RUN npm ci
 
 # Copy full repository source and build production static bundle
 COPY . .
+# The git commit of this build, stamped into the UI bundle (docker build --build-arg BUILD_COMMIT=$(git rev-parse HEAD))
+ARG BUILD_COMMIT=dev
+ENV BUILD_COMMIT=$BUILD_COMMIT
 RUN npm run build
 
 # ── Stage 2: Production Air-Gapped / On-Premises Runtime ──────────────────────
@@ -24,6 +27,10 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV STORAGE_PROVIDER=local
 ENV LOCAL_STORAGE_PATH=/app/data/evidence
+
+# Reported by GET /api/v1/health (buildCommit); the ARG must be redeclared because each stage starts clean
+ARG BUILD_COMMIT=dev
+ENV BUILD_COMMIT=$BUILD_COMMIT
 
 # Create local evidence storage directory
 RUN mkdir -p /app/data/evidence

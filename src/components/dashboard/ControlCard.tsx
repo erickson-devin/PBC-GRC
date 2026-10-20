@@ -45,6 +45,8 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 }) => {
   const {
     state,
+    notesStatus,
+    notesEditable,
     updateControlStatus,
     updateControlNotes,
     applyStarterTemplate,
@@ -438,17 +440,24 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           <div className="space-y-1.5">
             <textarea
               rows={4}
-              disabled={!canEdit}
+              disabled={!canEdit || !notesEditable}
               value={notes}
               onChange={(e) => updateControlNotes(control.id, e.target.value)}
               placeholder={`Describe how ${currentTenant.name} enforces this practice (e.g. policies, technical configurations, endpoint controls)...`}
               className="w-full p-3.5 rounded-xl bg-slate-900 border border-slate-700/80 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs sm:text-sm text-slate-100 placeholder-slate-400 leading-relaxed font-sans transition-all duration-200 disabled:opacity-60 resize-y"
             />
+            {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
+              <p role="status" className="text-xs text-amber-300 px-1">
+                {notesStatus === 'loading'
+                  ? 'Loading implementation notes from the server…'
+                  : 'Implementation notes could not be loaded from the server. They are not kept in this browser, so editing is off until the server is reachable.'}
+              </p>
+            )}
             <div className="flex items-center justify-between text-xs text-slate-400 px-1">
               <span>FAR 52.204-21 audit evidence reference</span>
               <span className="font-mono">{notes.length} characters</span>
             </div>
-            <OdpPanel control={control} notes={notes} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
+            <OdpPanel control={control} notes={notes} canEdit={canEdit && notesEditable}tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
             <CrosswalkPanel controlId={control.id} />
           </div>
 

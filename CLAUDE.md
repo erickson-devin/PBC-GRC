@@ -10,7 +10,7 @@ Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) | exit 0 |
 | Build | `npm run build` (`tsc && vite build`) | exit 0 |
-| Tests | `npm run test:all` (about 2m) | exit 0: 41 suites, 2608 of 2608 assertions |
+| Tests | `npm run test:all` (about 2m) | exit 0: 42 suites, 2649 of 2649 assertions |
 | One suite | `npx tsx tests/<name>.test.ts` (or `npm run test:<name>`) | each prints a final `📊 TEST RESULTS: n / n` line |
 | Node 22 (what CI runs) | `npx -y -p node@22 -- npm run test:all` | passes |
 | Exporter (Python) | `cd exporters/pbc-vm-exporter && python -m pytest -q` (venv: `python -m venv .venv`, then `pip install -e ".[dev]"`) | 227 passed, 1 skipped (POSIX-only); CI job "exporter" |

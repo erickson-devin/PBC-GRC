@@ -120,6 +120,35 @@ async function runTests() {
     );
   }
 
+  // Test Group 1b: server control states reach the handover package
+  console.log('\n🗄️ Test Group 1b: Server Control States in the Handover Package');
+  {
+    const base = { responsibleRole: 'Owner', lastUpdated: '2026-01-01T00:00:00.000Z', tags: [] as string[] };
+    const states = {
+      'AC.L1-3.1.1': { ...base, id: 'AC.L1-3.1.1', status: 'MET' as const, implementationNotes: 'SERVER-NOTES-MARKER-55' },
+    };
+    const withStates = await generateEnclaveHandoverPackage(testTenant.id, testTenant, undefined, states);
+    const without = await generateEnclaveHandoverPackage(testTenant.id, testTenant);
+
+    assert(
+      JSON.stringify(withStates.reports.systemSecurityPlan).includes('SERVER-NOTES-MARKER-55'),
+      'O1: server implementation notes appear in the SSP when controlStates is provided'
+    );
+    assert(
+      !JSON.stringify(without.reports.systemSecurityPlan).includes('SERVER-NOTES-MARKER-55'),
+      'O2: SSP does not include the notes when controlStates is omitted'
+    );
+
+    const notMet = { ...states, 'AC.L1-3.1.1': { ...states['AC.L1-3.1.1'], status: 'NOT_MET' as const } };
+    const overridden = await generateEnclaveHandoverPackage(testTenant.id, testTenant, undefined, notMet);
+    assert(
+      overridden.complianceSummary.notMetCount !== withStates.complianceSummary.notMetCount
+        || overridden.complianceSummary.metCount !== withStates.complianceSummary.metCount,
+      'O3: controlStates overrides the cached status in the report summary',
+      `met ${withStates.complianceSummary.metCount}->${overridden.complianceSummary.metCount}, notMet ${withStates.complianceSummary.notMetCount}->${overridden.complianceSummary.notMetCount}`
+    );
+  }
+
   // Test Group 2: NIST SP 800-88 Cryptographic Sanitization & Destruction Protocol
   console.log('\n🔥 Test Group 2: NIST SP 800-88 Cryptographic Destruction Protocol');
   {

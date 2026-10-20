@@ -5,6 +5,11 @@ import path from 'path';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Build identity: the git commit (BUILD_COMMIT, set by the Docker build) and build time, shown in the UI
+  define: {
+    __BUILD_COMMIT__: JSON.stringify(process.env.BUILD_COMMIT || 'dev'),
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
