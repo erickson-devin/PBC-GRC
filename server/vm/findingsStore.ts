@@ -393,6 +393,30 @@ export async function markRunNormalized(tenantId: string, runId: string, finishe
   await need(client).query("UPDATE vm_runs SET status = 'NORMALIZED', finished_at = $3, warning = $4, error = NULL WHERE id = $1 AND tenant_id = $2", [runId, tenantId, finishedAt, warning]);
 }
 
+/**
+ * Everything the snapshot evaluates, in one tenant transaction: every finding (any status), the ids of the vulnerabilities
+ * on the known-exploited list that the tenant has findings for, and every POA&M item.
+ */
+export async function loadSnapshotFindings(tenantId: string): Promise<{ findings: VmFinding[]; kevVulnIds: string[]; poam: VmPoamItem[] }> {
+  if (isMemory()) {
+    const findings = [...memoryFindings.values()].filter((f) => f.tenantId === tenantId).map((f) => ({ ...f }));
+    const kevVulnIds = [...new Set(findings.map((f) => f.vulnId))].filter((id) => memoryVulns.get(id)?.kev);
+    const poam = [...memoryPoam.values()].filter((p) => p.tenantId === tenantId).map((p) => ({ ...p }));
+    return { findings, kevVulnIds, poam };
+  }
+  return withVmTenantTx(tenantId, async (client) => {
+    const c = need(client);
+    const found = await c.query('SELECT * FROM vm_findings WHERE tenant_id = $1', [tenantId]);
+    const kev = await c.query('SELECT DISTINCT f.vuln_id FROM vm_findings f JOIN vm_vulns v ON v.vuln_id = f.vuln_id WHERE f.tenant_id = $1 AND v.kev', [tenantId]);
+    const poam = await c.query('SELECT * FROM vm_poam_items WHERE tenant_id = $1', [tenantId]);
+    return {
+      findings: found.rows.map(rowToFinding),
+      kevVulnIds: kev.rows.map((r) => r.vuln_id as string),
+      poam: poam.rows.map(rowToPoamItem),
+    };
+  });
+}
+
 const SEVERITY_ORDER: Record<VmSeverity, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, UNKNOWN: 3, LOW: 4 };
 
 export interface FindingFilter {

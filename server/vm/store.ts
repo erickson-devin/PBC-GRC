@@ -171,6 +171,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
     memoryRuns.set(run.id, run);
     source.lastRunId = run.id;
     source.lastRunAt = now;
+    source.staleSince = null;
     source.updatedAt = now;
     return { run: { ...run }, source: { ...source } };
   }
@@ -215,7 +216,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
     }
 
     const updated = await client.query(
-      `UPDATE vm_sources SET last_run_id = $3, last_run_at = $4, updated_at = NOW()
+      `UPDATE vm_sources SET last_run_id = $3, last_run_at = $4, stale_since = NULL, updated_at = NOW()
        WHERE tenant_id = $1 AND id = $2 RETURNING *`,
       [tenantId, existing.id, runRow.id, runRow.received_at],
     );
@@ -248,6 +249,22 @@ export async function listRuns(tenantId: string, options: { limit?: number } = {
   }
   return inTenantTx(tenantId, async (client) => {
     const { rows } = await client.query('SELECT * FROM vm_runs WHERE tenant_id = $1 ORDER BY received_at DESC LIMIT $2', [tenantId, limit]);
+    return rows.map(rowToRun);
+  });
+}
+
+/** Runs received at or after `sinceIso`, newest first. */
+export async function listRunsSince(tenantId: string, sinceIso: string): Promise<VmRun[]> {
+  if (isMemory()) {
+    const sinceMs = Date.parse(sinceIso);
+    return [...memoryRuns.values()]
+      .reverse()
+      .filter((r) => r.tenantId === tenantId && Date.parse(r.receivedAt) >= sinceMs)
+      .sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0))
+      .map((r) => ({ ...r }));
+  }
+  return inTenantTx(tenantId, async (client) => {
+    const { rows } = await client.query('SELECT * FROM vm_runs WHERE tenant_id = $1 AND received_at >= $2 ORDER BY received_at DESC', [tenantId, sinceIso]);
     return rows.map(rowToRun);
   });
 }
@@ -320,4 +337,96 @@ export async function listSources(tenantId: string): Promise<VmSource[]> {
     const { rows } = await client.query('SELECT * FROM vm_sources WHERE tenant_id = $1 ORDER BY lower(label)', [tenantId]);
     return rows.map(rowToSource);
   });
+}
+
+// ------------------------------------------------------------------------------------------------ scheduler
+
+export interface SchedulerSourceRow {
+  tenantId: string;
+  sourceId: string;
+  label: string;
+  enabled: boolean;
+  expectedIntervalMinutes: number;
+  lastRunAt: string | null;
+  staleSince: string | null;
+}
+
+/**
+ * Every source of every tenant, for the in-process scheduler. On PostgreSQL this is the ONE place that sets app.vm_scheduler
+ * (the rls_vm_sources_scheduler policy): it reads vm_sources only and never sets a tenant context. Writes that follow happen
+ * per tenant, under that tenant's own context.
+ */
+export async function enumerateSchedulerSources(): Promise<SchedulerSourceRow[]> {
+  if (isMemory()) {
+    return [...memorySources.values()]
+      .map((s) => ({
+        tenantId: s.tenantId,
+        sourceId: s.id,
+        label: s.label,
+        enabled: s.enabled,
+        expectedIntervalMinutes: s.expectedIntervalMinutes,
+        lastRunAt: s.lastRunAt,
+        staleSince: s.staleSince,
+      }))
+      .sort((a, b) => {
+        const la = a.label.toLowerCase();
+        const lb = b.label.toLowerCase();
+        return a.tenantId < b.tenantId ? -1 : a.tenantId > b.tenantId ? 1 : la < lb ? -1 : la > lb ? 1 : a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0;
+      });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT set_config('app.vm_scheduler', 'on', true)");
+    const { rows } = await client.query(
+      'SELECT tenant_id, id, label, enabled, expected_interval_minutes, last_run_at, stale_since FROM vm_sources ORDER BY tenant_id, lower(label), id',
+    );
+    await client.query('COMMIT');
+    return rows.map((r) => ({
+      tenantId: r.tenant_id as string,
+      sourceId: r.id as string,
+      label: r.label as string,
+      enabled: Boolean(r.enabled),
+      expectedIntervalMinutes: Number(r.expected_interval_minutes),
+      lastRunAt: iso(r.last_run_at),
+      staleSince: iso(r.stale_since),
+    }));
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Sets or clears stale_since, but only while last_run_at is still what the scheduler read: a run that arrived in between
+ * must not be marked stale. The comparison is at millisecond precision because the driver hands timestamps over as JS dates.
+ * Returns whether a row changed.
+ */
+export async function setSourceStaleSince(
+  tenantId: string,
+  sourceId: string,
+  staleSince: string | null,
+  expectedLastRunAt: string | null,
+): Promise<boolean> {
+  if (isMemory()) {
+    const source = memorySources.get(sourceId);
+    if (!source || source.tenantId !== tenantId || source.lastRunAt !== expectedLastRunAt) return false;
+    source.staleSince = staleSince;
+    return true;
+  }
+  return inTenantTx(tenantId, async (client) => {
+    const res = await client.query(
+      'UPDATE vm_sources SET stale_since = $3 WHERE tenant_id = $1 AND id = $2 AND date_trunc(\'milliseconds\', last_run_at) IS NOT DISTINCT FROM $4::timestamptz',
+      [tenantId, sourceId, staleSince, expectedLastRunAt],
+    );
+    return (res.rowCount ?? 0) > 0;
+  });
+}
+
+/** Test hook (memory mode): there is no endpoint to edit a source. */
+export function __setVmSourceEnabledForTests(sourceId: string, enabled: boolean): void {
+  const source = memorySources.get(sourceId);
+  if (source) source.enabled = enabled;
 }

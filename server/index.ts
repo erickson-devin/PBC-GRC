@@ -7,6 +7,7 @@ import { initDb, assertDbModeAllowed, getDbMode } from './db';
 import { assertAuthConfig, isLocalAuthMode } from './auth/localAuth';
 import { errorMessage } from '../src/utils/errors';
 import { parseTrustProxy } from './trustProxy';
+import { startVmScheduler } from './vm/scheduler';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,6 +78,10 @@ export const server = app.listen(PORT, async () => {
     assertAuthConfig();
     await initDb();
     console.log(`[Startup] Database mode: ${getDbMode()} | Auth mode: ${isLocalAuthMode() ? 'local (air-gapped)' : 'firebase'}`);
+    const vmScheduler = startVmScheduler();
+    if (vmScheduler) {
+      console.log(`[Startup] VM scheduler: tick every ${vmScheduler.tickMinutes} min, snapshot every ${vmScheduler.snapshotIntervalHours} h`);
+    }
     if (process.env.VM_ALLOW_INSECURE_TOKENS === 'true') {
       console.warn('[Startup] VM_ALLOW_INSECURE_TOKENS=true: service tokens may be created over plain HTTP and will cross the network in clear text');
     }

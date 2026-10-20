@@ -3,6 +3,15 @@ import { VmTokenError, createVmToken, listVmTokens, revokeVmToken } from '../vm/
 import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
 import { listFindings } from '../vm/findingsStore';
 import { enqueueVmRun, isVmRunActive, recoverStaleRuns } from '../vm/worker';
+import {
+  VmSnapshotError,
+  lastManualSnapshotAt,
+  listVmSnapshots,
+  noteManualSnapshot,
+  readLatestSnapshot,
+  runVmSnapshot,
+} from '../vm/snapshotWriter';
+import { VM_MANUAL_SNAPSHOT_MIN_INTERVAL_MS, manualSnapshotAllowed } from '../vm/snapshot';
 import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
 import { VM_FINDING_STATUSES, VM_SEVERITIES, VM_TOKEN_SCOPES } from '../../src/types/vm';
@@ -26,6 +35,24 @@ function sendError(res: Response, err: unknown, fallback: string): void {
   if (err instanceof VmTokenError && err.code === 'limit') {
     res.status(429).json({ error: err.message, code: 'limit' });
     return;
+  }
+  if (err instanceof VmSnapshotError) {
+    if (err.code === 'in_progress') {
+      res.status(409).json({ error: 'vm_snapshot_in_progress' });
+      return;
+    }
+    if (err.code === 'no_sources') {
+      res.status(409).json({ error: 'vm_no_sources' });
+      return;
+    }
+    if (err.code === 'requires_local_storage') {
+      res.status(503).json({ error: 'vm_requires_local_storage' });
+      return;
+    }
+    if (err.code === 'integrity') {
+      res.status(409).json({ error: 'vm_snapshot_integrity_mismatch' });
+      return;
+    }
   }
   console.error('[VM API]', fallback, errorMessage(err));
   res.status(500).json({ error: fallback });
@@ -209,6 +236,56 @@ router.get('/sources', async (req: Request, res: Response): Promise<void> => {
     res.json({ tenantId: req.tenantId, totalCount: sources.length, sources });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the sources');
+  }
+});
+
+/**
+ * POST .../vm/snapshot (owner / admin, by requireWriteRole): evaluates the three assessor criteria now and writes the
+ * evidence and control notes. At most one a minute per tenant (counted only after a success); the scheduler is exempt.
+ */
+router.post('/snapshot', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const nowMs = Date.now();
+  const last = lastManualSnapshotAt(tenantId);
+  if (!manualSnapshotAllowed(last, nowMs)) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((VM_MANUAL_SNAPSHOT_MIN_INTERVAL_MS - (nowMs - (last as number))) / 1000));
+    res.status(429).json({ error: 'vm_snapshot_too_soon', retryAfterSeconds });
+    return;
+  }
+  try {
+    const { snapshot } = await runVmSnapshot(tenantId, { trigger: 'manual' });
+    noteManualSnapshot(tenantId, Date.now());
+    console.log('[VM API] ' + req.user?.uid + ' created snapshot ' + snapshot.id + ' in ' + tenantId);
+    res.status(201).json({ snapshot });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to create the snapshot');
+  }
+});
+
+/** GET .../vm/snapshots: the tenant's snapshots, newest first (at most 100). Open to every role, like /findings. */
+router.get('/snapshots', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const snapshots = await listVmSnapshots(req.tenantId!);
+    res.json({ tenantId: req.tenantId, totalCount: snapshots.length, snapshots });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the snapshots');
+  }
+});
+
+/** GET .../vm/snapshot/latest: the newest snapshot with its report, after checking the stored file against its recorded sha256. */
+router.get('/snapshot/latest', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const latest = await readLatestSnapshot(req.tenantId!);
+    if (!latest) {
+      res.status(404).json({ error: 'vm_snapshot_not_found' });
+      return;
+    }
+    res.json({ snapshot: latest.snapshot, report: latest.report });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to read the snapshot');
   }
 });
 
