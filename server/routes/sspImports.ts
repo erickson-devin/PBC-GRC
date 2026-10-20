@@ -344,7 +344,7 @@ router.post('/:jobId/commit', async (req: Request, res: Response): Promise<void>
     return;
   }
   try {
-    const result = await commitReviewedSuggestions(tenantId, job, reviewerName(req), ids);
+    const result = await commitReviewedSuggestions(tenantId, job, reviewerName(req), ids, req.user?.uid ?? null);
     res.json({ ...result, job: await getJob(tenantId, job.id) });
   } catch (err: unknown) {
     console.error('[SSP Import] commit failed:', errorMessage(err));

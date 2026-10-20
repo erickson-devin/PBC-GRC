@@ -227,13 +227,13 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
       return { rows: [], command: 'INSERT', rowCount: 0, oid: 0, fields: [] };
     }
     const controlId = params[1];
-    const status = params[2] || 'NOT_STARTED';
-    const notes = params[3] ?? '';
-    const role = params[4] || 'IT / Security Lead';
-    const updatedBy = params[5] || 'System';
-
     const key = `${tenantId}__${controlId}`;
     const existing = memoryControls.get(key);
+    // NULL means keep, like COALESCE(..., control_assessments.<col>) in the PostgreSQL statement
+    const status = params[2] || existing?.status || 'NOT_STARTED';
+    const notes = params[3] ?? existing?.implementation_notes ?? '';
+    const role = params[4] || existing?.responsible_role || 'IT / Security Lead';
+    const updatedBy = params[5] || 'System';
 
     const record: InMemoryControl = {
       id: existing?.id || `ctrl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,

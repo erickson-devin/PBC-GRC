@@ -254,7 +254,10 @@ router.post('/snapshot', async (req: Request, res: Response): Promise<void> => {
     return;
   }
   try {
-    const { snapshot } = await runVmSnapshot(tenantId, { trigger: 'manual' });
+    const { snapshot } = await runVmSnapshot(tenantId, {
+      trigger: 'manual',
+      triggeredBy: { actor: req.user?.name || req.user?.email || 'Compliance Assessor', userId: req.user?.uid ?? null },
+    });
     noteManualSnapshot(tenantId, Date.now());
     console.log('[VM API] ' + req.user?.uid + ' created snapshot ' + snapshot.id + ' in ' + tenantId);
     res.status(201).json({ snapshot });

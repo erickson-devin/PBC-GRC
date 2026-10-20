@@ -541,6 +541,32 @@ export function replaceDelimitedBlock(notes: string, block: string): string {
   return `${notes}\n\n${block}`;
 }
 
+const BLOCK_SOURCE = BLOCK_RE.source;
+const FIRST_BLOCK_RE = new RegExp(BLOCK_SOURCE);
+const LEADING_BLOCK_RE = new RegExp(`^${BLOCK_SOURCE}(?:\\r?\\n){0,2}`);
+const INNER_BLOCK_RE = new RegExp(`(?:\\r?\\n){0,2}${BLOCK_SOURCE}`, 'g');
+
+/** The first complete block in the notes, or null. A dangling begin marker is not a block. */
+export function extractDelimitedBlock(notes: string): string | null {
+  const m = FIRST_BLOCK_RE.exec(notes);
+  return m ? m[0] : null;
+}
+
+/** Removes every complete block with its separating blank line; dangling markers and all other text are left alone. */
+export function stripDelimitedBlocks(notes: string): string {
+  return notes.replace(LEADING_BLOCK_RE, '').replace(INNER_BLOCK_RE, '');
+}
+
+/**
+ * The notes to store when a person (or the SSP import) writes `newNotes` over `previousNotes`: any block in the new text is
+ * removed (it could be forged or stale) and the one from the previous notes, else `fallbackBlock`, is put back.
+ */
+export function composeCommittedNotes(previousNotes: string, newNotes: string, fallbackBlock: string | null): string {
+  const block = extractDelimitedBlock(previousNotes) ?? fallbackBlock;
+  const cleaned = stripDelimitedBlocks(newNotes);
+  return block === null ? cleaned : replaceDelimitedBlock(cleaned, block);
+}
+
 export interface SchedulerSourceInput {
   tenantId: string;
   sourceId: string;

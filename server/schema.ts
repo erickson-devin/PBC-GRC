@@ -1,6 +1,7 @@
 import { TENANT_ROLES } from '../src/utils/roles';
 import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
 import { FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
+import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
@@ -21,6 +22,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'tenants', tenantColumn: 'id' },
   { table: 'tenant_users', tenantColumn: 'tenant_id' },
   { table: 'control_assessments', tenantColumn: 'tenant_id' },
+  { table: 'control_assessment_events', tenantColumn: 'tenant_id' },
   { table: 'evidence_metadata', tenantColumn: 'tenant_id' },
   { table: 'ssp_documents', tenantColumn: 'tenant_id' },
   { table: 'tenant_invitations', tenantColumn: 'tenant_id' },
@@ -44,7 +46,8 @@ const roleList = TENANT_ROLES.map((r) => `'${r}'`).join(', ');
 const fipsStatusList = FIPS_STATUSES.map((s) => `'${s}'`).join(', ');
 const fipsStandardList = FIPS_STANDARDS.map((s) => `'${s}'`).join(', ');
 const assetCategoryList = CMMC_ASSET_CATEGORIES.map((c) => `'${c}'`).join(', ');
-const vmSourceKindList = VM_SOURCE_KINDS.map((k) => `'${k}'`).join(', ');
+const controlChangeSourceList = CONTROL_CHANGE_SOURCES.map((s) => `'${s}'`).join(', ');
+const vmSourceKindList =VM_SOURCE_KINDS.map((k) => `'${k}'`).join(', ');
 const vmScopeList = VM_TOKEN_SCOPES.map((s) => `'${s}'`).join(', ');
 const vmRunStatusList = VM_RUN_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
@@ -105,6 +108,32 @@ export const TABLES_SQL = `
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT unq_tenant_control UNIQUE (tenant_id, control_id)
   );
+
+  -- Notes may hold CUI, so an event records only their SHA-256 and length, never the text.
+  -- No foreign key to control_assessments: the history outlives the row it describes.
+  CREATE TABLE IF NOT EXISTS control_assessment_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      source VARCHAR(16) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      old_status VARCHAR(32),
+      new_status VARCHAR(32) NOT NULL,
+      old_role VARCHAR(128),
+      new_role VARCHAR(128) NOT NULL,
+      notes_changed BOOLEAN NOT NULL,
+      old_notes_sha256 CHAR(64),
+      new_notes_sha256 CHAR(64) NOT NULL,
+      old_notes_length INTEGER,
+      new_notes_length INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT control_assessment_events_sha_check CHECK ((old_notes_sha256 IS NULL OR old_notes_sha256 ~ '^[0-9a-f]{64}$') AND new_notes_sha256 ~ '^[0-9a-f]{64}$'),
+      CONSTRAINT control_assessment_events_length_check CHECK ((old_notes_length IS NULL OR old_notes_length >= 0) AND new_notes_length >= 0)
+  );
+  ALTER TABLE control_assessment_events DROP CONSTRAINT IF EXISTS control_assessment_events_source_check;
+  ALTER TABLE control_assessment_events ADD CONSTRAINT control_assessment_events_source_check CHECK (source IN (${controlChangeSourceList}));
+  CREATE INDEX IF NOT EXISTS idx_control_assessment_events_control ON control_assessment_events (tenant_id, control_id, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS evidence_metadata (
       id VARCHAR(64) PRIMARY KEY,

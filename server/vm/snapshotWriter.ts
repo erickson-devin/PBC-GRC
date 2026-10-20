@@ -4,7 +4,7 @@ import { getTenantProgram, queryWithTenant } from '../db';
 import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { listAgentAssetCandidates, listAssets } from '../assets';
-import { readControlAssessments, upsertControlAssessment } from '../controlAssessments';
+import { writeControlAssessment, type ControlChangeActor } from '../controlAssessments';
 import { localStorageRoot, readTenantFile, storageProvider, writeTenantFile } from '../evidence/storage';
 import { listRunsSince, listSources } from './store';
 import { loadSnapshotFindings } from './findingsStore';
@@ -188,24 +188,28 @@ export async function writeSnapshotEvidence(
 // ------------------------------------------------------------------------------------------------ control notes
 
 /**
- * Replaces the snapshot block in each control's notes (appending it when there is none). The current status and role are
- * passed through unchanged; a control with no row yet is created as NOT_STARTED.
+ * Replaces the snapshot block in each control's notes (appending it when there is none). Status and role are not passed
+ * through: NULL keeps the stored value (COALESCE), and the FOR UPDATE read inside writeControlAssessment closes the race with a
+ * concurrent human edit. A control with no row yet is created as NOT_STARTED. Each write records a history event for `who`.
  */
 export async function applySnapshotNotes(
   tenantId: string,
   report: SnapshotReport,
   evidenceByControl: Record<string, string[]>,
+  who: ControlChangeActor,
 ): Promise<void> {
-  const live = await readControlAssessments(tenantId);
   for (const controlId of Object.keys(evidenceByControl)) {
-    const cur = live.get(controlId);
-    await upsertControlAssessment(tenantId, {
+    await writeControlAssessment(
+      tenantId,
       controlId,
-      status: cur?.status ?? 'NOT_STARTED',
-      notes: replaceDelimitedBlock(cur?.notes ?? '', renderNotesBlock(report, evidenceByControl[controlId])),
-      role: cur?.role ?? 'IT / Security Lead',
-      updatedBy: VM_SNAPSHOT_ACTOR,
-    });
+      (cur) => ({
+        status: null,
+        notes: replaceDelimitedBlock(cur?.notes ?? '', renderNotesBlock(report, evidenceByControl[controlId])),
+        role: null,
+        updatedBy: VM_SNAPSHOT_ACTOR,
+      }),
+      who,
+    );
   }
 }
 
@@ -236,7 +240,7 @@ export function __setVmSnapshotFaultForTests(tenantId: string | null): void {
 
 export async function runVmSnapshot(
   tenantId: string,
-  opts: { now?: Date; trigger: 'manual' | 'scheduler' },
+  opts: { now?: Date; trigger: 'manual' | 'scheduler'; triggeredBy?: { actor: string; userId: string | null } },
 ): Promise<{ snapshot: VmSnapshotSummary; report: SnapshotReport }> {
   if (storageProvider() !== 'local') throw new VmSnapshotError('requires_local_storage');
   if (running.has(tenantId)) throw new VmSnapshotError('in_progress');
@@ -252,7 +256,11 @@ export async function runVmSnapshot(
     const report = computeSnapshot(input);
     const md = renderSnapshotMarkdown(report);
     const written = await writeSnapshotEvidence(tenantId, report, md, now);
-    await applySnapshotNotes(tenantId, report, written.evidenceByControl);
+    await applySnapshotNotes(tenantId, report, written.evidenceByControl, {
+      source: 'vm-snapshot',
+      actor: opts.triggeredBy?.actor ?? VM_SNAPSHOT_ACTOR,
+      userId: opts.triggeredBy?.userId ?? null,
+    });
 
     console.log(
       `[VM Snapshot] ${snapshotId} in ${tenantId}: criteria MET ${report.criteria.met ? 'yes' : 'no'}, ${written.evidenceIds.length + written.inheritedEvidenceIds.length} evidence rows (${opts.trigger})`,

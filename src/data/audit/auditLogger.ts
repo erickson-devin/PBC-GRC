@@ -91,6 +91,25 @@ export function saveLedger(tenantId: string, entries: AuditLogEntry[]): void {
 }
 
 /**
+ * Describes implementation notes for the ledger without storing any of their text (notes may contain CUI and the
+ * ledger is persisted to localStorage). Returns '' for empty notes, else `sha256:<hex> (<n> chars)`. When Web Crypto
+ * is unavailable it returns the length only, `(<n> chars)`, rather than a non-SHA-256 digest.
+ */
+export async function describeNotesForLedger(notes: string): Promise<string> {
+  if (!notes || !notes.trim()) return '';
+  const length = `(${notes.length} chars)`;
+  const subtle: SubtleCrypto | undefined = typeof globalThis !== 'undefined' ? globalThis.crypto?.subtle : undefined;
+  if (!subtle) return length;
+  try {
+    const digest = await subtle.digest('SHA-256', new TextEncoder().encode(notes));
+    const hex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `sha256:${hex} ${length}`;
+  } catch {
+    return length;
+  }
+}
+
+/**
  * Appends an immutable, SHA-256 chained entry to the tenant's audit ledger.
  */
 export async function recordAuditEvent(params: {

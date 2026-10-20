@@ -12,7 +12,8 @@
  *   4. tenant DISCOVERY: in user context a user sees only the tenants they belong to (and only their own
  *      membership rows), and that context can never write.
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
- * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets and the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns). Exit code 0 = all checks passed.
+ *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
+ * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, control_assessment_events (actor "rls_verify_actor") and the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns). Exit code 0 = all checks passed.
  */
 export {};
 
@@ -368,7 +369,41 @@ async function main() {
     check(findingsStolen.rows.length === 0, 'vm_findings: tenant Y cannot read tenant X findings even by naming the tenant');
     const findingsUpdate = await queryWithTenant(TENANT_Y, "UPDATE vm_findings SET status = 'FALSE_POSITIVE' WHERE tenant_id = $1", [TENANT_X]);
     check((findingsUpdate.rowCount ?? 0) === 0, "vm_findings: tenant Y cannot update tenant X's findings");
+
+    console.log('\n--- 3c. Control assessment history ---');
+    const insertEvent =
+      "INSERT INTO control_assessment_events (tenant_id, control_id, source, actor, new_status, new_role, notes_changed, new_notes_sha256, new_notes_length) VALUES ($1, 'AC.L1-3.1.1', $2, 'rls_verify_actor', 'MET', 'IT / Security Lead', true, $3, 0)";
+    const goodSha = 'a'.repeat(64);
+    check(
+      await rejectsWith(TENANT_X, insertEvent, [TENANT_Y, 'human', goodSha], { code: '42501' }),
+      "control_assessment_events: tenant X cannot insert an event for tenant Y (WITH CHECK)", lastRejection
+    );
+    let eventOk = false;
+    try {
+      await queryWithTenant(TENANT_X, insertEvent, [TENANT_X, 'human', goodSha]);
+      eventOk = true;
+    } catch {
+      eventOk = false;
+    }
+    check(eventOk, 'control_assessment_events: tenant X can insert an event for itself');
+    const eventsNoCtx = await pool.query("SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%'");
+    check(eventsNoCtx.rowCount === 0, 'control_assessment_events: no tenant context => zero rows visible', `saw ${eventsNoCtx.rowCount}`);
+    const eventsX = await queryWithTenant(TENANT_X, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []);
+    check(eventsX.rows.length === 1, 'control_assessment_events: tenant X sees its own event', `saw ${eventsX.rows.length}`);
+    const eventsY = await queryWithTenant(TENANT_Y, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%' OR tenant_id = $1", [TENANT_X]);
+    check(eventsY.rows.length === 0, "control_assessment_events: tenant Y sees none of tenant X's events, even by naming the tenant", `saw ${eventsY.rows.length}`);
+    check(
+      await rejectsWith(TENANT_X, insertEvent, [TENANT_X, 'robot', goodSha], { code: '23514', constraint: 'control_assessment_events_source_check' }),
+      "control_assessment_events: a source outside human, ssp-commit, vm-snapshot is refused (source_check)", lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, insertEvent, [TENANT_X, 'human', 'xyz'], { code: '23514', constraint: 'control_assessment_events_sha_check' }),
+      "control_assessment_events: a notes digest that is not 64 lowercase hex characters is refused (sha_check)", lastRejection
+    );
   } finally {
+    for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+    }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM vm_sightings WHERE source_id IN (SELECT id FROM vm_sources WHERE label LIKE 'rls_verify_%')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_findings WHERE vuln_id LIKE 'RLS-VERIFY-%'", []).catch(() => undefined);

@@ -12,6 +12,7 @@ import {
   getAuditLogs,
   exportAuditPackageJson,
   saveLedger,
+  describeNotesForLedger,
   GENESIS_HASH,
 } from '../src/data/audit/auditLogger';
 import {
@@ -127,6 +128,47 @@ async function runTestSuite() {
   const exportJson = await exportAuditPackageJson(testTenant, 'Vanguard Defense');
   assert(exportJson.includes('Event Horizon: Singularity'), 'Export JSON includes platform name');
   assert(exportJson.includes('"isValid": true'), 'Export JSON includes verified chain proof');
+
+  // 1.8 Notes-change events record a digest and length only: no notes text in the localStorage-backed ledger
+  const g = globalThis as any;
+  const hadWindow = 'window' in g;
+  const priorWindow = g.window;
+  const fakeStore = new Map<string, string>();
+  g.window = {
+    localStorage: {
+      getItem: (k: string) => (fakeStore.has(k) ? fakeStore.get(k)! : null),
+      setItem: (k: string, v: string) => { fakeStore.set(k, String(v)); },
+      removeItem: (k: string) => { fakeStore.delete(k); },
+    },
+  };
+  try {
+    const notesTenant = 'test-tenant-notes-ledger';
+    const oldNotes = 'CUI-MARKER-7f3a previous paragraph';
+    const newNotes = 'CUI-MARKER-7f3a secret paragraph';
+    saveLedger(notesTenant, []);
+    const notesEntry = await recordAuditEvent({
+      tenantId: notesTenant,
+      actorEmail: 'ciso@defense-prime.com',
+      actionType: 'CONTROL_NOTES_UPDATED',
+      targetEntity: 'AC.L1-3.1.1',
+      previousState: await describeNotesForLedger(oldNotes),
+      newState: await describeNotesForLedger(newNotes),
+    });
+    const storedLedger = fakeStore.get(`pbc_audit_ledger_${notesTenant}`) || '';
+    assert(storedLedger.length > 0 && storedLedger.includes('CONTROL_NOTES_UPDATED'), 'Notes change is recorded in the persisted ledger');
+    assert(!storedLedger.includes('CUI-MARKER-7f3a') && !storedLedger.includes('secret paragraph'), 'Persisted ledger JSON contains no notes text');
+    const newStateText = String(notesEntry.newState);
+    assert(
+      /^sha256:[0-9a-f]{64} \(\d+ chars\)$/.test(newStateText) || /^\(\d+ chars\)$/.test(newStateText),
+      'Notes newState is a digest + length (or length-only fallback)',
+      newStateText
+    );
+    assert(newStateText.endsWith(`(${newNotes.length} chars)`), 'Notes newState records the correct length');
+    assert(String(notesEntry.previousState).endsWith(`(${oldNotes.length} chars)`), 'Notes previousState records the correct length');
+    assert((await describeNotesForLedger('')) === '' && (await describeNotesForLedger('   \n')) === '', 'Empty or whitespace-only notes give an empty string');
+  } finally {
+    if (hadWindow) g.window = priorWindow; else delete g.window;
+  }
 
   // ==========================================================================
   // SECTION 2: AUTOMATED SPRS & eMASS EXPORT ENGINE

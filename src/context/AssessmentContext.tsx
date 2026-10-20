@@ -26,7 +26,7 @@ import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives'
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
 import { ApiClient } from '../services/apiClient';
 import { useTenant } from './TenantContext';
-import { recordAuditEvent } from '../data/audit/auditLogger';
+import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import {
   AssetTelemetryRecord,
   BoundaryAggregationResult,
@@ -345,16 +345,20 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       };
 
       // Record audit event for narrative change
-      recordAuditEvent({
-        tenantId: currentTenant.id,
-        actorId: currentUser.id,
-        actorEmail: currentUser.email,
-        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
-        actionType: 'CONTROL_NOTES_UPDATED',
-        targetEntity: controlId,
-        previousState: current.implementationNotes ? `${current.implementationNotes.substring(0, 60)}...` : '',
-        newState: notes ? `${notes.substring(0, 60)}...` : '',
-      }).catch(() => {});
+      // Notes may contain CUI and the ledger sits in localStorage: record a digest and length only, never text
+      const previousNotes = current.implementationNotes || '';
+      Promise.all([describeNotesForLedger(previousNotes), describeNotesForLedger(notes)])
+        .then(([previousState, newState]) => recordAuditEvent({
+          tenantId: currentTenant.id,
+          actorId: currentUser.id,
+          actorEmail: currentUser.email,
+          actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+          actionType: 'CONTROL_NOTES_UPDATED',
+          targetEntity: controlId,
+          previousState,
+          newState,
+        }))
+        .catch(() => {});
 
       return {
         ...prev,
