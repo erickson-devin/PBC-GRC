@@ -11,7 +11,7 @@ import {
   FileCode,
   File,
   Shield,
-  Cloud,
+  HardDrive,
   Building,
   Lock,
   Copy,
@@ -115,7 +115,7 @@ export const EvidenceVaultView: React.FC = () => {
   const handleDownloadFile = async (item: EvidenceItem) => {
     const fileData = await EvidenceVault.getFile(currentTenant.id, item.id);
     if (!fileData) {
-      alert('This evidence file does not have local binary storage attached (Cloud metadata reference).');
+      alert('This evidence file does not have local binary storage attached (metadata reference only).');
       return;
     }
     const url = URL.createObjectURL(fileData.blob);
@@ -155,7 +155,7 @@ export const EvidenceVaultView: React.FC = () => {
         <div>
           <h2 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
             <Paperclip className="w-6 h-6 text-brand-400" />
-            Evidence Vault & GCS Bucket Sync
+            Evidence Vault (Local)
           </h2>
           <p className="text-xs text-slate-400 mt-1">
             Tenant-isolated evidence storage with client-side SHA-256 immutability verification for <strong>{currentTenant.name}</strong>.
@@ -168,8 +168,8 @@ export const EvidenceVaultView: React.FC = () => {
             {currentTenant.cageCode || 'CAGE'}
           </span>
           <span className="px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-mono flex items-center gap-1.5">
-            <Cloud className="w-3.5 h-3.5" />
-            GCS Synced
+            <HardDrive className="w-3.5 h-3.5" />
+            Local Vault
           </span>
         </div>
       </div>
@@ -179,7 +179,7 @@ export const EvidenceVaultView: React.FC = () => {
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Tenant Evidence Files</span>
           <p className="text-3xl font-extrabold text-white font-mono mt-1">{state.evidenceIndex.length}</p>
-          <p className="text-xs text-slate-400 mt-1">GCS Scoped: <span className="font-mono text-brand-300">{currentTenant.id}</span></p>
+          <p className="text-xs text-slate-400 mt-1">Tenant Scoped: <span className="font-mono text-brand-300">{currentTenant.id}</span></p>
         </div>
 
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
@@ -203,7 +203,7 @@ export const EvidenceVaultView: React.FC = () => {
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <Upload className="w-4 h-4 text-brand-400" />
-              Upload Evidence to Control (GCS + SHA-256 Pipeline)
+              Upload Evidence to Control (Local Vault + SHA-256 Pipeline)
             </span>
           </div>
 
@@ -329,7 +329,7 @@ export const EvidenceVaultView: React.FC = () => {
                             <div className="flex items-center gap-2">
                               <p className="font-semibold text-white truncate max-w-xs">{item.name}</p>
                               <span className="text-xs font-bold px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                GCS
+                                Local Vault
                               </span>
                             </div>
                             <p className="text-xs text-slate-400 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>

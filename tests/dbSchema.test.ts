@@ -6,7 +6,7 @@ import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSc
  * Pure checks (no database needed) on the schema bootstrap and the pool configuration:
  *  - tenant_users and ssp_documents are created by initDb;
  *  - EVERY tenant-bound table gets ENABLE + FORCE ROW LEVEL SECURITY and a policy;
- *  - DATABASE_URL selects a standard connection string, otherwise the existing Cloud SQL socket / TCP logic.
+ *  - DATABASE_URL selects a standard connection string, otherwise the existing Unix socket / TCP logic.
  * Live enforcement against PostgreSQL itself is covered by `npm run db:verify-rls` (needs a real database).
  */
 let passed = 0;
@@ -129,8 +129,10 @@ const both = buildPoolConfig({ DATABASE_URL: 'postgres://u:p@urlhost/db', DB_HOS
 assert(both.config.connectionString !== undefined && both.config.host === undefined, 'DATABASE_URL takes precedence over DB_* settings');
 assert(buildPoolConfig({ DATABASE_URL: '   ' } as NodeJS.ProcessEnv).config.connectionString === undefined, 'blank DATABASE_URL is ignored');
 
-const socket = buildPoolConfig({} as NodeJS.ProcessEnv);
-assert(String(socket.config.host).startsWith('/cloudsql/') && socket.config.port === undefined, 'default: Cloud SQL Unix socket (no port)');
+const defaults = buildPoolConfig({} as NodeJS.ProcessEnv);
+assert(defaults.config.host === '127.0.0.1' && defaults.config.port === 5432, 'default: 127.0.0.1 over TCP on 5432');
+const socket = buildPoolConfig({ DB_HOST: '/var/run/postgresql' } as NodeJS.ProcessEnv);
+assert(socket.config.host === '/var/run/postgresql' && socket.config.port === undefined, 'an absolute DB_HOST is a Unix socket directory (no port)');
 const tcp = buildPoolConfig({ DB_HOST: 'singularity-db', DB_PORT: '5433', DB_USER: 'u', DB_NAME: 'n', DB_PASS: 'p' } as NodeJS.ProcessEnv);
 assert(tcp.config.host === 'singularity-db' && tcp.config.port === 5433 && tcp.config.user === 'u', 'DB_HOST without a leading "/" is TCP with DB_PORT');
 assert(buildPoolConfig({} as NodeJS.ProcessEnv).config.ssl === undefined, 'TLS is off unless requested');

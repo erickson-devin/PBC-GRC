@@ -1,5 +1,6 @@
 # ==============================================================================
 # Event Horizon: Singularity — Air-Gapped & On-Premises Orchestration
+# On-prem only: there is no cloud deployment.
 # Services: PostgreSQL 16 Database + Singularity Enclave App & API + Ollama AI (optional profile)
 #
 # Required secrets (put them in a .env file next to this file, or export them):
@@ -48,7 +49,8 @@ services:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - /mnt/user/appdata/singularity/docker/postgres:/docker-entrypoint-initdb.d:ro
+      # Unraid sets INITDB_DIR=/mnt/user/appdata/singularity/docker/postgres; elsewhere the repository copy is used
+      - ${INITDB_DIR:-./docker/postgres}:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d${POSTGRES_DB:-cmmc_compliance_db}"]
       interval: 5s
@@ -81,8 +83,14 @@ services:
       DB_USER: ${APP_DB_USER:-grc_app}
       DB_PASS: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD (application database role password)}
       DB_NAME: ${POSTGRES_DB:-cmmc_compliance_db}
-      # Air-gapped identity: bcrypt passwords + locally signed JWTs. No Firebase / Google / Microsoft required.
-      AUTH_MODE: ${AUTH_MODE:-local}
+      # Air-gapped identity: bcrypt passwords + locally signed JWTs (local is the only mode).
+      AUTH_MODE: local
+      # Listen address inside the container. 0.0.0.0 (all interfaces) keeps the Unraid WebUI reachable on the LAN;
+      # see docs/ON_PREM_DATABASE.md "Network exposure" for restricting access. APP_PORT is deliberately NOT passed in:
+      # the container always listens on 3000 and APP_PORT only chooses the published host port (see ports below).
+      APP_BIND_ADDRESS: ${APP_BIND_ADDRESS:-0.0.0.0}
+      # Test-only; refused in production
+      ALLOW_DEV_MOCK_TOKENS: ${ALLOW_DEV_MOCK_TOKENS:-}
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:?Set LOCAL_AUTH_SECRET (>= 32 random characters)}
       # Platform administrators and the first-time setup wizard (see the notes at the top of this file)
       PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
@@ -112,7 +120,8 @@ services:
       VM_SNAPSHOT_INTERVAL_HOURS: ${VM_SNAPSHOT_INTERVAL_HOURS:-}
       VM_COVERAGE_THRESHOLD: ${VM_COVERAGE_THRESHOLD:-}
     ports:
-      - "3000:3000"
+      # All interfaces by decision (Unraid WebUI on the LAN); the host port is APP_PORT, the container always listens on 3000
+      - "${APP_PORT:-3000}:3000"
     volumes:
       # Persistent local evidence vault mounted to host disk
       - ./data/evidence:/app/data/evidence

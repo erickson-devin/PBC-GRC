@@ -2,7 +2,7 @@ import './testEnv';
 import './localAuthEnv';
 import { server } from '../server/index';
 import { __resetMemoryLocalUsersForTests } from '../server/auth/localUsers';
-import { __resetMemoryTenantsForTests } from '../server/db';
+import { __resetMemoryTenantsForTests, createTenantWithOwner } from '../server/db';
 import { __resetMemoryInvitationsForTests } from '../server/invitations';
 import { __resetPlatformSetupForTests, isSetupRequired, removePlatformAdmin } from '../server/platformSetup';
 import { __resetSetupThrottleForTests } from '../server/routes/setup';
@@ -166,13 +166,22 @@ async function run() {
   assert((await status()).tokenRequired === false, 'and once locked the token is no longer mentioned');
   delete process.env.SETUP_TOKEN;
 
-  console.log('\n--- Not available without local accounts ---');
+  console.log('\n--- AUTH_MODE unset (local accounts are the default) ---');
   reset();
-  process.env.AUTH_MODE = 'firebase';
-  const st = await status();
-  assert(st.setupRequired === false, 'status: not required when the install uses an external identity provider');
-  assert((await call('POST', '/setup', { body: payload() })).status === 404, 'POST /setup is 404 there');
+  delete process.env.AUTH_MODE;
+  assert((await status()).setupRequired === true, 'with AUTH_MODE unset a fresh install still needs setup');
   process.env.AUTH_MODE = 'local';
+
+  console.log('\n--- An existing install: a tenant but no administrator ---');
+  reset();
+  assert((await status()).setupRequired === true, 'no administrator and no tenant: setup is required');
+  await createTenantWithOwner(
+    { id: 'tenant-legacy-0001', name: 'Legacy Org', systemName: 'Legacy Enclave', systemOwner: 'Owner', enabledFrameworks: ['CMMC_L1'], primaryFramework: 'CMMC_L1' },
+    { userId: 'u_legacy', email: 'owner@legacy.mil', name: 'Owner' }
+  );
+  assert((await status()).setupRequired === false, 'once any tenant exists the wizard is closed, so it cannot be used to claim the install');
+  const legacy = await call('POST', '/setup', { body: payload() });
+  assert(legacy.status === 409 && legacy.body?.code === 'setup_complete', 'and POST /setup is refused (409 setup_complete)', legacy);
 
   console.log('\n--- Throttle ---');
   reset();

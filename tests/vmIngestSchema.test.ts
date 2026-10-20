@@ -21,7 +21,8 @@ import {
   localStorageRoot,
   resolveTenantLocalPath,
   resolveWithin,
-  storageProvider,
+  assertStorageConfig,
+  isLocalStorageConfigured,
   writeTenantFile,
 } from '../server/evidence/storage';
 import { VM_SEVERITIES, VM_SOURCE_KINDS } from '../src/types/vm';
@@ -339,16 +340,24 @@ async function main() {
     assert(resolveTenantLocalPath('t', '../u/a.json') === null, 'resolveTenantLocalPath rejects another tenant directory');
 
     delete process.env.STORAGE_PROVIDER;
-    assert(storageProvider() === 'local', 'provider defaults to local');
+    assert(isLocalStorageConfigured() === true, 'storage is local when STORAGE_PROVIDER is unset');
+    process.env.STORAGE_PROVIDER = 'local';
+    assert(isLocalStorageConfigured() === true, 'STORAGE_PROVIDER=local is local');
+    process.env.STORAGE_PROVIDER = ' LOCAL ';
+    assert(isLocalStorageConfigured() === true, 'STORAGE_PROVIDER is trimmed and case-insensitive');
     process.env.STORAGE_PROVIDER = 'GCS';
-    assert(storageProvider() === 'gcs', 'provider GCS (any case) is gcs');
+    assert(isLocalStorageConfigured() === false, 'STORAGE_PROVIDER=GCS (any case) is not local');
     process.env.STORAGE_PROVIDER = 'gcs';
-    assert(storageProvider() === 'gcs', 'provider gcs is gcs');
+    assert(isLocalStorageConfigured() === false, 'STORAGE_PROVIDER=gcs is not local');
     process.env.STORAGE_PROVIDER = 's3';
-    assert(storageProvider() === 'local', 'unknown provider resolves to local');
+    assert(isLocalStorageConfigured() === false, 'STORAGE_PROVIDER=s3 is not local (it is refused, not mapped to local)');
+    assert(/not supported/.test(await rejects(async () => assertStorageConfig({ STORAGE_PROVIDER: 'gcs' } as NodeJS.ProcessEnv))), 'assertStorageConfig refuses STORAGE_PROVIDER=gcs');
+    assert((await rejects(async () => assertStorageConfig({ STORAGE_PROVIDER: 's3' } as NodeJS.ProcessEnv))) !== '', 'assertStorageConfig refuses STORAGE_PROVIDER=s3');
+    assert((await rejects(async () => assertStorageConfig({} as NodeJS.ProcessEnv))) === '', 'assertStorageConfig accepts an unset STORAGE_PROVIDER');
+    assert((await rejects(async () => assertStorageConfig({ STORAGE_PROVIDER: 'local' } as NodeJS.ProcessEnv))) === '', 'assertStorageConfig accepts STORAGE_PROVIDER=local');
     process.env.STORAGE_PROVIDER = 'gcs';
-    assert((await rejects(() => writeTenantFile('tenant-a', 'vm/runs/r2.json', bytes, { exclusive: true }))) !== '', 'gcs provider: writeTenantFile rejects');
-    assert(!fs.existsSync(path.join(tmp, 'tenants', 'tenant-a', 'vm', 'runs', 'r2.json')), 'gcs provider wrote nothing');
+    assert((await rejects(() => writeTenantFile('tenant-a', 'vm/runs/r2.json', bytes, { exclusive: true }))) !== '', 'a non-local provider: writeTenantFile rejects');
+    assert(!fs.existsSync(path.join(tmp, 'tenants', 'tenant-a', 'vm', 'runs', 'r2.json')), 'a non-local provider wrote nothing');
   } finally {
     if (savedEnv.provider === undefined) delete process.env.STORAGE_PROVIDER;
     else process.env.STORAGE_PROVIDER = savedEnv.provider;

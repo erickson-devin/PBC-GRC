@@ -5,7 +5,7 @@ import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { listAgentAssetCandidates, listAssets } from '../assets';
 import { writeControlAssessment, type ControlChangeActor } from '../controlAssessments';
-import { localStorageRoot, readTenantFile, storageProvider, writeTenantFile } from '../evidence/storage';
+import { localStorageRoot, readTenantFile, isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { listRunsSince, listSources } from './store';
 import { loadSnapshotFindings } from './findingsStore';
 import {
@@ -242,7 +242,7 @@ export async function runVmSnapshot(
   tenantId: string,
   opts: { now?: Date; trigger: 'manual' | 'scheduler'; triggeredBy?: { actor: string; userId: string | null } },
 ): Promise<{ snapshot: VmSnapshotSummary; report: SnapshotReport }> {
-  if (storageProvider() !== 'local') throw new VmSnapshotError('requires_local_storage');
+  if (!isLocalStorageConfigured()) throw new VmSnapshotError('requires_local_storage');
   if (running.has(tenantId)) throw new VmSnapshotError('in_progress');
   running.add(tenantId);
   try {

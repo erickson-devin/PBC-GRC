@@ -285,7 +285,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-start gap-2.5 text-xs text-slate-400">
                 <Lock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <span>
-                  Your enclave is partitioned with Cloud SQL Row-Level Security and customer-isolated Google Cloud Storage buckets. No demo data will leak into this workspace.
+                  Your enclave is partitioned with PostgreSQL Row-Level Security and a tenant-isolated local evidence vault, hosted on-premises by the customer; documents and CUI never leave the customer's enclave. No demo data will leak into this workspace.
                 </span>
               </div>
             </form>

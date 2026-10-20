@@ -5,7 +5,7 @@ import {
   FileText,
   FileImage,
   Shield,
-  Cloud,
+  HardDrive,
   Copy,
   Check,
   CheckCircle2,
@@ -14,7 +14,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EvidenceVault } from '../../services/evidenceVault';
-import { GcsService } from '../../services/gcsService';
+import { generateEvidenceObjectPath } from '../../data/audit/storageDriver';
 import { findControlDefinition } from '../../data/frameworks';
 
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
@@ -28,7 +28,7 @@ const EvidencePreviewModalContent: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [hasBlob, setHasBlob] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<boolean>(false);
-  const [copiedGcs, setCopiedGcs] = useState<boolean>(false);
+  const [copiedPath, setCopiedPath] = useState<boolean>(false);
 
   useEffect(() => {
     let active = true;
@@ -75,7 +75,7 @@ const EvidencePreviewModalContent: React.FC = () => {
   const isImage = previewEvidence.mimeType.includes('image') || previewEvidence.name.match(/\.(png|jpg|jpeg|webp|gif)$/i);
   const isPdf = previewEvidence.mimeType.includes('pdf') || previewEvidence.name.endsWith('.pdf');
 
-  const gcsUri = previewEvidence.gcsPath || GcsService.generateGcsPath(
+  const vaultPath = previewEvidence.gcsPath || generateEvidenceObjectPath(
     currentTenant.id,
     previewEvidence.controlId,
     previewEvidence.id,
@@ -99,10 +99,10 @@ const EvidencePreviewModalContent: React.FC = () => {
     setTimeout(() => setCopiedHash(false), 2000);
   };
 
-  const handleCopyGcs = () => {
-    copyToClipboard(gcsUri);
-    setCopiedGcs(true);
-    setTimeout(() => setCopiedGcs(false), 2000);
+  const handleCopyPath = () => {
+    copyToClipboard(vaultPath);
+    setCopiedPath(true);
+    setTimeout(() => setCopiedPath(false), 2000);
   };
 
   return (
@@ -119,7 +119,7 @@ const EvidencePreviewModalContent: React.FC = () => {
               <div className="flex items-center gap-2">
                 <DialogTitle as="h3" className="text-sm font-bold text-white truncate">{previewEvidence.name}</DialogTitle>
                 <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                  <Cloud className="w-2.5 h-2.5" /> GCS Cloud Scoped
+                  <HardDrive className="w-2.5 h-2.5" /> Local Vault
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -147,19 +147,19 @@ const EvidencePreviewModalContent: React.FC = () => {
           </div>
         </div>
 
-        {/* GCP Cloud & Cryptographic Audit Bar */}
+        {/* Vault Path & Cryptographic Audit Bar */}
         <div className="px-6 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-3 flex-wrap">
-            {/* GCS Path */}
+            {/* Vault Path */}
             <div className="flex items-center gap-1.5 font-mono text-xs text-slate-300">
-              <Cloud className="w-3.5 h-3.5 text-brand-400 shrink-0" />
-              <span className="truncate max-w-[280px] sm:max-w-md">{gcsUri}</span>
+              <HardDrive className="w-3.5 h-3.5 text-brand-400 shrink-0" />
+              <span className="truncate max-w-[280px] sm:max-w-md">{vaultPath}</span>
               <button
-                onClick={handleCopyGcs}
-                title="Copy GCS Path"
+                onClick={handleCopyPath}
+                title="Copy Path"
                 className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
               >
-                {copiedGcs ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                {copiedPath ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
               </button>
             </div>
 
@@ -219,15 +219,15 @@ const EvidencePreviewModalContent: React.FC = () => {
               </div>
             )
           ) : (
-            /* Demo / Cloud-Synced Reference Notice */
+            /* Metadata-only Reference Notice */
             <div className="text-center space-y-4 max-w-md p-8 bg-slate-900 border border-slate-800 rounded-2xl">
               <div className="w-12 h-12 rounded-2xl bg-brand-500/15 text-brand-400 flex items-center justify-center mx-auto">
                 <FileText className="w-6 h-6" />
               </div>
               <div>
-                <h4 className="text-base font-bold text-white">GCS Cloud Evidence Artifact</h4>
+                <h4 className="text-base font-bold text-white">Evidence Artifact</h4>
                 <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                  This artifact (<span className="font-mono text-brand-300">{previewEvidence.name}</span>) is indexed in Cloud SQL for <strong>{previewEvidence.controlId}</strong> with verified SHA-256 fingerprinting.
+                  This artifact (<span className="font-mono text-brand-300">{previewEvidence.name}</span>) is indexed in the local database for <strong>{previewEvidence.controlId}</strong> with verified SHA-256 fingerprinting.
                 </p>
               </div>
               <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-left text-xs space-y-1">

@@ -55,7 +55,7 @@ function generateMockJwt(tenantId: string, email: string): string {
       email,
       tenantId,
       name: `Assessor for ${tenantId}`,
-      iss: 'https://securetoken.google.com/grc-tool-507203',
+      iss: 'pbc-grc-dev-mock',
       exp: Math.floor(Date.now() / 1000) + 3600,
     })
   ).toString('base64');
@@ -64,7 +64,7 @@ function generateMockJwt(tenantId: string, email: string): string {
 
 async function runTests() {
   console.log('================================================================');
-  console.log('🧪 RUNNING PRODUCTION CLOUD SQL RLS TENANT ISOLATION TEST SUITE');
+  console.log('🧪 RUNNING POSTGRESQL RLS TENANT ISOLATION TEST SUITE');
   console.log('================================================================\n');
 
   let passedTests = 0;
@@ -157,7 +157,7 @@ async function runTests() {
     );
     console.log('');
 
-    // 5. Evidence Pipeline: Request GCS Signed URL & Save Record for Company A
+    // 5. Evidence Pipeline: Request an evidence upload URL & Save Record for Company A
     console.log('--- Test 5: Evidence Pipeline & SHA-256 Immutability Record ---');
     const testSha256 = '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8';
     const uploadUrlRes = await request({
@@ -177,11 +177,11 @@ async function runTests() {
       },
     });
 
-    assert(uploadUrlRes.status === 201, 'GCS Signed Upload URL generated (HTTP 201)');
+    assert(uploadUrlRes.status === 201, 'Evidence upload URL generated (HTTP 201)');
     assert(Boolean(uploadUrlRes.body?.uploadUrl), 'Upload URL contains valid presigned endpoint');
     assert(
       uploadUrlRes.body?.gcsPath?.replace(/\\/g, '/').includes(`tenants/${tenantA}/controls/AC.L1-3.1.1/`),
-      'GCS object path is partitioned strictly under Company A tenant folder'
+      'Evidence path is partitioned strictly under Company A tenant folder'
     );
     assert(
       uploadUrlRes.body?.evidence?.fileHash === testSha256,

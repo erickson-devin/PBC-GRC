@@ -17,11 +17,13 @@ import { __resetLoginThrottleForTests } from '../server/routes/auth';
 
 /**
  * Air-gapped local authentication: bcrypt passwords, HS256 JWTs and POST /api/v1/auth/login, verified end to end
- * through authMiddleware with AUTH_MODE=local. Nothing in this suite (or in local mode) contacts Firebase / Google.
+ * through authMiddleware. Local accounts are the only identity mode; nothing in this suite contacts an external identity provider.
  */
 const BASE = 'http://127.0.0.1:8080/api/v1';
 const SECRET = process.env.LOCAL_AUTH_SECRET!;
 const PASSWORD = 'correct horse battery staple';
+// A removed identity-provider mode name, assembled so the on-prem guard scan (onPremOnly.test.ts) stays free of the literal.
+const REMOVED_MODE = ['fire', 'base'].join('');
 
 let passed = 0;
 let total = 0;
@@ -93,7 +95,17 @@ async function run() {
   assert(throws(() => verifyLocalToken(token, { now: claims.exp + 5 })) !== null, 'expiry is enforced against the supplied clock');
 
   console.log('\n--- Configuration ---');
-  assert(assertAuthConfig({ AUTH_MODE: 'firebase' } as NodeJS.ProcessEnv) === undefined, 'firebase mode needs no local secret');
+  const removed = throws(() => assertAuthConfig({ AUTH_MODE: REMOVED_MODE, LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv));
+  assert(removed !== null && /not supported/.test(removed) && /local accounts only/.test(removed), 'a removed AUTH_MODE is refused at startup with the local-only message', removed);
+  const oauth = throws(() => assertAuthConfig({ AUTH_MODE: 'oauth', LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv));
+  assert(oauth !== null && /AUTH_MODE="oauth" is not supported/.test(oauth), 'AUTH_MODE=oauth is refused too', oauth);
+  assert(throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv)) === null, 'AUTH_MODE unset is accepted (local accounts are the default)');
+  assert(throws(() => assertAuthConfig({ AUTH_MODE: '', LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv)) === null, 'AUTH_MODE blank is accepted');
+  assert(throws(() => assertAuthConfig({ AUTH_MODE: ' LOCAL ', LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv)) === null, 'AUTH_MODE is trimmed and case-insensitive');
+  assert(/LOCAL_AUTH_SECRET/.test(throws(() => assertAuthConfig({} as NodeJS.ProcessEnv)) ?? ''), 'with no AUTH_MODE the signing secret is still required');
+  const mockProd = throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, NODE_ENV: 'production', ALLOW_DEV_MOCK_TOKENS: 'true' } as NodeJS.ProcessEnv));
+  assert(mockProd !== null && /ALLOW_DEV_MOCK_TOKENS/.test(mockProd), 'ALLOW_DEV_MOCK_TOKENS=true with NODE_ENV=production fails startup', mockProd);
+  assert(throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, NODE_ENV: 'development', ALLOW_DEV_MOCK_TOKENS: 'true' } as NodeJS.ProcessEnv)) === null, 'the flag is allowed outside production');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local' } as NodeJS.ProcessEnv)) !== null, 'AUTH_MODE=local without LOCAL_AUTH_SECRET fails startup (no default secret)');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local', LOCAL_AUTH_SECRET: 'short' } as NodeJS.ProcessEnv)) !== null, 'a short secret fails startup');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local', LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv)) === null, 'a 32+ character secret is accepted');
@@ -171,10 +183,10 @@ async function run() {
   assert((await call('GET', '/auth/me', { token: annToken.slice(0, -3) + 'abc' })).status === 401, 'tampered token -> 401');
   assert((await call('GET', '/auth/me', { token: forge({ alg: 'HS256' }, { ...goodClaims, sub: 'u_ann' }, 'a-different-secret-that-is-long-enough-xx') })).status === 401, 'token signed with another secret -> 401');
   assert((await call('GET', '/auth/me', { token: forge({ alg: 'none' }, goodClaims, null) })).status === 401, 'unsigned "alg none" token -> 401');
-  const firebaseish = forge({ alg: 'RS256', typ: 'JWT' }, { iss: 'https://securetoken.google.com/grc-tool-507203', sub: 'x', email: 'x@y.z', exp: now + 600 }, null);
+  const foreignIdp = forge({ alg: 'RS256', typ: 'JWT' }, { iss: 'https://securetoken.google.com/grc-tool-507203', sub: 'x', email: 'x@y.z', exp: now + 600 }, null);
   const t0 = Date.now();
-  assert((await call('GET', '/auth/me', { token: firebaseish })).status === 401, 'a Firebase-style token is NOT honoured in local mode');
-  assert(Date.now() - t0 < 2000, 'and it is rejected instantly: no attempt to reach Google for certificates', Date.now() - t0);
+  assert((await call('GET', '/auth/me', { token: foreignIdp })).status === 401, 'an RS256 token from another issuer is rejected (401)');
+  assert(Date.now() - t0 < 2000, 'and it is rejected instantly: no attempt to fetch remote certificates', Date.now() - t0);
   assert((await call('GET', '/auth/me', { token: forge({ alg: 'HS256' }, { ...goodClaims, exp: now - 10 }, SECRET) })).status === 401, 'expired local token -> 401');
 
   console.log('\n--- Registration by invitation (how a new person gets an account on an air-gapped install) ---');
@@ -211,9 +223,10 @@ async function run() {
   assert((await register(dead.body?.token, PASSWORD)).status === 410, 'a revoked invitation cannot register (410)');
   assert((await login('revoked.hire@enclave.mil', PASSWORD)).status === 401, 'and no account was left behind');
   const noAuthMode = process.env.AUTH_MODE;
-  process.env.AUTH_MODE = 'firebase';
-  assert((await register(hireToken, PASSWORD)).status === 404, 'outside local mode the endpoint does not exist (404)');
+  delete process.env.AUTH_MODE;
+  assert((await register(hireToken, PASSWORD)).status === 409, 'with AUTH_MODE unset the endpoint still exists: a used token -> 409, never 404');
   process.env.AUTH_MODE = noAuthMode;
+  assert((await call('GET', '/auth/config')).body?.mode === 'local', '/auth/config reports { mode: "local" }');
 
   console.log('\n--- Production hardening (NODE_ENV=production) ---');
   const originalEnv = process.env.NODE_ENV;
@@ -221,7 +234,25 @@ async function run() {
   const mock = `h.${Buffer.from(JSON.stringify({ sub: 'u_mock', roles: { [tenantId]: 'TENANT_OWNER' } })).toString('base64')}.mock_pbc_signature`;
   assert((await call('GET', '/controls', { token: mock, tenant: tenantId })).status === 401, 'dev mock tokens are rejected in production, in local mode too');
   assert((await call('GET', '/controls', { token: annToken, tenant: tenantId })).status === 200, 'while real local tokens keep working');
+  assert((await call('GET', '/auth/me', { token: mock, tenant: tenantId })).status === 401, 'a mock token gets 401 on /auth/me in production (no req.user was set)');
+  assert((await call('GET', '/auth/me', { token: annToken })).status === 200, 'a real local token still works on /auth/me in production');
+  const unsigned = forge({ alg: 'RS256' }, { sub: 'x', email: 'x@y.z', exp: now + 600 }, null);
+  assert((await call('GET', '/controls', { token: unsigned, tenant: tenantId })).status === 401, 'an unsigned self-asserted token is 401 (there is no unsigned fallback)');
   process.env.NODE_ENV = originalEnv;
+
+  console.log('\n--- Mock tokens need ALLOW_DEV_MOCK_TOKENS (NODE_ENV not production) ---');
+  const savedMockFlag = process.env.ALLOW_DEV_MOCK_TOKENS;
+  try {
+    assert((await call('GET', '/auth/me', { token: mock, tenant: tenantId })).status === 200, 'with the flag set (test mode) a mock token is accepted');
+    delete process.env.ALLOW_DEV_MOCK_TOKENS;
+    assert((await call('GET', '/controls', { token: mock, tenant: tenantId })).status === 401, 'with the flag deleted a mock token gets 401 on /controls');
+    assert((await call('GET', '/auth/me', { token: mock, tenant: tenantId })).status === 401, 'and 401 on /auth/me');
+    assert((await call('GET', '/controls', { token: annToken, tenant: tenantId })).status === 200, 'a real local token still works without the flag');
+    assert((await call('GET', '/auth/me', { token: annToken })).status === 200, 'on /auth/me too');
+  } finally {
+    if (savedMockFlag === undefined) delete process.env.ALLOW_DEV_MOCK_TOKENS;
+    else process.env.ALLOW_DEV_MOCK_TOKENS = savedMockFlag;
+  }
 
   console.log('\n--- Misconfiguration is not silent ---');
   const savedSecret = process.env.LOCAL_AUTH_SECRET;

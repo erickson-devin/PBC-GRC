@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import { LocalAuthConfigError, isLocalAuthMode, signLocalToken, validateNewPassword } from '../auth/localAuth';
+import { LocalAuthConfigError, signLocalToken, validateNewPassword } from '../auth/localAuth';
 import { LocalUserExistsError, createLocalUser, deleteLocalUser, normalizeEmail } from '../auth/localUsers';
 import { TenantExistsError, createTenantWithOwner } from '../db';
 import { createInvitation } from '../invitations';
@@ -25,7 +25,7 @@ import type { TenantRole } from '../../src/types/tenant';
  *   - the lock is claimed with one atomic INSERT, so two simultaneous requests cannot both create an administrator;
  *   - everything is validated BEFORE anything is written, and a failure part-way undoes what was written, including
  *     giving the lock back, so a half-finished attempt cannot strand the install or leave a stray account behind;
- *   - it is only reachable with AUTH_MODE=local (this wizard sets a local password), and is throttled per address;
+ *   - it is throttled per address;
  *   - SETUP_TOKEN, when set, must accompany the request: an operator who exposes a fresh install before they have
  *     completed setup can require proof that the person at the keyboard is the one who started the container.
  */
@@ -58,14 +58,14 @@ const slugify = (value: string): string =>
 
 /**
  * GET /api/v1/setup/status   (public)
- * { setupRequired, tokenRequired }. `setupRequired` is false whenever an administrator exists (or the install does not
- * use local accounts), which is what makes the browser send everyone to the login page instead of the wizard.
+ * { setupRequired, tokenRequired }. `setupRequired` is false whenever an administrator exists (or the install already has data),
+ * which is what makes the browser send everyone to the login page instead of the wizard.
  * Fails closed: if the database cannot be read the answer is "not required".
  */
 router.get('/status', async (_req: Request, res: Response): Promise<void> => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    const required = isLocalAuthMode() && (await isSetupRequired());
+    const required = await isSetupRequired();
     res.json({ setupRequired: required, tokenRequired: required && Boolean((process.env.SETUP_TOKEN ?? '').trim()) });
   } catch (err: unknown) {
     console.error('[Setup] Could not read setup status:', errorMessage(err));
@@ -122,10 +122,6 @@ function parseBody(body: unknown): { value: ParsedSetup } | { error: string } {
  * only their hashes; with no mail server on an air-gapped install, the administrator hands the links out).
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
-  if (!isLocalAuthMode()) {
-    res.status(404).json({ error: 'First-time setup is only available on installations that use local accounts' });
-    return;
-  }
   if (throttled(req.ip || 'unknown')) {
     res.setHeader('Retry-After', String(WINDOW_MS / 1000));
     res.status(429).json({ error: 'Too many attempts. Try again shortly.' });

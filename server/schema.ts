@@ -144,11 +144,12 @@ export const TABLES_SQL = `
       mime_type VARCHAR(128) NOT NULL,
       gcs_path TEXT NOT NULL,
       file_hash VARCHAR(64) NOT NULL,
-      sync_status VARCHAR(32) DEFAULT 'gcs_synced',
+      sync_status VARCHAR(32) DEFAULT 'local_storage',
       description TEXT,
       uploaded_by VARCHAR(255),
       uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  ALTER TABLE evidence_metadata ALTER COLUMN sync_status SET DEFAULT 'local_storage';
 
   CREATE TABLE IF NOT EXISTS ssp_documents (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -232,7 +233,7 @@ export const TABLES_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS unq_enclave_assets_name ON enclave_assets(tenant_id, lower(asset_name));
   CREATE INDEX IF NOT EXISTS idx_enclave_assets_tenant_category ON enclave_assets(tenant_id, cmmc_category);
 
-  -- Local (air-gapped) identities for AUTH_MODE=local. Global, not tenant-bound: a person logs in first and
+  -- Local identities. Global, not tenant-bound: a person logs in first and
   -- belongs to tenants through tenant_users. Passwords are stored only as bcrypt hashes.
   CREATE TABLE IF NOT EXISTS local_users (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,

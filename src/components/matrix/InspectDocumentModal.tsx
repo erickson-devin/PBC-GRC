@@ -776,7 +776,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                               </span>
                             ) : (
                               <span className="badge inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-xs">
-                                GCS SYNCED
+                                LOCAL VAULT
                               </span>
                             )}
                           </div>

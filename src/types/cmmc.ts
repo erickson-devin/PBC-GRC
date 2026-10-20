@@ -39,8 +39,8 @@ export interface ControlDefinition {
 export type EvidenceSyncStatus =
   | 'local_cached'
   | 'local_storage'
-  | 'gcs_synced'
-  | 'gcs_signed_url'
+  | 'gcs_synced' // legacy rows from a former cloud deployment
+  | 'gcs_signed_url' // legacy rows from a former cloud deployment
   | 'inherited'; // evidence reused from an equivalent control in another framework
 
 export interface EvidenceItem {
@@ -53,7 +53,7 @@ export interface EvidenceItem {
   uploadedAt: string; // ISO string
   description?: string;
   hasBlob?: boolean; // stored in IndexedDB vault
-  gcsPath?: string; // e.g. "gs://pbc-grc-evidence-prod/tenants/tenant-1/controls/AC.L1-3.1.1/file_xyz.pdf"
+  gcsPath?: string; // legacy field name: the path in the local vault, e.g. "tenants/tenant-1/controls/AC.L1-3.1.1/file_xyz.pdf"
   fileHash?: string; // SHA-256 hex string for immutability verification
   syncStatus?: EvidenceSyncStatus;
   uploadedBy?: string;

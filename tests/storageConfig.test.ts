@@ -29,16 +29,19 @@ const unsubscribe = subscribeStorageConfig(() => {
   notifications++;
 });
 
-const first = setServerStorageConfig({ provider: 'gcs', localStoragePath: './data/evidence', isAirGapped: false });
+const first = setServerStorageConfig({ provider: 'local', localStoragePath: './data/evidence', isAirGapped: true });
 assert(getStorageConfig() === first, 'server config becomes the snapshot');
 assert(getStorageConfig() === getStorageConfig(), 'server-config snapshot is referentially stable');
 assert(notifications === 1, 'subscribers notified once on first server config');
 
-const again = setServerStorageConfig({ provider: 'gcs', localStoragePath: './data/evidence', isAirGapped: false });
+const again = setServerStorageConfig({ provider: 'local', localStoragePath: './data/evidence', isAirGapped: true });
 assert(again === first && notifications === 1, 'identical server config keeps the reference and does not re-notify');
 
-setServerStorageConfig({ provider: 'local', localStoragePath: './data/evidence', isAirGapped: true });
-assert(getStorageConfig().provider === 'local' && notifications === 2, 'changed server config updates snapshot and notifies');
+setServerStorageConfig({ provider: 'local', localStoragePath: '/srv/evidence', isAirGapped: true });
+assert(getStorageConfig().localStoragePath === '/srv/evidence' && notifications === 2, 'changed server config (the path) updates snapshot and notifies');
+
+const legacy = setServerStorageConfig({ provider: 'gcs' } as unknown as Parameters<typeof setServerStorageConfig>[0]);
+assert(legacy.provider === 'local', 'a legacy provider value from an old server normalises to local');
 
 unsubscribe();
 

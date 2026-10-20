@@ -74,24 +74,6 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
     }
   };
 
-  const getProviderIcon = () => {
-    if (currentUser.authProvider === 'microsoft.com') {
-      return (
-        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-xs font-bold text-sky-400 bg-sky-950/60 rounded border border-sky-500/30 px-1" title="Microsoft 365 Entra ID">
-          M
-        </span>
-      );
-    }
-    if (currentUser.authProvider === 'google.com') {
-      return (
-        <span className="w-3.5 h-3.5 inline-flex items-center justify-center text-xs font-bold text-amber-400 bg-amber-950/60 rounded border border-amber-500/30 px-1" title="Google Workspace">
-          G
-        </span>
-      );
-    }
-    return null;
-  };
-
   return (
     <>
       <div className="relative" ref={menuRef}>
@@ -112,7 +94,6 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
               <span className="text-xs font-bold text-white truncate">
                 {currentUser.name}
               </span>
-              {getProviderIcon()}
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <span className="truncate max-w-[90px]">{currentTenant.name}</span>

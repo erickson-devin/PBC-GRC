@@ -8,11 +8,3 @@ export function errorMessage(err: unknown): string {
   }
   return '';
 }
-
-/** Firebase-style error code (e.g. 'auth/popup-closed-by-user'), if present. */
-export function errorCode(err: unknown): string | undefined {
-  if (err && typeof err === 'object' && 'code' in err && typeof (err as { code: unknown }).code === 'string') {
-    return (err as { code: string }).code;
-  }
-  return undefined;
-}

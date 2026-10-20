@@ -8,9 +8,19 @@ import crypto from 'crypto';
  * so tests can point the root at a temporary directory.
  */
 
-/** Anything other than an explicit 'gcs' resolves to local disk. */
-export function storageProvider(): 'local' | 'gcs' {
-  return (process.env.STORAGE_PROVIDER || 'local').toLowerCase() === 'gcs' ? 'gcs' : 'local';
+/** Evidence lives on local disk only: STORAGE_PROVIDER may be unset, blank or "local". Read per call (tests change it). */
+export function isLocalStorageConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = (env.STORAGE_PROVIDER ?? '').trim().toLowerCase();
+  return value === '' || value === 'local';
+}
+
+/** Startup validation: refuse any other STORAGE_PROVIDER value instead of silently treating it as local. */
+export function assertStorageConfig(env: NodeJS.ProcessEnv = process.env): void {
+  if (!isLocalStorageConfigured(env)) {
+    throw new Error(
+      `STORAGE_PROVIDER="${env.STORAGE_PROVIDER}" is not supported: evidence is stored on local disk only (LOCAL_STORAGE_PATH). Remove STORAGE_PROVIDER or set it to "local".`
+    );
+  }
 }
 
 export function localStorageRoot(): string {
@@ -52,7 +62,7 @@ const TENANT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
  * Writes `data` to <root>/tenants/<tenantId>/<relativeKey>. With `exclusive` an existing file is an error (flag 'wx').
- * Local provider only; rejects a tenant id or key that would leave the tenant directory.
+ * Local disk only; rejects a tenant id or key that would leave the tenant directory.
  */
 export async function writeTenantFile(
   tenantId: string,
@@ -60,7 +70,7 @@ export async function writeTenantFile(
   data: Buffer,
   options: { exclusive: boolean },
 ): Promise<{ absPath: string; sha256: string; size: number }> {
-  if (storageProvider() !== 'local') throw new Error('Local storage is required');
+  if (!isLocalStorageConfigured()) throw new Error('Local storage is required');
   if (typeof tenantId !== 'string' || !TENANT_ID.test(tenantId)) throw new Error('Invalid tenant id');
   const absPath = resolveTenantLocalPath(tenantId, relativeKey);
   if (!absPath) throw new Error('Invalid storage path');

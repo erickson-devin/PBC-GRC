@@ -197,7 +197,6 @@ async function main() {
     .map((f) => path.relative(root, f).replace(/\\/g, '/'))
     .sort();
   const allowed = [
-    'src/config/firebase.ts',
     'src/context/AuthContext.tsx',
     'src/context/TenantContext.tsx',
     'src/data/audit/auditLogger.ts',

@@ -5,13 +5,17 @@
  *  - DB_MODE=memory is the explicit opt-in to the in-memory, RLS-emulating store (the server no longer falls back
  *    silently). DATABASE_URL is cleared too, so these tests can NEVER touch a real database, even if a developer's
  *    .env points at one. (dotenv never overrides a variable that is already set, so setting it here wins.)
- *  - AUTH_MODE is reset to the default; tests of local auth opt in via ./localAuthEnv.
- *  - NODE_ENV must not be 'production': tests authenticate with dev-only mock tokens,
- *    which the auth middleware deliberately rejects in production.
+ *  - Local accounts are the only auth mode and startup asserts the configuration, so AUTH_MODE, LOCAL_AUTH_SECRET and
+ *    STORAGE_PROVIDER are SET (never deleted): dotenv would refill a deleted value from a developer's .env.
+ *  - NODE_ENV must not be 'production', and ALLOW_DEV_MOCK_TOKENS=true is what lets tests authenticate with dev-only
+ *    mock tokens, which the auth middleware rejects in production or whenever the flag is absent.
  */
 process.env.PORT = '8080';
 process.env.NODE_ENV = 'test';
 process.env.DB_MODE = 'memory';
 process.env.DATABASE_URL = '';
-delete process.env.AUTH_MODE;
+process.env.AUTH_MODE = 'local';
+process.env.LOCAL_AUTH_SECRET = 'test-only-secret-0123456789abcdef-0123456789abcdef';
+process.env.STORAGE_PROVIDER = 'local';
+process.env.ALLOW_DEV_MOCK_TOKENS = 'true';
 export {};

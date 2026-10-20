@@ -117,7 +117,7 @@ export interface NewJob {
   framework: SspImportFramework;
   /** NIST SP 800-53 imports only. */
   baseline?: SspBaseline | null;
-  storedProvider: 'local' | 'gcs';
+  storedProvider: 'local';
   storedPath: string;
   analyzer: string;
 }

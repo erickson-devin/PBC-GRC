@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
-import { buildDevMockIdToken } from '../../config/devAuthToken';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -24,23 +23,15 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { idToken, currentUser } = useAuth();
+  const { idToken } = useAuth();
   const { currentTenant } = useTenant();
   const [isCopied, setIsCopied] = useState(false);
 
   if (!isOpen) return null;
 
-  const displayToken =
-    idToken ||
-    buildDevMockIdToken({
-      aud: 'grc-tool-507203',
-      sub: currentUser.id,
-      email: currentUser.email,
-      tenant_id: currentTenant.id,
-    }) ||
-    '';
+  const displayToken = idToken || '';
 
-  const curlExample = `curl -X GET "https://grc.pitchblackcyber.com/api/v1/assessments" \\
+  const curlExample = `curl -X GET "${window.location.origin}/api/v1/assessments" \\
   -H "Authorization: Bearer ${displayToken ? `${displayToken.slice(0, 24)}...` : '<ID_TOKEN>'}" \\
   -H "X-Tenant-ID: ${currentTenant.id}"`;
 
@@ -84,7 +75,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               </span>
               <div className="flex items-center gap-1 text-xs text-slate-400">
                 <Clock className="w-3 h-3 text-brand-400" />
-                <span>Expires in 1 hr</span>
+                <span>Expires 8 hours after sign-in</span>
               </div>
             </div>
 
@@ -123,7 +114,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </div>
           </div>
 
-          {/* Cloud SQL Multi-Tenant note */}
+          {/* Multi-tenant note */}
           <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs text-slate-400 flex items-start gap-2">
             <Server className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
             <span>

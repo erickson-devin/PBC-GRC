@@ -323,7 +323,7 @@ export function compileNistSSP(
           { label: 'Information System Owner', value: `${metadata.systemOwner || 'Authorized Officer'} (Signature on Record)` },
           { label: 'Primary Assessor / Lead Auditor', value: `${metadata.primaryAssessor || 'Certified Assessor'} (Attested)` },
           { label: 'Attestation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
-          { label: 'Enclave Cryptographic State', value: 'Immutable GCS Vault Evidence Hash Ingestion Active' },
+          { label: 'Enclave Cryptographic State', value: 'Immutable On-Premises Vault Evidence Hash Ingestion Active' },
         ],
       },
     ],

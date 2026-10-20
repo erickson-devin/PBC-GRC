@@ -52,11 +52,6 @@ export default defineConfig({
             return 'vendor-ui';
           }
 
-          // ── Firebase SDK ────────────────────────────────────────────────
-          if (id.includes('node_modules/firebase') || id.includes('node_modules/@firebase')) {
-            return 'vendor-firebase';
-          }
-
           // ── PDF / HTML report compilers & exporters ─────────────────────
           if (
             id.includes('/src/data/reports/') ||

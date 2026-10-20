@@ -3,8 +3,8 @@ import bcrypt from 'bcryptjs';
 
 /**
  * Local (air-gapped) authentication primitives: HS256 JWTs and bcrypt password hashing.
- * Nothing here touches the network, so the platform runs with no Firebase / Google / Microsoft reachability.
- * Enable with AUTH_MODE=local and LOCAL_AUTH_SECRET (>= 32 characters). There is intentionally NO default secret.
+ * Nothing here touches the network, so the platform runs fully on-prem with no external identity provider.
+ * LOCAL_AUTH_SECRET (>= 32 characters) is required. There is intentionally NO default secret.
  */
 
 export const LOCAL_TOKEN_ISSUER = 'pbc-grc-local';
@@ -30,27 +30,32 @@ export class LocalTokenError extends Error {
   }
 }
 
-export function isLocalAuthMode(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.AUTH_MODE || 'firebase').trim().toLowerCase() === 'local';
-}
-
 export function getLocalAuthSecret(env: NodeJS.ProcessEnv = process.env): string {
   const secret = env.LOCAL_AUTH_SECRET ?? '';
   if (secret.length < MIN_SECRET_LENGTH) {
     throw new LocalAuthConfigError(
-      `LOCAL_AUTH_SECRET must be set to at least ${MIN_SECRET_LENGTH} characters when AUTH_MODE=local (e.g. \`openssl rand -hex 32\`).`
+      `LOCAL_AUTH_SECRET must be set to at least ${MIN_SECRET_LENGTH} characters (e.g. \`openssl rand -hex 32\`).`
     );
   }
   return secret;
 }
 
-/** Startup validation: refuse to run in local-auth mode without a proper signing secret. */
+/**
+ * Startup validation: local accounts are the only identity mode. AUTH_MODE may be omitted or "local"; anything
+ * else is refused. The signing secret is always required, and dev mock tokens can never be enabled in production.
+ */
 export function assertAuthConfig(env: NodeJS.ProcessEnv = process.env): void {
-  const mode = (env.AUTH_MODE || 'firebase').trim().toLowerCase();
-  if (mode !== 'local' && mode !== 'firebase') {
-    throw new LocalAuthConfigError(`Invalid AUTH_MODE "${env.AUTH_MODE}": expected "firebase" or "local".`);
+  const raw = env.AUTH_MODE ?? '';
+  const mode = raw.trim().toLowerCase();
+  if (mode !== '' && mode !== 'local') {
+    throw new LocalAuthConfigError(
+      `AUTH_MODE="${raw}" is not supported: PBC-GRC uses local accounts only. Remove AUTH_MODE or set it to "local".`
+    );
   }
-  if (mode === 'local') getLocalAuthSecret(env);
+  getLocalAuthSecret(env);
+  if (env.ALLOW_DEV_MOCK_TOKENS === 'true' && env.NODE_ENV === 'production') {
+    throw new LocalAuthConfigError('ALLOW_DEV_MOCK_TOKENS must not be set when NODE_ENV=production');
+  }
 }
 
 // ----------------------------------------------------------------------------- JWT (HS256)

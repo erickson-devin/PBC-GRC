@@ -4,7 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
 import { initDb, assertDbModeAllowed, getDbMode } from './db';
-import { assertAuthConfig, isLocalAuthMode } from './auth/localAuth';
+import { assertAuthConfig } from './auth/localAuth';
+import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { parseTrustProxy } from './trustProxy';
 import { startVmScheduler } from './vm/scheduler';
@@ -13,7 +14,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+// APP_PORT wins; PORT is the older name and stays as the fallback.
+const PORT = parseInt(process.env.APP_PORT || process.env.PORT || '', 10) || 3000;
+// All interfaces by default so the WebUI is reachable on the LAN (Unraid); set APP_BIND_ADDRESS to restrict it.
+const BIND_ADDRESS = (process.env.APP_BIND_ADDRESS || '').trim() || '0.0.0.0';
 
 // Honour X-Forwarded-* only from the named proxy address (never a boolean or hop count, see trustProxy.ts)
 try {
@@ -45,7 +49,7 @@ app.use((_req, res, next) => {
 // Mount API v1 Routes
 app.use('/api/v1', apiRouter);
 
-// Serve Frontend in Production or Single-Container Cloud Run Mode
+// Serve the built frontend from this same process (single-container mode)
 const distPath = path.resolve(__dirname, '../dist');
 
 // Static assets
@@ -65,9 +69,9 @@ app.use((req, res, next) => {
 });
 
 // Server Initialization
-export const server = app.listen(PORT, async () => {
+export const server = app.listen(PORT, BIND_ADDRESS, async () => {
   console.log(`=======================================================`);
-  console.log(`🚀 PBC-GRC Cloud SQL Express API Server running on port ${PORT}`);
+  console.log(`🚀 PBC-GRC API Server running on port ${PORT}`);
   console.log(`🔐 RLS Tenant Context: Active (SET LOCAL app.current_tenant_id)`);
   console.log(`📡 Endpoints: /api/v1/auth, /api/v1/tenants, /api/v1/controls, /api/v1/evidence, /api/v1/health`);
   console.log(`=======================================================`);
@@ -76,8 +80,13 @@ export const server = app.listen(PORT, async () => {
   try {
     assertDbModeAllowed();
     assertAuthConfig();
+    assertStorageConfig();
     await initDb();
-    console.log(`[Startup] Database mode: ${getDbMode()} | Auth mode: ${isLocalAuthMode() ? 'local (air-gapped)' : 'firebase'}`);
+    console.log(`[Startup] Database mode: ${getDbMode()}`);
+    console.log(`[Startup] Auth: local accounts | Storage: local (${localStorageRoot()})`);
+    if (BIND_ADDRESS === '0.0.0.0' || BIND_ADDRESS === '::') {
+      console.log(`[Startup] Listening on ${BIND_ADDRESS}:${PORT} (all interfaces, so the Unraid WebUI is reachable on the LAN). To restrict access see docs/ON_PREM_DATABASE.md "Network exposure"; multi-factor authentication for 3.5.3 is provided by an external control until Phase 5.9, see docs/VULNERABILITY_MANAGEMENT.md section 2.3.`);
+    }
     const vmScheduler = startVmScheduler();
     if (vmScheduler) {
       console.log(`[Startup] VM scheduler: tick every ${vmScheduler.tickMinutes} min, snapshot every ${vmScheduler.snapshotIntervalHours} h`);
