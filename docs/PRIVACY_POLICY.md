@@ -20,16 +20,16 @@ This Privacy Policy explains how we collect, handle, protect, and process inform
 ## 2. Information We Collect
 
 ### A. Customer Account & Identity Information
-When you request an enclave license, schedule a sales onboarding call, or log into the platform via Single Sign-On (SSO):
+When you request an enclave license, schedule a sales onboarding call, or sign in to the platform with your local account:
 - **Contact Information:** Name, corporate work email address, telephone number, and job title.
 - **Organization Metadata:** Company name, Commercial and Government Entity (CAGE) Code, System for Award Management (SAM.gov) registration status, and estimated in-scope user count.
-- **Federated Authentication Tokens:** Identity provider claims transmitted during OAuth SSO authentication (such as Microsoft 365 / Entra ID or Google Workspace), including your user principal name, unique subject identifier, and cryptographic ID token. We do not receive or store your plaintext passwords.
+- **Local Account Credentials:** Your name, work email address and a password you choose. Passwords are stored only as salted bcrypt hashes on the customer's own infrastructure; plaintext passwords are never stored or transmitted to Pitch Black Cyber. Sessions use locally signed tokens that expire after 8 hours.
 
 ### B. Compliance Assessment & Evidence Data (Customer Tenant Data)
 When using the PBC-GRC platform to document compliance:
 - **System Security Plan (SSP) Details:** System descriptions, network architecture narratives, designated system owners, boundary statements, and operational environment descriptions.
 - **Control Implementation Statements:** Custom narratives detailing your organization's technical implementation of the 17 CMMC Level 1 / FAR 52.204-21 controls.
-- **Audit Evidence Files:** Artifacts, policies, configuration screenshots, and audit logs uploaded to support assessment claims. These files are stored in customer-isolated Google Cloud Storage (GCS) buckets and indexed using cryptographic SHA-256 hashes.
+- **Audit Evidence Files:** Artifacts, policies, configuration screenshots, and audit logs uploaded to support assessment claims. These files are stored on the customer's own infrastructure, in customer-isolated storage that never leaves the customer's enclave, and indexed using cryptographic SHA-256 hashes.
 
 ### C. Technical & Usage Information
 When interacting with our web application:
@@ -40,9 +40,9 @@ When interacting with our web application:
 ## 3. How We Use Your Information
 
 We process customer data exclusively to deliver and secure our compliance enclave services:
-1. **Provisioning Isolated Enclaves:** To configure logical tenant boundaries in Google Cloud SQL and Google Cloud Storage.
+1. **Provisioning Isolated Enclaves:** To configure logical tenant boundaries in the PostgreSQL database and evidence storage hosted on the customer's own infrastructure.
 2. **Generating Compliance Deliverables:** To automate the compilation of auditor-ready System Security Plans (SSPs), SPRS score calculation matrices, and evidence packages.
-3. **Identity Verification & Access Control:** To authenticate defense assessors, system owners, and compliance personnel using multi-factor federated SSO.
+3. **Identity Verification & Access Control:** To authenticate defense assessors, system owners, and compliance personnel with local password accounts (accounts lock after repeated failed attempts). Multi-factor authentication within the platform is planned.
 4. **Customer Support & Solution Architecture:** To assist your team with CMMC boundary scoping, platform configuration, and license management.
 5. **Security & Regulatory Compliance:** To maintain immutable audit logs, prevent unauthorized access, and detect system anomalies.
 
@@ -53,26 +53,24 @@ We process customer data exclusively to deliver and secure our compliance enclav
 ## 4. Multi-Tenant Data Isolation & Security Architecture
 
 PBC-GRC employs defense-in-depth architectural safeguards to maintain rigorous tenant boundaries:
-- **Cryptographic Evidence Integrity:** Every evidence file uploaded to our Google Cloud Storage enclave is hashed client-side with SHA-256 before transit. Integrity hashes are verified upon retrieval to prevent tampering.
+- **Cryptographic Evidence Integrity:** Every evidence file uploaded to the customer's on-premises evidence storage is hashed client-side with SHA-256 before transit. Integrity hashes are verified upon retrieval to prevent tampering.
 - **Tenant Partitioning:** Database records are partitioned using PostgreSQL Row-Level Security (RLS) ensuring strict logical segregation between contractor enclaves.
-- **Encryption in Transit & at Rest:** All data in transit is encrypted using TLS 1.3. All persistent data in Google Cloud Storage and Google Cloud SQL is encrypted at rest using AES-256 with customer-managed or Google-managed encryption keys.
-- **Sub-processor Compliance:** All cloud infrastructure hosting PBC-GRC services (Google Cloud Platform) maintains FedRAMP certifications, ISO 27001, and SOC 2 Type II compliance.
+- **Encryption in Transit & at Rest:** All data in transit is encrypted using TLS 1.3. Persistent data is stored on the customer's own infrastructure, where encryption at rest is provided by the customer's disk or volume encryption and managed with customer-controlled keys.
+- **On-Premises Hosting:** PBC-GRC is hosted on the customer's own infrastructure. Documents and CUI never leave the customer's enclave, and no cloud provider processes customer data.
 
 ---
 
 ## 5. Third-Party Sub-processors & Service Providers
 
-To operate our cloud-native compliance architecture, we engage vetted sub-processors that meet strict security criteria:
-- **Google Cloud Platform (GCP):** Cloud Run (compute), Cloud SQL (relational database), Cloud Storage (evidence enclaves), and Cloud Identity Platform (authentication).
-- **Microsoft Entra ID:** Federated enterprise authentication for defense contractors utilizing Microsoft 365 GCC or Commercial.
-- **Cloudflare:** DNS routing, DDoS mitigation, and edge TLS termination.
+The platform runs entirely on the customer's own infrastructure and engages no third-party sub-processors for customer data:
+- **Customer-Hosted Infrastructure:** Compute, the relational database, evidence storage, and authentication run on the customer's own infrastructure; no cloud provider or identity provider processes customer data.
 
 ---
 
 ## 6. Data Retention & Deletion
 
 - **Active Subscriptions:** We retain your tenant configuration, compliance narratives, and evidence files for the duration of your active license agreement to support ongoing assessment baselines and C3PAO audits.
-- **Upon Contract Termination:** Within thirty (30) days of subscription termination or upon explicit written request, customer tenant databases and Google Cloud Storage evidence objects will be permanently purged in accordance with DoD 5220.22-M / NIST SP 800-88 sanitization guidelines.
+- **Upon Contract Termination:** Within thirty (30) days of subscription termination or upon explicit written request, customer tenant databases and evidence files will be permanently purged in accordance with DoD 5220.22-M / NIST SP 800-88 sanitization guidelines.
 - **Customer Backups:** Administrators may export a complete JSON or Markdown archive of their entire assessment state and evidence manifest at any time via the top navigation bar.
 
 ---

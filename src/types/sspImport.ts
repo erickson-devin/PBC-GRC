@@ -192,7 +192,7 @@ export interface SspImportJob {
   baseline: SspBaseline | null;
   status: SspJobStatus;
   stageProgress: SspStageProgress;
-  storedProvider: 'local' | 'gcs';
+  storedProvider: 'local';
   storedPath: string;
   pageCount: number | null;
   charCount: number | null;

@@ -6,7 +6,7 @@ import { serviceTokenMiddleware } from '../middleware/serviceTokenMiddleware';
 import { validateIngestPayload, vmIngestMaxBytes } from '../vm/ingestSchema';
 import { findRunBySha, recordReceivedRun, VmStoreError } from '../vm/store';
 import { enqueueVmRun, recoverStaleRuns } from '../vm/worker';
-import { storageProvider, writeTenantFile } from '../evidence/storage';
+import { isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
 
 /**
@@ -30,7 +30,7 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
     res.status(415).json({ error: 'unsupported_media_type' });
     return;
   }
-  if (storageProvider() !== 'local') {
+  if (!isLocalStorageConfigured()) {
     res.status(503).json({ error: 'vm_requires_local_storage' });
     return;
   }

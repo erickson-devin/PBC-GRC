@@ -1,11 +1,8 @@
 /**
  * Event Horizon: Singularity — Evidence Storage Driver
  *
- * Implements environment-agnostic storage abstraction for both:
- * 1. Air-Gapped / On-Premises Enclaves (`STORAGE_PROVIDER === 'local'`)
- *    persisting files to local disk under `process.env.LOCAL_STORAGE_PATH || './data/evidence/'`.
- * 2. Cloud Deployments (`STORAGE_PROVIDER === 'gcs'`)
- *    persisting files to Google Cloud Storage with Signed URLs.
+ * Local-disk storage for on-premises enclaves (`STORAGE_PROVIDER === 'local'`), persisting files under
+ * `process.env.LOCAL_STORAGE_PATH || './data/evidence/'`. It is the only provider.
  *
  * Provides cryptographic SHA-256 integrity hashing and validation via `cryptoUtils.ts`.
  */
@@ -13,7 +10,7 @@
 import { computeSha256 } from './cryptoUtils';
 import { ApiClient } from '../../services/apiClient';
 
-export type StorageProviderType = 'local' | 'gcs';
+export type StorageProviderType = 'local';
 
 export interface StorageConfig {
   provider: StorageProviderType;
@@ -49,8 +46,9 @@ function nodeEnv(key: string): string | undefined {
   return typeof process !== 'undefined' ? process.env?.[key] : undefined;
 }
 
-function normalizeProvider(value: string | undefined): StorageProviderType {
-  return value?.toLowerCase() === 'gcs' ? 'gcs' : 'local';
+/** Local disk is the only provider: any other value (e.g. a legacy one from an old server) normalises to it. */
+function normalizeProvider(_value: string | undefined): StorageProviderType {
+  return 'local';
 }
 
 /**

@@ -64,7 +64,7 @@ async function run() {
   const run = (env: Record<string, string>) => {
     const r = spawnSync(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
       cwd: process.cwd(),
-      env: { ...process.env, PORT: '8097', DATABASE_URL: '', DB_HOST: '127.0.0.1', DB_PORT: '1', NODE_ENV: 'test', ...env },
+      env: { ...process.env, PORT: '8097', DATABASE_URL: '', DB_HOST: '127.0.0.1', DB_PORT: '1', NODE_ENV: 'test', LOCAL_AUTH_SECRET: 'x'.repeat(40), AUTH_MODE: '', STORAGE_PROVIDER: '', ...env },
       encoding: 'utf8',
       timeout: 30_000,
     });
@@ -72,10 +72,19 @@ async function run() {
   };
   const noDb = run({ DB_MODE: '' });
   assert(noDb.code === 1 && /\[FATAL\]/.test(noDb.out), 'server with unreachable PostgreSQL exits 1 with a [FATAL] message', { code: noDb.code });
+  assert(/PostgreSQL connection failed/.test(noDb.out), 'and the failure is the database, not a missing auth secret', noDb.out.slice(-300));
   const memProd = run({ DB_MODE: 'memory', NODE_ENV: 'production' });
   assert(memProd.code === 1 && /not allowed when NODE_ENV=production/.test(memProd.out), 'server refuses DB_MODE=memory in production (exit 1)', { code: memProd.code });
-  const noSecret = run({ DB_MODE: 'memory', AUTH_MODE: 'local', LOCAL_AUTH_SECRET: '' });
-  assert(noSecret.code === 1 && /LOCAL_AUTH_SECRET/.test(noSecret.out), 'server refuses AUTH_MODE=local without a signing secret (exit 1)', { code: noSecret.code });
+  const noSecret = run({ DB_MODE: 'memory', LOCAL_AUTH_SECRET: '' });
+  assert(noSecret.code === 1 && /LOCAL_AUTH_SECRET/.test(noSecret.out), 'server refuses to start without a signing secret (exit 1)', { code: noSecret.code });
+  const removedMode = run({ DB_MODE: 'memory', AUTH_MODE: ['fire', 'base'].join('') });
+  assert(removedMode.code === 1 && /AUTH_MODE="[a-z]+" is not supported/.test(removedMode.out), 'server refuses a removed AUTH_MODE (exit 1)', { code: removedMode.code });
+  const oauthMode = run({ DB_MODE: 'memory', AUTH_MODE: 'oauth' });
+  assert(oauthMode.code === 1 && /AUTH_MODE="oauth" is not supported/.test(oauthMode.out), 'server refuses AUTH_MODE=oauth (exit 1)', { code: oauthMode.code });
+  const gcsStore = run({ DB_MODE: 'memory', STORAGE_PROVIDER: 'gcs' });
+  assert(gcsStore.code === 1 && /STORAGE_PROVIDER="gcs" is not supported/.test(gcsStore.out), 'server refuses STORAGE_PROVIDER=gcs (exit 1)', { code: gcsStore.code });
+  const s3Store = run({ DB_MODE: 'memory', STORAGE_PROVIDER: 's3' });
+  assert(s3Store.code === 1 && /STORAGE_PROVIDER="s3" is not supported/.test(s3Store.out), 'server refuses STORAGE_PROVIDER=s3 (exit 1)', { code: s3Store.code });
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

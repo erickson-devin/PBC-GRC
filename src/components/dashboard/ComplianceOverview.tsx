@@ -385,7 +385,7 @@ export const ComplianceOverview: React.FC = () => {
                     </span>
                   ) : (
                     <span className="px-2.5 py-0.5 rounded-md text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                      {state.evidenceIndex.length} GCS SYNCED
+                      {state.evidenceIndex.length} VAULT FILES
                     </span>
                   )}
                 </div>
@@ -428,9 +428,9 @@ export const ComplianceOverview: React.FC = () => {
               <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
                 <span
                   className="text-slate-400 text-xs truncate max-w-[260px]"
-                  title={isLocal ? `Local Storage Path: ${localStoragePath}` : 'Enclave bucket: gs://pbc-grc-evidence'}
+                  title={`Local Storage Path: ${localStoragePath}`}
                 >
-                  {isLocal ? `Storage Path: ${localStoragePath}` : 'Enclave bucket: gs://pbc-grc-evidence'}
+                  {`Storage Path: ${localStoragePath}`}
                 </span>
                 <button
                   onClick={() => setActiveTab('vault')}

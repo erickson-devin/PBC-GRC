@@ -12,7 +12,6 @@ import {
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
-import { DEFAULT_GCP_CONFIG } from '../../services/gcsService';
 
 import { copyToClipboard } from '../../utils/clipboard';
 export const SSPBuilder: React.FC = () => {
@@ -46,7 +45,7 @@ export const SSPBuilder: React.FC = () => {
     text += `SYSTEM NAME: ${meta.systemName}\n`;
     text += `SYSTEM OWNER: ${meta.systemOwner}\n`;
     text += `ASSESSMENT DATE: ${meta.assessmentDate}\n`;
-    text += `GCS ENCLAVE: gs://${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${currentTenant.id}/\n\n`;
+    text += `EVIDENCE VAULT (LOCAL): tenants/${currentTenant.id}/\n\n`;
     text += `SYSTEM BOUNDARY & SCOPE:\n${meta.systemBoundaryScope}\n\n`;
     text += `${totalControls} CONTROLS ASSESSMENT MATRIX:\n`;
 
@@ -509,7 +508,7 @@ export const SSPBuilder: React.FC = () => {
                       </p>
                     </div>
 
-                    {/* Evidence References with SHA-256 and GCS Path */}
+                    {/* Evidence References with SHA-256 and vault path */}
                     <div className="flex items-start gap-2 flex-wrap text-[11px] pt-1">
                       <span className="font-semibold text-slate-600">Attached Evidence Artifacts:</span>
                       {evidenceList.length === 0 ? (
@@ -522,7 +521,7 @@ export const SSPBuilder: React.FC = () => {
                               className="px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-800 rounded-lg font-mono text-[10px] flex items-center justify-between flex-wrap gap-2"
                             >
                               <span className="font-bold">{e.name}</span>
-                              <span className="text-slate-500">GCS: {e.gcsPath || 'Local Vault'}</span>
+                              <span className="text-slate-500">Path: {e.gcsPath || 'Local Vault'}</span>
                               {e.fileHash && (
                                 <span className="text-emerald-700 font-semibold">SHA-256: {e.fileHash.substring(0, 16)}...</span>
                               )}

@@ -4,7 +4,7 @@ export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
 
 export type SamStatus = 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'NOT_REGISTERED';
 
-export type AuthProviderType = 'microsoft.com' | 'google.com' | 'password' | 'emailLink' | 'demo';
+export type AuthProviderType = 'password';
 
 export interface EnclaveStackProfile {
   identityProvider: 'ENTRA_ID_GOV' | 'ENTRA_ID_COMMERCIAL' | 'OKTA' | 'ACTIVE_DIRECTORY';
@@ -90,13 +90,3 @@ export interface TeamMember {
   userId?: string;
   avatarUrl?: string;
 }
-
-export interface GcpServiceConfig {
-  projectId: string;
-  region: string;
-  gcsBucketName: string;
-  cloudSqlInstance: string;
-  databaseName: string;
-  identityDomain: string;
-}
-

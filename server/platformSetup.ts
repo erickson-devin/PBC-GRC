@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { pool, getDbMode } from './db';
+import { pool, getDbMode, memoryHasTenants } from './db';
 import { platformAdminEmails } from './auth/platformAdmin';
 
 /**
@@ -34,14 +34,19 @@ export async function isSetupLocked(): Promise<boolean> {
 
 /**
  * Does this installation still need its first administrator? False as soon as ANY administrator exists: a configured
- * one (PLATFORM_ADMIN_EMAILS), one made by the wizard, or the setup lock itself.
+ * one (PLATFORM_ADMIN_EMAILS), one made by the wizard, or the setup lock itself. It is also false when the database
+ * already holds data from an earlier deployment (accounts or tenants), so an upgraded install never opens the wizard
+ * to an anonymous caller. `tenants` is under FORCE row-level security and cannot be read without a tenant context, so
+ * on PostgreSQL the signal is `local_users`, which is global (not in RLS_TENANT_TABLES); in memory mode, the tenants map.
  */
 export async function isSetupRequired(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
   if (platformAdminEmails(env).size > 0) return false;
   if (await isSetupLocked()) return false;
-  if (isMemory()) return memoryAdmins.size === 0;
-  const res = await pool.query('SELECT 1 FROM platform_admins LIMIT 1');
-  return (res.rowCount ?? 0) === 0;
+  if (isMemory()) return memoryAdmins.size === 0 && !memoryHasTenants();
+  const admins = await pool.query('SELECT 1 FROM platform_admins LIMIT 1');
+  if ((admins.rowCount ?? 0) > 0) return false;
+  const users = await pool.query('SELECT 1 FROM local_users LIMIT 1');
+  return (users.rowCount ?? 0) === 0;
 }
 
 /**

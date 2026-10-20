@@ -1,11 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import { getTenantRole, isTenantMember } from '../db';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 import type { TenantRole } from '../../src/types/tenant';
-import { LocalAuthConfigError, isLocalAuthMode, verifyLocalToken } from '../auth/localAuth';
+import { LocalAuthConfigError, verifyLocalToken } from '../auth/localAuth';
 
 // Extend Express Request interface with authenticated user & tenant context
 declare global {
@@ -26,27 +24,15 @@ declare global {
   }
 }
 
-// Firebase Admin is only needed when verifying Firebase ID tokens. In AUTH_MODE=local nothing may reach Google.
-if (!isLocalAuthMode() && !getApps().length) {
-  try {
-    initializeApp({
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'grc-tool-507203',
-    });
-    console.log('[Firebase Admin] Initialized successfully');
-  } catch (err: unknown) {
-    console.warn('[Firebase Admin] Initialization notice:', errorMessage(err));
-  }
-}
-
 const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const DEV_FALLBACK_TENANT_ID = 'tenant-vanguard-01';
 
 /**
- * Mock / unsigned-token support exists only for local development and automated tests.
- * It is never honoured when NODE_ENV === 'production'.
+ * Mock-token support exists only for local development and automated tests: it needs ALLOW_DEV_MOCK_TOKENS=true
+ * and is never honoured when NODE_ENV === 'production' (startup also refuses that combination). Read per request.
  */
 function isMockAuthAllowed(): boolean {
-  return process.env.NODE_ENV !== 'production';
+  return process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_MOCK_TOKENS === 'true';
 }
 
 function isMockToken(token: string): boolean {
@@ -119,7 +105,7 @@ function identityFromClaims(
  * tenant_users membership row. Returns null (after writing the error response) on failure.
  *
  * `allowUnscopedDev` lets dev-only mock tokens that carry no tenant claims at all
- * choose a tenant via the header; it is always false for real (Firebase / local) tokens.
+ * choose a tenant via the header; it is always false for real (local) tokens.
  */
 async function resolveTenantId(
   res: Response,
@@ -177,13 +163,13 @@ async function resolveTenantRole(identity: TokenIdentity, tenantId: string, devM
 
 interface Authenticated {
   identity: TokenIdentity;
-  /** True for dev/test mock or unsigned tokens (never produced in production). */
+  /** True for dev/test mock tokens (never produced in production). */
   devMock: boolean;
 }
 
 /**
  * Turns a bearer token into an identity. Throws on any invalid token (callers answer 401).
- * Order: dev mock tokens (non-production only) -> local JWT (AUTH_MODE=local) -> Firebase ID token.
+ * Order: dev mock tokens (non-production, opt-in only) -> local JWT.
  */
 async function authenticateToken(token: string): Promise<Authenticated> {
   const mockAllowed = isMockAuthAllowed();
@@ -193,48 +179,16 @@ async function authenticateToken(token: string): Promise<Authenticated> {
     return { identity: decodeMockToken(token), devMock: true };
   }
 
-  // 2. Air-gapped local identity: verified with the local secret only, never contacting Google.
-  if (isLocalAuthMode()) {
-    const claims = verifyLocalToken(token);
-    return {
-      identity: identityFromClaims(claims as unknown as Record<string, unknown>, {
-        uid: claims.sub,
-        email: claims.email,
-        name: claims.name,
-      }),
-      devMock: false,
-    };
-  }
-
-  // 3. Production Firebase ID Token verification
-  try {
-    const decodedToken = await getAuth().verifyIdToken(token);
-    const identity = identityFromClaims(decodedToken as unknown as Record<string, unknown>, {
-      uid: decodedToken.uid,
-      email: decodedToken.email || '',
-      name: decodedToken.name || (decodedToken.email ? decodedToken.email.split('@')[0] : 'Assessor'),
-    });
-    // The verified uid / email always win over any custom claim of the same name.
-    identity.user.uid = decodedToken.uid;
-    identity.user.email = decodedToken.email;
-    return { identity, devMock: false };
-  } catch (err: unknown) {
-    // Local dev without live GCP credentials: accept an unsigned JWT payload. Never in production.
-    if (mockAllowed && token.includes('.')) {
-      const payload = readJwtPayload(token);
-      if (payload) {
-        return {
-          identity: identityFromClaims(payload, {
-            uid: 'user-dev-local',
-            email: 'assessor@vanguard-defense.us',
-            name: 'Compliance Assessor',
-          }),
-          devMock: true,
-        };
-      }
-    }
-    throw err;
-  }
+  // 2. Local identity: verified with the local secret only, never contacting any external service.
+  const claims = verifyLocalToken(token);
+  return {
+    identity: identityFromClaims(claims as unknown as Record<string, unknown>, {
+      uid: claims.sub,
+      email: claims.email,
+      name: claims.name,
+    }),
+    devMock: false,
+  };
 }
 
 async function handle(req: Request, res: Response, next: NextFunction, requireTenant: boolean): Promise<void> {
@@ -295,7 +249,7 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
 }
 
 /**
- * Validates incoming Authorization Bearer tokens (Firebase ID token, or a local JWT when AUTH_MODE=local) and
+ * Validates incoming Authorization Bearer tokens (locally signed JWTs) and
  * attaches the verified req.user, plus req.tenantId / req.tenantRole after checking tenant membership.
  */
 export function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {

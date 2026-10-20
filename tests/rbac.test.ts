@@ -96,6 +96,35 @@ async function run() {
   const noRole = mockJwt({});
   assert((await call('PUT', '/controls/AC.L1-3.1.1', noRole, TENANT, controlUpdate)).status === 200, 'dev mock token without roles defaults to owner');
 
+  console.log('\n--- Mock tokens are refused in production ---');
+  const savedNodeEnv = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    assert((await call('GET', '/auth/me', noRole)).status === 401, 'NODE_ENV=production: mock token -> 401 on GET /auth/me (no req.user)');
+    assert((await call('GET', '/controls', tokenFor('TENANT_OWNER'))).status === 401, 'NODE_ENV=production: owner mock token -> 401 on GET /controls');
+    assert((await call('PUT', '/controls/AC.L1-3.1.1', tokenFor('TENANT_OWNER'), TENANT, controlUpdate)).status === 401, 'NODE_ENV=production: owner mock token cannot write (401)');
+  } finally {
+    process.env.NODE_ENV = savedNodeEnv;
+  }
+  assert((await call('GET', '/controls', tokenFor('TENANT_OWNER'))).status === 200, 'NODE_ENV restored: the mock token works again in test mode');
+
+  console.log('\n--- Mock tokens need ALLOW_DEV_MOCK_TOKENS=true ---');
+  const savedMockFlag = process.env.ALLOW_DEV_MOCK_TOKENS;
+  try {
+    delete process.env.ALLOW_DEV_MOCK_TOKENS;
+    assert((await call('GET', '/auth/me', noRole)).status === 401, 'flag absent: mock token -> 401 on GET /auth/me');
+    assert((await call('GET', '/controls', tokenFor('TENANT_OWNER'))).status === 401, 'flag absent: mock token -> 401 on GET /controls');
+    assert((await call('PUT', '/controls/AC.L1-3.1.1', tokenFor('TENANT_OWNER'), TENANT, controlUpdate)).status === 401, 'flag absent: PUT /controls -> 401');
+    const unsigned = `h.${Buffer.from(JSON.stringify({ sub: 'user_rbac', email: 'rbac@test.mil', roles: { [TENANT]: 'TENANT_OWNER' } })).toString('base64')}.sig`;
+    assert((await call('GET', '/controls', unsigned)).status === 401, 'an unsigned self-asserted token without the mock marker -> 401 (no unsigned fallback)');
+    process.env.ALLOW_DEV_MOCK_TOKENS = 'false';
+    assert((await call('GET', '/controls', tokenFor('TENANT_OWNER'))).status === 401, 'flag "false": mock token -> 401');
+  } finally {
+    if (savedMockFlag === undefined) delete process.env.ALLOW_DEV_MOCK_TOKENS;
+    else process.env.ALLOW_DEV_MOCK_TOKENS = savedMockFlag;
+  }
+  assert((await call('GET', '/controls', tokenFor('TENANT_OWNER'))).status === 200, 'flag restored: the mock token works again');
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');

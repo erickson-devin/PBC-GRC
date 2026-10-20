@@ -51,16 +51,16 @@ Because our customers operate under strict Department of Defense (DoD) regulator
     {
       title: '2. Information We Collect',
       content: `• Customer Account & Identity Information: Contact name, corporate work email, direct phone number, organization name, CAGE Code, SAM.gov status, and in-scope user count.
-• Federated Authentication Claims: OAuth identity claims transmitted during Single Sign-On (Microsoft 365 / Entra ID or Google Workspace), including user principal names and cryptographic ID tokens. We never receive or store plaintext passwords.
-• Compliance Assessment & Evidence Data: System Security Plan (SSP) details, network boundary narratives, designated system owners, custom control implementation statements, and uploaded audit evidence artifacts stored in Google Cloud Storage.
+• Local Account Credentials: Your name, work email and a password you choose. Passwords are stored only as salted bcrypt hashes on the customer's own infrastructure; plaintext passwords are never stored or transmitted to Pitch Black Cyber. Sessions use locally signed tokens that expire after 8 hours.
+• Compliance Assessment & Evidence Data: System Security Plan (SSP) details, network boundary narratives, designated system owners, custom control implementation statements, and uploaded audit evidence artifacts stored in the customer's on-premises evidence vault.
 • Security & Audit Logs: Timestamps of control modifications, evidence uploads, export operations, IP addresses, and diagnostic telemetry necessary for CMMC Level 1 security audit trails.`,
     },
     {
       title: '3. How We Use Your Information',
       content: `We process customer data exclusively to deliver and secure our compliance enclave services:
-1. Provisioning isolated tenant enclaves in Google Cloud SQL and Google Cloud Storage.
+1. Provisioning isolated tenant enclaves in the customer's on-premises PostgreSQL database and evidence vault.
 2. Generating compliance deliverables (System Security Plans, SPRS matrices, and evidence packages).
-3. Identity verification and multi-factor federated access control.
+3. Identity verification with local password accounts (accounts lock after repeated failed attempts); multi-factor authentication within the platform is planned.
 4. Providing technical support and solutions architect guidance.
 5. Maintaining immutable audit logs and detecting unauthorized access.
 
@@ -68,21 +68,20 @@ We DO NOT sell, monetize, rent, or trade your personal or organizational data. W
     },
     {
       title: '4. Multi-Tenant Data Isolation & Security Architecture',
-      content: `• Cryptographic Evidence Integrity: Every evidence file uploaded to our Google Cloud Storage enclave is hashed client-side with SHA-256 before transit. Integrity hashes are verified upon retrieval to prevent tampering.
+      content: `• Cryptographic Evidence Integrity: Every evidence file uploaded to the on-premises evidence vault is hashed client-side with SHA-256 before transit. Integrity hashes are verified upon retrieval to prevent tampering.
 • Tenant Partitioning: Database records are partitioned using PostgreSQL Row-Level Security (RLS) ensuring strict logical segregation between contractor enclaves.
-• Encryption in Transit & at Rest: All data in transit is encrypted using TLS 1.3. All persistent data in Google Cloud Storage and Google Cloud SQL is encrypted at rest using AES-256 with customer-managed or Google-managed keys.
-• Sub-processor Compliance: All cloud infrastructure hosting PBC-GRC services (Google Cloud Platform) maintains FedRAMP certifications, ISO 27001, and SOC 2 Type II compliance.`,
+• Encryption in Transit & at Rest: All data in transit is encrypted using TLS 1.3. All persistent data resides on customer-controlled on-premises storage and is protected at rest by the customer's volume encryption.
+• Hosting: PBC-GRC is hosted on-premises by the customer; documents and CUI never leave the customer's enclave.`,
     },
     {
       title: '5. Third-Party Sub-processors',
-      content: `• Google Cloud Platform (GCP): Cloud Run, Cloud SQL, Cloud Storage, and Cloud Identity Platform.
-• Microsoft Entra ID: Federated enterprise authentication for defense contractors utilizing Microsoft 365 GCC or Commercial.
-• Cloudflare: DNS routing, DDoS mitigation, and edge TLS termination.`,
+      content: `• Hosting: PBC-GRC is hosted on-premises by the customer; documents and CUI never leave the customer's enclave.
+• No third-party sub-processors: compute, the database, evidence storage and authentication all run on the customer's own infrastructure; no cloud provider or identity provider processes customer data.`,
     },
     {
       title: '6. Data Retention & Deletion',
       content: `• Active Subscriptions: Retained for the duration of your active license agreement to support ongoing assessment baselines and C3PAO audits.
-• Upon Contract Termination: Within thirty (30) days of subscription termination or upon explicit written request, customer tenant databases and Google Cloud Storage evidence objects will be permanently purged in accordance with DoD 5220.22-M / NIST SP 800-88 sanitization guidelines.
+• Upon Contract Termination: Within thirty (30) days of subscription termination or upon explicit written request, customer tenant databases and evidence objects will be permanently purged in accordance with DoD 5220.22-M / NIST SP 800-88 sanitization guidelines.
 • Customer Backups: Administrators may export a complete JSON or Markdown archive of their entire assessment state and evidence manifest at any time via the top navigation bar.`,
     },
     {
@@ -126,11 +125,11 @@ PBC-GRC is a software-as-a-service compliance documentation, readiness tracking,
 1. Classified Information Prohibition: Upload, transmit, or process any Classified National Security Information (Confidential, Secret, or Top Secret) within the Service. PBC-GRC is designed for Federal Contract Information (FCI) and unclassified compliance assessments.
 2. Tampering & Reverse Engineering: Reverse engineer, decompile, disassemble, or attempt to derive the source code or underlying schemas of the Service.
 3. Unauthorized Penetration Testing: Perform denial-of-service (DoS) attacks, automated penetration scans, or vulnerability exploitation against the production infrastructure without prior written authorization from Pitch Black Cyber.
-4. Credential Security: Share user login credentials or bypass federated Single Sign-On (SSO) multi-factor authentication requirements.`,
+4. Credential Security: Share user login credentials, or bypass or weaken the authentication controls of the Service or of the customer's enclave.`,
     },
     {
       title: '6. Service Availability & Support',
-      content: `• Uptime Commitment: Pitch Black Cyber utilizes enterprise Google Cloud Platform (GCP) infrastructure engineered for high availability (99.9% targeted uptime, excluding scheduled maintenance).
+      content: `• Availability: PBC-GRC is hosted on-premises by the customer, so availability depends on the customer's own infrastructure.
 • Technical Support: Standard email and solutions architect support is available Monday through Friday during standard business hours via support@pitchblackcyber.com.`,
     },
     {

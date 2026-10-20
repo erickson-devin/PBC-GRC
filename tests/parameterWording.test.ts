@@ -14,7 +14,6 @@ import { startFakeOllama } from './fakeOllama';
  */
 const BASE = 'http://127.0.0.1:8080/api/v1';
 process.env.PLATFORM_ADMIN_EMAILS = 'u_aia_owner@test.mil';
-delete process.env.AUTH_MODE; // mock tokens, as in the other API tests
 
 let passed = 0;
 let total = 0;

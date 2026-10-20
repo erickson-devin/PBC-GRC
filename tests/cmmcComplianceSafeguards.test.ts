@@ -22,11 +22,10 @@ import {
   generateSprsAssessmentSummary,
 } from '../src/data/reports/sprsCompiler';
 import {
-  generateGcsLifecyclePolicy,
-  calculateObjectRetentionHeaders,
   purgeTenantData,
   MIN_RETENTION_DAYS,
 } from '../src/data/storage/retentionPolicy';
+import * as retentionModule from '../src/data/storage/retentionPolicy';
 import { CMMC_LEVEL_2_CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls';
 import { ControlState } from '../src/types/cmmc';
 import { ReportMetadata } from '../src/types/report';
@@ -307,17 +306,9 @@ async function runTestSuite() {
   // 3.1 Minimum Retention Policy
   assert(MIN_RETENTION_DAYS === 1095, 'Minimum audit retention is 1095 days (3 years)');
 
-  const gcsPolicy = generateGcsLifecyclePolicy('gs://singularity-evidence-prod');
-  assert(gcsPolicy.isLocked === true, 'GCS lifecycle policy is locked');
-  assert(gcsPolicy.retentionPeriodDays === 1095, 'Retention period is 1095 days');
-  assert(gcsPolicy.lifecycleRules.some(r => r.action.storageClass === 'COLDLINE'), 'Policy transitions to Coldline');
-  assert(gcsPolicy.lifecycleRules.some(r => r.action.storageClass === 'ARCHIVE'), 'Policy transitions to Archive');
-
-  // 3.2 Object Retention Headers
-  const retentionHeaders = calculateObjectRetentionHeaders('2026-09-14T00:00:00.000Z', 1095);
-  assert(retentionHeaders.retentionMode === 'COMPLIANCE', 'Retention mode is COMPLIANCE');
-  assert(retentionHeaders.retainUntilDate.startsWith('2029-'), 'RetainUntilDate is 3 years in the future (2029)');
-  assert(retentionHeaders.customMetadata['x-goog-compliance-standard'] === 'DFARS-252.204-7012', 'Header includes DFARS-252.204-7012 metadata');
+  // 3.2 Evidence is stored on local disk only: the retention module carries no cloud lifecycle or object-lock helpers
+  assert(!('generateGcsLifecyclePolicy' in retentionModule) && !('calculateObjectRetentionHeaders' in retentionModule), 'Retention module exports no cloud lifecycle or object-lock helpers');
+  assert(Object.keys(retentionModule).every((k) => !/gcs|bucket|objectretention/i.test(k)), 'Retention module exports nothing cloud-specific');
 
   // 3.3 Cryptographic Tenant Data Wipe & Certificate of Destruction
   const destructionCert = await purgeTenantData({

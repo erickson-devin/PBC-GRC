@@ -19,18 +19,12 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { currentUser, firebaseUser } = useAuth();
+  const { currentUser } = useAuth();
   const { currentTenant, currentRole } = useTenant();
 
   if (!isOpen) return null;
 
-  const providerLabel = currentUser.authProvider === 'microsoft.com'
-    ? 'Microsoft 365 / Entra ID'
-    : currentUser.authProvider === 'google.com'
-    ? 'Google Workspace / Cloud Identity'
-    : currentUser.authProvider === 'emailLink'
-    ? 'Passwordless Magic Link (Auditor)'
-    : 'Enterprise Password Credentials';
+  const providerLabel = 'Local account';
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
@@ -117,10 +111,10 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
 
             <div>
               <label className="text-slate-400 text-xs uppercase font-bold block mb-1">
-                User UID (Cloud Identity)
+                User ID
               </label>
               <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 font-mono text-xs text-slate-400 truncate">
-                {firebaseUser?.uid || currentUser.id}
+                {currentUser.id}
               </div>
             </div>
           </div>

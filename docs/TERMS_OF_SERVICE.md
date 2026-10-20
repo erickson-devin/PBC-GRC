@@ -49,13 +49,13 @@ Customer agrees that it shall not, and shall not permit any authorized user to:
 1. **Classified Information Prohibition:** Upload, transmit, or process any **Classified National Security Information** (Confidential, Secret, or Top Secret) within the Service. PBC-GRC is designed for Federal Contract Information (FCI) and unclassified compliance assessments.
 2. **Tampering & Reverse Engineering:** Reverse engineer, decompile, disassemble, or attempt to derive the source code or underlying schemas of the Service.
 3. **Unauthorized Penetration Testing:** Perform denial-of-service (DoS) attacks, automated penetration scans, or vulnerability exploitation against the production infrastructure without prior written authorization from Pitch Black Cyber.
-4. **Credential Security:** Share user login credentials or bypass federated Single Sign-On (SSO) multi-factor authentication requirements.
+4. **Credential Security:** Share user login credentials, or bypass or weaken the authentication controls of the Service or of the customer's enclave.
 
 ---
 
 ## 6. Service Availability & Support
 
-- **Uptime Commitment:** Pitch Black Cyber utilizes enterprise Google Cloud Platform (GCP) infrastructure engineered for high availability (99.9% targeted uptime, excluding scheduled maintenance).
+- **Hosting and Availability:** PBC-GRC is hosted on the customer's own infrastructure. Documents and CUI never leave the customer's enclave, no cloud provider processes customer data, and availability of the hosted platform depends on the customer's own infrastructure.
 - **Technical Support:** Standard email and solutions architect support is available Monday through Friday during standard business hours via `support@pitchblackcyber.com`.
 
 ---

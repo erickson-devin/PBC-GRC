@@ -173,7 +173,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const frameworkControls = getFrameworkControls(framework, baseline, overlay);
     const targetControlIds = frameworkControls.map(c => c.id);
 
-    // 2. Query tenant assessment records from Cloud SQL (guarded by RLS)
+    // 2. Query tenant assessment records from PostgreSQL (guarded by RLS)
     const result = await queryWithTenant(
       tenantId,
       'SELECT * FROM control_assessments WHERE tenant_id = $1 ORDER BY control_id ASC',

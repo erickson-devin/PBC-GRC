@@ -17,7 +17,7 @@ function generateMockJwt(tenantId: string, email: string): string {
       email,
       tenantId,
       name: `Assessor for ${tenantId}`,
-      iss: 'https://securetoken.google.com/grc-tool-507203',
+      iss: 'pbc-grc-dev-mock',
       exp: Math.floor(Date.now() / 1000) + 3600,
     })
   ).toString('base64');

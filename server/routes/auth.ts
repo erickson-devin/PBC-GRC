@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import {
   LocalAuthConfigError,
   getDummyHash,
-  isLocalAuthMode,
   signLocalToken,
   verifyPassword,
 } from '../auth/localAuth';
@@ -22,10 +21,10 @@ const router = Router();
 
 /**
  * GET /api/v1/auth/config   (public)
- * Tells the browser which identity provider this server uses, so the client never guesses from build-time env.
+ * Reports the identity mode. Local accounts are the only mode; the endpoint stays so the client can confirm it.
  */
 router.get('/config', (_req: Request, res: Response): void => {
-  res.json({ mode: isLocalAuthMode() ? 'local' : 'firebase' });
+  res.json({ mode: 'local' });
 });
 
 // ---- per-IP throttle (in addition to per-account lockout) -------------------------------------
@@ -50,18 +49,13 @@ export function __resetLoginThrottleForTests(): void {
 const INVALID_CREDENTIALS = { error: 'Invalid email or password' };
 
 /**
- * POST /api/v1/auth/login   (public; only when AUTH_MODE=local)
+ * POST /api/v1/auth/login   (public)
  * Body: { email, password }. Returns a short-lived HS256 JWT carrying `sub`, `email` and `name`, which
- * authMiddleware accepts exactly like a Firebase ID token. The failure response is identical for an unknown
+ * authMiddleware verifies with the local secret. The failure response is identical for an unknown
  * email, a wrong password and a disabled account, and a hash is compared in every case, so neither the
  * message nor the timing reveals which emails exist. Accounts lock for 15 minutes after 5 consecutive failures.
  */
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
-  if (!isLocalAuthMode()) {
-    res.status(404).json({ error: 'Local authentication is not enabled on this server' });
-    return;
-  }
-
   if (throttled(req.ip || 'unknown')) {
     res.setHeader('Retry-After', String(WINDOW_MS / 1000));
     res.status(429).json({ error: 'Too many login attempts. Try again shortly.' });
@@ -115,17 +109,13 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
- * POST /api/v1/auth/register-with-invite   (public; only when AUTH_MODE=local)
+ * POST /api/v1/auth/register-with-invite   (public)
  * Body: { token, name?, password }. How a brand-new person gets an account on an air-gapped install: holding the
  * invitation token proves they received it at the invited address, so the account is created for THAT email, the
  * invitation is consumed, and they are signed in, in one step. If an account for the email already exists they are
  * told to sign in instead (409 account_exists), and nothing is consumed.
  */
 router.post('/register-with-invite', async (req: Request, res: Response): Promise<void> => {
-  if (!isLocalAuthMode()) {
-    res.status(404).json({ error: 'Local authentication is not enabled on this server' });
-    return;
-  }
   if (throttled(req.ip || 'unknown')) {
     res.setHeader('Retry-After', String(WINDOW_MS / 1000));
     res.status(429).json({ error: 'Too many attempts. Try again shortly.' });

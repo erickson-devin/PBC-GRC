@@ -391,7 +391,7 @@ async function run() {
   process.env.STORAGE_PROVIDER = 'gcs';
   const noStore = await ingest(tokenA, bytesOf({ label: 'gcs-src', agents: ['g1'] }));
   process.env.STORAGE_PROVIDER = 'local';
-  assert(noStore.status === 503 && noStore.body?.error === 'vm_requires_local_storage', 'STORAGE_PROVIDER=gcs -> 503 vm_requires_local_storage', noStore.body);
+  assert(noStore.status === 503 && noStore.body?.error === 'vm_requires_local_storage', 'a non-local STORAGE_PROVIDER at runtime (gcs) -> 503 vm_requires_local_storage', noStore.body);
   const afterGcs = await ingest(tokenA, bytesOf({ label: 'gcs-src', agents: ['g1'] }));
   assert(afterGcs.status === 202, 'and local storage works again afterwards (202)', afterGcs.body);
 

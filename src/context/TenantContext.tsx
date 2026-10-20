@@ -291,7 +291,7 @@ interface TenantContextType {
   switchUser: (user: User) => void;
   syncAuthUser: (user: User, preferredTenantId?: string) => void;
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
-  // Cloud SQL Live Sync Engine
+  // Live Sync Engine (PostgreSQL)
   liveControls: Record<string, ControlState> | null;
   /** Tenant the live controls were last loaded for (null before the first successful load, on a failure or a switch). */
   liveControlsTenantId: string | null;
@@ -832,7 +832,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [activeOverlayFilters]);
 
   // ============================================================================
-  // Cloud SQL Express API Live Sync Engine (Row-Level Security Tenant Isolation)
+  // Express API Live Sync Engine (Row-Level Security Tenant Isolation)
   // ============================================================================
   const [liveControls, setLiveControls] = useState<Record<string, ControlState> | null>(null);
   const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
@@ -842,7 +842,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [liveControlsTenantId, setLiveControlsTenantId] = useState<string | null>(null);
 
   /**
-   * Pull live control states and evidence artifacts from Cloud SQL /api/v1
+   * Pull live control states and evidence artifacts from PostgreSQL via /api/v1
    * Operates with dynamic framework, baseline, and overlay parameters
    */
   const refreshLiveData = useCallback(async (

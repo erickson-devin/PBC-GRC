@@ -13,7 +13,7 @@ import {
   Sparkles,
   ExternalLink,
   ChevronRight,
-  Cloud,
+  HardDrive,
   Copy,
   Check,
   Terminal,
@@ -468,7 +468,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                 <Paperclip className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Audit Evidence Drop-Zone ({evidenceCount} attached)</span>
               </span>
-              <span className="text-xs text-slate-400">SHA-256 Validated • GCS Vault</span>
+              <span className="text-xs text-slate-400">SHA-256 Validated • Local Vault</span>
             </div>
 
             {canEdit ? (
@@ -507,7 +507,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                   <div>
                     <p className="text-xs sm:text-sm font-bold text-white">
                       {isUploading
-                        ? 'Hashing with SHA-256 & Encrypting into GCS Vault...'
+                        ? 'Hashing with SHA-256 & Encrypting into Local Vault...'
                         : isDraggingOver
                         ? 'Drop Files to Attach as Evidence'
                         : 'Drag & Drop Evidence Files Here or Click to Browse'}
@@ -549,7 +549,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                               </span>
                             ) : (
                               <span className="text-emerald-400 flex items-center gap-0.5">
-                                <Cloud className="w-2.5 h-2.5" /> GCS
+                                <HardDrive className="w-2.5 h-2.5" /> Local Vault
                               </span>
                             )}
                           </div>

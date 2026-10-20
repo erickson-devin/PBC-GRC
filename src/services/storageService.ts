@@ -2,7 +2,6 @@ import { AssessmentState, ControlState, SSPMetadata } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { getFrameworkControls } from '../data/frameworks';
-import { DEFAULT_GCP_CONFIG } from './gcsService';
 import { ASSESSMENT_KEY_PREFIX, stripImplementationNotesForCache } from './browserStorageScrub';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
@@ -185,7 +184,7 @@ export const StorageService = {
     md += `**System Owner:** ${meta.systemOwner}\n`;
     md += `**Lead Assessor:** ${meta.authorName}\n`;
     md += `**Assessment Date:** ${meta.assessmentDate}\n`;
-    md += `**Cloud Storage (GCS) Enclave:** \`gs://${DEFAULT_GCP_CONFIG.gcsBucketName}/tenants/${state.tenantId}/\`\n\n`;
+    md += `**Evidence vault (local):** \`tenants/${state.tenantId}/\`\n\n`;
     md += `## 1. System Scope & Boundary Description\n${meta.systemBoundaryScope}\n\n`;
     md += `## 2. Operating Environment & Cloud Service Providers (CSPs)\n`;
     md += `- **Environment:** ${meta.systemEnvironment}\n`;
@@ -208,9 +207,9 @@ export const StorageService = {
       md += `${cState?.implementationNotes || '_No implementation narrative provided._'}\n\n`;
 
       if (ctrlEvidence.length > 0) {
-        md += `**GCS Audit Evidence Artifacts:**\n`;
+        md += `**Audit Evidence Artifacts:**\n`;
         ctrlEvidence.forEach(e => {
-          md += `- **${e.name}** (${Math.round(e.fileSize / 1024)} KB) | GCS: \`${e.gcsPath || 'Local'}\` | SHA-256: \`${e.fileHash || 'N/A'}\`\n`;
+          md += `- **${e.name}** (${Math.round(e.fileSize / 1024)} KB) | Path: \`${e.gcsPath || 'Local'}\` | SHA-256: \`${e.fileHash || 'N/A'}\`\n`;
         });
       } else {
         md += `_No evidence files attached._\n`;

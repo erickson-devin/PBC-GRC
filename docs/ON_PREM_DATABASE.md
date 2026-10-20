@@ -17,7 +17,7 @@ Required settings (in a `.env` file next to `docker-compose.yml`, or exported):
 
 ## First-time setup
 
-On a new installation there is no account yet. Open the application in a browser: with `AUTH_MODE=local` and no administrator,
+On a new installation there is no account yet. Open the application in a browser: when no platform administrator and no local user exist,
 every address shows the **setup wizard** (`/#setup`) instead of the sign-in page. It asks for
 
 1. your company name (this creates the first tenant),
@@ -42,6 +42,30 @@ Recovery (a forgotten password, or an account that must exist before the wizard 
 docker compose exec -e LOCAL_USER_PASSWORD='a long passphrase, 12+ chars' singularity-app \
   npx tsx scripts/createLocalUser.ts you@example.mil "Your Name"
 ```
+
+## Network exposure
+
+The app listens on `APP_BIND_ADDRESS` (default `0.0.0.0`, all interfaces) and the compose file publishes `APP_PORT`
+(default `3000`) on all interfaces, so the Unraid WebUI is reachable on the LAN out of the box. The server logs one line at
+startup when it is bound to all interfaces. The app speaks plain HTTP; see
+`docs/VULNERABILITY_MANAGEMENT.md` §2.3 for the TLS requirement on service tokens.
+
+To restrict access:
+
+* Put a reverse proxy on the same host. With compose, change the published port to `127.0.0.1:${APP_PORT:-3000}:3000` (the
+  app inside the container must keep listening on `0.0.0.0`, or Docker cannot forward the published port to it). For a
+  source install, set `APP_BIND_ADDRESS=127.0.0.1`.
+* Use the host firewall to limit which networks can reach `APP_PORT`.
+* Reach the app only over a VPN.
+
+The database and the other internal services are never exposed to the network: PostgreSQL is published on `127.0.0.1`
+only (`${DB_PORT:-5432}`), and Ollama (the optional `ai` profile) publishes no port and is reachable only on the internal
+Docker network.
+
+**Multi-factor authentication (NIST SP 800-171 3.5.3).** The app provides single-factor password sign-in (12+ characters,
+bcrypt, lockout, throttling) and has no second factor of its own. Until TOTP lands in local auth (planned for Phase 5.9),
+meet 3.5.3 with an external control: a VPN that enforces MFA, or a jump host. The app must **not** be configured to trust
+an identity header from a proxy: if the port is reachable without the proxy, that would let anyone sign in as anyone.
 
 ## Existing data volume (already initialised before this change)
 
@@ -71,3 +95,13 @@ production) set `DB_MODE=memory` explicitly, e.g. in `.env`:
 ```
 DB_MODE=memory
 ```
+
+## The cloud deployment was retired
+
+A former Google Cloud deployment (Firebase sign-in, Cloud SQL, a GCS evidence bucket) held demo data only and is being shut
+down. PBC-GRC is on-premises only: this build refuses to start with an `AUTH_MODE` or `STORAGE_PROVIDER` value other than
+`local`.
+
+* Evidence rows that still name a cloud path (`gs://`) or carry a cloud sync status (`gcs_synced`, `gcs_signed_url`) are legacy and cannot be read; the demo data they pointed at is gone with the deployment.
+* Accounts from that deployment do not exist here. Create the first administrator with `scripts/createLocalUser.ts` or the
+  setup wizard, then invite members.

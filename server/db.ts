@@ -9,8 +9,8 @@ const { Pool } = pg;
  * Connection settings, chosen from the environment:
  *   1. DATABASE_URL  - standard PostgreSQL connection string (postgres://user:pass@host:5432/db?sslmode=require).
  *                      Takes precedence; works for managed Postgres, RDS, on-prem, docker, etc.
- *   2. DB_HOST etc.  - discrete settings. A DB_HOST starting with "/" (default: the Cloud SQL socket) is a Unix
- *                      domain socket; anything else is TCP using DB_PORT.
+ *   2. DB_HOST etc.  - discrete settings. A DB_HOST starting with "/" (e.g. /var/run/postgresql) is a Unix
+ *                      domain socket; anything else (default 127.0.0.1) is TCP using DB_PORT.
  * Optional TLS for either: DB_SSL=true (certificate verification stays on unless DB_SSL_REJECT_UNAUTHORIZED=false).
  */
 export function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): { config: pg.PoolConfig; target: string } {
@@ -35,7 +35,7 @@ export function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): { config:
     return { config: { ...common, connectionString: databaseUrl }, target };
   }
 
-  const host = env.DB_HOST || '/cloudsql/grc-tool-507203:us-central1:pbc-grc-db';
+  const host = env.DB_HOST || '127.0.0.1';
   const user = env.DB_USER || 'postgres';
   const database = env.DB_NAME || 'cmmc_compliance_db';
   const password = env.DB_PASS || '';
@@ -54,7 +54,7 @@ const { config: poolConfig, target: dbTarget } = buildPoolConfig();
 export const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
-  console.error('[Cloud SQL Pool Error]:', errorMessage(err));
+  console.error('[PostgreSQL Pool Error]:', errorMessage(err));
 });
 
 import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data/frameworks/controlMappings';
@@ -144,7 +144,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
   } catch (err: unknown) {
     throw new Error(`PostgreSQL connection failed (${dbTarget}): ${errorMessage(err)}. Fix DATABASE_URL / DB_* settings, or set DB_MODE=memory for local development.`);
   }
-  console.log(`[Cloud SQL] Successfully connected to PostgreSQL at ${dbTarget}`);
+  console.log(`[PostgreSQL] Successfully connected to PostgreSQL at ${dbTarget}`);
   return true;
 }
 
@@ -300,7 +300,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     }
 
     const isInherited = /'inherited'/i.test(normalized);
-    const sync_status = isInherited ? 'inherited' : (params.length > 10 ? params[8] : 'gcs_signed_url');
+    const sync_status = isInherited ? 'inherited' : (params.length > 10 ? params[8] : 'local_storage');
     const description = params.length > 10 ? params[9] : params[8] || '';
     const uploaded_by = params.length > 10 ? params[10] : params[9] || 'Assessor';
 
@@ -449,7 +449,7 @@ export async function initDb(): Promise<void> {
       );
     }
 
-    console.log('[Cloud SQL] Database schema, control mappings, and RLS policies verified.');
+    console.log('[PostgreSQL] Database schema, control mappings, and RLS policies verified.');
   } catch (err: unknown) {
     throw new Error(`Failed to initialise the database schema: ${errorMessage(err)}`);
   } finally {
@@ -873,6 +873,11 @@ export async function removeTenantMember(tenantId: string, userId: string): Prom
   if (isMemoryMode()) return memoryTenantUsers.delete(tenantId + "__" + userId);
   const res = await queryWithTenant(tenantId, "DELETE FROM tenant_users WHERE tenant_id = $1 AND user_id = $2", [tenantId, userId]);
   return (res.rowCount ?? 0) > 0;
+}
+
+/** True when the in-memory store holds at least one tenant (memory mode only; PostgreSQL `tenants` is under FORCE RLS). */
+export function memoryHasTenants(): boolean {
+  return memoryTenants.size > 0;
 }
 
 /** Test hook: clears the in-memory tenant and membership stores. */

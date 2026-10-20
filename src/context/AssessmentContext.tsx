@@ -21,7 +21,8 @@ import {
 } from '../data/frameworks';
 import { StorageService, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
-import { GcsService } from '../services/gcsService';
+import { computeSha256 } from '../services/evidenceIntegrity';
+import { generateEvidenceObjectPath } from '../data/audit/storageDriver';
 import { computeDomainStats } from '../data/frameworks/domainStats';
 import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives';
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
@@ -208,7 +209,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setState(tenantState);
   }, [currentTenant.id]);
 
-  // Synchronize live backend data into assessment state when received from Cloud SQL
+  // Synchronize live backend data into assessment state when received from PostgreSQL
   useEffect(() => {
     if (liveControls) {
       setState(prev => ({
@@ -992,7 +993,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
   }, [canEdit]);
 
-  // Action: Upload Evidence with GCS Path & SHA-256 Hashing
+  // Action: Upload Evidence with Vault Path & SHA-256 Hashing
   const uploadEvidence = useCallback(async (
     controlId: string,
     file: File,
@@ -1002,7 +1003,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       throw new Error('Read-Only access: Evidence uploads are restricted for your role.');
     }
 
-    const fileHash = await GcsService.computeSha256(file);
+    const fileHash = await computeSha256(file);
 
     // Upload via the server (signed URL) and record it in evidence_metadata
     try {
@@ -1016,8 +1017,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       });
 
       if (uploadResp) {
-        // Upload binary to Local Enclave Storage or GCS via Signed URL
-        await ApiClient.uploadFileToGcs(uploadResp.uploadUrl, file, file.type, currentTenant.id);
+        // Upload binary to the local evidence vault via the server-relative URL
+        await ApiClient.uploadEvidenceFile(uploadResp.uploadUrl, file, file.type, currentTenant.id);
         // Save in local IndexedDB vault for client-side preview
         await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
 
@@ -1036,7 +1037,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           hasBlob: true,
           gcsPath: uploadResp.gcsPath,
           fileHash,
-          syncStatus: 'gcs_synced',
+          syncStatus: 'local_storage',
           uploadedBy: currentUser.name,
         }));
 
@@ -1053,7 +1054,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // Offline fallback: keep the file in the local vault
     const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const gcsPath = GcsService.generateGcsPath(currentTenant.id, controlId, evidenceId, file.name);
+    const gcsPath = generateEvidenceObjectPath(currentTenant.id, controlId, evidenceId, file.name);
 
     // Store in tenant-partitioned IndexedDB vault
     await EvidenceVault.saveFile(currentTenant.id, evidenceId, file, gcsPath, fileHash);
@@ -1070,7 +1071,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       hasBlob: true,
       gcsPath,
       fileHash,
-      syncStatus: 'gcs_synced',
+      syncStatus: 'local_storage',
       uploadedBy: currentUser.name,
     };
 
@@ -1088,7 +1089,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       hasBlob: true,
       gcsPath,
       fileHash,
-      syncStatus: 'gcs_synced',
+      syncStatus: 'local_storage',
       uploadedBy: currentUser.name,
     }));
 

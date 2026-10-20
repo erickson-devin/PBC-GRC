@@ -270,7 +270,7 @@ async function run() {
   __resetVmSnapshotLimiterForTests();
   const noStore = await snapshotPost(L1, owner1);
   process.env.STORAGE_PROVIDER = 'local';
-  assert(noStore.status === 503 && noStore.body?.error === 'vm_requires_local_storage', 'A16 STORAGE_PROVIDER=gcs -> 503 vm_requires_local_storage', noStore.body);
+  assert(noStore.status === 503 && noStore.body?.error === 'vm_requires_local_storage', 'A16 a non-local STORAGE_PROVIDER at runtime (gcs) -> 503 vm_requires_local_storage', noStore.body);
   const afterGcs = await snapshotPost(L1, owner1);
   assert(afterGcs.status !== 429 && afterGcs.status === 201, 'A16 the next POST is not rate limited (the failed one did not consume the window)', afterGcs.body);
 

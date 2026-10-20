@@ -3,7 +3,6 @@ import type pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { Storage } from '@google-cloud/storage';
 import { queryWithTenant } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
@@ -15,32 +14,17 @@ const router = Router();
 // Read-only roles (ASSESSOR, VIEWER) may GET but never POST / PUT / DELETE (uploads included).
 router.use(requireWriteRole);
 
-// Storage Provider Configuration
-// Anything other than an explicit 'gcs' resolves to local disk (matches the client-side driver default).
-const storageProvider: 'local' | 'gcs' = (process.env.STORAGE_PROVIDER || 'local').toLowerCase() === 'gcs' ? 'gcs' : 'local';
+// Storage: local disk only (server/index.ts refuses any other STORAGE_PROVIDER at startup).
+// The `storageProvider` / `provider` response fields stay (always 'local') so existing clients keep working.
+const storageProvider = 'local' as const;
 const localStoragePath = path.resolve(process.env.LOCAL_STORAGE_PATH || './data/evidence');
 
-// Ensure local evidence directory exists when local storage is enabled
-if (storageProvider === 'local') {
-  try {
-    fs.mkdirSync(localStoragePath, { recursive: true });
-    console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStoragePath}`);
-  } catch (err: unknown) {
-    console.warn(`[Evidence Storage] Local storage directory setup notice: ${errorMessage(err)}`);
-  }
-}
-
-// GCP Cloud Storage Configuration (when STORAGE_PROVIDER === 'gcs')
-const gcsProjectId = process.env.VITE_GCP_PROJECT_ID || 'grc-tool-507203';
-const gcsBucketName = process.env.VITE_GCS_BUCKET_NAME || 'pbc-grc-evidence-prod';
-
-let storage: Storage | null = null;
-if (storageProvider === 'gcs') {
-  try {
-    storage = new Storage({ projectId: gcsProjectId });
-  } catch {
-    storage = null;
-  }
+// Ensure the local evidence directory exists
+try {
+  fs.mkdirSync(localStoragePath, { recursive: true });
+  console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStoragePath}`);
+} catch (err: unknown) {
+  console.warn(`[Evidence Storage] Local storage directory setup notice: ${errorMessage(err)}`);
 }
 
 const CONTROL_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -72,7 +56,7 @@ function mapRowToEvidence(row: pg.QueryResultRow) {
     mimeType: row.mime_type || 'application/octet-stream',
     gcsPath: row.gcs_path,
     fileHash: row.file_hash,
-    syncStatus: row.sync_status || (storageProvider === 'local' ? 'local_storage' : 'gcs_synced'),
+    syncStatus: row.sync_status || 'local_storage',
     description: row.description || '',
     uploadedBy: row.uploaded_by || '',
     uploadedAt: row.uploaded_at || new Date().toISOString(),
@@ -87,7 +71,7 @@ router.get('/config/storage-info', async (_req: Request, res: Response): Promise
   res.json({
     provider: storageProvider,
     localStoragePath,
-    isAirGapped: storageProvider === 'local',
+    isAirGapped: true,
     status: 'ACTIVE',
   });
 });
@@ -95,8 +79,7 @@ router.get('/config/storage-info', async (_req: Request, res: Response): Promise
 /**
  * POST /api/v1/evidence/upload-url
  * Generates an upload URL for evidence artifacts:
- * - When STORAGE_PROVIDER === 'local', generates a relative local upload endpoint (/upload-local/:id)
- * - When STORAGE_PROVIDER === 'gcs', generates a GCS Signed URL
+ * Generates a relative local upload endpoint (/upload-local/:id).
  * Saves initial metadata to evidence table.
  */
 router.post('/upload-url', async (req: Request, res: Response): Promise<void> => {
@@ -139,50 +122,15 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
   const effectiveSize = fileSize || 0;
   const effectiveUser = req.user?.name || req.user?.email || 'Compliance Assessor';
 
-  let signedUploadUrl: string;
-  let storedStoragePath: string;
-  let initialSyncStatus: string;
-
-  if (storageProvider === 'local') {
-    // On-Premises Air-Gapped Enclave: upload to local Express handler
-    const safeLocalPath = resolveWithin(localStoragePath, objectPath);
-    if (!safeLocalPath) {
-      res.status(400).json({ error: 'Invalid evidence path: resolved location is outside the evidence store' });
-      return;
-    }
-    signedUploadUrl = `/api/v1/evidence/upload-local/${evidenceId}`;
-    storedStoragePath = safeLocalPath;
-    initialSyncStatus = 'local_storage';
-  } else {
-    // Cloud GCS deployment
-    const gcsUri = `gs://${gcsBucketName}/${objectPath}`;
-    storedStoragePath = gcsUri;
-    initialSyncStatus = 'gcs_signed_url';
-
-    if (!storage) {
-      console.error('[GCS Signed URL] STORAGE_PROVIDER=gcs but the GCS client is not configured');
-      res.status(503).json({
-        error: 'Cloud evidence storage is unavailable: the GCS client is not configured. Contact your administrator or switch STORAGE_PROVIDER to local.',
-      });
-      return;
-    }
-
-    try {
-      const [url] = await storage.bucket(gcsBucketName).file(objectPath).getSignedUrl({
-        version: 'v4',
-        action: 'write',
-        expires: Date.now() + 15 * 60 * 1000,
-        contentType: effectiveMime,
-      });
-      signedUploadUrl = url;
-    } catch (gcsErr: unknown) {
-      console.error('[GCS Signed URL] Signing failed:', gcsErr instanceof Error ? gcsErr.message : gcsErr);
-      res.status(503).json({
-        error: 'Cloud evidence storage is unavailable: unable to sign an upload URL. No evidence record was created.',
-      });
-      return;
-    }
+  // On-premises enclave: upload to the local Express handler
+  const safeLocalPath = resolveWithin(localStoragePath, objectPath);
+  if (!safeLocalPath) {
+    res.status(400).json({ error: 'Invalid evidence path: resolved location is outside the evidence store' });
+    return;
   }
+  const signedUploadUrl = `/api/v1/evidence/upload-local/${evidenceId}`;
+  const storedStoragePath = safeLocalPath;
+  const initialSyncStatus = 'local_storage';
 
   try {
     // Save record to evidence_metadata guarded by RLS tenant context
@@ -245,7 +193,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
     }
 
     res.status(201).json({
-      message: storageProvider === 'local' ? 'Evidence record created for local enclave storage' : 'Evidence record created and GCS upload URL generated',
+      message: 'Evidence record created for local enclave storage',
       uploadUrl: signedUploadUrl,
       gcsPath: storedStoragePath,
       storageProvider,
@@ -271,10 +219,6 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
   const tenantId = req.tenantId!;
   const evidenceId = String(req.params.evidenceId);
 
-  if (storageProvider !== 'local') {
-    res.status(409).json({ error: 'Local evidence upload is disabled: STORAGE_PROVIDER is not local' });
-    return;
-  }
   if (!EVIDENCE_ID_PATTERN.test(evidenceId)) {
     res.status(400).json({ error: 'Invalid evidence ID' });
     return;

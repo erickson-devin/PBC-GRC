@@ -111,8 +111,6 @@ async function authedJson<T>(
   return data as T;
 }
 
-export type AuthMode = 'firebase' | 'local';
-
 export interface LocalLoginResponse {
   token: string;
   tokenType: 'Bearer';
@@ -142,21 +140,6 @@ export interface SetupResult extends LocalLoginResponse {
 }
 
 export const ApiClient = {
-  /**
-   * GET /api/v1/auth/config
-   * Which identity provider the server uses. Returns null if the server cannot be reached.
-   */
-  async getAuthMode(): Promise<AuthMode | null> {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/auth/config`);
-      if (!res.ok) return null;
-      const data = (await res.json()) as { mode?: string };
-      return data.mode === 'local' ? 'local' : 'firebase';
-    } catch {
-      return null;
-    }
-  },
-
   /**
    * GET /api/v1/setup/status
    * Does this installation still need its first administrator? Resolves null when the server cannot be reached, which
@@ -537,7 +520,7 @@ export const ApiClient = {
   },
 
   /**
-   * Retrieve active Firebase ID Token from localStorage
+   * Retrieve the active session token from localStorage
    */
   getToken(): string | null {
     try {
@@ -702,7 +685,7 @@ export const ApiClient = {
 
   /**
    * GET /api/v1/evidence/config/storage-info
-   * Reports the server's active evidence storage provider (local disk or GCS).
+   * Reports the server's active evidence storage provider (local disk).
    */
   async getStorageInfo(
     tenantId: string
@@ -717,7 +700,7 @@ export const ApiClient = {
 
   /**
    * POST /api/v1/evidence/upload-url
-   * Requests a GCS Signed URL and registers evidence metadata in Cloud SQL
+   * Registers evidence metadata and returns the server-relative upload URL
    */
   async requestUploadUrl(
     tenantId: string,
@@ -745,23 +728,23 @@ export const ApiClient = {
   },
 
   /**
-   * Uploads binary file directly to Local Enclave Storage or GCS via Signed URL
+   * Uploads a binary file to the local evidence vault through the server-relative URL returned by requestUploadUrl.
+   * Only our own API receives the file and credentials, so any other URL is refused.
    */
-  async uploadFileToGcs(signedUrl: string, file: File | Blob, mimeType: string, tenantId?: string): Promise<void> {
-    const isServerRelative = signedUrl.startsWith('/');
-    const targetUrl = isServerRelative && API_BASE_URL ? `${API_BASE_URL}${signedUrl}` : signedUrl;
+  async uploadEvidenceFile(uploadUrl: string, file: File | Blob, mimeType: string, tenantId?: string): Promise<void> {
+    if (!uploadUrl.startsWith('/') || uploadUrl.startsWith('//')) {
+      throw new Error('Evidence upload URL must be a server-relative path.');
+    }
+    const targetUrl = API_BASE_URL ? `${API_BASE_URL}${uploadUrl}` : uploadUrl;
     const headers: Record<string, string> = {
       'Content-Type': mimeType || 'application/octet-stream',
     };
-    // Only our own API receives credentials; a GCS signed URL carries its own signature.
-    if (isServerRelative) {
-      if (tenantId) {
-        headers['x-tenant-id'] = tenantId;
-      }
-      const token = this.getToken();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+    if (tenantId) {
+      headers['x-tenant-id'] = tenantId;
+    }
+    const token = this.getToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     const res = await fetch(targetUrl, {
