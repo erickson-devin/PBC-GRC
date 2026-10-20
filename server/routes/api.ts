@@ -22,6 +22,7 @@ router.get('/health', async (_req, res) => {
     timestamp: new Date().toISOString(),
     service: 'pbc-grc-api',
     version: '1.0.0',
+    buildCommit: process.env.BUILD_COMMIT || 'dev', // set by the Docker build (--build-arg BUILD_COMMIT=<git sha>)
     database, // 'connected' | 'memory' (explicit DB_MODE=memory) | 'unavailable'
   });
 });

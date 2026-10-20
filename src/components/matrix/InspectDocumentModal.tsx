@@ -66,6 +66,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     setSelectedControlId,
     frameworkControls,
     state,
+    notesStatus,
+    notesEditable,
     updateControlStatus,
     updateControlNotes,
     applyStarterTemplate,
@@ -586,7 +588,14 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                     <strong className="text-slate-200">Authoring view.</strong> Describe how each item of this control is met. The answers are saved in the control&apos;s implementation narrative, under a &quot;Statement a:&quot; line for each item.
                     To assess objectives or review an SSP import, use the <button type="button" onClick={() => setActiveTab('objectives')} className="underline text-cyan-300 hover:text-cyan-200">Assessment Objectives</button> tab.
                   </p>
-                  <SspStatementEditor control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
+                  <SspStatementEditor control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit && notesEditable} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
+                  {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
+                    <p role="status" className="text-xs text-amber-300">
+                      {notesStatus === 'loading'
+                        ? 'Loading implementation notes from the server…'
+                        : 'Implementation notes could not be loaded from the server. They are not kept in this browser, so editing is off until the server is reachable.'}
+                    </p>
+                  )}
                 </div>
               ) : (
               <div className="space-y-2">
@@ -602,11 +611,18 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   rows={8}
                   value={ctrlState.implementationNotes || ''}
                   onChange={(e) => updateControlNotes(control.id, e.target.value)}
-                  disabled={!canEdit}
+                  disabled={!canEdit || !notesEditable}
                   placeholder="Detail your organizational implementation for this requirement across people, processes, and technology..."
                   className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 transition-all font-mono leading-relaxed disabled:opacity-60"
                 />
-                <OdpPanel control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
+                {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
+                  <p role="status" className="text-xs text-amber-300">
+                    {notesStatus === 'loading'
+                      ? 'Loading implementation notes from the server…'
+                      : 'Implementation notes could not be loaded from the server. They are not kept in this browser, so editing is off until the server is reachable.'}
+                  </p>
+                )}
+                <OdpPanel control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit && notesEditable} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
               </div>
               )}
 

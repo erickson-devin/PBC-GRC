@@ -22,6 +22,7 @@ import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { BrandLogo } from '../common/BrandLogo';
+import { BuildStamp } from '../common/BuildStamp';
 import { canRoleReviewSspImports } from '../../utils/roles';
 
 // ─── Badge Design System ────────────────────────────────────────────────────
@@ -374,6 +375,7 @@ export const Sidebar: React.FC = () => {
           <span>{guidance.authority} Compliant</span>
         </p>
         <p>{totalControls} Controls • {guidance.poamPermitted ? 'Time-Bounded POA&Ms' : 'Zero POA&Ms Allowed'}</p>
+        <BuildStamp />
       </div>
     </aside>
   );

@@ -293,6 +293,8 @@ interface TenantContextType {
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
   // Cloud SQL Live Sync Engine
   liveControls: Record<string, ControlState> | null;
+  /** Tenant the live controls were last loaded for (null before the first successful load, on a failure or a switch). */
+  liveControlsTenantId: string | null;
   liveEvidence: EvidenceItem[] | null;
   isSyncing: boolean;
   syncError: string | null;
@@ -836,6 +838,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  /** Tenant whose controls (and so implementation notes) the last successful controls load came from; null until then. */
+  const [liveControlsTenantId, setLiveControlsTenantId] = useState<string | null>(null);
 
   /**
    * Pull live control states and evidence artifacts from Cloud SQL /api/v1
@@ -854,17 +858,21 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (serverTenant && !serverTenant.serverBacked) {
       setLiveControls(null);
       setLiveEvidence(null);
+      setLiveControlsTenantId(null);
       return;
     }
 
     const token = ApiClient.getToken();
     if (!token) {
       // Unauthenticated fallback
+      setLiveControlsTenantId(null);
       return;
     }
 
     setIsSyncing(true);
     setSyncError(null);
+    // A switch to another tenant must not keep showing the previous tenant's notes as loaded
+    setLiveControlsTenantId(prev => (prev === targetTenantId ? prev : null));
 
     const fw = frameworkToFetch || activeFramework;
     const bl = baselineToFetch || activeBaselineTier;
@@ -883,7 +891,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setLiveControls(controlsMap);
       setLiveEvidence(evidenceList);
+      setLiveControlsTenantId(targetTenantId);
     } catch (err: unknown) {
+      setLiveControlsTenantId(null);
       setSyncError(errorMessage(err) || 'Sync error');
     } finally {
       setIsSyncing(false);
@@ -897,6 +907,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } else {
       setLiveControls(null);
       setLiveEvidence(null);
+      setLiveControlsTenantId(null);
     }
   }, [currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
 
@@ -1212,12 +1223,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         assessment.objectives = objectives;
         assessment.lastSaved = new Date().toISOString();
-        StorageService.saveAssessment(currentTenant.id, assessment);
+        // Server-backed tenants never keep implementation notes in this browser (Phase 5.6)
+        StorageService.saveAssessment(currentTenant.id, assessment, { keepNotes: !currentTenant.serverBacked });
       }
     } catch (e) {
       console.warn('Failed to cascade stack profile to assessment storage:', e);
     }
-  }, [currentTenant.id, updateTenant]);
+  }, [currentTenant.id, currentTenant.serverBacked, updateTenant]);
 
   const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
     setLiveTenants(prev =>
@@ -1682,6 +1694,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncAuthUser,
     resolveTenantForEmail,
     liveControls,
+    liveControlsTenantId,
     liveEvidence,
     isSyncing,
     syncError,
@@ -1751,6 +1764,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncAuthUser,
     resolveTenantForEmail,
     liveControls,
+    liveControlsTenantId,
     liveEvidence,
     isSyncing,
     syncError,

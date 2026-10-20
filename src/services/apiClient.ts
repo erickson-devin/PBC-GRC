@@ -608,10 +608,7 @@ export const ApiClient = {
       headers: this.getHeaders(tenantId),
     });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to fetch controls: ${res.status}`);
-    }
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
 
     const data = await res.json();
     return data.controls || [];
