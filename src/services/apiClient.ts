@@ -38,6 +38,8 @@ function requireAsset(raw: unknown): EnclaveAsset {
  */
 export class ApiError extends Error {
   readonly status: number;
+  /** The server's machine-readable `reason` (e.g. 'invalid_code', 'password_change_required'), when it sent one. */
+  reason?: string;
   constructor(status: number, message: string) {
     super(message);
     this.name = 'ApiError';
@@ -45,9 +47,59 @@ export class ApiError extends Error {
   }
 }
 
-/** Turns a failed response into an ApiError with a clear message for the common cases (401 / 403 / 400 / 5xx). */
-function apiErrorFromResponse(status: number, body: unknown): ApiError {
+const bodyReason = (body: unknown): string | undefined => {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return typeof reason === 'string' && reason ? reason : undefined;
+};
+
+/**
+ * A plain-language message for a failed sign-in step, password change or account-administration call, chosen by the server's
+ * `reason` code first and the HTTP status second. A wrong code is never reported as an expired session.
+ */
+export function mfaErrorMessage(status: number, body: unknown): string {
   const serverMessage = typeof (body as { error?: unknown } | null)?.error === 'string' ? (body as { error: string }).error : '';
+  switch (bodyReason(body)) {
+    case 'invalid_code':
+      return 'That code is not correct. Check the current code in your authenticator app (or use a recovery code) and try again.';
+    case 'mfa_token_invalid':
+      return 'This sign-in step has timed out or is no longer valid. Sign in again.';
+    case 'password_change_required':
+      return 'You must change your password before you can continue.';
+    case 'mfa_unavailable':
+      return 'Your second factor cannot be read right now. Contact your administrator.';
+    case 'code_required':
+      return 'Enter the 6-digit code from your authenticator app.';
+    case 'invalid_current_password':
+      return 'The current password is not correct.';
+    case 'weak_password':
+      return serverMessage || 'The new password does not meet the requirements.';
+    case 'mfa_already_enrolled':
+      return 'A second factor is already set up for this account.';
+    case 'mfa_not_started':
+      return 'Start the setup again to get a new secret.';
+    case 'self':
+      return 'You cannot do that to your own account here.';
+    default:
+      break;
+  }
+  if (status === 429) return 'Too many attempts, or the account is temporarily locked. Wait a few minutes and try again.';
+  if (status === 401) return serverMessage || 'Your session has expired or is not valid. Please sign in again.';
+  if (status === 503) return 'Sign-in is not available right now. Contact your administrator.';
+  return serverMessage || (status >= 500 ? 'The server could not complete the request. Please try again.' : 'The request was not accepted.');
+}
+
+/** Turns a failed response into an ApiError carrying the server's `reason` (when it sent one). */
+function apiErrorFromResponse(status: number, body: unknown): ApiError {
+  const err = baseApiError(status, body);
+  const reason = bodyReason(body);
+  if (reason) err.reason = reason;
+  return err;
+}
+
+/** The message mapping for the common cases (401 / 403 / 400 / 5xx). */
+function baseApiError(status: number, body: unknown): ApiError {
+  const serverMessage = typeof (body as { error?: unknown } | null)?.error === 'string' ? (body as { error: string }).error : '';
+  if (status === 403 && bodyReason(body) === 'password_change_required') return new ApiError(403, mfaErrorMessage(status, body));
   if (status === 401) return new ApiError(401, 'Your session has expired or is not valid. Please sign in again.');
   if (status === 403) return new ApiError(403, serverMessage || 'You do not have permission to do that.');
   if (status === 400 || status === 404 || status === 409 || status === 410) return new ApiError(status, serverMessage || 'The request was not accepted.');
@@ -111,13 +163,168 @@ async function authedJson<T>(
   return data as T;
 }
 
+/** A signed-in session as the server returns it. */
 export interface LocalLoginResponse {
   token: string;
   tokenType: 'Bearer';
   expiresAt: string;
   expiresIn: number;
   user: { id: string; email: string; name: string };
+  /** True while the account must set a new password before anything else works. */
+  mustChangePassword: boolean;
+  mfaEnrolled: boolean;
+  /** Only after a recovery code was used. */
+  recoveryCodesRemaining?: number;
 }
+
+export type MfaStage = 'verify' | 'enrol';
+
+/** Sign-in is not finished: a second step follows ('verify' a code, or 'enrol' a new factor). The token is proof of step one, not a session. */
+export interface MfaPendingInfo {
+  stage: MfaStage;
+  mfaToken: string;
+  expiresAt: string;
+  methods?: string[];
+}
+
+export type LocalLoginResult = ({ kind: 'session' } & LocalLoginResponse) | ({ kind: 'mfa' } & MfaPendingInfo);
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * Reads the body of POST /auth/login, /auth/register-with-invite, /setup and /auth/mfa/* into a session or a pending second step.
+ * Anything else is a 502: the server sent something this version of the app does not understand.
+ */
+export function parseLocalLoginResult(body: unknown): LocalLoginResult {
+  const bad = () => new ApiError(502, 'The server sent back a sign-in response this version of the app does not understand.');
+  if (!isRecord(body)) throw bad();
+  if (body.mfa === 'verify' || body.mfa === 'enrol') {
+    if (typeof body.mfaToken !== 'string' || !body.mfaToken || typeof body.expiresAt !== 'string') throw bad();
+    const methods = Array.isArray(body.methods) ? body.methods.filter((m): m is string => typeof m === 'string') : undefined;
+    return { kind: 'mfa', stage: body.mfa, mfaToken: body.mfaToken, expiresAt: body.expiresAt, ...(methods ? { methods } : {}) };
+  }
+  const user = body.user;
+  if (typeof body.token !== 'string' || !body.token || !isRecord(user) || typeof user.email !== 'string' || !user.email) throw bad();
+  return {
+    kind: 'session',
+    token: body.token,
+    tokenType: 'Bearer',
+    expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : '',
+    expiresIn: typeof body.expiresIn === 'number' ? body.expiresIn : 0,
+    user: { id: typeof user.id === 'string' ? user.id : '', email: user.email, name: typeof user.name === 'string' ? user.name : '' },
+    mustChangePassword: body.mustChangePassword === true,
+    mfaEnrolled: body.mfaEnrolled === true,
+    ...(typeof body.recoveryCodesRemaining === 'number' ? { recoveryCodesRemaining: body.recoveryCodesRemaining } : {}),
+  };
+}
+
+/** What POST /auth/mfa/enrol/start returns: the new secret, shown once. */
+export interface MfaEnrolmentStart {
+  secret: string;
+  otpauthUri: string;
+  issuer: string;
+  accountName: string;
+  algorithm: string;
+  digits: number;
+  period: number;
+}
+
+/** POST /auth/mfa/enrol/confirm: the one-time recovery codes, plus the session when enrolment finished a sign-in. */
+export interface MfaEnrolmentConfirm {
+  recoveryCodes: string[];
+  enrolledAt: string;
+  session: LocalLoginResponse | null;
+}
+
+export interface MfaStatus {
+  enrolled: boolean;
+  enrolledAt: string | null;
+  recoveryCodesRemaining: number;
+  required: boolean;
+  mode: string;
+}
+
+/** One local account as the platform-administration console lists it. */
+export interface LocalAccount {
+  id: string;
+  email: string;
+  name: string;
+  disabled: boolean;
+  mfaEnrolled: boolean;
+  mustChangePassword: boolean;
+  lockedUntil: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * JSON request for the sign-in, second-factor, password and local-account calls. Failures become an ApiError whose message
+ * comes from mfaErrorMessage and whose `reason` is the server's code. Without `token` it uses the stored session, unless
+ * `anonymous` is set (the pending-token calls carry their proof in the body).
+ */
+async function accountJson<T>(method: string, path: string, options: { body?: unknown; token?: string | null; anonymous?: boolean } = {}): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (!options.anonymous) {
+    const bearer = options.token ?? ApiClient.getToken();
+    if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
+    headers.Authorization = `Bearer ${bearer}`;
+  }
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  const res = await apiFetch(`${API_BASE_URL}/api/v1${path}`, {
+    method,
+    headers,
+    cache: 'no-store',
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new ApiError(res.status, mfaErrorMessage(res.status, data));
+    const reason = bodyReason(data);
+    if (reason) err.reason = reason;
+    throw err;
+  }
+  return data as T;
+}
+
+const parseEnrolmentStart = (data: unknown): MfaEnrolmentStart => {
+  if (!isRecord(data) || typeof data.secret !== 'string' || typeof data.otpauthUri !== 'string') {
+    throw new ApiError(502, 'The server sent back an enrolment response this version of the app does not understand.');
+  }
+  return {
+    secret: data.secret,
+    otpauthUri: data.otpauthUri,
+    issuer: typeof data.issuer === 'string' ? data.issuer : '',
+    accountName: typeof data.accountName === 'string' ? data.accountName : '',
+    algorithm: typeof data.algorithm === 'string' ? data.algorithm : 'SHA1',
+    digits: typeof data.digits === 'number' ? data.digits : 6,
+    period: typeof data.period === 'number' ? data.period : 30,
+  };
+};
+
+const parseRecoveryCodes = (data: unknown): string[] => {
+  const codes = isRecord(data) ? data.recoveryCodes : undefined;
+  if (!Array.isArray(codes) || !codes.every((c) => typeof c === 'string')) {
+    throw new ApiError(502, 'The server sent back recovery codes this version of the app does not understand.');
+  }
+  return codes as string[];
+};
+
+const parseAccount = (raw: unknown): LocalAccount => {
+  if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.email !== 'string') {
+    throw new ApiError(502, 'The server sent back an account this version of the app does not understand.');
+  }
+  return {
+    id: raw.id,
+    email: raw.email,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    disabled: raw.disabled === true,
+    mfaEnrolled: raw.mfaEnrolled === true,
+    mustChangePassword: raw.mustChangePassword === true,
+    lockedUntil: typeof raw.lockedUntil === 'string' ? raw.lockedUntil : null,
+    lastLoginAt: typeof raw.lastLoginAt === 'string' ? raw.lastLoginAt : null,
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+  };
+};
 
 export interface SetupStatus {
   setupRequired: boolean;
@@ -134,9 +341,22 @@ export interface SetupInput {
   setupToken?: string;
 }
 
-export interface SetupResult extends LocalLoginResponse {
+/** What the setup wizard created. The sign-in outcome (a session, or an enrolment step first) is `login`. */
+export interface SetupResult {
+  user: { id: string; email: string; name: string };
   tenant: { id: string; name: string };
   invites: Array<{ email: string; role: TenantRole; token?: string; expiresAt?: string; error?: string }>;
+}
+
+export interface SetupOutcome {
+  login: LocalLoginResult;
+  setup: SetupResult;
+}
+
+export interface RegisterOutcome {
+  login: LocalLoginResult;
+  tenantId: string;
+  role: TenantRole;
 }
 
 export const ApiClient = {
@@ -157,7 +377,7 @@ export const ApiClient = {
   },
 
   /** POST /api/v1/setup: the first-time setup wizard. Throws ApiError (409 once setup has been completed). */
-  async runSetup(input: SetupInput): Promise<SetupResult> {
+  async runSetup(input: SetupInput): Promise<SetupOutcome> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -165,7 +385,12 @@ export const ApiClient = {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw apiErrorFromResponse(res.status, data);
-    return data as SetupResult;
+    const login = parseLocalLoginResult(data);
+    const body = data as { user?: SetupResult['user']; tenant?: SetupResult['tenant']; invites?: SetupResult['invites'] };
+    if (!body.user || !body.tenant || !Array.isArray(body.invites)) {
+      throw new ApiError(502, 'The server sent back a setup response this version of the app does not understand.');
+    }
+    return { login, setup: { user: body.user, tenant: body.tenant, invites: body.invites } };
   },
 
   // ---------------------------------------------------------------- AI wording helper
@@ -406,7 +631,7 @@ export const ApiClient = {
    * POST /api/v1/auth/register-with-invite (air-gapped installs). Creates the account for the INVITED email, consumes
    * the invitation and signs the person in. 409 `account_exists` means: sign in instead.
    */
-  async registerWithInvite(input: { token: string; password: string; name?: string }): Promise<LocalLoginResponse & { tenantId: string; role: TenantRole }> {
+  async registerWithInvite(input: { token: string; password: string; name?: string }): Promise<RegisterOutcome> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/auth/register-with-invite`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -417,7 +642,9 @@ export const ApiClient = {
       const err = apiErrorFromResponse(res.status, data);
       throw Object.assign(err, { reason: (data as { reason?: string } | null)?.reason });
     }
-    return data as LocalLoginResponse & { tenantId: string; role: TenantRole };
+    const login = parseLocalLoginResult(data);
+    const { tenantId, role } = data as { tenantId: string; role: TenantRole };
+    return { login, tenantId, role };
   },
 
   /**
@@ -504,19 +731,120 @@ export const ApiClient = {
 
   /**
    * POST /api/v1/auth/login  (air-gapped installs, AUTH_MODE=local)
-   * Throws an Error carrying the server's message (e.g. invalid credentials, account locked).
+   * Resolves a session, or `{ kind: 'mfa' }` when a second step (a code, or enrolling a factor) comes next.
+   * Throws an ApiError carrying the server's message (e.g. invalid credentials, account locked).
    */
-  async localLogin(email: string, password: string): Promise<LocalLoginResponse> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+  async localLogin(email: string, password: string): Promise<LocalLoginResult> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
       body: JSON.stringify({ email, password }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error((data as { error?: string }).error || `Sign-in failed (HTTP ${res.status})`);
+      const err = new ApiError(res.status, (data as { error?: string }).error || `Sign-in failed (HTTP ${res.status})`);
+      const reason = bodyReason(data);
+      if (reason) err.reason = reason;
+      throw err;
     }
-    return data as LocalLoginResponse;
+    return parseLocalLoginResult(data);
+  },
+
+  /** POST /api/v1/auth/mfa/verify: the second step of a sign-in. Send either a 6-digit `code` or a `recoveryCode`. */
+  async verifyMfa(mfaToken: string, input: { code?: string; recoveryCode?: string }): Promise<LocalLoginResponse> {
+    const body = input.recoveryCode !== undefined ? { mfaToken, recoveryCode: input.recoveryCode } : { mfaToken, code: input.code ?? '' };
+    const result = parseLocalLoginResult(await accountJson<unknown>('POST', '/auth/mfa/verify', { body, anonymous: true }));
+    if (result.kind !== 'session') throw new ApiError(502, 'The server sent back a sign-in response this version of the app does not understand.');
+    const { kind: _kind, ...session } = result;
+    return session;
+  },
+
+  /** POST /api/v1/auth/mfa/enrol/start: a new secret (shown once). With `mfaToken` it is the pending sign-in's enrolment, else the session's. */
+  async startMfaEnrolment(mfaToken?: string): Promise<MfaEnrolmentStart> {
+    const data = await accountJson<unknown>('POST', '/auth/mfa/enrol/start', mfaToken ? { body: { mfaToken }, anonymous: true } : { body: {} });
+    return parseEnrolmentStart(data);
+  },
+
+  /** POST /api/v1/auth/mfa/enrol/confirm: proves the app works and returns the one-time recovery codes (plus the session on the pending path). */
+  async confirmMfaEnrolment(code: string, mfaToken?: string): Promise<MfaEnrolmentConfirm> {
+    const data = await accountJson<unknown>('POST', '/auth/mfa/enrol/confirm', mfaToken ? { body: { code, mfaToken }, anonymous: true } : { body: { code } });
+    const recoveryCodes = parseRecoveryCodes(data);
+    const enrolledAt = isRecord(data) && typeof data.enrolledAt === 'string' ? data.enrolledAt : '';
+    let session: LocalLoginResponse | null = null;
+    if (mfaToken) {
+      const result = parseLocalLoginResult(data);
+      if (result.kind === 'session') {
+        const { kind: _kind, ...rest } = result;
+        session = rest;
+      }
+    }
+    return { recoveryCodes, enrolledAt, session };
+  },
+
+  /** GET /api/v1/auth/mfa */
+  async getMfaStatus(): Promise<MfaStatus> {
+    const data = await accountJson<Record<string, unknown>>('GET', '/auth/mfa');
+    return {
+      enrolled: data.enrolled === true,
+      enrolledAt: typeof data.enrolledAt === 'string' ? data.enrolledAt : null,
+      recoveryCodesRemaining: typeof data.recoveryCodesRemaining === 'number' ? data.recoveryCodesRemaining : 0,
+      required: data.required === true,
+      mode: typeof data.mode === 'string' ? data.mode : '',
+    };
+  },
+
+  /** POST /api/v1/auth/mfa/recovery-codes: a fresh set (the old ones stop working). Needs a current authenticator code. */
+  async regenerateRecoveryCodes(code: string): Promise<{ recoveryCodes: string[]; recoveryCodesRemaining: number }> {
+    const data = await accountJson<unknown>('POST', '/auth/mfa/recovery-codes', { body: { code } });
+    const recoveryCodes = parseRecoveryCodes(data);
+    const remaining = isRecord(data) && typeof data.recoveryCodesRemaining === 'number' ? data.recoveryCodesRemaining : recoveryCodes.length;
+    return { recoveryCodes, recoveryCodesRemaining: remaining };
+  },
+
+  /**
+   * POST /api/v1/auth/password: needs the current password and, for an enrolled account, a fresh code. Every other session of the
+   * account ends; the response is the new session, which the caller must store.
+   */
+  async changePassword(currentPassword: string, newPassword: string, code?: string, token?: string): Promise<LocalLoginResponse> {
+    const body: Record<string, string> = { currentPassword, newPassword };
+    if (code) body.code = code;
+    const result = parseLocalLoginResult(await accountJson<unknown>('POST', '/auth/password', { body, token }));
+    if (result.kind !== 'session') throw new ApiError(502, 'The server sent back a sign-in response this version of the app does not understand.');
+    const { kind: _kind, ...session } = result;
+    return session;
+  },
+
+  // ---------------------------------------------------------------- local account administration (platform administrators)
+
+  /** GET /api/v1/platform/users */
+  async listLocalUsers(): Promise<LocalAccount[]> {
+    const data = await accountJson<{ users?: unknown }>('GET', '/platform/users');
+    return Array.isArray(data?.users) ? data.users.map(parseAccount) : [];
+  },
+
+  /** POST /api/v1/platform/users/:id/reset-password: sets a temporary password the person must change at their next sign-in. */
+  async adminResetPassword(userId: string, newPassword: string): Promise<{ user: LocalAccount; message: string }> {
+    const data = await accountJson<{ user?: unknown; message?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/reset-password`, { body: { newPassword } });
+    return { user: parseAccount(data?.user), message: typeof data?.message === 'string' ? data.message : '' };
+  },
+
+  /** POST /api/v1/platform/users/:id/reset-mfa */
+  async adminResetMfa(userId: string): Promise<LocalAccount> {
+    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/reset-mfa`, { body: {} });
+    return parseAccount(data?.user);
+  },
+
+  /** POST /api/v1/platform/users/:id/disable */
+  async disableUser(userId: string): Promise<LocalAccount> {
+    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/disable`, { body: {} });
+    return parseAccount(data?.user);
+  },
+
+  /** POST /api/v1/platform/users/:id/enable */
+  async enableUser(userId: string): Promise<LocalAccount> {
+    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/enable`, { body: {} });
+    return parseAccount(data?.user);
   },
 
   /**

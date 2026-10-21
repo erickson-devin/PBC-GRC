@@ -75,7 +75,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               </span>
               <div className="flex items-center gap-1 text-xs text-slate-400">
                 <Clock className="w-3 h-3 text-brand-400" />
-                <span>Expires 8 hours after sign-in</span>
+                <span>Expires 8 hours after sign-in, or sooner if your password is changed or your account is reset</span>
               </div>
             </div>
 

@@ -25,8 +25,9 @@ try {
     throw new Error('DB_MODE=memory would not persist this account. Point DATABASE_URL / DB_* at PostgreSQL.');
   }
   await initDb(); // makes sure the local_users table exists
-  const user = await createLocalUser({ email, name: nameParts.join(' '), password });
-  console.log(`Created local user ${user.email} (${user.id}).`);
+  // A credential an operator typed is temporary: the person must change it before anything else works.
+  const user = await createLocalUser({ email, name: nameParts.join(' '), password }, { mustChangePassword: true });
+  console.log(`Created local user ${user.email} (${user.id}). They must change the temporary credential at their first sign-in.`);
 } catch (err: unknown) {
   exitCode = 1;
   console.error(err instanceof LocalUserExistsError ? err.message : `Failed: ${err instanceof Error ? err.message : String(err)}`);

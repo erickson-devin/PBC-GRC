@@ -10,6 +10,7 @@ import { getDatabaseStatus } from '../db';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
 import { listStoredPlatformAdminEmails } from '../platformSetup';
 import setupRouter from './setup';
+import platformUsersRouter from './platformUsers';
 
 const router = Router();
 
@@ -56,6 +57,9 @@ router.get('/platform/admins', authOnlyMiddleware, async (req, res) => {
   const emails = new Set([...platformAdminEmails(), ...(await listStoredPlatformAdminEmails())]);
   res.json({ admins: [...emails].sort().map((email) => ({ email })) });
 });
+
+// Local-account administration (reset, disable, enable): platform administrators only, checked inside the router
+router.use('/platform/users', authOnlyMiddleware, platformUsersRouter);
 
 // Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
 // tenants they belong to, or creates one and becomes its first TENANT_OWNER.

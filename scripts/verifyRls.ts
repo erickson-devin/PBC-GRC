@@ -13,7 +13,8 @@
  *      membership rows), and that context can never write.
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
- * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, control_assessment_events (actor "rls_verify_actor") and the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns). Exit code 0 = all checks passed.
+ *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
+ * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"). Exit code 0 = all checks passed.
  */
 export {};
 
@@ -419,6 +420,7 @@ async function main() {
   }
 
   await verifyDiscovery();
+  await verifyLocalIdentities();
 }
 
 async function verifyDiscovery() {
@@ -487,6 +489,106 @@ async function verifyDiscovery() {
       await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM tenants WHERE id LIKE 'rls_verify_%'", []).catch(() => undefined);
     }
+  }
+}
+
+async function verifyLocalIdentities() {
+  console.log('\n--- 7. Local identities: second factor storage (local_users, global table) ---');
+  const { buildSchemaSql } = await import('../server/schema');
+  const { confirmTotp, consumeRecoveryCode, consumeTotpStep, replaceRecoveryCodeHashes } = await import('../server/auth/localUsers');
+
+  const ID = (n: number) => `rls_verify_lu_${n}`;
+  const GOOD_BLOB = `v1.${'A'.repeat(16)}.${'B'.repeat(24)}.${'C'.repeat(22)}`; // the shape encryptTotpSecret produces
+  const HASH_A = 'a'.repeat(64);
+  const HASH_B = 'b'.repeat(64);
+  const insertUser = (n: number, extraColumns = '', extraValues: unknown[] = []) =>
+    pool.query(
+      `INSERT INTO local_users (id, email, name, password_hash${extraColumns}) VALUES ($1, $2, 'rls_verify', 'x'${extraValues.map((_, i) => `, $${i + 3}`).join('')})`,
+      [ID(n), `rls_verify_lu_${n}@example.mil`, ...extraValues]
+    );
+  let lastRejection = '';
+  // True only for the expected SQLSTATE and constraint, so a stray error cannot masquerade as the refusal under test.
+  const rejects = async (run: () => Promise<unknown>, want: { code: string; constraint: string }): Promise<boolean> => {
+    try {
+      await run();
+      lastRejection = 'no error';
+      return false;
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      lastRejection = `code ${e.code}, constraint ${e.constraint}`;
+      return e.code === want.code && e.constraint === want.constraint;
+    }
+  };
+
+  try {
+    // V1: local_users is global identity data, not a tenant table.
+    const luFlags = await pool.query("SELECT relrowsecurity FROM pg_class WHERE relname = 'local_users' AND relkind = 'r'");
+    check(luFlags.rows[0]?.relrowsecurity === false, 'local_users: row security is NOT enabled (global identity table)', JSON.stringify(luFlags.rows));
+    check(!RLS_TENANT_TABLES.some((t) => t.table === 'local_users'), 'local_users is not listed in RLS_TENANT_TABLES');
+
+    // V2 and V9: the column shapes.
+    const cols = await pool.query(
+      "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = 'local_users' AND table_schema = current_schema()"
+    );
+    const col = (name: string) => cols.rows.find((r) => r.column_name === name);
+    check(
+      col('token_version')?.data_type === 'integer' && col('token_version')?.is_nullable === 'NO' && /^0\b/.test(String(col('token_version')?.column_default)),
+      'local_users.token_version is integer NOT NULL DEFAULT 0', JSON.stringify(col('token_version'))
+    );
+    check(col('totp_secret_enc')?.data_type === 'text' && col('totp_secret_enc')?.is_nullable === 'YES', 'local_users.totp_secret_enc is nullable text', JSON.stringify(col('totp_secret_enc')));
+    check(col('totp_confirmed_at')?.data_type === 'timestamp with time zone', 'local_users.totp_confirmed_at is timestamptz', JSON.stringify(col('totp_confirmed_at')));
+    check(col('totp_last_used_step')?.data_type === 'bigint', 'local_users.totp_last_used_step is bigint', JSON.stringify(col('totp_last_used_step')));
+    check(col('recovery_code_hashes')?.data_type === 'ARRAY' && col('recovery_code_hashes')?.is_nullable === 'NO', 'local_users.recovery_code_hashes is an ARRAY, NOT NULL', JSON.stringify(col('recovery_code_hashes')));
+    check(!col('totp_secret'), 'local_users has no plaintext totp_secret column');
+    check(
+      col('must_change_password')?.data_type === 'boolean' && col('must_change_password')?.is_nullable === 'NO' && String(col('must_change_password')?.column_default) === 'false',
+      'local_users.must_change_password is boolean NOT NULL DEFAULT false', JSON.stringify(col('must_change_password'))
+    );
+
+    // V3: the schema script is idempotent.
+    let secondRun = true;
+    try {
+      await pool.query(buildSchemaSql());
+    } catch (err) {
+      secondRun = false;
+      lastRejection = (err as Error).message;
+    }
+    check(secondRun, 'running the whole schema script a second time succeeds', lastRejection);
+    const after = await pool.query("SELECT COUNT(*)::int AS n FROM information_schema.columns WHERE table_name = 'local_users' AND table_schema = current_schema()");
+    check(after.rows[0]?.n === cols.rows.length, 'the second schema run leaves the local_users column count unchanged', `${cols.rows.length} -> ${after.rows[0]?.n}`);
+
+    // V4 to V6: the CHECK constraints.
+    check(
+      await rejects(() => insertUser(1, ', totp_secret_enc', ['JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP']), { code: '23514', constraint: 'local_users_totp_secret_enc_check' }),
+      'a plaintext base32 secret in totp_secret_enc is refused (totp_secret_enc_check)', lastRejection
+    );
+    check(
+      await rejects(() => insertUser(2, ', recovery_code_hashes', [['abc']]), { code: '23514', constraint: 'local_users_recovery_codes_check' }),
+      'a recovery digest that is not 64 lowercase hex characters is refused (recovery_codes_check)', lastRejection
+    );
+    check(
+      await rejects(() => insertUser(3, ', totp_confirmed_at', [new Date().toISOString()]), { code: '23514', constraint: 'local_users_totp_confirm_check' }),
+      'totp_confirmed_at with no secret is refused (totp_confirm_check)', lastRejection
+    );
+
+    // V7, V8 and V10: the atomic statements, through the real storage functions. User 4 holds a confirmed factor.
+    await insertUser(4, ', totp_secret_enc', [GOOD_BLOB]);
+    check((await replaceRecoveryCodeHashes(ID(4), [HASH_A])) === false, 'replacing recovery codes with no confirmed factor updates 0 rows');
+    const untouched = await pool.query('SELECT cardinality(recovery_code_hashes) AS n FROM local_users WHERE id = $1', [ID(4)]);
+    check(untouched.rows[0]?.n === 0, 'the refused replacement left the recovery codes empty', JSON.stringify(untouched.rows));
+    check((await confirmTotp(ID(4), 100, [HASH_A, HASH_B])) === true, 'confirming a pending factor stores the step and the recovery digests');
+    check((await confirmTotp(ID(4), 101, [HASH_A])) === false, 'a second confirmation updates 0 rows');
+    check((await replaceRecoveryCodeHashes(ID(4), [HASH_A])) === true, 'replacing recovery codes after confirmation updates exactly 1 row');
+
+    check((await consumeRecoveryCode(ID(4), HASH_A)) === true, 'a recovery digest is consumed once (1 row)');
+    check((await consumeRecoveryCode(ID(4), HASH_A)) === false, 'the same recovery digest cannot be consumed twice (0 rows)');
+
+    check((await consumeTotpStep(ID(4), 200)) === true, 'a TOTP step newer than the last one is accepted (1 row)');
+    check((await consumeTotpStep(ID(4), 200)) === false, 'the same TOTP step is refused (replay, 0 rows)');
+    check((await consumeTotpStep(ID(4), 199)) === false, 'an older TOTP step is refused (0 rows)');
+    check((await consumeTotpStep(ID(4), 201)) === true, 'the next TOTP step is accepted again (1 row)');
+  } finally {
+    await pool.query("DELETE FROM local_users WHERE id LIKE 'rls_verify_lu_%'").catch(() => undefined);
   }
 }
 

@@ -18,4 +18,6 @@ process.env.AUTH_MODE = 'local';
 process.env.LOCAL_AUTH_SECRET = 'test-only-secret-0123456789abcdef-0123456789abcdef';
 process.env.STORAGE_PROVIDER = 'local';
 process.env.ALLOW_DEV_MOCK_TOKENS = 'true';
+// The suites that are not about MFA stay on the password-only login path whatever the default is; tests/mfa.test.ts switches it per section.
+process.env.MFA_REQUIRED = 'off';
 export {};

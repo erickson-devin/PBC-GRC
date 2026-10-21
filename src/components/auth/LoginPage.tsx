@@ -4,6 +4,8 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
+import { MfaChallengeForm } from './MfaChallengeForm';
+import { MfaEnrolmentPanel } from './MfaEnrolmentPanel';
 
 interface LoginPageProps {
   onSuccessRedirect?: (path?: string) => void;
@@ -20,6 +22,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     loading,
     authError,
     clearAuthError,
+    mfaChallenge,
+    startEnrolment,
+    confirmEnrolment,
+    finishMfa,
+    cancelMfa,
   } = useAuth();
 
   const [email, setEmail] = React.useState('');
@@ -48,7 +55,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) return;
-    await loginWithEmailPassword(email.trim(), password);
+    const outcome = await loginWithEmailPassword(email.trim(), password);
+    // Step one is done (or a second step follows): the password is not needed any more, so it does not stay in state
+    if (outcome !== 'failed') setPassword('');
   };
 
   return (
@@ -82,7 +91,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 CMMC 2.0 Level 1 Enclave
               </div>
               <h2 className="text-2xl font-black text-white tracking-tight">
-                Enterprise Sign In
+                {mfaChallenge ? (mfaChallenge.stage === 'enrol' ? 'Set Up Two-Step Verification' : 'Two-Step Verification') : 'Enterprise Sign In'}
               </h2>
             </div>
 
@@ -94,7 +103,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
             )}
 
+            {/* Second step: a code, or setting up an authenticator */}
+            {mfaChallenge?.stage === 'verify' && <MfaChallengeForm />}
+            {mfaChallenge?.stage === 'enrol' && (
+              <MfaEnrolmentPanel
+                onStart={startEnrolment}
+                onConfirm={confirmEnrolment}
+                onDone={finishMfa}
+                onCancel={cancelMfa}
+                cancelLabel="Cancel and sign in again"
+              />
+            )}
+
             {/* Local credentials */}
+            {!mfaChallenge && (
             <form onSubmit={handlePasswordSubmit} className="space-y-3">
               <input
                 type="email"
@@ -120,6 +142,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 Sign In
               </button>
             </form>
+            )}
 
           </div>
         </div>

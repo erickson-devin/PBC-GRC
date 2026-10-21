@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
+import { MfaChallengeForm } from './MfaChallengeForm';
+import { MfaEnrolmentPanel } from './MfaEnrolmentPanel';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AuthModalProps {
@@ -24,6 +26,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
     loading,
     authError,
     clearAuthError,
+    mfaChallenge,
+    startEnrolment,
+    confirmEnrolment,
+    finishMfa,
+    cancelMfa,
   } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -47,7 +54,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
       return;
     }
 
-    await loginWithEmailPassword(email.trim(), password);
+    const outcome = await loginWithEmailPassword(email.trim(), password);
+    // Step one is done (or a second step follows): the password is not needed any more, so it does not stay in state
+    if (outcome !== 'failed') setPassword('');
   };
 
   return (
@@ -79,7 +88,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
             </div>
 
             <DialogTitle as="h3" className="text-xl sm:text-2xl font-black text-white tracking-tight">
-              Sign In to Defense Enclave
+              {mfaChallenge ? (mfaChallenge.stage === 'enrol' ? 'Set Up Two-Step Verification' : 'Two-Step Verification') : 'Sign In to Defense Enclave'}
             </DialogTitle>
             <p className="text-xs text-slate-400">
               Event Horizon: Singularity • Central Governance & Compliance Engine
@@ -95,7 +104,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
             </div>
           )}
 
+          {/* Second step: a code, or setting up an authenticator */}
+          {mfaChallenge?.stage === 'verify' && <MfaChallengeForm />}
+          {mfaChallenge?.stage === 'enrol' && (
+            <MfaEnrolmentPanel
+              onStart={startEnrolment}
+              onConfirm={confirmEnrolment}
+              onDone={finishMfa}
+              onCancel={cancelMfa}
+              cancelLabel="Cancel and sign in again"
+            />
+          )}
+
           {/* Local credentials */}
+          {!mfaChallenge && (
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">Work Email</label>
@@ -163,6 +185,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
               </button>
             )}
           </form>
+          )}
 
           {/* Legal Links */}
           <div className="mt-3 text-center text-xs text-slate-400">

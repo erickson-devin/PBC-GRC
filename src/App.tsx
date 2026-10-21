@@ -13,6 +13,7 @@ import { InspectDocumentModal } from './components/matrix/InspectDocumentModal';
 import { EvidencePreviewModal } from './components/common/EvidencePreviewModal';
 import { LoginPage } from './components/auth/LoginPage';
 import { AuthModal } from './components/auth/AuthModal';
+import { PasswordChangeScreen } from './components/auth/PasswordChangeForm';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { LegalModal, LegalTab } from './components/common/LegalModal';
 import { OnboardingModal } from './components/onboarding/OnboardingModal';
@@ -35,7 +36,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { AppRoute, resolveRoot, routeFromUrl } from './utils/appRoute';
 const AppContent: React.FC = () => {
   const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { isAuthenticated, mustChangePassword, loading: authLoading } = useAuth();
   const {
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
@@ -166,6 +167,10 @@ const AppContent: React.FC = () => {
     setCurrentRoute('login');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
+
+  // A temporary password (administrator reset, or an account created from the command line) must be replaced before anything else:
+  // the server refuses every other request until then, so the app is not rendered at all.
+  if (isAuthenticated && mustChangePassword) return <PasswordChangeScreen />;
 
   return (
     <>

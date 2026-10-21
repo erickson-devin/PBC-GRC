@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import { LocalAuthConfigError, signLocalToken, validateNewPassword } from '../auth/localAuth';
+import { LocalAuthConfigError, getMfaRequirement, signLocalToken, signMfaPendingToken, validateNewPassword } from '../auth/localAuth';
+import { isMfaRequiredFor } from '../auth/mfaPolicy';
 import { LocalUserExistsError, createLocalUser, deleteLocalUser, normalizeEmail } from '../auth/localUsers';
 import { TenantExistsError, createTenantWithOwner } from '../db';
 import { createInvitation } from '../invitations';
@@ -118,7 +119,8 @@ function parseBody(body: unknown): { value: ParsedSetup } | { error: string } {
  * Body: { companyName, email, password, adminName?, invites?: string[], inviteRole?, setupToken? }.
  * Creates, in order: the administrator's local account, the platform-administrator record (which also takes the
  * one-time lock), the primary tenant with the administrator as its TENANT_OWNER, and an invitation per teammate.
- * Responds 201 with a signed-in session for the new administrator and one-time invitation tokens (the server keeps
+ * Responds 201 with a signed-in session for the new administrator (or, when MFA_REQUIRED is not `off`, { mfa: 'enrol', mfaToken }:
+ * the administrator enrols a second factor first) and one-time invitation tokens (the server keeps
  * only their hashes; with no mail server on an air-gapped install, the administrator hands the links out).
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
@@ -220,16 +222,30 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         }
       }
 
-      const { token, claims } = signLocalToken({ id: user.id, email: user.email, name: user.name });
       console.log(`[Setup] First-time setup completed: ${user.email} is the platform administrator; tenant ${tenant.id} created; ${invites.filter((i) => i.token).length} invitation(s) staged. Setup is now locked.`);
+      const summary = { user: { id: user.id, email: user.email, name: user.name }, tenant: { id: tenant.id, name: tenant.name }, invites };
+      // A platform administrator is always privileged: whenever MFA_REQUIRED is not `off`, the first administrator enrols a
+      // second factor before getting a session (the wizard continues with the enrol-stage token).
+      if (isMfaRequiredFor(getMfaRequirement(), { isPlatformAdmin: true, tenantRoles: ['TENANT_OWNER'] })) {
+        const pending = signMfaPendingToken({ id: user.id, tokenVersion: user.tokenVersion }, 'enrol');
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(201).json({
+          mfa: 'enrol',
+          mfaToken: pending.token,
+          expiresAt: new Date(pending.claims.exp * 1000).toISOString(),
+          ...summary,
+        });
+        return;
+      }
+      const { token, claims } = signLocalToken({ id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion }, { amr: ['pwd'] });
       res.status(201).json({
         token,
         tokenType: 'Bearer',
         expiresAt: new Date(claims.exp * 1000).toISOString(),
         expiresIn: claims.exp - claims.iat,
-        user: { id: user.id, email: user.email, name: user.name },
-        tenant: { id: tenant.id, name: tenant.name },
-        invites,
+        mustChangePassword: false,
+        mfaEnrolled: false,
+        ...summary,
       });
     } catch (err: unknown) {
       await undo();

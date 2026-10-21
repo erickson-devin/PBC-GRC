@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import type { SetupResult } from '../services/apiClient';
 import { copyToClipboard } from '../utils/clipboard';
 import { errorMessage } from '../utils/errors';
+import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
 import type { TenantRole } from '../types/tenant';
 
 interface SetupPageProps {
@@ -42,7 +43,7 @@ export function parseInviteList(text: string): { emails: string[]; invalid: stri
 }
 
 export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onFinished, onOpenLegal }) => {
-  const { completeSetup } = useAuth();
+  const { completeSetup, mfaChallenge, startEnrolment, confirmEnrolment, finishMfa } = useAuth();
   const ids = { company: useId(), name: useId(), email: useId(), pw: useId(), pw2: useId(), invites: useId(), role: useId(), token: useId(), err: useId() };
 
   const [companyName, setCompanyName] = useState('');
@@ -232,6 +233,21 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
                 <p className="text-xs text-slate-500 text-center">Setup can only be run once. After this, this page no longer exists.</p>
               </form>
             ) : (
+              mfaChallenge?.stage === 'enrol' ? (
+              <div className="space-y-5">
+                <div className="text-center space-y-2">
+                  <div className="flex justify-center">
+                    <ShieldCheck className="w-10 h-10 text-cyan-400" aria-hidden="true" />
+                  </div>
+                  <h1 className="text-2xl font-black text-white tracking-tight">Secure your administrator account</h1>
+                  <p className="text-sm text-slate-400">
+                    <strong className="text-slate-200">{result.tenant.name}</strong> is ready. Set up two-step verification for{' '}
+                    <strong className="text-slate-200">{result.user.email}</strong> before you continue; your team&rsquo;s invitation links follow.
+                  </p>
+                </div>
+                <MfaEnrolmentPanel onStart={startEnrolment} onConfirm={confirmEnrolment} onDone={finishMfa} />
+              </div>
+              ) : (
               <div className="space-y-5">
                 <div className="text-center space-y-2">
                   <div className="flex justify-center">
@@ -283,6 +299,7 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
                   Open my dashboard
                 </button>
               </div>
+              )
             )}
           </div>
         </div>

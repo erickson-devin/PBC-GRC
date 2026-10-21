@@ -3,7 +3,8 @@ import { getTenantRole, isTenantMember } from '../db';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 import type { TenantRole } from '../../src/types/tenant';
-import { LocalAuthConfigError, verifyLocalToken } from '../auth/localAuth';
+import { LocalAuthConfigError, LocalTokenError, verifyLocalToken } from '../auth/localAuth';
+import { getLocalUserAuthState } from '../auth/localUsers';
 
 // Extend Express Request interface with authenticated user & tenant context
 declare global {
@@ -26,6 +27,8 @@ declare global {
 
 const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const DEV_FALLBACK_TENANT_ID = 'tenant-vanguard-01';
+/** The one request a session flagged must_change_password may make (compared with req.baseUrl + req.path). */
+const PASSWORD_CHANGE_PATH = '/api/v1/auth/password';
 
 /**
  * Mock-token support exists only for local development and automated tests: it needs ALLOW_DEV_MOCK_TOKENS=true
@@ -165,6 +168,8 @@ interface Authenticated {
   identity: TokenIdentity;
   /** True for dev/test mock tokens (never produced in production). */
   devMock: boolean;
+  /** The account is flagged to change its password before doing anything else (never true for mock tokens). */
+  mustChangePassword: boolean;
 }
 
 /**
@@ -176,11 +181,17 @@ async function authenticateToken(token: string): Promise<Authenticated> {
 
   // 1. Development / test mock tokens. Never accepted in production.
   if (mockAllowed && isMockToken(token)) {
-    return { identity: decodeMockToken(token), devMock: true };
+    return { identity: decodeMockToken(token), devMock: true, mustChangePassword: false };
   }
 
   // 2. Local identity: verified with the local secret only, never contacting any external service.
   const claims = verifyLocalToken(token);
+  // One primary-key read per request: a password change, a disable and an MFA reset bump token_version, which ends every older session.
+  // Tokens minted before the upgrade carry no `ver` and count as version 0.
+  const state = await getLocalUserAuthState(claims.sub);
+  if (!state || state.disabled || (claims.ver ?? 0) !== state.tokenVersion) {
+    throw new LocalTokenError('Session is no longer valid');
+  }
   return {
     identity: identityFromClaims(claims as unknown as Record<string, unknown>, {
       uid: claims.sub,
@@ -188,6 +199,7 @@ async function authenticateToken(token: string): Promise<Authenticated> {
       name: claims.name,
     }),
     devMock: false,
+    mustChangePassword: state.mustChangePassword,
   };
 }
 
@@ -217,8 +229,21 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
       res.status(503).json({ error: 'Authentication is not available: server is misconfigured' });
       return;
     }
+    if (!(err instanceof LocalTokenError)) {
+      // The token was fine but the account lookup failed (database error): 503, so an outage does not sign everyone out.
+      console.error('[AuthMiddleware] Account lookup failed:', errorMessage(err));
+      res.status(503).json({ error: 'Authentication is temporarily unavailable' });
+      return;
+    }
     console.error('[AuthMiddleware] Token verification failed:', errorMessage(err));
     res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+    return;
+  }
+
+  // A forced password change (temporary password after an admin reset or a CLI-created account) leaves exactly one
+  // request open: POST /api/v1/auth/password.
+  if (authenticated.mustChangePassword && !(req.method === 'POST' && req.baseUrl + req.path === PASSWORD_CHANGE_PATH)) {
+    res.status(403).json({ error: 'You must change your password before continuing', reason: 'password_change_required' });
     return;
   }
 

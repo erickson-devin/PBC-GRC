@@ -119,6 +119,36 @@ for (const p of DISCOVERY_POLICIES) {
 assert(DISCOVERY_POLICIES.every((p) => protectedTables.has(p.table)), 'discovery policies only extend tables that already have FORCE RLS');
 assert(!TABLES_SQL.includes('app.current_user_id'), 'the user context is used only by policies, never by table definitions');
 
+console.log('\n--- local_users second factor (Phase 5.9) ---');
+const luStart = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_users');
+const luEnd = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS ssp_import_jobs');
+const luBlock = luStart >= 0 && luEnd > luStart ? TABLES_SQL.slice(luStart, luEnd) : '';
+const addColumnLines = [
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;',
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS totp_secret_enc TEXT;',
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS totp_confirmed_at TIMESTAMPTZ;',
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS totp_last_used_step BIGINT;',
+  "ALTER TABLE local_users ADD COLUMN IF NOT EXISTS recovery_code_hashes TEXT[] NOT NULL DEFAULT '{}';",
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false;',
+];
+assert(addColumnLines.every((l) => TABLES_SQL.includes(l)), 'S1: the six ADD COLUMN IF NOT EXISTS lines for the second factor, token version and forced password change are present', addColumnLines.filter((l) => !TABLES_SQL.includes(l)));
+const addColumnCount = (luBlock.match(/ADD COLUMN/g) || []).length;
+const addColumnGuarded = (luBlock.match(/ADD COLUMN IF NOT EXISTS/g) || []).length;
+const addConstraints = [...luBlock.matchAll(/ADD CONSTRAINT (\w+)/g)].map((m) => m[1]);
+assert(luBlock.length > 0 && addColumnCount === addColumnGuarded && addColumnCount === 6, 'S2: every ADD COLUMN in the local_users block is IF NOT EXISTS (idempotent)', { addColumnCount, addColumnGuarded });
+assert(
+  addConstraints.length === 3 && addConstraints.every((c) => luBlock.indexOf(`DROP CONSTRAINT IF EXISTS ${c}`) >= 0 && luBlock.indexOf(`DROP CONSTRAINT IF EXISTS ${c}`) < luBlock.indexOf(`ADD CONSTRAINT ${c}`)),
+  'S2: every ADD CONSTRAINT is preceded by its DROP CONSTRAINT IF EXISTS',
+  addConstraints
+);
+assert((luBlock.match(/CREATE TABLE/g) || []).length === 1 && !/\btenant_id\b/.test(luBlock), 'S2: the block creates only local_users and has no tenant_id (global identity data)');
+assert(!/totp_secret\s+(TEXT|VARCHAR)/i.test(TABLES_SQL) && !/recovery_codes\s+(TEXT|JSONB)/i.test(TABLES_SQL), 'S3: no plaintext secret or recovery-code column (only totp_secret_enc and recovery_code_hashes)');
+assert(!buildRlsSql().includes('local_users'), 'S4: buildRlsSql() does not mention local_users');
+assert(
+  ['local_users_totp_secret_enc_check', 'local_users_recovery_codes_check', 'local_users_totp_confirm_check'].every((c) => TABLES_SQL.includes(c)),
+  'S5: the three second-factor CHECK constraints are present'
+);
+
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);
 assert(url.config.connectionString === 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require', 'DATABASE_URL is passed through as the connection string');

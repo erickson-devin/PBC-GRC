@@ -7,6 +7,7 @@ import { __resetMemoryInvitationsForTests } from '../server/invitations';
 import { __resetPlatformSetupForTests, isSetupRequired, removePlatformAdmin } from '../server/platformSetup';
 import { __resetSetupThrottleForTests } from '../server/routes/setup';
 import { __resetLoginThrottleForTests } from '../server/routes/auth';
+import { base32Decode, generateTotp } from '../server/auth/totp';
 
 /**
  * First-time setup wizard: the one public endpoint that creates an administrator. It must work exactly once and then
@@ -182,6 +183,26 @@ async function run() {
   assert((await status()).setupRequired === false, 'once any tenant exists the wizard is closed, so it cannot be used to claim the install');
   const legacy = await call('POST', '/setup', { body: payload() });
   assert(legacy.status === 409 && legacy.body?.code === 'setup_complete', 'and POST /setup is refused (409 setup_complete)', legacy);
+
+  console.log('\n--- With MFA required, the first administrator enrols before getting a session ---');
+  reset();
+  process.env.MFA_REQUIRED = 'privileged';
+  try {
+    const staged = await call('POST', '/setup', { body: payload() });
+    assert(staged.status === 201 && staged.body?.mfa === 'enrol' && typeof staged.body?.mfaToken === 'string', 'setup returns { mfa: "enrol", mfaToken } (201)', staged.status);
+    assert(staged.body?.token === undefined && Array.isArray(staged.body?.invites) && staged.body.invites.length === 2, 'no session token yet, and the 2 invitations are staged');
+    const mfaToken: string = staged.body?.mfaToken;
+    const started = await call('POST', '/auth/mfa/enrol/start', { body: { mfaToken } });
+    assert(started.status === 200 && typeof started.body?.secret === 'string', 'the enrol-stage token starts the enrolment');
+    const confirmed = await call('POST', '/auth/mfa/enrol/confirm', {
+      body: { mfaToken, code: generateTotp(base32Decode(started.body?.secret), Date.now()) },
+    });
+    assert(confirmed.status === 200 && typeof confirmed.body?.token === 'string' && confirmed.body?.recoveryCodes?.length === 8, 'confirming with a code from that secret returns the session and the recovery codes', confirmed.status);
+    const me = await call('GET', '/me', { token: confirmed.body?.token });
+    assert(me.status === 200 && me.body?.isPlatformAdmin === true, 'and the session is the platform administrator\'s', me.body);
+  } finally {
+    process.env.MFA_REQUIRED = 'off';
+  }
 
   console.log('\n--- Throttle ---');
   reset();
