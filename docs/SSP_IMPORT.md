@@ -29,7 +29,7 @@ Two ways to read a document, chosen per import:
 
 ## How a document is matched
 
-1. The text is extracted in an isolated worker thread (memory cap and timeout), so a hostile file cannot take down the API.
+1. The text is extracted in a separate, short-lived child process (`server/ssp/extractChild.ts`, started with `child_process.fork`, a 768 MB heap cap and a 90 s timeout). The document bytes reach it over the in-memory IPC channel and are never written to disk, and it gets only a minimal environment (no secrets). If the parser crashes, runs out of memory, hangs or throws, that import fails with a clear message and the API keeps running.
 2. It is split into sections at headings and at lines that start with a control reference.
 3. A control is found by its CMMC identifier (`AC.L2-3.1.1`) or its NIST SP 800-171 number (`3.1.1`).
    * a section that starts with the identifier is the document's description of that control (`CMMC_ID_SECTION`, the

@@ -1,26 +1,17 @@
 /**
- * Runs in a worker thread (see extract.ts): parses an untrusted PDF or DOCX. Isolated so that a malicious or huge file
- * can only take down this thread (it has a memory cap and a timeout), never the API server.
+ * The parsing itself: turns an untrusted PDF or DOCX into text. It runs inside the forked child process (see
+ * extractChild.ts and extract.ts), never in the API server's own process.
  */
-import { parentPort, workerData } from 'worker_threads';
 import { createRequire } from 'module';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
-import type { ExtractedDocument, PageSpan, SspDocumentKind } from './types';
+import type { ExtractedDocument, PageSpan } from './types';
 
-interface WorkerInput {
-  kind: SspDocumentKind;
-  data: Uint8Array;
-  maxPages: number;
-  maxChars: number;
-  maxZipEntries: number;
-}
+export type CoreInput = { kind: 'pdf' | 'docx'; data: Uint8Array; maxPages: number; maxChars: number; maxZipEntries: number };
 
-const input = workerData as WorkerInput;
-
-async function extractPdf(): Promise<ExtractedDocument> {
+async function extractPdf(input: CoreInput): Promise<ExtractedDocument> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const require = createRequire(import.meta.url);
   const fontDir = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts') + path.sep;
@@ -56,7 +47,7 @@ async function extractPdf(): Promise<ExtractedDocument> {
   return { text: text.trimEnd(), pages, pageCount: doc.numPages };
 }
 
-async function extractDocx(): Promise<ExtractedDocument> {
+async function extractDocx(input: CoreInput): Promise<ExtractedDocument> {
   // A .docx is a zip: refuse an archive with an absurd number of entries before handing it to the parser
   const zip = await JSZip.loadAsync(input.data);
   if (Object.keys(zip.files).length > input.maxZipEntries) throw new Error('too_many_entries');
@@ -66,6 +57,6 @@ async function extractDocx(): Promise<ExtractedDocument> {
   return { text, pages: [], pageCount: 0 };
 }
 
-(input.kind === 'pdf' ? extractPdf() : extractDocx())
-  .then((result) => parentPort!.postMessage({ ok: true, result }))
-  .catch((err: unknown) => parentPort!.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+export async function extractWith(input: CoreInput): Promise<ExtractedDocument> {
+  return input.kind === 'pdf' ? extractPdf(input) : extractDocx(input);
+}

@@ -11,7 +11,7 @@ import { getJob, replaceStaged, updateJob } from './store';
 import { SSP_JOB_TERMINAL, type MappingResult, type SspImportJob } from './types';
 
 /**
- * Runs import jobs: read the stored document, extract its text (in a worker thread), chunk it, map it to controls by rules,
+ * Runs import jobs: read the stored document, extract its text (in a child process), chunk it, map it to controls by rules,
  * optionally let the local language model read it as well, and write the suggestions to the staging tables. Jobs run one at
  * a time and can be cancelled. This module never writes control_assessments.
  */
