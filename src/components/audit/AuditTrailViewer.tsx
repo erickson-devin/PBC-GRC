@@ -24,7 +24,7 @@ import {
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard as copyText } from '../../utils/clipboard';
 export const AuditTrailViewer: React.FC = () => {
-  const { currentTenant } = useTenant();
+  const { currentTenant, programs } = useTenant();
 
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [verification, setVerification] = useState<AuditVerificationResult | null>(null);
@@ -37,6 +37,11 @@ export const AuditTrailViewer: React.FC = () => {
   const [selectedAction, setSelectedAction] = useState<AuditActionType | 'ALL'>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  // The ledger is tenant-wide; entries written inside a program carry its id in metadata.programId ('LEGACY': entries without one)
+  const [programFilter, setProgramFilter] = useState<string>('ALL');
+  useEffect(() => {
+    setProgramFilter('ALL');
+  }, [currentTenant.id]);
 
   // Load the ledger and verify its hash chain
   const loadData = useCallback(async () => {
@@ -84,6 +89,10 @@ export const AuditTrailViewer: React.FC = () => {
   const filteredLogs = useMemo(() => {
     return logs.filter(entry => {
       if (selectedAction !== 'ALL' && entry.actionType !== selectedAction) return false;
+      if (programFilter !== 'ALL') {
+        const entryProgram = entry.metadata?.programId;
+        if (programFilter === 'LEGACY' ? entryProgram != null && entryProgram !== '' : entryProgram !== programFilter) return false;
+      }
       if (startDate && new Date(entry.timestamp) < new Date(startDate)) return false;
       if (endDate && new Date(entry.timestamp) > new Date(endDate + 'T23:59:59')) return false;
       if (searchQuery.trim()) {
@@ -97,7 +106,7 @@ export const AuditTrailViewer: React.FC = () => {
       }
       return true;
     });
-  }, [logs, selectedAction, startDate, endDate, searchQuery]);
+  }, [logs, selectedAction, programFilter, startDate, endDate, searchQuery]);
 
   const getActionBadge = (action: AuditActionType) => {
     switch (action) {
@@ -265,6 +274,24 @@ export const AuditTrailViewer: React.FC = () => {
             </select>
           </div>
 
+          {programs.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <span>Program:</span>
+              <select
+                value={programFilter}
+                onChange={e => setProgramFilter(e.target.value)}
+                aria-label="Filter by program"
+                className="px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+              >
+                <option value="ALL">All programs</option>
+                <option value="LEGACY">Tenant / legacy</option>
+                {programs.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}{p.archived ? ' (archived)' : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex items-center gap-1 text-xs text-slate-400">
             <span>From:</span>
             <input
@@ -285,11 +312,12 @@ export const AuditTrailViewer: React.FC = () => {
             />
           </div>
 
-          {(searchQuery || selectedAction !== 'ALL' || startDate || endDate) && (
+          {(searchQuery || selectedAction !== 'ALL' || programFilter !== 'ALL' || startDate || endDate) && (
             <button
               onClick={() => {
                 setSearchQuery('');
                 setSelectedAction('ALL');
+                setProgramFilter('ALL');
                 setStartDate('');
                 setEndDate('');
               }}

@@ -293,7 +293,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       let controlStates: Record<string, ControlState> | undefined;
       if (tenant.serverBacked) {
         try {
-          const list = await ApiClient.getControls(tenant.id, { framework: tenant.primaryFramework });
+          // null: the tenant's default program (the handover package is not scoped to whichever program this browser has open)
+          const list = await ApiClient.getControls(tenant.id, { framework: tenant.primaryFramework }, null);
           controlStates = Object.fromEntries(list.map(c => [c.id, c]));
         } catch (err: unknown) {
           // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.

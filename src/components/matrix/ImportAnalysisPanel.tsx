@@ -6,6 +6,8 @@ import type { ObjectiveStatus, SspImportJob, StagedControlView } from '../../typ
 interface Props {
   controlId: string;
   tenantId: string;
+  /** The active program: the imports shown are the ones staged for it. */
+  programId?: string | null;
 }
 
 const STATUS_LABEL: Record<ObjectiveStatus, string> = {
@@ -28,16 +30,16 @@ const STATUS_CLASS: Record<ObjectiveStatus, string> = {
  * assessment objective, the confidence of the match and the warnings. Read-only: an import only suggests; the objectives below
  * are still assessed by a person. Shows nothing when no import mentions the control (or the caller may not read imports).
  */
-export const ImportAnalysisPanel: React.FC<Props> = ({ controlId, tenantId }) => {
+export const ImportAnalysisPanel: React.FC<Props> = ({ controlId, tenantId, programId = null }) => {
   const [found, setFound] = useState<{ job: SspImportJob; staged: StagedControlView } | null>(null);
 
   useEffect(() => {
     let alive = true;
     setFound(null);
     (async () => {
-      const jobs = (await ApiClient.sspListJobs(tenantId)).filter((j) => j.status === 'READY_FOR_REVIEW' || j.status === 'COMMITTED').slice(0, 5); // newest first
+      const jobs = (await ApiClient.sspListJobs(tenantId, programId)).filter((j) => j.status === 'READY_FOR_REVIEW' || j.status === 'COMMITTED').slice(0, 5); // newest first
       for (const job of jobs) {
-        const { staged } = await ApiClient.sspGetStaged(tenantId, job.id);
+        const { staged } = await ApiClient.sspGetStaged(tenantId, job.id, programId);
         const hit = staged.find((s) => s.controlId === controlId && s.reviewState !== 'REJECTED');
         if (hit) {
           if (alive) setFound({ job, staged: hit });
@@ -48,7 +50,7 @@ export const ImportAnalysisPanel: React.FC<Props> = ({ controlId, tenantId }) =>
     return () => {
       alive = false;
     };
-  }, [controlId, tenantId]);
+  }, [controlId, tenantId, programId]);
 
   if (!found) return null;
   const { job, staged } = found;

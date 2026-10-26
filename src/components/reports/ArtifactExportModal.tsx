@@ -67,6 +67,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const {
     currentTenant,
     activeFramework,
+    activeProgram,
     canEdit,
   } = useTenant();
 
@@ -97,7 +98,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     samStatus: meta.samStatus || currentTenant.samStatus || 'ACTIVE',
     systemOwner: meta.systemOwner || currentTenant.systemOwner || 'Alex Mercer, CMMC CCA',
     primaryAssessor: meta.authorName || 'Lead Compliance Assessor',
-    boundaryDescription: meta.systemBoundaryScope || currentTenant.systemBoundaryScope || 'The system boundary encompasses corporate identity tenants, managed physical and virtual endpoints, boundary gateway firewalls, and cloud services processing Federal Contract Information (FCI) or Controlled Unclassified Information (CUI).',
+    boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || 'The system boundary encompasses corporate identity tenants, managed physical and virtual endpoints, boundary gateway firewalls, and cloud services processing Federal Contract Information (FCI) or Controlled Unclassified Information (CUI).',
     systemEnvironment: meta.systemEnvironment || 'Hybrid Cloud: Cloud Identity & SaaS Services + On-Premises Enclave VLAN.',
     operationalStatus: 'Operational' as SystemOperationalStatus,
     cloudServiceProviders: meta.cloudServiceProviders || 'Google Cloud Platform, Microsoft 365, Cloudflare Zero Trust.',
@@ -123,7 +124,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     } else {
       setSelectedDocType(getDefaultDocumentTypeForFramework(activeFramework));
     }
-  }, [activeFramework, exportModalInitialDocType, propInitialDocType, isOpen]);
+  }, [activeFramework, activeProgram?.id, exportModalInitialDocType, propInitialDocType, isOpen]);
 
   // Sync initial metadata from current tenant when opening modal
   useEffect(() => {
@@ -136,11 +137,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
         samStatus: meta.samStatus || currentTenant.samStatus || prev.samStatus,
         systemOwner: meta.systemOwner || currentTenant.systemOwner || prev.systemOwner,
         primaryAssessor: meta.authorName || prev.primaryAssessor,
-        boundaryDescription: meta.systemBoundaryScope || currentTenant.systemBoundaryScope || prev.boundaryDescription,
+        boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || prev.boundaryDescription,
         framework: activeFramework,
       }));
     }
-  }, [isOpen, currentTenant, meta, activeFramework]);
+  }, [isOpen, currentTenant, meta, activeFramework, activeProgram?.id, activeProgram?.boundarySummary]);
 
   // Save metadata to tenant state
   const handleSaveMetadata = useCallback(() => {
@@ -998,7 +999,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Sparkles className="w-4 h-4 text-brand-400" />
             <span>
-              Compiled for <strong>{currentTenant.name}</strong> • Framework: <strong>{frameworkDef.name}</strong>
+              Compiled for <strong>{currentTenant.name}</strong>{activeProgram ? <> • Program: <strong>{activeProgram.name}</strong></> : null} • Framework: <strong>{frameworkDef.name}</strong>
             </span>
           </div>
 

@@ -352,6 +352,21 @@ async function main() {
   const hook = read('src/hooks/useProgram.ts');
   assert(!/\.setItem\(/.test(hook) && /useTenant\(\)/.test(hook), 'T6q useProgram is a read-through of TenantContext and writes no storage');
 
+  // The header switcher and the create / edit dialog (wave 4, P3), read from the source
+  const formModal = read('src/components/programs/ProgramFormModal.tsx');
+  const switcher = read('src/components/layout/ProgramSwitcher.tsx');
+  const header = read('src/components/layout/Header.tsx');
+  const profileMenu = read('src/components/auth/UserProfileDropdown.tsx');
+  const overlaysMenu = read('src/components/layout/FrameworkSwitcher.tsx');
+  assert(/import \{[^}]*DialogOverlay[^}]*\} from '..\/common\/DialogOverlay'/.test(formModal) && /<DialogOverlay[\s>]/.test(formModal) && /<DialogTitle[\s>]/.test(formModal), 'T4 ProgramFormModal.tsx renders through DialogOverlay and DialogTitle');
+  assert(/validateProgramInput\(/.test(formModal) && /PROGRAM_FRAMEWORKS/.test(formModal) && /currentTenant\.enabledFrameworks/.test(formModal) && /maxLength=\{PROGRAM_TEXT_MAX\}/.test(formModal), 'T4b the dialog validates through validateProgramInput and offers only the tenant\'s enabled frameworks');
+  assert(/isSaving \? undefined : close/.test(formModal) && /disabled=\{isSaving\}/.test(formModal), 'T4c the dialog cannot be dismissed while a request is in flight');
+  assert(/canManagePrograms/.test(switcher) && /\{canManagePrograms && \(/.test(switcher) && /New Program/.test(switcher), 'T5 ProgramSwitcher.tsx shows "New Program" only when canManagePrograms');
+  assert(/role="menuitemradio"/.test(switcher) && /aria-checked=\{selected\}/.test(switcher) && /useEscapeKey\(/.test(switcher) && /addEventListener\('mousedown'/.test(switcher) && /window\.location\.hash = 'programs'/.test(switcher) && /Default boundary/.test(switcher), 'T5b the switcher is a menuitemradio menu closing on Escape and outside mousedown, links to #programs and has the browser-only badge');
+  assert(/<ProgramSwitcher\s*\/>/.test(header) && /<FrameworkSwitcher\s*\/>/.test(header) && header.indexOf('<TenantSwitcher') < header.indexOf('<ProgramSwitcher'), 'T5c Header renders the ProgramSwitcher after the TenantSwitcher (FrameworkSwitcher stays only as the overlays menu)');
+  assert(!/setCiaImpact|toggleAllControlsApplied|setActiveFramework|CIA Triad/.test(overlaysMenu) && (overlaysMenu.match(/toggleOverlayFilter\('/g) ?? []).length === 4, 'T5d FrameworkSwitcher is the overlays menu: four overlay toggles, no framework menu, no CIA editor');
+  assert(/Programs/.test(profileMenu) && !/Switch Organization/.test(profileMenu) && /window\.location\.hash = 'programs'/.test(profileMenu), 'T5e the profile menu has "Programs" (to #programs) and no "Switch Organization"');
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');

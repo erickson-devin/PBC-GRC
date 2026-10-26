@@ -23,12 +23,14 @@ export const SSPBuilder: React.FC = () => {
     exportAssessmentMarkdown,
   } = useAssessment();
 
-  const { currentTenant, canEdit, activeFramework } = useTenant();
+  const { currentTenant, canEdit, activeFramework, activeProgram } = useTenant();
 
   const [viewMode, setViewMode] = useState<'document' | 'form'>('document');
   const [copied, setCopied] = useState<boolean>(false);
 
   const meta = state.sspMetadata;
+  // The active program's boundary summary describes the system when the plan's own boundary text is empty
+  const boundaryScope = meta.systemBoundaryScope || activeProgram?.boundarySummary || '';
   const frameworkTitle = getFrameworkTitle(activeFramework);
   const guidance = getFrameworkGuidanceText(activeFramework);
   const totalControls = frameworkControls.length || metrics.totalControls || 1;
@@ -42,11 +44,12 @@ export const SSPBuilder: React.FC = () => {
     text += `ORGANIZATION: ${meta.organizationName}\n`;
     text += `CAGE CODE: ${meta.cageCode}\n`;
     text += `SAM.GOV STATUS: ${meta.samStatus || 'Active'}\n`;
+    if (activeProgram) text += `PROGRAM: ${activeProgram.name}\n`;
     text += `SYSTEM NAME: ${meta.systemName}\n`;
     text += `SYSTEM OWNER: ${meta.systemOwner}\n`;
     text += `ASSESSMENT DATE: ${meta.assessmentDate}\n`;
     text += `EVIDENCE VAULT (LOCAL): tenants/${currentTenant.id}/\n\n`;
-    text += `SYSTEM BOUNDARY & SCOPE:\n${meta.systemBoundaryScope}\n\n`;
+    text += `SYSTEM BOUNDARY & SCOPE:\n${boundaryScope}\n\n`;
     text += `${totalControls} CONTROLS ASSESSMENT MATRIX:\n`;
 
     for (const ctrl of frameworkControls) {
@@ -395,6 +398,7 @@ export const SSPBuilder: React.FC = () => {
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-slate-500 block font-medium">Information System Name</span>
                 <span className="text-slate-900 font-bold">{meta.systemName}</span>
+                {activeProgram && <span className="text-slate-500 block text-xs mt-0.5">Program: {activeProgram.name}</span>}
               </div>
 
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -415,7 +419,7 @@ export const SSPBuilder: React.FC = () => {
               2. System Boundary & Scope Narrative
             </h2>
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
-              {meta.systemBoundaryScope || 'No boundary scope defined.'}
+              {boundaryScope || 'No boundary scope defined.'}
             </div>
           </div>
 

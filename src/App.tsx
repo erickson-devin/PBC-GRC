@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AssessmentProvider, useAssessment } from './context/AssessmentContext';
@@ -30,10 +30,11 @@ import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyMo
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
 import { SspImportView } from './components/sspImport/SspImportView';
+import { ProgramsPage } from './components/programs/ProgramsPage';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 
-import { AppRoute, resolveRoot, routeFromUrl } from './utils/appRoute';
+import { AppRoute, initialTabFromUrl, resolveRoot, routeFromUrl } from './utils/appRoute';
 const AppContent: React.FC = () => {
   const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
   const { isAuthenticated, mustChangePassword, loading: authLoading } = useAuth();
@@ -109,6 +110,10 @@ const AppContent: React.FC = () => {
 
       const nextRoute = getRouteFromUrl();
       setCurrentRoute(nextRoute);
+
+      // #programs (the switcher's "View All Programs", the profile menu) opens the programs page
+      const nextTab = initialTabFromUrl({ pathname: window.location.pathname, hash: window.location.hash });
+      if (nextTab) setActiveTab(nextTab);
     };
 
 
@@ -121,6 +126,10 @@ const AppContent: React.FC = () => {
       } else if (initialHash === '#terms' || initialPath === '/terms' || initialPath === '/terms-of-service') {
         openLegalModal('terms');
       }
+
+      // A deep link to the programs page (#programs, /programs)
+      const initialTab = initialTabFromUrl({ pathname: window.location.pathname, hash: window.location.hash });
+      if (initialTab) setActiveTab(initialTab);
     }
 
     window.addEventListener('hashchange', handleNavigation);
@@ -129,7 +138,17 @@ const AppContent: React.FC = () => {
       window.removeEventListener('hashchange', handleNavigation);
       window.removeEventListener('popstate', handleNavigation);
     };
-  }, [openLegalModal, setIsTeamModalOpen]);
+  }, [openLegalModal, setIsTeamModalOpen, setActiveTab]);
+
+  // Leaving the programs page clears its address, so choosing "View All Programs" again changes the hash and opens it again
+  const previousTab = useRef(activeTab);
+  useEffect(() => {
+    const was = previousTab.current;
+    previousTab.current = activeTab;
+    if (was === 'programs' && activeTab !== 'programs' && initialTabFromUrl({ pathname: window.location.pathname, hash: window.location.hash })) {
+      window.history.replaceState(null, '', '/#app');
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (setup.state === 'required' && currentRoute !== 'setup') {
@@ -244,6 +263,7 @@ const AppContent: React.FC = () => {
                 {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
                 {activeTab === 'settings' && <EnclaveSettings />}
+                {activeTab === 'programs' && <ProgramsPage />}
               </main>
             </div>
 

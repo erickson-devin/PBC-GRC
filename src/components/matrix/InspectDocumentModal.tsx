@@ -78,7 +78,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     getObjectivesForControl,
   } = useAssessment();
 
-  const { canEdit, currentTenant, activeFramework, setActiveFramework } = useTenant();
+  const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram } = useTenant();
   const storageConfig = useStorageConfig(currentTenant?.id);
 
   // Primary active tab defaults to 'objectives' as specified
@@ -345,7 +345,12 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     return t.category === templateFilter;
   });
 
+  // Jumping to another framework switches to a program of that framework: without one there is nowhere to go
+  const canJumpTo = (targetFramework: ComplianceFramework): boolean =>
+    targetFramework === activeFramework || programs.some((p) => !p.archived && p.framework === targetFramework);
+
   const handleNavigateToMapped = (targetFramework: ComplianceFramework, targetControlId: string) => {
+    if (!canJumpTo(targetFramework)) return;
     if (FRAMEWORK_REGISTRY[targetFramework]) {
       setActiveFramework(targetFramework);
     }
@@ -568,7 +573,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 <strong className="text-slate-200">Audit view.</strong> Assess each determination statement and see what an SSP import found for this control.
                 To write how the control is implemented, use the <button type="button" onClick={() => setActiveTab('narrative')} className="underline text-cyan-300 hover:text-cyan-200">System Security Plan (SSP)</button> tab.
               </p>
-              <ImportAnalysisPanel controlId={control.id} tenantId={currentTenant.id} />
+              <ImportAnalysisPanel controlId={control.id} tenantId={currentTenant.id} programId={activeProgram?.id ?? null} />
               <ObjectiveChecklist controlId={control.id} />
             </div>
           )}
@@ -876,7 +881,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                     <button type="button"
                       key={idx}
                       onClick={() => handleNavigateToMapped(m.targetFramework, m.targetControlId)}
-                      className="w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800/80 hover:border-cyan-500/40 cursor-pointer transition-colors"
+                      aria-disabled={!canJumpTo(m.targetFramework) || undefined}
+                      title={canJumpTo(m.targetFramework) ? undefined : 'No program uses this framework. Create one on the Programs page to open this control.'}
+                      className={`w-full text-left p-4 rounded-xl bg-slate-950 border border-slate-800/80 transition-colors ${canJumpTo(m.targetFramework) ? 'hover:border-cyan-500/40 cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="font-mono text-xs font-bold text-cyan-300">

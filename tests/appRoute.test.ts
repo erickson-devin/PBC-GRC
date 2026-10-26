@@ -1,4 +1,4 @@
-import { routeFromUrl, resolveRoot } from '../src/utils/appRoute';
+import { routeFromUrl, resolveRoot, initialTabFromUrl } from '../src/utils/appRoute';
 import fs from 'fs';
 import path from 'path';
 
@@ -34,6 +34,13 @@ for (const p of ['/pricing', '/about', '/contact', '/request-license', '/landing
 }
 assert(route('/', '#demo') === 'root' && route('/', '#sandbox') === 'root' && route('/', '', '?mode=sandbox') === 'root' && route('/', '', '?view=demo') === 'root', 'the demo sandbox has no route any more (path, hash or query)');
 assert(route('/privacy') === 'root' && route('/terms') === 'root', 'the legal paths are not pages either (the app opens its legal dialog for them, then resolves)');
+
+console.log('\n--- The programs page ---');
+assert(route('/', '#programs') === 'app' && route('/programs') === 'app' && route('/', '#PROGRAMS') === 'app', 'R1 #programs and /programs resolve to the app');
+assert(initialTabFromUrl({ pathname: '/', hash: '#programs', search: '' }) === 'programs' && initialTabFromUrl({ pathname: '/programs', hash: '', search: '' }) === 'programs', 'R2 initialTabFromUrl returns "programs" for #programs and /programs');
+assert(initialTabFromUrl({ pathname: '/', hash: '#app', search: '' }) === null && initialTabFromUrl({ pathname: '/app', hash: '', search: '' }) === null && route('/programs/x') === 'root', 'R2b other URLs name no tab, and /programs/x is not a route');
+const programsPage = fs.readFileSync(path.join(process.cwd(), 'src/components/programs/ProgramsPage.tsx'), 'utf8');
+assert(/import \{[^}]*DialogOverlay[^}]*\} from '..\/common\/DialogOverlay'/.test(programsPage) && /import \{ ProgramFormModal \} from '.\/ProgramFormModal'/.test(programsPage), 'ProgramsPage imports DialogOverlay and ProgramFormModal');
 
 console.log('\n--- Resolving "/" ---');
 assert(resolveRoot(false) === 'login', 'without a session: the login page');
@@ -77,7 +84,7 @@ for (const f of componentFiles) {
 assert(uncapped.length === 0, 'heuristic: every <DialogOverlay> call site has a max-h-[..] cap or a my-auto panel within 900 characters (so a short viewport scrolls instead of clipping)', uncapped);
 assert(!/guidance\.standardRef/.test(read('src/components/layout/Sidebar.tsx')), 'Sidebar: the audit-trail item carries no standard badge that squeezes its label');
 const profileMenu = read('src/components/auth/UserProfileDropdown.tsx');
-assert(/\{onOpenTenantSwitcher && \(/.test(profileMenu), 'UserProfileDropdown: "Switch Organization" renders only when a handler is provided');
+assert(profileMenu.includes('Programs') && !profileMenu.includes('Switch Organization'), 'UserProfileDropdown: a "Programs" menu item replaces "Switch Organization"');
 assert(profileMenu.includes('ROLE_LABELS[currentRole]') && /case 'MSP_ADMIN'/.test(profileMenu), 'UserProfileDropdown: the role line uses ROLE_LABELS and MSP_ADMIN has its own badge');
 const accountModal = read('src/components/auth/AccountSettingsModal.tsx');
 assert(!/>\s*Verified\s*</.test(accountModal) && accountModal.includes('ROLE_LABELS[currentRole]'), 'AccountSettingsModal: no hard-coded "Verified" badge; the role shows its label');
