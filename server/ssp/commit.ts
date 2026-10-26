@@ -29,7 +29,6 @@ export async function commitReviewedSuggestions(
   onlyIds?: string[],
   reviewerUserId: string | null = null
 ): Promise<CommitResult> {
-  const { tenantId } = scope;
   if (job.programId && job.programId !== scope.programId) throw new Error('The import belongs to another program');
   const result: CommitResult = { committed: [], conflicts: [] };
   const staged = (await listStaged(scope, job.id)).filter(
@@ -71,7 +70,7 @@ export async function commitReviewedSuggestions(
 
   // The job is done once nothing is waiting for a decision any more
   const remaining = (await listStaged(scope, job.id)).filter((s) => ['PENDING', 'ACCEPTED', 'EDITED', 'CONFLICT'].includes(s.reviewState));
-  if (result.committed.length > 0 && remaining.length === 0) await updateJob(tenantId, job.id, { status: 'COMMITTED' });
+  if (result.committed.length > 0 && remaining.length === 0) await updateJob(scope, job.id, { status: 'COMMITTED' });
 
   console.log(
     `[SSP Import] ${job.id} (${job.fileName}, sha256 ${job.fileSha256.slice(0, 12)}...): ${reviewer} committed ${result.committed.length} control(s), ${result.conflicts.length} conflict(s)`

@@ -40,6 +40,22 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
 
+/**
+ * Tables whose rows belong to exactly one PROGRAM of their tenant (an authorization boundary, see server/programs.ts). Each is also in
+ * RLS_TENANT_TABLES; on top of the tenant policy it gets a RESTRICTIVE policy tying rows to `app.current_program_id`, so the database
+ * itself keeps program B from reading or overwriting program A, whatever a query's WHERE clause says.
+ */
+export const RLS_PROGRAM_TABLES: readonly string[] = [
+  'control_assessments',
+  'control_assessment_events',
+  'evidence_metadata',
+  'ssp_import_jobs',
+  'staged_controls',
+  'vm_poam_items',
+];
+
+export const rlsProgramPolicyName = (table: string): string => `rls_${table}_program_isolation`;
+
 const tenantPredicate = (column: string): string =>
   `${column} = NULLIF(current_setting('app.current_tenant_id', true), '')`;
 
@@ -557,8 +573,8 @@ export const TABLES_SQL = `
 
   -- Programs (authorization boundaries), additive data layer: a tenant owns several programs, each with one framework (and, for
   -- NIST SP 800-53, one baseline). All program DDL lives here, after the VM and local_users blocks (tests pin their layout).
-  -- Nothing here changes behaviour: program_id stays nullable and the old unique key on control_assessments stays in place until
-  -- the enforcement wave (server/programs.ts backfills program_id lazily, per tenant, under that tenant's RLS context).
+  -- program_id stays nullable at the column level (server/programs.ts backfills it lazily, per tenant, under that tenant's RLS context);
+  -- the NOT VALID checks, the per-program unique key and the program row policies (buildProgramRlsSql) at the end enforce it.
   CREATE TABLE IF NOT EXISTS programs (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
       tenant_id VARCHAR(64) NOT NULL,
@@ -616,8 +632,36 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_evidence_metadata_program ON evidence_metadata (tenant_id, program_id, uploaded_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_program ON ssp_import_jobs (tenant_id, program_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_program ON vm_poam_items (tenant_id, program_id, status);
-  -- The per-program key, added next to the old (tenant_id, control_id) one; the old one is dropped in the enforcement wave.
+  -- The per-program key replaces the old (tenant_id, control_id) one: the same control id holds one row per program. Every ON CONFLICT
+  -- on control_assessments names (tenant_id, program_id, control_id) (server/controlAssessments.ts, server/routes/controls.ts).
   CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);
+  ALTER TABLE control_assessments DROP CONSTRAINT IF EXISTS unq_tenant_control;
+
+  -- program_id is required on every new or changed row. Each check is added unvalidated: it applies to writes from now on without
+  -- scanning the table (a plain NOT NULL column constraint scans every row whatever the row policies say, and would stop the boot on a
+  -- row that is not backfilled yet). Validating the checks is a later step, once every tenant's rows are backfilled.
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'control_assessments_program_required' AND conrelid = 'control_assessments'::regclass) THEN
+      ALTER TABLE control_assessments ADD CONSTRAINT control_assessments_program_required CHECK (program_id IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'control_assessment_events_program_required' AND conrelid = 'control_assessment_events'::regclass) THEN
+      ALTER TABLE control_assessment_events ADD CONSTRAINT control_assessment_events_program_required CHECK (program_id IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evidence_metadata_program_required' AND conrelid = 'evidence_metadata'::regclass) THEN
+      ALTER TABLE evidence_metadata ADD CONSTRAINT evidence_metadata_program_required CHECK (program_id IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ssp_import_jobs_program_required' AND conrelid = 'ssp_import_jobs'::regclass) THEN
+      ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_program_required CHECK (program_id IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'staged_controls_program_required' AND conrelid = 'staged_controls'::regclass) THEN
+      ALTER TABLE staged_controls ADD CONSTRAINT staged_controls_program_required CHECK (program_id IS NOT NULL) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vm_poam_items_program_required' AND conrelid = 'vm_poam_items'::regclass) THEN
+      ALTER TABLE vm_poam_items ADD CONSTRAINT vm_poam_items_program_required CHECK (program_id IS NOT NULL) NOT VALID;
+    END IF;
+  END
+  $$;
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
@@ -735,7 +779,45 @@ ${discoveryPolicies}
 `;
 }
 
+const programContext = "NULLIF(current_setting('app.current_program_id', true), '')";
+const tenantContext = "NULLIF(current_setting('app.current_tenant_id', true), '')";
+/** The tenant's default program: what a row that has no program yet (not backfilled) belongs to. Row-independent, so evaluated once per query. */
+const tenantDefaultProgram = `(SELECT p.id FROM programs p WHERE p.tenant_id = ${tenantContext} AND p.is_default)`;
+
+/**
+ * The program-isolation policy of every RLS_PROGRAM_TABLES table, created once (a re-run finds it in pg_policies and skips).
+ *
+ * RESTRICTIVE: it is AND-ed with the tenant policy, so a row must belong to the session's tenant AND to the session's program.
+ * USING: a row without a program counts as the tenant's default program's, so the lazy backfill (server/programs.ts) can still see and
+ * adopt it. WITH CHECK: no such mapping, a written row must carry exactly the session's program. A session with no program set
+ * (`app.current_program_id` unset or empty) sees no rows and cannot write: every path that touches these tables sets both settings.
+ */
+export function buildProgramRlsSql(tables: readonly string[] = RLS_PROGRAM_TABLES): string {
+  const policies = tables
+    .map((table) => {
+      const name = rlsProgramPolicyName(table);
+      return `    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies WHERE schemaname = current_schema() AND tablename = '${table}' AND policyname = '${name}'
+    ) THEN
+      CREATE POLICY ${name} ON ${table}
+        AS RESTRICTIVE
+        FOR ALL
+        USING (COALESCE(program_id, ${tenantDefaultProgram}) = ${programContext})
+        WITH CHECK (program_id = ${programContext});
+    END IF;`;
+    })
+    .join('\n\n');
+
+  return `
+  DO $$
+  BEGIN
+${policies}
+  END
+  $$;
+`;
+}
+
 /** Complete, idempotent schema bootstrap executed by initDb(). */
 export function buildSchemaSql(): string {
-  return `${TABLES_SQL}\n${buildRlsSql()}`;
+  return `${TABLES_SQL}\n${buildRlsSql()}\n${buildProgramRlsSql()}`;
 }

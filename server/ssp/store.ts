@@ -33,12 +33,13 @@ export function __resetSspStoreForTests(): void {
   memoryStaged.clear();
 }
 
-async function inTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient) => Promise<T>, programId?: string): Promise<T> {
+/** One transaction under the tenant's AND the program's RLS context: ssp_import_jobs and staged_controls have a program row policy. */
+async function inTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient) => Promise<T>, programId: string): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
-    if (programId) await client.query('SELECT set_config($1, $2, true)', ['app.current_program_id', programId]);
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_program_id', programId]);
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
@@ -200,7 +201,8 @@ export interface JobPatch {
 }
 
 /** The job by id inside its tenant, whatever its program: for the job's own updates (the id is unique). */
-async function getJobById(tenantId: string, id: string): Promise<SspImportJob | null> {
+async function getJobById(scope: ProgramScope, id: string): Promise<SspImportJob | null> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const j = memoryJobs.get(id);
     return j && j.tenantId === tenantId ? { ...j } : null;
@@ -208,10 +210,11 @@ async function getJobById(tenantId: string, id: string): Promise<SspImportJob | 
   return inTenantTx(tenantId, async (c) => {
     const res = await c.query('SELECT * FROM ssp_import_jobs WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
     return res.rows[0] ? rowToJob(res.rows[0]) : null;
-  });
+  }, scope.programId);
 }
 
-export async function updateJob(tenantId: string, id: string, patch: JobPatch): Promise<SspImportJob | null> {
+export async function updateJob(scope: ProgramScope, id: string, patch: JobPatch): Promise<SspImportJob | null> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const j = memoryJobs.get(id);
     if (!j || j.tenantId !== tenantId) return null;
@@ -235,12 +238,12 @@ export async function updateJob(tenantId: string, id: string, patch: JobPatch): 
   if (patch.error !== undefined) add('error', patch.error);
   if (patch.startedAt !== undefined) add('started_at', patch.startedAt);
   if (patch.finishedAt !== undefined) add('finished_at', patch.finishedAt);
-  if (sets.length === 0) return getJobById(tenantId, id);
+  if (sets.length === 0) return getJobById(scope, id);
   vals.push(id, tenantId);
   return inTenantTx(tenantId, async (c) => {
     const res = await c.query(`UPDATE ssp_import_jobs SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND tenant_id = $${vals.length} RETURNING *`, vals as never[]);
     return res.rows[0] ? rowToJob(res.rows[0]) : null;
-  });
+  }, scope.programId);
 }
 
 export async function deleteJob(scope: ProgramScope, id: string): Promise<boolean> {

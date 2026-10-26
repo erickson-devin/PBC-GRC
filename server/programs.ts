@@ -214,7 +214,8 @@ export async function ensureDefaultProgram(tenantId: string): Promise<Program> {
 
 /**
  * Backfill: gives every row of the tenant that has no program the tenant's default program, in one transaction under the tenant's RLS
- * context. It cannot be a plain UPDATE at boot, because FORCE RLS hides every tenant from a session with no tenant context.
+ * context and the default program's (the program row policies need both). It cannot be a plain UPDATE at boot, because FORCE RLS hides
+ * every tenant from a session with no tenant context.
  * Idempotent: a second run changes nothing. Returns how many rows each table adopted.
  */
 export async function migrateTenantToPrograms(tenantId: string): Promise<MigrationCounts> {
@@ -223,11 +224,15 @@ export async function migrateTenantToPrograms(tenantId: string): Promise<Migrati
   if (isMemory()) {
     const program = await resolveDefaultProgram(tenantId);
     for (const table of PROGRAM_SCOPED_TABLES) {
-      counts[table] = (await queryWithTenant(tenantId, update(table), [program.id, tenantId])).rowCount ?? 0;
+      // in the default program's context, like PostgreSQL below: the row policy lets only that context adopt the legacy rows
+      counts[table] = (await queryWithProgram({ tenantId, programId: program.id }, update(table), [program.id, tenantId])).rowCount ?? 0;
     }
   } else {
     await inTenantTx(tenantId, async (q) => {
-      const program = await selectOrCreateDefault(q, tenantId);
+      const program = await selectOrCreateDefault(q, tenantId); // the program insert needs only the tenant policy
+      // The program policy of the six tables: USING maps a row with no program to the default program, WITH CHECK demands the program
+      // the row is given. So the UPDATEs run with BOTH settings, the default program being the current one.
+      await q('SELECT set_config($1, $2, true)', ['app.current_program_id', program.id]);
       for (const table of PROGRAM_SCOPED_TABLES) counts[table] = (await q(update(table), [program.id, tenantId])).rowCount ?? 0;
     });
   }
@@ -472,7 +477,7 @@ export async function countProgramUsage(scope: ProgramScope): Promise<ProgramUsa
   let evidence: number;
   let imports: number;
   if (isMemory()) {
-    // The emulator answers with whole rows (and keeps a legacy row without a program visible): count the program's own base rows
+    // The emulator answers with whole rows (WHERE is not evaluated): count the program's own base rows
     const rows = (await queryWithProgram(scope, 'SELECT * FROM evidence_metadata WHERE tenant_id = $1 AND program_id = $2', params)).rows;
     evidence = rows.filter((r) => r.tenant_id === tenantId && r.program_id === programId && r.sync_status !== 'inherited').length;
     imports = 0; // the SSP import store in memory is not program-aware yet

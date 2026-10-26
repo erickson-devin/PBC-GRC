@@ -1,5 +1,5 @@
 import './testEnv';
-import { __resetMemoryTenantsForTests, createTenantWithOwner, queryWithProgram, queryWithTenant } from '../server/db';
+import { __resetMemoryTenantsForTests, __seedLegacyRowForTests, createTenantWithOwner, queryWithProgram, queryWithTenant } from '../server/db';
 import {
   DEFAULT_PROGRAM_NAME,
   MAX_PROGRAMS_PER_TENANT,
@@ -153,23 +153,16 @@ async function main() {
   console.log('\n--- legacy rows are adopted by the default program ---');
   __resetProgramsForTests();
   const legacyTenant = 'legacy-1';
-  await queryWithTenant(
-    legacyTenant,
-    'INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, responsible_role, updated_by) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (tenant_id, control_id) DO NOTHING RETURNING *',
-    [legacyTenant, 'AC.L1-3.1.1', 'MET', 'legacy notes', 'IT / Security Lead', 'tester']
-  );
-  await queryWithTenant(
-    legacyTenant,
-    `INSERT INTO evidence_metadata (id, tenant_id, control_id, file_name, file_size, mime_type, gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()) RETURNING *`,
-    ['ev-legacy', legacyTenant, 'AC.L1-3.1.1', 'old.pdf', 5, 'application/pdf', '/vault/old', 'h', 'local_storage', 'old', 'tester']
-  );
+  // rows written before programs existed: no program_id (the fail-closed store refuses such a write, so the test hook seeds them)
+  __seedLegacyRowForTests(legacyTenant, 'control_assessments', { control_id: 'AC.L1-3.1.1', status: 'MET', implementation_notes: 'legacy notes', updated_by: 'tester' });
+  __seedLegacyRowForTests(legacyTenant, 'evidence_metadata', { id: 'ev-legacy', control_id: 'AC.L1-3.1.1', file_name: 'old.pdf', file_size: 5, mime_type: 'application/pdf', gcs_path: '/vault/old', file_hash: 'h', description: 'old', uploaded_by: 'tester' });
   const before = (await queryWithTenant(legacyTenant, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [legacyTenant])).rows;
-  assert(before.length === 1 && before[0].program_id === null, 'a legacy control row has no program', before);
+  assert(before.length === 0, 'a legacy row (no program) is invisible to a tenant-only query: the program policy fails closed', before);
   const counts1 = await migrateTenantToPrograms(legacyTenant);
   const def = (await listPrograms(legacyTenant))[0];
-  const after = (await queryWithTenant(legacyTenant, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [legacyTenant])).rows;
-  const evAfter = (await queryWithTenant(legacyTenant, 'SELECT * FROM evidence_metadata WHERE tenant_id = $1', [legacyTenant])).rows;
+  const defScope = { tenantId: legacyTenant, programId: def.id };
+  const after = (await queryWithProgram(defScope, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [legacyTenant])).rows;
+  const evAfter = (await queryWithProgram(defScope, 'SELECT * FROM evidence_metadata WHERE tenant_id = $1', [legacyTenant])).rows;
   assert(Boolean(def?.isDefault) && after[0]?.program_id === def.id && evAfter.length >= 1 && evAfter.every((r) => r.program_id === def.id), "after migrateTenantToPrograms the rows' program_id is the default program (evidence and its inherited copies)", [def?.id, after[0]?.program_id, evAfter.map((r) => r.program_id)]);
   assert(counts1.control_assessments === 1 && counts1.evidence_metadata === evAfter.length && counts1.total === 1 + evAfter.length, 'the first run reports the rows it adopted (one answer, every evidence row)', counts1);
   const counts2 = await migrateTenantToPrograms(legacyTenant);
@@ -177,13 +170,9 @@ async function main() {
   assert((await listPrograms(legacyTenant)).length === 1, 'the migration created no second program');
   const other = await migrateTenantToPrograms('legacy-2');
   assert(other.total === 0, "one tenant's migration touches nothing of another tenant");
-  assert((await queryWithTenant(legacyTenant, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [legacyTenant])).rows.length === 1, 'the adopted row is still the only row');
+  assert((await queryWithProgram(defScope, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [legacyTenant])).rows.length === 1, 'the adopted row is still the only row');
   await ensureDefaultProgram('legacy-3'); // runs the migration once; a legacy row written afterwards stays until it is migrated again
-  await queryWithTenant(
-    'legacy-3',
-    'INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, responsible_role, updated_by) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (tenant_id, control_id) DO NOTHING RETURNING *',
-    ['legacy-3', 'AC.L1-3.1.2', 'NOT_STARTED', '', 'IT / Security Lead', 'tester']
-  );
+  __seedLegacyRowForTests('legacy-3', 'control_assessments', { control_id: 'AC.L1-3.1.2', status: 'NOT_STARTED', updated_by: 'tester' });
   const late = await migrateTenantToPrograms('legacy-3');
   assert(late.control_assessments === 1, 'migrateTenantToPrograms can be called again to adopt a row written after the first run', late);
 
@@ -202,7 +191,7 @@ async function main() {
   assert(!(await queryWithProgram(scopeB, select, ['t-iso'])).rows.some((r) => r.control_id === 'X.1'), "B does not see A's row");
   assert((await queryWithProgram({ tenantId: 't-iso2', programId: pa.id }, select, ['t-iso2'])).rows.length === 0, "a second tenant, even with A's program id, sees nothing");
   assert((await queryWithProgram({ tenantId: 't-iso2', programId: pa.id }, select, ['t-iso'])).rows.length === 0, "a second tenant asking for the first tenant's id still sees nothing");
-  assert((await queryWithTenant('t-iso', select, ['t-iso'])).rows.some((r) => r.control_id === 'X.1'), 'a query with no program is still tenant-wide (behaviour unchanged)');
+  assert((await queryWithTenant('t-iso', select, ['t-iso'])).rows.length === 0, 'a tenant-only query sees nothing (fails closed)');
   const [, mismatchParams] = control('t-iso', pa.id, 'X.2', 'MET');
   const mismatch = await queryWithProgram(scopeB, insertSql, [...mismatchParams]);
   assert(mismatch.rowCount === 0 && mismatch.rows.length === 0, "an insert under B for A's program id is refused");

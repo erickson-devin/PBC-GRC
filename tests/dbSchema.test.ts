@@ -1,6 +1,6 @@
 import { assertSupportedPostgresVersion, buildPoolConfig } from '../server/db';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
-import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql, rlsPolicyName } from '../server/schema';
+import { DISCOVERY_POLICIES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildProgramRlsSql, buildRlsSql, buildSchemaSql, rlsPolicyName, rlsProgramPolicyName } from '../server/schema';
 
 /**
  * Pure checks (no database needed) on the schema bootstrap and the pool configuration:
@@ -175,7 +175,7 @@ assert(fkCount === FK_TABLES.length, 'P1: five composite (tenant_id, program_id)
 for (const t of FK_TABLES) {
   assert(programDdl.includes('ALTER TABLE ' + t + ' ADD CONSTRAINT fk_' + t + '_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id)'), 'P1: ' + t + ' has the composite program foreign key');
 }
-assert(!programDdl.includes('fk_control_assessment_events_program') && !programDdl.includes('ALTER TABLE control_assessment_events ADD CONSTRAINT'), 'P1: control_assessment_events has no foreign key (the history outlives the program)');
+assert(!programDdl.includes('fk_control_assessment_events_program') && !programDdl.includes('ALTER TABLE control_assessment_events ADD CONSTRAINT fk_'), 'P1: control_assessment_events has no foreign key (the history outlives the program)');
 assert(
   programDdl.includes('ALTER TABLE control_assessments ADD CONSTRAINT fk_control_assessments_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
     programDdl.includes('ALTER TABLE staged_controls ADD CONSTRAINT fk_staged_controls_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE'),
@@ -188,8 +188,9 @@ assert(
 assert(TABLES_SQL.indexOf('ADD CONSTRAINT control_mappings_mapping_type_check') > 0 && TABLES_SQL.indexOf('ADD CONSTRAINT control_mappings_mapping_type_check') < programsAt, 'P1: the program DDL starts after control_mappings_mapping_type_check (the end of the old schema)');
 assert(programsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_admins') && programsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_users'), 'P1: the program DDL sits after the VM block and the local_users block, which are not edited');
 const fkAdds = (programDdl.match(/ADD CONSTRAINT fk_/g) || []).length;
-const fkGuards = (programDdl.match(/conname = /g) || []).length;
-assert(fkAdds === FK_TABLES.length && fkAdds === fkGuards, 'P1: every foreign key is added once, behind a pg_constraint guard (' + fkAdds + ' adds, ' + fkGuards + ' guards)');
+const requiredAdds = programDdl.split('_program_required CHECK (program_id IS NOT NULL) NOT VALID;').length - 1;
+const guards = (programDdl.match(/conname = /g) || []).length;
+assert(fkAdds === FK_TABLES.length && fkAdds + requiredAdds === guards, 'P1: every foreign key and every program_required check is added once, behind a pg_constraint guard (' + fkAdds + ' keys + ' + requiredAdds + ' checks, ' + guards + ' guards)');
 assert(
   TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_assessment_events_program ON control_assessment_events (tenant_id, program_id, control_id, created_at DESC);') &&
     TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_evidence_metadata_program ON evidence_metadata (tenant_id, program_id, uploaded_at DESC);') &&
@@ -198,8 +199,44 @@ assert(
   'P1: the four program indexes exist'
 );
 assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);'), 'P1: the per-program control key is added');
-assert(!programDdl.includes('unq_tenant_control') && !programDdl.includes('RESTRICTIVE') && !programDdl.includes('NOT VALID') && !programDdl.includes('SET NOT NULL'), 'P1: nothing of the enforcement wave yet (the old unique key stays, no restrictive policy, no NOT VALID check, no NOT NULL)');
-assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).length === RLS_TENANT_TABLES.length, 'P1: no program row policy yet; every policy is still a tenant policy');
+assert(!programDdl.includes('SET NOT NULL'), 'P1: program_id is never made NOT NULL with SET NOT NULL (it scans every row, whatever the row policies say)');
+assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).length === RLS_TENANT_TABLES.length, 'P1: buildRlsSql() holds only the tenant policies (the program policies are buildProgramRlsSql())');
+
+console.log('\n--- Programs: database-enforced isolation (P5) ---');
+const programRls = buildProgramRlsSql();
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify(PROGRAM_SCOPED), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables', RLS_PROGRAM_TABLES);
+assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
+assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
+assert(
+  (schema.match(/WITH CHECK/g) || []).length === RLS_TENANT_TABLES.length + RLS_PROGRAM_TABLES.length,
+  'P5: every tenant and every program policy has a WITH CHECK (' + (schema.match(/WITH CHECK/g) || []).length + ' of ' + (RLS_TENANT_TABLES.length + RLS_PROGRAM_TABLES.length) + ')'
+);
+assert((programRls.match(/WITH CHECK/g) || []).length === RLS_PROGRAM_TABLES.length && (programRls.match(/CREATE POLICY/g) || []).length === RLS_PROGRAM_TABLES.length, 'P5: one policy with a WITH CHECK per program table');
+for (const t of RLS_PROGRAM_TABLES) {
+  const name = rlsProgramPolicyName(t);
+  const start = programRls.indexOf('CREATE POLICY ' + name + ' ON ' + t);
+  const block = start < 0 ? '' : programRls.slice(start, programRls.indexOf('END IF;', start));
+  assert(name === 'rls_' + t + '_program_isolation' && start >= 0, 'P5: ' + t + ': CREATE POLICY ' + name);
+  assert(block.includes('AS RESTRICTIVE') && block.includes('FOR ALL') && block.indexOf('AS RESTRICTIVE') < block.indexOf('FOR ALL'), 'P5: ' + t + ': the policy is RESTRICTIVE and FOR ALL (AND-ed with the tenant policy)');
+  assert(programRls.includes("policyname = '" + name + "'"), 'P5: ' + t + ': the policy is created once (pg_policies guard)');
+  const usingAt = block.indexOf('USING (');
+  const checkAt = block.indexOf('WITH CHECK (');
+  const using = usingAt < 0 || checkAt < usingAt ? '' : block.slice(usingAt + 'USING ('.length, checkAt);
+  const withCheck = checkAt < 0 ? '' : block.slice(checkAt + 'WITH CHECK ('.length, block.lastIndexOf(');'));
+  assert(using.includes("COALESCE(program_id, (SELECT p.id FROM programs p WHERE p.tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '') AND p.is_default))") && using.includes("= NULLIF(current_setting('app.current_program_id', true), '')"), 'P5: ' + t + ': USING maps a row with no program to the tenant default program, then compares with the session program', using);
+  assert(withCheck === "program_id = NULLIF(current_setting('app.current_program_id', true), '')" && !/COALESCE/.test(withCheck), 'P5: ' + t + ': WITH CHECK has no COALESCE (a written row must carry exactly the session program)', withCheck);
+}
+assert(!rls.includes('RESTRICTIVE') && DISCOVERY_POLICIES.every((p) => !p.using.includes('current_program_id')), 'P5: no tenant or discovery policy is restrictive or keys on the program');
+assert(!programRls.includes('ON programs') && !programRls.includes('rls_programs_program_isolation'), 'P5: programs itself has no program policy (only the tenant policy)');
+const uniqueNew = TABLES_SQL.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);');
+const dropOld = TABLES_SQL.indexOf('ALTER TABLE control_assessments DROP CONSTRAINT IF EXISTS unq_tenant_control;');
+assert(uniqueNew > 0 && dropOld > uniqueNew, 'P5: DROP CONSTRAINT IF EXISTS unq_tenant_control comes after the per-program unique index exists');
+for (const t of PROGRAM_SCOPED) {
+  const c = t + '_program_required';
+  const guard = "conname = '" + c + "' AND conrelid = '" + t + "'::regclass";
+  assert(programDdl.includes(guard) && programDdl.includes('ALTER TABLE ' + t + ' ADD CONSTRAINT ' + c + ' CHECK (program_id IS NOT NULL) NOT VALID;'), 'P5: ' + t + ': program_id IS NOT NULL check, NOT VALID, added once');
+}
+assert((programDdl.match(/NOT VALID/g) || []).length === PROGRAM_SCOPED.length, 'P5: exactly the six NOT VALID checks');
 
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);

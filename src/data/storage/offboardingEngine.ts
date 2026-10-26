@@ -253,6 +253,8 @@ export async function executeCryptographicDestruction(params: {
       `pbc_assessment_${params.tenantId}`,
       `pbc_audit_ledger_${params.tenantId}`,
       `pbc_evidence_${params.tenantId}`,
+      // every other program's assessment cache (pbc_cmmc_assessment_v3_<tenant>::<program>) and the active-program choice
+      ...StorageService.listProgramKeys(params.tenantId),
     ];
 
     keysToPurge.forEach(key => {

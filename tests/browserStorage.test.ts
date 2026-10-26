@@ -182,6 +182,23 @@ async function main() {
   await runBrowserStorageScrub(st5, (m) => logs3.push(m));
   assert(logs3.length === 0, 'S11b nothing changed means no log line', logs3);
 
+  // S14: a program cache of a server-backed tenant is scrubbed like the tenant cache; a browser-only tenant's is kept
+  const st8 = new MemoryStorage();
+  st8.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'brw1' }]));
+  st8.setItem(ASSESSMENT_KEY_PREFIX + 'srv1::p2', JSON.stringify(makeState('srv1', `z ${MARKER}`)));
+  st8.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', JSON.stringify(makeState('brw1', `z ${MARKER}`)));
+  const r8 = await runBrowserStorageScrub(st8, () => undefined);
+  assert(r8.scrubbed === 1 && r8.keptBrowserOnly === 1, 'S14a the program cache of a server-backed tenant is scrubbed, the browser-only tenant is kept', r8);
+  assert(!st8.getItem(ASSESSMENT_KEY_PREFIX + 'srv1::p2')!.includes(MARKER) && st8.getItem(ASSESSMENT_KEY_PREFIX + 'brw1')!.includes(MARKER), 'S14b srv1::p2 holds no marker, brw1 keeps it');
+
+  // S15: a program save goes to the program's key, strips the notes, and leaves the legacy key alone
+  globalStore.clear();
+  globalStore.setItem(ASSESSMENT_KEY_PREFIX + 't1', 'legacy-untouched');
+  StorageService.saveAssessment('t1', makeState('t1', MARKER), { segment: 'p2' });
+  const p2Raw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 't1::p2');
+  assert(p2Raw !== null && !p2Raw.includes(MARKER), 'S15a saveAssessment with a segment writes <key>::p2 without the notes');
+  assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 't1') === 'legacy-untouched', 'S15b the legacy key is untouched by a program save');
+
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
@@ -216,6 +233,8 @@ async function main() {
   assert(computeNotesStatus({ ...base, liveControlsTenantId: 'other' }) === 'loading', 'N3 controls of another tenant, no error, is loading');
   assert(computeNotesStatus({ ...base, syncError: 'offline' }) === 'unavailable', 'N4 a sync error is unavailable');
   assert(computeNotesStatus({ ...base, hasToken: false }) === 'unavailable', 'N5 no token is unavailable');
+  assert(computeNotesStatus({ ...base, liveControlsTenantId: 't1::pA', tenantId: 't1::pB' }) === 'loading', 'N6 controls loaded for program A are not loaded for program B of the same tenant');
+  assert(computeNotesStatus({ ...base, liveControlsTenantId: 't1::pB', tenantId: 't1::pB' }) === 'loaded', 'N7 controls loaded for the program on screen are loaded');
 
   console.log('\n--- Ledger redaction ---');
   const hex64 = 'a'.repeat(64);

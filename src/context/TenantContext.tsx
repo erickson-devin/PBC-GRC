@@ -29,6 +29,15 @@ import type { AssetInput } from '../data/telemetry/assetScope';
 import { notifyAssetsChanged } from '../services/assetService';
 import type { EnclaveAsset } from '../types/telemetry';
 import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
+import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
+import {
+  activeProgramStorageKey,
+  isCurrentResponse,
+  pickActiveProgramId,
+  programCacheSegment,
+  programScopeKey,
+} from '../data/programSync';
+import { programBaselineToCia } from '../data/programScope';
 import {
   ServerInvitation,
   buildTeam,
@@ -51,12 +60,14 @@ const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
 const LIVE_ACTIVE_TENANT_ID_KEY = 'pbc_live_active_tenant_v4';
 const CURRENT_USER_KEY = 'pbc_active_user_v4';
 const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
-const ACTIVE_FRAMEWORK_KEY = 'pbc_active_framework_v1';
-const ACTIVE_BASELINE_TIER_KEY = 'pbc_active_baseline_tier_v1';
+// Overlays stay per browser (a program setting later); the framework, baseline tier and CIA triad now come from the active program
 const ACTIVE_OVERLAY_FILTERS_KEY = 'pbc_active_overlay_filters_v1';
 
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [
+  'pbc_active_framework_v1', // per-browser framework / baseline / CIA choices: derived from the active program now
+  'pbc_active_baseline_tier_v1',
+  'pbc_active_cia_triad',
   'pbc_license_requests_v4', // lead capture of the removed public site
   'pbc_demo_tenants_v4', // the removed demo sandbox
   'pbc_demo_active_tenant_v4',
@@ -196,6 +207,25 @@ export interface TenantSyncState {
   error: string | null;
 }
 
+/** 'unsupported': a browser-only tenant has no server, so no programs (one implicit default boundary). */
+export type ProgramsStatus = 'idle' | 'loading' | 'ready' | 'error' | 'unsupported';
+
+interface ProgramsState {
+  tenantId: string;
+  programs: Program[];
+  status: ProgramsStatus;
+  activeId: string | null;
+}
+
+const NO_PROGRAMS: Program[] = [];
+
+/** The tier a program's baseline stands for (the tier the live controls request and the matrix label use). */
+function baselineToTier(baseline: ProgramBaseline | null | undefined): BaselineTier {
+  if (baseline === 'MODERATE') return 'MOD_MOD_MOD';
+  if (baseline === 'HIGH') return 'HIGH_HIGH_HIGH';
+  return 'LOW_LOW_LOW';
+}
+
 interface TenantContextType {
   tenants: Tenant[];
   currentTenant: Tenant;
@@ -293,9 +323,29 @@ interface TenantContextType {
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
   // Live Sync Engine (PostgreSQL)
   liveControls: Record<string, ControlState> | null;
-  /** Tenant the live controls were last loaded for (null before the first successful load, on a failure or a switch). */
-  liveControlsTenantId: string | null;
+  /**
+   * What the live controls were last loaded for: the tenant id, or `tenant::program` while a program is active (compare it with
+   * programScopeKey). Null before the first successful load, on a failure, and from the moment a program switch starts.
+   */
+  liveScopeKey: string | null;
   liveEvidence: EvidenceItem[] | null;
+  // Programs (authorization boundaries) of the active tenant
+  /** The tenant's programs, archived ones included (empty for a browser-only tenant). */
+  programs: Program[];
+  /** The program being shown; null for a browser-only tenant, before the list loads, or when it cannot be loaded (the server then serves the default program). */
+  activeProgram: Program | null;
+  programsStatus: ProgramsStatus;
+  /** Switches the active program (refused: unknown, archived, or a browser-only tenant). Clears the live data at once and reloads it for the new program. */
+  switchProgram: (programId: string) => boolean;
+  /** Re-fetches the program list of the active tenant (or `tenantId`). */
+  refreshPrograms: (tenantId?: string) => Promise<void>;
+  createProgram: (input: ProgramInput) => Promise<Program>;
+  updateProgram: (programId: string, updates: ProgramUpdate) => Promise<Program>;
+  archiveProgram: (programId: string) => Promise<void>;
+  unarchiveProgram: (programId: string) => Promise<void>;
+  deleteProgram: (programId: string) => Promise<void>;
+  /** Who may create, edit, archive and delete programs (TENANT_OWNER and MSP_ADMIN). */
+  canManagePrograms: boolean;
   isSyncing: boolean;
   syncError: string | null;
   /** State of the last sync of the tenant list (and the user's roles in it) with GET /api/v1/tenants. */
@@ -310,7 +360,9 @@ interface TenantContextType {
     tenantToFetch?: string,
     frameworkToFetch?: ComplianceFramework,
     baselineToFetch?: BaselineTier,
-    overlayToFetch?: OverlayParameter
+    overlayToFetch?: OverlayParameter,
+    /** The program to load (default: the active one; null: the tenant's default program). */
+    programToFetch?: string | null
   ) => Promise<void>;
   updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState | null>;
   createLiveEvidenceUploadUrl: (payload: {
@@ -320,18 +372,23 @@ interface TenantContextType {
     mimeType: string;
     fileHash: string;
     description?: string;
-  }) => Promise<UploadUrlResponse | null>;
-  // Multi-Framework & Baseline Architecture
+  }, programId?: string | null) => Promise<UploadUrlResponse | null>;
+  // Multi-Framework & Baseline Architecture (framework, baseline and CIA triad are derived from the active program)
+  /** The active program's framework, else the tenant's primary framework. */
   activeFramework: ComplianceFramework;
+  /** Switches to a program that has this framework (the default one first); a no-op when there is none. */
   setActiveFramework: (framework: ComplianceFramework) => void;
+  /** The active program's baseline as a tier (LOW / MODERATE / HIGH; LOW_LOW_LOW without one). */
   activeBaselineTier: BaselineTier;
-  setActiveBaselineTier: (tier: BaselineTier) => void;
   activeOverlayFilters: OverlayFilters;
   setActiveOverlayFilters: React.Dispatch<React.SetStateAction<OverlayFilters>>;
   toggleNonNetworkedOverlay: () => void;
   toggleOverlayFilter: (key: keyof OverlayFilters) => void;
+  /** The active program's baseline as a triad (all controls without a baseline). Read-only: the baseline is fixed when the program is created. */
   ciaTriad: CiaTriadSelection;
+  /** @deprecated No effect: the CIA triad follows the program's baseline. Removed with the CIA editor of the old framework menu. */
   setCiaImpact: (dimension: 'confidentiality' | 'integrity' | 'availability', level: ImpactLevel) => void;
+  /** @deprecated No effect (see setCiaImpact). */
   toggleAllControlsApplied: () => void;
 }
 
@@ -715,31 +772,168 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [migrateTenantToServer]);
 
 
-  // Multi-Framework & Baseline State
-  const [activeFramework, setActiveFrameworkState] = useState<ComplianceFramework>(() => {
-    try {
-      const saved = localStorage.getItem(ACTIVE_FRAMEWORK_KEY);
-      if (saved && ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'].includes(saved)) {
-        return saved as ComplianceFramework;
-      }
-    } catch {
-      // framework storage load fallback
-    }
-    return 'CMMC_L1';
-  });
+  // ============================================================================
+  // Programs (authorization boundaries): one framework, baseline and set of control answers each
+  // ============================================================================
+  // The live data (controls + evidence) the Express API returned for the active scope. `liveScopeKey` names that scope
+  // (tenant, or tenant::program): nothing may be merged, shown as loaded or saved unless it matches the scope on screen.
+  const [liveControls, setLiveControls] = useState<Record<string, ControlState> | null>(null);
+  const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [liveScopeKey, setLiveScopeKey] = useState<string | null>(null);
+  // Request sequence of the live data: every load takes a number and its answer is dropped unless it is still the newest, so a
+  // slow response for one program (or tenant) can never land in another. A program switch bumps it too.
+  const liveSeq = useRef(0);
 
-  const [activeBaselineTier, setActiveBaselineTierState] = useState<BaselineTier>(() => {
-    try {
-      const saved = localStorage.getItem(ACTIVE_BASELINE_TIER_KEY);
-      if (saved && ['LOW_LOW_LOW', 'MOD_MOD_MOD', 'LOW_LOW_MOD', 'HIGH_HIGH_HIGH', 'ALL_CONTROLS'].includes(saved)) {
-        return saved as BaselineTier;
-      }
-    } catch {
-      // baseline tier storage load fallback
-    }
-    return 'LOW_LOW_LOW';
-  });
+  // The programs of the active tenant (server-backed tenants only). `programsRef` is what async code reads: a render lags a commit.
+  const [programsState, setProgramsState] = useState<ProgramsState>({ tenantId: '', programs: NO_PROGRAMS, status: 'idle', activeId: null });
+  const programsRef = useRef(programsState);
+  const programsSeq = useRef(0);
+  const commitPrograms = useCallback((next: ProgramsState) => {
+    programsRef.current = next;
+    setProgramsState(next);
+  }, []);
+  /** Forgets the live data of the previous scope at once and invalidates every load still in flight. */
+  const dropLiveData = useCallback(() => {
+    liveSeq.current++;
+    setLiveControls(null);
+    setLiveEvidence(null);
+    setLiveScopeKey(null);
+  }, []);
+  /** The program a tenant's requests go to right now (null: none known yet, the server serves its default program). */
+  const programIdFor = useCallback((tenantId: string): string | null => {
+    const ps = programsRef.current;
+    return ps.tenantId === tenantId ? ps.activeId : null;
+  }, []);
 
+  const programsForTenant = programsState.tenantId === currentTenant.id && Boolean(currentTenant.serverBacked);
+  const programs = programsForTenant ? programsState.programs : NO_PROGRAMS;
+  const activeProgram = useMemo(
+    () => programs.find(p => p.id === programsState.activeId && !p.archived) ?? null,
+    [programs, programsState.activeId]
+  );
+  const activeProgramId = activeProgram?.id ?? null;
+  const programsStatus: ProgramsStatus = !currentTenant.serverBacked ? 'unsupported' : programsForTenant ? programsState.status : 'idle';
+
+  const refreshPrograms = useCallback(async (tenantIdArg?: string): Promise<void> => {
+    const tenantId = tenantIdArg ?? currentTenantIdRef.current;
+    if (!liveTenantsRef.current.find(t => t.id === tenantId)?.serverBacked) return;
+    const seq = ++programsSeq.current;
+    const before = programsRef.current;
+    const sameTenant = before.tenantId === tenantId;
+    if (!sameTenant || before.status === 'idle') {
+      commitPrograms({ tenantId, programs: sameTenant ? before.programs : NO_PROGRAMS, status: 'loading', activeId: sameTenant ? before.activeId : null });
+    }
+    try {
+      const list = await ApiClient.listPrograms(tenantId, { includeArchived: true });
+      // Dropped when a newer refresh started or the user moved to another tenant meanwhile
+      if (!isCurrentResponse(seq, programsSeq.current) || tenantId !== currentTenantIdRef.current) return;
+      const prev = programsRef.current;
+      const prevActive = prev.tenantId === tenantId ? prev.activeId : null;
+      let stored: string | null = null;
+      try { stored = localStorage.getItem(activeProgramStorageKey(tenantId)); } catch {}
+      const activeId = pickActiveProgramId(prevActive ?? stored, list);
+      // The active program changed under the screen (first load, archived, deleted): the live data of the old one must go
+      if (activeId !== prevActive) dropLiveData();
+      commitPrograms({ tenantId, programs: list, status: 'ready', activeId });
+    } catch (err: unknown) {
+      if (!isCurrentResponse(seq, programsSeq.current) || tenantId !== currentTenantIdRef.current) return;
+      console.warn('[Programs] Could not load the programs from the server:', errorMessage(err));
+      const prev = programsRef.current;
+      const same = prev.tenantId === tenantId;
+      commitPrograms({ tenantId, programs: same ? prev.programs : NO_PROGRAMS, status: 'error', activeId: same ? prev.activeId : null });
+    }
+  }, [commitPrograms, dropLiveData]);
+
+  // Programs follow the active tenant: loaded from the server, or none for a tenant that only exists in this browser
+  useEffect(() => {
+    if (!currentTenant.serverBacked) {
+      programsSeq.current++;
+      commitPrograms({ tenantId: currentTenant.id, programs: NO_PROGRAMS, status: 'unsupported', activeId: null });
+      return;
+    }
+    if (ApiClient.getToken()) void refreshPrograms(currentTenant.id);
+  }, [currentTenant.id, currentTenant.serverBacked, refreshPrograms, commitPrograms]);
+
+  /**
+   * Switch sequence: validate the program (it must exist, not be archived), remember the choice, bump the request sequence and
+   * clear the live controls / evidence / scope key in the same render, then the live-data effect loads the new program (and
+   * AssessmentContext reloads its cache from the new program's key). Nothing of the old program is shown, merged or saved after it.
+   */
+  const switchProgram = useCallback((programId: string): boolean => {
+    const tenantId = currentTenantIdRef.current;
+    const ps = programsRef.current;
+    if (ps.tenantId !== tenantId || !liveTenantsRef.current.find(t => t.id === tenantId)?.serverBacked) return false;
+    const target = ps.programs.find(p => p.id === programId);
+    if (!target || target.archived) return false;
+    if (ps.activeId === programId) return true;
+    try {
+      localStorage.setItem(activeProgramStorageKey(tenantId), programId);
+    } catch {
+      // storage unavailable: the choice only lasts for this session
+    }
+    dropLiveData();
+    commitPrograms({ ...ps, activeId: programId });
+    return true;
+  }, [commitPrograms, dropLiveData]);
+
+  const createProgram = useCallback(async (input: ProgramInput): Promise<Program> => {
+    const tenantId = currentTenantIdRef.current;
+    const created = await ApiClient.createProgram(tenantId, input);
+    await refreshPrograms(tenantId);
+    return created;
+  }, [refreshPrograms]);
+
+  const updateProgram = useCallback(async (programId: string, updates: ProgramUpdate): Promise<Program> => {
+    const tenantId = currentTenantIdRef.current;
+    const updated = await ApiClient.updateProgram(tenantId, programId, updates);
+    await refreshPrograms(tenantId);
+    return updated;
+  }, [refreshPrograms]);
+
+  const archiveProgram = useCallback(async (programId: string): Promise<void> => {
+    const tenantId = currentTenantIdRef.current;
+    await ApiClient.archiveProgram(tenantId, programId);
+    // The refresh moves the screen to another program when the archived one was showing (see refreshPrograms)
+    await refreshPrograms(tenantId);
+  }, [refreshPrograms]);
+
+  const unarchiveProgram = useCallback(async (programId: string): Promise<void> => {
+    const tenantId = currentTenantIdRef.current;
+    await ApiClient.unarchiveProgram(tenantId, programId);
+    await refreshPrograms(tenantId);
+  }, [refreshPrograms]);
+
+  const deleteProgram = useCallback(async (programId: string): Promise<void> => {
+    const tenantId = currentTenantIdRef.current;
+    await ApiClient.deleteProgram(tenantId, programId);
+    // Its browser cache goes with it; a stored choice of it is forgotten
+    try {
+      localStorage.removeItem(StorageService.getAssessmentKey(tenantId, programId));
+      if (localStorage.getItem(activeProgramStorageKey(tenantId)) === programId) localStorage.removeItem(activeProgramStorageKey(tenantId));
+    } catch {}
+    const ps = programsRef.current;
+    if (ps.tenantId === tenantId && ps.activeId === programId) commitPrograms({ ...ps, activeId: null });
+    await refreshPrograms(tenantId);
+  }, [refreshPrograms, commitPrograms]);
+
+  // Framework, baseline and CIA triad belong to the active program (fixed when it is created); a tenant without one uses its primary framework
+  const activeFramework: ComplianceFramework = activeProgram?.framework ?? currentTenant.primaryFramework ?? 'CMMC_L1';
+  const activeBaselineTier: BaselineTier = baselineToTier(activeProgram?.baseline);
+  const ciaTriad = useMemo<CiaTriadSelection>(() => programBaselineToCia(activeProgram?.baseline), [activeProgram?.baseline]);
+
+  const setActiveFramework = useCallback((framework: ComplianceFramework) => {
+    const ps = programsRef.current;
+    if (ps.tenantId !== currentTenantIdRef.current) return;
+    const current = ps.programs.find(p => p.id === ps.activeId);
+    if (current && current.framework === framework) return;
+    const matching = ps.programs.filter(p => !p.archived && p.framework === framework);
+    const target = matching.find(p => p.isDefault) ?? matching[0];
+    if (target) switchProgram(target.id);
+  }, [switchProgram]);
+
+  // Overlays stay per browser until they become a program setting
   const [activeOverlayFilters, setActiveOverlayFilters] = useState<OverlayFilters>(() => {
     try {
       const saved = localStorage.getItem(ACTIVE_OVERLAY_FILTERS_KEY);
@@ -752,64 +946,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return { nonNetworkedOnly: false };
   });
 
-  const setActiveFramework = useCallback((framework: ComplianceFramework) => {
-    setActiveFrameworkState(framework);
-    try {
-      localStorage.setItem(ACTIVE_FRAMEWORK_KEY, framework);
-    } catch {}
-  }, []);
-
-  // When active tenant changes, dynamically synchronize active framework with the enclave's enabled framework scope
-  useEffect(() => {
-    const tenantEnabled: ComplianceFramework[] = currentTenant.enabledFrameworks && currentTenant.enabledFrameworks.length > 0
-      ? currentTenant.enabledFrameworks
-      : (currentTenant.primaryFramework ? [currentTenant.primaryFramework] : ['CMMC_L1']);
-    const tenantPrimary: ComplianceFramework = currentTenant.primaryFramework || tenantEnabled[0] || 'CMMC_L1';
-
-    if (!tenantEnabled.includes(activeFramework)) {
-      setActiveFramework(tenantPrimary);
-    }
-  }, [currentTenant.id, currentTenant.primaryFramework, currentTenant.enabledFrameworks, activeFramework, setActiveFramework]);
-
-  const setActiveBaselineTier = useCallback((tier: BaselineTier) => {
-    setActiveBaselineTierState(tier);
-    try {
-      localStorage.setItem(ACTIVE_BASELINE_TIER_KEY, tier);
-    } catch {}
-  }, []);
-
-  const [ciaTriad, setCiaTriad] = useState<CiaTriadSelection>(() => {
-    try {
-      const saved = localStorage.getItem('pbc_active_cia_triad');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return {
-      confidentiality: 'MODERATE',
-      integrity: 'MODERATE',
-      availability: 'MODERATE',
-      isAllControlsApplied: true,
-    };
-  });
-
-  const setCiaImpact = useCallback((dimension: 'confidentiality' | 'integrity' | 'availability', level: ImpactLevel) => {
-    setCiaTriad(prev => {
-      const next = { ...prev, [dimension]: level, isAllControlsApplied: false };
-      try {
-        localStorage.setItem('pbc_active_cia_triad', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  }, []);
-
-  const toggleAllControlsApplied = useCallback(() => {
-    setCiaTriad(prev => {
-      const next = { ...prev, isAllControlsApplied: !prev.isAllControlsApplied };
-      try {
-        localStorage.setItem('pbc_active_cia_triad', JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  }, []);
+  // The CIA triad follows the program's baseline: the old per-browser editor has no effect any more
+  const setCiaImpact = useCallback((_dimension: 'confidentiality' | 'integrity' | 'availability', _level: ImpactLevel) => {}, []);
+  const toggleAllControlsApplied = useCallback(() => {}, []);
 
   const toggleOverlayFilter = useCallback((key: keyof OverlayFilters) => {
     setActiveOverlayFilters(prev => {
@@ -834,55 +973,61 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // ============================================================================
   // Express API Live Sync Engine (Row-Level Security Tenant Isolation)
   // ============================================================================
-  const [liveControls, setLiveControls] = useState<Record<string, ControlState> | null>(null);
-  const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
-  /** Tenant whose controls (and so implementation notes) the last successful controls load came from; null until then. */
-  const [liveControlsTenantId, setLiveControlsTenantId] = useState<string | null>(null);
+  /** The scope (tenant, or tenant::program) the requests of `tenantId` belong to right now. */
+  const scopeNow = useCallback((tenantId: string): string => programScopeKey(tenantId, programIdFor(tenantId)), [programIdFor]);
 
   /**
    * Pull live control states and evidence artifacts from PostgreSQL via /api/v1
-   * Operates with dynamic framework, baseline, and overlay parameters
+   * Operates with dynamic framework, baseline, overlay and program parameters. The latest request wins: an answer that
+   * is no longer the newest (another program, another tenant, a newer refresh) is dropped, never shown or merged.
    */
   const refreshLiveData = useCallback(async (
     tenantToFetch?: string,
     frameworkToFetch?: ComplianceFramework,
     baselineToFetch?: BaselineTier,
-    overlayToFetch?: OverlayParameter
+    overlayToFetch?: OverlayParameter,
+    programToFetch?: string | null
   ) => {
     const targetTenantId = tenantToFetch || currentTenant.id;
+    const seq = ++liveSeq.current;
 
     // A tenant that exists only in this browser (a draft, or legacy data) has nothing on the server to load
     const serverTenant = liveTenantsRef.current.find(t => t.id === targetTenantId);
     if (serverTenant && !serverTenant.serverBacked) {
       setLiveControls(null);
       setLiveEvidence(null);
-      setLiveControlsTenantId(null);
+      setLiveScopeKey(null);
       return;
     }
 
     const token = ApiClient.getToken();
     if (!token) {
       // Unauthenticated fallback
-      setLiveControlsTenantId(null);
+      setLiveScopeKey(null);
       return;
     }
 
+    // The program: the one asked for, else the active one of that tenant (null: the server's default program)
+    const ps = programsRef.current;
+    const programId = programToFetch !== undefined ? programToFetch : ps.tenantId === targetTenantId ? ps.activeId : null;
+    const program = programId && ps.tenantId === targetTenantId ? ps.programs.find(p => p.id === programId) : undefined;
+    const scope = programScopeKey(targetTenantId, programId);
+
     setIsSyncing(true);
     setSyncError(null);
-    // A switch to another tenant must not keep showing the previous tenant's notes as loaded
-    setLiveControlsTenantId(prev => (prev === targetTenantId ? prev : null));
+    // A switch to another tenant or program must not keep showing the previous one's notes as loaded
+    setLiveScopeKey(prev => (prev === scope ? prev : null));
 
-    const fw = frameworkToFetch || activeFramework;
-    const bl = baselineToFetch || activeBaselineTier;
+    const fw = frameworkToFetch || program?.framework || activeFramework;
+    const bl = baselineToFetch || (program ? baselineToTier(program.baseline) : activeBaselineTier);
     const ov = overlayToFetch || (activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
 
     try {
       const [controlsList, evidenceList] = await Promise.all([
-        ApiClient.getControls(targetTenantId, { framework: fw, baseline: bl, overlay: ov }),
-        ApiClient.getEvidence(targetTenantId),
+        ApiClient.getControls(targetTenantId, { framework: fw, baseline: bl, overlay: ov }, programId),
+        ApiClient.getEvidence(targetTenantId, programId),
       ]);
+      if (!isCurrentResponse(seq, liveSeq.current)) return;
 
       const controlsMap: Record<string, ControlState> = {};
       for (const ctrl of controlsList) {
@@ -891,41 +1036,52 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       setLiveControls(controlsMap);
       setLiveEvidence(evidenceList);
-      setLiveControlsTenantId(targetTenantId);
+      setLiveScopeKey(scope);
     } catch (err: unknown) {
-      setLiveControlsTenantId(null);
+      if (!isCurrentResponse(seq, liveSeq.current)) return;
+      setLiveScopeKey(null);
       setSyncError(errorMessage(err) || 'Sync error');
     } finally {
-      setIsSyncing(false);
+      if (isCurrentResponse(seq, liveSeq.current)) setIsSyncing(false);
     }
   }, [currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly]);
 
-  // Automatically pull live controls & evidence when tenant, framework, or overlay changes
+  // A server-backed tenant's data is not requested before its programs are known (or known to be unavailable): the first
+  // request would otherwise go to the default program and be thrown away when the active program turns out to be another.
+  const programsReady = programsStatus === 'ready' || programsStatus === 'error' || programsStatus === 'unsupported';
+
+  // Automatically pull live controls & evidence when tenant, program, framework, or overlay changes
   useEffect(() => {
-    if (ApiClient.getToken()) {
-      refreshLiveData(currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
+    if (ApiClient.getToken() && programsReady) {
+      refreshLiveData(currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE', activeProgramId);
     } else {
+      liveSeq.current++;
       setLiveControls(null);
       setLiveEvidence(null);
-      setLiveControlsTenantId(null);
+      setLiveScopeKey(null);
+      setIsSyncing(false);
     }
-  }, [currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
+  }, [currentTenant.id, activeProgramId, programsReady, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
 
   const updateLiveControl = useCallback(async (
     controlId: string,
     updates: Partial<ControlState>
   ): Promise<ControlState | null> => {
+    // The program (and so the scope) is fixed when the edit starts: an answer arriving after a switch is not applied to the new program
+    const scope = scopeNow(currentTenant.id);
     try {
-      const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates);
-      setLiveControls(prev => ({
-        ...prev,
-        [controlId]: updated,
-      }));
+      const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates, programIdFor(currentTenant.id));
+      if (scopeNow(currentTenant.id) === scope) {
+        setLiveControls(prev => ({
+          ...prev,
+          [controlId]: updated,
+        }));
+      }
       return updated;
     } catch {
       return null;
     }
-  }, [currentTenant.id]);
+  }, [currentTenant.id, scopeNow, programIdFor]);
 
   const createLiveEvidenceUploadUrl = useCallback(async (payload: {
     controlId: string;
@@ -934,16 +1090,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     mimeType: string;
     fileHash: string;
     description?: string;
-  }): Promise<UploadUrlResponse | null> => {
+  }, programId?: string | null): Promise<UploadUrlResponse | null> => {
+    // `programId` is the program the caller started the upload for (default: the active one now)
+    const program = programId !== undefined ? programId : programIdFor(currentTenant.id);
+    const scope = programScopeKey(currentTenant.id, program);
     try {
-      const resp = await ApiClient.requestUploadUrl(currentTenant.id, payload);
-      setLiveEvidence(prev => [resp.evidence, ...(prev || [])]);
+      const resp = await ApiClient.requestUploadUrl(currentTenant.id, payload, program);
+      if (scopeNow(currentTenant.id) === scope) setLiveEvidence(prev => [resp.evidence, ...(prev || [])]);
       return resp;
     } catch {
       return null;
     }
-  }, [currentTenant.id]);
-
+  }, [currentTenant.id, scopeNow, programIdFor]);
 
   // Check if active tenant requires initial setup wizard
   const needsOnboarding = useMemo(() => currentTenant.isConfigured === false, [currentTenant.isConfigured]);
@@ -966,6 +1124,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Only TENANT_OWNER and MSP_ADMIN may edit; ASSESSOR and VIEWER are read-only.
   const canEdit = useMemo(() => canRoleWrite(currentRole), [currentRole]);
+
+  // Creating, editing, archiving and deleting programs: TENANT_OWNER and MSP_ADMIN (the server enforces it)
+  const canManagePrograms = canEdit;
 
   const canManageTenant = useMemo(() => {
     return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';
@@ -1183,18 +1344,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       enabledFrameworks: validEnabled,
       primaryFramework: validPrimary,
     });
-
-    if (currentTenant.id === tenantId) {
-      setActiveFramework(validPrimary);
-    }
-  }, [updateTenant, currentTenant.id, setActiveFramework]);
+    // The framework shown is the active program's (or the tenant's primary one without a program): nothing else to switch
+  }, [updateTenant]);
 
   const updateStackProfile = useCallback((profile: EnclaveStackProfile) => {
     updateTenant(currentTenant.id, { stackProfile: profile });
 
     // Cascade tailored stack narratives to all assessment objectives in local storage
     try {
-      const tenantKey = StorageService.getTenantKey(currentTenant.id);
+      // The active program's cache (the default program keeps the legacy key)
+      const segment = programCacheSegment(activeProgram);
+      const tenantKey = StorageService.getAssessmentKey(currentTenant.id, segment);
       const raw = localStorage.getItem(tenantKey);
       if (raw) {
         const assessment = JSON.parse(raw);
@@ -1224,12 +1384,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         assessment.objectives = objectives;
         assessment.lastSaved = new Date().toISOString();
         // Server-backed tenants never keep implementation notes in this browser (Phase 5.6)
-        StorageService.saveAssessment(currentTenant.id, assessment, { keepNotes: !currentTenant.serverBacked });
+        StorageService.saveAssessment(currentTenant.id, assessment, { keepNotes: !currentTenant.serverBacked, segment });
       }
     } catch (e) {
       console.warn('Failed to cascade stack profile to assessment storage:', e);
     }
-  }, [currentTenant.id, currentTenant.serverBacked, updateTenant]);
+  }, [currentTenant.id, currentTenant.serverBacked, activeProgram, updateTenant]);
 
   const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
     setLiveTenants(prev =>
@@ -1317,6 +1477,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         window.localStorage.removeItem(`pbc_cmmc_assessment_v3_${tenantId}`);
         window.localStorage.removeItem(`pbc_assessment_${tenantId}`);
         window.localStorage.removeItem(`pbc_audit_ledger_${tenantId}`);
+        // every other program's assessment cache (pbc_cmmc_assessment_v3_<tenant>::<program>) and the active-program choice
+        StorageService.listProgramKeys(tenantId).forEach(key => window.localStorage.removeItem(key));
       } catch {}
     }
 
@@ -1395,9 +1557,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // Reconcile tenants and roles with the server, then load live data for the active tenant
     if (user.idToken || ApiClient.getToken()) {
-      void syncTenantsFromServer(user.idToken || undefined).then(() => refreshLiveData(preferredTenantId));
+      void syncTenantsFromServer(user.idToken || undefined)
+        .then(() => refreshPrograms(preferredTenantId))
+        .then(() => refreshLiveData(preferredTenantId));
     }
-  }, [liveTenants, refreshLiveData, syncTenantsFromServer]);
+  }, [liveTenants, refreshLiveData, refreshPrograms, syncTenantsFromServer]);
 
   /**
    * Provision a brand-new defense enclave with isolated database boundary and onboarding token
@@ -1694,8 +1858,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncAuthUser,
     resolveTenantForEmail,
     liveControls,
-    liveControlsTenantId,
+    liveScopeKey,
     liveEvidence,
+    programs,
+    activeProgram,
+    programsStatus,
+    switchProgram,
+    refreshPrograms,
+    createProgram,
+    updateProgram,
+    archiveProgram,
+    unarchiveProgram,
+    deleteProgram,
+    canManagePrograms,
     isSyncing,
     syncError,
     tenantSync,
@@ -1711,7 +1886,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activeFramework,
     setActiveFramework,
     activeBaselineTier,
-    setActiveBaselineTier,
     activeOverlayFilters,
     setActiveOverlayFilters,
     toggleNonNetworkedOverlay,
@@ -1764,8 +1938,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     syncAuthUser,
     resolveTenantForEmail,
     liveControls,
-    liveControlsTenantId,
+    liveScopeKey,
     liveEvidence,
+    programs,
+    activeProgram,
+    programsStatus,
+    switchProgram,
+    refreshPrograms,
+    createProgram,
+    updateProgram,
+    archiveProgram,
+    unarchiveProgram,
+    deleteProgram,
+    canManagePrograms,
     isSyncing,
     syncError,
     tenantSync,
@@ -1781,7 +1966,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activeFramework,
     setActiveFramework,
     activeBaselineTier,
-    setActiveBaselineTier,
     activeOverlayFilters,
     setActiveOverlayFilters,
     toggleNonNetworkedOverlay,

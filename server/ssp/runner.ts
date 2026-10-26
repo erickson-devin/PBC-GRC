@@ -74,12 +74,11 @@ export function enqueueImport(tenantId: string, programId: string, jobId: string
  * staged); one that is still waiting is simply marked cancelled. Returns false when there was nothing to cancel.
  */
 export async function cancelJob(scope: ProgramScope, jobId: string): Promise<boolean> {
-  const { tenantId } = scope;
   const job = await getJob(scope, jobId);
   if (!job || SSP_JOB_TERMINAL.includes(job.status)) return false;
   controllers.get(jobId)?.abort();
   // The running worker records CANCELLED itself; a job nobody is working on is closed here
-  if (!active.has(jobId)) await updateJob(tenantId, jobId, { status: 'CANCELLED', error: 'Cancelled.', finishedAt: new Date().toISOString() });
+  if (!active.has(jobId)) await updateJob(scope, jobId, { status: 'CANCELLED', error: 'Cancelled.', finishedAt: new Date().toISOString() });
   return true;
 }
 
@@ -99,8 +98,8 @@ export function recoverStaleJobs(jobs: SspImportJob[], scope: ProgramScope): voi
 
 // ------------------------------------------------------------------------------------------------ the job
 
-async function fail(tenantId: string, jobId: string, message: string): Promise<void> {
-  await updateJob(tenantId, jobId, { status: 'FAILED', error: message, finishedAt: new Date().toISOString() }).catch(() => undefined);
+async function fail(scope: ProgramScope, jobId: string, message: string): Promise<void> {
+  await updateJob(scope, jobId, { status: 'FAILED', error: message, finishedAt: new Date().toISOString() }).catch(() => undefined);
 }
 
 const aiOptions = () => ({
@@ -109,23 +108,22 @@ const aiOptions = () => ({
 });
 
 async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
-  const { tenantId } = scope;
   const signal = controllers.get(jobId)?.signal;
   try {
     const job = await getJob(scope, jobId);
     if (!job || SSP_JOB_TERMINAL.includes(job.status)) return;
 
-    await updateJob(tenantId, jobId, { status: 'EXTRACTING', startedAt: new Date().toISOString(), error: null, stageProgress: { stage: 'Reading the document' } });
+    await updateJob(scope, jobId, { status: 'EXTRACTING', startedAt: new Date().toISOString(), error: null, stageProgress: { stage: 'Reading the document' } });
     const buffer = await readUploadedPolicy({ provider: job.storedProvider, path: job.storedPath });
     const detected = await detectDocumentKind(buffer);
     if (!detected) {
-      await fail(tenantId, jobId, 'The stored file is not a PDF or Word (.docx) document.');
+      await fail(scope, jobId, 'The stored file is not a PDF or Word (.docx) document.');
       return;
     }
     const doc = await extractDocument(buffer, detected.kind);
     if (signal?.aborted) throw new OllamaError('cancelled', 'Cancelled.');
 
-    await updateJob(tenantId, jobId, { status: 'ANALYZING', stageProgress: { stage: 'Mapping to controls' }, pageCount: doc.pageCount || null, charCount: doc.text.length });
+    await updateJob(scope, jobId, { status: 'ANALYZING', stageProgress: { stage: 'Mapping to controls' }, pageCount: doc.pageCount || null, charCount: doc.text.length });
     const chunks = chunkDocument(doc.text, doc.pages, { refStyle: job.framework === 'NIST_800_53_REV5' ? 'nist53' : 'cmmc' });
     const rules = mapDocumentToControls(doc.text, doc.pages, job.framework, chunks, job.baseline);
 
@@ -146,7 +144,7 @@ async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
           rules,
           signal,
           options: aiOptions(),
-          onProgress: (p) => updateJob(tenantId, jobId, { stageProgress: p }).then(() => undefined, () => undefined), // awaited, so a late progress write can never overwrite the final state
+          onProgress: (p) => updateJob(scope, jobId, { stageProgress: p }).then(() => undefined, () => undefined), // awaited, so a late progress write can never overwrite the final state
         });
         mapping = result.mapping;
         progress = { chunksTotal: result.stats.sectionsAnalyzed + result.stats.sectionsFailed, controlsFound: mapping.staged.length, ai: result.stats, ...(result.warnings.length ? { warning: result.warnings.join(' ') } : {}) };
@@ -164,7 +162,7 @@ async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
     const live = await readLiveControls(scope);
     await replaceStaged(scope, jobId, mapping.staged.map((s) => ({ ...s, baseHash: hashLiveControl(live.get(s.controlId)) })));
 
-    await updateJob(tenantId, jobId, {
+    await updateJob(scope, jobId, {
       status: 'READY_FOR_REVIEW',
       analyzer,
       stageProgress: progress,
@@ -176,11 +174,11 @@ async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
     console.log(`[SSP Import] ${jobId}: ${mapping.staged.length}/${mapping.coverage.totalControls} ${job.framework} controls found in ${chunks.length} sections (${analyzer})`);
   } catch (err: unknown) {
     if (err instanceof OllamaError && err.code === 'cancelled') {
-      await updateJob(tenantId, jobId, { status: 'CANCELLED', error: 'Cancelled.', finishedAt: new Date().toISOString() }).catch(() => undefined);
+      await updateJob(scope, jobId, { status: 'CANCELLED', error: 'Cancelled.', finishedAt: new Date().toISOString() }).catch(() => undefined);
       return;
     }
     const message = err instanceof ExtractionError ? err.message : 'The import failed unexpectedly. Check the server log and try again.';
     if (!(err instanceof ExtractionError)) console.error(`[SSP Import] ${jobId} failed:`, errorMessage(err));
-    await fail(tenantId, jobId, message);
+    await fail(scope, jobId, message);
   }
 }

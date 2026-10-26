@@ -167,6 +167,7 @@ export async function getDatabaseStatus(): Promise<'connected' | 'memory' | 'una
 /**
  * Execute query guarded by Row-Level Security (RLS) tenant context session variable:
  * SET LOCAL app.current_tenant_id = '${tenantId}'
+ * Sets no program, so the program-scoped tables (RLS_PROGRAM_TABLES in schema.ts) show no rows and refuse writes here: use queryWithProgram.
  */
 export async function queryWithTenant(tenantId: string, text: string, params: SqlParam[] = []): Promise<pg.QueryResult> {
   // Sanitize tenant ID to prevent injection
@@ -203,9 +204,9 @@ export interface ProgramScope {
 }
 
 /**
- * Like queryWithTenant, and also sets app.current_program_id for the transaction (SET LOCAL + set_config, same sanitising), so that
- * program-level row policies can key on it. In DB_MODE=memory the emulator additionally filters the rows by the program and refuses an
- * INSERT whose program parameter differs from it.
+ * Like queryWithTenant, and also sets app.current_program_id for the transaction (SET LOCAL + set_config, same sanitising): the
+ * RESTRICTIVE program policies of the program-scoped tables key on it. In DB_MODE=memory the emulator mirrors them: it filters the rows
+ * by the program and refuses an INSERT whose program parameter differs from it.
  */
 export async function queryWithProgram(scope: ProgramScope, text: string, params: SqlParam[] = []): Promise<pg.QueryResult> {
   const sanitizedTenantId = scope.tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -232,22 +233,73 @@ export async function queryWithProgram(scope: ProgramScope, text: string, params
 }
 
 /**
+ * Test hook (memory mode only, throws otherwise): stores a row with program_id null, as a database written before programs existed
+ * would hold it, bypassing the fail-closed write rule. migrateTenantToPrograms adopts such rows. Fields not given get defaults.
+ */
+export function __seedLegacyRowForTests(
+  tenantId: string,
+  table: 'control_assessments' | 'evidence_metadata',
+  row: Record<string, unknown>
+): void {
+  if (!isMemoryMode()) throw new Error('__seedLegacyRowForTests requires DB_MODE=memory');
+  const now = new Date().toISOString();
+  if (table === 'control_assessments') {
+    const controlId = String(row.control_id);
+    const record: InMemoryControl = {
+      id: String(row.id ?? `ctrl_legacy_${Math.random().toString(36).substring(2, 9)}`),
+      tenant_id: tenantId,
+      control_id: controlId,
+      status: (row.status as InMemoryControl['status']) ?? 'NOT_STARTED',
+      implementation_notes: String(row.implementation_notes ?? ''),
+      responsible_role: String(row.responsible_role ?? 'IT / Security Lead'),
+      program_id: null,
+      tags: [],
+      updated_by: String(row.updated_by ?? 'System'),
+      updated_at: now,
+    };
+    memoryControls.set(controlKey(tenantId, null, controlId), record);
+    return;
+  }
+  const id = String(row.id);
+  const record: InMemoryEvidence = {
+    id,
+    tenant_id: tenantId,
+    control_id: String(row.control_id),
+    file_name: String(row.file_name ?? 'legacy.bin'),
+    file_size: Number(row.file_size ?? 0),
+    mime_type: String(row.mime_type ?? 'application/octet-stream'),
+    gcs_path: String(row.gcs_path ?? ''),
+    file_hash: String(row.file_hash ?? ''),
+    sync_status: String(row.sync_status ?? 'local_storage'),
+    description: String(row.description ?? ''),
+    uploaded_by: String(row.uploaded_by ?? 'Assessor'),
+    uploaded_at: now,
+    program_id: null,
+  };
+  memoryEvidence.set(id, record);
+}
+
+/**
  * Executes queries against in-memory store while strictly enforcing
  * tenant isolation equivalent to PostgreSQL Row-Level Security (RLS).
- * With a `programId` the control_assessments and evidence_metadata statements are also scoped to that program (a legacy row with no
- * program stays visible until it is backfilled); without one the behaviour is tenant-wide, as before programs existed.
+ * The control_assessments and evidence_metadata statements also mirror the RESTRICTIVE program policy and fail closed: they see and
+ * write only the rows of the `programId` they run in, a row with no program (not backfilled yet) is visible to nobody, and a statement
+ * with no program context reads nothing and writes nothing (the backfill UPDATE is the one statement that adopts such rows).
  */
 // `params` is positional and column-typed by the emulated statements below, hence the loose element type.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function executeInMemoryWithTenant(tenantId: string, text: string, params: any[], programId?: string): pg.QueryResult {
   const normalized = text.trim();
-  const inProgram = (rowProgram: string | null | undefined): boolean => programId === undefined || rowProgram === null || rowProgram === undefined || rowProgram === programId;
+  // The program policy: no program context sees nothing, and a row without a program (legacy, not backfilled) belongs to nobody here
+  const inProgram = (rowProgram: string | null | undefined): boolean => programId !== undefined && typeof rowProgram === 'string' && rowProgram === programId;
 
   // 0. Backfill: UPDATE control_assessments | evidence_metadata SET program_id = $1 WHERE tenant_id = $2 AND program_id IS NULL
+  // Under the policy it only sees the legacy rows (which map to the tenant's default program) when it runs in that program, and only
+  // writes that program: any other context touches 0 rows.
   const backfill = /^UPDATE\s+(control_assessments|evidence_metadata)\s+SET\s+program_id\s*=\s*\$1\s+WHERE\s+tenant_id\s*=\s*\$2\s+AND\s+program_id\s+IS\s+NULL/i.exec(normalized);
   if (backfill) {
     let count = 0;
-    if (params[1] === tenantId && typeof params[0] === 'string') {
+    if (programId !== undefined && params[0] === programId && params[1] === tenantId && typeof params[0] === 'string') {
       if (backfill[1].toLowerCase() === 'control_assessments') {
         for (const [key, item] of [...memoryControls.entries()]) {
           if (item.tenant_id !== tenantId || item.program_id !== null) continue;
@@ -271,7 +323,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
   // 0b. DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2 (what the ON DELETE CASCADE of a deleted program does)
   if (/^DELETE\s+FROM\s+control_assessments\s+WHERE\s+tenant_id\s*=\s*\$1\s+AND\s+program_id\s*=\s*\$2/i.test(normalized)) {
     let count = 0;
-    if (params[0] === tenantId && typeof params[1] === 'string') {
+    if (programId !== undefined && params[0] === tenantId && params[1] === programId) {
       for (const [key, item] of [...memoryControls.entries()]) {
         if (item.tenant_id !== tenantId || item.program_id !== params[1]) continue;
         memoryControls.delete(key);
@@ -285,7 +337,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
   if (/SELECT\s+.*FROM\s+control_assessments/i.test(normalized)) {
     const rows: InMemoryControl[] = [];
     for (const item of memoryControls.values()) {
-      // RLS filter: strictly match app.current_tenant_id (and the program, when the query has one)
+      // RLS filter: strictly match app.current_tenant_id and app.current_program_id
       if (item.tenant_id === tenantId && inProgram(item.program_id)) {
         rows.push(item);
       }
@@ -304,31 +356,14 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     // params: [tenant_id, control_id, status, implementation_notes, responsible_role, updated_by, program_id?] (program_id is LAST)
     const rowTenantId = params[0];
     const rowProgram: string | null = params[6] ?? null;
-    // RLS WITH CHECK validation: Cannot insert for a tenant (or, in a program context, a program) other than the active one
-    if (rowTenantId !== tenantId || (programId !== undefined && rowProgram !== programId)) {
+    // RLS WITH CHECK validation: cannot insert for another tenant or another program, nor without a program context at all
+    if (rowTenantId !== tenantId || programId === undefined || rowProgram !== programId) {
       return { rows: [], command: 'INSERT', rowCount: 0, oid: 0, fields: [] };
     }
     const controlId = params[1];
+    // The unique key is (tenant_id, program_id, control_id): the same control id is one row per program, never shared between them
     const key = controlKey(tenantId, rowProgram, controlId);
-    let existingKey = key;
-    let existing = memoryControls.get(key);
-    if (!existing) {
-      // The PostgreSQL unique key is still (tenant_id, control_id) in this wave: a statement with a program claims the legacy row of
-      // the control, and one without a program finds the control's row in whichever program holds it.
-      const legacyKey = controlKey(tenantId, null, controlId);
-      if (rowProgram !== null && memoryControls.has(legacyKey)) {
-        existingKey = legacyKey;
-        existing = memoryControls.get(legacyKey);
-      } else if (rowProgram === null) {
-        for (const [k, item] of memoryControls.entries()) {
-          if (item.tenant_id === tenantId && item.control_id === controlId) {
-            existingKey = k;
-            existing = item;
-            break;
-          }
-        }
-      }
-    }
+    const existing = memoryControls.get(key);
     // NULL means keep, like COALESCE(..., control_assessments.<col>) in the PostgreSQL statement
     const status = params[2] || existing?.status || 'NOT_STARTED';
     const notes = params[3] ?? existing?.implementation_notes ?? '';
@@ -342,14 +377,13 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
       status,
       implementation_notes: notes,
       responsible_role: role,
-      program_id: existing?.program_id ?? rowProgram,
+      program_id: rowProgram,
       tags: existing?.tags || [],
       updated_by: updatedBy,
       updated_at: new Date().toISOString(),
     };
 
-    if (existingKey !== key && rowProgram !== null) memoryControls.delete(existingKey);
-    memoryControls.set(rowProgram !== null ? key : existingKey, record);
+    memoryControls.set(key, record);
 
     return {
       rows: [record],
@@ -404,7 +438,10 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     if (rowTenantId !== tenantId) {
       throw new Error(`Row-Level Security violation: tenant ${tenantId} cannot write record for tenant ${rowTenantId}`);
     }
-    if (programId !== undefined && rowProgram !== programId) {
+    if (programId === undefined) {
+      throw new Error('Row-Level Security violation: evidence_metadata cannot be written without a program context');
+    }
+    if (rowProgram !== programId) {
       throw new Error(`Row-Level Security violation: program ${programId} cannot write record for program ${rowProgram}`);
     }
 

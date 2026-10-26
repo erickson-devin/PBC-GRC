@@ -28,6 +28,7 @@ import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives'
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
 import { ApiClient } from '../services/apiClient';
 import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
+import { programCacheSegment, programScopeKey, shouldPersistAssessment } from '../data/programSync';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import {
@@ -58,6 +59,7 @@ export type NavigationTab =
   | 'audit'       // Legacy alias → renders same as 'audit_logs'
   | 'guidance'    // Framework Guidance & Authority
   | 'settings'    // Enclave Settings
+  | 'programs'    // Programs & Boundaries (the programs page)
   | 'stigs';      // Legacy — now external link, kept for backwards compat
 
 interface AssessmentContextType {
@@ -124,8 +126,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     canEdit,
     currentUser,
     liveControls,
-    liveControlsTenantId,
+    liveScopeKey,
     liveEvidence,
+    activeProgram,
     syncError,
     updateLiveControl,
     createLiveEvidenceUploadUrl,
@@ -135,10 +138,19 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ciaTriad,
   } = useTenant();
 
+  // What is on screen: the tenant, or tenant::program. Live data, the cache and every save are matched against it.
+  const programId = activeProgram?.id;
+  const programScope = programScopeKey(currentTenant.id, programId);
+  // The default program keeps the legacy cache key; any other program has its own (see StorageService.getAssessmentKey)
+  const cacheSegment = programCacheSegment(activeProgram);
+  // Every ledger entry says which program it was made in (the ledger itself stays one per tenant)
+  const auditMetadata = useMemo(() => ({ programId: programId ?? null }), [programId]);
+
+  // Notes count as loaded only when the live controls are those of this very program (scope keys in both fields)
   const notesStatus = computeNotesStatus({
     serverBacked: Boolean(currentTenant.serverBacked),
-    liveControlsTenantId,
-    tenantId: currentTenant.id,
+    liveControlsTenantId: liveScopeKey,
+    tenantId: programScope,
     syncError,
     hasToken: Boolean(ApiClient.getToken()),
   });
@@ -158,7 +170,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [activeFramework, activeBaselineTier, ciaTriad, activeOverlayFilters]);
 
   // Load tenant-isolated assessment state
+  // (the program's cache is loaded by the effect below once the program is known; until then this is the tenant / default cache)
   const [state, setState] = useState<AssessmentState>(() => StorageService.loadAssessment(currentTenant));
+  // The scope this state was loaded for
+  const stateScope = programScopeKey(state.tenantId, state.programId);
   // Latest state for actions that must read it without a state dependency (import diff)
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -193,44 +208,56 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [currentTenant.id]);
 
-  // Initial boundary evaluation on mount / tenant switch
+  // Initial boundary evaluation on mount / tenant switch / program switch (the reloaded program's controls get the telemetry too)
   useEffect(() => {
     refreshBoundaryTelemetry();
-  }, [currentTenant.id, refreshBoundaryTelemetry]);
+  }, [currentTenant.id, programScope, refreshBoundaryTelemetry]);
 
   const openExportModal = useCallback((initialDocType?: ReportDocumentType) => {
     setExportModalInitialDocType(initialDocType);
     setIsExportModalOpen(true);
   }, []);
 
-  // When active tenant changes, dynamically reload that tenant's partitioned assessment
+  // When the active tenant or program changes, reload that scope's partitioned assessment from its own cache key and reset what
+  // was selected in the previous one. (Nothing of the previous program survives in `state`: it is replaced as a whole.)
   useEffect(() => {
-    const tenantState = StorageService.loadAssessment(currentTenant);
-    setState(tenantState);
-  }, [currentTenant.id]);
+    const scopeState = StorageService.loadAssessment(currentTenant, activeProgram?.framework ?? 'CMMC_L1', cacheSegment);
+    setState({ ...scopeState, programId });
+    setSelectedControlId(null);
+    setSelectedDomainFilter('ALL');
+    setSelectedStatusFilter('ALL');
+    setSearchQuery('');
+    setPreviewEvidence(null);
+    setIsExportModalOpen(false);
+  }, [currentTenant.id, programScope]);
 
-  // Synchronize live backend data into assessment state when received from PostgreSQL
+  // Synchronize live backend data into assessment state when received from PostgreSQL. Scoped: only live data of the scope on
+  // screen is merged, and only into a state loaded for that same scope (program A's controls never reach program B).
   useEffect(() => {
-    if (liveControls) {
-      setState(prev => ({
-        ...prev,
-        tenantId: currentTenant.id,
-        controls: {
-          ...prev.controls,
-          ...liveControls,
-        },
-        evidenceIndex: liveEvidence ? liveEvidence : prev.evidenceIndex,
-      }));
+    if (liveControls && liveScopeKey === programScope) {
+      setState(prev => {
+        if (programScopeKey(prev.tenantId, prev.programId) !== programScope) return prev;
+        return {
+          ...prev,
+          tenantId: currentTenant.id,
+          controls: {
+            ...prev.controls,
+            ...liveControls,
+          },
+          evidenceIndex: liveEvidence ? liveEvidence : prev.evidenceIndex,
+        };
+      });
     }
-  }, [liveControls, liveEvidence, currentTenant.id]);
+  }, [liveControls, liveEvidence, liveScopeKey, programScope, stateScope, currentTenant.id]);
 
-  // Auto-save state changes under tenant partition
+  // Auto-save state changes under the scope's own cache key. Never save a state under a scope it was not loaded for: while a
+  // program switch is settling `state` still belongs to the previous program and must not land in the new program's key.
   useEffect(() => {
-    if (state.tenantId === currentTenant.id) {
+    if (shouldPersistAssessment(stateScope, programScope)) {
       // Server-backed tenants never keep implementation notes in this browser (Phase 5.6)
-      StorageService.saveAssessment(currentTenant.id, state, { keepNotes: !currentTenant.serverBacked });
+      StorageService.saveAssessment(currentTenant.id, state, { keepNotes: !currentTenant.serverBacked, segment: cacheSegment });
     }
-  }, [state, currentTenant.id, currentTenant.serverBacked]);
+  }, [state, stateScope, programScope, cacheSegment, currentTenant.id, currentTenant.serverBacked]);
 
   // Calculate Real-time Compliance Metrics dynamically for active framework controls
   const metrics: ComplianceMetrics = useMemo(() => {
@@ -324,6 +351,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // Asynchronously append to immutable audit ledger
       recordAuditEvent({
         tenantId: currentTenant.id,
+        metadata: auditMetadata,
         actorId: currentUser.id,
         actorEmail: currentUser.email,
         actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -345,7 +373,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       return updated;
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls]);
+  }, [canEdit, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls]);
 
   // Action: Update Control Notes with RBAC Check
   const updateControlNotes = useCallback((controlId: string, notes: string) => {
@@ -378,6 +406,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       Promise.all([describeNotesForLedger(previousNotes), describeNotesForLedger(notes)])
         .then(([previousState, newState]) => recordAuditEvent({
           tenantId: currentTenant.id,
+          metadata: auditMetadata,
           actorId: currentUser.id,
           actorEmail: currentUser.email,
           actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -401,7 +430,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, notesEditable, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
@@ -423,6 +452,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       recordAuditEvent({
         tenantId: currentTenant.id,
+        metadata: auditMetadata,
         actorId: currentUser.id,
         actorEmail: currentUser.email,
         actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -445,7 +475,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Apply Starter Template
   const applyStarterTemplate = useCallback((controlId: string, narrative: string) => {
@@ -473,6 +503,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       recordAuditEvent({
         tenantId: currentTenant.id,
+        metadata: auditMetadata,
         actorId: currentUser.id,
         actorEmail: currentUser.email,
         actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -503,7 +534,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, notesEditable, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
 
   // Action: Bulk Apply STIG Policy Narratives across mapped controls
   const bulkApplyStigNarratives = useCallback((narratives: Record<string, string>): number => {
@@ -691,6 +722,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     recordAuditEvent({
       tenantId: currentTenant.id,
+      metadata: auditMetadata,
       actorId: currentUser.id,
       actorEmail: currentUser.email,
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -699,7 +731,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       previousState: 'STATUS_UPDATE',
       newState: status,
     }).catch(() => {});
-  }, [canEdit, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration]);
+  }, [canEdit, frameworkControls, currentUser, currentTenant.id, auditMetadata, activeFramework, triggerSprsCelebration]);
 
   const updateObjectiveNarrative = useCallback((objectiveId: string, narrative: string) => {
     if (!canEdit) {
@@ -1003,6 +1035,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       throw new Error('Read-Only access: Evidence uploads are restricted for your role.');
     }
 
+    // The program the upload belongs to is fixed here: a switch while it runs does not move it
+    const uploadScope = programScope;
     const fileHash = await computeSha256(file);
 
     // Upload via the server (signed URL) and record it in evidence_metadata
@@ -1014,11 +1048,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         mimeType: file.type || 'application/octet-stream',
         fileHash,
         description: description || `Audit evidence for control ${controlId}`,
-      });
+      }, programId ?? null);
 
       if (uploadResp) {
         // Upload binary to the local evidence vault via the server-relative URL
-        await ApiClient.uploadEvidenceFile(uploadResp.uploadUrl, file, file.type, currentTenant.id);
+        await ApiClient.uploadEvidenceFile(uploadResp.uploadUrl, file, file.type, currentTenant.id, programId ?? null);
         // Save in local IndexedDB vault for client-side preview
         await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
 
@@ -1041,7 +1075,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           uploadedBy: currentUser.name,
         }));
 
-        setState(prev => ({
+        // Only into the program the upload was made for (the user may have switched while it ran; the server has the file either way)
+        setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== uploadScope ? prev : {
           ...prev,
           evidenceIndex: [uploadResp.evidence, ...inheritedItems, ...prev.evidenceIndex],
         }));
@@ -1093,13 +1128,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       uploadedBy: currentUser.name,
     }));
 
-    setState(prev => ({
+    setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== uploadScope ? prev : {
       ...prev,
       evidenceIndex: [newItem, ...inheritedItems, ...prev.evidenceIndex],
     }));
 
     recordAuditEvent({
       tenantId: currentTenant.id,
+      metadata: auditMetadata,
       actorId: currentUser.id,
       actorEmail: currentUser.email,
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -1109,7 +1145,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }).catch(() => {});
 
     return newItem;
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, createLiveEvidenceUploadUrl]);
+  }, [canEdit, currentTenant.id, programId, programScope, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, createLiveEvidenceUploadUrl]);
 
   // Action: Remove Evidence
   const removeEvidence = useCallback(async (evidenceId: string) => {
@@ -1122,6 +1158,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     recordAuditEvent({
       tenantId: currentTenant.id,
+      metadata: auditMetadata,
       actorId: currentUser.id,
       actorEmail: currentUser.email,
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -1133,7 +1170,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       ...prev,
       evidenceIndex: prev.evidenceIndex.filter(e => e.id !== evidenceId),
     }));
-  }, [canEdit, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles]);
+  }, [canEdit, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles]);
 
   // Action: Reset Assessment
   const resetAssessment = useCallback(async () => {
@@ -1141,10 +1178,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Read-Only access: Cannot reset assessment.');
       return;
     }
-    await EvidenceVault.clearTenant(currentTenant.id);
+    // A server-backed tenant's other programs keep their evidence: delete only the files this program's index lists. (A browser-only
+    // tenant has a single boundary: its whole vault goes.)
+    if (currentTenant.serverBacked) {
+      for (const item of stateRef.current.evidenceIndex) await EvidenceVault.deleteFile(currentTenant.id, item.id);
+    } else {
+      await EvidenceVault.clearTenant(currentTenant.id);
+    }
 
     recordAuditEvent({
       tenantId: currentTenant.id,
+      metadata: auditMetadata,
       actorId: currentUser.id,
       actorEmail: currentUser.email,
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
@@ -1152,9 +1196,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       targetEntity: `Tenant Enclave (${currentTenant.name})`,
     }).catch(() => {});
 
-    const blank = createInitialState(currentTenant);
-    setState(blank);
-  }, [canEdit, currentTenant, currentUser.id, currentUser.email, currentUser.roles]);
+    const blank = createInitialState(currentTenant, activeProgram?.framework);
+    setState({ ...blank, programId });
+  }, [canEdit, currentTenant, activeProgram?.framework, programId, auditMetadata, currentUser.id, currentUser.email, currentUser.roles]);
 
   // Action: Import Assessment JSON
   const importAssessmentJSON = useCallback(async (file: File): Promise<boolean> => {
@@ -1192,6 +1236,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
 
       imported.tenantId = currentTenant.id;
+      imported.programId = programId;
       imported.lastSaved = new Date().toISOString();
 
       // A server-backed tenant's notes, status and roles live on the server: send each control that differs from the
@@ -1227,7 +1272,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
       return false;
     }
-  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, currentUser.name, frameworkControls, activeFramework, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, updateLiveControl]);
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {

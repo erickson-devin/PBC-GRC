@@ -60,7 +60,8 @@ export function __setVmVulnKevForTests(vulnId: string, kev: boolean): void {
 
 /**
  * Runs `fn` in one tenant transaction (the client is null in memory mode). Everything the worker writes for a run goes through
- * it, so a failure part-way commits nothing. With a `programId` the transaction also runs in that program's context.
+ * it, so a failure part-way commits nothing. With a `programId` the transaction also runs in that program's context (both settings,
+ * tenant and program, which the program row policy of vm_poam_items needs); without one it can read no vm_poam_items row and write none.
  */
 export async function withVmTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient | null) => Promise<T>, programId?: string): Promise<T> {
   if (isMemory()) return fn(null);
@@ -424,9 +425,10 @@ export async function markRunNormalized(tenantId: string, runId: string, finishe
 
 /**
  * Everything the snapshot evaluates, in one tenant transaction: every finding (any status), the ids of the vulnerabilities
- * on the known-exploited list that the tenant has findings for, and every POA&M item.
+ * on the known-exploited list that the tenant has findings for, and the POA&M items of `programId` (the VM target program: the
+ * tenant's default program, which the caller resolves).
  */
-export async function loadSnapshotFindings(tenantId: string): Promise<{ findings: VmFinding[]; kevVulnIds: string[]; poam: VmPoamItem[] }> {
+export async function loadSnapshotFindings(tenantId: string, programId: string): Promise<{ findings: VmFinding[]; kevVulnIds: string[]; poam: VmPoamItem[] }> {
   if (isMemory()) {
     const findings = [...memoryFindings.values()].filter((f) => f.tenantId === tenantId).map((f) => ({ ...f }));
     const kevVulnIds = [...new Set(findings.map((f) => f.vulnId))].filter((id) => memoryVulns.get(id)?.kev);
@@ -443,7 +445,7 @@ export async function loadSnapshotFindings(tenantId: string): Promise<{ findings
       kevVulnIds: kev.rows.map((r) => r.vuln_id as string),
       poam: poam.rows.map(rowToPoamItem),
     };
-  });
+  }, programId);
 }
 
 const SEVERITY_ORDER: Record<VmSeverity, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, UNKNOWN: 3, LOW: 4 };

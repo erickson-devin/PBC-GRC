@@ -15,6 +15,10 @@ import {
 } from '../src/data/programSync';
 import { programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
+import { StorageService } from '../src/services/storageService';
+import { ASSESSMENT_KEY_PREFIX } from '../src/services/browserStorageScrub';
+import type { AssessmentState } from '../src/types/cmmc';
+import type { Tenant } from '../src/types/tenant';
 
 /**
  * Multi-program client contract: the server's program list and metrics parsed, the active-program choice, the scope keys, the create-form
@@ -131,6 +135,53 @@ console.log('\n--- stale responses and saves ---');
 assert(shouldPersistAssessment('t1::pA', 't1::pB') === false, 'S1 a state of one program is not saved under another');
 assert(shouldPersistAssessment('t1::pA', 't1::pA') === true && shouldPersistAssessment(null, null) === false, 'S2 the same scope is saved; no scope is not');
 assert(isCurrentResponse(3, 4) === false && isCurrentResponse(4, 4) === true, 'S3 only the latest request sequence is current');
+
+console.log('\n--- per-program assessment caches ---');
+class MemoryStorage {
+  private map = new Map<string, string>();
+  get length() { return this.map.size; }
+  key(i: number) { return Array.from(this.map.keys())[i] ?? null; }
+  getItem(k: string) { return this.map.has(k) ? this.map.get(k)! : null; }
+  setItem(k: string, v: string) { this.map.set(k, v); }
+  removeItem(k: string) { this.map.delete(k); }
+  keys() { return Array.from(this.map.keys()).sort(); }
+}
+const cacheStore = new MemoryStorage();
+Object.defineProperty(globalThis, 'localStorage', { value: cacheStore, configurable: true, writable: true });
+const MARK = 'CUI-MARK-P2';
+const cacheState = (tenantId: string, programId?: string): AssessmentState => ({
+  version: '2.0.0',
+  tenantId,
+  ...(programId ? { programId } : {}),
+  sspMetadata: { tenantId } as AssessmentState['sspMetadata'],
+  controls: { 'AC.L1-3.1.1': { id: 'AC.L1-3.1.1', tenantId, status: 'IMPLEMENTED', implementationNotes: MARK, responsibleRole: 'r', lastUpdated: 'x', tags: [] } as AssessmentState['controls'][string] },
+  evidenceIndex: [],
+  lastSaved: 'x',
+});
+const cacheTenant = { id: 't1', name: 't1', serverBacked: true, primaryFramework: 'CMMC_L1' } as unknown as Tenant;
+
+assert(StorageService.getAssessmentKey('t1', null) === 'pbc_cmmc_assessment_v3_t1' && StorageService.getAssessmentKey('t1', undefined) === 'pbc_cmmc_assessment_v3_t1', 'K2 getAssessmentKey without a segment is the legacy key');
+assert(StorageService.getAssessmentKey('t1', 'p9') === 'pbc_cmmc_assessment_v3_t1::p9' && StorageService.getAssessmentKey('t1', 'p9').startsWith(ASSESSMENT_KEY_PREFIX), 'K3 getAssessmentKey with a segment is <legacy key>::<segment>');
+assert(StorageService.getTenantKey('t1') === StorageService.getAssessmentKey('t1', null), 'K3b getTenantKey is the default program key');
+
+StorageService.saveAssessment('t1', cacheState('t1', 'pA'), { segment: 'pA' });
+StorageService.saveAssessment('t1', cacheState('t1', 'pB'), { segment: 'pB' });
+assert(cacheStore.getItem('pbc_cmmc_assessment_v3_t1') === null && cacheStore.getItem('pbc_cmmc_assessment_v3_t1::pA') !== null && cacheStore.getItem('pbc_cmmc_assessment_v3_t1::pB') !== null, 'K6 a program save lands only under its own key, never under the legacy one');
+assert(!cacheStore.getItem('pbc_cmmc_assessment_v3_t1::pA')!.includes(MARK), 'K7 the program cache holds no implementation notes');
+const loadedA = StorageService.loadAssessment(cacheTenant, 'CMMC_L1', 'pA');
+const loadedB = StorageService.loadAssessment(cacheTenant, 'CMMC_L1', 'pB');
+assert(loadedA.programId === 'pA' && loadedB.programId === 'pB', 'K8 each program loads from its own cache', { a: loadedA.programId, b: loadedB.programId });
+const freshP = StorageService.loadAssessment(cacheTenant, 'NIST_800_53_REV5', 'pNew');
+assert(cacheStore.getItem('pbc_cmmc_assessment_v3_t1::pNew') !== null && cacheStore.getItem('pbc_cmmc_assessment_v3_t1') === null && Object.keys(freshP.controls).length > 100, 'K9 a program with no cache starts blank for its own framework, under its own key');
+StorageService.saveAssessment('t1', cacheState('t1'));
+assert(cacheStore.getItem('pbc_cmmc_assessment_v3_t1') !== null, 'K10 a save without a segment keeps writing the legacy key');
+cacheStore.setItem('pbc_active_program_t1', 'pA');
+cacheStore.setItem('pbc_cmmc_assessment_v3_t10::pA', '{}');
+cacheStore.setItem('pbc_cmmc_assessment_v3_t2', '{}');
+const listed = StorageService.listProgramKeys('t1').sort();
+assert(JSON.stringify(listed) === JSON.stringify(['pbc_active_program_t1', 'pbc_cmmc_assessment_v3_t1::pA', 'pbc_cmmc_assessment_v3_t1::pB', 'pbc_cmmc_assessment_v3_t1::pNew']), 'K11 listProgramKeys finds the tenant\'s program caches and its active-program key, not another tenant\'s', listed);
+StorageService.clearTenant('t1');
+assert(JSON.stringify(cacheStore.keys()) === JSON.stringify(['pbc_cmmc_assessment_v3_t10::pA', 'pbc_cmmc_assessment_v3_t2']), 'K12 clearTenant removes the legacy cache, every program cache and the active-program key, nothing of another tenant', cacheStore.keys());
 
 console.log('\n--- apiClient headers, against a stubbed fetch ---');
 type Call = { url: string; init: RequestInit };
@@ -270,6 +321,36 @@ async function main() {
 
   const syncSource = fs.readFileSync(path.join(root, 'src/data/programSync.ts'), 'utf8');
   assert(!/\.setItem\(/.test(syncSource), 'T2e programSync.ts writes no browser storage');
+
+  // The contexts (React, so not rendered here): the guards that keep one program's data out of another, read from the source
+  const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+  const tenantCtx = read('src/context/TenantContext.tsx');
+  const assessCtx = read('src/context/AssessmentContext.tsx');
+  assert(/shouldPersistAssessment\(stateScope, programScope\)/.test(assessCtx) && !/state\.tenantId === currentTenant\.id/.test(assessCtx), 'T6a the auto-save runs only when the state belongs to the scope on screen (no bare tenant-id check)');
+  assert(/liveScopeKey === programScope/.test(assessCtx) && /programScopeKey\(prev\.tenantId, prev\.programId\) !== programScope\) return prev/.test(assessCtx), 'T6b live data is merged only for the scope on screen and only into a state of that scope');
+  assert(/loadAssessment\(currentTenant, activeProgram\?\.framework \?\? 'CMMC_L1', cacheSegment\)/.test(assessCtx) && /\[currentTenant\.id, programScope\]/.test(assessCtx), 'T6c the cache is reloaded from the program\'s own key when the scope changes');
+  const auditCalls = (assessCtx.match(/recordAuditEvent\(\{/g) ?? []).length;
+  const auditMeta = (assessCtx.match(/recordAuditEvent\(\{\n\s+tenantId: currentTenant\.id,\n\s+metadata: auditMetadata,/g) ?? []).length;
+  assert(auditCalls === 8 && auditMeta === auditCalls, 'T6d every recordAuditEvent in AssessmentContext carries metadata.programId', { auditCalls, auditMeta });
+  assert(/\| 'programs'/.test(assessCtx), 'T6e NavigationTab has the programs tab');
+  assert(/isCurrentResponse\(seq, liveSeq\.current\)/.test(tenantCtx) && (tenantCtx.match(/isCurrentResponse\(seq, liveSeq\.current\)/g) ?? []).length >= 3, 'T6f refreshLiveData drops every response that is not the newest request');
+  const switchBody = tenantCtx.slice(tenantCtx.indexOf('const switchProgram = useCallback'));
+  const iPersist = switchBody.indexOf('localStorage.setItem(activeProgramStorageKey(');
+  const iDrop = switchBody.indexOf('dropLiveData();');
+  const iCommit = switchBody.indexOf('commitPrograms({ ...ps, activeId: programId })');
+  assert(iPersist > 0 && iDrop > iPersist && iCommit > iDrop, 'T6g switchProgram persists the choice, then clears the live data (bumping the sequence), then commits the new program');
+  assert(/liveSeq\.current\+\+;\s+setLiveControls\(null\);\s+setLiveEvidence\(null\);\s+setLiveScopeKey\(null\);/.test(tenantCtx), 'T6h dropLiveData bumps the request sequence and clears controls, evidence and the scope key together');
+  assert(!/liveControlsTenantId/.test(tenantCtx) && /liveScopeKey: string \| null/.test(tenantCtx), 'T6i TenantContext exposes liveScopeKey, not liveControlsTenantId');
+  assert(!/ACTIVE_FRAMEWORK_KEY|ACTIVE_BASELINE_TIER_KEY|getItem\('pbc_active_cia_triad'\)|setItem\('pbc_active_cia_triad'/.test(tenantCtx), 'T6j the per-browser framework, baseline and CIA keys are no longer read or written');
+  const legacy = tenantCtx.slice(tenantCtx.indexOf('const LEGACY_STORAGE_KEYS'), tenantCtx.indexOf('];', tenantCtx.indexOf('const LEGACY_STORAGE_KEYS')));
+  assert(['pbc_active_framework_v1', 'pbc_active_baseline_tier_v1', 'pbc_active_cia_triad'].every((k) => legacy.includes(`'${k}'`)), 'T6k the per-browser framework, baseline and CIA keys are purged as legacy keys');
+  assert(/pbc_active_overlay_filters_v1/.test(tenantCtx) && !/pbc_active_overlay_filters_v1/.test(legacy), 'T6l overlays stay per browser (not purged)');
+  assert(/programsStatus: ProgramsStatus = !currentTenant\.serverBacked \? 'unsupported'/.test(tenantCtx), 'T6m a browser-only tenant has programs status unsupported');
+  assert(/ciaTriad = useMemo<CiaTriadSelection>\(\(\) => programBaselineToCia\(activeProgram\?\.baseline\)/.test(tenantCtx) && /activeProgram\?\.framework \?\? currentTenant\.primaryFramework/.test(tenantCtx), 'T6n the framework and CIA triad are derived from the active program');
+  assert(/StorageService\.listProgramKeys\(tenantId\)/.test(tenantCtx) && /listProgramKeys\(params\.tenantId\)/.test(read('src/data/storage/offboardingEngine.ts')), 'T6o deleteTenant and the offboarding purge remove the program caches');
+  assert(/getAssessmentKey\(currentTenant\.id, segment\)/.test(tenantCtx), 'T6p updateStackProfile targets the active program\'s cache key');
+  const hook = read('src/hooks/useProgram.ts');
+  assert(!/\.setItem\(/.test(hook) && /useTenant\(\)/.test(hook), 'T6q useProgram is a read-through of TenantContext and writes no storage');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

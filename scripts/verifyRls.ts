@@ -14,14 +14,16 @@
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
- * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"). Exit code 0 = all checks passed.
+ *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies and the NOT VALID program_required checks are in the catalog, and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them.
+ * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
 
 process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: this script must hit the real DB
 
-const { pool, initDb, queryWithTenant, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
-const { RLS_TENANT_TABLES } = await import('../server/schema');
+const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
+const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
+type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
 function check(ok: boolean, message: string, detail?: string) {
@@ -31,6 +33,23 @@ function check(ok: boolean, message: string, detail?: string) {
 
 const TENANT_X = 'rls_verify_tenant_x';
 const TENANT_Y = 'rls_verify_tenant_y';
+
+/** Creates a CMMC_L2 program of the tenant (the tenant policy alone lets a program be inserted) and returns its id. */
+const mkProgram = async (tenant: string, name: string, isDefault = false): Promise<string> =>
+  String(
+    (await queryWithTenant(tenant, "INSERT INTO programs (tenant_id, name, framework_id, is_default) VALUES ($1, $2, 'CMMC_L2', $3) RETURNING id", [tenant, name, isDefault])).rows[0]?.id
+  );
+
+/** True only when the statement, run in the program's context, fails with the expected SQLSTATE and/or constraint. */
+async function rejectsIn(scope: ProgramScope, sql: string, params: (string | number | null)[], want: { code?: string; constraint?: string }): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await queryWithProgram(scope, sql, params);
+    return { ok: false, detail: 'no error' };
+  } catch (err) {
+    const e = err as { code?: string; constraint?: string };
+    return { ok: (want.code === undefined || e.code === want.code) && (want.constraint === undefined || e.constraint === want.constraint), detail: 'code ' + e.code + ', constraint ' + e.constraint };
+  }
+}
 
 async function main() {
   if (!(await checkDatabaseConnection())) {
@@ -64,6 +83,8 @@ async function main() {
        ON CONFLICT (user_id, tenant_id) DO NOTHING`,
       [user, `${user}@example.mil`, user, tenant]
     );
+  let scopeX: ProgramScope | null = null;
+  let scopeY: ProgramScope | null = null;
   try {
     await add(TENANT_X, 'rls_verify_x1');
     await add(TENANT_Y, 'rls_verify_y1');
@@ -372,38 +393,42 @@ async function main() {
     check((findingsUpdate.rowCount ?? 0) === 0, "vm_findings: tenant Y cannot update tenant X's findings");
 
     console.log('\n--- 3c. Control assessment history ---');
+    // control_assessment_events is program-scoped: every insert and read below runs in the program of its tenant (both settings)
+    const programX = await mkProgram(TENANT_X, 'rls_verify_events_x', true);
+    const programY = await mkProgram(TENANT_Y, 'rls_verify_events_y', true);
+    scopeX = { tenantId: TENANT_X, programId: programX };
+    scopeY = { tenantId: TENANT_Y, programId: programY };
     const insertEvent =
-      "INSERT INTO control_assessment_events (tenant_id, control_id, source, actor, new_status, new_role, notes_changed, new_notes_sha256, new_notes_length) VALUES ($1, 'AC.L1-3.1.1', $2, 'rls_verify_actor', 'MET', 'IT / Security Lead', true, $3, 0)";
+      "INSERT INTO control_assessment_events (tenant_id, control_id, source, actor, new_status, new_role, notes_changed, new_notes_sha256, new_notes_length, program_id) VALUES ($1, 'AC.L1-3.1.1', $2, 'rls_verify_actor', 'MET', 'IT / Security Lead', true, $3, 0, $4)";
     const goodSha = 'a'.repeat(64);
-    check(
-      await rejectsWith(TENANT_X, insertEvent, [TENANT_Y, 'human', goodSha], { code: '42501' }),
-      "control_assessment_events: tenant X cannot insert an event for tenant Y (WITH CHECK)", lastRejection
-    );
+    const crossTenant = await rejectsIn(scopeX, insertEvent, [TENANT_Y, 'human', goodSha, programX], { code: '42501' });
+    check(crossTenant.ok, "control_assessment_events: tenant X cannot insert an event for tenant Y (WITH CHECK)", crossTenant.detail);
     let eventOk = false;
     try {
-      await queryWithTenant(TENANT_X, insertEvent, [TENANT_X, 'human', goodSha]);
+      await queryWithProgram(scopeX, insertEvent, [TENANT_X, 'human', goodSha, programX]);
       eventOk = true;
     } catch {
       eventOk = false;
     }
-    check(eventOk, 'control_assessment_events: tenant X can insert an event for itself');
+    check(eventOk, 'control_assessment_events: tenant X can insert an event for itself, in its program');
     const eventsNoCtx = await pool.query("SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%'");
     check(eventsNoCtx.rowCount === 0, 'control_assessment_events: no tenant context => zero rows visible', `saw ${eventsNoCtx.rowCount}`);
-    const eventsX = await queryWithTenant(TENANT_X, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []);
+    const eventsTenantOnly = await queryWithTenant(TENANT_X, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []);
+    check(eventsTenantOnly.rows.length === 0, 'control_assessment_events: a tenant context with no program context sees nothing (the program policy)', `saw ${eventsTenantOnly.rows.length}`);
+    const eventsX = await queryWithProgram(scopeX, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []);
     check(eventsX.rows.length === 1, 'control_assessment_events: tenant X sees its own event', `saw ${eventsX.rows.length}`);
-    const eventsY = await queryWithTenant(TENANT_Y, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%' OR tenant_id = $1", [TENANT_X]);
+    const eventsY = await queryWithProgram(scopeY, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%' OR tenant_id = $1", [TENANT_X]);
     check(eventsY.rows.length === 0, "control_assessment_events: tenant Y sees none of tenant X's events, even by naming the tenant", `saw ${eventsY.rows.length}`);
-    check(
-      await rejectsWith(TENANT_X, insertEvent, [TENANT_X, 'robot', goodSha], { code: '23514', constraint: 'control_assessment_events_source_check' }),
-      "control_assessment_events: a source outside human, ssp-commit, vm-snapshot is refused (source_check)", lastRejection
-    );
-    check(
-      await rejectsWith(TENANT_X, insertEvent, [TENANT_X, 'human', 'xyz'], { code: '23514', constraint: 'control_assessment_events_sha_check' }),
-      "control_assessment_events: a notes digest that is not 64 lowercase hex characters is refused (sha_check)", lastRejection
-    );
+    const badSource = await rejectsIn(scopeX, insertEvent, [TENANT_X, 'robot', goodSha, programX], { code: '23514', constraint: 'control_assessment_events_source_check' });
+    check(badSource.ok, "control_assessment_events: a source outside human, ssp-commit, vm-snapshot is refused (source_check)", badSource.detail);
+    const badSha = await rejectsIn(scopeX, insertEvent, [TENANT_X, 'human', 'xyz', programX], { code: '23514', constraint: 'control_assessment_events_sha_check' });
+    check(badSha.ok, "control_assessment_events: a notes digest that is not 64 lowercase hex characters is refused (sha_check)", badSha.detail);
   } finally {
+    for (const scope of [scopeX, scopeY]) {
+      if (scope) await queryWithProgram(scope, "DELETE FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+    }
     for (const t of [TENANT_X, TENANT_Y]) {
-      await queryWithTenant(t, "DELETE FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
     }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM vm_sightings WHERE source_id IN (SELECT id FROM vm_sources WHERE label LIKE 'rls_verify_%')", []).catch(() => undefined);
@@ -421,6 +446,7 @@ async function main() {
 
   await verifyDiscovery();
   await verifyLocalIdentities();
+  await verifyProgramIsolation();
 }
 
 async function verifyDiscovery() {
@@ -589,6 +615,183 @@ async function verifyLocalIdentities() {
     check((await consumeTotpStep(ID(4), 201)) === true, 'the next TOTP step is accepted again (1 row)');
   } finally {
     await pool.query("DELETE FROM local_users WHERE id LIKE 'rls_verify_lu_%'").catch(() => undefined);
+  }
+}
+
+async function verifyProgramIsolation() {
+  console.log('\n--- 8. Program isolation (RESTRICTIVE program policies) ---');
+  const insertControl = 'INSERT INTO control_assessments (tenant_id, control_id, status, program_id) VALUES ($1, $2, $3, $4) RETURNING id';
+  const upsertControl =
+    'INSERT INTO control_assessments (tenant_id, control_id, status, program_id) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, program_id, control_id) DO UPDATE SET status = EXCLUDED.status RETURNING id';
+  let defaultX = '';
+  let defaultY = '';
+  let programA = '';
+  let programB = '';
+  try {
+    defaultX = await mkProgram(TENANT_X, 'rls_verify_p8_x_default', true);
+    programA = await mkProgram(TENANT_X, 'rls_verify_p8_a');
+    programB = await mkProgram(TENANT_X, 'rls_verify_p8_b');
+    defaultY = await mkProgram(TENANT_Y, 'rls_verify_p8_y_default', true);
+    const scopeA = { tenantId: TENANT_X, programId: programA };
+    const scopeB = { tenantId: TENANT_X, programId: programB };
+    const scopeDefaultX = { tenantId: TENANT_X, programId: defaultX };
+    const scopeDefaultY = { tenantId: TENANT_Y, programId: defaultY };
+
+    // 8a. programs themselves carry the tenant policy only
+    const noCtx = await pool.query("SELECT 1 FROM programs WHERE name LIKE 'rls_verify_p8_%'");
+    check(noCtx.rowCount === 0, '8a. programs: no tenant context => zero rows visible', 'saw ' + noCtx.rowCount);
+    const ownY = await queryWithTenant(TENANT_Y, "SELECT id FROM programs WHERE name LIKE 'rls_verify_p8_%'", []);
+    check(ownY.rows.length === 1 && ownY.rows[0].id === defaultY, "8a. programs: tenant Y sees only its own program, none of tenant X's", JSON.stringify(ownY.rows));
+    const yNamesX = await queryWithTenant(TENANT_Y, 'SELECT id FROM programs WHERE tenant_id = $1', [TENANT_X]);
+    check(yNamesX.rows.length === 0, "8a. programs: tenant Y cannot read tenant X's programs even by naming the tenant", 'saw ' + yNamesX.rows.length);
+
+    // 8b. a program id of another tenant is refused by the composite foreign key
+    // (the session runs in Y's program so the program policy passes; (X, Y's program) does not exist, so the foreign key refuses it)
+    const foreign = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertControl, [TENANT_X, 'AC.L1-3.1.1', 'MET', defaultY], { code: '23503', constraint: 'fk_control_assessments_program' });
+    check(foreign.ok, "8b. control_assessments: tenant X cannot attach a row to tenant Y's program (composite foreign key)", foreign.detail);
+
+    // 8c. program B cannot read or overwrite program A
+    const x1 = await queryWithProgram(scopeA, insertControl, [TENANT_X, 'AC.L1-3.1.1', 'MET', programA]);
+    check(x1.rows.length === 1, '8c. control_assessments: under program A the row X1 is inserted');
+    const bSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM control_assessments WHERE program_id = $1', [programA]);
+    check(bSeesA.rows.length === 0, "8c. program B cannot read program A's row by naming the program", 'saw ' + bSeesA.rows.length);
+    const bSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM control_assessments WHERE tenant_id = $1', [TENANT_X]);
+    check(bSeesAny.rows.length === 0, "8c. program B sees none of program A's rows (policy, not WHERE)", 'saw ' + bSeesAny.rows.length);
+    const bUpdates = await queryWithProgram(scopeB, "UPDATE control_assessments SET status = 'NOT_MET' WHERE program_id = $1", [programA]);
+    check((bUpdates.rowCount ?? 0) === 0, "8c. program B cannot update program A's row (0 rows)", 'updated ' + bUpdates.rowCount);
+    const bDeletes = await queryWithProgram(scopeB, 'DELETE FROM control_assessments WHERE program_id = $1', [programA]);
+    check((bDeletes.rowCount ?? 0) === 0, "8c. program B cannot delete program A's row (0 rows)", 'deleted ' + bDeletes.rowCount);
+    const bInsertsIntoA = await rejectsIn(scopeB, insertControl, [TENANT_X, 'AC.L1-3.1.2', 'MET', programA], { code: '42501' });
+    check(bInsertsIntoA.ok, "8c. program B cannot insert a row into program A (WITH CHECK, 42501)", bInsertsIntoA.detail);
+    const stillMet = await queryWithProgram(scopeA, "SELECT status FROM control_assessments WHERE control_id = 'AC.L1-3.1.1'", []);
+    check(stillMet.rows.length === 1 && stillMet.rows[0].status === 'MET', "8c. program A's row is untouched", JSON.stringify(stillMet.rows));
+
+    // the same control id is one row per program: the per-program key replaced unq_tenant_control
+    const uq = await pool.query(
+      "SELECT (SELECT count(*)::int FROM pg_constraint WHERE conname = 'unq_tenant_control' AND conrelid = 'control_assessments'::regclass) AS old_key, (SELECT count(*)::int FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'unq_control_assessments_program_control') AS new_key"
+    );
+    check(uq.rows[0]?.old_key === 0 && uq.rows[0]?.new_key === 1, '8c. the (tenant_id, control_id) unique key is gone and the (tenant_id, program_id, control_id) key exists', JSON.stringify(uq.rows[0]));
+    await queryWithProgram(scopeB, upsertControl, [TENANT_X, 'AC.L1-3.1.1', 'NOT_MET', programB]);
+    await queryWithProgram(scopeB, upsertControl, [TENANT_X, 'AC.L1-3.1.1', 'IN_PROGRESS', programB]); // the ON CONFLICT path
+    const rowA = await queryWithProgram(scopeA, "SELECT status FROM control_assessments WHERE control_id = 'AC.L1-3.1.1'", []);
+    const rowB = await queryWithProgram(scopeB, "SELECT status FROM control_assessments WHERE control_id = 'AC.L1-3.1.1'", []);
+    check(
+      rowA.rows.length === 1 && rowA.rows[0].status === 'MET' && rowB.rows.length === 1 && rowB.rows[0].status === 'IN_PROGRESS',
+      "8c. the same control in program B is its own row, and the upsert never touches program A's row",
+      JSON.stringify([rowA.rows, rowB.rows])
+    );
+
+    // no program context at all
+    const tenantOnly = await queryWithTenant(TENANT_X, 'SELECT 1 FROM control_assessments WHERE tenant_id = $1', [TENANT_X]);
+    check(tenantOnly.rows.length === 0, '8c. a tenant context with no program context sees zero control_assessments rows', 'saw ' + tenantOnly.rows.length);
+    let tenantOnlyInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertControl, [TENANT_X, 'AC.L1-3.1.3', 'MET', programA]);
+    } catch (err) {
+      tenantOnlyInsert = String((err as { code?: string }).code);
+    }
+    check(tenantOnlyInsert === '42501', '8c. a tenant context with no program context cannot insert a row (42501)', tenantOnlyInsert);
+    const asDefaultX = await queryWithProgram(scopeDefaultX, 'SELECT 1 FROM control_assessments WHERE tenant_id = $1', [TENANT_X]);
+    check(asDefaultX.rows.length === 0, "8c. the default program sees none of A's or B's rows", 'saw ' + asDefaultX.rows.length);
+    const yWithXProgram = await queryWithProgram({ tenantId: TENANT_Y, programId: programA }, 'SELECT 1 FROM control_assessments WHERE tenant_id = $1', [TENANT_X]);
+    check(yWithXProgram.rows.length === 0, "8c. tenant Y running in tenant X's program id sees nothing (the tenant policy still applies)", 'saw ' + yWithXProgram.rows.length);
+    const yDefault = await queryWithProgram(scopeDefaultY, 'SELECT 1 FROM control_assessments', []);
+    check(yDefault.rows.length === 0, "8c. tenant Y's default program sees none of tenant X's rows", 'saw ' + yDefault.rows.length);
+
+    // 8d. the catalog
+    const pol = await pool.query(
+      "SELECT tablename, policyname, permissive, cmd, qual, with_check FROM pg_policies WHERE schemaname = current_schema() AND policyname LIKE 'rls_%_program_isolation'"
+    );
+    check(pol.rows.length === RLS_PROGRAM_TABLES.length, '8d. exactly ' + RLS_PROGRAM_TABLES.length + ' program-isolation policies exist', 'found ' + pol.rows.length);
+    for (const t of RLS_PROGRAM_TABLES) {
+      const rows = pol.rows.filter((r) => r.tablename === t);
+      const r = rows[0];
+      check(
+        rows.length === 1 && r.policyname === 'rls_' + t + '_program_isolation' && r.permissive === 'RESTRICTIVE' && r.cmd === 'ALL' && r.qual !== null && r.with_check !== null,
+        '8d. ' + t + ': one RESTRICTIVE policy, FOR ALL, with USING and WITH CHECK',
+        JSON.stringify(rows)
+      );
+    }
+    const checks = await pool.query(
+      "SELECT conrelid::regclass::text AS tbl, conname, convalidated FROM pg_constraint WHERE conname LIKE '%_program_required' AND connamespace = current_schema()::regnamespace"
+    );
+    for (const t of RLS_PROGRAM_TABLES) {
+      const c = checks.rows.find((x) => x.conname === t + '_program_required');
+      check(Boolean(c) && c.convalidated === false, '8d. ' + t + ': the program_required check exists and is NOT VALID (validated later)', JSON.stringify(c));
+    }
+
+    await verifyUpgrade();
+  } finally {
+    for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the rows cascade with their program
+    }
+  }
+}
+
+/**
+ * 8e. An upgrade: a database that holds rows with no program (written before programs existed). They are visible under the tenant's
+ * default program and not under another one, and migrateTenantToPrograms gives them the default program. Runs in the isolated schema
+ * rls_verify_upgrade (SET search_path on every pooled connection, so the real server functions run there too); SKIPPED when the role
+ * may not create a schema.
+ */
+async function verifyUpgrade() {
+  const SCHEMA = 'rls_verify_upgrade';
+  const { buildSchemaSql, buildProgramRlsSql } = await import('../server/schema');
+  const { migrateTenantToPrograms } = await import('../server/programs');
+  const setSearchPath = async (path: string | null) => {
+    // every connection of the pool (max 10) takes the setting, so queryWithTenant and migrateTenantToPrograms run in the schema as well
+    const clients = await Promise.all(Array.from({ length: 10 }, () => pool.connect()));
+    try {
+      for (const c of clients) await c.query(path ? 'SET search_path = ' + path : 'RESET search_path');
+    } finally {
+      for (const c of clients) c.release();
+    }
+  };
+  try {
+    await pool.query('DROP SCHEMA IF EXISTS ' + SCHEMA + ' CASCADE');
+    await pool.query('CREATE SCHEMA ' + SCHEMA);
+  } catch (err) {
+    console.log('  SKIP: 8e. cannot create the schema ' + SCHEMA + ' (' + String((err as Error).message) + '); the upgrade of legacy rows is not verified here');
+    return;
+  }
+  const T = TENANT_X;
+  try {
+    await setSearchPath(SCHEMA + ', public');
+    await pool.query(buildSchemaSql());
+    // the legacy state: no program on the rows, no program policy yet and no program_required checks
+    for (const t of ['control_assessments', 'evidence_metadata']) {
+      await pool.query('ALTER TABLE ' + t + ' DROP CONSTRAINT ' + t + '_program_required');
+      await pool.query('DROP POLICY rls_' + t + '_program_isolation ON ' + t);
+    }
+    const defaultId = await mkProgram(T, 'rls_verify_up_default', true);
+    const otherId = await mkProgram(T, 'rls_verify_up_other');
+    await queryWithTenant(T, "INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes) VALUES ($1, 'AC.L1-3.1.1', 'MET', 'legacy')", [T]);
+    await queryWithTenant(
+      T,
+      "INSERT INTO evidence_metadata (id, tenant_id, control_id, file_name, file_size, mime_type, gcs_path, file_hash) VALUES ('rls_verify_up_ev', $1, 'AC.L1-3.1.1', 'old.pdf', 5, 'application/pdf', '/vault/old', 'h')",
+      [T]
+    );
+    await pool.query(buildProgramRlsSql()); // the upgrade: the policies arrive over rows that have no program
+    const underDefault = await queryWithProgram({ tenantId: T, programId: defaultId }, 'SELECT program_id FROM control_assessments WHERE tenant_id = $1', [T]);
+    check(underDefault.rows.length === 1 && underDefault.rows[0].program_id === null, '8e. a legacy row (no program) is visible under the default program', JSON.stringify(underDefault.rows));
+    const underOther = await queryWithProgram({ tenantId: T, programId: otherId }, 'SELECT program_id FROM control_assessments WHERE tenant_id = $1', [T]);
+    check(underOther.rows.length === 0, '8e. the legacy row is not visible under another program', 'saw ' + underOther.rows.length);
+    const evUnderOther = await queryWithProgram({ tenantId: T, programId: otherId }, 'SELECT 1 FROM evidence_metadata WHERE tenant_id = $1', [T]);
+    check(evUnderOther.rows.length === 0, '8e. the legacy evidence row is not visible under another program', 'saw ' + evUnderOther.rows.length);
+    const counts = await migrateTenantToPrograms(T);
+    check(counts.control_assessments === 1 && counts.evidence_metadata === 1, '8e. migrateTenantToPrograms adopts the legacy answer and evidence row (both settings, WITH CHECK passes)', JSON.stringify(counts));
+    const adopted = await queryWithProgram({ tenantId: T, programId: defaultId }, 'SELECT program_id FROM control_assessments WHERE tenant_id = $1', [T]);
+    const adoptedEv = await queryWithProgram({ tenantId: T, programId: defaultId }, 'SELECT program_id FROM evidence_metadata WHERE tenant_id = $1', [T]);
+    check(adopted.rows.length === 1 && adopted.rows[0].program_id === defaultId && adoptedEv.rows[0]?.program_id === defaultId, '8e. the rows now hold the default program id', JSON.stringify([adopted.rows, adoptedEv.rows]));
+    const again = await migrateTenantToPrograms(T);
+    check(again.total === 0, '8e. a second migration changes nothing', JSON.stringify(again));
+    const stillHidden = await queryWithProgram({ tenantId: T, programId: otherId }, 'SELECT 1 FROM control_assessments WHERE tenant_id = $1', [T]);
+    check(stillHidden.rows.length === 0, '8e. the adopted row stays invisible to the other program', 'saw ' + stillHidden.rows.length);
+  } catch (err) {
+    check(false, '8e. the upgrade test ran to the end', String((err as Error).stack ?? err));
+  } finally {
+    await setSearchPath(null).catch(() => undefined);
+    await pool.query('DROP SCHEMA IF EXISTS ' + SCHEMA + ' CASCADE').catch(() => undefined);
   }
 }
 

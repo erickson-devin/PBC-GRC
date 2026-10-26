@@ -209,7 +209,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
             scope,
             `INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, responsible_role, updated_by, program_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT (tenant_id, control_id) DO NOTHING
+             ON CONFLICT (tenant_id, program_id, control_id) DO NOTHING
              RETURNING *`,
             [tenantId, ctrlId, 'NOT_STARTED', '', 'IT / Security Lead', req.user?.name || 'System Initializer', scope.programId]
           );

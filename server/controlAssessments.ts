@@ -20,8 +20,8 @@ export interface ControlAssessment {
 }
 
 /**
- * The program's current control answers, by control id. A legacy row that has no program yet counts as the program's own until it is
- * backfilled (migrateTenantToPrograms), so nothing disappears while the data layer is being introduced.
+ * The program's current control answers, by control id. A legacy row that has no program yet counts as the default program's until it is
+ * backfilled (migrateTenantToPrograms): the row policy maps it there, and no other program ever sees it.
  */
 export async function readControlAssessments(scope: ProgramScope): Promise<Map<string, ControlAssessment>> {
   const res = await queryWithProgram(scope, 'SELECT * FROM control_assessments WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL)', [scope.tenantId, scope.programId]);
@@ -48,7 +48,7 @@ const UPSERT = `
   ) VALUES (
     $1, $2, COALESCE($3::varchar, 'NOT_STARTED'), COALESCE($4::text, ''), COALESCE($5::varchar, 'IT / Security Lead'), $6, $7::varchar
   )
-  ON CONFLICT (tenant_id, control_id)
+  ON CONFLICT (tenant_id, program_id, control_id)
   DO UPDATE SET
     status = COALESCE($3::varchar, control_assessments.status),
     implementation_notes = COALESCE($4::text, control_assessments.implementation_notes),
@@ -59,7 +59,7 @@ const UPSERT = `
   RETURNING *;
 `;
 
-// A legacy row without a program is the program's own until it is backfilled; the unique key is still (tenant_id, control_id) in this wave.
+// A legacy row without a program is the default program's until it is backfilled (the row policy maps it there); the unique key is (tenant_id, program_id, control_id).
 const SELECT_ONE = 'SELECT * FROM control_assessments WHERE tenant_id = $1 AND control_id = $2 AND (program_id = $3 OR program_id IS NULL) FOR UPDATE';
 
 const INSERT_EVENT = `

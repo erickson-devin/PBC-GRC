@@ -91,6 +91,8 @@ export interface SSPMetadata {
 export interface AssessmentState {
   version: string;
   tenantId: string; // Multi-tenant root partition
+  /** The program this state was loaded for (absent for a browser-only tenant, or a state saved before programs); with tenantId it is the save guard's scope. */
+  programId?: string;
   sspMetadata: SSPMetadata;
   controls: Record<string, ControlState>;
   evidenceIndex: EvidenceItem[];
