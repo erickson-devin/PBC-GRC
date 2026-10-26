@@ -53,7 +53,8 @@ services:
       # Bound to localhost: the database should not be reachable from the network
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Database files: a named volume by default; Unraid sets DB_DATA_DIR=/mnt/cache/appdata/singularity/postgres (a host directory)
+      - ${DB_DATA_DIR:-postgres_data}:/var/lib/postgresql/data
       # Unraid sets INITDB_DIR=/mnt/user/appdata/singularity/docker/postgres; elsewhere the repository copy is used
       - ${INITDB_DIR:-./docker/postgres}:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -132,8 +133,8 @@ services:
       # All interfaces by decision (Unraid WebUI on the LAN); the host port is APP_PORT, the container always listens on 3000
       - "${APP_PORT:-3000}:3000"
     volumes:
-      # Persistent local evidence vault mounted to host disk
-      - ./data/evidence:/app/data/evidence
+      # Persistent local evidence vault: the repository folder by default; Unraid sets EVIDENCE_DIR=/mnt/cache/appdata/singularity/evidence
+      - ${EVIDENCE_DIR:-./data/evidence}:/app/data/evidence
     networks:
       - singularity-network
 
@@ -144,7 +145,8 @@ services:
     container_name: singularity-ollama
     restart: unless-stopped
     volumes:
-      - ollama-models:/root/.ollama
+      # Model store: a named volume by default; Unraid sets OLLAMA_MODELS_DIR=/mnt/user/appdata/singularity/ollama-models
+      - ${OLLAMA_MODELS_DIR:-ollama-models}:/root/.ollama
     # No published port: only the app container (same network) can reach it
     networks:
       - singularity-network

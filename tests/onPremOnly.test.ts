@@ -236,6 +236,10 @@ if (app) {
 }
 assert(!compose.some((l) => /network_mode\s*:\s*["']?host/.test(l)), 'no service uses network_mode: host');
 assert(!!db && listOf(db, 'volumes').some((v) => v.startsWith('${INITDB_DIR:-./docker/postgres}:')), 'the db init mount uses ${INITDB_DIR:-./docker/postgres}', db && listOf(db, 'volumes'));
+assert(!!db && listOf(db, 'volumes').some((v) => v.startsWith('${DB_DATA_DIR:-postgres_data}:/var/lib/postgresql/data')), 'the db data volume is ${DB_DATA_DIR:-postgres_data} (host path on Unraid, named volume elsewhere)', db && listOf(db, 'volumes'));
+assert(!!app && listOf(app, 'volumes').some((v) => v.startsWith('${EVIDENCE_DIR:-./data/evidence}:/app/data/evidence')), 'the evidence vault mount is ${EVIDENCE_DIR:-./data/evidence}', app && listOf(app, 'volumes'));
+assert(!!ollama && listOf(ollama, 'volumes').some((v) => v.startsWith('${OLLAMA_MODELS_DIR:-ollama-models}:/root/.ollama')), 'the ollama model store is ${OLLAMA_MODELS_DIR:-ollama-models}', ollama && listOf(ollama, 'volumes'));
+assert(!compose.some((l) => /\/mnt\//.test(l)), 'no host-specific /mnt path is hard-coded outside comments (Unraid values live in .env)', compose.filter((l) => /\/mnt\//.test(l)));
 
 console.log('\n--- Dockerfile and .env.example ---');
 const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');

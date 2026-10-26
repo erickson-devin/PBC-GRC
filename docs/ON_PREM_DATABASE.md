@@ -152,6 +152,23 @@ from `LOCAL_AUTH_SECRET` otherwise. Plain secrets and recovery codes are never s
 password change, an MFA reset or an administrator password reset ends that person's sessions on their next request (this
 costs one extra primary-key lookup per request; if the database is unavailable the answer is 503, not a sign-out).
 
+## Host paths (Docker Compose)
+
+The compose file keeps every host-specific location in a variable, so the same file runs on a laptop and on Unraid. The
+defaults are a named volume (database, Ollama models) or the repository folder (evidence, init scripts); the Unraid
+installation sets these in the `.env` next to `docker-compose.yml`:
+
+| Variable | Unraid value | Default |
+| --- | --- | --- |
+| `DB_DATA_DIR` | `/mnt/cache/appdata/singularity/postgres` | named volume `postgres_data` |
+| `EVIDENCE_DIR` | `/mnt/cache/appdata/singularity/evidence` | `./data/evidence` |
+| `OLLAMA_MODELS_DIR` | `/mnt/user/appdata/singularity/ollama-models` | named volume `ollama-models` |
+| `INITDB_DIR` | `/mnt/user/appdata/singularity/docker/postgres` | `./docker/postgres` (the repository copy) |
+
+Changing `DB_DATA_DIR` on an existing installation points PostgreSQL at a different (empty) directory: the init script runs
+again there and the old data stays where it was. The Unraid installation also runs `OLLAMA_MODEL=llama3.2:3b` with
+`OLLAMA_NUM_CTX=4096` (the model the CMMC import is tuned for), set the same way.
+
 ## Existing data volume (already initialised before this change)
 
 The init script only runs when the volume is first created. For an existing deployment, run once as the admin user:
