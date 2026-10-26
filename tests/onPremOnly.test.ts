@@ -230,10 +230,16 @@ if (app) {
   assert(env.APP_BIND_ADDRESS === '${APP_BIND_ADDRESS:-0.0.0.0}', 'app environment: APP_BIND_ADDRESS: ${APP_BIND_ADDRESS:-0.0.0.0}', env.APP_BIND_ADDRESS);
   assert(env.AUTH_MODE === 'local', 'app environment: AUTH_MODE: local', env.AUTH_MODE);
   assert(!('APP_PORT' in env), 'app environment has no APP_PORT key (the container always listens on 3000)');
+  assert(env.MFA_REQUIRED === '${MFA_REQUIRED:-}', 'app environment: MFA_REQUIRED: ${MFA_REQUIRED:-} (empty means the default, all)', env.MFA_REQUIRED);
+  assert(env.MFA_ENCRYPTION_KEY === '${MFA_ENCRYPTION_KEY:-}', 'app environment: MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-} (optional)', env.MFA_ENCRYPTION_KEY);
   assert(!('GOOGLE_APPLICATION_CREDENTIALS' in env) && Object.keys(env).every((k) => !/^(GOOGLE_|GCP_|GCS_|FIREBASE_)/i.test(k)), 'app environment has no cloud-provider variables', Object.keys(env));
 }
 assert(!compose.some((l) => /network_mode\s*:\s*["']?host/.test(l)), 'no service uses network_mode: host');
 assert(!!db && listOf(db, 'volumes').some((v) => v.startsWith('${INITDB_DIR:-./docker/postgres}:')), 'the db init mount uses ${INITDB_DIR:-./docker/postgres}', db && listOf(db, 'volumes'));
+assert(!!db && listOf(db, 'volumes').some((v) => v.startsWith('${DB_DATA_DIR:-postgres_data}:/var/lib/postgresql/data')), 'the db data volume is ${DB_DATA_DIR:-postgres_data} (host path on Unraid, named volume elsewhere)', db && listOf(db, 'volumes'));
+assert(!!app && listOf(app, 'volumes').some((v) => v.startsWith('${EVIDENCE_DIR:-./data/evidence}:/app/data/evidence')), 'the evidence vault mount is ${EVIDENCE_DIR:-./data/evidence}', app && listOf(app, 'volumes'));
+assert(!!ollama && listOf(ollama, 'volumes').some((v) => v.startsWith('${OLLAMA_MODELS_DIR:-ollama-models}:/root/.ollama')), 'the ollama model store is ${OLLAMA_MODELS_DIR:-ollama-models}', ollama && listOf(ollama, 'volumes'));
+assert(!compose.some((l) => /\/mnt\//.test(l)), 'no host-specific /mnt path is hard-coded outside comments (Unraid values live in .env)', compose.filter((l) => /\/mnt\//.test(l)));
 
 console.log('\n--- Dockerfile and .env.example ---');
 const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
@@ -243,6 +249,10 @@ assert(!!healthcheck && /\/api\/v1\/health\b/.test(healthcheck[0]), 'the Dockerf
 const envExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
 assert(/^LOCAL_AUTH_SECRET=/m.test(envExample), '.env.example contains LOCAL_AUTH_SECRET=');
 assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has no VITE_FIREBASE / VITE_GCP / VITE_GCS');
+assert(/^# MFA_REQUIRED=/m.test(envExample), '.env.example documents MFA_REQUIRED');
+assert(/^# MFA_ENCRYPTION_KEY=/m.test(envExample), '.env.example documents MFA_ENCRYPTION_KEY');
+const testAll: string = pkg.scripts?.['test:all'] ?? '';
+assert(['totp', 'mfa', 'mfaClient'].every((n) => testAll.includes(`tests/${n}.test.ts`)), 'package.json test:all runs tests/totp.test.ts, tests/mfa.test.ts and tests/mfaClient.test.ts');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

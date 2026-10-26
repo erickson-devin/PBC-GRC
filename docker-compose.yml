@@ -8,6 +8,11 @@
 #   APP_DB_PASSWORD     password of the application's database role
 #   LOCAL_AUTH_SECRET   >= 32 random characters used to sign sessions (e.g. `openssl rand -hex 32`)
 #
+# Multi-factor authentication (TOTP) is ON by default for every local account (MFA_REQUIRED=all). To stage the rollout set
+# MFA_REQUIRED=privileged first (platform administrators, tenant owners, MSP administrators), then remove it or set `all`.
+# MFA_ENCRYPTION_KEY (optional, >= 32 random characters) keeps the enrolled factors independent of LOCAL_AUTH_SECRET.
+# See docs/ON_PREM_DATABASE.md "Multi-factor authentication".
+#
 # Optional:
 #   PLATFORM_ADMIN_EMAILS  comma-separated e-mail addresses of the platform administrators of this installation. Only they can
 #                          provision tenants for a specific assessment program (which frameworks a tenant may use) and see the
@@ -48,7 +53,8 @@ services:
       # Bound to localhost: the database should not be reachable from the network
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Database files: a named volume by default; Unraid sets DB_DATA_DIR=/mnt/cache/appdata/singularity/postgres (a host directory)
+      - ${DB_DATA_DIR:-postgres_data}:/var/lib/postgresql/data
       # Unraid sets INITDB_DIR=/mnt/user/appdata/singularity/docker/postgres; elsewhere the repository copy is used
       - ${INITDB_DIR:-./docker/postgres}:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -92,6 +98,10 @@ services:
       # Test-only; refused in production
       ALLOW_DEV_MOCK_TOKENS: ${ALLOW_DEV_MOCK_TOKENS:-}
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:?Set LOCAL_AUTH_SECRET (>= 32 random characters)}
+      # who must use a TOTP second factor: all (default when empty) | privileged | off
+      MFA_REQUIRED: ${MFA_REQUIRED:-}
+      # optional key (>= 32 characters) for the stored TOTP secrets; empty = derived from LOCAL_AUTH_SECRET
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-}
       # Platform administrators and the first-time setup wizard (see the notes at the top of this file)
       PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
       SETUP_TOKEN: ${SETUP_TOKEN:-}
@@ -123,8 +133,8 @@ services:
       # All interfaces by decision (Unraid WebUI on the LAN); the host port is APP_PORT, the container always listens on 3000
       - "${APP_PORT:-3000}:3000"
     volumes:
-      # Persistent local evidence vault mounted to host disk
-      - ./data/evidence:/app/data/evidence
+      # Persistent local evidence vault: the repository folder by default; Unraid sets EVIDENCE_DIR=/mnt/cache/appdata/singularity/evidence
+      - ${EVIDENCE_DIR:-./data/evidence}:/app/data/evidence
     networks:
       - singularity-network
 
@@ -135,7 +145,8 @@ services:
     container_name: singularity-ollama
     restart: unless-stopped
     volumes:
-      - ollama-models:/root/.ollama
+      # Model store: a named volume by default; Unraid sets OLLAMA_MODELS_DIR=/mnt/user/appdata/singularity/ollama-models
+      - ${OLLAMA_MODELS_DIR:-ollama-models}:/root/.ollama
     # No published port: only the app container (same network) can reach it
     networks:
       - singularity-network

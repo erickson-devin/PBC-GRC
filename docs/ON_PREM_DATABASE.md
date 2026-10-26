@@ -62,10 +62,112 @@ The database and the other internal services are never exposed to the network: P
 only (`${DB_PORT:-5432}`), and Ollama (the optional `ai` profile) publishes no port and is reachable only on the internal
 Docker network.
 
-**Multi-factor authentication (NIST SP 800-171 3.5.3).** The app provides single-factor password sign-in (12+ characters,
-bcrypt, lockout, throttling) and has no second factor of its own. Until TOTP lands in local auth (planned for Phase 5.9),
-meet 3.5.3 with an external control: a VPN that enforces MFA, or a jump host. The app must **not** be configured to trust
-an identity header from a proxy: if the port is reachable without the proxy, that would let anyone sign in as anyone.
+**Multi-factor authentication (NIST SP 800-171 3.5.3).** The app enforces a TOTP second factor according to `MFA_REQUIRED` (on for
+everyone by default); see "Multi-factor authentication" below. The app must **not** be configured to trust an identity header from a
+proxy: if the port is reachable without the proxy, that would let anyone sign in as anyone.
+
+## Multi-factor authentication
+
+The app has its own second factor, so NIST SP 800-171 3.5.3 no longer depends on an external control (a VPN that enforces
+MFA is still good practice for network access, see "Network exposure"). **It is on by default.**
+
+**What it is.** TOTP (RFC 6238: 6 digits, 30 seconds, SHA-1) with any authenticator app. At enrolment the server shows an
+`otpauth://` URI and the secret as text (there is no QR image: type or paste the secret, or open the URI on a phone) and the
+person confirms with a first code. They then get **8 single-use recovery codes, shown once** (format `XXXXX-XXXXX`, letters
+and digits without the easily confused `I`, `L`, `O`, `U`); save them somewhere other than the phone. Signing in is two steps:
+the password, then a code from the app (or a recovery code). The second step is only reachable with the short-lived proof that
+the password step succeeded; the proof works once.
+
+**`MFA_REQUIRED`** (environment variable; read on every sign-in):
+
+| Value | Who must hold a second factor |
+| --- | --- |
+| `all` (default, also when empty) | every local account |
+| `privileged` | platform administrators (`PLATFORM_ADMIN_EMAILS` and the first administrator), tenant owners (`TENANT_OWNER`) and MSP administrators (`MSP_ADMIN`) |
+| `off` | nobody is required to. Anyone who has already enrolled is still asked for a code at sign-in |
+
+Any other value stops the server at startup. With `off` in production (`NODE_ENV=production`) the server logs a warning at
+startup, because 3.5.3 is then not met by the application.
+
+**Staged rollout (the operator's job; the server does not stage it for you).** Set `MFA_REQUIRED=privileged`, restart, let
+the administrators and tenant owners enrol, then remove the variable (or set `all`) and restart. Whenever a person is
+required to hold a factor and has none, they are asked to enrol **at their next sign-in** (no grace period): the password
+step is followed by the enrolment screen, and no session is issued until the first code is confirmed. All sessions signed
+before the upgrade that introduced this feature end at the upgrade (sessions are now signed with a derived key), so
+everyone signs in again.
+
+**First administrator and invitations.** The first-time setup wizard enrols the first administrator inline (a platform
+administrator is always privileged), unless `MFA_REQUIRED=off`: the wizard returns the enrolment step instead of a session
+and continues once the first code is confirmed. A person who registers through an invitation is asked to enrol straight away
+when `MFA_REQUIRED` requires it for them (always under `all`; under `privileged` when the invited role is `TENANT_OWNER` or
+`MSP_ADMIN`).
+
+**Lockout.** A wrong or replayed code counts like a wrong password: five consecutive failures lock the account for 15
+minutes (the same counter as password failures). The password step no longer resets that counter on success when a second
+step follows; the counter is reset when the whole sign-in completes. Each sign-in uses two requests of the 20 per minute per
+IP address allowed (behind a reverse proxy with `TRUST_PROXY` unset, people share the proxy's address).
+
+**Forced password change (`must_change_password`, NIST 3.5.9).** A password typed by an operator is temporary. Accounts created with
+`npm run auth:create-user` and accounts whose password a platform administrator reset have `must_change_password` set. Until they change it,
+their session can only call the password-change endpoint (every other request answers 403 `password_change_required`); a
+successful change clears the flag and issues a new session. The change asks for the current password and, when a factor is
+enrolled, a current code.
+
+**Platform administrator account actions** (Administration console, `/api/v1/platform/users`, platform administrators only):
+*reset password* (sets a temporary password, removes the person's second factor and recovery codes, ends their sessions,
+clears a lockout, and forces a change at their next sign-in), *reset MFA* (removes the factor and recovery codes, ends their
+sessions; they enrol again at their next sign-in if required), *disable* (blocks sign-in, ends their sessions, removes the
+factor) and *enable* (allows sign-in again and clears a lockout; the factor is not restored). **An administrator cannot do
+any of these to their own account** (409); their own password change goes through the account settings. Each action logs the
+actor's and the target's email address.
+
+**Lost authenticator and lost recovery codes.** Another platform administrator resets the person's MFA (or their password,
+which also removes the factor) in the console. For the **last remaining platform administrator** nobody else can do that, so
+use the command line at the server's keyboard, with the same `DATABASE_URL` / `DB_*` as the server:
+
+```bash
+npm run auth:reset-mfa -- you@example.mil
+```
+
+It removes the factor and recovery codes, ends the person's sessions and clears a lockout; they enrol again at the next
+sign-in. (It needs PostgreSQL; it refuses `DB_MODE=memory`.) Someone who still holds recovery codes can sign in with one
+instead of a code, and a signed-in person can replace their recovery codes with 8 new ones (`POST /api/v1/auth/mfa/recovery-codes`, which needs a fresh app code).
+
+**Secrets and rotation.** Three keys are derived (HKDF-SHA256) with different labels, so none can be used in place of
+another: the **session signing** key (from `LOCAL_AUTH_SECRET`), the **TOTP secret encryption** key (AES-256-GCM, bound to the
+account row) and the **recovery-code pepper** (a keyed hash, so a stolen database cannot be brute-forced). The last two come
+from `MFA_ENCRYPTION_KEY` when it is set (optional, 32 or more random characters, for example `openssl rand -hex 32`) and
+from `LOCAL_AUTH_SECRET` otherwise. Plain secrets and recovery codes are never stored or logged.
+
+* **Case A: `MFA_ENCRYPTION_KEY` not set, `LOCAL_AUTH_SECRET` rotated.** Everyone is signed out **and every enrolled factor and
+  recovery code becomes unreadable**. At the second step the server answers 503 `mfa_unavailable` (it never falls back to a
+  password-only session) until each person's factor is removed with `npm run auth:reset-mfa -- <email>` (or by an
+  administrator in the console) and they enrol again.
+* **Case B: `MFA_ENCRYPTION_KEY` set, `LOCAL_AUTH_SECRET` rotated.** Everyone is signed out, and the factors survive.
+  Set `MFA_ENCRYPTION_KEY` before enrolling people if you expect to rotate the session secret.
+* **Rotating `MFA_ENCRYPTION_KEY`** (or setting it on an installation that already has enrolments, or removing it) **always
+  destroys the enrolled factors**, as in case A: reset each one with the same command.
+
+**Sessions end immediately.** Every authenticated request checks the account in the database: disabling an account, a
+password change, an MFA reset or an administrator password reset ends that person's sessions on their next request (this
+costs one extra primary-key lookup per request; if the database is unavailable the answer is 503, not a sign-out).
+
+## Host paths (Docker Compose)
+
+The compose file keeps every host-specific location in a variable, so the same file runs on a laptop and on Unraid. The
+defaults are a named volume (database, Ollama models) or the repository folder (evidence, init scripts); the Unraid
+installation sets these in the `.env` next to `docker-compose.yml`:
+
+| Variable | Unraid value | Default |
+| --- | --- | --- |
+| `DB_DATA_DIR` | `/mnt/cache/appdata/singularity/postgres` | named volume `postgres_data` |
+| `EVIDENCE_DIR` | `/mnt/cache/appdata/singularity/evidence` | `./data/evidence` |
+| `OLLAMA_MODELS_DIR` | `/mnt/user/appdata/singularity/ollama-models` | named volume `ollama-models` |
+| `INITDB_DIR` | `/mnt/user/appdata/singularity/docker/postgres` | `./docker/postgres` (the repository copy) |
+
+Changing `DB_DATA_DIR` on an existing installation points PostgreSQL at a different (empty) directory: the init script runs
+again there and the old data stays where it was. The Unraid installation also runs `OLLAMA_MODEL=llama3.2:3b` with
+`OLLAMA_NUM_CTX=4096` (the model the CMMC import is tuned for), set the same way.
 
 ## Existing data volume (already initialised before this change)
 

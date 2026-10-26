@@ -37,7 +37,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
 import { Tenant, TenantInvitation } from '../../types/tenant';
 import { frameworkLabel, programSummary } from '../../data/programs';
-import { ApiClient, ApiError } from '../../services/apiClient';
+import { ApiClient, ApiError, type LocalAccount } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { NewTenantModal } from './NewTenantModal';
 import { EditEnclaveModal } from './EditEnclaveModal';
@@ -106,8 +106,75 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     };
   }, []);
 
+  // Local accounts: who can sign in to this installation, and the administrator actions on them
+  type AccountActionKind = 'reset-password' | 'reset-mfa' | 'disable' | 'enable';
+  const [localUsers, setLocalUsers] = useState<LocalAccount[] | null>(null);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [usersVersion, setUsersVersion] = useState(0);
+  const [accountAction, setAccountAction] = useState<{ kind: AccountActionKind; user: LocalAccount } | null>(null);
+  const [tempPassword, setTempPassword] = useState('');
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountActionError, setAccountActionError] = useState<string | null>(null);
+  const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    ApiClient.listLocalUsers().then(
+      (list) => {
+        if (cancelled) return;
+        setLocalUsers(list);
+        setUsersError(null);
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setUsersError(errorMessage(err) || 'Could not load the local accounts.');
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [usersVersion]);
+
+  const closeAccountAction = () => {
+    setAccountAction(null);
+    setTempPassword('');
+    setAccountActionError(null);
+  };
+
+  const runAccountAction = async () => {
+    if (!accountAction) return;
+    const { kind, user } = accountAction;
+    if (kind === 'reset-password' && tempPassword.length < 12) {
+      setAccountActionError('The temporary password must be at least 12 characters.');
+      return;
+    }
+    setAccountBusy(true);
+    setAccountActionError(null);
+    try {
+      if (kind === 'reset-password') {
+        await ApiClient.adminResetPassword(user.id, tempPassword);
+        setAccountNotice(`${user.email}: the temporary password is set. They must change it at their next sign-in, and set up two-step verification again. Give it to them through a separate secure channel.`);
+      } else if (kind === 'reset-mfa') {
+        await ApiClient.adminResetMfa(user.id);
+        setAccountNotice(`${user.email}: two-step verification was removed and their sessions were signed out.`);
+      } else if (kind === 'disable') {
+        await ApiClient.disableUser(user.id);
+        setAccountNotice(`${user.email} is disabled and cannot sign in. Their sessions were signed out and their two-step verification was removed.`);
+      } else {
+        await ApiClient.enableUser(user.id);
+        setAccountNotice(`${user.email} can sign in again. They will need to set up two-step verification again if it is required.`);
+      }
+      closeAccountAction();
+      setUsersVersion((v) => v + 1);
+    } catch (err: unknown) {
+      setAccountActionError(errorMessage(err) || 'The action failed.');
+    } finally {
+      setAccountBusy(false);
+      setTempPassword('');
+    }
+  };
+
   // Destruction state
-  const [selectedTenantForDestruction, setSelectedTenantForDestruction] = useState<Tenant | null>(null);
+  const [selectedTenantForDestruction,setSelectedTenantForDestruction] = useState<Tenant | null>(null);
   const [isDestructionModalOpen, setIsDestructionModalOpen] = useState(false);
   const [destructionConfirmInput, setDestructionConfirmInput] = useState('');
   const [isDestroying, setIsDestroying] = useState(false);
@@ -844,6 +911,137 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </table>
           </div>
         </div>
+
+        {/* Section 2b: Local accounts (sign-in credentials and second factors) */}
+        <div className="stitch-card p-6 space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Lock className="w-4 h-4 text-cyan-400" />
+              <span>Local accounts{localUsers ? ` (${localUsers.length})` : ''}</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Everyone who can sign in to this installation. Resetting a password sets a temporary one the person must change at their next sign-in.
+              Resetting two-step verification, resetting a password and disabling an account all sign the person out everywhere.
+            </p>
+          </div>
+
+          {usersError && <ErrorNotice message={usersError} />}
+          {accountNotice && (
+            <div role="status" className="flex items-start justify-between gap-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+              <span>{accountNotice}</span>
+              <button aria-label="Dismiss" onClick={() => setAccountNotice(null)} className="text-emerald-400 hover:text-white">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-xs tracking-wider border-b border-slate-800">
+                <tr>
+                  <th className="py-3 px-4">Account</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">2-step</th>
+                  <th className="py-3 px-4">Last sign-in</th>
+                  <th className="py-3 px-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 font-sans">
+                {(localUsers ?? []).map((u) => {
+                  const isSelf = u.email.toLowerCase() === currentUser.email.toLowerCase();
+                  const locked = Boolean(u.lockedUntil) && new Date(u.lockedUntil as string).getTime() > Date.now();
+                  const actionClass = 'px-2 py-1 rounded-lg border border-slate-700 text-slate-200 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed';
+                  return (
+                    <tr key={u.id} className="even:bg-slate-950/40 odd:bg-slate-900/20 align-top">
+                      <td className="py-3.5 px-4">
+                        <div className="font-mono text-slate-200 font-semibold">
+                          {u.email}
+                          {isSelf && <span className="ml-2 text-xs font-sans text-cyan-300">(you)</span>}
+                        </div>
+                        {u.name && <div className="text-slate-400">{u.name}</div>}
+                      </td>
+                      <td className="py-3.5 px-4 space-x-1.5">
+                        {u.disabled ? (
+                          <span className="px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">Disabled</span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">Active</span>
+                        )}
+                        {locked && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">Locked</span>}
+                        {u.mustChangePassword && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">Must change password</span>}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-300">{u.mfaEnrolled ? 'On' : 'Off'}</td>
+                      <td className="py-3.5 px-4 text-slate-300">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : 'Never'}</td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex flex-wrap gap-1.5">
+                          <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'reset-password', user: u })} className={actionClass}>Reset password</button>
+                          <button type="button" disabled={isSelf || !u.mfaEnrolled} onClick={() => setAccountAction({ kind: 'reset-mfa', user: u })} className={actionClass}>Reset 2-step</button>
+                          {u.disabled ? (
+                            <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'enable', user: u })} className={actionClass}>Enable</button>
+                          ) : (
+                            <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'disable', user: u })} className={actionClass}>Disable</button>
+                          )}
+                        </div>
+                        {isSelf && <p className="text-slate-400 mt-1">Use Account settings to change your own password.</p>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {localUsers !== null && localUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-6 px-4 text-center text-slate-400">There are no local accounts.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Confirmation for a local-account action */}
+        {accountAction && (
+          <DialogOverlay onClose={accountBusy ? undefined : closeAccountAction} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+            <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl">
+              <div className="p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-4 text-xs">
+                <DialogTitle as="h3" className="text-base font-bold text-white">
+                  {accountAction.kind === 'reset-password' && 'Reset password'}
+                  {accountAction.kind === 'reset-mfa' && 'Reset two-step verification'}
+                  {accountAction.kind === 'disable' && 'Disable account'}
+                  {accountAction.kind === 'enable' && 'Enable account'}
+                </DialogTitle>
+                <p className="text-slate-300 leading-relaxed">
+                  {accountAction.kind === 'reset-password' && <>Set a temporary password for <strong className="text-white font-mono">{accountAction.user.email}</strong>. They are signed out everywhere, lose their two-step verification and recovery codes, and must change this password at their next sign-in.</>}
+                  {accountAction.kind === 'reset-mfa' && <>Remove the authenticator and recovery codes of <strong className="text-white font-mono">{accountAction.user.email}</strong> and sign them out everywhere. They will set up two-step verification again at their next sign-in if it is required.</>}
+                  {accountAction.kind === 'disable' && <>Block <strong className="text-white font-mono">{accountAction.user.email}</strong> from signing in. They are signed out everywhere and their two-step verification is removed.</>}
+                  {accountAction.kind === 'enable' && <>Allow <strong className="text-white font-mono">{accountAction.user.email}</strong> to sign in again. Their two-step verification is not restored.</>}
+                </p>
+                {accountAction.kind === 'reset-password' && (
+                  <div>
+                    <label htmlFor="admin-temp-password" className="block text-xs font-semibold text-slate-300 mb-1">Temporary password (at least 12 characters)</label>
+                    <input
+                      id="admin-temp-password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={tempPassword}
+                      onChange={(e) => setTempPassword(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+                )}
+                <ErrorNotice message={accountActionError} />
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={closeAccountAction} disabled={accountBusy} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold">Cancel</button>
+                  <button
+                    type="button"
+                    onClick={() => void runAccountAction()}
+                    disabled={accountBusy || (accountAction.kind === 'reset-password' && !tempPassword)}
+                    className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-bold"
+                  >
+                    {accountBusy ? 'Working…' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </DialogOverlay>
+        )}
 
         {/* Section 3: Pending & Recent Onboarding Invitations */}
         <div className="stitch-card p-6 space-y-4">

@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
 import { initDb, assertDbModeAllowed, getDbMode } from './db';
-import { assertAuthConfig } from './auth/localAuth';
+import { assertAuthConfig, authStartupWarnings } from './auth/localAuth';
 import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { parseTrustProxy } from './trustProxy';
@@ -80,12 +80,13 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
   try {
     assertDbModeAllowed();
     assertAuthConfig();
+    for (const w of authStartupWarnings()) console.warn('[Startup] ' + w);
     assertStorageConfig();
     await initDb();
     console.log(`[Startup] Database mode: ${getDbMode()}`);
     console.log(`[Startup] Auth: local accounts | Storage: local (${localStorageRoot()})`);
     if (BIND_ADDRESS === '0.0.0.0' || BIND_ADDRESS === '::') {
-      console.log(`[Startup] Listening on ${BIND_ADDRESS}:${PORT} (all interfaces, so the Unraid WebUI is reachable on the LAN). To restrict access see docs/ON_PREM_DATABASE.md "Network exposure"; multi-factor authentication for 3.5.3 is provided by an external control until Phase 5.9, see docs/VULNERABILITY_MANAGEMENT.md section 2.3.`);
+      console.log(`[Startup] Listening on ${BIND_ADDRESS}:${PORT} (all interfaces, so the Unraid WebUI is reachable on the LAN). To restrict access see docs/ON_PREM_DATABASE.md "Network exposure"; multi-factor authentication is enforced according to MFA_REQUIRED, see docs/ON_PREM_DATABASE.md "Multi-factor authentication".`);
     }
     const vmScheduler = startVmScheduler();
     if (vmScheduler) {

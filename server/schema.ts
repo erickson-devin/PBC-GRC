@@ -248,6 +248,22 @@ export const TABLES_SQL = `
       CONSTRAINT unq_local_users_email UNIQUE (email)
   );
 
+  -- Second factor (TOTP) and session revocation. token_version is bumped on a password change, a disable and an MFA
+  -- reset; a session or pending token carrying an older version is rejected. totp_secret_enc is AES-256-GCM ciphertext
+  -- (never the secret); recovery_code_hashes are keyed HMAC-SHA256 hex digests, never the codes.
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS totp_secret_enc TEXT;
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS totp_confirmed_at TIMESTAMPTZ;
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS totp_last_used_step BIGINT;
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS recovery_code_hashes TEXT[] NOT NULL DEFAULT '{}';
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE local_users DROP CONSTRAINT IF EXISTS local_users_totp_secret_enc_check;
+  ALTER TABLE local_users ADD CONSTRAINT local_users_totp_secret_enc_check CHECK (totp_secret_enc IS NULL OR totp_secret_enc ~ '^v1[.][A-Za-z0-9_-]{16}[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]{22}$');
+  ALTER TABLE local_users DROP CONSTRAINT IF EXISTS local_users_recovery_codes_check;
+  ALTER TABLE local_users ADD CONSTRAINT local_users_recovery_codes_check CHECK (cardinality(recovery_code_hashes) <= 16 AND array_to_string(recovery_code_hashes, ',') ~ '^([0-9a-f]{64}(,[0-9a-f]{64})*)?$');
+  ALTER TABLE local_users DROP CONSTRAINT IF EXISTS local_users_totp_confirm_check;
+  ALTER TABLE local_users ADD CONSTRAINT local_users_totp_confirm_check CHECK (totp_confirmed_at IS NULL OR totp_secret_enc IS NOT NULL);
+
   -- SSP import (see server/ssp): an uploaded System Security Plan is extracted and mapped to controls, and the result is
   -- held HERE, in a staging area. Nothing in these tables is ever a compliance answer: control_assessments changes only
   -- through an explicit, reviewed commit, so these tables deliberately have no foreign key into it.

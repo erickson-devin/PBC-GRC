@@ -17,6 +17,8 @@ import { AuthProviderType, TenantInvitation } from '../types/tenant';
 import { programSummary } from '../data/programs';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { errorMessage } from '../utils/errors';
+import { MfaChallengeForm } from '../components/auth/MfaChallengeForm';
+import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
 
 interface AcceptInvitePageProps {
   onSuccessNavigate?: () => void;
@@ -39,6 +41,11 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     registerWithInvite,
     authError,
     clearAuthError,
+    mfaChallenge,
+    startEnrolment,
+    confirmEnrolment,
+    finishMfa,
+    cancelMfa,
   } = useAuth();
 
   // Parse token from search query or hash
@@ -71,6 +78,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimSuccess, setClaimSuccess] = useState(false);
+  // What is left to do once a second step (a code, or enrolling an authenticator) finishes: nothing more after registering, or
+  // accepting the invitation when an existing account was signed in
+  const [afterSecondStep, setAfterSecondStep] = useState<'registered' | 'claim' | null>(null);
 
   // Sync token from URL popstate / hashchange
   useEffect(() => {
@@ -184,13 +194,28 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     try {
       // The server creates the account for the invited address, accepts the invitation and signs us in.
       try {
-        await registerWithInvite(invitation.token, name, password);
+        const stage = await registerWithInvite(invitation.token, name, password);
+        if (stage === 'enrol') {
+          // An authenticator has to be set up before the session starts
+          setPassword('');
+          setConfirmPassword('');
+          setAfterSecondStep('registered');
+          setIsSubmitting(false);
+          return;
+        }
       } catch (err: unknown) {
         if ((err as { reason?: string }).reason !== 'account_exists') throw err;
         // This address already has an account: sign in with ITS password, then accept the invitation.
-        const signedIn = await loginWithEmailPassword(invitation.email, password);
-        if (!signedIn) {
+        const outcome = await loginWithEmailPassword(invitation.email, password);
+        if (outcome === 'failed') {
           setClaimError('An account for this email already exists. Enter that account\'s password to accept the invitation.');
+          setIsSubmitting(false);
+          return;
+        }
+        setPassword('');
+        setConfirmPassword('');
+        if (outcome === 'mfa' || outcome === 'enrol') {
+          setAfterSecondStep('claim');
           setIsSubmitting(false);
           return;
         }
@@ -207,6 +232,30 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       setClaimError(errorMessage(err) || 'Could not accept the invitation.');
       setIsSubmitting(false);
     }
+  };
+
+  // The second step is finished and the person is signed in
+  const handleSecondStepDone = async () => {
+    if (!invitation) return;
+    if (afterSecondStep === 'claim') {
+      const claim = await claimInviteToken(invitation.token, { name: fullName.trim() || invitation.email.split('@')[0], email: invitation.email, authProvider: 'password' as AuthProviderType });
+      if (!claim.success) {
+        setClaimError(claim.error || 'Failed to claim invitation.');
+        setAfterSecondStep(null);
+        return;
+      }
+    }
+    setAfterSecondStep(null);
+    handleClaimSuccess();
+  };
+
+  const abandonSecondStep = () => {
+    cancelMfa();
+    if (afterSecondStep === 'registered') {
+      // The account exists and the invitation is used up; only the sign-in is left, which asks for the authenticator again
+      setClaimError('Your account was created. Sign in to finish setting up two-step verification.');
+    }
+    setAfterSecondStep(null);
   };
 
   // -------------------------------------------------------------------------
@@ -400,7 +449,25 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                 </div>
               )}
 
+              {/* Second step: a code, or setting up an authenticator */}
+              {mfaChallenge?.stage === 'verify' && (
+                <MfaChallengeForm onDone={() => void handleSecondStepDone()} onCancel={abandonSecondStep} />
+              )}
+              {mfaChallenge?.stage === 'enrol' && (
+                <MfaEnrolmentPanel
+                  onStart={startEnrolment}
+                  onConfirm={confirmEnrolment}
+                  onDone={async () => {
+                    await finishMfa();
+                    await handleSecondStepDone();
+                  }}
+                  onCancel={abandonSecondStep}
+                  cancelLabel="Cancel"
+                />
+              )}
+
               {/* Set Password Form */}
+              {!mfaChallenge && (
               <form onSubmit={handlePasswordClaim} className="space-y-3.5 animate-fadeIn">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
@@ -490,6 +557,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   )}
                 </button>
               </form>
+              )}
 
               {/* Footer Terms Notice */}
               <div className="text-center pt-2 text-[11px] text-slate-400">

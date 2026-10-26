@@ -128,7 +128,7 @@ async function run() {
   console.log('\n--- Server in local mode ---');
   assert((await call('GET', '/auth/config')).body?.mode === 'local', 'GET /auth/config reports local mode');
   await createLocalUser({ email: 'Ann@Enclave.mil', name: 'Ann Analyst', password: PASSWORD });
-  await createLocalUser({ email: 'bob@enclave.mil', name: 'Bob', password: PASSWORD });
+  const bob = await createLocalUser({ email: 'bob@enclave.mil', name: 'Bob', password: PASSWORD });
   const dup = await createLocalUser({ email: 'ann@enclave.mil', name: 'x', password: PASSWORD }).then(() => null, (e: Error) => e.name);
   assert(dup === 'LocalUserExistsError', 'emails are unique case-insensitively');
 
@@ -171,12 +171,16 @@ async function run() {
   assert((await call('GET', '/controls', { token: annToken, tenant: tenantId })).status === 200, 'GET /controls with the local token + x-tenant-id');
   assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: annToken, tenant: tenantId, body: { status: 'MET', implementationNotes: 'local auth' } })).status === 200, 'owner can write (role read from tenant_users)');
 
-  const bobToken = signLocalToken({ id: 'lu_bob_not_member', email: 'bob@enclave.mil', name: 'Bob' }).token;
+  const bobToken = signLocalToken({ id: bob.id, email: 'bob@enclave.mil', name: 'Bob' }).token; // no `ver` claim: what a token minted before 5.9 looks like
   assert((await call('GET', '/controls', { token: bobToken, tenant: tenantId })).status === 403, 'a valid local user who is not a member gets 403');
-  const add = await call('POST', `/tenants/${tenantId}/members`, { token: annToken, tenant: tenantId, body: { userId: 'lu_bob_not_member', email: 'bob@enclave.mil', role: 'ASSESSOR' } });
+  const add = await call('POST', `/tenants/${tenantId}/members`, { token: annToken, tenant: tenantId, body: { userId: bob.id, email: 'bob@enclave.mil', role: 'ASSESSOR' } });
   assert(add.status === 201, 'the owner adds Bob as ASSESSOR');
   assert((await call('GET', '/controls', { token: bobToken, tenant: tenantId })).status === 200, 'Bob can now read');
   assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: bobToken, tenant: tenantId, body: { status: 'MET' } })).status === 403, 'but the read-only role holds for local users too (403)');
+
+  const ghostToken = signLocalToken({ id: 'lu_ghost_no_account', email: 'ghost@enclave.mil', name: 'Ghost' }).token;
+  assert((await call('GET', '/auth/me', { token: ghostToken })).status === 401, 'a validly signed token for a user id with no account -> 401');
+  assert(verifyLocalToken(bobToken).ver === undefined && (await call('GET', '/auth/me', { token: bobToken })).status === 200, 'a pre-upgrade token without `ver` for a real version-0 user -> 200');
 
   console.log('\n--- Rejections ---');
   assert((await call('GET', '/controls', { tenant: tenantId })).status === 401, 'no token -> 401');
