@@ -10,7 +10,7 @@ Node is on PATH (v24 locally; CI and the Dockerfile are PINNED to Node 22.23.3 b
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) | exit 0 |
 | Build | `npm run build` (`tsc && vite build`) | exit 0 |
-| Tests | `npm run test:all` (about 2m) | exit 0: 46 suites, 3078 of 3078 assertions |
+| Tests | `npm run test:all` (about 2m) | exit 0: 46 suites, 3082 of 3082 assertions |
 | One suite | `npx tsx tests/<name>.test.ts` (or `npm run test:<name>`) | each prints a final `📊 TEST RESULTS: n / n` line |
 | Node 22 (what CI runs) | `npx -y -p node@22.23.3 -- npm run test:all` (NOT `node@22`: that floats to 22.23.4 and segfaults in `tests/sspImport.test.ts`) | passes |
 | Exporter (Python) | `cd exporters/pbc-vm-exporter && python -m pytest -q` (venv: `python -m venv .venv`, then `pip install -e ".[dev]"`) | 227 passed, 1 skipped (POSIX-only); CI job "exporter" |
