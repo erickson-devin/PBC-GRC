@@ -4,7 +4,6 @@ import {
   User,
   Shield,
   Building,
-  CheckCircle2,
   KeyRound,
   ShieldCheck,
 } from 'lucide-react';
@@ -13,6 +12,7 @@ import { useTenant } from '../../context/TenantContext';
 import { ApiClient, MfaStatus } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
+import { ROLE_LABELS } from '../../utils/roles';
 import { MfaEnrolmentPanel, RecoveryCodesNotice } from './MfaEnrolmentPanel';
 import { PasswordChangeForm } from './PasswordChangeForm';
 
@@ -129,9 +129,6 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               </label>
               <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-white font-mono flex items-center justify-between">
                 <span>{currentUser.email}</span>
-                <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                  <CheckCircle2 className="w-3 h-3" /> Verified
-                </span>
               </div>
             </div>
 
@@ -151,7 +148,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 </label>
                 <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-brand-300 font-semibold text-xs flex items-center gap-1.5">
                   <Shield className="w-3.5 h-3.5 text-brand-400 shrink-0" />
-                  <span>{currentRole}</span>
+                  <span>{ROLE_LABELS[currentRole] ?? currentRole}</span>
                 </div>
               </div>
             </div>

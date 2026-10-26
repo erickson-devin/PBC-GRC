@@ -3,6 +3,7 @@ import { User, AuthProviderType } from '../types/tenant';
 import { useTenant, ANONYMOUS_USER } from './TenantContext';
 import { ApiClient, LocalLoginResponse, MfaEnrolmentStart, MfaStage, SetupInput, SetupResult } from '../services/apiClient';
 import { errorMessage } from '../utils/errors';
+import { buildUserProfile } from '../utils/userProfile';
 
 /** A sign-in that is not finished: the person still has to enter a code ('verify') or enrol an authenticator ('enrol'). Lives in React state only. */
 export interface MfaChallenge {
@@ -145,20 +146,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string,
     displayName: string | null,
     provider: AuthProviderType,
-    token: string
+    token: string,
+    userId?: string
   ) => {
     const { tenant, role } = resolveTenantForEmail(email);
 
     const userProfile: User = {
-      id: `user-${email.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 20)}`,
-      name: displayName || email.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      email: email,
-      organization: tenant.name,
-      authProvider: provider,
-      emailVerified: true,
-      roles: {
-        [tenant.id]: role,
-      },
+      ...buildUserProfile(
+        { id: userId, email, name: displayName },
+        { tenantId: tenant.id, role, organization: tenant.name, provider }
+      ),
       idToken: token,
     };
 
@@ -176,7 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /** Enters the app with a complete session. */
   const applySession = useCallback(async (session: LocalLoginResponse) => {
-    await handleUserSession(session.user.email, session.user.name, 'password', session.token);
+    await handleUserSession(session.user.email, session.user.name, 'password', session.token, session.user.id);
     setMustChangePassword(session.mustChangePassword);
     setMfaEnrolled(session.mfaEnrolled);
     heldSession.current = null;

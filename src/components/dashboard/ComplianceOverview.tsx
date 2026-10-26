@@ -19,6 +19,7 @@ import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 import { calculateSprsScore, formatSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
+import { storagePathLabel } from '../../data/audit/storageDriver';
 import { DomainCards } from './DomainCards';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { ROLE_LABELS } from '../../utils/roles';
@@ -358,7 +359,7 @@ export const ComplianceOverview: React.FC = () => {
         {/* Widget 2: Evidence Vault & Artifact Health */}
         {(() => {
           const storageProvider = storageConfig.provider;
-          const localStoragePath = storageConfig.localStoragePath;
+          const localStoragePath = storagePathLabel(storageConfig) ?? 'unknown';
           const isLocal = storageProvider === 'local';
 
           return (

@@ -61,6 +61,30 @@ assert(/location \^~ \/api\//.test(nginx) && /try_files \$uri \$uri\/ \/index\.h
 const serverIndex = fs.readFileSync(path.join(root, 'server/index.ts'), 'utf8');
 assert(!/privacy|terms/i.test(serverIndex), 'the Express server has no static routes for public pages');
 
+console.log('\n--- Dialogs: portalled to <body>, capped to the viewport; menu and label fixes ---');
+const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
+const dialogOverlay = read('src/components/common/DialogOverlay.tsx');
+assert(/import \{ createPortal \} from 'react-dom'/.test(dialogOverlay) && /createPortal\([\s\S]*document\.body\s*\)/.test(dialogOverlay), 'DialogOverlay renders through a portal into document.body (a backdrop-blur ancestor such as the header would otherwise become the containing block of `fixed inset-0`)');
+assert(/no-print/.test(dialogOverlay), 'the portalled overlay is still hidden when printing (no-print)');
+const componentFiles = walk(path.join(root, 'src/components')).filter((f) => /\.tsx$/.test(f)).filter((f) => !/common[\\/]DialogOverlay\.tsx$|telemetry[\\/]AssetRemediationDrawer\.tsx$|reports[\\/]ArtifactExportModal\.tsx$/.test(f));
+const uncapped: string[] = [];
+for (const f of componentFiles) {
+  const text = fs.readFileSync(f, 'utf8');
+  for (const m of text.matchAll(/<DialogOverlay\s/g)) {
+    if (!/max-h-\[|my-auto/.test(text.slice(m.index, m.index + 900))) uncapped.push(`${path.relative(root, f)}:${text.slice(0, m.index).split('\n').length}`);
+  }
+}
+assert(uncapped.length === 0, 'heuristic: every <DialogOverlay> call site has a max-h-[..] cap or a my-auto panel within 900 characters (so a short viewport scrolls instead of clipping)', uncapped);
+assert(!/guidance\.standardRef/.test(read('src/components/layout/Sidebar.tsx')), 'Sidebar: the audit-trail item carries no standard badge that squeezes its label');
+const profileMenu = read('src/components/auth/UserProfileDropdown.tsx');
+assert(/\{onOpenTenantSwitcher && \(/.test(profileMenu), 'UserProfileDropdown: "Switch Organization" renders only when a handler is provided');
+assert(profileMenu.includes('ROLE_LABELS[currentRole]') && /case 'MSP_ADMIN'/.test(profileMenu), 'UserProfileDropdown: the role line uses ROLE_LABELS and MSP_ADMIN has its own badge');
+const accountModal = read('src/components/auth/AccountSettingsModal.tsx');
+assert(!/>\s*Verified\s*</.test(accountModal) && accountModal.includes('ROLE_LABELS[currentRole]'), 'AccountSettingsModal: no hard-coded "Verified" badge; the role shows its label');
+assert(!read('src/components/layout/TenantSwitcher.tsx').includes('/17 Met'), 'TenantSwitcher: the met count is not hard-coded to 17');
+const frameworkSwitcher = read('src/components/layout/FrameworkSwitcher.tsx');
+assert(!frameworkSwitcher.includes('toggleNonNetworkedOverlay') && frameworkSwitcher.split("toggleOverlayFilter('nonNetworkedOnly')").length - 1 === 1, 'FrameworkSwitcher: one control for the Stand-Alone / Air-Gapped overlay (the scope-menu row), no header duplicate');
+
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
 console.log('================================================================\n');

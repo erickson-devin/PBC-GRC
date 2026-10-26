@@ -999,8 +999,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         {/* Confirmation for a local-account action */}
         {accountAction && (
           <DialogOverlay onClose={accountBusy ? undefined : closeAccountAction} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
-            <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl">
-              <div className="p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-4 text-xs">
+            <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
+              <div className="max-h-[calc(94vh-0.75rem)] overflow-y-auto p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-4 text-xs">
                 <DialogTitle as="h3" className="text-base font-bold text-white">
                   {accountAction.kind === 'reset-password' && 'Reset password'}
                   {accountAction.kind === 'reset-mfa' && 'Reset two-step verification'}
@@ -1383,7 +1383,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       {/* 5. Two-Step NIST SP 800-88 Cryptographic Sanitization & Destruction Modal */}
       {isDestructionModalOpen && selectedTenantForDestruction && (
         <DialogOverlay onClose={isDestroying ? undefined : () => { setIsDestructionModalOpen(false); setSelectedTenantForDestruction(null); }} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
-          <div className="relative w-full max-w-xl my-8 p-1.5 rounded-[2rem] bg-gradient-to-b from-rose-900/40 via-slate-900/60 to-slate-950 ring-1 ring-rose-700/60 shadow-2xl shadow-rose-950/40 animate-scaleUp">
+          <div className="relative w-full max-w-xl my-auto p-1.5 rounded-[2rem] bg-gradient-to-b from-rose-900/40 via-slate-900/60 to-slate-950 ring-1 ring-rose-700/60 shadow-2xl shadow-rose-950/40 animate-scaleUp">
             <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
               
               <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">

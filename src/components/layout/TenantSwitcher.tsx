@@ -138,7 +138,7 @@ export const TenantSwitcher: React.FC = () => {
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
               <span className="text-slate-400">•</span>
-              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
+              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/{metrics.totalControls} Met</span>
             </div>
           </div>
         </div>
@@ -172,7 +172,7 @@ export const TenantSwitcher: React.FC = () => {
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
               <span className="text-slate-400">•</span>
-              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/17 Met</span>
+              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/{metrics.totalControls} Met</span>
             </div>
           </div>
 
@@ -269,7 +269,7 @@ export const TenantSwitcher: React.FC = () => {
       {/* Modal: Create Client Organization */}
       {isCreateModalOpen && (
         <DialogOverlay onClose={closeCreateModal} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5">
+          <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center text-brand-400">

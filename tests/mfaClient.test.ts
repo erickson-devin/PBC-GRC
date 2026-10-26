@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ApiClient, ApiError, mfaErrorMessage, parseLocalLoginResult } from '../src/services/apiClient';
+import { buildUserProfile } from '../src/utils/userProfile';
 import { groupSecret } from '../src/components/auth/MfaEnrolmentPanel';
 
 /**
@@ -174,6 +175,17 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   } finally {
     globalThis.fetch = realFetch;
   }
+
+  console.log('\n--- buildUserProfile: the server id, no invented "verified" flag ---');
+  const profileOpts = { tenantId: 't1', role: 'TENANT_OWNER' as const, organization: 'Focus', provider: 'password' as const };
+  const withId = buildUserProfile({ id: 'u-123', email: 'devin.erickson@focus.com', name: 'Devin Erickson' }, profileOpts);
+  assert(withId.id === 'u-123', 'the profile id is the server user id', withId.id);
+  assert(JSON.stringify(withId.roles) === JSON.stringify({ t1: 'TENANT_OWNER' }), 'the role is keyed by the tenant id', withId.roles);
+  assert(!('emailVerified' in withId), 'no emailVerified flag is made up');
+  const noId = buildUserProfile({ id: '', email: 'devin.erickson@focus.com', name: 'Devin Erickson' }, profileOpts);
+  assert(noId.id === 'user-devin-erickson-focus', 'without a server id the e-mail-derived id is the fallback', noId.id);
+  const noName = buildUserProfile({ id: 'u-123', email: 'devin.erickson@focus.com', name: null }, profileOpts);
+  assert(noName.name === 'Devin Erickson', 'without a name the display name comes from the e-mail', noName.name);
 
   console.log('\n--- Static checks: nothing secret is stored or logged by the client ---');
   const root = process.cwd();

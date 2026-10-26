@@ -202,8 +202,6 @@ export const Sidebar: React.FC = () => {
           id: 'audit_logs',
           label: 'Immutable Audit Trail',
           icon: ShieldCheck,
-          badge: guidance.standardRef.split('/')[0].trim(),
-          badgeVariant: 'status',
         },
         {
           id: 'guidance',

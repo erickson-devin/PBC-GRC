@@ -147,7 +147,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       {/* Click outside backdrop */}
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
-      <div className="relative w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-5">
+      <div className="relative w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-5 max-h-[90vh] overflow-y-auto">
         
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">

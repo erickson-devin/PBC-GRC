@@ -45,7 +45,6 @@ export interface User {
   googleWorkspaceEmail?: string;
   roles: Record<string, TenantRole>; // Map tenantId -> TenantRole
   authProvider?: AuthProviderType;
-  emailVerified?: boolean;
   domain?: string;
   idToken?: string;
   isSuperAdmin?: boolean;

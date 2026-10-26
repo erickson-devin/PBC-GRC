@@ -62,7 +62,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
   return (
     <DialogOverlay onClose={closeAuthModal} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-xl animate-fadeIn overflow-y-auto">
       {/* Outer Chassis Shell (Double-Bezel) */}
-      <div className="relative w-full max-w-lg my-8 p-1.5 sm:p-2 rounded-[2rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950/85 ring-1 ring-white/10 shadow-2xl shadow-slate-950">
+      <div className="relative w-full max-w-lg my-auto p-1.5 sm:p-2 rounded-[2rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950/85 ring-1 ring-white/10 shadow-2xl shadow-slate-950">
         
         {/* Inner Core Container */}
         <div className="relative p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 shadow-[inset_0_1px_1px_rgba(255,255,255,0.08)]">
