@@ -4,15 +4,15 @@ On-prem CMMC / NIST compliance platform: React + Vite client (`src/`), Express 5
 
 ## Commands & gates
 
-Node is on PATH (v24 locally; CI and the Dockerfile are PINNED to Node 22.23.3 because 22.23.4 segfaults the PDF extraction worker in the full test chain, see the §11 ticket in `docs/VULNERABILITY_MANAGEMENT.md`; `engines` is `>=22.13`). Run from the repo root.
+Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>=22.13`). Run from the repo root.
 
-| Gate | Command | Baseline (2026-10-20, branch `feature/vm-phase-5-9-local-auth`) |
+| Gate | Command | Baseline (2026-10-25, branch `feature/pdf-extract-child-process`) |
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) | exit 0 |
 | Build | `npm run build` (`tsc && vite build`) | exit 0 |
-| Tests | `npm run test:all` (about 2m) | exit 0: 46 suites, 3082 of 3082 assertions |
+| Tests | `npm run test:all` (about 2m) | exit 0: 46 suites, 3112 of 3112 assertions |
 | One suite | `npx tsx tests/<name>.test.ts` (or `npm run test:<name>`) | each prints a final `ðŸ“Š TEST RESULTS: n / n` line |
-| Node 22 (what CI runs) | `npx -y -p node@22.23.3 -- npm run test:all` (NOT `node@22`: that floats to 22.23.4 and segfaults in `tests/sspImport.test.ts`) | passes |
+| Node 22 (what CI runs) | `npx -y -p node@22 -- npm run test:all` | passes |
 | Exporter (Python) | `cd exporters/pbc-vm-exporter && python -m pytest -q` (venv: `python -m venv .venv`, then `pip install -e ".[dev]"`) | 227 passed, 1 skipped (POSIX-only); CI job "exporter" |
 
 * CI (`.github/workflows/ci.yml`) runs two jobs on every PR to `main`: `test` (the three gates: typecheck, build, tests) and `exporter` (pytest plus the offline dry run); `docker-publish.yml` repeats them on `main` before publishing an image. There is no lint, format, locale or spec-parity gate, and no linter or formatter is configured: **match the surrounding style by hand**. `/test` runs all of the above.

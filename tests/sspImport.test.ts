@@ -7,7 +7,8 @@ import { makeDocx, makePdf } from './sspFixtures';
 import { server } from '../server/index';
 import { chunkDocument } from '../server/ssp/chunk';
 import { mapDocumentToControls, reflowPdfLines } from '../server/ssp/controlMapper';
-import { detectDocumentKind, extractDocument, ExtractionError } from '../server/ssp/extract';
+import { classifyChildExit, detectDocumentKind, extractDocument, ExtractionError } from '../server/ssp/extract';
+import { extractWith } from '../server/ssp/extractCore';
 import { getFrameworkControls } from '../src/data/frameworks';
 
 /**
@@ -132,6 +133,8 @@ function unitTests() {
   assert(fake.staged.length === 0 && fake.unmapped[0]?.reason === 'NOT_IN_CATALOG', 'an identifier that is not in the catalog is reported, never staged');
 }
 
+let REAL_PDF: Buffer; // set by extractionTests, reused by isolationTests
+
 async function extractionTests() {
   console.log('\n--- Extraction ---');
   const pdf = makePdf([SSP_LINES.slice(0, 5), SSP_LINES.slice(5)]);
@@ -181,7 +184,8 @@ async function extractionTests() {
     'intranet wiki. New employees are told during onboarding to email the standard IT helpdesk if',
     'they see a virus or something suspicious on their workstation.',
   ];
-  const real = await extractDocument(makePdf([REAL_PAGE_1, REAL_PAGE_2]), 'pdf');
+  REAL_PDF = makePdf([REAL_PAGE_1, REAL_PAGE_2]);
+  const real = await extractDocument(REAL_PDF, 'pdf');
   const realMap = mapDocumentToControls(real.text, real.pages, 'CMMC_L2');
   const realIds = realMap.staged.map((x) => x.controlId).join();
   assert(realIds === 'AC.L1-3.1.1,AC.L1-3.1.2,AU.L2-3.3.1,IR.L2-3.6.1', 'the real SSP yields exactly its four controls against Level 2, and nothing else', realIds);
@@ -198,6 +202,98 @@ async function extractionTests() {
   assert(corrupt instanceof ExtractionError, 'a corrupt PDF fails cleanly instead of crashing the server', corrupt?.code);
   const notZip = await extractDocument(Buffer.from('PK\x03\x04garbage'), 'docx').then(() => null, (e) => e);
   assert(notZip instanceof ExtractionError, 'a corrupt DOCX fails cleanly', notZip?.code);
+}
+
+const health = async () => (await fetch(`${BASE}/health`)).status;
+
+/** Runs fn with the extraction test hook set (and optionally NODE_ENV changed); both are always restored. */
+async function withHook<T>(mode: string | null, fn: () => Promise<T>, nodeEnv?: string): Promise<T> {
+  const savedEnv = process.env.NODE_ENV;
+  const savedMode = process.env.SSP_EXTRACT_TEST_MODE;
+  try {
+    if (nodeEnv) process.env.NODE_ENV = nodeEnv;
+    if (mode) process.env.SSP_EXTRACT_TEST_MODE = mode;
+    else delete process.env.SSP_EXTRACT_TEST_MODE;
+    return await fn();
+  } finally {
+    process.env.NODE_ENV = savedEnv;
+    if (savedMode === undefined) delete process.env.SSP_EXTRACT_TEST_MODE;
+    else process.env.SSP_EXTRACT_TEST_MODE = savedMode;
+  }
+}
+
+const outcome = (p: Promise<unknown>) => p.then(() => null, (e) => e as ExtractionError);
+
+async function isolationTests() {
+  console.log('\n--- Extraction runs in a child process ---');
+  const heap = 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory';
+  assert(classifyChildExit(null, 'SIGSEGV', '') === 'crashed', 'a SIGSEGV is a crash');
+  assert(classifyChildExit(null, 'SIGABRT', '') === 'crashed', 'a SIGABRT is a crash');
+  assert(classifyChildExit(3221225477, null, '') === 'crashed', 'a Windows access violation (0xC0000005) is a crash');
+  assert(classifyChildExit(3221226505, null, '') === 'crashed', 'a Windows fail-fast (0xC0000409) is a crash');
+  assert(classifyChildExit(134, null, '') === 'crashed', 'exit code 134 (abort) is a crash');
+  assert(classifyChildExit(139, null, '') === 'crashed', 'exit code 139 (segfault) is a crash');
+  assert(classifyChildExit(0, null, '') === 'crashed', 'exiting 0 without an answer is a crash');
+  assert(classifyChildExit(1, null, '') === 'crashed', 'any other non-zero exit without an answer is a crash');
+  assert(classifyChildExit(70, null, '') === 'parse_failed', 'the child\'s own "uncaught" exit (70) is an unreadable document');
+  assert(classifyChildExit(null, 'SIGABRT', heap) === 'parse_failed', 'running out of memory (signal) is an unreadable document, not a crash');
+  assert(classifyChildExit(134, null, heap) === 'parse_failed', 'running out of memory (exit code) is an unreadable document, not a crash');
+
+  const pdf = makePdf([SSP_LINES.slice(0, 5), SSP_LINES.slice(5)]);
+  const docx = await makeDocx(SSP_LINES);
+  const realPdf = REAL_PDF;
+  const core = (data: Buffer, kind: 'pdf' | 'docx') => extractWith({ kind, data: new Uint8Array(data), maxPages: 500, maxChars: 5_000_000, maxZipEntries: 2000 });
+  for (const [label, data, kind] of [['PDF', pdf, 'pdf'], ['DOCX', docx, 'docx'], ['two-page SSP', realPdf, 'pdf']] as const) {
+    const viaChild = JSON.stringify(await extractDocument(data, kind));
+    assert(viaChild === JSON.stringify(await core(data, kind)), `the ${label} read in the child is identical to the same read in-process`);
+  }
+
+  const abort = await withHook('abort', () => outcome(extractDocument(pdf, 'pdf')));
+  assert(abort instanceof ExtractionError && abort.code === 'crashed' && /stopped unexpectedly/.test(abort.message), 'a child that aborts is reported as crashed', abort?.code);
+  assert((await health()) === 200, 'the server is still healthy after the child aborted');
+  if (process.platform === 'win32') {
+    assert(classifyChildExit(3221225477, null, '') === 'crashed', 'a segmentation fault (POSIX only here) is a crash: Windows access violation code');
+  } else {
+    const segv = await withHook('segv', () => outcome(extractDocument(pdf, 'pdf')));
+    assert(segv instanceof ExtractionError && segv.code === 'crashed', 'a child killed by SIGSEGV is reported as crashed', segv?.code);
+  }
+  const thrown = await withHook('throw', () => outcome(extractDocument(pdf, 'pdf')));
+  assert(thrown instanceof ExtractionError && thrown.code === 'parse_failed', 'an uncaught exception in the child is an unreadable document', thrown?.code);
+  assert((await health()) === 200, 'the server is still healthy after an uncaught exception in the child');
+  const rejected = await withHook('reject', () => outcome(extractDocument(pdf, 'pdf')));
+  assert(rejected instanceof ExtractionError && rejected.code === 'parse_failed', 'an unhandled rejection in the child is an unreadable document', rejected?.code);
+
+  let hung: import('child_process').ChildProcess | undefined;
+  const timedOut = await withHook('hang', () => outcome(extractDocument(pdf, 'pdf', { timeoutMs: 1500, onSpawn: (c) => { hung = c; } })));
+  assert(timedOut instanceof ExtractionError && timedOut.code === 'timeout', 'a child that never answers is stopped by the timeout', timedOut?.code);
+  if (hung && hung.exitCode === null && hung.signalCode === null) {
+    await Promise.race([new Promise((r) => hung!.once('exit', r)), new Promise((r) => setTimeout(r, 10_000))]);
+  }
+  let alive = true;
+  try {
+    process.kill(hung!.pid!, 0);
+  } catch {
+    alive = false;
+  }
+  assert(!alive, 'the timed-out child does not survive');
+
+  const oom = await withHook('oom', () => outcome(extractDocument(pdf, 'pdf', { memoryMb: 128 })));
+  assert(oom instanceof ExtractionError && oom.code === 'parse_failed', 'a child that exhausts its memory cap is an unreadable document', oom?.code);
+  assert((await health()) === 200, 'the server is still healthy after the child ran out of memory');
+
+  const silent = await withHook('exit0', () => outcome(extractDocument(pdf, 'pdf')));
+  assert(silent instanceof ExtractionError && silent.code === 'crashed', 'a child that exits 0 without answering is reported as crashed', silent?.code);
+
+  let spawned: import('child_process').ChildProcess | undefined;
+  const plain = await withHook(null, () => extractDocument(pdf, 'pdf', { onSpawn: (c) => { spawned = c; } }));
+  for (let i = 0; i < 50 && spawned!.exitCode === null && spawned!.signalCode === null; i++) await new Promise((r) => setTimeout(r, 100));
+  assert(plain.pageCount === 2 && (spawned!.exitCode !== null || spawned!.signalCode !== null), 'a normal read resolves and its child is gone within 5 s');
+
+  const expected = JSON.stringify(await extractDocument(pdf, 'pdf'));
+  const prod = await withHook('abort', () => extractDocument(pdf, 'pdf').then((r) => JSON.stringify(r), (e) => `rejected:${e.code}`), 'production');
+  assert(prod === expected, 'outside NODE_ENV=test the failure hook is ignored (production)', prod);
+  const dev = await withHook('abort', () => extractDocument(pdf, 'pdf').then((r) => JSON.stringify(r), (e) => `rejected:${e.code}`), 'development');
+  assert(dev === expected, 'outside NODE_ENV=test the failure hook is ignored (development)', dev);
 }
 
 async function apiTests() {
@@ -343,11 +439,20 @@ async function apiTests() {
   const failedJob = await waitReady(owner, tenant, failed.body?.job?.id);
   assert(failedJob.status === 'FAILED' && /OCR|No text/i.test(failedJob.error), 'a scanned PDF fails with a clear reason', failedJob.error);
   assert((await call('PATCH', `${root(tenant)}/${failedJob.id}/staged/x`, owner, tenant, { reviewState: 'ACCEPTED' })).status === 409, 'a failed import is not open for review (409)');
+
+  // The document reader dies natively: the job fails with a clear message and the server keeps serving
+  const crashedUp = await withHook('abort', async () => {
+    const r = await upload(owner, tenant, { data: pdf, name: 'crash.pdf' }, { framework: 'CMMC_L1' });
+    return waitReady(owner, tenant, r.body?.job?.id);
+  });
+  assert(crashedUp.status === 'FAILED' && /stopped unexpectedly/.test(crashedUp.error), 'a document reader that crashes fails the import with a clear reason', crashedUp.error);
+  assert((await health()) === 200, 'the server is still healthy after the document reader crashed');
 }
 
 async function run() {
   unitTests();
   await extractionTests();
+  await isolationTests();
   await apiTests();
 }
 

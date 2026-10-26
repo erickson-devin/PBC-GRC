@@ -4,9 +4,7 @@
 # ==============================================================================
 
 # ── Stage 1: Build Frontend Vite Application ──────────────────────────────────
-# Node pinned to 22.23.3: 22.23.4 (2026-10-21) segfaults the PDF extraction worker thread, which takes the whole server
-# process down. Unpin once PDF extraction runs in a child process (docs/VULNERABILITY_MANAGEMENT.md section 11).
-FROM node:22.23.3-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy dependency manifests and install full development dependencies
@@ -21,7 +19,7 @@ ENV BUILD_COMMIT=$BUILD_COMMIT
 RUN npm run build
 
 # ── Stage 2: Production Air-Gapped / On-Premises Runtime ──────────────────────
-FROM node:22.23.3-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 # Set default production environment variables
