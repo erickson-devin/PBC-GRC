@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 import { TenantRole } from '../../types/tenant';
+import { ROLE_LABELS } from '../../utils/roles';
 import { AccountSettingsModal } from './AccountSettingsModal';
 import { ApiTokensModal } from './ApiTokensModal';
 
@@ -59,6 +60,12 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
             <Shield className="w-3 h-3" /> Tenant Owner
           </span>
         );
+      case 'MSP_ADMIN':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+            <Shield className="w-3 h-3" /> MSP Admin
+          </span>
+        );
       case 'ASSESSOR':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
@@ -98,7 +105,7 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <span className="truncate max-w-[90px]">{currentTenant.name}</span>
               <span className="text-slate-400">•</span>
-              <span className="text-brand-300 font-medium">{currentRole === 'TENANT_OWNER' ? 'Owner' : currentRole === 'ASSESSOR' ? 'Assessor' : 'Viewer'}</span>
+              <span className="text-brand-300 font-medium">{ROLE_LABELS[currentRole] ?? currentRole}</span>
             </div>
           </div>
 
@@ -131,19 +138,19 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
 
             {/* Core Actions */}
             <div className="p-1.5 space-y-0.5">
-              {/* Switch Organization */}
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  if (onOpenTenantSwitcher) {
+              {/* Switch Organization (only when the host wires it up) */}
+              {onOpenTenantSwitcher && (
+                <button
+                  onClick={() => {
+                    setIsOpen(false);
                     onOpenTenantSwitcher();
-                  }
-                }}
-                className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
-              >
-                <Building2 className="w-4 h-4 text-slate-400" />
-                <span>Switch Organization</span>
-              </button>
+                  }}
+                  className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+                >
+                  <Building2 className="w-4 h-4 text-slate-400" />
+                  <span>Switch Organization</span>
+                </button>
+              )}
 
               {/* Team & Role Permissions (Tenant Owner / Admin) */}
               {canManageTenant && (
@@ -196,7 +203,7 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
                 className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
               >
                 <Key className="w-4 h-4 text-slate-400" />
-                <span>API Keys / Cloud Tokens</span>
+                <span>API Session Token</span>
               </button>
             </div>
 

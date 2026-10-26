@@ -1016,11 +1016,13 @@ export const ApiClient = {
    * Reports the server's active evidence storage provider (local disk).
    */
   async getStorageInfo(
-    tenantId: string
+    tenantId: string,
+    token?: string | null
   ): Promise<{ provider: string; localStoragePath: string; isAirGapped: boolean } | null> {
+    // The caller can pass the session token itself: right after sign-in it is not in browser storage yet.
     const res = await fetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
       method: 'GET',
-      headers: this.getHeaders(tenantId),
+      headers: this.getHeaders(tenantId, token ? { Authorization: `Bearer ${token}` } : undefined),
     });
     if (!res.ok) return null;
     return await res.json();

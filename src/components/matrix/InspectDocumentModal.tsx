@@ -30,6 +30,7 @@ import { ComplianceFramework } from '../../types/framework';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
+import { storagePathLabel } from '../../data/audit/storageDriver';
 import {
   findControlDefinition,
   FRAMEWORK_REGISTRY,
@@ -726,7 +727,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               <div className="space-y-3">
                 {(() => {
                   const storageProvider = storageConfig.provider;
-                  const localStoragePath = storageConfig.localStoragePath;
+                  const localStoragePath = storagePathLabel(storageConfig);
                   const isLocal = storageProvider === 'local';
 
                   return (
@@ -737,7 +738,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                       {isLocal && (
                         <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-mono text-xs font-bold shadow-sm shadow-cyan-950/30">
                           <HardDrive className="w-3 h-3 text-cyan-400" />
-                          <span>LOCAL ENCLAVE STORAGE ({localStoragePath})</span>
+                          <span>LOCAL ENCLAVE STORAGE{localStoragePath ? ` (${localStoragePath})` : ''}</span>
                         </span>
                       )}
                     </div>

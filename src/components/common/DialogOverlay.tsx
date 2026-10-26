@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useScrollLock } from '../../hooks/useScrollLock';
@@ -44,11 +45,13 @@ export const DialogOverlay: React.FC<DialogOverlayProps> = ({ label, onClose, ro
     if (!document.getElementById(titleId)) console.warn('[DialogOverlay] no <DialogTitle> was rendered and no label was given: the dialog has no accessible name.');
   }, [label, titleId, explicitLabelledBy]);
 
-  return (
+  // Portalled to <body>: a dialog rendered inside the header (backdrop-blur makes it the containing block of `fixed`
+  // descendants) would otherwise be centred on the header box instead of the viewport
+  return createPortal(
     <DialogContext.Provider value={{ titleId }}>
       <div
         {...rest}
-        className={`${className} outline-none`}
+        className={`${className} no-print outline-none`}
         ref={ref}
         role={role}
         aria-modal="true"
@@ -59,7 +62,8 @@ export const DialogOverlay: React.FC<DialogOverlayProps> = ({ label, onClose, ro
       >
         {children}
       </div>
-    </DialogContext.Provider>
+    </DialogContext.Provider>,
+    document.body
   );
 };
 

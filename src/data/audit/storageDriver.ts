@@ -62,7 +62,7 @@ export function setServerStorageConfig(info: {
   const provider = normalizeProvider(info.provider);
   const next: StorageConfig = {
     provider,
-    localStoragePath: info.localStoragePath || DEFAULT_LOCAL_STORAGE_PATH,
+    localStoragePath: info.localStoragePath || '',
     isAirGapped: info.isAirGapped ?? provider === 'local',
     maxUploadSizeBytes: DEFAULT_MAX_UPLOAD_BYTES,
   };
@@ -98,13 +98,21 @@ export function subscribeStorageConfig(listener: () => void): () => void {
  * The server is the single source of truth, so the browser can never disagree with it
  * because of a stale build-time `VITE_*` value. Returns null if the server is unreachable.
  */
-export async function fetchStorageConfig(tenantId: string): Promise<StorageConfig | null> {
+export async function fetchStorageConfig(tenantId: string, token?: string | null): Promise<StorageConfig | null> {
   try {
-    const info = await ApiClient.getStorageInfo(tenantId);
+    const info = await ApiClient.getStorageInfo(tenantId, token);
     return info ? setServerStorageConfig(info) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The path to show people: the server's value, or null while it is not known (never the client default, which
+ * is not where the server keeps evidence).
+ */
+export function storagePathLabel(c: { localStoragePath: string; loaded: boolean }): string | null {
+  return c.loaded && c.localStoragePath ? c.localStoragePath : null;
 }
 
 /**

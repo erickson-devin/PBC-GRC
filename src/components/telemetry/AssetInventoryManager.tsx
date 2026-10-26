@@ -749,7 +749,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         <DialogOverlay onClose={() => setIsCsvModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
           <div aria-hidden="true" className="absolute inset-0" onClick={() => setIsCsvModalOpen(false)} />
 
-          <div className="relative w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-4">
+          <div className="relative w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-indigo-400" />

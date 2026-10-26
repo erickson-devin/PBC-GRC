@@ -21,7 +21,6 @@ export const FrameworkSwitcher: React.FC = () => {
     activeFramework,
     setActiveFramework,
     activeOverlayFilters,
-    toggleNonNetworkedOverlay,
     toggleOverlayFilter,
     ciaTriad,
     setCiaImpact,
@@ -162,26 +161,6 @@ export const FrameworkSwitcher: React.FC = () => {
           <ChevronDown className={`w-3.5 h-3.5 text-slate-400 ml-0.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
         </button>
       )}
-
-      {/* Tactical / Non-Networked Overlay Toggle Button */}
-      <button
-        onClick={toggleNonNetworkedOverlay}
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${
-          activeOverlayFilters.nonNetworkedOnly
-            ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/10'
-            : 'bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border-slate-700/70'
-        }`}
-        title={
-          activeOverlayFilters.nonNetworkedOnly
-            ? 'Tactical / Non-Networked System Overlay is ACTIVE (hiding non-applicable network boundary controls). Click to show all controls.'
-            : 'Click to enable Tactical / Non-Networked System Overlay (hides non-applicable network boundary controls)'
-        }
-      >
-        <WifiOff className={`w-3.5 h-3.5 ${activeOverlayFilters.nonNetworkedOnly ? 'text-amber-400 animate-pulse motion-reduce:animate-none' : 'text-slate-400'}`} />
-        <span className="hidden xl:inline text-xs">
-          {activeOverlayFilters.nonNetworkedOnly ? 'Tactical Overlay: ON' : 'Tactical Overlay'}
-        </span>
-      </button>
 
       {/* Dropdown Menu (Only rendered when multi-framework and open) */}
       {isMultiFramework && isOpen && (
