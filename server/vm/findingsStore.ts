@@ -25,9 +25,7 @@ const chunks = <T>(items: T[]): T[][] => {
 
 const memoryFindings = new Map<string, VmFinding>(); // key: id
 const memorySightings = new Map<string, VmSighting>(); // key: tenantId|runId|findingId
-/** A POA&M item with the program it belongs to (null until a caller passes one; see insertPoamItems). */
-type MemoryPoamItem = VmPoamItem & { programId: string | null };
-const memoryPoam = new Map<string, MemoryPoamItem>(); // key: id
+const memoryPoam = new Map<string, VmPoamItem>(); // key: id (programId is null until a caller passes one; see insertPoamItems)
 const memoryVulns = new Map<string, VmVuln>(); // key: vuln_id
 
 /** Test hook. */
@@ -143,6 +141,7 @@ export function rowToPoamItem(r: pg.QueryResultRow): VmPoamItem {
     createdBy: r.created_by,
     createdAt: iso(r.created_at) as string,
     updatedAt: iso(r.updated_at) as string,
+    programId: r.program_id ?? null,
   };
 }
 

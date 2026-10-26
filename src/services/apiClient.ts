@@ -24,6 +24,8 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
+import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
+import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 
 function requireAsset(raw: unknown): EnclaveAsset {
@@ -146,13 +148,14 @@ export interface InvitePreview {
 async function authedJson<T>(
   method: string,
   path: string,
-  options: { token?: string | null; tenantId?: string; body?: unknown } = {}
+  options: { token?: string | null; tenantId?: string; programId?: string | null; body?: unknown } = {}
 ): Promise<T> {
   const bearer = options.token ?? ApiClient.getToken();
   if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
   const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
+  if (options.programId) headers['x-program-id'] = options.programId;
   const res = await apiFetch(`${API_BASE_URL}/api/v1${path}`, {
     method,
     headers,
@@ -408,20 +411,22 @@ export const ApiClient = {
   // ---------------------------------------------------------------- SSP import
 
   /** GET /api/v1/tenants/:id/ssp-imports/capabilities */
-  async sspCapabilities(tenantId: string): Promise<SspCapabilities> {
-    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/capabilities`, { tenantId });
+  async sspCapabilities(tenantId: string, programId?: string | null): Promise<SspCapabilities> {
+    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/capabilities`, { tenantId, programId });
   },
 
   /** GET /api/v1/tenants/:id/ssp-imports */
-  async sspListJobs(tenantId: string): Promise<SspImportJob[]> {
-    const data = await authedJson<{ jobs?: SspImportJob[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, { tenantId });
+  async sspListJobs(tenantId: string, programId?: string | null): Promise<SspImportJob[]> {
+    const data = await authedJson<{ jobs?: SspImportJob[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, { tenantId, programId });
     return Array.isArray(data?.jobs) ? data.jobs : [];
   },
 
   /** POST /api/v1/tenants/:id/ssp-imports (multipart). Owner / MSP admin only. */
-  async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules', baseline?: SspBaseline): Promise<SspImportJob> {
+  async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules', baseline?: SspBaseline, programId?: string | null): Promise<SspImportJob> {
     const bearer = ApiClient.getToken();
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
+    const uploadHeaders: Record<string, string> = { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId }; // no Content-Type: the browser sets the multipart boundary
+    if (programId) uploadHeaders['x-program-id'] = programId;
     const form = new FormData();
     form.append('framework', framework);
     form.append('analysis', analysis);
@@ -429,7 +434,7 @@ export const ApiClient = {
     form.append('file', file, file.name);
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId }, // no Content-Type: the browser sets the multipart boundary
+      headers: uploadHeaders,
       body: form,
     });
     const data = await res.json().catch(() => null);
@@ -438,51 +443,99 @@ export const ApiClient = {
   },
 
   /** GET /api/v1/tenants/:id/ssp-imports/:jobId/staged: the suggestions next to the controls' current answers. */
-  async sspGetStaged(tenantId: string, jobId: string): Promise<{ job: SspImportJob; staged: StagedControlView[] }> {
-    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/staged`, { tenantId });
+  async sspGetStaged(tenantId: string, jobId: string, programId?: string | null): Promise<{ job: SspImportJob; staged: StagedControlView[] }> {
+    return authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/staged`, { tenantId, programId });
   },
 
   /** GET /api/v1/tenants/:id/ssp-imports/:jobId */
-  async sspGetJob(tenantId: string, jobId: string): Promise<SspImportJob> {
-    const data = await authedJson<{ job: SspImportJob }>('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}`, { tenantId });
+  async sspGetJob(tenantId: string, jobId: string, programId?: string | null): Promise<SspImportJob> {
+    const data = await authedJson<{ job: SspImportJob }>('GET', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}`, { tenantId, programId });
     return data.job;
   },
 
   /** PATCH .../staged/:id: records a review decision. Nothing is written to the controls until the commit. */
-  async sspReview(tenantId: string, jobId: string, stagedId: string, decision: { reviewState: SspReviewState; editedNotes?: string }): Promise<StagedControl> {
+  async sspReview(tenantId: string, jobId: string, stagedId: string, decision: { reviewState: SspReviewState; editedNotes?: string }, programId?: string | null): Promise<StagedControl> {
     const data = await authedJson<{ staged: StagedControl }>(
       'PATCH',
       `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/staged/${encodeURIComponent(stagedId)}`,
-      { tenantId, body: decision }
+      { tenantId, programId, body: decision }
     );
     return data.staged;
   },
 
   /** POST .../commit: applies the accepted and edited suggestions to the controls. */
-  async sspCommit(tenantId: string, jobId: string): Promise<SspCommitOutcome> {
-    return authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/commit`, { tenantId, body: {} });
+  async sspCommit(tenantId: string, jobId: string, programId?: string | null): Promise<SspCommitOutcome> {
+    return authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/commit`, { tenantId, programId, body: {} });
   },
 
   /** POST .../:jobId/cancel: stops an import that has not finished. */
-  async sspCancel(tenantId: string, jobId: string): Promise<void> {
-    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/cancel`, { tenantId, body: {} });
+  async sspCancel(tenantId: string, jobId: string, programId?: string | null): Promise<void> {
+    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/cancel`, { tenantId, programId, body: {} });
   },
 
   /** DELETE .../:jobId */
-  async sspDelete(tenantId: string, jobId: string): Promise<void> {
-    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}`, { tenantId });
+  async sspDelete(tenantId: string, jobId: string, programId?: string | null): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}`, { tenantId, programId });
   },
 
   /** The uploaded document, as a blob URL the caller must revoke. */
-  async sspDownloadUrl(tenantId: string, jobId: string): Promise<string> {
+  async sspDownloadUrl(tenantId: string, jobId: string, programId?: string | null): Promise<string> {
     const bearer = ApiClient.getToken();
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/file`, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId },
+      headers: { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId, ...(programId ? { 'x-program-id': programId } : {}) },
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
     return URL.createObjectURL(await res.blob());
+  },
+
+  // ---------------------------------------------------------------- programs (authorization boundaries)
+
+  /** GET /api/v1/tenants/:id/programs. Archived programs are included only when asked for. */
+  async listPrograms(tenantId: string, options: { includeArchived?: boolean } = {}): Promise<Program[]> {
+    const query = options.includeArchived ? '?includeArchived=true' : '';
+    return parseProgramList(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs${query}`, { tenantId }));
+  },
+
+  /** POST /api/v1/tenants/:id/programs. Owner / MSP admin only. Framework and baseline cannot be changed afterwards. */
+  async createProgram(tenantId: string, input: ProgramInput): Promise<Program> {
+    const checked = validateProgramInput(input, { tenantFrameworks: [String(input.framework)], existing: [] });
+    const body = programCreateBody(checked.value);
+    const program = parseProgramResponse(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/programs`, { tenantId, body }));
+    if (!program) throw new ApiError(502, 'The server sent back a program this version of the app does not understand.');
+    return program;
+  },
+
+  /** PUT /api/v1/tenants/:id/programs/:programId: name, description and boundary summary. */
+  async updateProgram(tenantId: string, programId: string, updates: ProgramUpdate): Promise<Program> {
+    const body: Record<string, string> = {};
+    if (updates.name !== undefined) body.name = updates.name;
+    if (updates.description !== undefined) body.description = updates.description;
+    if (updates.boundarySummary !== undefined) body.systemBoundarySummary = updates.boundarySummary;
+    const program = parseProgramResponse(await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId, body }));
+    if (!program) throw new ApiError(502, 'The server sent back a program this version of the app does not understand.');
+    return program;
+  },
+
+  /** POST .../programs/:programId/archive (archived programs stay readable, writes are refused). */
+  async archiveProgram(tenantId: string, programId: string): Promise<Program | null> {
+    return parseProgramResponse(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/archive`, { tenantId, body: {} }));
+  },
+
+  /** POST .../programs/:programId/unarchive */
+  async unarchiveProgram(tenantId: string, programId: string): Promise<Program | null> {
+    return parseProgramResponse(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/unarchive`, { tenantId, body: {} }));
+  },
+
+  /** DELETE .../programs/:programId. Only a non-default program with no evidence, imports or POA&M items. */
+  async deleteProgram(tenantId: string, programId: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId });
+  },
+
+  /** GET .../programs/:programId/metrics */
+  async getProgramMetrics(tenantId: string, programId: string): Promise<ProgramMetrics> {
+    return parseProgramMetrics(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/metrics`, { tenantId }));
   },
 
   // ---------------------------------------------------------------- team: members and invitations
@@ -861,12 +914,13 @@ export const ApiClient = {
   /**
    * Constructs authorization and tenant context headers
    */
-  getHeaders(tenantId: string, extraHeaders?: HeadersInit): HeadersInit {
+  getHeaders(tenantId: string, extraHeaders?: HeadersInit, programId?: string | null): HeadersInit {
     const token = this.getToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-tenant-id': tenantId,
     };
+    if (programId) headers['x-program-id'] = programId;
 
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -901,7 +955,8 @@ export const ApiClient = {
       framework?: ComplianceFramework;
       baseline?: BaselineTier;
       overlay?: OverlayParameter;
-    }
+    },
+    programId?: string | null
   ): Promise<ControlState[]> {
     const token = this.getToken();
     if (!token) {
@@ -916,7 +971,7 @@ export const ApiClient = {
     const queryString = query.toString() ? `?${query.toString()}` : '';
     const res = await fetch(`${API_BASE_URL}/api/v1/controls${queryString}`, {
       method: 'GET',
-      headers: this.getHeaders(tenantId),
+      headers: this.getHeaders(tenantId, undefined, programId),
     });
 
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
@@ -965,11 +1020,12 @@ export const ApiClient = {
   async updateControl(
     tenantId: string,
     controlId: string,
-    updates: Partial<ControlState>
+    updates: Partial<ControlState>,
+    programId?: string | null
   ): Promise<ControlState> {
     const res = await fetch(`${API_BASE_URL}/api/v1/controls/${encodeURIComponent(controlId)}`, {
       method: 'PUT',
-      headers: this.getHeaders(tenantId),
+      headers: this.getHeaders(tenantId, undefined, programId),
       body: JSON.stringify({
         status: updates.status,
         implementationNotes: updates.implementationNotes,
@@ -991,7 +1047,7 @@ export const ApiClient = {
    * GET /api/v1/evidence
    * Retrieves all evidence artifacts for the active tenant
    */
-  async getEvidence(tenantId: string): Promise<EvidenceItem[]> {
+  async getEvidence(tenantId: string, programId?: string | null): Promise<EvidenceItem[]> {
     const token = this.getToken();
     if (!token) {
       throw new Error('Not authenticated: ID token not found');
@@ -999,7 +1055,7 @@ export const ApiClient = {
 
     const res = await fetch(`${API_BASE_URL}/api/v1/evidence`, {
       method: 'GET',
-      headers: this.getHeaders(tenantId),
+      headers: this.getHeaders(tenantId, undefined, programId),
     });
 
     if (!res.ok) {
@@ -1041,11 +1097,12 @@ export const ApiClient = {
       mimeType: string;
       fileHash: string; // SHA-256
       description?: string;
-    }
+    },
+    programId?: string | null
   ): Promise<UploadUrlResponse> {
     const res = await fetch(`${API_BASE_URL}/api/v1/evidence/upload-url`, {
       method: 'POST',
-      headers: this.getHeaders(tenantId),
+      headers: this.getHeaders(tenantId, undefined, programId),
       body: JSON.stringify(payload),
     });
 
@@ -1061,7 +1118,7 @@ export const ApiClient = {
    * Uploads a binary file to the local evidence vault through the server-relative URL returned by requestUploadUrl.
    * Only our own API receives the file and credentials, so any other URL is refused.
    */
-  async uploadEvidenceFile(uploadUrl: string, file: File | Blob, mimeType: string, tenantId?: string): Promise<void> {
+  async uploadEvidenceFile(uploadUrl: string, file: File | Blob, mimeType: string, tenantId?: string, programId?: string | null): Promise<void> {
     if (!uploadUrl.startsWith('/') || uploadUrl.startsWith('//')) {
       throw new Error('Evidence upload URL must be a server-relative path.');
     }
@@ -1071,6 +1128,9 @@ export const ApiClient = {
     };
     if (tenantId) {
       headers['x-tenant-id'] = tenantId;
+    }
+    if (programId) {
+      headers['x-program-id'] = programId;
     }
     const token = this.getToken();
     if (token) {

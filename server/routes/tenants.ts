@@ -20,6 +20,9 @@ import tenantAssetsRouter from './assets';
 import sspImportsRouter from './sspImports';
 import aiAssistRouter from './aiAssist';
 import vmRouter from './vm';
+import programsRouter from './programs';
+import { programContext } from '../middleware/programContext';
+import { ensureDefaultProgram } from '../programs';
 import { isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
@@ -194,6 +197,8 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
         },
         owner
       );
+      // The tenant's default program, from its primary framework (created lazily on first use if this fails)
+      await ensureDefaultProgram(id).catch((err: unknown) => console.warn(`[Tenants API] Default program of ${id} not created yet:`, errorMessage(err)));
       console.log(`[Tenants API] ${owner.userId} created tenant ${id} and is its TENANT_OWNER`);
       res.status(201).json({ tenant: created.tenant, member: created.member, role: 'TENANT_OWNER' });
       return;
@@ -213,9 +218,12 @@ router.use(requireWriteRole);
 // Invitations: /api/v1/tenants/:tenantId/invites (create / list / revoke / resend / extend / edit)
 router.use('/:tenantId/invites', tenantInvitesRouter);
 router.use('/:tenantId/assets', tenantAssetsRouter);
-router.use('/:tenantId/ssp-imports', sspImportsRouter);
+// SSP imports and the VM module resolve the program from x-program-id; the programs API itself (it works on archived programs and names
+// them in the URL) and ai-assist do not.
+router.use('/:tenantId/programs', programsRouter);
+router.use('/:tenantId/ssp-imports', programContext, sspImportsRouter);
 router.use('/:tenantId/ai-assist', aiAssistRouter);
-router.use('/:tenantId/vm', vmRouter);
+router.use('/:tenantId/vm', programContext, vmRouter);
 
 const USER_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,128}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;

@@ -1,8 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type pg from 'pg';
-import { getTenantProgram, queryWithTenant } from '../db';
+import { getTenantProgram, queryWithProgram, type ProgramScope } from '../db';
 import { CONTROL_STATUSES, listControlAssessmentEvents, writeControlAssessment } from '../controlAssessments';
-import { ensureDefaultProgram } from '../programs';
 import { ensureControlInProgram, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
@@ -22,6 +21,9 @@ const router = Router();
 
 // Read-only roles (ASSESSOR, VIEWER) may GET but never POST / PUT / DELETE.
 router.use(requireWriteRole);
+
+/** The tenant and program of the request (set by authMiddleware and the programContext middleware that is mounted before this router). */
+const scopeOf = (req: Request): ProgramScope => ({ tenantId: req.tenantId!, programId: req.programId! });
 
 /**
  * Format DB row into client-compatible ControlState
@@ -161,12 +163,14 @@ router.get('/mappings', (req: Request, res: Response): void => {
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
+  const scope = scopeOf(req);
 
   try {
-    // Framework segregation: a tenant serves the frameworks of its program. With no framework asked for, its primary one.
+    // Framework segregation: a tenant serves the frameworks of its assessment program (the allow-list); a framework asked for
+    // explicitly stays allowed under it (the crosswalk view). With none asked for, the active program's own framework.
     const program = await getTenantProgram(tenantId);
     const asked = req.query.framework_id || req.query.framework;
-    const query = !asked && program ? { ...req.query, framework_id: program.primaryFramework } : req.query;
+    const query = !asked && req.program ? { ...req.query, framework_id: req.program.frameworkId } : req.query;
     const { framework, baseline, overlay } = normalizeFrameworkParams(query);
     if (!(await ensureFrameworkEnabled(req, res, framework, program))) return;
 
@@ -174,11 +178,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const frameworkControls = getFrameworkControls(framework, baseline, overlay);
     const targetControlIds = frameworkControls.map(c => c.id);
 
-    // 2. Query tenant assessment records from PostgreSQL (guarded by RLS)
-    const result = await queryWithTenant(
-      tenantId,
-      'SELECT * FROM control_assessments WHERE tenant_id = $1 ORDER BY control_id ASC',
-      [tenantId]
+    // 2. Query the active program's assessment records from PostgreSQL (guarded by RLS; a legacy row with no program counts as its own until backfilled)
+    const result = await queryWithProgram(
+      scope,
+      'SELECT * FROM control_assessments WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) ORDER BY control_id ASC',
+      [tenantId, scope.programId]
     );
 
     const existingMap = new Map<string, pg.QueryResultRow>();
@@ -201,13 +205,13 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     if (framework === 'CMMC_L1' && missingControls.length > 0) {
       for (const ctrlId of missingControls) {
         try {
-          const insertRes = await queryWithTenant(
-            tenantId,
-            `INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, responsible_role, updated_by)
-             VALUES ($1, $2, $3, $4, $5, $6)
+          const insertRes = await queryWithProgram(
+            scope,
+            `INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, responsible_role, updated_by, program_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (tenant_id, control_id) DO NOTHING
              RETURNING *`,
-            [tenantId, ctrlId, 'NOT_STARTED', '', 'IT / Security Lead', req.user?.name || 'System Initializer']
+            [tenantId, ctrlId, 'NOT_STARTED', '', 'IT / Security Lead', req.user?.name || 'System Initializer', scope.programId]
           );
 
           if (insertRes.rows.length > 0) {
@@ -308,7 +312,7 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
 
   try {
     const written = await writeControlAssessment(
-      { tenantId, programId: (await ensureDefaultProgram(tenantId)).id },
+      scopeOf(req),
       String(controlId),
       () => ({
         status: status || null,
@@ -350,7 +354,7 @@ router.get('/:controlId/history', async (req: Request, res: Response): Promise<v
   const rawLimit = typeof req.query.limit === 'string' ? req.query.limit : '';
   const limit = /^\d+$/.test(rawLimit) ? Math.min(200, Math.max(1, Number(rawLimit))) : 50;
   try {
-    const events = await listControlAssessmentEvents({ tenantId, programId: (await ensureDefaultProgram(tenantId)).id }, controlId, limit);
+    const events = await listControlAssessmentEvents(scopeOf(req), controlId, limit);
     res.json({ tenantId, controlId, totalCount: events.length, events });
   } catch (err: unknown) {
     console.error(`[Controls API] Error reading the history of ${controlId} for tenant ${tenantId}:`, err);

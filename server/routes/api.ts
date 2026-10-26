@@ -6,6 +6,7 @@ import controlsRouter from './controls';
 import evidenceRouter from './evidence';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
+import { programContext } from '../middleware/programContext';
 import { getDatabaseStatus } from '../db';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
 import { listStoredPlatformAdminEmails } from '../platformSetup';
@@ -67,8 +68,9 @@ router.get('/tenants', authOnlyMiddleware, listMyTenantsHandler);
 router.post('/tenants', authOnlyMiddleware, createTenantHandler);
 
 // Everything else is protected by authentication AND tenant membership
-router.use('/controls', authMiddleware, controlsRouter);
-router.use('/evidence', authMiddleware, evidenceRouter);
+// Controls and evidence belong to a program (authorization boundary): programContext resolves it from x-program-id (default program without it)
+router.use('/controls', authMiddleware, programContext, controlsRouter);
+router.use('/evidence', authMiddleware, programContext, evidenceRouter);
 router.use('/tenants', authMiddleware, tenantsRouter);
 
 export default router;

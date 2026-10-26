@@ -29,7 +29,7 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 const crypto = await import('crypto');
 const fs = await import('fs');
 const path = await import('path');
-const { pool, initDb, queryWithTenant, checkDatabaseConnection } = await import('../server/db');
+const { pool, initDb, queryWithTenant, queryWithProgram, checkDatabaseConnection } = await import('../server/db');
 const { createVmToken, listVmTokens, revokeVmToken, lookupVmTokenByHash, sha256Hex, VmTokenError, VM_TOKEN_PATTERN, MAX_ACTIVE_TOKENS_PER_TENANT } =
   await import('../server/vm/tokens');
 const { recordReceivedRun, findRunBySha, getRun, listRuns, listSources, resetRunForReprocess, updateRun, enumerateSchedulerSources, VmStoreError } = await import('../server/vm/store');
@@ -320,7 +320,7 @@ async function main() {
     check((await workerSource())?.staleSince === null, 'a tick at the real time clears stale_since again', String((await workerSource())?.staleSince));
 
     check((await latestSnapshotAt(TENANT_X)) !== null, 'the same tick snapshotted tenant X (latestSnapshotAt is set)');
-    const snapshotRows = async () => (await queryWithTenant(TENANT_X, "SELECT * FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [TENANT_X])).rows;
+    const snapshotRows = async () => (await queryWithProgram(await scopeOf(TENANT_X), "SELECT * FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [TENANT_X])).rows;
     const firstSnapshot = await snapshotRows();
     check(firstSnapshot.length === 12, 'tenant X holds 12 snapshot evidence rows (no program record: 3 controls x 2 files, plus 3 SI inheritances x 2)', String(firstSnapshot.length));
     const baseRows = firstSnapshot.filter((r) => r.sync_status !== 'inherited');
@@ -404,6 +404,7 @@ async function main() {
       await queryWithTenant(t, "DELETE FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM control_assessment_events WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM control_assessments WHERE tenant_id = $1 AND control_id IN ('RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1', 'CA.L2-3.12.3')", [t]).catch(() => undefined);
+      await queryWithTenant(t, 'DELETE FROM programs WHERE tenant_id = $1', [t]).catch(() => undefined); // the default program ensureDefaultProgram created
       fs.rmSync(path.join(localStorageRoot(), 'tenants', t, 'vm', 'snapshots'), { recursive: true, force: true });
     }
     await pool.query("DELETE FROM vm_vulns WHERE vuln_id LIKE 'VM-VERIFY-%' OR vuln_id LIKE 'CVE-2099-%'").catch(() => undefined);

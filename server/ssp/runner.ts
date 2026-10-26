@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { queryWithTenant } from '../db';
+import type { ProgramScope } from '../db';
+import { readControlAssessments } from '../controlAssessments';
 import { errorMessage } from '../../src/utils/errors';
 import { analyzeDocumentWithAi } from './analyze';
 import { chunkDocument } from './chunk';
@@ -29,18 +30,11 @@ export interface LiveControl {
   updatedAt: string | null;
 }
 
-/** The tenant's current control answers, by control id. */
-export async function readLiveControls(tenantId: string): Promise<Map<string, LiveControl>> {
-  const res = await queryWithTenant(tenantId, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [tenantId]);
+/** The program's current control answers, by control id. */
+export async function readLiveControls(scope: ProgramScope): Promise<Map<string, LiveControl>> {
   const map = new Map<string, LiveControl>();
-  for (const row of res.rows) {
-    if (row.tenant_id !== tenantId) continue; // defence in depth: the store already filters by tenant
-    map.set(String(row.control_id), {
-      status: row.status || 'NOT_STARTED',
-      notes: row.implementation_notes || '',
-      role: row.responsible_role || 'IT / Security Lead',
-      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
-    });
+  for (const [controlId, a] of await readControlAssessments(scope)) {
+    map.set(controlId, { status: a.status, notes: a.notes, role: a.role, updatedAt: a.updatedAt });
   }
   return map;
 }
@@ -62,12 +56,12 @@ const STALE_AFTER_MS = 2 * 60 * 1000;
 
 export const isJobActive = (jobId: string): boolean => active.has(jobId);
 
-export function enqueueImport(tenantId: string, jobId: string): void {
+export function enqueueImport(tenantId: string, programId: string, jobId: string): void {
   if (active.has(jobId)) return;
   active.add(jobId);
   controllers.set(jobId, new AbortController());
   chain = chain
-    .then(() => processJob(tenantId, jobId))
+    .then(() => processJob({ tenantId, programId }, jobId))
     .catch(() => undefined)
     .finally(() => {
       active.delete(jobId);
@@ -79,8 +73,9 @@ export function enqueueImport(tenantId: string, jobId: string): void {
  * Stops a job that has not finished. One that is running is told to stop (the request to the model is aborted and nothing is
  * staged); one that is still waiting is simply marked cancelled. Returns false when there was nothing to cancel.
  */
-export async function cancelJob(tenantId: string, jobId: string): Promise<boolean> {
-  const job = await getJob(tenantId, jobId);
+export async function cancelJob(scope: ProgramScope, jobId: string): Promise<boolean> {
+  const { tenantId } = scope;
+  const job = await getJob(scope, jobId);
   if (!job || SSP_JOB_TERMINAL.includes(job.status)) return false;
   controllers.get(jobId)?.abort();
   // The running worker records CANCELLED itself; a job nobody is working on is closed here
@@ -93,12 +88,12 @@ export async function cancelJob(tenantId: string, jobId: string): Promise<boolea
  * in the vault. Called lazily when a tenant's jobs are listed, because on PostgreSQL a job can only be read in its
  * tenant's context.
  */
-export function recoverStaleJobs(jobs: SspImportJob[]): void {
+export function recoverStaleJobs(jobs: SspImportJob[], scope: ProgramScope): void {
   const now = Date.now();
   for (const j of jobs) {
     if (SSP_JOB_TERMINAL.includes(j.status) || active.has(j.id)) continue;
     const since = new Date(j.startedAt ?? j.createdAt).getTime();
-    if (now - since > STALE_AFTER_MS) enqueueImport(j.tenantId, j.id);
+    if (now - since > STALE_AFTER_MS) enqueueImport(j.tenantId, j.programId ?? scope.programId, j.id);
   }
 }
 
@@ -113,10 +108,11 @@ const aiOptions = () => ({
   gapAnalysis: !['0', 'false', 'no', 'off'].includes((process.env.SSP_AI_GAP_ANALYSIS ?? 'true').trim().toLowerCase()),
 });
 
-async function processJob(tenantId: string, jobId: string): Promise<void> {
+async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
+  const { tenantId } = scope;
   const signal = controllers.get(jobId)?.signal;
   try {
-    const job = await getJob(tenantId, jobId);
+    const job = await getJob(scope, jobId);
     if (!job || SSP_JOB_TERMINAL.includes(job.status)) return;
 
     await updateJob(tenantId, jobId, { status: 'EXTRACTING', startedAt: new Date().toISOString(), error: null, stageProgress: { stage: 'Reading the document' } });
@@ -165,8 +161,8 @@ async function processJob(tenantId: string, jobId: string): Promise<void> {
     }
 
     // Remember what each control looks like NOW, so the commit can tell if it changed while this was being reviewed
-    const live = await readLiveControls(tenantId);
-    await replaceStaged(tenantId, jobId, mapping.staged.map((s) => ({ ...s, baseHash: hashLiveControl(live.get(s.controlId)) })));
+    const live = await readLiveControls(scope);
+    await replaceStaged(scope, jobId, mapping.staged.map((s) => ({ ...s, baseHash: hashLiveControl(live.get(s.controlId)) })));
 
     await updateJob(tenantId, jobId, {
       status: 'READY_FOR_REVIEW',

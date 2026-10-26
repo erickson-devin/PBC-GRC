@@ -2,7 +2,11 @@ import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode, getTenantProgram, pool, queryWithProgram, queryWithTenant, type ProgramScope, type SqlParam } from './db';
 import { PROGRAM_FRAMEWORK_IDS } from './schema';
-import { countPoamItems } from './vm/findingsStore';
+import { readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
+import { stripDelimitedBlocks } from './vm/snapshot';
+import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
+import { getFrameworkControls } from '../src/data/frameworks';
+import { getEquivalentControlIds } from '../src/data/frameworks/controlMappings';
 
 /**
  * Programs: a tenant's authorization boundaries (an ATO effort or project). Each program has one framework and, for NIST SP 800-53,
@@ -10,7 +14,7 @@ import { countPoamItems } from './vm/findingsStore';
  * program, created lazily from the tenant's primary framework, which also adopts the rows written before programs existed.
  *
  * This is the data layer: PostgreSQL (the tenant RLS context is set on every statement) or process memory when DB_MODE=memory.
- * The HTTP routes, the request scoping and the clone seed come later.
+ * The HTTP routes are in routes/programs.ts and the request scoping in middleware/programContext.ts.
  */
 
 export const DEFAULT_PROGRAM_NAME = 'Default Authorization Boundary';
@@ -70,7 +74,7 @@ export interface NewProgramInput {
   baseline?: string | null;
   description?: string;
   systemBoundarySummary?: string;
-  /** Initial content. Absent or empty is a blank program; `cloneFrom` is not implemented yet and is refused. */
+  /** Initial content. Absent or empty is a blank program; `cloneFrom` (a program of the same tenant) copies its notes, see cloneProgramContent. */
   seed?: { cloneFrom?: string } | null;
 }
 
@@ -85,6 +89,8 @@ export interface ProgramPatch {
 }
 
 export type ProgramUsage = { evidence: number; imports: number; poam: number };
+/** What the program page shows for a program: control coverage, evidence files (not the inherited copies) and open POA&M items. */
+export type ProgramMetrics = { documented: number; total: number; evidence: number; openPoam: number };
 export type MigrationCounts = Record<ProgramScopedTable, number> & { total: number };
 
 const memoryPrograms = new Map<string, Program>(); // key: id
@@ -266,9 +272,10 @@ async function isNameTaken(tenantId: string, name: string, exceptId?: string): P
 /**
  * Creates a program. The framework must be one the tenant has enabled (a tenant with no tenant record, the development fallback, is not
  * restricted); the baseline applies to NIST SP 800-53 only (LOW, MODERATE or HIGH, MODERATE when omitted); names are unique per tenant
- * ignoring case; a tenant holds at most 50 programs. Only the blank seed exists so far.
+ * ignoring case; a tenant holds at most 50 programs. The seed is blank, or a clone of another program of the tenant (cloneProgramContent;
+ * `cloner` is who the copied rows are recorded under in the history, the requesting user).
  */
-export async function createProgram(tenantId: string, input: NewProgramInput, createdBy: string | null): Promise<Program> {
+export async function createProgram(tenantId: string, input: NewProgramInput, createdBy: string | null, cloner?: ControlChangeActor): Promise<Program> {
   const name = validName(input.name);
   const frameworkId = programFramework(input.frameworkId);
   const enabled = (await getTenantProgram(tenantId))?.enabledFrameworks;
@@ -283,9 +290,12 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   } else if (rawBaseline !== undefined && rawBaseline !== null && rawBaseline !== '') {
     throw new ProgramError('invalid_baseline', 'Only a NIST SP 800-53 program has a baseline');
   }
-  if (input.seed?.cloneFrom) throw new ProgramError('not_implemented', 'Cloning a program is not implemented yet: create a blank program');
+  const cloneFrom = input.seed?.cloneFrom;
+  if (cloneFrom !== undefined && cloneFrom !== null && typeof cloneFrom !== 'string') throw new ProgramError('program_not_found', 'Program to clone from not found');
 
   await ensureDefaultProgram(tenantId);
+  // The source must be a program of this tenant (another tenant's id is as unknown as a made-up one)
+  const source = cloneFrom ? await requireProgram(tenantId, cloneFrom) : null;
   if (await isNameTaken(tenantId, name)) throw nameTaken();
   if ((await listPrograms(tenantId, { includeArchived: true })).length >= MAX_PROGRAMS_PER_TENANT) {
     throw new ProgramError('program_limit', `A tenant holds at most ${MAX_PROGRAMS_PER_TENANT} programs`);
@@ -294,28 +304,97 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   const description = typeof input.description === 'string' ? input.description : '';
   const systemBoundarySummary = typeof input.systemBoundarySummary === 'string' ? input.systemBoundarySummary : '';
   const by = createdBy ? createdBy.slice(0, 255) : null;
+  let program: Program;
   if (isMemory()) {
     const now = new Date().toISOString();
-    const program: Program = {
+    program = {
       id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, systemBoundarySummary,
       isDefault: false, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
     };
     memoryPrograms.set(program.id, program);
-    return program;
+  } else {
+    try {
+      const res = await queryWithTenant(
+        tenantId,
+        `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, system_boundary_summary, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [tenantId, name, description, frameworkId, baseline, systemBoundarySummary, by]
+      );
+      program = rowToProgram(res.rows[0]);
+    } catch (err) {
+      if ((err as { code?: string })?.code === '23505') throw nameTaken();
+      throw err;
+    }
   }
-  try {
-    const res = await queryWithTenant(
-      tenantId,
-      `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, system_boundary_summary, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [tenantId, name, description, frameworkId, baseline, systemBoundarySummary, by]
+  if (source) {
+    try {
+      await cloneProgramContent(source, program, cloner ?? { source: 'human', actor: by ?? 'System', userId: null });
+    } catch (err) {
+      await deleteProgram(tenantId, program.id).catch(() => undefined); // do not leave a half-seeded program behind
+      throw err;
+    }
+  }
+  return program;
+}
+
+/** The controls a program's framework and baseline define (the whole catalog without a baseline). */
+function catalogIds(program: Program): Set<string> {
+  return new Set(getFrameworkControls(program.frameworkId, program.baseline ?? 'ALL_CONTROLS').map((c) => c.id));
+}
+
+const DEFAULT_ROLE = 'IT / Security Lead';
+
+/**
+ * Seeds `target` from `source` (both programs of one tenant): the implementation notes (vulnerability-management snapshot blocks
+ * stripped) and the responsible role of each control, with the status reset to NOT_STARTED. A control of the target's catalog is copied
+ * when the source's catalog has the same id, or when exactly one control of the source's catalog is an EXACT / EQUIVALENT crosswalk
+ * match for it (the copy is then written under the target's id). Nothing else is copied: no evidence, SSP imports or POA&M items, and
+ * nothing for a control with neither notes nor a role of its own. Each copied row records a history event from `who`. Returns how many
+ * controls were copied.
+ */
+export async function cloneProgramContent(source: Program, target: Program, who: ControlChangeActor): Promise<number> {
+  if (source.tenantId !== target.tenantId) throw new ProgramError('program_not_found', 'Program not found');
+  const tenantId = target.tenantId;
+  const rows = await readControlAssessments({ tenantId, programId: source.id });
+  const inSource = catalogIds(source);
+  let copied = 0;
+  for (const targetId of catalogIds(target)) {
+    let sourceId: string | null = null;
+    if (inSource.has(targetId)) sourceId = targetId;
+    else {
+      const matches = getEquivalentControlIds(targetId).filter((id) => inSource.has(id));
+      if (matches.length === 1) sourceId = matches[0];
+    }
+    const row = sourceId ? rows.get(sourceId) : undefined;
+    if (!row) continue;
+    const notes = stripDelimitedBlocks(row.notes);
+    if (notes.trim() === '' && row.role === DEFAULT_ROLE) continue;
+    await writeControlAssessment(
+      { tenantId, programId: target.id },
+      targetId,
+      () => ({ status: 'NOT_STARTED', notes, role: row.role, updatedBy: who.actor }),
+      who
     );
-    return rowToProgram(res.rows[0]);
-  } catch (err) {
-    if ((err as { code?: string })?.code === '23505') throw nameTaken();
-    throw err;
+    copied++;
   }
+  return copied;
+}
+
+/**
+ * The numbers a program card shows. total: the controls of the program's framework and baseline; documented: those with notes
+ * (outside the vulnerability-management snapshot blocks) or the status MET; evidence: files uploaded to the program (not inherited
+ * copies); openPoam: open and in-progress POA&M items.
+ */
+export async function getProgramMetrics(program: Program): Promise<ProgramMetrics> {
+  const scope = { tenantId: program.tenantId, programId: program.id };
+  const catalog = catalogIds(program);
+  let documented = 0;
+  for (const [controlId, a] of await readControlAssessments(scope)) {
+    if (catalog.has(controlId) && (a.status === 'MET' || stripDelimitedBlocks(a.notes).trim() !== '')) documented++;
+  }
+  const usage = await countProgramUsage(scope);
+  return { documented, total: catalog.size, evidence: usage.evidence, openPoam: await countOpenPoamItems(scope) };
 }
 
 async function requireProgram(tenantId: string, id: string): Promise<Program> {
@@ -418,6 +497,8 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     throw new ProgramError('program_not_empty', 'The program still holds evidence, SSP imports or POA&M items', { ...usage });
   }
   if (isMemory()) {
+    // the answers of the program go with it (in PostgreSQL the foreign key cascades); the history events stay
+    await queryWithProgram({ tenantId, programId: id }, 'DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2', [tenantId, id]);
     memoryPrograms.delete(id);
     return;
   }

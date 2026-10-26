@@ -14,6 +14,7 @@ import {
 import { VM_MANUAL_SNAPSHOT_MIN_INTERVAL_MS, manualSnapshotAllowed } from '../vm/snapshot';
 import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
+import { ensureDefaultProgram } from '../programs';
 import { VM_FINDING_STATUSES, VM_SEVERITIES, VM_TOKEN_SCOPES } from '../../src/types/vm';
 import type { VmFindingStatus, VmSeverity, VmTokenScope } from '../../src/types/vm';
 
@@ -254,8 +255,10 @@ router.post('/snapshot', async (req: Request, res: Response): Promise<void> => {
     return;
   }
   try {
+    // The snapshot belongs to the tenant's default program whatever x-program-id says (decision 6).
     const { snapshot } = await runVmSnapshot(tenantId, {
       trigger: 'manual',
+      programId: (await ensureDefaultProgram(tenantId)).id,
       triggeredBy: { actor: req.user?.name || req.user?.email || 'Compliance Assessor', userId: req.user?.uid ?? null },
     });
     noteManualSnapshot(tenantId, Date.now());

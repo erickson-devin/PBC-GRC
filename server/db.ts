@@ -268,6 +268,19 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     return { rows: [], command: 'UPDATE', rowCount: count, oid: 0, fields: [] };
   }
 
+  // 0b. DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2 (what the ON DELETE CASCADE of a deleted program does)
+  if (/^DELETE\s+FROM\s+control_assessments\s+WHERE\s+tenant_id\s*=\s*\$1\s+AND\s+program_id\s*=\s*\$2/i.test(normalized)) {
+    let count = 0;
+    if (params[0] === tenantId && typeof params[1] === 'string') {
+      for (const [key, item] of [...memoryControls.entries()]) {
+        if (item.tenant_id !== tenantId || item.program_id !== params[1]) continue;
+        memoryControls.delete(key);
+        count++;
+      }
+    }
+    return { rows: [], command: 'DELETE', rowCount: count, oid: 0, fields: [] };
+  }
+
   // 1. SELECT from control_assessments
   if (/SELECT\s+.*FROM\s+control_assessments/i.test(normalized)) {
     const rows: InMemoryControl[] = [];

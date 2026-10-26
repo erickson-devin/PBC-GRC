@@ -181,6 +181,8 @@ export interface SspStageProgress {
 export interface SspImportJob {
   id: string;
   tenantId: string;
+  /** The program the import belongs to; its suggestions are committed only there. Absent on a job written before programs existed. */
+  programId?: string;
   createdBy: string;
   createdByUserId: string | null;
   fileName: string;
@@ -210,6 +212,7 @@ export interface StagedControl extends StagedControlDraft {
   id: string;
   jobId: string;
   tenantId: string;
+  programId?: string;
   /** Hash of the live notes + status when this suggestion was staged; null when the control had no row yet. */
   baseHash: string | null;
   reviewState: SspReviewState;

@@ -98,7 +98,7 @@ async function main() {
   assert((await codeOf(createProgram('t-val', { name: 'Odd', frameworkId: 'NOT_A_FRAMEWORK' }, 'u'))) === 'framework_not_enabled', 'an unknown framework -> framework_not_enabled');
   assert((await codeOf(createProgram('t-val', { name: 'Priv', frameworkId: 'NIST_800_53_REV5', baseline: 'PRIVACY' }, 'u'))) === 'invalid_baseline', 'NIST with the PRIVACY baseline -> invalid_baseline');
   assert((await codeOf(createProgram('t-val', { name: 'Low', frameworkId: 'CMMC_L2', baseline: 'LOW' }, 'u'))) === 'invalid_baseline', 'CMMC_L2 with a baseline -> invalid_baseline');
-  assert((await codeOf(createProgram('t-val', { name: 'Clone', frameworkId: 'CMMC_L2', seed: { cloneFrom: d1.id } }, 'u'))) === 'not_implemented', 'a clone seed is refused for now (wave 2) -> not_implemented');
+  assert((await codeOf(createProgram('t-val', { name: 'Clone', frameworkId: 'CMMC_L2', seed: { cloneFrom: 'no-such-program' } }, 'u'))) === 'program_not_found', 'a clone seed naming an unknown source program -> program_not_found');
   const a = await createProgram('t-val', { name: '  Boundary A  ', frameworkId: 'CMMC_L2', description: 'd', systemBoundarySummary: 's' }, 'alice');
   assert(a.name === 'Boundary A' && a.frameworkId === 'CMMC_L2' && a.baseline === null && a.isDefault === false && a.createdBy === 'alice' && a.description === 'd' && a.systemBoundarySummary === 's', 'a valid program is created (name trimmed)', a);
   assert((await codeOf(createProgram('t-val', { ...base, name: 'boundary a' }, 'u'))) === 'program_name_taken', "'boundary a' after 'Boundary A' -> program_name_taken");

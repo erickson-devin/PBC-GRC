@@ -147,4 +147,6 @@ export interface VmPoamItem {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** The program the item belongs to; null for a legacy item that was never backfilled. */
+  programId?: string | null;
 }
