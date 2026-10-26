@@ -149,6 +149,58 @@ assert(
   'S5: the three second-factor CHECK constraints are present'
 );
 
+console.log('\n--- Programs (authorization boundaries): additive data layer ---');
+const PROGRAM_SCOPED = ['control_assessments', 'control_assessment_events', 'evidence_metadata', 'ssp_import_jobs', 'staged_controls', 'vm_poam_items'];
+const FK_TABLES = PROGRAM_SCOPED.filter((t) => t !== 'control_assessment_events');
+const programsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS programs (');
+const programsBlock = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt, TABLES_SQL.indexOf('\n  );', programsAt));
+const programDdl = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt);
+assert(programsAt >= 0 && TABLES_SQL.includes('CREATE TABLE IF NOT EXISTS programs ('), 'P1: programs is created by initDb');
+assert(RLS_TENANT_TABLES.some((r) => r.table === 'programs' && r.tenantColumn === 'tenant_id'), 'P1: programs is in RLS_TENANT_TABLES on tenant_id (FORCE RLS and the tenant policy)');
+assert(programsBlock.includes('CONSTRAINT unq_programs_tenant_id UNIQUE (tenant_id, id)'), 'P1: programs carries the (tenant_id, id) key the composite foreign keys point at');
+assert(programsBlock.includes('id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text') && programsBlock.includes('CONSTRAINT programs_default_not_archived CHECK (NOT (is_default AND archived_at IS NOT NULL))'), 'P1: text ids like every other table, and a default program cannot be archived');
+assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default'), 'P1: at most one default program per tenant');
+assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name))'), 'P1: program names are unique per tenant ignoring case');
+assert(TABLES_SQL.includes("ADD CONSTRAINT programs_framework_check CHECK (framework_id IN ('CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'))"), 'P1: the framework check lists the five registry ids');
+assert(TABLES_SQL.includes("ADD CONSTRAINT programs_baseline_check CHECK (baseline IS NULL OR (framework_id = 'NIST_800_53_REV5' AND baseline IN ('LOW', 'MODERATE', 'HIGH')))"), 'P1: a baseline exists for NIST only and is LOW, MODERATE or HIGH');
+assert(
+  ['programs_framework_check', 'programs_baseline_check'].every((c) => TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) >= 0 && TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) < TABLES_SQL.indexOf('ADD CONSTRAINT ' + c)),
+  'P1: the two programs checks are dropped before they are added, so a new framework reaches existing databases'
+);
+for (const t of PROGRAM_SCOPED) {
+  assert(TABLES_SQL.includes('ALTER TABLE ' + t + ' ADD COLUMN IF NOT EXISTS program_id VARCHAR(64)'), 'P1: ' + t + ' gets a nullable program_id, idempotently');
+}
+const fkCount = (programDdl.match(/FOREIGN KEY \(tenant_id, program_id\) REFERENCES programs \(tenant_id, id\)/g) || []).length;
+assert(fkCount === FK_TABLES.length, 'P1: five composite (tenant_id, program_id) foreign keys', fkCount);
+for (const t of FK_TABLES) {
+  assert(programDdl.includes('ALTER TABLE ' + t + ' ADD CONSTRAINT fk_' + t + '_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id)'), 'P1: ' + t + ' has the composite program foreign key');
+}
+assert(!programDdl.includes('fk_control_assessment_events_program') && !programDdl.includes('ALTER TABLE control_assessment_events ADD CONSTRAINT'), 'P1: control_assessment_events has no foreign key (the history outlives the program)');
+assert(
+  programDdl.includes('ALTER TABLE control_assessments ADD CONSTRAINT fk_control_assessments_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
+    programDdl.includes('ALTER TABLE staged_controls ADD CONSTRAINT fk_staged_controls_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE'),
+  'P1: deleting a program removes its control answers and staged suggestions'
+);
+assert(
+  ['evidence_metadata', 'ssp_import_jobs', 'vm_poam_items'].every((t) => programDdl.includes('ALTER TABLE ' + t + ' ADD CONSTRAINT fk_' + t + '_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE RESTRICT')),
+  'P1: evidence, SSP imports and POA&M items RESTRICT the deletion of their program'
+);
+assert(TABLES_SQL.indexOf('ADD CONSTRAINT control_mappings_mapping_type_check') > 0 && TABLES_SQL.indexOf('ADD CONSTRAINT control_mappings_mapping_type_check') < programsAt, 'P1: the program DDL starts after control_mappings_mapping_type_check (the end of the old schema)');
+assert(programsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_admins') && programsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_users'), 'P1: the program DDL sits after the VM block and the local_users block, which are not edited');
+const fkAdds = (programDdl.match(/ADD CONSTRAINT fk_/g) || []).length;
+const fkGuards = (programDdl.match(/conname = /g) || []).length;
+assert(fkAdds === FK_TABLES.length && fkAdds === fkGuards, 'P1: every foreign key is added once, behind a pg_constraint guard (' + fkAdds + ' adds, ' + fkGuards + ' guards)');
+assert(
+  TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_assessment_events_program ON control_assessment_events (tenant_id, program_id, control_id, created_at DESC);') &&
+    TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_evidence_metadata_program ON evidence_metadata (tenant_id, program_id, uploaded_at DESC);') &&
+    TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_program ON ssp_import_jobs (tenant_id, program_id, created_at DESC);') &&
+    TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_vm_poam_items_program ON vm_poam_items (tenant_id, program_id, status);'),
+  'P1: the four program indexes exist'
+);
+assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);'), 'P1: the per-program control key is added');
+assert(!programDdl.includes('unq_tenant_control') && !programDdl.includes('RESTRICTIVE') && !programDdl.includes('NOT VALID') && !programDdl.includes('SET NOT NULL'), 'P1: nothing of the enforcement wave yet (the old unique key stays, no restrictive policy, no NOT VALID check, no NOT NULL)');
+assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).length === RLS_TENANT_TABLES.length, 'P1: no program row policy yet; every policy is still a tenant policy');
+
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);
 assert(url.config.connectionString === 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require', 'DATABASE_URL is passed through as the connection string');

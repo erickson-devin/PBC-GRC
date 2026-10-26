@@ -38,9 +38,13 @@ const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = aw
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
 const { runVmSnapshot, latestSnapshotAt } = await import('../server/vm/snapshotWriter');
 const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
+const { ensureDefaultProgram } = await import('../server/programs');
 const { VM_NOTES_BEGIN } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
+
+// The control history and answers are program-scoped: the VM snapshot writes into the tenant's default program.
+const scopeOf = async (tenantId: string) => ({ tenantId, programId: (await ensureDefaultProgram(tenantId)).id });
 
 let failures = 0;
 function check(ok: boolean, message: string, detail?: string) {
@@ -326,7 +330,7 @@ async function main() {
       String(baseRows.length),
     );
     const SNAPSHOT_CONTROLS = ['RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1'];
-    const live = await readControlAssessments(TENANT_X);
+    const live = await readControlAssessments(await scopeOf(TENANT_X));
     check(
       live.size === 3 && SNAPSHOT_CONTROLS.every((id) => live.get(id)?.status === 'NOT_STARTED' && (live.get(id)?.notes.split(VM_NOTES_BEGIN).length ?? 0) === 2),
       'three control rows were created: NOT_STARTED, each with exactly one snapshot block',
@@ -335,9 +339,9 @@ async function main() {
 
     // h. A human answer survives the next snapshot.
     const block = live.get('SI.L1-3.14.1')?.notes ?? '';
-    await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: 'MET', notes: `Human text\n\n${block}`, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
+    await writeControlAssessment(await scopeOf(TENANT_X), 'SI.L1-3.14.1', () => ({ status: 'MET', notes: `Human text\n\n${block}`, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
     await runVmSnapshot(TENANT_X, { trigger: 'manual' });
-    const afterHuman = (await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1');
+    const afterHuman = (await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1');
     check(
       afterHuman?.status === 'MET' && afterHuman.notes.startsWith('Human text') && afterHuman.notes.split(VM_NOTES_BEGIN).length === 2,
       'a second snapshot keeps the human status and text and holds one block',
@@ -350,7 +354,7 @@ async function main() {
     check(ofY.rows.every((r) => r.tenant_id === TENANT_Y) && ofY.rows.length === 0, "tenant Y sees none of tenant X's snapshot evidence", String(ofY.rows.length));
 
     console.log('\n--- 15. Control assessment history ---');
-    const events = await listControlAssessmentEvents(TENANT_X, 'SI.L1-3.14.1', 50);
+    const events = await listControlAssessmentEvents(await scopeOf(TENANT_X), 'SI.L1-3.14.1', 50);
     check(
       events.length === 3 && events.map((e) => e.source).join(',') === 'vm-snapshot,human,vm-snapshot',
       'SI.L1-3.14.1 has 3 events, newest first: vm-snapshot, human, vm-snapshot',
@@ -371,19 +375,19 @@ async function main() {
       Number((await queryWithTenant(TENANT_X, 'SELECT count(*)::int AS n FROM control_assessment_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n);
     check((await eventCount()) === 7, 'tenant X holds 7 events (3 from the first tick, 1 human, 3 from the second snapshot)', String(await eventCount()));
 
-    await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: null, notes: 'x', role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
-    check((await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1')?.status === 'MET', 'a write with a null status keeps MET');
+    await writeControlAssessment(await scopeOf(TENANT_X), 'SI.L1-3.14.1', () => ({ status: null, notes: 'x', role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
+    check((await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1')?.status === 'MET', 'a write with a null status keeps MET');
     const beforeRollback = await eventCount();
     const txClient = await pool.connect();
     try {
       await txClient.query('BEGIN');
       await txClient.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', TENANT_X]);
-      await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: 'NOT_MET', notes: null, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null }, txClient);
+      await writeControlAssessment(await scopeOf(TENANT_X), 'SI.L1-3.14.1', () => ({ status: 'NOT_MET', notes: null, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null }, txClient);
     } finally {
       await txClient.query('ROLLBACK').catch(() => undefined);
       txClient.release();
     }
-    check((await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1')?.status === 'MET', 'a write inside a rolled-back caller transaction leaves the status MET');
+    check((await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1')?.status === 'MET', 'a write inside a rolled-back caller transaction leaves the status MET');
     check((await eventCount()) === beforeRollback, 'and its event was rolled back with it (the event count is unchanged)', `${beforeRollback} -> ${await eventCount()}`);
     const noContextEvents = await pool.query('SELECT count(*)::int AS n FROM control_assessment_events');
     check(Number(noContextEvents.rows[0].n) === 0, 'without a tenant context no control_assessment_events row is visible', String(noContextEvents.rows[0].n));

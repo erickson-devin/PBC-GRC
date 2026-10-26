@@ -1,4 +1,5 @@
 import { writeControlAssessment } from '../controlAssessments';
+import { ensureDefaultProgram } from '../programs';
 import { VM_SNAPSHOT_CONTROLS, composeCommittedNotes } from '../vm/snapshot';
 import { hashLiveControl, readLiveControls } from './runner';
 import { listStaged, updateJob, updateStaged } from './store';
@@ -48,7 +49,7 @@ export async function commitReviewedSuggestions(
     // the block is machine-owned, so any block inside the reviewed text is dropped and the one the control carried is re-appended.
     const keepsBlock = (VM_SNAPSHOT_CONTROLS as readonly string[]).includes(item.controlId);
     const written = await writeControlAssessment(
-      tenantId,
+      { tenantId, programId: (await ensureDefaultProgram(tenantId)).id },
       item.controlId,
       (locked) =>
         hashLiveControl(locked) !== item.baseHash

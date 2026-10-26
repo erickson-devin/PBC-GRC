@@ -5,6 +5,7 @@ import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { listAgentAssetCandidates, listAssets } from '../assets';
 import { writeControlAssessment, type ControlChangeActor } from '../controlAssessments';
+import { ensureDefaultProgram } from '../programs';
 import { localStorageRoot, readTenantFile, isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { listRunsSince, listSources } from './store';
 import { loadSnapshotFindings } from './findingsStore';
@@ -200,7 +201,7 @@ export async function applySnapshotNotes(
 ): Promise<void> {
   for (const controlId of Object.keys(evidenceByControl)) {
     await writeControlAssessment(
-      tenantId,
+      { tenantId, programId: (await ensureDefaultProgram(tenantId)).id },
       controlId,
       (cur) => ({
         status: null,

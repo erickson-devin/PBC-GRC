@@ -11,6 +11,7 @@ import { __resetVmSnapshotLimiterForTests, __setVmSnapshotFaultForTests } from '
 import { __runVmSchedulerTickForTests, startVmScheduler, stopVmScheduler } from '../server/vm/scheduler';
 import { VM_NOTES_BEGIN, VM_NOTES_END } from '../server/vm/snapshot';
 import { readControlAssessments } from '../server/controlAssessments';
+import { ensureDefaultProgram } from '../server/programs';
 import { readTenantFile } from '../server/evidence/storage';
 
 /**
@@ -217,7 +218,7 @@ async function run() {
   assert(si2?.status === 'MET', 'A08 the status is still MET', si2?.status);
   assert((await snapshotRowsOf(L1, owner1)).length === 16, 'A08 sixteen snapshot rows in total after two snapshots', (await snapshotRowsOf(L1, owner1)).length);
 
-  const live1 = await readControlAssessments(L1);
+  const live1 = await readControlAssessments({ tenantId: L1, programId: (await ensureDefaultProgram(L1)).id });
   assert(!live1.has('RA.L2-3.11.2') && !live1.has('RA.L2-3.11.3'), 'A09 a Level 1 tenant gets no control row on RA.L2-3.11.2 or RA.L2-3.11.3');
   assert(String(live1.get('SI.L1-3.14.1')?.notes).includes(VM_NOTES_BEGIN), 'A09 only SI.L1-3.14.1 carries the block');
 
@@ -232,7 +233,7 @@ async function run() {
     snap3,
   );
   assert((await snapshotRowsOf(L2, admin)).length === 14, 'A10 fourteen snapshot rows (8 base + 6 inherited from SI.L1-3.14.1)', (await snapshotRowsOf(L2, admin)).length);
-  const live3 = await readControlAssessments(L2);
+  const live3 = await readControlAssessments({ tenantId: L2, programId: (await ensureDefaultProgram(L2)).id });
   assert(live3.get('RA.L2-3.11.2')?.status === 'NOT_MET', 'A10 RA.L2-3.11.2 is still NOT_MET', live3.get('RA.L2-3.11.2'));
   assert(live3.get('CA.L2-3.12.3')?.status === 'NOT_STARTED' && String(live3.get('CA.L2-3.12.3')?.notes).includes(VM_NOTES_BEGIN), 'A10 the created CA.L2-3.12.3 row is NOT_STARTED and carries the block', live3.get('CA.L2-3.12.3'));
 

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import type pg from 'pg';
 import { getTenantProgram, queryWithTenant } from '../db';
 import { CONTROL_STATUSES, listControlAssessmentEvents, writeControlAssessment } from '../controlAssessments';
+import { ensureDefaultProgram } from '../programs';
 import { ensureControlInProgram, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
@@ -307,7 +308,7 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
 
   try {
     const written = await writeControlAssessment(
-      tenantId,
+      { tenantId, programId: (await ensureDefaultProgram(tenantId)).id },
       String(controlId),
       () => ({
         status: status || null,
@@ -349,7 +350,7 @@ router.get('/:controlId/history', async (req: Request, res: Response): Promise<v
   const rawLimit = typeof req.query.limit === 'string' ? req.query.limit : '';
   const limit = /^\d+$/.test(rawLimit) ? Math.min(200, Math.max(1, Number(rawLimit))) : 50;
   try {
-    const events = await listControlAssessmentEvents(tenantId, controlId, limit);
+    const events = await listControlAssessmentEvents({ tenantId, programId: (await ensureDefaultProgram(tenantId)).id }, controlId, limit);
     res.json({ tenantId, controlId, totalCount: events.length, events });
   } catch (err: unknown) {
     console.error(`[Controls API] Error reading the history of ${controlId} for tenant ${tenantId}:`, err);

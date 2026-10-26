@@ -35,6 +35,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_findings', tenantColumn: 'tenant_id' },
   { table: 'vm_sightings', tenantColumn: 'tenant_id' },
   { table: 'vm_poam_items', tenantColumn: 'tenant_id' },
+  { table: 'programs', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -54,6 +55,10 @@ const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
 const vmFindingStatusList = VM_FINDING_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmPoamStatusList = VM_POAM_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmVulnSourceList = VM_VULN_SOURCES.map((s) => `'${s}'`).join(', ');
+
+/** The framework ids a program may carry: the registry ids (src/data/frameworks/frameworkRegistry.ts), canonical spelling only. */
+export const PROGRAM_FRAMEWORK_IDS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'] as const;
+const programFrameworkList = PROGRAM_FRAMEWORK_IDS.map((f) => `'${f}'`).join(', ');
 
 /** Tables and columns (idempotent). */
 export const TABLES_SQL = `
@@ -549,6 +554,70 @@ export const TABLES_SQL = `
   UPDATE control_mappings SET mapping_type = 'EQUIVALENT' WHERE mapping_type IS NULL OR mapping_type NOT IN ('EXACT', 'EQUIVALENT', 'SUBSET', 'SUPERSET');
   ALTER TABLE control_mappings DROP CONSTRAINT IF EXISTS control_mappings_mapping_type_check;
   ALTER TABLE control_mappings ADD CONSTRAINT control_mappings_mapping_type_check CHECK (mapping_type IN ('EXACT', 'EQUIVALENT', 'SUBSET', 'SUPERSET'));
+
+  -- Programs (authorization boundaries), additive data layer: a tenant owns several programs, each with one framework (and, for
+  -- NIST SP 800-53, one baseline). All program DDL lives here, after the VM and local_users blocks (tests pin their layout).
+  -- Nothing here changes behaviour: program_id stays nullable and the old unique key on control_assessments stays in place until
+  -- the enforcement wave (server/programs.ts backfills program_id lazily, per tenant, under that tenant's RLS context).
+  CREATE TABLE IF NOT EXISTS programs (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      framework_id VARCHAR(64) NOT NULL,
+      baseline VARCHAR(16),
+      system_boundary_summary TEXT NOT NULL DEFAULT '',
+      is_default BOOLEAN NOT NULL DEFAULT FALSE,
+      archived_at TIMESTAMPTZ,
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_programs_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT programs_default_not_archived CHECK (NOT (is_default AND archived_at IS NOT NULL))
+  );
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_framework_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_framework_check CHECK (framework_id IN (${programFrameworkList}));
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_baseline_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_baseline_check CHECK (baseline IS NULL OR (framework_id = 'NIST_800_53_REV5' AND baseline IN ('LOW', 'MODERATE', 'HIGH')));
+  -- One default program per tenant, and program names are unique per tenant ignoring case.
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default;
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name));
+
+  ALTER TABLE control_assessments ADD COLUMN IF NOT EXISTS program_id VARCHAR(64);
+  ALTER TABLE control_assessment_events ADD COLUMN IF NOT EXISTS program_id VARCHAR(64);
+  ALTER TABLE evidence_metadata ADD COLUMN IF NOT EXISTS program_id VARCHAR(64);
+  ALTER TABLE ssp_import_jobs ADD COLUMN IF NOT EXISTS program_id VARCHAR(64);
+  ALTER TABLE staged_controls ADD COLUMN IF NOT EXISTS program_id VARCHAR(64);
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS program_id VARCHAR(64);
+
+  -- Composite foreign keys, added once (a re-run finds the constraint and skips). control_assessment_events deliberately has NO key:
+  -- the history outlives the control row and its program. Files on disk, vault documents and the compliance record are RESTRICT.
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_control_assessments_program' AND conrelid = 'control_assessments'::regclass) THEN
+      ALTER TABLE control_assessments ADD CONSTRAINT fk_control_assessments_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_staged_controls_program' AND conrelid = 'staged_controls'::regclass) THEN
+      ALTER TABLE staged_controls ADD CONSTRAINT fk_staged_controls_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_evidence_metadata_program' AND conrelid = 'evidence_metadata'::regclass) THEN
+      ALTER TABLE evidence_metadata ADD CONSTRAINT fk_evidence_metadata_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_ssp_import_jobs_program' AND conrelid = 'ssp_import_jobs'::regclass) THEN
+      ALTER TABLE ssp_import_jobs ADD CONSTRAINT fk_ssp_import_jobs_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_vm_poam_items_program' AND conrelid = 'vm_poam_items'::regclass) THEN
+      ALTER TABLE vm_poam_items ADD CONSTRAINT fk_vm_poam_items_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE RESTRICT;
+    END IF;
+  END
+  $$;
+
+  CREATE INDEX IF NOT EXISTS idx_control_assessment_events_program ON control_assessment_events (tenant_id, program_id, control_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_evidence_metadata_program ON evidence_metadata (tenant_id, program_id, uploaded_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_program ON ssp_import_jobs (tenant_id, program_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_vm_poam_items_program ON vm_poam_items (tenant_id, program_id, status);
+  -- The per-program key, added next to the old (tenant_id, control_id) one; the old one is dropped in the enforcement wave.
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
