@@ -19,7 +19,9 @@ import {
   runBrowserStorageScrub,
 } from '../src/services/browserStorageScrub';
 import { StorageService } from '../src/services/storageService';
-import { redactLedgerNotesExcerpts, recordAuditEvent, verifyAuditChain, loadLedger } from '../src/data/audit/auditLogger';
+import { redactLedgerNotesExcerpts, recordAuditEvent, verifyAuditChain, loadLedger, describeNotesForLedger, describeAddressForLedger } from '../src/data/audit/auditLogger';
+import { ingestAccretionDiscoveryPayload } from '../src/data/telemetry/assetRegistry';
+import { ingestScapScanReport, generateSimulatedScanReport } from '../src/data/telemetry/scapIngestEngine';
 import type { AssessmentState } from '../src/types/cmmc';
 import type { AuditLogEntry } from '../src/types/audit';
 import type { Tenant } from '../src/types/tenant';
@@ -496,6 +498,87 @@ async function main() {
   assert((await verifyAuditChain(storedLedger)).isValid, 'L10c the stored ledger verifies');
   const st7Again = await runBrowserStorageScrub(st7, () => undefined);
   assert(st7Again.ledgersRedacted === 0 && st7.setCalls.length === 2, 'L10d a second run leaves the ledger alone', st7Again);
+
+  console.log('\n--- Identifier redaction ---');
+  const IP = '10.91.0.1';
+  const MAC = '00:91:00:00:00:01';
+  const HOST = 'HOST-MARK-91';
+  const mkIdent = async (tid: string): Promise<AuditLogEntry[]> => {
+    globalStore.clear();
+    const base = { tenantId: tid, actorEmail: 'a@x.com' };
+    await recordAuditEvent({ ...base, actionType: 'CONTROL_STATUS_UPDATED', targetEntity: 'c1', previousState: 'NOT_STARTED', newState: 'IMPLEMENTED' });
+    await recordAuditEvent({ ...base, actionType: 'EVIDENCE_UPLOADED', targetEntity: `${MARKER} plan.pdf`, newState: { controlId: 'AC.L1-3.1.1', sha256: hex64, sizeBytes: 5 } });
+    await recordAuditEvent({ ...base, actionType: 'TELEMETRY_INGESTED', targetEntity: 'EnclaveAsset:a1', newState: { hostName: HOST, ipAddress: IP, macAddress: MAC, discoveryStatus: 'UNCONFIRMED_DISCOVERY' } });
+    await recordAuditEvent({ ...base, actionType: 'EVIDENCE_UPLOADED', targetEntity: 'SCAP Scan: scan_1_abc', newState: { scanId: 'scan_1_abc', hostName: HOST, targetIp: IP, passedCount: 3 } });
+    await recordAuditEvent({ ...base, actionType: 'EVIDENCE_UPLOADED', targetEntity: 'ev_1760000000000_ab12c', newState: { controlId: 'c1', sha256: hex64, sizeBytes: 1, fileName: `sha256:${hex64} (12 chars)` } });
+    await recordAuditEvent({ ...base, actionType: 'TELEMETRY_INGESTED', targetEntity: 'EnclaveAsset:a2', newState: { hostName: '(7 chars)', ipAddress: '', macAddress: `sha256:${hex64} (17 chars)` } });
+    return [...loadLedger(tid)];
+  };
+  const idChain = await mkIdent('L3');
+  const idBefore = JSON.stringify(idChain);
+  const idHead = idChain[idChain.length - 1].sha256Hash;
+  const idRed = await redactLedgerNotesExcerpts(idChain);
+  assert(idRed.redacted === 6 && idRed.identifiers === 6 && idRed.notes === 0 && JSON.stringify(idChain) === idBefore, 'I1 six identifiers are redacted, no notes, input untouched', idRed.redacted);
+  const idOut = JSON.stringify(idRed.entries);
+  assert(![MARKER, 'plan.pdf', HOST, IP, MAC].some((s) => idOut.includes(s)), 'I2 no file name, host name, IP or MAC is left in the ledger');
+  assert(idRed.entries[1].targetEntity === await describeNotesForLedger(`${MARKER} plan.pdf`), 'I3 an evidence target holding a file name becomes its descriptor');
+  const s2 = idRed.entries[2].newState as any;
+  assert(s2.hostName === await describeNotesForLedger(HOST) && s2.ipAddress === await describeAddressForLedger(IP) && s2.ipAddress === `(${IP.length} chars)` && s2.macAddress === `(${MAC.length} chars)` && s2.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && idRed.entries[2].targetEntity === 'EnclaveAsset:a1', 'I4 asset host name gets a digest descriptor, IP and MAC length only, rest unchanged', s2);
+  const s3 = idRed.entries[3].newState as any;
+  assert(idRed.entries[3].targetEntity === 'SCAP Scan: scan_1_abc' && s3.scanId === 'scan_1_abc' && s3.passedCount === 3 && s3.hostName === await describeNotesForLedger(HOST) && s3.targetIp === `(${IP.length} chars)`, 'I5 SCAP entry keeps target, scan id and counts; host and IP are descriptors', s3);
+  assert(idRed.entries[0].sha256Hash === idChain[0].sha256Hash && JSON.stringify(idRed.entries[4].newState) === JSON.stringify(idChain[4].newState) && JSON.stringify(idRed.entries[5].newState) === JSON.stringify(idChain[5].newState), 'I6 entry 0 keeps its hash; entries holding descriptors, evidence ids and empty values are not changed');
+  const idLast = idRed.entries[idRed.entries.length - 1];
+  assert((await verifyAuditChain(idRed.entries)).isValid && idRed.entries.length === 7 && idLast.actionType === ('LEDGER_REDACTED' as any) && idLast.previousState === idHead && /0 notes excerpt\(s\), 6 identifier\(s\)/.test(String(idLast.newState)), 'I7 the chain verifies, 7 entries, LEDGER_REDACTED counts notes and identifiers', idLast.newState);
+  const idRed2 = await redactLedgerNotesExcerpts(idRed.entries);
+  assert(idRed2.redacted === 0 && idRed2.entries === idRed.entries, 'I8 redacting twice is a no-op (same array)');
+
+  // browser-only tenant: still redacted by the start-up scrub
+  const stI = new MemoryStorage();
+  stI.setItem(LEDGER_KEY_PREFIX + 'L3', JSON.stringify(idChain));
+  stI.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'L3', serverBacked: false }]));
+  stI.setCalls.length = 0;
+  const rI = await runBrowserStorageScrub(stI, () => undefined);
+  const storedI = stI.getItem(LEDGER_KEY_PREFIX + 'L3')!;
+  assert(rI.ledgersRedacted === 1 && rI.ledgerEntriesRedacted === 6 && !storedI.includes(HOST) && (await verifyAuditChain(JSON.parse(storedI))).isValid, 'I9 a browser-only ledger is redacted by the scrub and verifies', rI);
+  stI.setCalls.length = 0;
+  const rI2 = await runBrowserStorageScrub(stI, () => undefined);
+  assert(rI2.ledgersRedacted === 0 && stI.setCalls.length === 0, 'I9b a second run writes nothing', rI2);
+
+  // writers record descriptors
+  globalStore.clear();
+  await ingestAccretionDiscoveryPayload('W1', [{ agentId: 's1', hostName: 'HOST-MARK-W1', ipAddress: '10.77.0.1', macAddress: '00:77:00:00:00:01', osFingerprint: 'Linux', discoveredPorts: [22], connectionType: 'ETHERNET' }]);
+  const w1 = loadLedger('W1');
+  const w1Last = w1[w1.length - 1];
+  const w1s = w1Last?.newState as any;
+  assert(w1Last?.actionType === 'TELEMETRY_INGESTED' && w1s.hostName === await describeNotesForLedger('HOST-MARK-W1') && w1s.ipAddress === '(9 chars)' && w1s.macAddress === '(17 chars)' && !['HOST-MARK-W1', '10.77.0.1', '00:77:00:00:00:01'].some((s) => JSON.stringify(w1).includes(s)), 'I10 the discovery writer records descriptors only', w1s);
+  const rep = generateSimulatedScanReport('W2', 'HOST-MARK-W2', '10.78.0.1');
+  const scap = await ingestScapScanReport(rep, () => undefined, () => undefined, 'W2');
+  const w2 = loadLedger('W2');
+  const w2Last = w2[w2.length - 1];
+  const w2s = w2Last.newState as any;
+  assert(w2Last.targetEntity.startsWith('SCAP Scan: ') && w2s.hostName === await describeNotesForLedger('HOST-MARK-W2') && w2s.targetIp === '(9 chars)' && !['HOST-MARK-W2', '10.78.0.1'].some((s) => JSON.stringify(w2).includes(s)) && scap.auditHash === w2Last.sha256Hash && (await verifyAuditChain(w2)).isValid, 'I11 the SCAP writer records descriptors only and its audit hash matches the ledger', w2s);
+
+  // compare-and-set: another tab appends while the scrub is hashing
+  const fix12 = await mkIdent('L4');
+  const fix12Json = JSON.stringify(fix12);
+  await recordAuditEvent({ tenantId: 'L4', actorEmail: 'a@x.com', actionType: 'TELEMETRY_INGESTED', targetEntity: 'EnclaveAsset:a3', newState: { hostName: HOST, ipAddress: IP, macAddress: MAC } });
+  const ext12 = [...loadLedger('L4')];
+  const ext12Json = JSON.stringify(ext12);
+  class RacingStorage extends MemoryStorage {
+    reads = 0;
+    getItem(k: string) {
+      if (k !== LEDGER_KEY_PREFIX + 'L4') return super.getItem(k);
+      this.reads++;
+      return this.reads === 1 ? fix12Json : ext12Json;
+    }
+  }
+  const stRace = new RacingStorage();
+  stRace.setItem(LEDGER_KEY_PREFIX + 'L4', fix12Json);
+  stRace.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'L4', serverBacked: false }]));
+  const rRace = await runBrowserStorageScrub(stRace, () => undefined);
+  const storedRace = MemoryStorage.prototype.getItem.call(stRace, LEDGER_KEY_PREFIX + 'L4')!;
+  const raceEntries = JSON.parse(storedRace) as AuditLogEntry[];
+  assert(rRace.failed === 0 && raceEntries.some((e) => e.id === ext12[ext12.length - 1].id) && !storedRace.includes(HOST) && !storedRace.includes(IP) && (await verifyAuditChain(raceEntries)).isValid, 'I12 an entry appended during the scrub is kept, redacted and the chain verifies', rRace);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
