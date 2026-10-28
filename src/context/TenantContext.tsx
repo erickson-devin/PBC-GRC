@@ -386,6 +386,8 @@ interface TenantContextType {
     fileHash: string;
     description?: string;
   }, programId?: string | null) => Promise<UploadUrlResponse | null>;
+  /** Deletes an evidence record (and its cross-framework copies) on the server and drops them from the list. Rejects on failure. */
+  deleteLiveEvidence: (evidenceId: string, programId?: string | null) => Promise<{ removedIds: string[]; fileRemoved: boolean }>;
   // Multi-Framework & Baseline Architecture (framework, baseline and CIA triad are derived from the active program)
   /** The active program's framework, else the tenant's primary framework. */
   activeFramework: ComplianceFramework;
@@ -1196,6 +1198,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [currentTenant.id, scopeNow, programIdFor]);
 
+  const deleteLiveEvidence = useCallback(async (evidenceId: string, programId?: string | null): Promise<{ removedIds: string[]; fileRemoved: boolean }> => {
+    // `programId` is the program the caller started the delete for (default: the active one now)
+    const program = programId !== undefined ? programId : programIdFor(currentTenant.id);
+    const scope = programScopeKey(currentTenant.id, program);
+    const result = await ApiClient.deleteEvidence(currentTenant.id, evidenceId, program);
+    const gone = new Set(result.removedIds);
+    if (scopeNow(currentTenant.id) === scope) setLiveEvidence(prev => prev ? prev.filter(e => !gone.has(e.id)) : prev);
+    return result;
+  }, [currentTenant.id, scopeNow, programIdFor]);
+
   // Check if active tenant requires initial setup wizard
   const needsOnboarding = useMemo(() => currentTenant.isConfigured === false, [currentTenant.isConfigured]);
 
@@ -1986,6 +1998,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateLiveObjectivesBulk,
     importLiveObjectives,
     createLiveEvidenceUploadUrl,
+    deleteLiveEvidence,
     activeFramework,
     setActiveFramework,
     activeBaselineTier,
@@ -2071,6 +2084,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateLiveObjectivesBulk,
     importLiveObjectives,
     createLiveEvidenceUploadUrl,
+    deleteLiveEvidence,
     activeFramework,
     setActiveFramework,
     activeBaselineTier,

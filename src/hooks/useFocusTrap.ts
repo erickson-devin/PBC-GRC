@@ -1,4 +1,4 @@
-import { RefObject, useEffect } from 'react';
+import { RefObject, useEffect, useRef } from 'react';
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -13,10 +13,15 @@ const visibleFocusables = (root: HTMLElement): HTMLElement[] =>
  *  - on close, focus returns to what had it before, so keyboard users are not dropped at the top of the page.
  */
 export function useFocusTrap(ref: RefObject<HTMLElement | null>): void {
+  // Taken on the first render, before the dialog is in the DOM: by the time the effect runs an autoFocus element inside
+  // the dialog already has focus, and returning focus to it on close would drop the user at the top of the page
+  const previousRef = useRef<HTMLElement | null>(
+    typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null
+  );
   useEffect(() => {
     const root = ref.current;
     if (!root) return undefined;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previous = previousRef.current && !root.contains(previousRef.current) ? previousRef.current : null;
     if (!root.contains(document.activeElement)) root.focus({ preventScroll: true });
 
     const onKeyDown = (e: KeyboardEvent) => {
