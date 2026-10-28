@@ -144,10 +144,10 @@ for (const e of LEGACY_EXEMPT) {
 }
 
 // The install never points at the vendor's hosted domain: URLs are built from the install's own origin. Only the legal
-// text (website link) and the sidebar (Photon link, tracked separately) may carry one.
+// text may carry a vendor URL; the sidebar's Photon link comes from VITE_PHOTON_URL (#93).
 console.log('\n--- Vendor URLs ---');
 const VENDOR_URL = /https?:\/\/[A-Za-z0-9.-]*pitchblackcyber\.com/i;
-const VENDOR_URL_ALLOWED = ['src/components/common/LegalModal.tsx', 'src/components/layout/Sidebar.tsx'];
+const VENDOR_URL_ALLOWED = ['src/components/common/LegalModal.tsx'];
 {
   const hits: string[] = [];
   for (const [file, body] of text) {
@@ -157,6 +157,14 @@ const VENDOR_URL_ALLOWED = ['src/components/common/LegalModal.tsx', 'src/compone
     });
   }
   assert(hits.length === 0, `a pitchblackcyber.com URL appears only in ${VENDOR_URL_ALLOWED.join(' and ')}`, hits.slice(0, 10));
+}
+
+// The Photon link is opt-in: no built-in vendor URL in the sidebar.
+{
+  const sb = (text.get('src/components/layout/Sidebar.tsx') ?? '').replace(/\r\n/g, '\n');
+  assert(sb.includes('VITE_PHOTON_URL'), 'Sidebar.tsx reads VITE_PHOTON_URL');
+  assert(!/beta\.vpn|:8800/.test(sb), 'Sidebar.tsx has no built-in Photon host or port');
+  assert(/\.\.\.\(photonUrl\s*\?/.test(sb), 'Sidebar.tsx adds the Photon item only when photonUrl is set');
 }
 
 // The Accretion modal has no fake sensor key: the endpoint is built from the install's own origin.
