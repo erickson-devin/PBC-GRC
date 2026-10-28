@@ -483,7 +483,7 @@ export const SspImportView: React.FC = () => {
                   >
                     <span className="block text-sm font-semibold text-white truncate">{j.fileName}</span>
                     <span className="block text-xs text-slate-400 mt-0.5">
-                      {j.framework === 'CMMC_L1' ? 'Level 1' : j.framework === 'CMMC_L2' ? 'Level 2' : `SP 800-53 ${j.baseline ? j.baseline.charAt(0) + j.baseline.slice(1).toLowerCase() : ''}`.trim()} · {formatDate(j.createdAt)}
+                      {j.framework === 'CMMC_L1' ? 'Level 1' : j.framework === 'CMMC_L2' ? 'Level 2' : `SP 800-53 ${j.baseline ? j.baseline.charAt(0) + j.baseline.slice(1).toLowerCase() : ''}${j.coverage?.privacy ? ' + Privacy' : ''}`.trim()} · {formatDate(j.createdAt)}
                     </span>
                     <span className="mt-1.5 flex items-center gap-1.5 text-xs">
                       {!isTerminal(j.status) && <Loader2 className="w-3 h-3 animate-spin motion-reduce:animate-none text-cyan-400" aria-hidden="true" />}

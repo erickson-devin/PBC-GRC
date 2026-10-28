@@ -965,7 +965,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [switchProgram]);
 
   // Overlays stay per browser until they become a program setting
-  const [activeOverlayFilters, setActiveOverlayFilters] = useState<OverlayFilters>(() => {
+  const [storedOverlayFilters, setActiveOverlayFilters] = useState<OverlayFilters>(() => {
     try {
       const saved = localStorage.getItem(ACTIVE_OVERLAY_FILTERS_KEY);
       if (saved) {
@@ -976,6 +976,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     return { nonNetworkedOnly: false };
   });
+  // A program that applies the privacy baseline processes PII: "No PII processing" does not apply to it, whatever this browser saved
+  const activeOverlayFilters = useMemo<OverlayFilters>(
+    () => (activeProgram?.privacyBaseline && storedOverlayFilters.noPiiProcessing ? { ...storedOverlayFilters, noPiiProcessing: false } : storedOverlayFilters),
+    [storedOverlayFilters, activeProgram?.privacyBaseline]
+  );
 
   // The CIA triad follows the program's baseline: the old per-browser editor has no effect any more
   const setCiaImpact = useCallback((_dimension: 'confidentiality' | 'integrity' | 'availability', _level: ImpactLevel) => {}, []);
@@ -997,9 +1002,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     try {
-      localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(activeOverlayFilters));
+      localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(storedOverlayFilters));
     } catch {}
-  }, [activeOverlayFilters]);
+  }, [storedOverlayFilters]);
 
   // ============================================================================
   // Express API Live Sync Engine (Row-Level Security Tenant Isolation)

@@ -54,7 +54,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
-  const [selectedBaselineFilter, setSelectedBaselineFilter] = useState<'ALL' | 'LOW' | 'MODERATE' | 'HIGH'>('ALL');
+  const [selectedBaselineFilter, setSelectedBaselineFilter] = useState<'ALL' | 'LOW' | 'MODERATE' | 'HIGH' | 'PRIVACY'>('ALL');
   const [selectedKindFilter, setSelectedKindFilter] = useState<'ALL' | 'BASE' | 'ENHANCEMENT'>('ALL');
   // The SP 800-53 catalog has hundreds of controls: draw a page at a time
   const PAGE_SIZE = 60;
@@ -107,7 +107,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       // Baseline impact filter (per NIST SP 800-53B guidelines)
       if (selectedBaselineFilter !== 'ALL' && ctrl.baselines) {
         // SP 800-53B baseline membership, exactly (SP 800-53 controls carry it)
-        if (!ctrl.baselines[selectedBaselineFilter.toLowerCase() as 'low' | 'moderate' | 'high']) return false;
+        if (!ctrl.baselines[selectedBaselineFilter.toLowerCase() as 'low' | 'moderate' | 'high' | 'privacy']) return false;
       } else if (selectedBaselineFilter !== 'ALL') {
         if (selectedBaselineFilter === 'LOW') {
           const isLow = ctrl.baselineImpact === 'LOW' || ctrl.baselineTiers?.includes('LOW_LOW_LOW');
@@ -169,7 +169,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       case 'CMMC_L2':
         return '110 Requirements • Controlled Unclassified Information (CUI) • DoD SPRS Assessment';
       case 'NIST_800_53_REV5':
-        return `NIST SP 800-53 Baseline: ${activeBaselineTier} • FedRAMP / FISMA Authorization`;
+        return `NIST SP 800-53 Baseline: ${activeBaselineTier}${activeProgram?.privacyBaseline ? ' + Privacy' : ''} • FedRAMP / FISMA Authorization`;
       case 'SOC_2_TYPE_II':
         return 'AICPA Trust Services Criteria (Security, Availability, Confidentiality) • Type II Attestation';
       case 'HIPAA_SECURITY':
@@ -422,6 +422,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               <option value="LOW">Low Baseline</option>
               <option value="MODERATE">Moderate Baseline</option>
               <option value="HIGH">High Baseline</option>
+              {activeFramework === 'NIST_800_53_REV5' && <option value="PRIVACY">Privacy Baseline</option>}
             </select>
           </div>
 
