@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type pg from 'pg';
-import { getDbMode, pool } from '../db';
+import { getDbMode, pool, queryWithProgram, type ProgramScope } from '../db';
 import { listAssets } from '../assets';
 import { updateRun } from './store';
 import type { ApplyRunResult, LinkedPoamItem, PoamCandidate, PoamDraft, SightingDraft } from './storeTypes';
@@ -25,7 +25,7 @@ const chunks = <T>(items: T[]): T[][] => {
 
 const memoryFindings = new Map<string, VmFinding>(); // key: id
 const memorySightings = new Map<string, VmSighting>(); // key: tenantId|runId|findingId
-const memoryPoam = new Map<string, VmPoamItem>(); // key: id
+const memoryPoam = new Map<string, VmPoamItem>(); // key: id (programId is null until a caller passes one; see insertPoamItems)
 const memoryVulns = new Map<string, VmVuln>(); // key: vuln_id
 
 /** Test hook. */
@@ -60,14 +60,16 @@ export function __setVmVulnKevForTests(vulnId: string, kev: boolean): void {
 
 /**
  * Runs `fn` in one tenant transaction (the client is null in memory mode). Everything the worker writes for a run goes through
- * it, so a failure part-way commits nothing.
+ * it, so a failure part-way commits nothing. With a `programId` the transaction also runs in that program's context (both settings,
+ * tenant and program, which the program row policy of vm_poam_items needs); without one it can read no vm_poam_items row and write none.
  */
-export async function withVmTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient | null) => Promise<T>): Promise<T> {
+export async function withVmTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient | null) => Promise<T>, programId?: string): Promise<T> {
   if (isMemory()) return fn(null);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+    if (programId) await client.query('SELECT set_config($1, $2, true)', ['app.current_program_id', programId]);
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
@@ -140,6 +142,7 @@ export function rowToPoamItem(r: pg.QueryResultRow): VmPoamItem {
     createdBy: r.created_by,
     createdAt: iso(r.created_at) as string,
     updatedAt: iso(r.updated_at) as string,
+    programId: r.program_id ?? null,
   };
 }
 
@@ -345,8 +348,11 @@ export async function listPoamCandidates(
   return { candidates, linked };
 }
 
-/** Inserts the worker's POA&M items; the partial unique index (unq_vm_poam_items_auto) makes a repeat a no-op. */
-export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], client: pg.PoolClient | null): Promise<void> {
+/**
+ * Inserts the worker's POA&M items; the partial unique index (unq_vm_poam_items_auto) makes a repeat a no-op. `programId` is the program
+ * the items belong to (the tenant's default program once the worker passes it); without one the rows carry none.
+ */
+export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], client: pg.PoolClient | null, programId: string | null = null): Promise<void> {
   if (drafts.length === 0) return;
   if (isMemory()) {
     for (const d of drafts) {
@@ -367,6 +373,7 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
         createdBy: d.createdBy,
         createdAt: now,
         updatedAt: now,
+        programId,
       });
     }
     return;
@@ -374,12 +381,35 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
   const c = need(client);
   for (const part of chunks(drafts)) {
     await c.query(
-      `INSERT INTO vm_poam_items (tenant_id, finding_id, control_id, weakness, mitigation, owner, scheduled_completion, status, created_by)
-       VALUES ${placeholders(part.length, 9)}
+      `INSERT INTO vm_poam_items (tenant_id, finding_id, control_id, weakness, mitigation, owner, scheduled_completion, status, created_by, program_id)
+       VALUES ${placeholders(part.length, 10)}
        ON CONFLICT DO NOTHING`,
-      part.flatMap((d) => [tenantId, d.findingId, d.controlId, d.weakness, d.mitigation, d.owner, d.scheduledCompletion, d.status, d.createdBy]),
+      part.flatMap((d) => [tenantId, d.findingId, d.controlId, d.weakness, d.mitigation, d.owner, d.scheduledCompletion, d.status, d.createdBy, programId]),
     );
   }
+}
+
+/** The program's POA&M items still open (OPEN or IN_PROGRESS). A legacy item with no program is not counted until it is backfilled. */
+export async function countOpenPoamItems(scope: ProgramScope): Promise<number> {
+  return countPoam(scope, true);
+}
+
+/** Every POA&M item of the program, whatever its status (what keeps a program from being deleted). */
+export async function countPoamItems(scope: ProgramScope): Promise<number> {
+  return countPoam(scope, false);
+}
+
+async function countPoam(scope: ProgramScope, openOnly: boolean): Promise<number> {
+  const open = (status: string): boolean => status === 'OPEN' || status === 'IN_PROGRESS';
+  if (isMemory()) {
+    return [...memoryPoam.values()].filter((p) => p.tenantId === scope.tenantId && p.programId === scope.programId && (!openOnly || open(p.status))).length;
+  }
+  const res = await queryWithProgram(
+    scope,
+    `SELECT COUNT(*)::int AS n FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2${openOnly ? " AND status IN ('OPEN', 'IN_PROGRESS')" : ''}`,
+    [scope.tenantId, scope.programId],
+  );
+  return Number(res.rows[0]?.n ?? 0);
 }
 
 // ------------------------------------------------------------------------------------------------ runs and listing
@@ -395,9 +425,10 @@ export async function markRunNormalized(tenantId: string, runId: string, finishe
 
 /**
  * Everything the snapshot evaluates, in one tenant transaction: every finding (any status), the ids of the vulnerabilities
- * on the known-exploited list that the tenant has findings for, and every POA&M item.
+ * on the known-exploited list that the tenant has findings for, and the POA&M items of `programId` (the VM target program: the
+ * tenant's default program, which the caller resolves).
  */
-export async function loadSnapshotFindings(tenantId: string): Promise<{ findings: VmFinding[]; kevVulnIds: string[]; poam: VmPoamItem[] }> {
+export async function loadSnapshotFindings(tenantId: string, programId: string): Promise<{ findings: VmFinding[]; kevVulnIds: string[]; poam: VmPoamItem[] }> {
   if (isMemory()) {
     const findings = [...memoryFindings.values()].filter((f) => f.tenantId === tenantId).map((f) => ({ ...f }));
     const kevVulnIds = [...new Set(findings.map((f) => f.vulnId))].filter((id) => memoryVulns.get(id)?.kev);
@@ -414,7 +445,7 @@ export async function loadSnapshotFindings(tenantId: string): Promise<{ findings
       kevVulnIds: kev.rows.map((r) => r.vuln_id as string),
       poam: poam.rows.map(rowToPoamItem),
     };
-  });
+  }, programId);
 }
 
 const SEVERITY_ORDER: Record<VmSeverity, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, UNKNOWN: 3, LOW: 4 };

@@ -29,7 +29,7 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 const crypto = await import('crypto');
 const fs = await import('fs');
 const path = await import('path');
-const { pool, initDb, queryWithTenant, checkDatabaseConnection } = await import('../server/db');
+const { pool, initDb, queryWithTenant, queryWithProgram, checkDatabaseConnection } = await import('../server/db');
 const { createVmToken, listVmTokens, revokeVmToken, lookupVmTokenByHash, sha256Hex, VmTokenError, VM_TOKEN_PATTERN, MAX_ACTIVE_TOKENS_PER_TENANT } =
   await import('../server/vm/tokens');
 const { recordReceivedRun, findRunBySha, getRun, listRuns, listSources, resetRunForReprocess, updateRun, enumerateSchedulerSources, VmStoreError } = await import('../server/vm/store');
@@ -38,9 +38,13 @@ const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = aw
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
 const { runVmSnapshot, latestSnapshotAt } = await import('../server/vm/snapshotWriter');
 const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
+const { ensureDefaultProgram } = await import('../server/programs');
 const { VM_NOTES_BEGIN } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
+
+// The control history and answers are program-scoped: the VM snapshot writes into the tenant's default program.
+const scopeOf = async (tenantId: string) => ({ tenantId, programId: (await ensureDefaultProgram(tenantId)).id });
 
 let failures = 0;
 function check(ok: boolean, message: string, detail?: string) {
@@ -316,7 +320,7 @@ async function main() {
     check((await workerSource())?.staleSince === null, 'a tick at the real time clears stale_since again', String((await workerSource())?.staleSince));
 
     check((await latestSnapshotAt(TENANT_X)) !== null, 'the same tick snapshotted tenant X (latestSnapshotAt is set)');
-    const snapshotRows = async () => (await queryWithTenant(TENANT_X, "SELECT * FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [TENANT_X])).rows;
+    const snapshotRows = async () => (await queryWithProgram(await scopeOf(TENANT_X), "SELECT * FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [TENANT_X])).rows;
     const firstSnapshot = await snapshotRows();
     check(firstSnapshot.length === 12, 'tenant X holds 12 snapshot evidence rows (no program record: 3 controls x 2 files, plus 3 SI inheritances x 2)', String(firstSnapshot.length));
     const baseRows = firstSnapshot.filter((r) => r.sync_status !== 'inherited');
@@ -326,7 +330,7 @@ async function main() {
       String(baseRows.length),
     );
     const SNAPSHOT_CONTROLS = ['RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1'];
-    const live = await readControlAssessments(TENANT_X);
+    const live = await readControlAssessments(await scopeOf(TENANT_X));
     check(
       live.size === 3 && SNAPSHOT_CONTROLS.every((id) => live.get(id)?.status === 'NOT_STARTED' && (live.get(id)?.notes.split(VM_NOTES_BEGIN).length ?? 0) === 2),
       'three control rows were created: NOT_STARTED, each with exactly one snapshot block',
@@ -335,9 +339,9 @@ async function main() {
 
     // h. A human answer survives the next snapshot.
     const block = live.get('SI.L1-3.14.1')?.notes ?? '';
-    await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: 'MET', notes: `Human text\n\n${block}`, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
+    await writeControlAssessment(await scopeOf(TENANT_X), 'SI.L1-3.14.1', () => ({ status: 'MET', notes: `Human text\n\n${block}`, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
     await runVmSnapshot(TENANT_X, { trigger: 'manual' });
-    const afterHuman = (await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1');
+    const afterHuman = (await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1');
     check(
       afterHuman?.status === 'MET' && afterHuman.notes.startsWith('Human text') && afterHuman.notes.split(VM_NOTES_BEGIN).length === 2,
       'a second snapshot keeps the human status and text and holds one block',
@@ -345,12 +349,17 @@ async function main() {
     );
     check((await snapshotRows()).length === 24, 'tenant X now holds 24 snapshot evidence rows');
 
-    // i. Tenant isolation of the evidence rows.
-    const ofY = await queryWithTenant(TENANT_Y, "SELECT * FROM evidence_metadata WHERE uploaded_by = 'system:vm-snapshot'", []);
+    // i. Tenant isolation of the evidence rows (evidence_metadata is program-scoped: read under Y's own default program, then under X's
+    // program with Y's tenant, which no row policy lets through).
+    const ofY = await queryWithProgram(await scopeOf(TENANT_Y), "SELECT * FROM evidence_metadata WHERE uploaded_by = 'system:vm-snapshot'", []);
     check(ofY.rows.every((r) => r.tenant_id === TENANT_Y) && ofY.rows.length === 0, "tenant Y sees none of tenant X's snapshot evidence", String(ofY.rows.length));
+    const ofYWithXProgram = await queryWithProgram({ tenantId: TENANT_Y, programId: (await scopeOf(TENANT_X)).programId }, "SELECT * FROM evidence_metadata WHERE uploaded_by = 'system:vm-snapshot'", []);
+    check(ofYWithXProgram.rows.length === 0, "tenant Y sees none of them even when it runs in the id of tenant X's program", String(ofYWithXProgram.rows.length));
+    const ofXNoProgram = await queryWithTenant(TENANT_X, "SELECT * FROM evidence_metadata WHERE uploaded_by = 'system:vm-snapshot'", []);
+    check(ofXNoProgram.rows.length === 0, 'tenant X with no program context sees none of its own snapshot evidence (the program row policy)', String(ofXNoProgram.rows.length));
 
     console.log('\n--- 15. Control assessment history ---');
-    const events = await listControlAssessmentEvents(TENANT_X, 'SI.L1-3.14.1', 50);
+    const events = await listControlAssessmentEvents(await scopeOf(TENANT_X), 'SI.L1-3.14.1', 50);
     check(
       events.length === 3 && events.map((e) => e.source).join(',') === 'vm-snapshot,human,vm-snapshot',
       'SI.L1-3.14.1 has 3 events, newest first: vm-snapshot, human, vm-snapshot',
@@ -368,28 +377,31 @@ async function main() {
       JSON.stringify(events[0]),
     );
     const eventCount = async (): Promise<number> =>
-      Number((await queryWithTenant(TENANT_X, 'SELECT count(*)::int AS n FROM control_assessment_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n);
+      Number((await queryWithProgram(await scopeOf(TENANT_X), 'SELECT count(*)::int AS n FROM control_assessment_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n);
     check((await eventCount()) === 7, 'tenant X holds 7 events (3 from the first tick, 1 human, 3 from the second snapshot)', String(await eventCount()));
 
-    await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: null, notes: 'x', role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
-    check((await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1')?.status === 'MET', 'a write with a null status keeps MET');
+    await writeControlAssessment(await scopeOf(TENANT_X), 'SI.L1-3.14.1', () => ({ status: null, notes: 'x', role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null });
+    check((await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1')?.status === 'MET', 'a write with a null status keeps MET');
     const beforeRollback = await eventCount();
     const txClient = await pool.connect();
     try {
       await txClient.query('BEGIN');
       await txClient.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', TENANT_X]);
-      await writeControlAssessment(TENANT_X, 'SI.L1-3.14.1', () => ({ status: 'NOT_MET', notes: null, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null }, txClient);
+      await writeControlAssessment(await scopeOf(TENANT_X), 'SI.L1-3.14.1', () => ({ status: 'NOT_MET', notes: null, role: null, updatedBy: 'vm_verify' }), { source: 'human', actor: 'vm_verify', userId: null }, txClient);
     } finally {
       await txClient.query('ROLLBACK').catch(() => undefined);
       txClient.release();
     }
-    check((await readControlAssessments(TENANT_X)).get('SI.L1-3.14.1')?.status === 'MET', 'a write inside a rolled-back caller transaction leaves the status MET');
+    check((await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1')?.status === 'MET', 'a write inside a rolled-back caller transaction leaves the status MET');
     check((await eventCount()) === beforeRollback, 'and its event was rolled back with it (the event count is unchanged)', `${beforeRollback} -> ${await eventCount()}`);
     const noContextEvents = await pool.query('SELECT count(*)::int AS n FROM control_assessment_events');
     check(Number(noContextEvents.rows[0].n) === 0, 'without a tenant context no control_assessment_events row is visible', String(noContextEvents.rows[0].n));
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
-      await queryWithTenant(t, 'DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
+      // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
+      const programId = (await queryWithTenant(t, 'SELECT id FROM programs WHERE tenant_id = $1 AND is_default', [t]).catch(() => null))?.rows[0]?.id as string | undefined;
+      const inProgram = (sql: string, params: string[]) => (programId ? queryWithProgram({ tenantId: t, programId }, sql, params) : Promise.resolve(undefined));
+      await inProgram('DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_sightings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_findings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'vm-verify%'", []).catch(() => undefined);
@@ -397,9 +409,10 @@ async function main() {
       await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path LIKE '/vm_verify/%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_sources WHERE label ILIKE 'vm_verify%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_service_tokens WHERE name LIKE 'vm_verify%'", []).catch(() => undefined);
-      await queryWithTenant(t, "DELETE FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [t]).catch(() => undefined);
-      await queryWithTenant(t, 'DELETE FROM control_assessment_events WHERE tenant_id = $1', [t]).catch(() => undefined);
-      await queryWithTenant(t, "DELETE FROM control_assessments WHERE tenant_id = $1 AND control_id IN ('RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1', 'CA.L2-3.12.3')", [t]).catch(() => undefined);
+      await inProgram("DELETE FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [t]).catch(() => undefined);
+      await inProgram('DELETE FROM control_assessment_events WHERE tenant_id = $1', [t]).catch(() => undefined);
+      await inProgram("DELETE FROM control_assessments WHERE tenant_id = $1 AND control_id IN ('RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1', 'CA.L2-3.12.3')", [t]).catch(() => undefined);
+      await queryWithTenant(t, 'DELETE FROM programs WHERE tenant_id = $1', [t]).catch(() => undefined); // the default program ensureDefaultProgram created
       fs.rmSync(path.join(localStorageRoot(), 'tenants', t, 'vm', 'snapshots'), { recursive: true, force: true });
     }
     await pool.query("DELETE FROM vm_vulns WHERE vuln_id LIKE 'VM-VERIFY-%' OR vuln_id LIKE 'CVE-2099-%'").catch(() => undefined);

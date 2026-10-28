@@ -3,7 +3,7 @@ import type pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { queryWithTenant } from '../db';
+import { queryWithProgram, type ProgramScope } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { ensureControlInProgram } from '../middleware/frameworkGuard';
@@ -26,6 +26,9 @@ try {
 } catch (err: unknown) {
   console.warn(`[Evidence Storage] Local storage directory setup notice: ${errorMessage(err)}`);
 }
+
+/** The tenant and program of the request (set by authMiddleware and the programContext middleware that is mounted before this router). */
+const scopeOf = (req: Request): ProgramScope => ({ tenantId: req.tenantId!, programId: req.programId! });
 
 const CONTROL_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -137,14 +140,15 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
     const insertQuery = `
       INSERT INTO evidence_metadata (
         id, tenant_id, control_id, file_name, file_size, mime_type,
-        gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at
+        gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at, program_id
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12
       )
       RETURNING *;
     `;
 
-    const result = await queryWithTenant(tenantId, insertQuery, [
+    const scope = scopeOf(req);
+    const result = await queryWithProgram(scope, insertQuery, [
       evidenceId,
       tenantId,
       controlId,
@@ -156,6 +160,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
       initialSyncStatus,
       description || `Audit Evidence for ${controlId}`,
       effectiveUser,
+      scope.programId,
     ]);
 
     const savedRecord = mapRowToEvidence(result.rows[0]);
@@ -169,13 +174,13 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
         const inhInsert = `
           INSERT INTO evidence_metadata (
             id, tenant_id, control_id, file_name, file_size, mime_type,
-            gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at
+            gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at, program_id
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, 'inherited', $9, $10, NOW()
+            $1, $2, $3, $4, $5, $6, $7, $8, 'inherited', $9, $10, NOW(), $11
           )
           ON CONFLICT (id) DO NOTHING;
         `;
-        await queryWithTenant(tenantId, inhInsert, [
+        await queryWithProgram(scope, inhInsert, [
           inhId,
           tenantId,
           mappedId,
@@ -186,6 +191,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
           fileHash,
           inhDesc,
           effectiveUser,
+          scope.programId,
         ]);
       }
     } catch (inhErr: unknown) {
@@ -225,10 +231,10 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
   }
 
   try {
-    const result = await queryWithTenant(
-      tenantId,
-      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
-      [evidenceId, tenantId]
+    const result = await queryWithProgram(
+      scopeOf(req),
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL)',
+      [evidenceId, tenantId, req.programId!]
     );
 
     if (result.rows.length === 0) {
@@ -275,10 +281,10 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
     const hashMatch = !record.file_hash || record.file_hash.toLowerCase() === computedHash.toLowerCase();
 
     // Update metadata record with verified file size, verified hash, and local_storage status
-    await queryWithTenant(
-      tenantId,
-      'UPDATE evidence_metadata SET file_size = $1, file_hash = $2, gcs_path = $3, sync_status = $4 WHERE id = $5',
-      [buffer.length, computedHash, targetFilePath, 'local_storage', evidenceId]
+    await queryWithProgram(
+      scopeOf(req),
+      'UPDATE evidence_metadata SET file_size = $1, file_hash = $2, gcs_path = $3, sync_status = $4 WHERE id = $5 AND tenant_id = $6 AND (program_id = $7 OR program_id IS NULL)',
+      [buffer.length, computedHash, targetFilePath, 'local_storage', evidenceId, tenantId, req.programId!]
     );
 
     res.status(200).json({
@@ -311,10 +317,10 @@ router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<voi
   const { evidenceId } = req.params;
 
   try {
-    const result = await queryWithTenant(
-      tenantId,
-      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
-      [evidenceId, tenantId]
+    const result = await queryWithProgram(
+      scopeOf(req),
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL)',
+      [evidenceId, tenantId, req.programId!]
     );
 
     if (result.rows.length === 0) {
@@ -348,10 +354,10 @@ router.get('/:evidenceId/verify-integrity', async (req: Request, res: Response):
   const { evidenceId } = req.params;
 
   try {
-    const result = await queryWithTenant(
-      tenantId,
-      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
-      [evidenceId, tenantId]
+    const result = await queryWithProgram(
+      scopeOf(req),
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL)',
+      [evidenceId, tenantId, req.programId!]
     );
 
     if (result.rows.length === 0) {
@@ -387,17 +393,17 @@ router.get('/:evidenceId/verify-integrity', async (req: Request, res: Response):
 
 /**
  * GET /api/v1/evidence
- * Retrieves all evidence artifacts for the active tenant.
+ * Retrieves all evidence artifacts of the active program.
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
   const { control_id } = req.query;
 
   try {
-    const result = await queryWithTenant(
-      tenantId,
-      'SELECT * FROM evidence_metadata WHERE tenant_id = $1 ORDER BY uploaded_at DESC',
-      [tenantId]
+    const result = await queryWithProgram(
+      scopeOf(req),
+      'SELECT * FROM evidence_metadata WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) ORDER BY uploaded_at DESC',
+      [tenantId, req.programId!]
     );
 
     let evidenceList = result.rows.map(mapRowToEvidence);
@@ -431,10 +437,10 @@ router.get('/:evidenceId', async (req: Request, res: Response): Promise<void> =>
   const { evidenceId } = req.params;
 
   try {
-    const result = await queryWithTenant(
-      tenantId,
-      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2',
-      [evidenceId, tenantId]
+    const result = await queryWithProgram(
+      scopeOf(req),
+      'SELECT * FROM evidence_metadata WHERE id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL)',
+      [evidenceId, tenantId, req.programId!]
     );
 
     if (result.rows.length === 0) {

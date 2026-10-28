@@ -84,7 +84,7 @@ const toChallenge = (p: { stage: MfaStage; mfaToken: string; expiresAt: string; 
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { resolveTenantForEmail, syncAuthUser, currentUser: tenantUser } = useTenant();
+  const { resolveTenantForEmail, syncAuthUser, resetForSignOut, currentUser: tenantUser, currentTenant } = useTenant();
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
@@ -147,7 +147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     displayName: string | null,
     provider: AuthProviderType,
     token: string,
-    userId?: string
+    userId?: string,
+    skipServerSync = false
   ) => {
     const { tenant, role } = resolveTenantForEmail(email);
 
@@ -163,7 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIdToken(token);
     setIsAuthenticated(true);
     setAuthError(null);
-    syncAuthUser(userProfile, tenant.id);
+    syncAuthUser(userProfile, tenant.id, { skipServerSync });
   }, [resolveTenantForEmail, syncAuthUser]);
 
   // Local accounts only: there is no identity provider to wait for.
@@ -173,7 +174,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /** Enters the app with a complete session. */
   const applySession = useCallback(async (session: LocalLoginResponse) => {
-    await handleUserSession(session.user.email, session.user.name, 'password', session.token, session.user.id);
+    // While the forced password change is pending the server answers nothing else: no tenant / programs / data sync yet
+    // (changePassword runs it with the new token).
+    await handleUserSession(session.user.email, session.user.name, 'password', session.token, session.user.id, session.mustChangePassword);
     setMustChangePassword(session.mustChangePassword);
     setMfaEnrolled(session.mfaEnrolled);
     heldSession.current = null;
@@ -263,7 +266,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(prev => ({ ...prev, idToken: session.token }));
     setMustChangePassword(false);
     setMfaEnrolled(session.mfaEnrolled);
-  }, [idToken]);
+    // The tenant / programs / data loads read the stored token: store the new one first rather than wait for the effect
+    try { localStorage.setItem(AUTH_TOKEN_KEY, session.token); } catch {}
+    // The roles cached so far are provisional: load the real ones now that the server accepts requests again
+    syncAuthUser({ ...tenantUser, idToken: session.token }, currentTenant.id);
+  }, [idToken, syncAuthUser, tenantUser, currentTenant.id]);
 
   /**
    * Onboarding by invitation: the server creates the account for the invited email, consumes the invitation
@@ -308,6 +315,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Sign Out
    */
   const logout = useCallback(async () => {
+    resetForSignOut();
     setIsAuthenticated(false);
     setIdToken(null);
     setMustChangePassword(false);
@@ -323,7 +331,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (typeof window !== 'undefined') {
       window.location.hash = '';
     }
-  }, []);
+  }, [resetForSignOut]);
 
   const openAuthModal = useCallback((_mode: 'signin' = 'signin', redirectUrl?: string) => {
     if (redirectUrl) {

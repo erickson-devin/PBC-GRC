@@ -47,6 +47,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     currentTenant,
     activeFramework,
     activeBaselineTier,
+    activeProgram,
     activeOverlayFilters,
     toggleNonNetworkedOverlay,
   } = useTenant();
@@ -180,6 +181,11 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
   const totalControlsCount = frameworkControls.length;
 
+  // The program the matrix belongs to: its name and, for NIST SP 800-53, its baseline
+  const programLabel = activeProgram
+    ? `${activeProgram.name}${activeProgram.framework === 'NIST_800_53_REV5' && activeProgram.baseline ? ` · ${activeProgram.baseline.charAt(0)}${activeProgram.baseline.slice(1).toLowerCase()}` : ''}`
+    : null;
+
   return (
     <div className="space-y-6 animate-fadeIn">
       
@@ -189,6 +195,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 mb-1.5">
             <Sparkles className="w-3 h-3 text-cyan-400" />
             <span>{currentFrameworkDef.authority.toUpperCase()} COMPLIANCE MATRIX</span>
+            {programLabel && <span className="text-cyan-200 normal-case font-semibold" title="Active program">· {programLabel}</span>}
           </div>
           <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2.5">
             <Shield className="w-7 h-7 text-cyan-400" />

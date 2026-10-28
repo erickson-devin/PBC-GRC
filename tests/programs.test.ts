@@ -105,6 +105,13 @@ async function apiTests() {
   const mine = async (t: string) => ((await call('GET', '/tenants', t)).body?.tenants ?? []) as Json[];
   assert(!JSON.stringify(await mine(admin)).match(/licen|annual|price/i), 'the tenant list carries no license tier either');
 
+  console.log('\n--- The default program of a new tenant ---');
+  const l2Programs = await call('GET', `/tenants/${l2Id}/programs`, admin, l2Id);
+  const l2List = (l2Programs.body?.programs ?? []) as Json[];
+  assert(l2Programs.status === 200 && l2List.length === 1 && l2List[0].isDefault === true && l2List[0].frameworkId === 'CMMC_L2' && l2List[0].baseline === null, 'a tenant created with CMMC Level 2 as its primary framework has one default program on CMMC_L2', l2Programs.body);
+  const nistList = ((await call('GET', `/tenants/${nistId}/programs`, admin, nistId)).body?.programs ?? []) as Json[];
+  assert(nistList.length === 1 && nistList[0].frameworkId === 'NIST_800_53_REV5' && nistList[0].baseline === 'MODERATE', 'and a NIST-primary tenant has a MODERATE default program', nistList);
+
   console.log('\n--- Changing a program ---');
   const ownerTok = owner; // owner of l1Id
   const tryOwn = await call('PATCH', `/tenants/${l1Id}`, ownerTok, l1Id, { primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2'] });

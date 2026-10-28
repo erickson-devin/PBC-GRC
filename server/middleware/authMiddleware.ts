@@ -3,6 +3,7 @@ import { getTenantRole, isTenantMember } from '../db';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 import type { TenantRole } from '../../src/types/tenant';
+import type { Program } from '../programs';
 import { LocalAuthConfigError, LocalTokenError, verifyLocalToken } from '../auth/localAuth';
 import { getLocalUserAuthState } from '../auth/localUsers';
 
@@ -21,6 +22,9 @@ declare global {
       claimedTenantIds?: string[];
       /** The authenticated user's role in `tenantId`; drives the write guard. */
       tenantRole?: TenantRole;
+      /** The program (authorization boundary) the request runs in; set by the program-context middleware, not by authentication. */
+      programId?: string;
+      program?: Program;
     }
   }
 }

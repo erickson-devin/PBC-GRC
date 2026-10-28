@@ -28,6 +28,8 @@ import { useFipsModules } from '../../hooks/useFipsModules';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
+import { PROGRAM_TEXT_MAX } from '../../data/programSync';
+import { errorMessage } from '../../utils/errors';
 import { programSummary } from '../../data/programs';
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
@@ -49,13 +51,35 @@ const DEFAULT_STACK: EnclaveStackProfile = {
 };
 
 export const EnclaveSettings: React.FC = () => {
-  const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework } = useTenant();
+  const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework, activeProgram, updateProgram, canManagePrograms } = useTenant();
   const cryptoModules = useFipsModules();
   const { setActiveTab, setSelectedControlId } = useAssessment();
 
   const [previewingPolicy, setPreviewingPolicy] = useState<{ code: string; title: string } | null>(null);
   const [copiedPolicy, setCopiedPolicy] = useState<boolean>(false);
   const [previewMode, setPreviewMode] = useState<'formatted' | 'raw'>('formatted');
+
+  // The boundary statement belongs to the active program (owners and MSP admins edit it); a tenant without programs keeps the tenant's text
+  const [editingBoundary, setEditingBoundary] = useState(false);
+  const [boundaryDraft, setBoundaryDraft] = useState('');
+  const [boundaryBusy, setBoundaryBusy] = useState(false);
+  const [boundaryError, setBoundaryError] = useState<string | null>(null);
+  const boundaryText = activeProgram ? activeProgram.boundarySummary : currentTenant.systemBoundaryScope;
+  const canEditBoundary = Boolean(activeProgram) && canManagePrograms && !activeProgram?.archived;
+
+  const saveBoundary = async () => {
+    if (!activeProgram) return;
+    setBoundaryBusy(true);
+    setBoundaryError(null);
+    try {
+      await updateProgram(activeProgram.id, { boundarySummary: boundaryDraft });
+      setEditingBoundary(false);
+    } catch (err: unknown) {
+      setBoundaryError(errorMessage(err) || 'Could not save the boundary description.');
+    } finally {
+      setBoundaryBusy(false);
+    }
+  };
 
   const stack: EnclaveStackProfile = {
     identityProvider: currentTenant.stackProfile?.identityProvider || DEFAULT_STACK.identityProvider,
@@ -634,11 +658,28 @@ export const EnclaveSettings: React.FC = () => {
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-2">
-          <span className="text-xs font-bold text-slate-300">Authorized Boundary Scope:</span>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-bold text-slate-300">Authorized Boundary Scope{activeProgram ? ` (${activeProgram.name})` : ''}:</span>
+            {canEditBoundary && !editingBoundary && (
+              <button type="button" onClick={() => { setBoundaryDraft(activeProgram?.boundarySummary ?? ''); setBoundaryError(null); setEditingBoundary(true); }} className="btn-base btn-ghost px-2 py-0.5 text-xs">Edit</button>
+            )}
+          </div>
+          {editingBoundary ? (
+            <div className="space-y-2">
+              <label htmlFor="enclave-boundary-summary" className="sr-only">Boundary description</label>
+              <textarea id="enclave-boundary-summary" value={boundaryDraft} maxLength={PROGRAM_TEXT_MAX} rows={5} onChange={(e) => setBoundaryDraft(e.target.value)} className="w-full px-3 py-2 text-xs font-mono bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60" />
+              {boundaryError && <p role="alert" className="text-xs text-rose-300">{boundaryError}</p>}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void saveBoundary()} disabled={boundaryBusy} className="btn-base btn-primary px-3 py-1 text-xs">{boundaryBusy ? 'Saving…' : 'Save'}</button>
+                <button type="button" onClick={() => setEditingBoundary(false)} disabled={boundaryBusy} className="btn-base btn-ghost px-3 py-1 text-xs">Cancel</button>
+              </div>
+            </div>
+          ) : (
           <p className="text-xs text-slate-300 leading-relaxed font-mono bg-slate-900 p-3 rounded-xl border border-slate-800">
-            {currentTenant.systemBoundaryScope ||
+            {boundaryText ||
               `The boundary for ${currentTenant.name} includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints, internal facility network, and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI) or CUI.`}
           </p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
@@ -655,7 +696,7 @@ export const EnclaveSettings: React.FC = () => {
             <span className="text-emerald-400 font-bold">{currentTenant.samStatus}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-            <span className="text-slate-400 block text-xs">Assessment Program</span>
+            <span className="text-slate-400 block text-xs">Licensed Frameworks</span>
             <span className="text-cyan-300 font-bold">{programSummary(currentTenant.primaryFramework, currentTenant.enabledFrameworks).text}</span>
           </div>
         </div>

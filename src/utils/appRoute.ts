@@ -2,7 +2,7 @@
  * Which screen the URL asks for. This is the application only: there is no public site, so the only routes are
  *   login          /login            the sign-in page
  *   accept-invite  /invite, /accept-invite   the page an invited person opens with their token
- *   app            /app, /dashboard  the enclave (requires a session)
+ *   app            /app, /dashboard, /programs  the enclave (requires a session); /programs opens its programs page
  *   admin          /admin            platform administration
  *   setup          /setup            the first-time setup wizard (only while the installation has no administrator)
  * Anything else, including "/", is 'root': it never shows a page of its own but is sent to the app when signed in and to
@@ -27,8 +27,16 @@ export function routeFromUrl({ pathname, hash, search }: UrlParts): AppRoute {
     return 'accept-invite';
   }
   if (path === '/login' || h.startsWith('#login') || q.includes('view=login')) return 'login';
-  if (path === '/app' || path === '/dashboard' || h.startsWith('#app') || q.includes('view=app')) return 'app';
+  if (path === '/app' || path === '/dashboard' || path === '/programs' || h.startsWith('#app') || h.startsWith('#programs') || q.includes('view=app')) return 'app';
   return 'root';
+}
+
+/**
+ * The tab of the enclave a URL deep-links to, or null when it names none (the app then keeps its own tab). Only the programs
+ * page has an address: "#programs" and "/programs".
+ */
+export function initialTabFromUrl({ pathname, hash }: Pick<UrlParts, 'pathname' | 'hash'>): 'programs' | null {
+  return pathname.toLowerCase() === '/programs' || hash.toLowerCase().startsWith('#programs') ? 'programs' : null;
 }
 
 /** Where '/' and every unknown path end up. */

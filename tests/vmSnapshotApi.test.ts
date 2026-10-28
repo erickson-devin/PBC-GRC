@@ -11,6 +11,8 @@ import { __resetVmSnapshotLimiterForTests, __setVmSnapshotFaultForTests } from '
 import { __runVmSchedulerTickForTests, startVmScheduler, stopVmScheduler } from '../server/vm/scheduler';
 import { VM_NOTES_BEGIN, VM_NOTES_END } from '../server/vm/snapshot';
 import { readControlAssessments } from '../server/controlAssessments';
+import { createProgram, ensureDefaultProgram } from '../server/programs';
+import { queryWithProgram } from '../server/db';
 import { readTenantFile } from '../server/evidence/storage';
 
 /**
@@ -217,7 +219,7 @@ async function run() {
   assert(si2?.status === 'MET', 'A08 the status is still MET', si2?.status);
   assert((await snapshotRowsOf(L1, owner1)).length === 16, 'A08 sixteen snapshot rows in total after two snapshots', (await snapshotRowsOf(L1, owner1)).length);
 
-  const live1 = await readControlAssessments(L1);
+  const live1 = await readControlAssessments({ tenantId: L1, programId: (await ensureDefaultProgram(L1)).id });
   assert(!live1.has('RA.L2-3.11.2') && !live1.has('RA.L2-3.11.3'), 'A09 a Level 1 tenant gets no control row on RA.L2-3.11.2 or RA.L2-3.11.3');
   assert(String(live1.get('SI.L1-3.14.1')?.notes).includes(VM_NOTES_BEGIN), 'A09 only SI.L1-3.14.1 carries the block');
 
@@ -232,7 +234,7 @@ async function run() {
     snap3,
   );
   assert((await snapshotRowsOf(L2, admin)).length === 14, 'A10 fourteen snapshot rows (8 base + 6 inherited from SI.L1-3.14.1)', (await snapshotRowsOf(L2, admin)).length);
-  const live3 = await readControlAssessments(L2);
+  const live3 = await readControlAssessments({ tenantId: L2, programId: (await ensureDefaultProgram(L2)).id });
   assert(live3.get('RA.L2-3.11.2')?.status === 'NOT_MET', 'A10 RA.L2-3.11.2 is still NOT_MET', live3.get('RA.L2-3.11.2'));
   assert(live3.get('CA.L2-3.12.3')?.status === 'NOT_STARTED' && String(live3.get('CA.L2-3.12.3')?.notes).includes(VM_NOTES_BEGIN), 'A10 the created CA.L2-3.12.3 row is NOT_STARTED and carries the block', live3.get('CA.L2-3.12.3'));
 
@@ -336,6 +338,27 @@ async function run() {
   const latest25b = await call('GET', `/tenants/${S}/vm/snapshot/latest`, owner4, S);
   const rep25b = (latest25b.body?.report ?? {}) as Json;
   assert(post25b.status === 201 && rep25b.snapshotId === post25b.body?.snapshot?.id && rep25b.criteria?.sourcesWithinInterval?.met === true, 'A25 a NORMALIZED run after it makes criterion 1 met again', rep25b.criteria?.sourcesWithinInterval);
+
+  console.log('\n--- A26: the snapshot belongs to the default program only ---');
+  const defaultL1 = await ensureDefaultProgram(L1);
+  const programB = await createProgram(L1, { name: 'Snap L1 second program', frameworkId: 'CMMC_L1' }, 'u_snap_o1');
+  const scopeDefault = { tenantId: L1, programId: defaultL1.id };
+  const scopeB = { tenantId: L1, programId: programB.id };
+  const liveDefault = await readControlAssessments(scopeDefault);
+  const liveB = await readControlAssessments(scopeB);
+  assert(String(liveDefault.get('SI.L1-3.14.1')?.notes).includes(VM_NOTES_BEGIN), 'A26 the default program carries the snapshot block on SI.L1-3.14.1');
+  assert(![...liveB.values()].some((c) => String(c.notes).includes(VM_NOTES_BEGIN)), 'A26 a second program holds no snapshot block', [...liveB.keys()]);
+  const evidenceIn = async (scope: { tenantId: string; programId: string }) =>
+    (await queryWithProgram(scope, 'SELECT id, program_id, uploaded_by FROM evidence_metadata WHERE tenant_id = $1 AND program_id = $2', [scope.tenantId, scope.programId])).rows.filter((r) => r.uploaded_by === ACTOR);
+  const evDefault = await evidenceIn(scopeDefault);
+  const evB = await evidenceIn(scopeB);
+  assert(evDefault.length >= 8 && evDefault.every((r) => r.program_id === defaultL1.id), 'A26 the default program holds the snapshot evidence rows, all stamped with its id', evDefault.length);
+  assert(evB.length === 0, 'A26 a second program holds no system:vm-snapshot evidence', evB.length);
+  __resetVmSnapshotLimiterForTests();
+  const postB = await call('POST', `/tenants/${L1}/vm/snapshot`, owner1, L1, undefined, { 'x-program-id': programB.id });
+  const evBAfter = await evidenceIn(scopeB);
+  const evDefaultAfter = await evidenceIn(scopeDefault);
+  assert(postB.status === 201 && evBAfter.length === 0 && evDefaultAfter.length > evDefault.length, 'A26 a snapshot requested with x-program-id of the second program still lands in the default program', [postB.status, evBAfter.length, evDefaultAfter.length]);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

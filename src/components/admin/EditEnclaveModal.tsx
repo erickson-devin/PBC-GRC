@@ -13,6 +13,7 @@ import { Tenant } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
+import { initialOwnerEmail, ownerEmailChanged } from '../../utils/systemOwner';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface EditEnclaveModalProps {
@@ -41,6 +42,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
   const [name, setName] = useState('');
   const [cageCode, setCageCode] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
+  const [initialOwner, setInitialOwner] = useState('');
   const [primaryFramework, setPrimaryFramework] = useState<ComplianceFramework>('CMMC_L1');
   const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,11 +54,10 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
       setName(tenant.name || '');
       setCageCode(tenant.cageCode || '');
 
-      // Extract email from systemOwner if formatted like "Alex Mercer (alex@example.com)" or plain email
-      const rawOwner = tenant.systemOwner || '';
-      const emailMatch = rawOwner.match(/<([^>]+)>|\(([^)]+)\)/);
-      const extractedEmail = emailMatch ? (emailMatch[1] || emailMatch[2]) : rawOwner.includes('@') ? rawOwner : '';
-      setOwnerEmail(extractedEmail || tenant.domain ? `admin@${tenant.domain}` : rawOwner);
+      // Pre-fill only with an email already present in systemOwner; never invent one
+      const initial = initialOwnerEmail(tenant);
+      setInitialOwner(initial);
+      setOwnerEmail(initial);
 
       const prim = tenant.primaryFramework || 'CMMC_L1';
       setPrimaryFramework(prim);
@@ -107,8 +108,9 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
       // 2. Update multi-framework scope
       updateTenantFrameworkScope(tenant.id, enabledFrameworks, primaryFramework);
 
-      // 3. Reassign system owner if changed
-      if (ownerEmail.trim()) {
+      // 3. Update the SSP system-owner contact only if the user changed it
+      const ownerChanged = ownerEmailChanged(initialOwner, ownerEmail);
+      if (ownerChanged) {
         updateTenantOwner(tenant.id, ownerEmail.trim());
       }
 
@@ -117,7 +119,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
         onSaved({
           ...tenant,
           ...updatedTenant,
-          systemOwner: ownerEmail.trim() || tenant.systemOwner,
+          systemOwner: ownerChanged ? ownerEmail.trim() : tenant.systemOwner,
         } as Tenant);
       }
 
@@ -202,21 +204,20 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
               </div>
             </div>
 
-            {/* Row 2: Primary System Owner Email */}
+            {/* Row 2: System owner contact (optional, SSP) */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Primary System Owner Email *
+                  System Owner Contact (SSP)
                 </label>
                 <span className="text-xs text-purple-400 font-mono">
-                  Reassigns TENANT_OWNER administrative seat
+                  Shown as the system owner in the SSP. Roles are managed on the Team page.
                 </span>
               </div>
               <div className="relative">
                 <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="email"
-                  required
                   value={ownerEmail}
                   onChange={e => setOwnerEmail(e.target.value)}
                   placeholder="e.g. ciso@defensecontractor.us"

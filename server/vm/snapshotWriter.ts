@@ -1,10 +1,11 @@
 import crypto from 'crypto';
 import path from 'path';
-import { getTenantProgram, queryWithTenant } from '../db';
+import { getTenantProgram, queryWithProgram } from '../db';
 import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { listAgentAssetCandidates, listAssets } from '../assets';
 import { writeControlAssessment, type ControlChangeActor } from '../controlAssessments';
+import { ensureDefaultProgram } from '../programs';
 import { localStorageRoot, readTenantFile, isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { listRunsSince, listSources } from './store';
 import { loadSnapshotFindings } from './findingsStore';
@@ -40,14 +41,14 @@ export class VmSnapshotError extends Error {
 
 // ------------------------------------------------------------------------------------------------ input
 
-export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnapshotConfig, snapshotId: string): Promise<SnapshotInput> {
+export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnapshotConfig, snapshotId: string, programId?: string): Promise<SnapshotInput> {
   const windowStart = new Date(now.getTime() - cfg.snapshotIntervalHours * 3_600_000).toISOString();
   const sources = await listSources(tenantId);
   const runs = await listRunsSince(tenantId, windowStart);
   const assets = await listAssets(tenantId);
   // AssetRecord has no last_vuln_seen_at: join the candidate list by id.
   const seen = new Map((await listAgentAssetCandidates(tenantId)).map((c) => [c.id, c.lastVulnSeenAt]));
-  const { findings, kevVulnIds, poam } = await loadSnapshotFindings(tenantId);
+  const { findings, kevVulnIds, poam } = await loadSnapshotFindings(tenantId, programId ?? (await ensureDefaultProgram(tenantId)).id);
   return {
     snapshotId,
     tenantId,
@@ -91,13 +92,13 @@ export interface WrittenSnapshotEvidence {
   evidenceByControl: Record<string, string[]>;
 }
 
-// Same statements as the upload route (server/routes/evidence.ts).
+// Same statements as the upload route (server/routes/evidence.ts), with the program the rows belong to as the last parameter.
 const EVIDENCE_INSERT = `
   INSERT INTO evidence_metadata (
     id, tenant_id, control_id, file_name, file_size, mime_type,
-    gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at
+    gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at, program_id
   ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12
   )
   RETURNING *;
 `;
@@ -105,9 +106,9 @@ const EVIDENCE_INSERT = `
 const INHERITED_INSERT = `
   INSERT INTO evidence_metadata (
     id, tenant_id, control_id, file_name, file_size, mime_type,
-    gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at
+    gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at, program_id
   ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, 'inherited', $9, $10, NOW()
+    $1, $2, $3, $4, $5, $6, $7, $8, 'inherited', $9, $10, NOW(), $11
   )
   ON CONFLICT (id) DO NOTHING;
 `;
@@ -117,7 +118,9 @@ export async function writeSnapshotEvidence(
   report: SnapshotReport,
   md: string,
   now: Date,
+  programId: string,
 ): Promise<WrittenSnapshotEvidence> {
+  const scope = { tenantId, programId };
   const keys = snapshotFileKeys(report.snapshotId);
   const day = now.toISOString().slice(0, 10);
   const specs = [
@@ -147,7 +150,7 @@ export async function writeSnapshotEvidence(
     evidenceByControl[controlId] = [];
     for (const f of files) {
       const id = nextId();
-      await queryWithTenant(tenantId, EVIDENCE_INSERT, [
+      await queryWithProgram(scope, EVIDENCE_INSERT, [
         id,
         tenantId,
         controlId,
@@ -159,6 +162,7 @@ export async function writeSnapshotEvidence(
         'local_storage',
         description,
         VM_SNAPSHOT_ACTOR,
+        programId,
       ]);
       evidenceIds.push(id);
       evidenceByControl[controlId].push(id);
@@ -166,7 +170,7 @@ export async function writeSnapshotEvidence(
       // Cross-framework inheritance, explicit as in the upload route so both database modes hold the same rows.
       for (const mappedId of getEquivalentControlIds(controlId)) {
         const inhId = `${id}__inh_${mappedId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-        await queryWithTenant(tenantId, INHERITED_INSERT, [
+        await queryWithProgram(scope, INHERITED_INSERT, [
           inhId,
           tenantId,
           mappedId,
@@ -177,6 +181,7 @@ export async function writeSnapshotEvidence(
           f.sha256,
           `[Inherited from ${controlId}] ${description}`,
           VM_SNAPSHOT_ACTOR,
+          programId,
         ]);
         inheritedEvidenceIds.push(inhId);
       }
@@ -197,10 +202,11 @@ export async function applySnapshotNotes(
   report: SnapshotReport,
   evidenceByControl: Record<string, string[]>,
   who: ControlChangeActor,
+  programId: string,
 ): Promise<void> {
   for (const controlId of Object.keys(evidenceByControl)) {
     await writeControlAssessment(
-      tenantId,
+      { tenantId, programId },
       controlId,
       (cur) => ({
         status: null,
@@ -240,7 +246,7 @@ export function __setVmSnapshotFaultForTests(tenantId: string | null): void {
 
 export async function runVmSnapshot(
   tenantId: string,
-  opts: { now?: Date; trigger: 'manual' | 'scheduler'; triggeredBy?: { actor: string; userId: string | null } },
+  opts: { now?: Date; trigger: 'manual' | 'scheduler'; triggeredBy?: { actor: string; userId: string | null }; programId?: string },
 ): Promise<{ snapshot: VmSnapshotSummary; report: SnapshotReport }> {
   if (!isLocalStorageConfigured()) throw new VmSnapshotError('requires_local_storage');
   if (running.has(tenantId)) throw new VmSnapshotError('in_progress');
@@ -252,15 +258,17 @@ export async function runVmSnapshot(
     const now = opts.now ?? new Date();
     const cfg = getVmSnapshotConfig();
     const snapshotId = newSnapshotId(now.getTime());
-    const input = await loadSnapshotInput(tenantId, now, cfg, snapshotId);
+    // Snapshot evidence and notes belong to the tenant's default program (decision 6); the control set is still the allow-list's.
+    const programId = opts.programId ?? (await ensureDefaultProgram(tenantId)).id;
+    const input = await loadSnapshotInput(tenantId, now, cfg, snapshotId, programId);
     const report = computeSnapshot(input);
     const md = renderSnapshotMarkdown(report);
-    const written = await writeSnapshotEvidence(tenantId, report, md, now);
+    const written = await writeSnapshotEvidence(tenantId, report, md, now, programId);
     await applySnapshotNotes(tenantId, report, written.evidenceByControl, {
       source: 'vm-snapshot',
       actor: opts.triggeredBy?.actor ?? VM_SNAPSHOT_ACTOR,
       userId: opts.triggeredBy?.userId ?? null,
-    });
+    }, programId);
 
     console.log(
       `[VM Snapshot] ${snapshotId} in ${tenantId}: criteria MET ${report.criteria.met ? 'yes' : 'no'}, ${written.evidenceIds.length + written.inheritedEvidenceIds.length} evidence rows (${opts.trigger})`,
@@ -302,8 +310,9 @@ const SNAPSHOT_FILE = /^(vmsnap_[A-Za-z0-9_-]+)\.(json|md)$/;
 
 /** The snapshot evidence rows of a tenant (base rows only), newest first. The memory store ignores WHERE, so filter here too. */
 async function snapshotRows(tenantId: string): Promise<SnapshotRow[]> {
-  const res = await queryWithTenant(
-    tenantId,
+  // evidence_metadata is program-scoped: the snapshot evidence lives in the tenant's default program
+  const res = await queryWithProgram(
+    { tenantId, programId: (await ensureDefaultProgram(tenantId)).id },
     'SELECT id, control_id, file_name, gcs_path, file_hash, sync_status, uploaded_by, uploaded_at FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = $2 ORDER BY uploaded_at DESC',
     [tenantId, VM_SNAPSHOT_ACTOR],
   );

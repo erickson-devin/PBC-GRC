@@ -27,7 +27,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { currentTenant, currentUser, completeTenantOnboarding } = useTenant();
+  const { currentTenant, currentUser, completeTenantOnboarding, programs, updateProgram } = useTenant();
   const { updateSSPMetadata } = useAssessment();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -125,6 +125,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         cloudServiceProviders: cloudProviders.trim(),
         lastUpdated: new Date().toISOString(),
       });
+
+      // 2b. The boundary statement of a server-backed tenant belongs to its DEFAULT program. A failure here does not undo the
+      //     onboarding: the tenant's own copy of the text was saved above and the program text can be edited in Enclave Settings.
+      if (finalTenantId === currentTenant.id && currentTenant.serverBacked) {
+        const defaultProgram = programs.find((p) => p.isDefault && !p.archived);
+        if (defaultProgram) {
+          try {
+            await updateProgram(defaultProgram.id, { boundarySummary: boundaryScope.trim() });
+          } catch (err: unknown) {
+            console.warn('[Onboarding] Could not save the boundary description to the default program:', err);
+          }
+        }
+      }
 
       // 3. Trigger victory confetti
       try {

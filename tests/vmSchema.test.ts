@@ -174,6 +174,7 @@ assert(TABLES_SQL.includes("unq_vm_poam_items_auto ON vm_poam_items (tenant_id, 
 const adds = [...vmBlock.matchAll(/ADD CONSTRAINT (\w+)/g)].map((m) => m[1]);
 assert(adds.every((n) => vmBlock.includes(`DROP CONSTRAINT IF EXISTS ${n}`) && vmBlock.indexOf(`DROP CONSTRAINT IF EXISTS ${n}`) < vmBlock.indexOf(`ADD CONSTRAINT ${n}`)), 'every ADD CONSTRAINT is preceded by DROP CONSTRAINT IF EXISTS of the same name', adds);
 assert(!/ADD CONSTRAINT (fk_|unq_)/.test(vmBlock), 'foreign and unique keys are inline only (dropping a referenced key would need CASCADE)');
+assert(!vmBlock.includes('program_id'), 'the VM block does not mention program_id (the program column is added after the block, at the end of TABLES_SQL)');
 assert(!TABLES_SQL.includes('undefined'), 'no unresolved interpolation in TABLES_SQL');
 const full = buildSchemaSql();
 assert(full.includes('vm_findings') && full.includes('rls_vm_findings_tenant_isolation'), 'buildSchemaSql() includes the VM tables and their RLS');

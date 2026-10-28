@@ -9,6 +9,7 @@ import {
   Key,
   LogOut,
   Users,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
@@ -17,13 +18,7 @@ import { ROLE_LABELS } from '../../utils/roles';
 import { AccountSettingsModal } from './AccountSettingsModal';
 import { ApiTokensModal } from './ApiTokensModal';
 
-interface UserProfileDropdownProps {
-  onOpenTenantSwitcher?: () => void;
-}
-
-export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
-  onOpenTenantSwitcher,
-}) => {
+export const UserProfileDropdown: React.FC = () => {
   const { currentUser, logout } = useAuth();
   const {
     currentTenant,
@@ -138,19 +133,19 @@ export const UserProfileDropdown: React.FC<UserProfileDropdownProps> = ({
 
             {/* Core Actions */}
             <div className="p-1.5 space-y-0.5">
-              {/* Switch Organization (only when the host wires it up) */}
-              {onOpenTenantSwitcher && (
-                <button
-                  onClick={() => {
-                    setIsOpen(false);
-                    onOpenTenantSwitcher();
-                  }}
-                  className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
-                >
-                  <Building2 className="w-4 h-4 text-slate-400" />
-                  <span>Switch Organization</span>
-                </button>
-              )}
+              {/* Programs: the programs page (the header's switcher changes the active one) */}
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  if (typeof window !== 'undefined') {
+                    window.location.hash = 'programs';
+                  }
+                }}
+                className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+              >
+                <Layers className="w-4 h-4 text-slate-400" />
+                <span>Programs…</span>
+              </button>
 
               {/* Team & Role Permissions (Tenant Owner / Admin) */}
               {canManageTenant && (

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type pg from 'pg';
-import { getDbMode, pool } from '../db';
+import { getDbMode, pool, type ProgramScope } from '../db';
 import type {
   CoverageReport,
   GapAnalysis,
@@ -33,11 +33,13 @@ export function __resetSspStoreForTests(): void {
   memoryStaged.clear();
 }
 
-async function inTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+/** One transaction under the tenant's AND the program's RLS context: ssp_import_jobs and staged_controls have a program row policy. */
+async function inTenantTx<T>(tenantId: string, fn: (client: pg.PoolClient) => Promise<T>, programId: string): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_program_id', programId]);
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
@@ -55,6 +57,7 @@ function rowToJob(r: pg.QueryResultRow): SspImportJob {
   return {
     id: r.id,
     tenantId: r.tenant_id,
+    programId: r.program_id ?? undefined,
     createdBy: r.created_by,
     createdByUserId: r.created_by_user_id ?? null,
     fileName: r.file_name,
@@ -85,6 +88,7 @@ function rowToStaged(r: pg.QueryResultRow): StagedControl {
     id: r.id,
     jobId: r.job_id,
     tenantId: r.tenant_id,
+    programId: r.program_id ?? undefined,
     controlId: r.control_id,
     framework: r.framework as SspImportFramework,
     matchKind: r.match_kind as SspMatchKind,
@@ -108,6 +112,8 @@ function rowToStaged(r: pg.QueryResultRow): StagedControl {
 export interface NewJob {
   id: string;
   tenantId: string;
+  /** The program the import is stamped with: its suggestions can only be committed there. */
+  programId: string;
   createdBy: string;
   createdByUserId: string | null;
   fileName: string;
@@ -145,34 +151,39 @@ export async function createJob(input: NewJob): Promise<SspImportJob> {
   return inTenantTx(input.tenantId, async (c) => {
     const res = await c.query(
       `INSERT INTO ssp_import_jobs (id, tenant_id, created_by, created_by_user_id, file_name, mime_type, file_size, file_sha256,
-                                    framework, stored_provider, stored_path, analyzer, baseline)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+                                    framework, stored_provider, stored_path, analyzer, baseline, program_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [input.id, input.tenantId, input.createdBy, input.createdByUserId, input.fileName, input.mimeType, input.fileSize,
-       input.fileSha256, input.framework, input.storedProvider, input.storedPath, input.analyzer, input.baseline ?? null]
+       input.fileSha256, input.framework, input.storedProvider, input.storedPath, input.analyzer, input.baseline ?? null, input.programId]
     );
     return rowToJob(res.rows[0]);
-  });
+  }, input.programId);
 }
 
-export async function getJob(tenantId: string, id: string): Promise<SspImportJob | null> {
+/** A job of another program is not found (a job written before programs existed has no program and counts as this one's). */
+const inProgram = (rowProgram: string | null | undefined, scope: ProgramScope): boolean => !rowProgram || rowProgram === scope.programId;
+
+export async function getJob(scope: ProgramScope, id: string): Promise<SspImportJob | null> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const j = memoryJobs.get(id);
-    return j && j.tenantId === tenantId ? { ...j } : null;
+    return j && j.tenantId === tenantId && inProgram(j.programId, scope) ? { ...j } : null;
   }
   return inTenantTx(tenantId, async (c) => {
-    const res = await c.query('SELECT * FROM ssp_import_jobs WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+    const res = await c.query('SELECT * FROM ssp_import_jobs WHERE id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL)', [id, tenantId, scope.programId]);
     return res.rows[0] ? rowToJob(res.rows[0]) : null;
-  });
+  }, scope.programId);
 }
 
-export async function listJobs(tenantId: string): Promise<SspImportJob[]> {
+export async function listJobs(scope: ProgramScope): Promise<SspImportJob[]> {
+  const { tenantId } = scope;
   if (isMemory()) {
-    return [...memoryJobs.values()].filter((j) => j.tenantId === tenantId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((j) => ({ ...j }));
+    return [...memoryJobs.values()].filter((j) => j.tenantId === tenantId && inProgram(j.programId, scope)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((j) => ({ ...j }));
   }
   return inTenantTx(tenantId, async (c) => {
-    const res = await c.query('SELECT * FROM ssp_import_jobs WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 100', [tenantId]);
+    const res = await c.query('SELECT * FROM ssp_import_jobs WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) ORDER BY created_at DESC LIMIT 100', [tenantId, scope.programId]);
     return res.rows.map(rowToJob);
-  });
+  }, scope.programId);
 }
 
 export interface JobPatch {
@@ -189,7 +200,21 @@ export interface JobPatch {
   finishedAt?: string | null;
 }
 
-export async function updateJob(tenantId: string, id: string, patch: JobPatch): Promise<SspImportJob | null> {
+/** The job by id inside its tenant, whatever its program: for the job's own updates (the id is unique). */
+async function getJobById(scope: ProgramScope, id: string): Promise<SspImportJob | null> {
+  const { tenantId } = scope;
+  if (isMemory()) {
+    const j = memoryJobs.get(id);
+    return j && j.tenantId === tenantId ? { ...j } : null;
+  }
+  return inTenantTx(tenantId, async (c) => {
+    const res = await c.query('SELECT * FROM ssp_import_jobs WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+    return res.rows[0] ? rowToJob(res.rows[0]) : null;
+  }, scope.programId);
+}
+
+export async function updateJob(scope: ProgramScope, id: string, patch: JobPatch): Promise<SspImportJob | null> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const j = memoryJobs.get(id);
     if (!j || j.tenantId !== tenantId) return null;
@@ -213,36 +238,38 @@ export async function updateJob(tenantId: string, id: string, patch: JobPatch): 
   if (patch.error !== undefined) add('error', patch.error);
   if (patch.startedAt !== undefined) add('started_at', patch.startedAt);
   if (patch.finishedAt !== undefined) add('finished_at', patch.finishedAt);
-  if (sets.length === 0) return getJob(tenantId, id);
+  if (sets.length === 0) return getJobById(scope, id);
   vals.push(id, tenantId);
   return inTenantTx(tenantId, async (c) => {
     const res = await c.query(`UPDATE ssp_import_jobs SET ${sets.join(', ')} WHERE id = $${vals.length - 1} AND tenant_id = $${vals.length} RETURNING *`, vals as never[]);
     return res.rows[0] ? rowToJob(res.rows[0]) : null;
-  });
+  }, scope.programId);
 }
 
-export async function deleteJob(tenantId: string, id: string): Promise<boolean> {
+export async function deleteJob(scope: ProgramScope, id: string): Promise<boolean> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const j = memoryJobs.get(id);
-    if (!j || j.tenantId !== tenantId) return false;
+    if (!j || j.tenantId !== tenantId || !inProgram(j.programId, scope)) return false;
     memoryJobs.delete(id);
     for (const [sid, s] of memoryStaged) if (s.jobId === id) memoryStaged.delete(sid);
     return true;
   }
   return inTenantTx(tenantId, async (c) => {
-    const res = await c.query('DELETE FROM ssp_import_jobs WHERE id = $1 AND tenant_id = $2', [id, tenantId]);
+    const res = await c.query('DELETE FROM ssp_import_jobs WHERE id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL)', [id, tenantId, scope.programId]);
     return (res.rowCount ?? 0) > 0; // staged_controls go with it (ON DELETE CASCADE)
-  });
+  }, scope.programId);
 }
 
 // ------------------------------------------------------------------------------------------------ staged controls
 
 /** Replaces the staged suggestions of a job (re-running an analysis starts from a clean slate). */
 export async function replaceStaged(
-  tenantId: string,
+  scope: ProgramScope,
   jobId: string,
   drafts: Array<StagedControlDraft & { baseHash: string | null }>
 ): Promise<void> {
+  const { tenantId, programId } = scope;
   if (isMemory()) {
     for (const [sid, s] of memoryStaged) if (s.jobId === jobId) memoryStaged.delete(sid);
     for (const d of drafts) {
@@ -251,6 +278,7 @@ export async function replaceStaged(
         id: newId('stg'),
         jobId,
         tenantId,
+        programId,
         reviewState: 'PENDING',
         editedNotes: null,
         reviewedBy: null,
@@ -266,37 +294,39 @@ export async function replaceStaged(
     for (const d of drafts) {
       await c.query(
         `INSERT INTO staged_controls (id, tenant_id, job_id, control_id, framework, match_kind, origin, section_heading, suggested_notes,
-                                      confidence, source_quotes, gap_analysis, base_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13)`,
+                                      confidence, source_quotes, gap_analysis, base_hash, program_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14)`,
         [newId('stg'), tenantId, jobId, d.controlId, d.framework, d.matchKind, d.origin, d.sectionHeading, d.suggestedNotes, d.confidence,
-         JSON.stringify(d.sourceQuotes), JSON.stringify(d.gapAnalysis), d.baseHash]
+         JSON.stringify(d.sourceQuotes), JSON.stringify(d.gapAnalysis), d.baseHash, programId]
       );
     }
-  });
+  }, programId);
 }
 
-export async function listStaged(tenantId: string, jobId: string): Promise<StagedControl[]> {
+export async function listStaged(scope: ProgramScope, jobId: string): Promise<StagedControl[]> {
+  const { tenantId } = scope;
   if (isMemory()) {
     return [...memoryStaged.values()]
-      .filter((s) => s.tenantId === tenantId && s.jobId === jobId)
+      .filter((s) => s.tenantId === tenantId && s.jobId === jobId && inProgram(s.programId, scope))
       .sort((a, b) => a.controlId.localeCompare(b.controlId, undefined, { numeric: true }))
       .map((s) => ({ ...s }));
   }
   return inTenantTx(tenantId, async (c) => {
-    const res = await c.query('SELECT * FROM staged_controls WHERE job_id = $1 AND tenant_id = $2 ORDER BY control_id', [jobId, tenantId]);
+    const res = await c.query('SELECT * FROM staged_controls WHERE job_id = $1 AND tenant_id = $2 AND (program_id = $3 OR program_id IS NULL) ORDER BY control_id', [jobId, tenantId, scope.programId]);
     return res.rows.map(rowToStaged).sort((a, b) => a.controlId.localeCompare(b.controlId, undefined, { numeric: true }));
-  });
+  }, scope.programId);
 }
 
-export async function getStaged(tenantId: string, jobId: string, id: string): Promise<StagedControl | null> {
+export async function getStaged(scope: ProgramScope, jobId: string, id: string): Promise<StagedControl | null> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const s = memoryStaged.get(id);
-    return s && s.tenantId === tenantId && s.jobId === jobId ? { ...s } : null;
+    return s && s.tenantId === tenantId && s.jobId === jobId && inProgram(s.programId, scope) ? { ...s } : null;
   }
   return inTenantTx(tenantId, async (c) => {
-    const res = await c.query('SELECT * FROM staged_controls WHERE id = $1 AND job_id = $2 AND tenant_id = $3', [id, jobId, tenantId]);
+    const res = await c.query('SELECT * FROM staged_controls WHERE id = $1 AND job_id = $2 AND tenant_id = $3 AND (program_id = $4 OR program_id IS NULL)', [id, jobId, tenantId, scope.programId]);
     return res.rows[0] ? rowToStaged(res.rows[0]) : null;
-  });
+  }, scope.programId);
 }
 
 export interface StagedPatch {
@@ -308,10 +338,11 @@ export interface StagedPatch {
   baseHash?: string | null;
 }
 
-export async function updateStaged(tenantId: string, jobId: string, id: string, patch: StagedPatch): Promise<StagedControl | null> {
+export async function updateStaged(scope: ProgramScope, jobId: string, id: string, patch: StagedPatch): Promise<StagedControl | null> {
+  const { tenantId } = scope;
   if (isMemory()) {
     const s = memoryStaged.get(id);
-    if (!s || s.tenantId !== tenantId || s.jobId !== jobId) return null;
+    if (!s || s.tenantId !== tenantId || s.jobId !== jobId || !inProgram(s.programId, scope)) return null;
     Object.assign(s, patch);
     return { ...s };
   }
@@ -327,13 +358,13 @@ export async function updateStaged(tenantId: string, jobId: string, id: string, 
   if (patch.reviewedAt !== undefined) add('reviewed_at', patch.reviewedAt);
   if (patch.committedAt !== undefined) add('committed_at', patch.committedAt);
   if (patch.baseHash !== undefined) add('base_hash', patch.baseHash);
-  if (sets.length === 0) return getStaged(tenantId, jobId, id);
-  vals.push(id, jobId, tenantId);
+  if (sets.length === 0) return getStaged(scope, jobId, id);
+  vals.push(id, jobId, tenantId, scope.programId);
   return inTenantTx(tenantId, async (c) => {
     const res = await c.query(
-      `UPDATE staged_controls SET ${sets.join(', ')} WHERE id = $${vals.length - 2} AND job_id = $${vals.length - 1} AND tenant_id = $${vals.length} RETURNING *`,
+      `UPDATE staged_controls SET ${sets.join(', ')} WHERE id = $${vals.length - 3} AND job_id = $${vals.length - 2} AND tenant_id = $${vals.length - 1} AND (program_id = $${vals.length} OR program_id IS NULL) RETURNING *`,
       vals as never[]
     );
     return res.rows[0] ? rowToStaged(res.rows[0]) : null;
-  });
+  }, scope.programId);
 }

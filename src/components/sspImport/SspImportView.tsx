@@ -20,6 +20,8 @@ import {
   SSP_BASELINES,
   SSP_DEFAULT_BASELINE,
   SSP_JOB_TERMINAL,
+  isSspBaseline,
+  isSspImportFramework,
   type SspBaseline,
   type SspCapabilities,
   type SspCommitOutcome,
@@ -129,8 +131,16 @@ const StateBadge: React.FC<{ state: SspReviewState }> = ({ state }) => (
 );
 
 export const SspImportView: React.FC = () => {
-  const { currentTenant, currentRole, refreshLiveData } = useTenant();
+  const { currentTenant, currentRole, refreshLiveData, activeProgram } = useTenant();
   const tenantId = currentTenant.id;
+  // Jobs, detail and the commit belong to the active program; the request's framework field stays, the UI pins it to the program
+  const programId = activeProgram?.id ?? null;
+  const pinnedFramework: SspImportFramework | null = activeProgram && isSspImportFramework(activeProgram.framework) ? activeProgram.framework : null;
+  const pinnedBaseline: SspBaseline | null = pinnedFramework === 'NIST_800_53_REV5' && isSspBaseline(activeProgram?.baseline) ? (activeProgram?.baseline as SspBaseline) : null;
+  // The scope a response must still belong to when it arrives (a switch makes it stale)
+  const scopeKey = `${tenantId}::${programId ?? ''}`;
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
   const ids = { framework: useId(), baseline: useId(), file: useId(), filter: useId(), notes: useId() };
 
   const [caps, setCaps] = useState<SspCapabilities | null>(null);
@@ -142,6 +152,8 @@ export const SspImportView: React.FC = () => {
 
   const [framework, setFramework] = useState<SspImportFramework>('CMMC_L1');
   const [baseline, setBaseline] = useState<SspBaseline>(SSP_DEFAULT_BASELINE);
+  const effectiveFramework: SspImportFramework = pinnedFramework ?? framework;
+  const effectiveBaseline: SspBaseline = pinnedBaseline ?? baseline;
   const [uploading, setUploading] = useState(false);
   const [useAi, setUseAi] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -161,30 +173,41 @@ export const SspImportView: React.FC = () => {
 
   // ---- loading
   const loadJobs = useCallback(async () => {
+    const scope = scopeRef.current;
     try {
-      setJobs(await ApiClient.sspListJobs(tenantId));
+      const list = await ApiClient.sspListJobs(tenantId, programId);
+      if (scopeRef.current === scope) setJobs(list);
     } catch (err: unknown) {
-      setError(errorMessage(err) || 'Could not load the imports.');
+      if (scopeRef.current === scope) setError(errorMessage(err) || 'Could not load the imports.');
     }
-  }, [tenantId]);
+  }, [tenantId, programId]);
 
   const loadDetail = useCallback(
     async (jobId: string) => {
+      const scope = scopeRef.current;
       try {
-        const d = await ApiClient.sspGetStaged(tenantId, jobId);
+        const d = await ApiClient.sspGetStaged(tenantId, jobId, programId);
+        if (scopeRef.current !== scope) return;
         setDetail(d);
         setSelectedId((prev) => (prev && d.staged.some((s) => s.id === prev) ? prev : d.staged[0]?.id ?? null));
       } catch (err: unknown) {
-        setError(errorMessage(err) || 'Could not load the import.');
+        if (scopeRef.current === scope) setError(errorMessage(err) || 'Could not load the import.');
       }
     },
-    [tenantId]
+    [tenantId, programId]
   );
 
   useEffect(() => {
+    // A program switch starts from nothing: the previous program's drafts, detail and selection must not carry over
     setDetail(null);
     setSelectedJobId(null);
+    setSelectedId(null);
+    setDrafts({});
+    setJobs([]);
     setOutcome(null);
+    setConfirmCommit(false);
+    setConfirmDelete(null);
+    setError(null);
     if (!canView) {
       setLoading(false);
       return;
@@ -192,7 +215,7 @@ export const SspImportView: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const [c, j] = await Promise.all([ApiClient.sspCapabilities(tenantId), ApiClient.sspListJobs(tenantId)]);
+        const [c, j] = await Promise.all([ApiClient.sspCapabilities(tenantId, programId), ApiClient.sspListJobs(tenantId, programId)]);
         if (cancelled) return;
         setCaps(c);
         setJobs(j);
@@ -207,7 +230,7 @@ export const SspImportView: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, canView]);
+  }, [tenantId, programId, canView]);
 
   useEffect(() => {
     if (selectedJobId) void loadDetail(selectedJobId);
@@ -218,7 +241,9 @@ export const SspImportView: React.FC = () => {
   const processing = jobs.some((j) => !isTerminal(j.status));
   useEffect(() => {
     if (!processing) return undefined;
+    const scope = scopeRef.current;
     const t = window.setInterval(() => {
+      if (scopeRef.current !== scope) return;
       void loadJobs();
       if (selectedJobId && selectedJob && !isTerminal(selectedJob.status)) void loadDetail(selectedJobId);
     }, 1500);
@@ -232,7 +257,7 @@ export const SspImportView: React.FC = () => {
     setOutcome(null);
     setUploading(true);
     try {
-      const job = await ApiClient.sspUpload(tenantId, file, framework, caps?.aiStatus.available && useAi ? 'ai' : 'rules', framework === 'NIST_800_53_REV5' ? baseline : undefined);
+      const job = await ApiClient.sspUpload(tenantId, file, effectiveFramework, caps?.aiStatus.available && useAi ? 'ai' : 'rules', effectiveFramework === 'NIST_800_53_REV5' ? effectiveBaseline : undefined, programId);
       await loadJobs();
       setSelectedJobId(job.id);
       setTab('suggestions');
@@ -257,7 +282,7 @@ export const SspImportView: React.FC = () => {
       const updated = await ApiClient.sspReview(tenantId, detail.job.id, item.id, {
         reviewState: state,
         ...(state === 'ACCEPTED' || state === 'EDITED' ? { editedNotes: notes ?? item.editedNotes ?? item.suggestedNotes } : {}),
-      });
+      }, programId);
       setDetail((d) => (d ? { ...d, staged: d.staged.map((s) => (s.id === item.id ? { ...s, ...updated } : s)) } : d));
       setDrafts((d) => {
         const next = { ...d };
@@ -281,7 +306,7 @@ export const SspImportView: React.FC = () => {
     // screens keep showing the old notes until the page is reloaded.
     let controlsMayHaveChanged = false;
     try {
-      const result = await ApiClient.sspCommit(tenantId, detail.job.id);
+      const result = await ApiClient.sspCommit(tenantId, detail.job.id, programId);
       controlsMayHaveChanged = result.committed.length > 0;
       setOutcome(result);
       setConfirmCommit(false);
@@ -299,7 +324,7 @@ export const SspImportView: React.FC = () => {
   const cancel = async (jobId: string) => {
     setError(null);
     try {
-      await ApiClient.sspCancel(tenantId, jobId);
+      await ApiClient.sspCancel(tenantId, jobId, programId);
       await Promise.all([loadJobs(), loadDetail(jobId)]);
     } catch (err: unknown) {
       setError(errorMessage(err) || 'Could not cancel the import.');
@@ -309,7 +334,7 @@ export const SspImportView: React.FC = () => {
   const remove = async (jobId: string) => {
     setError(null);
     try {
-      await ApiClient.sspDelete(tenantId, jobId);
+      await ApiClient.sspDelete(tenantId, jobId, programId);
       setConfirmDelete(null);
       if (selectedJobId === jobId) {
         setSelectedJobId(null);
@@ -323,7 +348,7 @@ export const SspImportView: React.FC = () => {
 
   const download = async (job: SspImportJob) => {
     try {
-      const url = await ApiClient.sspDownloadUrl(tenantId, job.id);
+      const url = await ApiClient.sspDownloadUrl(tenantId, job.id, programId);
       const a = document.createElement('a');
       a.href = url;
       a.download = job.fileName;
@@ -394,16 +419,16 @@ export const SspImportView: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-end gap-3">
             <div>
               <label htmlFor={ids.framework} className="block text-xs font-semibold text-slate-300 mb-1.5">Map it to</label>
-              <select id={ids.framework} value={framework} onChange={(e) => setFramework(e.target.value as SspImportFramework)} className="px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60">
-                {caps.frameworks.map((f) => (
+              <select id={ids.framework} value={effectiveFramework} disabled={pinnedFramework !== null} title={pinnedFramework ? 'Fixed by the active program' : undefined} onChange={(e) => setFramework(e.target.value as SspImportFramework)} className="px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60">
+                {(pinnedFramework && !caps.frameworks.includes(pinnedFramework) ? [pinnedFramework, ...caps.frameworks] : caps.frameworks).map((f) => (
                   <option key={f} value={f}>{frameworkLabel(f)}</option>
                 ))}
               </select>
             </div>
-            {framework === 'NIST_800_53_REV5' && (
+            {effectiveFramework === 'NIST_800_53_REV5' && (
               <div>
                 <label htmlFor={ids.baseline} className="block text-xs font-semibold text-slate-300 mb-1.5">Baseline</label>
-                <select id={ids.baseline} value={baseline} onChange={(e) => setBaseline(e.target.value as SspBaseline)} className="px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60">
+                <select id={ids.baseline} value={effectiveBaseline} disabled={pinnedBaseline !== null} title={pinnedBaseline ? 'Fixed by the active program' : undefined} onChange={(e) => setBaseline(e.target.value as SspBaseline)} className="px-3 py-2 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus-visible:ring-2 focus-visible:ring-brand-400/60">
                   {SSP_BASELINES.map((b) => (
                     <option key={b} value={b}>{b === 'LOW' ? 'Low' : b === 'MODERATE' ? 'Moderate' : 'High'}</option>
                   ))}
@@ -417,7 +442,7 @@ export const SspImportView: React.FC = () => {
                 id={ids.file}
                 type="file"
                 accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                disabled={uploading || caps.frameworks.length === 0}
+                disabled={uploading || caps.frameworks.length === 0 || (pinnedFramework !== null && !caps.frameworks.includes(pinnedFramework))}
                 onChange={(e) => void upload(e.target.files?.[0])}
                 className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-500"
               />

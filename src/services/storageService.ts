@@ -3,6 +3,7 @@ import { Tenant } from '../types/tenant';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { getFrameworkControls } from '../data/frameworks';
 import { ASSESSMENT_KEY_PREFIX, stripImplementationNotesForCache } from './browserStorageScrub';
+import { activeProgramStorageKey } from '../data/programSync';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -45,8 +46,8 @@ export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
   };
 }
 
-export function createInitialState(tenant: Tenant): AssessmentState {
-  const framework = tenant.primaryFramework || 'CMMC_L1';
+export function createInitialState(tenant: Tenant, frameworkOverride?: ComplianceFramework): AssessmentState {
+  const framework = frameworkOverride || tenant.primaryFramework || 'CMMC_L1';
   return {
     version: '2.0.0',
     tenantId: tenant.id,
@@ -58,16 +59,26 @@ export function createInitialState(tenant: Tenant): AssessmentState {
 }
 
 export const StorageService = {
+  /**
+   * The cache key of one tenant's assessment. `segment` names a program other than the default one: that program's cache is
+   * `<tenant key>::<segment>`. The default program (and any browser-only tenant) passes null and keeps the legacy key.
+   */
+  getAssessmentKey(tenantId: string, segment: string | null | undefined): string {
+    return segment ? `${STORAGE_KEY_PREFIX}${tenantId}::${segment}` : `${STORAGE_KEY_PREFIX}${tenantId}`;
+  },
+
+  /** The legacy (default program) cache key of a tenant. */
   getTenantKey(tenantId: string): string {
-    return `${STORAGE_KEY_PREFIX}${tenantId}`;
+    return this.getAssessmentKey(tenantId, null);
   },
 
   /**
-   * Load isolated assessment for a specific tenant, performing legacy migration if needed
+   * Load isolated assessment for a specific tenant, performing legacy migration if needed. `segment` selects a non-default
+   * program's cache (see getAssessmentKey); a program that has no cache yet starts blank for `framework`.
    */
-  loadAssessment(tenant: Tenant, framework: ComplianceFramework = 'CMMC_L1'): AssessmentState {
+  loadAssessment(tenant: Tenant, framework: ComplianceFramework = 'CMMC_L1', segment: string | null = null): AssessmentState {
     try {
-      const key = this.getTenantKey(tenant.id);
+      const key = this.getAssessmentKey(tenant.id, segment);
       const data = localStorage.getItem(key);
       if (data) {
         const parsed = JSON.parse(data) as AssessmentState;
@@ -96,12 +107,12 @@ export const StorageService = {
       }
 
       // Default blank state for new tenants
-      const blankState = createInitialState(tenant);
-      this.saveAssessment(tenant.id, blankState);
+      const blankState = createInitialState(tenant, segment ? framework : undefined);
+      this.saveAssessment(tenant.id, blankState, { segment });
       return blankState;
     } catch (err) {
       console.error(`Failed to load assessment for tenant ${tenant.id}:`, err);
-      return createInitialState(tenant);
+      return createInitialState(tenant, segment ? framework : undefined);
     }
   },
 
@@ -134,7 +145,7 @@ export const StorageService = {
    * Save assessment state under strict tenant namespace. Implementation notes (possible CUI) are stripped from the
    * cache unless `keepNotes` is set, which only browser-only tenants may do (their cache is the only copy).
    */
-  saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean } = {}): void {
+  saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean; segment?: string | null } = {}): void {
     try {
       const base: AssessmentState = options.keepNotes ? state : stripImplementationNotesForCache(state);
       const payload: AssessmentState = {
@@ -142,7 +153,7 @@ export const StorageService = {
         tenantId,
         lastSaved: new Date().toISOString(),
       };
-      localStorage.setItem(this.getTenantKey(tenantId), JSON.stringify(payload));
+      localStorage.setItem(this.getAssessmentKey(tenantId, options.segment), JSON.stringify(payload));
     } catch (err) {
       console.error(`Failed to save assessment for tenant ${tenantId}:`, err);
     }
@@ -229,11 +240,30 @@ export const StorageService = {
     URL.revokeObjectURL(url);
   },
 
+  /** Every browser-storage key of a tenant's non-default programs (`<tenant key>::<program>`), plus its active-program choice. */
+  listProgramKeys(tenantId: string): string[] {
+    const prefix = `${this.getTenantKey(tenantId)}::`;
+    const keys: string[] = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) keys.push(k);
+      }
+      const activeKey = activeProgramStorageKey(tenantId);
+      if (localStorage.getItem(activeKey) !== null) keys.push(activeKey);
+    } catch {
+      // storage unavailable: nothing to list
+    }
+    return keys;
+  },
+
   /**
-   * Clear all storage for a specific tenant
+   * Clear all storage for a specific tenant: the legacy (default program) cache, every other program's cache, and the
+   * active-program choice
    */
   clearTenant(tenantId: string): void {
     try {
+      for (const key of this.listProgramKeys(tenantId)) localStorage.removeItem(key);
       localStorage.removeItem(this.getTenantKey(tenantId));
     } catch (err) {
       console.error(`Failed to clear storage for tenant ${tenantId}:`, err);

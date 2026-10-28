@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import path from 'path';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import { getTenantProgram } from '../db';
+import { getTenantProgram, type ProgramScope } from '../db';
+import { ensureDefaultProgram } from '../programs';
 import { ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { ensureActiveTenant } from './tenantGuards';
 import { commitReviewedSuggestions } from '../ssp/commit';
@@ -48,6 +49,15 @@ function guard(req: Request, res: Response, next: NextFunction): void {
 }
 router.use(guard);
 
+/**
+ * The program the request works in: the one the programContext middleware resolved from x-program-id (validated, active tenant
+ * only) or, without it, the tenant's default program. Jobs are stamped with it and every read and write below stays inside it.
+ */
+async function scopeOf(req: Request): Promise<ProgramScope> {
+  const tenantId = req.tenantId!;
+  return { tenantId, programId: req.programId ?? (await ensureDefaultProgram(tenantId)).id };
+}
+
 const reviewerName = (req: Request): string => req.user?.name || req.user?.email || 'Compliance reviewer';
 
 const cleanFileName = (name: string): string => path.basename(name.replace(/\\/g, '/')).replace(/[\u0000-\u001f]/g, '').slice(0, 255) || 'document';
@@ -74,8 +84,9 @@ router.get('/capabilities', async (req: Request, res: Response): Promise<void> =
 /** GET /: the tenant's imports, newest first. */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const jobs = await listJobs(req.tenantId!);
-    recoverStaleJobs(jobs);
+    const scope = await scopeOf(req);
+    const jobs = await listJobs(scope);
+    recoverStaleJobs(jobs, scope);
     res.json({ jobs });
   } catch (err: unknown) {
     console.error('[SSP Import] list failed:', errorMessage(err));
@@ -105,6 +116,7 @@ router.post('/', (req: Request, res: Response): void => {
         return;
       }
       const tenantId = req.tenantId!;
+      const scope = await scopeOf(req);
       const file = req.file;
       const framework = req.body?.framework;
       if (!file || !file.buffer?.length) {
@@ -141,7 +153,7 @@ router.post('/', (req: Request, res: Response): void => {
         }
       }
 
-      const running = (await listJobs(tenantId)).find((j) => !SSP_JOB_TERMINAL.includes(j.status) && isJobActive(j.id));
+      const running = (await listJobs(scope)).find((j) => !SSP_JOB_TERMINAL.includes(j.status) && isJobActive(j.id));
       if (running) {
         res.status(409).json({ error: 'Another import is still being processed. Wait for it to finish.', jobId: running.id });
         return;
@@ -160,6 +172,7 @@ router.post('/', (req: Request, res: Response): void => {
       const job = await createJob({
         id: jobId,
         tenantId,
+        programId: scope.programId,
         createdBy: reviewerName(req),
         createdByUserId: req.user?.uid ?? null,
         fileName,
@@ -172,7 +185,7 @@ router.post('/', (req: Request, res: Response): void => {
         storedPath: stored.path,
         analyzer: analysis === 'ai' ? aiAnalyzerId(ollama.config.model) : ANALYZER_ID,
       });
-      enqueueImport(tenantId, job.id);
+      enqueueImport(tenantId, scope.programId, job.id);
       console.log(`[SSP Import] ${reviewerName(req)} uploaded "${fileName}" (${file.size} bytes) for ${framework} in ${tenantId}: job ${job.id}`);
       res.status(202).json({ job });
     } catch (err: unknown) {
@@ -186,23 +199,23 @@ router.post('/', (req: Request, res: Response): void => {
 
 /** POST /:jobId/cancel: stops an import that has not finished (a running AI analysis is aborted and nothing is staged). */
 router.post('/:jobId/cancel', async (req: Request, res: Response): Promise<void> => {
-  const tenantId = req.tenantId!;
-  const job = await getJob(tenantId, String(req.params.jobId));
+  const scope = await scopeOf(req);
+  const job = await getJob(scope, String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
   }
-  if (!(await cancelJob(tenantId, job.id))) {
+  if (!(await cancelJob(scope, job.id))) {
     res.status(409).json({ error: 'This import has already finished.' });
     return;
   }
   console.log(`[SSP Import] ${reviewerName(req)} cancelled ${job.id}`);
-  res.status(202).json({ job: await getJob(tenantId, job.id) });
+  res.status(202).json({ job: await getJob(scope, job.id) });
 });
 
 /** GET /:jobId */
 router.get('/:jobId', async (req: Request, res: Response): Promise<void> => {
-  const job = await getJob(req.tenantId!, String(req.params.jobId));
+  const job = await getJob(await scopeOf(req), String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
@@ -212,7 +225,7 @@ router.get('/:jobId', async (req: Request, res: Response): Promise<void> => {
 
 /** GET /:jobId/file: the document that was uploaded (kept in the evidence vault). */
 router.get('/:jobId/file', async (req: Request, res: Response): Promise<void> => {
-  const job = await getJob(req.tenantId!, String(req.params.jobId));
+  const job = await getJob(await scopeOf(req), String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
@@ -233,14 +246,14 @@ router.get('/:jobId/file', async (req: Request, res: Response): Promise<void> =>
  * since the suggestion was staged.
  */
 router.get('/:jobId/staged', async (req: Request, res: Response): Promise<void> => {
-  const tenantId = req.tenantId!;
-  const job = await getJob(tenantId, String(req.params.jobId));
+  const scope = await scopeOf(req);
+  const job = await getJob(scope, String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
   }
   try {
-    const [staged, live] = await Promise.all([listStaged(tenantId, job.id), readLiveControls(tenantId)]);
+    const [staged, live] = await Promise.all([listStaged(scope, job.id), readLiveControls(scope)]);
     res.json({
       job,
       staged: staged.map((s) => {
@@ -263,8 +276,8 @@ router.get('/:jobId/staged', async (req: Request, res: Response): Promise<void> 
  * editedNotes? }. Sending editedNotes with ACCEPTED makes it EDITED. Nothing is written to the controls here.
  */
 router.patch('/:jobId/staged/:id', async (req: Request, res: Response): Promise<void> => {
-  const tenantId = req.tenantId!;
-  const job = await getJob(tenantId, String(req.params.jobId));
+  const scope = await scopeOf(req);
+  const job = await getJob(scope, String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
@@ -273,7 +286,7 @@ router.patch('/:jobId/staged/:id', async (req: Request, res: Response): Promise<
     res.status(409).json({ error: 'This import is not open for review.' });
     return;
   }
-  const item = await getStaged(tenantId, job.id, String(req.params.id));
+  const item = await getStaged(scope, job.id, String(req.params.id));
   if (!item) {
     res.status(404).json({ error: 'Suggestion not found' });
     return;
@@ -307,8 +320,8 @@ router.patch('/:jobId/staged/:id', async (req: Request, res: Response): Promise<
   try {
     // Re-opening a conflicting suggestion compares it with the control as it is NOW
     let baseHash: string | null | undefined;
-    if (item.reviewState === 'CONFLICT') baseHash = hashLiveControl((await readLiveControls(tenantId)).get(item.controlId));
-    const updated = await updateStaged(tenantId, job.id, item.id, {
+    if (item.reviewState === 'CONFLICT') baseHash = hashLiveControl((await readLiveControls(scope)).get(item.controlId));
+    const updated = await updateStaged(scope, job.id, item.id, {
       reviewState: state,
       editedNotes: state === 'EDITED' ? notes : null,
       reviewedBy: state === 'PENDING' ? null : reviewerName(req),
@@ -323,12 +336,12 @@ router.patch('/:jobId/staged/:id', async (req: Request, res: Response): Promise<
 });
 
 /**
- * POST /:jobId/commit: apply the ACCEPTED and EDITED suggestions (optionally only `ids`) to the tenant's controls.
+ * POST /:jobId/commit: apply the ACCEPTED and EDITED suggestions (optionally only `ids`) to the controls of the import's program.
  * Responds with what was committed and which suggestions were skipped as conflicts.
  */
 router.post('/:jobId/commit', async (req: Request, res: Response): Promise<void> => {
-  const tenantId = req.tenantId!;
-  const job = await getJob(tenantId, String(req.params.jobId));
+  const scope = await scopeOf(req);
+  const job = await getJob(scope, String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
@@ -344,8 +357,8 @@ router.post('/:jobId/commit', async (req: Request, res: Response): Promise<void>
     return;
   }
   try {
-    const result = await commitReviewedSuggestions(tenantId, job, reviewerName(req), ids, req.user?.uid ?? null);
-    res.json({ ...result, job: await getJob(tenantId, job.id) });
+    const result = await commitReviewedSuggestions(scope, job, reviewerName(req), ids, req.user?.uid ?? null);
+    res.json({ ...result, job: await getJob(scope, job.id) });
   } catch (err: unknown) {
     console.error('[SSP Import] commit failed:', errorMessage(err));
     res.status(500).json({ error: 'The commit failed part-way. Reload the import: what was already written is marked as committed.' });
@@ -354,8 +367,8 @@ router.post('/:jobId/commit', async (req: Request, res: Response): Promise<void>
 
 /** DELETE /:jobId: removes the import, its suggestions and the stored document. Committed control answers are not touched. */
 router.delete('/:jobId', async (req: Request, res: Response): Promise<void> => {
-  const tenantId = req.tenantId!;
-  const job = await getJob(tenantId, String(req.params.jobId));
+  const scope = await scopeOf(req);
+  const job = await getJob(scope, String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Import not found' });
     return;
@@ -364,7 +377,7 @@ router.delete('/:jobId', async (req: Request, res: Response): Promise<void> => {
     res.status(409).json({ error: 'This import is still being processed.' });
     return;
   }
-  await deleteJob(tenantId, job.id);
+  await deleteJob(scope, job.id);
   await deleteUploadedPolicy({ provider: job.storedProvider, path: job.storedPath });
   res.status(204).end();
 });

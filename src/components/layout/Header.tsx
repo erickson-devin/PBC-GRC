@@ -15,6 +15,7 @@ import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle } from '../../data/frameworks';
 import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { TenantSwitcher } from './TenantSwitcher';
+import { ProgramSwitcher } from './ProgramSwitcher';
 import { FrameworkSwitcher } from './FrameworkSwitcher';
 import { UserProfileDropdown } from '../auth/UserProfileDropdown';
 
@@ -67,7 +68,7 @@ export const Header: React.FC<HeaderProps> = () => {
     <header className="no-print bg-slate-900/90 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 px-3 sm:px-6 py-2.5 transition-colors">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4">
         
-        {/* Left: Brand + Multi-Tenant Switcher + Framework Switcher */}
+        {/* Left: Brand + Multi-Tenant Switcher + Program Switcher + Overlays */}
         <div className="flex items-center gap-3 sm:gap-4 w-full md:w-auto justify-between md:justify-start flex-wrap">
           {/* Brand */}
           <button type="button" 
@@ -95,7 +96,10 @@ export const Header: React.FC<HeaderProps> = () => {
 
           <div className="h-6 w-px bg-slate-800 hidden lg:block" />
 
-          {/* Top-Nav Framework & Baseline Switcher */}
+          {/* Top-Nav Program Switcher (the program holds the framework and baseline; doubles as the scope badge) */}
+          <ProgramSwitcher />
+
+          {/* Operational overlays (kept per browser) */}
           <FrameworkSwitcher />
         </div>
 

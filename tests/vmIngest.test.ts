@@ -12,6 +12,8 @@ import { __expireVmTokenForTests, clampTokenDays, generateVmToken, sha256Hex, sh
 import { vmIngestMaxBytes } from '../server/vm/ingestSchema';
 import { __drainVmWorkerForTests, __setVmWorkerFaultForTests, enqueueVmRun } from '../server/vm/worker';
 import { recordReceivedRun } from '../server/vm/store';
+import { countOpenPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
+import { ensureDefaultProgram } from '../server/programs';
 
 /**
  * Vulnerability-management Phase 2 over HTTP: service tokens (create / list / revoke, transport rule), the scanner push
@@ -546,6 +548,17 @@ async function run() {
   const faultyAgain = await runById(faulty.body?.run_id);
   assert(re3.status === 202 && faultyAgain.status === 'NORMALIZED' && faultyAgain.error === null, 'after clearing the fault, reprocessing the run -> NORMALIZED', faultyAgain);
   assert((await findingsOf(A, ownerA, `?assetId=${faultAsset}`)).length === 2, 'and adds no duplicate findings');
+
+  console.log('\n--- Automatic POA&M items belong to the default program ---');
+  const poamPayload = payloadOf({ label: 'poam-src', agents: ['p1'] });
+  poamPayload.hosts[0].findings = [{ vuln_id: 'CVE-2024-0003', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }];
+  const poamIngest = await ingest(tokenA, Buffer.from(JSON.stringify(poamPayload)));
+  await __drainVmWorkerForTests();
+  const poamItems = (await loadSnapshotFindings(A)).poam;
+  const defaultA = await ensureDefaultProgram(A);
+  assert(poamIngest.status === 202 && poamItems.length >= 1, 'an overdue finding creates an automatic POA&M item', [poamIngest.status, poamItems.length]);
+  assert(poamItems.every((p) => p.programId === defaultA.id), "every automatic POA&M item carries the tenant's default program id", poamItems.map((p) => p.programId));
+  assert((await countOpenPoamItems({ tenantId: A, programId: defaultA.id })) === poamItems.filter((p) => p.status === 'OPEN' || p.status === 'IN_PROGRESS').length, 'the default program counts those items as its open POA&M');
 
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();

@@ -10,6 +10,7 @@ import { mapDocumentToControls, reflowPdfLines } from '../server/ssp/controlMapp
 import { classifyChildExit, detectDocumentKind, extractDocument, ExtractionError } from '../server/ssp/extract';
 import { extractWith } from '../server/ssp/extractCore';
 import { getFrameworkControls } from '../src/data/frameworks';
+import { ensureDefaultProgram, createProgram } from '../server/programs';
 
 /**
  * SSP import, Phase 1: upload, extraction, chunking, regex control mapping, the staging area, and the review/commit rules.
@@ -51,27 +52,29 @@ const jwt = (claims: Record<string, unknown>) => `h.${Buffer.from(JSON.stringify
 const person = (sub: string) => jwt({ sub, email: `${sub}@test.mil`, name: sub, roles: { tenant_unrelated: 'VIEWER' } });
 type Json = Record<string, any>;
 
-async function call(method: string, p: string, token: string | null, tenant?: string, body?: unknown) {
+async function call(method: string, p: string, token: string | null, tenant?: string, body?: unknown, program?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenant) headers['x-tenant-id'] = tenant;
+  if (program) headers['x-program-id'] = program;
   const res = await fetch(`${BASE}${p}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: (await res.json().catch(() => null)) as Json | null };
 }
 
-async function upload(token: string | null, tenant: string, file: { data: Buffer; name: string; type?: string } | null, fields: Record<string, string> = {}) {
+async function upload(token: string | null, tenant: string, file: { data: Buffer; name: string; type?: string } | null, fields: Record<string, string> = {}, program?: string) {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, v);
   if (file) form.append('file', new Blob([new Uint8Array(file.data)], { type: file.type ?? 'application/octet-stream' }), file.name);
   const headers: Record<string, string> = { 'x-tenant-id': tenant };
+  if (program) headers['x-program-id'] = program;
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${BASE}/tenants/${tenant}/ssp-imports`, { method: 'POST', headers, body: form });
   return { status: res.status, body: (await res.json().catch(() => null)) as Json | null };
 }
 
-async function waitReady(token: string, tenant: string, jobId: string): Promise<Json> {
+async function waitReady(token: string, tenant: string, jobId: string, program?: string): Promise<Json> {
   for (let i = 0; i < 100; i++) {
-    const job = (await call('GET', `/tenants/${tenant}/ssp-imports/${jobId}`, token, tenant)).body?.job as Json;
+    const job = (await call('GET', `/tenants/${tenant}/ssp-imports/${jobId}`, token, tenant, undefined, program)).body?.job as Json;
     if (job && ['READY_FOR_REVIEW', 'FAILED', 'COMMITTED'].includes(job.status)) return job;
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -449,11 +452,82 @@ async function apiTests() {
   assert((await health()) === 200, 'the server is still healthy after the document reader crashed');
 }
 
+async function programTests() {
+  console.log('\n--- Programs: an import belongs to the program it was started in ---');
+  const owner = person('u_ssp_progowner');
+  const tenant = (await call('POST', '/tenants', owner, undefined, { name: 'Program SSP Org' })).body?.tenant?.id as string;
+  const root = `/tenants/${tenant}/ssp-imports`;
+  const def = await ensureDefaultProgram(tenant);
+  const progA = await createProgram(tenant, { name: 'Boundary A', frameworkId: 'CMMC_L1' }, 'u_ssp_progowner');
+  const progB = await createProgram(tenant, { name: 'Boundary B', frameworkId: 'CMMC_L1' }, 'u_ssp_progowner');
+  const A = progA.id;
+  const B = progB.id;
+  const pdf = makePdf([SSP_LINES.slice(0, 5), SSP_LINES.slice(5)]);
+  const notesIn = async (program: string | undefined, id: string) =>
+    (((await call('GET', '/controls?framework=CMMC_L1', owner, tenant, undefined, program)).body?.controls as Json[]).find((c) => c.id === id) as Json).implementationNotes as string;
+
+  const up = await upload(owner, tenant, { data: pdf, name: 'a.pdf', type: 'application/pdf' }, { framework: 'CMMC_L1' }, A);
+  assert(up.status === 202 && up.body?.job?.programId === A, 'an upload with x-program-id A is stamped with program A', up.body?.job?.programId);
+  const jobId = up.body?.job?.id as string;
+  const job = await waitReady(owner, tenant, jobId, A);
+  assert(job.status === 'READY_FOR_REVIEW' && job.programId === A, 'the import runs and stays in program A');
+  const noHeader = await upload(owner, tenant, { data: pdf, name: 'd.pdf', type: 'application/pdf' }, { framework: 'CMMC_L1' });
+  assert(noHeader.status === 202 && noHeader.body?.job?.programId === def.id, 'without the header the job is stamped with the tenant\'s default program', noHeader.body?.job?.programId);
+  await waitReady(owner, tenant, noHeader.body?.job?.id);
+  assert((await upload(owner, tenant, { data: pdf, name: 'x.pdf' }, { framework: 'CMMC_L1' }, 'prog_unknown')).status === 404, 'an unknown program id: 404');
+
+  const listA = (await call('GET', root, owner, tenant, undefined, A)).body?.jobs as Json[];
+  const listDef = (await call('GET', root, owner, tenant)).body?.jobs as Json[];
+  assert(listA.length === 1 && listA[0].id === jobId, 'program A lists its own import only', listA.map((j) => j.id));
+  assert(listDef.length === 1 && listDef[0].id === noHeader.body?.job?.id, 'the default program does not list A\'s import', listDef.map((j) => j.id));
+
+  console.log('\n--- Programs: another program cannot see or touch the import ---');
+  const stagedA = ((await call('GET', `${root}/${jobId}/staged`, owner, tenant, undefined, A)).body?.staged ?? []) as Json[];
+  const target = stagedA.find((i) => i.controlId === 'AC.L1-3.1.1') as Json;
+  const second = stagedA.find((i) => i.controlId === 'IA.L1-3.5.1') as Json;
+  assert(stagedA.length === 3 && stagedA.every((i) => i.programId === A), 'the staged suggestions carry program A', stagedA.map((i) => i.programId));
+  assert(((await call('GET', root, owner, tenant, undefined, B)).body?.jobs ?? []).length === 0, 'program B lists no imports');
+  assert((await call('GET', `${root}/${jobId}`, owner, tenant, undefined, B)).status === 404, 'GET the import in program B: 404');
+  assert((await call('GET', `${root}/${jobId}/staged`, owner, tenant, undefined, B)).status === 404, 'its suggestions in program B: 404');
+  assert((await call('GET', `${root}/${jobId}/file`, owner, tenant, undefined, B)).status === 404, 'its document in program B: 404');
+  assert((await call('PATCH', `${root}/${jobId}/staged/${target.id}`, owner, tenant, { reviewState: 'ACCEPTED' }, B)).status === 404, 'PATCH a suggestion in program B: 404');
+  assert((await call('POST', `${root}/${jobId}/commit`, owner, tenant, {}, B)).status === 404, 'commit in program B: 404');
+  assert((await call('POST', `${root}/${jobId}/cancel`, owner, tenant, {}, B)).status === 404, 'cancel in program B: 404');
+  assert((await call('DELETE', `${root}/${jobId}`, owner, tenant, undefined, B)).status === 404, 'delete in program B: 404');
+  assert((await call('GET', `${root}/${jobId}`, owner, tenant, undefined, A)).status === 200, 'and the import is untouched in program A');
+
+  console.log('\n--- Programs: a commit writes only into the import\'s program ---');
+  // The default program edits the control after the suggestions were staged (against program A): that is no conflict for A
+  await call('PUT', '/controls/AC.L1-3.1.1', owner, tenant, { status: 'IN_PROGRESS', implementationNotes: 'DEFAULT PROGRAM NOTES' });
+  assert((await notesIn(undefined, 'AC.L1-3.1.1')) === 'DEFAULT PROGRAM NOTES' && (await notesIn(A, 'AC.L1-3.1.1')) === '', 'setup: the default program has its own notes, program A has none');
+  const view = ((await call('GET', `${root}/${jobId}/staged`, owner, tenant, undefined, A)).body?.staged ?? []) as Json[];
+  assert(view.find((i) => i.id === target.id)?.changedSinceStaged === false && view.find((i) => i.id === target.id)?.current?.notes === '', 'the review in A shows A\'s control, not the default program\'s');
+  await call('PATCH', `${root}/${jobId}/staged/${target.id}`, owner, tenant, { reviewState: 'ACCEPTED' }, A);
+  await call('PATCH', `${root}/${jobId}/staged/${second.id}`, owner, tenant, { reviewState: 'ACCEPTED' }, A);
+  const commit = await call('POST', `${root}/${jobId}/commit`, owner, tenant, {}, A);
+  assert(commit.status === 200 && commit.body?.committed.length === 2 && commit.body.conflicts.length === 0, 'an edit in the default program after staging is no CONFLICT in program A', commit.body);
+  assert((await notesIn(A, 'AC.L1-3.1.1')).startsWith('Access to systems is limited'), 'program A has the committed notes');
+  assert((await notesIn(undefined, 'AC.L1-3.1.1')) === 'DEFAULT PROGRAM NOTES' && (await notesIn(undefined, 'IA.L1-3.5.1')) === '', 'the default program\'s copy is unchanged');
+  assert((await notesIn(B, 'AC.L1-3.1.1')) === '' && (await notesIn(B, 'IA.L1-3.5.1')) === '', 'and so is program B\'s');
+
+  console.log('\n--- Programs: an edit inside the program is still a conflict ---');
+  const up2 = await upload(owner, tenant, { data: pdf, name: 'a2.pdf', type: 'application/pdf' }, { framework: 'CMMC_L1' }, A);
+  const job2 = await waitReady(owner, tenant, up2.body?.job?.id, A);
+  const staged2 = ((await call('GET', `${root}/${job2.id}/staged`, owner, tenant, undefined, A)).body?.staged ?? []) as Json[];
+  const target2 = staged2.find((i) => i.controlId === 'AC.L1-3.1.1') as Json;
+  await call('PUT', '/controls/AC.L1-3.1.1', owner, tenant, { implementationNotes: 'EDITED IN A' }, A);
+  await call('PATCH', `${root}/${job2.id}/staged/${target2.id}`, owner, tenant, { reviewState: 'ACCEPTED' }, A);
+  const commit2 = await call('POST', `${root}/${job2.id}/commit`, owner, tenant, {}, A);
+  assert(commit2.status === 200 && commit2.body?.conflicts.length === 1 && commit2.body.conflicts[0] === target2.id && commit2.body.committed.length === 0, 'a control edited in program A after staging is a CONFLICT', commit2.body);
+  assert((await notesIn(A, 'AC.L1-3.1.1')) === 'EDITED IN A' && (await notesIn(undefined, 'AC.L1-3.1.1')) === 'DEFAULT PROGRAM NOTES', 'the conflicting control kept its notes, in both programs');
+}
+
 async function run() {
   unitTests();
   await extractionTests();
   await isolationTests();
   await apiTests();
+  await programTests();
 }
 
 run()

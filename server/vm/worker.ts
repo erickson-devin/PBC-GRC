@@ -4,6 +4,7 @@ import path from 'path';
 import { countAssets, createAgentReportedAsset, listAgentAssetCandidates, MAX_ASSETS_PER_TENANT, recordAgentReport } from '../assets';
 import { localStorageRoot, resolveTenantLocalPath } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
+import { ensureDefaultProgram } from '../programs';
 import type { VmRun } from '../../src/types/vm';
 import { normalizeWazuh, type NormalizedHost } from './adapters/wazuh';
 import { kindKey, planAssetMatches } from './assetMatch';
@@ -137,6 +138,8 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     else throw new RunFailure(`No normalizer for ${kind} yet.`);
 
     const now = new Date().toISOString();
+    // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's default program (decision 6).
+    const programId = (await ensureDefaultProgram(tenantId)).id;
     const summary = await withVmTenantTx(tenantId, async (client): Promise<RunSummary> => {
       const pgClient = client ?? undefined;
       let candidates = await listAgentAssetCandidates(tenantId, pgClient);
@@ -197,14 +200,14 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       if (isPoamAutocreateEnabled()) {
         const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client);
         const drafts = planPoamItems(overdue, linked, now);
-        await insertPoamItems(tenantId, drafts, client);
+        await insertPoamItems(tenantId, drafts, client, programId);
         poam = drafts.length;
       }
 
       const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;
       await markRunNormalized(tenantId, run.id, now, warning, client);
       return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam };
-    });
+    }, programId);
 
     console.log(
       `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M)`,

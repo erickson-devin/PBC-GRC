@@ -219,3 +219,27 @@ export function toServerPatch(updates: Partial<Tenant>): ServerTenantPatch {
   if (frameworks && frameworks.length > 0) patch.enabledFrameworks = frameworks;
   return patch;
 }
+
+/** True for assessor-style email domains (audit / C3PAO / assessor firms). */
+const isAssessorDomain = (emailDomain: string): boolean => {
+  const d = emailDomain.toLowerCase();
+  return d.includes('audit') || d.includes('c3pao') || d.includes('assessor');
+};
+
+/**
+ * The role shown BEFORE the server has answered (sign-in, or a reload with a cached tenant list). Least privilege:
+ * a tenant that exists on the server starts read-only until the sync writes the server's real role; only a draft
+ * that lives in this browser (first-run onboarding) is the user's own, so they own it.
+ */
+export function provisionalRoleForTenant(tenant: Pick<Tenant, 'serverBacked'>, emailDomain: string): TenantRole {
+  if (tenant.serverBacked) return 'VIEWER';
+  return isAssessorDomain(emailDomain) ? 'ASSESSOR' : 'TENANT_OWNER';
+}
+
+/**
+ * The server answers every request except the password change itself with 403 + reason 'password_change_required'
+ * while an account carries a temporary password. That is "not yet", not a failure.
+ */
+export function isPasswordChangeRequired(status: number, body: unknown): boolean {
+  return status === 403 && (body as { reason?: unknown } | null)?.reason === 'password_change_required';
+}

@@ -41,10 +41,11 @@ const jwt = (claims: Record<string, unknown>) => `h.${Buffer.from(JSON.stringify
 const person = (sub: string, email = `${sub}@test.mil`) => jwt({ sub, email, name: sub, roles: { tenant_unrelated: 'VIEWER' } });
 
 type Json = Record<string, any>;
-async function call(method: string, p: string, token: string | null, tenant?: string, body?: unknown) {
+async function call(method: string, p: string, token: string | null, tenant?: string, body?: unknown, program?: string) {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) h.Authorization = `Bearer ${token}`;
   if (tenant) h['x-tenant-id'] = tenant;
+  if (program) h['x-program-id'] = program;
   const res = await fetch(`${BASE}${p}`, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   let parsed: Json | null = null;
@@ -329,6 +330,23 @@ async function run() {
 
   const raw = (await history(T1, owner1, SI)).text;
   assert(!raw.includes('Human notes') && !raw.includes('Changed text') && !raw.includes('Re-reviewed') && !raw.includes('Flaws are identified') && !raw.includes(VM_NOTES_BEGIN), 'H10 the response carries no notes text', raw.slice(0, 200));
+
+  console.log('\n--- H12: the history belongs to a program ---');
+  const PE = 'PE.L1-3.10.1';
+  const progB = await call('POST', `/tenants/${T1}/programs`, owner1, T1, { name: 'History Boundary B', frameworkId: 'CMMC_L1' });
+  const B = progB.body?.program?.id as string;
+  const putIn = (program: string | undefined, notes: string) => call('PUT', `/controls/${PE}`, owner1, T1, { implementationNotes: notes }, program);
+  const eventsIn = async (program: string | undefined) => ((await call('GET', `/controls/${PE}/history`, owner1, T1, undefined, program)).body?.events ?? []) as Json[];
+  assert(progB.status === 201 && Boolean(B), 'H12 setup: a second program B in T1', progB.body);
+  const putA = await putIn(undefined, 'Written in the default program.');
+  const inA = await eventsIn(undefined);
+  const inB = await eventsIn(B);
+  assert(putA.status === 200 && inA.length === 1 && inB.length === 0, 'H12 an event written in the default program A is absent from B\'s history', [putA.status, inA.length, inB.length]);
+  const putB = await putIn(B, 'Written in program B.');
+  const inA2 = await eventsIn(undefined);
+  const inB2 = await eventsIn(B);
+  assert(putB.status === 200 && inA2.length === 1 && inB2.length === 1 && inB2[0].oldStatus === null && inA2[0].id !== inB2[0].id, 'H12 a write in B records its own first event (no old values) and adds none to A', [inA2.length, inB2.length, inB2[0]]);
+  assert(!(await call('GET', `/controls/${PE}/history`, owner1, T1, undefined, B)).text.includes('Written in'), 'H12 and the history of B carries no notes text either');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

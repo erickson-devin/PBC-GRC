@@ -209,6 +209,11 @@ export const Sidebar: React.FC = () => {
           icon: BookOpen,
         },
         {
+          id: 'programs',
+          label: 'Programs & Boundaries',
+          icon: Layers,
+        },
+        {
           id: 'settings',
           label: 'Enclave Settings',
           icon: Settings,
