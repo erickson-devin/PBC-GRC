@@ -425,6 +425,21 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     };
   }
 
+  // 3b. DELETE FROM evidence_metadata WHERE tenant_id = $1 AND (id = $2 OR starts_with(id, $3::text)) AND (program_id = $4 OR ...) RETURNING id, gcs_path
+  // $3 is null for an inherited copy (starts_with(id, NULL) matches nothing). Same program policy as the SELECT: other programs match 0 rows.
+  if (/^DELETE\s+FROM\s+evidence_metadata\s+WHERE\s+tenant_id\s*=\s*\$1\s+AND\s+\(id\s*=\s*\$2\s+OR\s+starts_with\(id,\s*\$3(::text)?\)\)/i.test(normalized)) {
+    const rows: Array<{ id: string; gcs_path: string }> = [];
+    if (programId !== undefined && params[0] === tenantId) {
+      for (const [key, item] of [...memoryEvidence.entries()]) {
+        if (item.tenant_id !== tenantId || !inProgram(item.program_id)) continue;
+        if (item.id !== params[1] && !(typeof params[2] === 'string' && item.id.startsWith(params[2]))) continue;
+        memoryEvidence.delete(key);
+        rows.push({ id: item.id, gcs_path: item.gcs_path });
+      }
+    }
+    return { rows, command: 'DELETE', rowCount: rows.length, oid: 0, fields: [] };
+  }
+
   // 4. INSERT into evidence_metadata (with Cross-Framework Evidence Inheritance)
   if (/INSERT\s+INTO\s+evidence_metadata/i.test(normalized)) {
     // A statement that names the program_id column passes it as its LAST parameter; the slots before it keep their meaning.
