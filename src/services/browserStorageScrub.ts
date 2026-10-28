@@ -371,7 +371,7 @@ export function runAssessmentCacheScrub(
   return result;
 }
 
-/** ASYNC part: redacts old notes excerpts in the browser audit ledgers (re-chaining needs hashing). */
+/** ASYNC part: redacts notes excerpts and identifiers in the browser audit ledgers (re-chaining needs hashing). */
 async function runLedgerScrub(storage: ScrubStorage, result: BrowserStorageScrubResult): Promise<void> {
   let keys: string[];
   try {
@@ -395,11 +395,41 @@ async function runLedgerScrub(storage: ScrubStorage, result: BrowserStorageScrub
         result.malformed++;
         continue;
       }
-      const out = await redactLedgerNotesExcerpts(parsed as AuditLogEntry[]);
+      let out = await redactLedgerNotesExcerpts(parsed as AuditLogEntry[]);
       if (out.redacted > 0) {
-        storage.setItem(key, JSON.stringify(out.entries));
-        result.ledgersRedacted++;
-        result.ledgerEntriesRedacted += out.redacted;
+        // Compare-and-set: redacting awaits hashing, so another tab may have appended meanwhile. Re-read before
+        // writing and redact the fresh ledger again (up to 3 attempts) instead of overwriting the new entries.
+        let current = raw;
+        let written = false;
+        for (let attempt = 0; attempt < 3 && !written; attempt++) {
+          const latest = storage.getItem(key);
+          if (latest === current) {
+            storage.setItem(key, JSON.stringify(out.entries));
+            written = true;
+            break;
+          }
+          let reparsed: unknown;
+          try {
+            reparsed = latest === null ? null : JSON.parse(latest);
+          } catch {
+            reparsed = null;
+          }
+          if (!Array.isArray(reparsed)) break;
+          current = latest as string;
+          out = await redactLedgerNotesExcerpts(reparsed as AuditLogEntry[]);
+          if (out.redacted === 0) {
+            written = true; // the fresh ledger needs nothing
+            break;
+          }
+        }
+        if (!written) {
+          result.failed++;
+          continue;
+        }
+        if (out.redacted > 0) {
+          result.ledgersRedacted++;
+          result.ledgerEntriesRedacted += out.redacted;
+        }
       }
     } catch {
       result.failed++;

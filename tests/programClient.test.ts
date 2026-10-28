@@ -335,6 +335,26 @@ async function headers() {
     } finally {
       URL.createObjectURL = urlSpy;
     }
+
+    stub(200, { deleted: true, evidenceId: 'ev 1', removedIds: ['ev 1', 7, 'ev 1__inh_AC-2'], fileRemoved: true });
+    const del = await ApiClient.deleteEvidence('t1', 'ev 1', 'p1');
+    assert(
+      calls[0].url === '/api/v1/evidence/ev%201' && calls[0].init.method === 'DELETE' && headerOf(calls[0], 'x-program-id') === 'p1' && headerOf(calls[0], 'x-tenant-id') === 't1'
+        && del.removedIds.length === 2 && del.removedIds[0] === 'ev 1' && del.fileRemoved === true,
+      'H16 deleteEvidence is DELETE on the encoded id with both headers and returns the string removedIds',
+      { url: calls[0].url, del }
+    );
+    stub(200, { deleted: true });
+    const delBare = await ApiClient.deleteEvidence('t1', 'ev 1');
+    assert(delBare.removedIds.length === 1 && delBare.removedIds[0] === 'ev 1' && delBare.fileRemoved === false && headerOf(calls[0], 'x-program-id') === undefined, 'H16a deleteEvidence defaults removedIds to the id and fileRemoved to false');
+    stub(409, { error: 'This program is archived', reason: 'program_archived' });
+    let delErr: { status?: number; message?: string } | null = null;
+    try {
+      await ApiClient.deleteEvidence('t1', 'ev1', 'p1');
+    } catch (e) {
+      delErr = e as { status?: number; message?: string };
+    }
+    assert(delErr?.status === 409 && delErr.message === 'This program is archived', 'H16b a 409 rejects with its status and the server message', delErr);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -346,7 +366,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;
@@ -377,6 +397,18 @@ async function main() {
   const auditCalls = (assessCtx.match(/recordAuditEvent\(\{/g) ?? []).length;
   const auditMeta = (assessCtx.match(/recordAuditEvent\(\{\n\s+tenantId: currentTenant\.id,\n\s+metadata: auditMetadata,/g) ?? []).length;
   assert(auditCalls === 9 && auditMeta === auditCalls, 'T6d every recordAuditEvent in AssessmentContext carries metadata.programId', { auditCalls, auditMeta });
+  // Evidence delete (#88) and the upload ledger entry (#87), read from the source
+  const removeBody = assessCtx.slice(assessCtx.indexOf('const removeEvidence = useCallback'), assessCtx.indexOf('const resetAssessment = useCallback'));
+  const iCatchReturn = removeBody.indexOf('return false;', removeBody.indexOf('catch (err)'));
+  const iFirstSetState = removeBody.indexOf('setState(');
+  assert(
+    removeBody.includes('await deleteLiveEvidence(evidenceId, programId ?? null)') && removeBody.includes('The evidence could not be deleted on the server:') && iCatchReturn > 0 && iFirstSetState > iCatchReturn,
+    'S1 removeEvidence deletes on the server first and returns from the catch before any local state change',
+    { iCatchReturn, iFirstSetState }
+  );
+  assert(/programScopeKey\(prev\.tenantId, prev\.programId\) !== deleteScope \? prev :/.test(removeBody) && removeBody.includes('const deleteScope = programScope;'), 'S2 the local removal only touches the state of the scope the delete started in');
+  assert(assessCtx.includes('targetEntity: newItem.id') && assessCtx.includes('describeNotesForLedger(file.name)') && !assessCtx.includes('targetEntity: file.name'), 'S3 the upload ledger entry names the evidence by id and a descriptor, not the file name');
+  assert(tenantCtx.includes('ApiClient.deleteEvidence(currentTenant.id, evidenceId, program)'), 'S4 deleteLiveEvidence calls ApiClient.deleteEvidence with the program the delete started in');
   assert(/\| 'programs'/.test(assessCtx), 'T6e NavigationTab has the programs tab');
   assert(/isCurrentResponse\(seq, liveSeq\.current\)/.test(tenantCtx) && (tenantCtx.match(/isCurrentResponse\(seq, liveSeq\.current\)/g) ?? []).length >= 3, 'T6f refreshLiveData drops every response that is not the newest request');
   const switchBody = tenantCtx.slice(tenantCtx.indexOf('const switchProgram = useCallback'));

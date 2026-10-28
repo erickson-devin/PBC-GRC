@@ -147,6 +147,8 @@ async function backendTests() {
   assert(swept.newDiscoveredCount === 1 && swept.items.length === 2 && /^[0-9a-f]{64}$/.test(swept.auditHash), 'discovery ingestion returns counts, the full list and an audit digest');
   const rogue = swept.items.find((a) => a.hostName === 'ROGUE')!;
   assert(rogue.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && summarizeScope(swept.items).unconfirmed === 1, 'a discovered device is unconfirmed and not counted in a category');
+  const serverLedger = localStorage.getItem(`pbc_audit_ledger_${tenantId}`) ?? '';
+  assert(serverLedger.includes('TELEMETRY_INGESTED') && !serverLedger.includes('ROGUE') && !serverLedger.includes('10.0.9.9') && !serverLedger.includes('00:11:22:33:44:55'), 'the browser audit ledger records the discovery without the host name, IP or MAC');
   const classified = await be.classify(rogue.id, 'CONTRACTOR_RISK');
   assert(classified.cmmcAssetCategory === 'CONTRACTOR_RISK' && classified.discoveryStatus === 'ACTIVE', 'classify assigns the category and confirms it');
   const sim1 = await be.simulateDiscovery();
@@ -193,6 +195,8 @@ async function backendTests() {
   assert(lcsv.imported === 1 && lcsv.skipped.length === 1, 'local CSV import skips unrecognised categories too');
   const ing = await legacy.ingest([{ agentId: 'a', ipAddress: '10.1.1.77', macAddress: 'AA:BB:CC:DD:EE:01', osFingerprint: '', discoveredPorts: [], connectionType: 'ETHERNET' }]);
   assert(ing.newDiscoveredCount === 1, 'local discovery ingestion works');
+  const legacyLedger = localStorage.getItem('pbc_audit_ledger_tenant-legacy-1') ?? '';
+  assert(legacyLedger.includes('TELEMETRY_INGESTED') && !legacyLedger.includes('10.1.1.77') && !legacyLedger.includes('AA:BB:CC:DD:EE:01') && !legacyLedger.includes('accretion-ee01'), 'the legacy tenant ledger holds no IP, MAC or default host name');
   await legacy.remove(l1.id);
   assert((await legacy.list()).every((a) => a.id !== l1.id), 'local remove');
   assert((await getAssetBackend('tenant-other', 'local-legacy').list()).length === 0, "another tenant's local inventory is separate");

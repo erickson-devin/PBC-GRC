@@ -15,7 +15,7 @@ import {
 } from '../../types/telemetry';
 import { ControlStatus, EvidenceItem } from '../../types/cmmc';
 import { AuditActionType } from '../../types/audit';
-import { recordAuditEvent, computeSha256 } from '../audit/auditLogger';
+import { recordAuditEvent, computeSha256, describeAddressForLedger, describeNotesForLedger } from '../audit/auditLogger';
 
 // ---------------------------------------------------------------------------
 // 1. CCE → GRC Control Mapping Table
@@ -245,8 +245,8 @@ export async function ingestScapScanReport(
     targetEntity: `SCAP Scan: ${report.scanId}`,
     newState: {
       scanId: report.scanId,
-      hostName: report.hostName,
-      targetIp: report.targetIp,
+      hostName: await describeNotesForLedger(report.hostName),
+      targetIp: await describeAddressForLedger(report.targetIp),
       osProfile: report.osProfile,
       passedCount: report.passedCount,
       failedCount: report.failedCount,

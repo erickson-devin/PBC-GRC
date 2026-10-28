@@ -121,7 +121,8 @@ interface AssessmentContextType {
   bulkApplyStigNarratives: (narratives: Record<string, string>) => number;
   updateSSPMetadata: (metadata: Partial<SSPMetadata>) => void;
   uploadEvidence: (controlId: string, file: File, description?: string) => Promise<EvidenceItem>;
-  removeEvidence: (evidenceId: string) => Promise<void>;
+  /** Resolves true when the evidence was removed, false when it was refused (no permission, or the server could not delete it). */
+  removeEvidence: (evidenceId: string) => Promise<boolean>;
   resetAssessment: () => Promise<void>;
   importAssessmentJSON: (file: File) => Promise<boolean>;
   exportAssessmentJSON: () => void;
@@ -169,6 +170,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     updateLiveObjectivesBulk,
     importLiveObjectives,
     createLiveEvidenceUploadUrl,
+    deleteLiveEvidence,
     activeFramework,
     activeBaselineTier,
     activeOverlayFilters,
@@ -1353,6 +1355,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       evidenceIndex: [newItem, ...inheritedItems, ...prev.evidenceIndex],
     }));
 
+    const fileNameDescriptor = await describeNotesForLedger(file.name);
     recordAuditEvent({
       tenantId: currentTenant.id,
       metadata: auditMetadata,
@@ -1360,21 +1363,33 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       actorEmail: currentUser.email,
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
       actionType: 'EVIDENCE_UPLOADED',
-      targetEntity: file.name,
-      newState: { controlId, sha256: fileHash, sizeBytes: file.size },
+      targetEntity: newItem.id,
+      newState: { controlId, sha256: fileHash, sizeBytes: file.size, fileName: fileNameDescriptor },
     }).catch(() => {});
 
     return newItem;
   }, [canEdit, currentTenant.id, currentTenant.serverBacked, programId, programScope, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, createLiveEvidenceUploadUrl]);
 
   // Action: Remove Evidence
-  const removeEvidence = useCallback(async (evidenceId: string) => {
+  const removeEvidence = useCallback(async (evidenceId: string): Promise<boolean> => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to delete evidence.');
-      return;
+      return false;
     }
 
-    await EvidenceVault.deleteFile(currentTenant.id, evidenceId);
+    // The server is the home of a server-backed tenant's evidence: it must delete first, and a refusal leaves everything in place
+    const deleteScope = programScope;
+    let removedIds: string[] = [evidenceId];
+    if (currentTenant.serverBacked) {
+      try {
+        removedIds = (await deleteLiveEvidence(evidenceId, programId ?? null)).removedIds;
+      } catch (err) {
+        alert(`The evidence could not be deleted on the server: ${errorMessage(err) || 'unknown error'}`);
+        return false;
+      }
+    }
+
+    await EvidenceVault.deleteFile(currentTenant.id, evidenceId).catch(() => undefined);
 
     recordAuditEvent({
       tenantId: currentTenant.id,
@@ -1386,11 +1401,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       targetEntity: evidenceId,
     }).catch(() => {});
 
-    setState(prev => ({
+    const gone = new Set(removedIds);
+    setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== deleteScope ? prev : {
       ...prev,
-      evidenceIndex: prev.evidenceIndex.filter(e => e.id !== evidenceId),
+      evidenceIndex: prev.evidenceIndex.filter(e => !gone.has(e.id)),
     }));
-  }, [canEdit, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles]);
+    return true;
+  }, [canEdit, currentTenant.id, currentTenant.serverBacked, programId, programScope, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, deleteLiveEvidence]);
 
   // Action: Reset Assessment
   const resetAssessment = useCallback(async () => {

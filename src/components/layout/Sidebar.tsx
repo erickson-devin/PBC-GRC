@@ -108,9 +108,9 @@ export const Sidebar: React.FC = () => {
     ? '100%'
     : `${metrics.completionPercentage}%`;
 
-  // Photon external URL — environment-configurable, falls back to Blake's beta instance
-  const photonUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_PHOTON_URL)
-    || 'http://beta.vpn.pitchblackcyber.com:8800/';
+  // Photon (the SCAP scanning arm, #103) is linked only when the install names it in VITE_PHOTON_URL: there is no built-in URL
+  const photonEnv = ((typeof import.meta !== 'undefined' && import.meta.env?.VITE_PHOTON_URL) || '').trim();
+  const photonUrl = /^https?:\/\//i.test(photonEnv) ? photonEnv : '';
 
   // ── Section Definitions ─────────────────────────────────────────────────
   const sections: NavSection[] = [
@@ -139,13 +139,13 @@ export const Sidebar: React.FC = () => {
     {
       title: 'Automation & Evidence',
       items: [
-        {
+        ...(photonUrl ? [{
           kind: 'external',
           label: 'Technical Baselines & STIGs',
           icon: Terminal,
           href: photonUrl,
           badgeVariant: 'status',
-        } as ExternalNavItem,
+        } as ExternalNavItem] : []),
         {
           id: 'evidence',
           label: 'Evidence Vault',

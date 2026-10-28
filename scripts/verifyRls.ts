@@ -668,6 +668,18 @@ async function verifyProgramIsolation() {
     const stillMet = await queryWithProgram(scopeA, "SELECT status FROM control_assessments WHERE control_id = 'AC.L1-3.1.1'", []);
     check(stillMet.rows.length === 1 && stillMet.rows[0].status === 'MET', "8c. program A's row is untouched", JSON.stringify(stillMet.rows));
 
+    // the evidence delete of the API (DELETE /evidence/:id) is program-scoped too: program B cannot remove program A's evidence
+    await queryWithProgram(
+      scopeA,
+      "INSERT INTO evidence_metadata (id, tenant_id, control_id, file_name, file_size, mime_type, gcs_path, file_hash, program_id) VALUES ('rls_verify_del_ev', $1, 'AC.L1-3.1.1', 'del.pdf', 5, 'application/pdf', '/vault/del', 'h', $2)",
+      [TENANT_X, programA]
+    );
+    const evDeleteSql = "DELETE FROM evidence_metadata WHERE tenant_id = $1 AND (id = $2 OR starts_with(id, $3::text)) AND (program_id = $4 OR program_id IS NULL) RETURNING id, gcs_path";
+    const bDeletesEv = await queryWithProgram(scopeB, evDeleteSql, [TENANT_X, 'rls_verify_del_ev', 'rls_verify_del_ev__inh_', programB]);
+    check((bDeletesEv.rowCount ?? 0) === 0, "8c. program B cannot delete program A's evidence through the API statement (0 rows)", 'deleted ' + bDeletesEv.rowCount);
+    const aDeletesEv = await queryWithProgram(scopeA, evDeleteSql, [TENANT_X, 'rls_verify_del_ev', 'rls_verify_del_ev__inh_', programA]);
+    check((aDeletesEv.rowCount ?? 0) === 1, "8c. program A can delete its own evidence through the same statement (1 row)", 'deleted ' + aDeletesEv.rowCount);
+
     // the same control id is one row per program: the per-program key replaced unq_tenant_control
     const uq = await pool.query(
       "SELECT (SELECT count(*)::int FROM pg_constraint WHERE conname = 'unq_tenant_control' AND conrelid = 'control_assessments'::regclass) AS old_key, (SELECT count(*)::int FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'unq_control_assessments_program_control') AS new_key"

@@ -1189,6 +1189,21 @@ export const ApiClient = {
   },
 
   /**
+   * DELETE /api/v1/evidence/:id
+   * Removes the record (and, for a base record, its cross-framework copies) and the file when nothing else uses it.
+   * Rejects with the server's reason (403 read-only role, 404 unknown, 409 archived program or system-managed evidence).
+   */
+  async deleteEvidence(tenantId: string, evidenceId: string, programId?: string | null): Promise<{ removedIds: string[]; fileRemoved: boolean }> {
+    const data = await authedJson<{ removedIds?: unknown; fileRemoved?: unknown }>(
+      'DELETE',
+      `/evidence/${encodeURIComponent(evidenceId)}`,
+      { tenantId, programId }
+    );
+    const removedIds = Array.isArray(data?.removedIds) ? data.removedIds.filter((id): id is string => typeof id === 'string') : [evidenceId];
+    return { removedIds, fileRemoved: data?.fileRemoved === true };
+  },
+
+  /**
    * GET /api/v1/evidence/config/storage-info
    * Reports the server's active evidence storage provider (local disk).
    */

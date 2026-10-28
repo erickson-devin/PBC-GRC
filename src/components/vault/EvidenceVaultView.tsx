@@ -23,6 +23,7 @@ import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks
 import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { ApiClient } from '../../services/apiClient';
+import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
 
 import { copyToClipboard } from '../../utils/clipboard';
 export const EvidenceVaultView: React.FC = () => {
@@ -51,6 +52,11 @@ export const EvidenceVaultView: React.FC = () => {
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [pendingDelete, setPendingDelete] = useState<EvidenceItem | null>(null);
+
+  // A tenant or program switch closes a pending confirmation: it named another boundary's file
+  useEffect(() => { setPendingDelete(null); }, [currentTenant.id, activeProgram?.id]);
 
   // Synchronize targetControlId when framework controls change
   useEffect(() => {
@@ -269,6 +275,7 @@ export const EvidenceVaultView: React.FC = () => {
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
+              ref={searchInputRef}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by name, control, or SHA-256 hash..."
@@ -417,11 +424,13 @@ export const EvidenceVaultView: React.FC = () => {
 
                           {canEdit && (
                             <button
-                              onClick={() => removeEvidence(item.id)}
+                              type="button"
+                              onClick={() => setPendingDelete(item)}
                               title="Delete File"
+                              aria-label={`Delete ${item.name}`}
                               className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-rose-400 hover:text-rose-300 transition-colors"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                             </button>
                           )}
                         </div>
@@ -433,6 +442,17 @@ export const EvidenceVaultView: React.FC = () => {
             </table>
           </div>
         </div>
+      )}
+
+      {canEdit && pendingDelete && (
+        <ConfirmDeleteEvidenceDialog
+          item={pendingDelete}
+          evidenceIndex={state.evidenceIndex}
+          serverBacked={Boolean(currentTenant.serverBacked)}
+          onConfirm={() => removeEvidence(pendingDelete.id)}
+          onClose={() => setPendingDelete(null)}
+          onDeleted={() => requestAnimationFrame(() => searchInputRef.current?.focus())}
+        />
       )}
     </div>
   );

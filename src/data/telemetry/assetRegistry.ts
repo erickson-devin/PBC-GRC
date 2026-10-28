@@ -15,7 +15,7 @@ import {
 } from '../../types/telemetry';
 import { parseAssetsCsv } from './assetScope';
 import { computeSha256 } from '../audit/cryptoUtils';
-import { recordAuditEvent } from '../audit/auditLogger';
+import { describeAddressForLedger, describeNotesForLedger, recordAuditEvent } from '../audit/auditLogger';
 
 const ASSET_REGISTRY_STORAGE_KEY_PREFIX = 'pbc_enclave_assets_v1_';
 
@@ -273,7 +273,13 @@ export async function ingestAccretionDiscoveryPayload(
       newCount++;
 
       // Asynchronously log audit event for newly discovered rogue / unmanaged endpoint
-      recordAuditEvent({
+      // (descriptors only: the ledger lives in localStorage, so no host name, IP or MAC is recorded)
+      const [hostNameDesc, ipDesc, macDesc] = await Promise.all([
+        describeNotesForLedger(newAsset.hostName ?? ''),
+        describeAddressForLedger(newAsset.ipAddress ?? ''),
+        describeAddressForLedger(newAsset.macAddress ?? ''),
+      ]);
+      await recordAuditEvent({
         tenantId,
         actorId: `accretion_${item.agentId}`,
         actorEmail: `accretion-sensor@${item.agentId}.local`,
@@ -281,9 +287,9 @@ export async function ingestAccretionDiscoveryPayload(
         actionType: 'TELEMETRY_INGESTED',
         targetEntity: `EnclaveAsset:${newAsset.id}`,
         newState: {
-          hostName: newAsset.hostName,
-          ipAddress: newAsset.ipAddress,
-          macAddress: newAsset.macAddress,
+          hostName: hostNameDesc,
+          ipAddress: ipDesc,
+          macAddress: macDesc,
           osFingerprint: item.osFingerprint,
           ports: item.discoveredPorts,
           discoveryStatus: 'UNCONFIRMED_DISCOVERY',
@@ -293,7 +299,7 @@ export async function ingestAccretionDiscoveryPayload(
           agentId: item.agentId,
           connectionType: item.connectionType,
         },
-      });
+      }).catch(() => undefined);
     }
   }
 

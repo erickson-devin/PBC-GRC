@@ -109,6 +109,11 @@ export async function describeNotesForLedger(notes: string): Promise<string> {
   }
 }
 
+/** Ledger descriptor for an IP or MAC address. Length only: a SHA-256 of a 32-bit address is reversible by enumeration. */
+export async function describeAddressForLedger(value: string): Promise<string> {
+  return !value || !value.trim() ? '' : `(${value.length} chars)`;
+}
+
 /**
  * Appends an immutable, SHA-256 chained entry to the tenant's audit ledger.
  */
@@ -175,31 +180,86 @@ function needsRedaction(value: unknown): boolean {
   return typeof value === 'string' && value !== '' && value !== LEDGER_REDACTION_MARKER && !NOTES_DESCRIPTOR_RE.test(value);
 }
 
+/** State keys that older builds filled with file names, host names, IPs or MACs (all may be CUI). */
+export const LEDGER_IDENTIFIER_KEYS = ['fileName', 'hostName', 'ipAddress', 'targetIp', 'macAddress'] as const;
+// IP and MAC get a length only: a hash of an address is reversible by enumeration
+const ADDRESS_KEYS = new Set<string>(['ipAddress', 'targetIp', 'macAddress']);
+// EVIDENCE_UPLOADED targets that are safe to keep: the evidence id, or the SCAP scan label
+const EVIDENCE_TARGET_KEPT_RE = /^(ev_\d+_[0-9a-z]{1,5}|SCAP Scan: .*)$/;
+
 /**
- * Removes implementation-notes excerpts that older builds wrote into CONTROL_NOTES_UPDATED entries (the notes may
- * contain CUI and the ledger lives in localStorage). Redacting changes the hashed payload, so the chain is re-hashed
- * from the first redacted entry and one LEDGER_REDACTED entry is appended (count and the old head hash). Returns the
- * same array and 0 when nothing needed redaction; never mutates its input.
+ * Removes text that older builds wrote into the ledger and that may be CUI (the ledger lives in localStorage):
+ * implementation-notes excerpts in CONTROL_NOTES_UPDATED entries, and file names, host names, IPs and MACs in entry
+ * states and in EVIDENCE_UPLOADED targets (replaced by describeNotesForLedger / describeAddressForLedger descriptors).
+ * Redacting changes the hashed payload, so the chain is re-hashed from the first redacted entry and one
+ * LEDGER_REDACTED entry is appended (counts and the old head hash). Returns the same array and 0 when nothing needed
+ * redaction; never mutates its input.
  */
 export async function redactLedgerNotesExcerpts(
   entries: AuditLogEntry[]
-): Promise<{ entries: AuditLogEntry[]; redacted: number }> {
+): Promise<{ entries: AuditLogEntry[]; redacted: number; notes: number; identifiers: number }> {
   let firstIndex = -1;
-  let redacted = 0;
-  const next = entries.map((entry, i) => {
-    if (!entry || entry.actionType !== 'CONTROL_NOTES_UPDATED') return entry;
-    const hitPrev = needsRedaction(entry.previousState);
-    const hitNew = needsRedaction(entry.newState);
-    if (!hitPrev && !hitNew) return entry;
-    if (firstIndex < 0) firstIndex = i;
-    redacted += (hitPrev ? 1 : 0) + (hitNew ? 1 : 0);
-    return {
-      ...entry,
-      previousState: hitPrev ? LEDGER_REDACTION_MARKER : entry.previousState,
-      newState: hitNew ? LEDGER_REDACTION_MARKER : entry.newState,
-    };
-  });
-  if (firstIndex < 0) return { entries, redacted: 0 };
+  let notes = 0;
+  let identifiers = 0;
+
+  const redactState = async (state: unknown): Promise<{ state: unknown; count: number }> => {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return { state, count: 0 };
+    let copy: Record<string, unknown> | null = null;
+    let count = 0;
+    for (const key of LEDGER_IDENTIFIER_KEYS) {
+      const value = (state as Record<string, unknown>)[key];
+      if (!needsRedaction(value)) continue;
+      if (!copy) copy = { ...(state as Record<string, unknown>) };
+      copy[key] = ADDRESS_KEYS.has(key)
+        ? await describeAddressForLedger(value as string)
+        : await describeNotesForLedger(value as string);
+      count++;
+    }
+    return { state: copy ?? state, count };
+  };
+
+  const next: AuditLogEntry[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    let entry = entries[i];
+    if (!entry) {
+      next.push(entry);
+      continue;
+    }
+    let changed = false;
+    if (entry.actionType === 'CONTROL_NOTES_UPDATED') {
+      const hitPrev = needsRedaction(entry.previousState);
+      const hitNew = needsRedaction(entry.newState);
+      if (hitPrev || hitNew) {
+        notes += (hitPrev ? 1 : 0) + (hitNew ? 1 : 0);
+        entry = {
+          ...entry,
+          previousState: hitPrev ? LEDGER_REDACTION_MARKER : entry.previousState,
+          newState: hitNew ? LEDGER_REDACTION_MARKER : entry.newState,
+        };
+        changed = true;
+      }
+    }
+    const prev = await redactState(entry.previousState);
+    const nw = await redactState(entry.newState);
+    if (prev.count + nw.count > 0) {
+      identifiers += prev.count + nw.count;
+      entry = { ...entry, previousState: prev.state, newState: nw.state };
+      changed = true;
+    }
+    if (
+      entry.actionType === 'EVIDENCE_UPLOADED' &&
+      needsRedaction(entry.targetEntity) &&
+      !EVIDENCE_TARGET_KEPT_RE.test(entry.targetEntity)
+    ) {
+      identifiers++;
+      entry = { ...entry, targetEntity: await describeNotesForLedger(entry.targetEntity) };
+      changed = true;
+    }
+    if (changed && firstIndex < 0) firstIndex = i;
+    next.push(entry);
+  }
+  if (firstIndex < 0) return { entries, redacted: 0, notes: 0, identifiers: 0 };
+  const redacted = notes + identifiers;
 
   const oldHead = entries[entries.length - 1].sha256Hash;
   for (let i = firstIndex; i < next.length; i++) {
@@ -225,7 +285,7 @@ export async function redactLedgerNotesExcerpts(
   const timestamp = new Date().toISOString();
   // LEDGER_REDACTED is written only here (see AuditActionType in src/types/audit.ts)
   const actionType: AuditActionType = 'LEDGER_REDACTED';
-  const newState = `redacted ${redacted} notes excerpt(s) and re-chained`;
+  const newState = `redacted ${notes} notes excerpt(s), ${identifiers} identifier(s) and re-chained`;
   const canonical = createCanonicalEntryPayload(
     sequenceNumber,
     timestamp,
@@ -253,7 +313,7 @@ export async function redactLedgerNotesExcerpts(
     previousHash: last.sha256Hash,
     sha256Hash: await computeSha256(canonical),
   });
-  return { entries: next, redacted };
+  return { entries: next, redacted, notes, identifiers };
 }
 
 /**

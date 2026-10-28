@@ -25,7 +25,7 @@ import {
   FileText,
   Sliders,
 } from 'lucide-react';
-import { ControlStatus } from '../../types/cmmc';
+import { ControlStatus, EvidenceItem } from '../../types/cmmc';
 import { ComplianceFramework } from '../../types/framework';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -53,6 +53,7 @@ import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 import { activateOnKey } from '../../utils/a11y';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
+import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
 interface InspectDocumentModalProps {
   controlId?: string | null;
   onClose?: () => void;
@@ -98,6 +99,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const [policyViewMode, setPolicyViewMode] = useState<'preview' | 'raw'>('preview');
   const [isSurveyModalOpen, setIsSurveyModalOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingDelete, setPendingDelete] = useState<EvidenceItem | null>(null);
+  const evidenceTabRef = useRef<HTMLButtonElement>(null);
 
   const activeId = propControlId !== undefined ? propControlId : selectedControlId;
 
@@ -160,6 +163,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const familyTitle = control?.domainName || control?.domain || familyPrefix;
 
   // Escape is handled by the shared <DialogOverlay> (top-most dialog only), not by a window listener here
+
+  // Moving to another control, tenant or program closes a pending confirmation
+  useEffect(() => { setPendingDelete(null); }, [activeId, currentTenant?.id, activeProgram?.id]);
 
   // Tab sync: reset to 'objectives' if the inspected control is not a -1 policy control
   useEffect(() => {
@@ -498,6 +504,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           </button>
 
           <button
+            ref={evidenceTabRef}
+            type="button"
             onClick={() => setActiveTab('evidence')}
             className={`py-3 flex items-center gap-2 border-b-2 transition-colors shrink-0 ${
               activeTab === 'evidence'
@@ -817,11 +825,13 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                           )}
                           {canEdit && (
                             <button
-                              onClick={() => removeEvidence(ev.id)}
+                              type="button"
+                              onClick={() => setPendingDelete(ev)}
                               className="p-2 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 transition-colors"
                               title="Delete Evidence"
+                              aria-label={`Delete ${ev.name}`}
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-4 h-4" aria-hidden="true" />
                             </button>
                           )}
                         </div>
@@ -1276,6 +1286,18 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             handleRecompile();
           }}
         />
+
+        {/* Delete confirmation: over this dialog (z-[60] above z-50) */}
+        {canEdit && pendingDelete && (
+          <ConfirmDeleteEvidenceDialog
+            item={pendingDelete}
+            evidenceIndex={state.evidenceIndex}
+            serverBacked={Boolean(currentTenant.serverBacked)}
+            onConfirm={() => removeEvidence(pendingDelete.id)}
+            onClose={() => setPendingDelete(null)}
+            onDeleted={() => requestAnimationFrame(() => evidenceTabRef.current?.focus())}
+          />
+        )}
       </div>
     </DialogOverlay>
   );

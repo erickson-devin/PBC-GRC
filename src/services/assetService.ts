@@ -12,7 +12,7 @@ import {
 import { AssetInput, parseAssetsCsv } from '../data/telemetry/assetScope';
 import { NO_FIPS, normalizeFips, resolveFips } from '../data/telemetry/fipsValidation';
 import { computeSha256 } from '../data/audit/cryptoUtils';
-import { recordAuditEvent } from '../data/audit/auditLogger';
+import { describeAddressForLedger, describeNotesForLedger, recordAuditEvent } from '../data/audit/auditLogger';
 import type {
   AccretionDiscoveryItem,
   AccretionIngestResult,
@@ -67,16 +67,22 @@ const nameKey = (n: string): string => n.trim().toLowerCase();
 
 async function auditDiscovery(tenantId: string, created: EnclaveAsset[]): Promise<void> {
   for (const asset of created) {
-    recordAuditEvent({
+    // The ledger lives in localStorage: record descriptors, never the host name, IP or MAC
+    const [hostName, ipAddress, macAddress] = await Promise.all([
+      describeNotesForLedger(asset.hostName ?? ''),
+      describeAddressForLedger(asset.ipAddress ?? ''),
+      describeAddressForLedger(asset.macAddress ?? ''),
+    ]);
+    await recordAuditEvent({
       tenantId,
       actorId: `accretion_${asset.accretionMetadata?.agentId ?? 'sensor'}`,
       actorEmail: `accretion-sensor@${asset.accretionMetadata?.agentId ?? 'sensor'}.local`,
       actorRole: 'Network Discovery Sensor',
       actionType: 'TELEMETRY_INGESTED',
       targetEntity: `EnclaveAsset:${asset.id}`,
-      newState: { hostName: asset.hostName, ipAddress: asset.ipAddress, macAddress: asset.macAddress, discoveryStatus: asset.discoveryStatus },
+      newState: { hostName, ipAddress, macAddress, discoveryStatus: asset.discoveryStatus },
       metadata: { sensor: 'Event Horizon: Accretion' },
-    });
+    }).catch(() => undefined);
   }
 }
 
