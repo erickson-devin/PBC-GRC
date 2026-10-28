@@ -1042,10 +1042,7 @@ export const ApiClient = {
       }),
     });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to update control: ${res.status}`);
-    }
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
 
     const data = await res.json();
     return data.control;
