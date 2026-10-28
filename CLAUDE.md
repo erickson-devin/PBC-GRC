@@ -32,9 +32,9 @@ Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>
 # Multi-Agent Workflow Rules
 
 1. You act as the Orchestrator. For small, single-file edits, you may write code directly.
-2. For complex, multi-file, or architectural tasks, you must use the subagents (`analyst`, `coder`, defined in `.claude/agents/`).
-3. When using subagents, ALWAYS delegate investigation and planning to the `analyst` first.
-4. Review the analyst's plan: drop items that need a product decision, that would add a dependency, or whose tests are timing/load-dependent. Then delegate implementation to the `coder`.
+2. For complex, multi-file, or architectural tasks, you must use the subagents (`analyst`, `ui-ux`, `coder`, defined in `.claude/agents/`).
+3. When using subagents, ALWAYS delegate investigation and planning first: to the `analyst` for data, server and logic work, to `ui-ux` for screens, flows and accessibility (a change that needs both gets the analyst first, then `ui-ux` for the UI part). Neither writes code.
+4. Review the plan: take items that need a product decision, would add a dependency, or whose tests are timing/load-dependent to the user as Part B (with a recommendation each) instead of handing them to a coder. Then delegate implementation to the `coder`.
 5. Trust but Verify: NEVER accept the coder's self-reported results. Independently run the full test suites AND every CI gate (typecheck, build, `test:all`; there is no lint or parity gate here), check exit codes, and read the non-test diff before declaring the task complete.
 6. Baseline first: run the suites before dispatching any coder so its effect is measurable (current baseline in the table above).
 7. Parallelism: split a large audit into scoped analysts running concurrently; split implementation into coders with DISJOINT file sets. Any file two plans touch goes to exactly one coder. Coders must not run server-booting suites concurrently (shared port 8080): the orchestrator runs the full suite, alone.
