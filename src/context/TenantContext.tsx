@@ -370,7 +370,7 @@ interface TenantContextType {
     /** The program to load (default: the active one; null: the tenant's default program). */
     programToFetch?: string | null
   ) => Promise<void>;
-  updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState | null>;
+  updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState>;
   /** Saves one objective (status, narrative, evidence links) to the program that is on screen when the call starts. Rejects when the server refuses or is unreachable. */
   updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'>) => Promise<ObjectiveRecord>;
   /** Saves many objectives (500 per request, each request all-or-nothing). Rejects when a request fails. */
@@ -1110,22 +1110,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateLiveControl = useCallback(async (
     controlId: string,
     updates: Partial<ControlState>
-  ): Promise<ControlState | null> => {
+  ): Promise<ControlState> => {
     // The program (and so the scope) is fixed when the edit starts: an answer arriving after a switch is not applied to the new program
     const scope = scopeNow(currentTenant.id);
-    try {
-      const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates, programIdFor(currentTenant.id));
-      if (scopeNow(currentTenant.id) === scope) {
-        setLiveControls(prev => ({
-          ...prev,
-          [controlId]: updated,
-        }));
-      }
-      return updated;
-    } catch {
-      return null;
+    // Rejects when the server refuses or cannot be reached: the caller (AssessmentContext.saveControl) tells the user the edit was not saved
+    const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates, programIdFor(currentTenant.id));
+    if (scopeNow(currentTenant.id) === scope) {
+      setLiveControls(prev => ({
+        ...prev,
+        [controlId]: updated,
+      }));
     }
-  }, [currentTenant.id, scopeNow, programIdFor]);
+    return updated;
+  },[currentTenant.id, scopeNow, programIdFor]);
 
   /** Re-reads the objectives of `scope` and shows them, unless the scope on screen has changed meanwhile. */
   const reloadLiveObjectives = useCallback(async (scope: string, programId: string | null): Promise<Record<string, ObjectiveRecord>> => {
@@ -1136,7 +1133,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return map;
   }, [currentTenant.id, scopeNow]);
 
-  // Unlike updateLiveControl, the objective writers reject: the narrative is only on the server, so the UI must be able to say it was not saved
+  // Like updateLiveControl, the objective writers reject: the narrative is only on the server, so the UI must be able to say it was not saved
   const updateLiveObjective = useCallback(async (
     objectiveId: string,
     controlId: string,

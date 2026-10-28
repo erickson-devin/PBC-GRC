@@ -398,7 +398,7 @@ async function main() {
 
   // The objective status writer saves the rolled-up control status (otherwise the next live merge reverts it)
   const statusBody = assessCtx.slice(assessCtx.indexOf('const updateObjectiveStatus = useCallback'), assessCtx.indexOf('const updateObjectiveNarrative = useCallback'));
-  assert(statusBody.includes('updateLiveControl(controlId, { status: rolledStatus') && !statusBody.includes("previousState: 'STATUS_UPDATE'") && (statusBody.match(/updateLiveControl\(/g) ?? []).length === 1, 'T6r updateObjectiveStatus saves the rolled-up control status once, and records the real previous status in the ledger');
+  assert(statusBody.includes('saveControl(controlId, { status: rolledStatus') && !statusBody.includes("previousState: 'STATUS_UPDATE'") && !statusBody.includes('updateLiveControl(') && (statusBody.match(/saveControl\(/g) ?? []).length === 1, 'T6r updateObjectiveStatus saves the rolled-up control status once, and records the real previous status in the ledger');
   const hook = read('src/hooks/useProgram.ts');
   assert(!/\.setItem\(/.test(hook) && /useTenant\(\)/.test(hook), 'T6q useProgram is a read-through of TenantContext and writes no storage');
 

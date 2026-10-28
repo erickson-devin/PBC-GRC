@@ -17,7 +17,7 @@ import { errorMessage } from '../../utils/errors';
  */
 export const BrowserOnlyNotesBanner: React.FC = () => {
   const { currentTenant, canEdit, migrateLocalTenantToServer } = useTenant();
-  const { objectivesNeedOwner } = useAssessment();
+  const { objectivesNeedOwner, controlSaveError, dismissControlSaveError } = useAssessment();
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving'>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +34,20 @@ export const BrowserOnlyNotesBanner: React.FC = () => {
               <CloudUpload className="h-4 w-4 shrink-0 text-amber-300" />
               <span>{OBJECTIVES_NEED_OWNER_MESSAGE}</span>
             </p>
+          </div>
+        )}
+        {controlSaveError && (
+          <div
+            role="alert"
+            className="max-w-7xl mx-auto mt-2 flex items-start justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs"
+          >
+            <p className="min-w-0 text-amber-200">
+              <span>{controlSaveError.message}</span>
+              {controlSaveError.count > 1 && <span> ({controlSaveError.count} changes not saved)</span>}
+            </p>
+            <button type="button" onClick={dismissControlSaveError} className="shrink-0 px-2 py-1 text-xs font-semibold text-slate-400 hover:text-white">
+              Dismiss
+            </button>
           </div>
         )}
         <ObjectiveReviewDialog />

@@ -42,6 +42,12 @@ import {
   stackCascadeFill,
   type ObjectiveCascadeDetail,
 } from '../data/objectiveSync';
+import {
+  coalesceSaveFailure,
+  controlSaveFailureMessage,
+  revertFailedControlFields,
+  type ControlSaveFailure,
+} from '../data/controlSave';
 import { errorMessage } from '../utils/errors';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
@@ -82,6 +88,9 @@ interface AssessmentContextType {
   notesStatus: NotesStatus;
   /** False while a server-backed tenant's notes are not loaded: editing them would overwrite the server copy blindly. */
   notesEditable: boolean;
+  /** The last control edit the server did not save (status, notes or role), with how many failed since it was dismissed. */
+  controlSaveError: ControlSaveFailure | null;
+  dismissControlSaveError: () => void;
   metrics: ComplianceMetrics;
   frameworkControls: FrameworkControlDefinition[];
   activeTab: NavigationTab;
@@ -342,6 +351,44 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, []);
 
+  // -------------------------------------------------------------------------
+  // Saving control edits. A server-backed tenant's status, notes and role are saved with one PUT each. The screen shows the edit at
+  // once; when the server refuses it or cannot be reached the edit is not shown as saved: the status / role go back to the server's
+  // value and a notice says what was not saved (it never repeats the text: notes may contain CUI).
+  // -------------------------------------------------------------------------
+  const liveControlsRef = useRef(liveControls);
+  liveControlsRef.current = liveControls;
+  const programScopeRef = useRef(programScope);
+  programScopeRef.current = programScope;
+  const [controlSaveError, setControlSaveError] = useState<ControlSaveFailure | null>(null);
+  const dismissControlSaveError = useCallback(() => setControlSaveError(null), []);
+  // A notice belongs to the program it was raised in
+  useEffect(() => {
+    setControlSaveError(null);
+  }, [currentTenant.id, programScope]);
+
+  /** Saves a control edit to the server. Never rejects: a failure is shown in the notice. Resolves with how it went. */
+  const saveControl = useCallback(async (controlId: string, update: Partial<ControlState>): Promise<'saved' | 'failed' | 'unreachable'> => {
+    // A browser-only tenant keeps its controls in this browser: nothing to send
+    if (!currentTenant.serverBacked) return 'saved';
+    const scope = programScope;
+    try {
+      await updateLiveControl(controlId, update);
+      return 'saved';
+    } catch (err: unknown) {
+      setState(prev => {
+        if (programScopeKey(prev.tenantId, prev.programId) !== scope) return prev;
+        const local = prev.controls[controlId];
+        if (!local) return prev;
+        const next = revertFailedControlFields(local, liveControlsRef.current?.[controlId], update);
+        return next === local ? prev : { ...prev, controls: { ...prev.controls, [controlId]: next } };
+      });
+      const message = controlSaveFailureMessage(controlId, update, err);
+      if (message !== null) setControlSaveError(p => coalesceSaveFailure(p, message));
+      return (err as { status?: unknown } | null)?.status === 0 ? 'unreachable' : 'failed';
+    }
+  }, [currentTenant.serverBacked, programScope, updateLiveControl]);
+
   // Action: Update Control Status with RBAC Check
   const updateControlStatus = useCallback((
     controlId: string,
@@ -352,9 +399,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Read-Only access: You do not have permission to modify controls for this tenant.');
       return;
     }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return;
+    }
 
     // Sync to the server
-    updateLiveControl(controlId, { status, updatedBy: currentUser.name });
+    void saveControl(controlId, { status, updatedBy: currentUser.name });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -406,7 +457,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       return updated;
     });
-  }, [canEdit, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls]);
+  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls, saveControl]);
 
   // Action: Update Control Notes with RBAC Check
   const updateControlNotes = useCallback((controlId: string, notes: string) => {
@@ -420,7 +471,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     // Sync to the server
-    updateLiveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
+    void saveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -463,14 +514,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, saveControl]);
 
   // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
     if (!canEdit) return;
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return;
+    }
 
     // Sync to the server (the audited writer records the change)
-    updateLiveControl(controlId, { responsibleRole: role, updatedBy: currentUser.name });
+    void saveControl(controlId, { responsibleRole: role, updatedBy: currentUser.name });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -508,7 +563,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, saveControl]);
 
   // Action: Apply Starter Template
   const applyStarterTemplate = useCallback((controlId: string, narrative: string) => {
@@ -550,7 +605,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         sent = true;
         const serverUpdate: Partial<ControlState> = { implementationNotes: narrative, updatedBy: currentUser.name };
         if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
-        updateLiveControl(controlId, serverUpdate);
+        void saveControl(controlId, serverUpdate);
       }
 
       return {
@@ -567,7 +622,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, saveControl]);
 
   // Action: Bulk Apply STIG Policy Narratives across mapped controls
   const bulkApplyStigNarratives = useCallback((narratives: Record<string, string>): number => {
@@ -622,7 +677,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         const serverUpdate: Partial<ControlState> = { implementationNotes: newNotes, updatedBy: currentUser.name };
         if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
-        updateLiveControl(id, serverUpdate);
+        void saveControl(id, serverUpdate);
 
         appliedCount++;
       });
@@ -634,7 +689,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
 
     return appliedCount;
-  }, [canEdit, notesEditable, currentTenant.id, currentUser.name, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentUser.name, saveControl]);
 
   // -------------------------------------------------------------------------
   // NIST SP 800-171A Objective-Level Evaluation & Rollup Engine
@@ -817,12 +872,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const objectiveSave = inputs.length === 1
       ? updateLiveObjective(inputs[0].objectiveId, inputs[0].controlId, { status: inputs[0].status, narrative: inputs[0].narrative, linkedEvidenceIds: inputs[0].linkedEvidenceIds })
       : updateLiveObjectivesBulk(inputs);
-    const controlSave = control ? updateLiveControl(control.id, control.update) : Promise.resolve(null);
-    void Promise.all([objectiveSave, controlSave]).catch((err: unknown) => {
+    // The control part reports its own failure (saveControl never rejects), apart from the objective part
+    if (control) void saveControl(control.id, control.update);
+    void objectiveSave.catch((err: unknown) => {
       alert(`The objective change could not be saved to the server: ${errorMessage(err) || 'unknown error'}`);
       revertObjectives(inputs.map(i => i.objectiveId), scope);
     });
-  }, [currentTenant.serverBacked, programScope, updateLiveObjective, updateLiveObjectivesBulk, updateLiveControl, revertObjectives]);
+  }, [currentTenant.serverBacked, programScope, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives]);
 
   // Review of a conflict the one-time upload found: the id keeps its cached narrative until the user picks a text
   // Ids whose cached narrative is empty or equal to the server's need no decision: they are dropped (this heals caches from older builds)
@@ -927,7 +983,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (currentTenant.serverBacked) {
       saveObjectives([{ objectiveId, controlId, status }]);
       if (rolledStatus !== currentCtrl.status) {
-        updateLiveControl(controlId, { status: rolledStatus, updatedBy: currentUser.name });
+        void saveControl(controlId, { status: rolledStatus, updatedBy: currentUser.name });
       }
     }
 
@@ -943,7 +999,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       previousState: currentCtrl.status,
       newState: rolledStatus,
     }).catch(() => {});
-  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, updateLiveControl]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, saveControl]);
 
   const updateObjectiveNarrative = useCallback((objectiveId: string, narrative: string) => {
     if (objectiveWriteBlocked('narratives')) return;
@@ -1431,9 +1487,21 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (serverUpdates.length > IMPORT_PUT_CAP) {
           console.warn(`Import changes ${serverUpdates.length} controls; only the first ${IMPORT_PUT_CAP} are saved to the server.`);
         }
+        const importScope = programScope;
         void (async () => {
-          for (const [id, update] of serverUpdates.slice(0, IMPORT_PUT_CAP)) {
-            await updateLiveControl(id, update);
+          const attempts = serverUpdates.slice(0, IMPORT_PUT_CAP);
+          let saved = 0;
+          let failed = 0;
+          for (const [id, update] of attempts) {
+            const outcome = await saveControl(id, update);
+            if (outcome === 'saved') saved++;
+            else failed++;
+            // The server cannot be reached: the rest would fail the same way
+            if (outcome === 'unreachable') break;
+          }
+          // Counts only, never text
+          if (failed > 0 && programScopeRef.current === importScope) {
+            setControlSaveError({ message: `The import saved ${saved} of ${attempts.length} controls to the server. The others were not saved.`, count: failed });
           }
         })();
       }
@@ -1442,7 +1510,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
       return false;
     }
-  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, updateLiveControl, updateLiveObjectivesBulk, isKnownControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, programScope, saveControl, updateLiveObjectivesBulk, isKnownControl]);
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
@@ -1458,6 +1526,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     state,
     notesStatus,
     notesEditable,
+    controlSaveError,
+    dismissControlSaveError,
     metrics,
     frameworkControls,
     activeTab,
@@ -1511,6 +1581,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     state,
     notesStatus,
     notesEditable,
+    controlSaveError,
+    dismissControlSaveError,
     metrics,
     frameworkControls,
     activeTab,

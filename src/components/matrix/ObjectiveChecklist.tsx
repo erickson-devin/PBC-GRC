@@ -23,6 +23,8 @@ import { useTenant } from '../../context/TenantContext';
 import { AssessmentObjective, ObjectiveStatus } from '../../types/assessment';
 import { calculateControlRollup } from '../../data/frameworks/assessmentObjectives';
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
+import { planConfirmAll, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
+import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 
 interface ObjectiveChecklistProps {
   controlId: string;
@@ -63,6 +65,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   const [appliedNoticeId, setAppliedNoticeId] = useState<string | null>(null);
   const [bulkNotice, setBulkNotice] = useState<boolean>(false);
   const [showEvidenceSelectorForId, setShowEvidenceSelectorForId] = useState<string | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<ConfirmAllPlan | null>(null);
 
   // Local state for Organization-Defined Parameters (ODPs) inline customization
   const [odpCustomValues, setOdpCustomValues] = useState<Record<string, Record<string, string>>>({});
@@ -172,14 +175,30 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     }
   };
 
-  const handleBulkApplyAll = () => {
-    if (!canEdit) return;
+  const applyAll = () => {
     applyAllObjectiveTemplatesForControl(controlId);
     setBulkNotice(true);
     setTimeout(() => setBulkNotice(false), 3000);
     if (onStatusChange) {
       onStatusChange('MET');
     }
+  };
+
+  // Ask first when the apply would overwrite notes or narratives that already hold text
+  const handleBulkApplyAll = () => {
+    if (!canEdit) return;
+    const plan = planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '');
+    if (!plan.needsConfirmation) {
+      applyAll();
+      return;
+    }
+    setPendingPlan(plan);
+  };
+
+  const handleConfirmReplace = () => {
+    setPendingPlan(null);
+    if (!canEdit) return;
+    applyAll();
   };
 
   const handleNarrativeChange = (objId: string, value: string) => {
@@ -280,6 +299,43 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           </button>
         </div>
       </div>
+
+      {pendingPlan && (
+        <DialogOverlay
+          role="alertdialog"
+          onClose={() => setPendingPlan(null)}
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
+        >
+          <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <DialogTitle as="h3" className="text-sm font-bold text-white">Replace with the best-practice narratives?</DialogTitle>
+            <div className="space-y-3 text-xs text-slate-300 leading-relaxed">
+              {pendingPlan.notesReplaced && (
+                <p>The control's implementation notes ({(state.controls[controlId]?.implementationNotes ?? '').length} characters) will be replaced.</p>
+              )}
+              {pendingPlan.narrativesReplaced.length > 0 && (
+                <p>
+                  The narratives of objectives {pendingPlan.narrativesReplaced.map((o) => `[${o.letter}]`).join(', ')} differ from the template and will be replaced.
+                </p>
+              )}
+              {pendingPlan.statusChanged.length > 0 && (
+                <p>Objectives {pendingPlan.statusChanged.map((o) => `[${o.letter}]`).join(', ')} will be marked MET.</p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingPlan(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button type="button" onClick={handleConfirmReplace} className="btn-accent px-4 py-2 rounded-xl text-xs">
+                Replace
+              </button>
+            </div>
+          </div>
+        </DialogOverlay>
+      )}
 
       {bulkNotice && (
         <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">

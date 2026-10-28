@@ -13,7 +13,8 @@ Object.defineProperty(globalThis, 'localStorage', {
   writable: true,
 });
 
-import { ApiClient } from '../src/services/apiClient';
+import { ApiClient, ApiError } from '../src/services/apiClient';
+import { coalesceSaveFailure, controlSaveFailureMessage, revertFailedControlFields } from '../src/data/controlSave';
 import {
   applyImportResult,
   cascadeFill,
@@ -27,7 +28,7 @@ import {
   stackCascadeFill,
 } from '../src/data/objectiveSync';
 import { StorageService } from '../src/services/storageService';
-import type { AssessmentState } from '../src/types/cmmc';
+import type { AssessmentState, ControlState } from '../src/types/cmmc';
 import type { AssessmentObjective } from '../src/types/assessment';
 import type { ObjectiveRecord } from '../src/types/controlObjectives';
 import type { EnclaveStackProfile } from '../src/types/tenant';
@@ -296,13 +297,103 @@ async function api() {
       refused = err instanceof Error ? err.message : String(err);
     }
     assert(refused.length > 0, 'A7 a refused write rejects, so the UI can show it', refused);
+
+    // updateControl: a refusal keeps its status and the server's message, so the UI can tell the user the edit was not saved
+    const failure = async (): Promise<unknown> => {
+      try {
+        await ApiClient.updateControl('t1', 'AC.L2-3.1.1', { status: 'MET' }, 'p1');
+        return null;
+      } catch (err) {
+        return err;
+      }
+    };
+    const ARCHIVED = 'This program is archived: it can be read but not changed';
+    stub(409, { error: ARCHIVED, code: 'program_archived' });
+    const archived = await failure();
+    assert(archived instanceof ApiError && archived.status === 409 && archived.message === ARCHIVED, 'A8 updateControl on an archived program rejects with ApiError 409 and the server\'s message', archived);
+    stub(403, { error: 'Read-only role' });
+    const forbidden = await failure();
+    assert(forbidden instanceof ApiError && forbidden.status === 403, 'A9 updateControl refused with 403 rejects with ApiError 403', forbidden);
+    calls.length = 0;
+    globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    const unreachable = await failure();
+    assert(unreachable instanceof ApiError && unreachable.status === 0 && unreachable.message === 'Cannot reach the server. Check your connection and try again.', 'A10 updateControl with the server unreachable rejects with ApiError 0', unreachable);
+    stub(200, { control: { id: 'AC.L2-3.1.1', status: 'MET' } });
+    const saved = await ApiClient.updateControl('t1', 'AC.L2-3.1.1', { status: 'MET' }, 'p1');
+    assert(calls[0].init.method === 'PUT' && calls[0].url.endsWith('/api/v1/controls/AC.L2-3.1.1') && headerOf(calls[0], 'x-program-id') === 'p1' && saved.status === 'MET', 'A11 a saved control resolves with the server\'s control (PUT, x-program-id)', calls[0].url);
   } finally {
     globalThis.fetch = realFetch;
   }
 }
 
+function controlSaveFailures() {
+  console.log('\n--- Control save failures ---');
+  const SECRET = 'SECRET-CUI-TEXT';
+  const ctl = (over: Partial<ControlState> = {}): ControlState => ({
+    id: 'AC.L2-3.1.1',
+    tenantId: 't1',
+    status: 'NOT_STARTED',
+    implementationNotes: '',
+    responsibleRole: 'IT / Security Lead',
+    lastUpdated: NOW,
+    tags: [],
+    ...over,
+  });
+
+  assert(controlSaveFailureMessage('AC.L2-3.1.1', { status: 'MET' }, new ApiError(401, 'Session expired')) === null, 'F1 a 401 needs no notice (the session signal signs the user out)');
+  const texts: Array<[string, unknown, string]> = [
+    ['unreachable', new ApiError(0, 'Cannot reach the server. Check your connection and try again.'), 'Cannot reach the server'],
+    ['409', new ApiError(409, 'This program is archived: it can be read but not changed'), 'This program is archived'],
+    ['403', new ApiError(403, 'Read-only role'), 'Read-only role'],
+    ['plain', new Error('boom'), 'boom'],
+  ];
+  for (const [name, err, expected] of texts) {
+    const msg = controlSaveFailureMessage('AC.L2-3.1.1', { status: 'MET' }, err);
+    assert(msg !== null && msg.includes(expected) && msg.includes('AC.L2-3.1.1') && msg.includes('was not saved'), `F2 the notice for ${name} carries the error text and the control id`, msg);
+  }
+  assert(controlSaveFailureMessage('AC.L2-3.1.1', { status: 'MET' }, {}) === 'The change to the status of AC.L2-3.1.1 was not saved: unknown error', 'F3 an error without a message reads "unknown error"');
+  const both = controlSaveFailureMessage('AC.L2-3.1.1', { implementationNotes: SECRET, status: 'MET', updatedBy: 'Ann' }, new ApiError(500, 'Server error')) ?? '';
+  assert(both.includes('status and implementation notes') && !both.includes(SECRET) && !both.includes('MET') && !both.includes('Ann'), 'F4 the notice names the fields, never a value (the notes may contain CUI)', both);
+  assert((controlSaveFailureMessage('AC.L2-3.1.1', { responsibleRole: 'CISO' }, new Error('x')) ?? '').includes('responsible role'), 'F5 a role change is called the responsible role');
+
+  const local = ctl({ status: 'MET', responsibleRole: 'CISO', implementationNotes: SECRET });
+  const server = ctl({ status: 'IN_PROGRESS', responsibleRole: 'IT / Security Lead', implementationNotes: 'server notes' });
+  const reverted = revertFailedControlFields(local, server, { status: 'MET', updatedBy: 'Ann' });
+  assert(reverted.status === 'IN_PROGRESS' && reverted.responsibleRole === 'CISO' && reverted.implementationNotes === SECRET && reverted !== local, 'F6 a refused status goes back to the server\'s; the rest is untouched');
+  assert(revertFailedControlFields(local, server, { status: 'NOT_MET' }) === local, 'F7 a newer local edit wins: nothing is reverted (same reference)');
+  assert(revertFailedControlFields(local, undefined, { status: 'MET' }) === local, 'F8 without a server copy nothing is reverted (same reference)');
+  assert(revertFailedControlFields(local, server, { implementationNotes: SECRET }) === local, 'F9 notes are never reverted: the text stays on screen');
+  const roleBack = revertFailedControlFields(local, server, { responsibleRole: 'CISO' });
+  assert(roleBack.responsibleRole === 'IT / Security Lead' && roleBack.status === 'MET', 'F10 a refused role goes back to the server\'s');
+
+  const first = coalesceSaveFailure(null, 'one');
+  const second = coalesceSaveFailure(first, 'two');
+  assert(first.count === 1 && second.count === 2 && second.message === 'two' && coalesceSaveFailure(undefined, 'x').count === 1, 'F11 failures coalesce: the newest message and a count');
+
+  const root = process.cwd();
+  const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+  const slice = (src: string, from: string, to: string) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from) + 1));
+  const assess = read('src/context/AssessmentContext.tsx');
+  const tenant = read('src/context/TenantContext.tsx');
+  const live = slice(tenant, 'const updateLiveControl = useCallback', 'const reloadLiveObjectives = useCallback');
+  assert(live.length > 0 && !/catch/.test(live) && !/return null/.test(live) && /Promise<ControlState>/.test(live), 'F12 updateLiveControl rejects: no catch, no null result');
+  assert((assess.match(/updateLiveControl\(/g) ?? []).length === 1, 'F13 AssessmentContext calls updateLiveControl once, inside saveControl');
+  const save = slice(assess, 'const saveControl = useCallback', '// Action: Update Control Status');
+  assert(/await updateLiveControl\(/.test(save) && /currentTenant\.serverBacked/.test(save) && /revertFailedControlFields\(/.test(save) && /coalesceSaveFailure\(/.test(save) && !/alert\(/.test(save) && !/console\./.test(save) && !/recordAuditEvent/.test(save), 'F14 saveControl sends for server tenants only, reverts, coalesces the notice, and neither alerts, logs nor audits');
+  const update = slice(read('src/services/apiClient.ts'), 'async updateControl(', '\n  },');
+  assert(/apiErrorFromResponse\(res\.status/.test(update) && !/throw new Error/.test(update), 'F15 apiClient.updateControl throws an ApiError');
+  const banner = read('src/components/common/BrowserOnlyNotesBanner.tsx');
+  assert(/controlSaveError/.test(banner) && /role="alert"/.test(banner) && /dismissControlSaveError/.test(banner), 'F16 the banner shows the control save notice as an alert with a Dismiss button');
+  const status = slice(assess, 'const updateControlStatus = useCallback', '// Action: Update Control Notes');
+  const role = slice(assess, 'const updateControlRole = useCallback', '// Action: Apply Starter Template');
+  assert(/!notesEditable/.test(status) && /!notesEditable/.test(role), 'F17 status and role changes are refused when the notes are not editable (offline / not loaded)');
+  const loop = slice(assess, 'const IMPORT_PUT_CAP', 'return true;');
+  assert(/saveControl\(id, update\)/.test(loop) && /'unreachable'\) break/.test(loop) && /controls to the server/.test(loop), 'F18 the import stops sending when the server is unreachable and reports how many controls were saved');
+}
+
 async function main() {
   await api();
+  controlSaveFailures();
 
   console.log('\n--- Static checks ---');
   const root = process.cwd();

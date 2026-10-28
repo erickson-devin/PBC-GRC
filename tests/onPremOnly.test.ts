@@ -246,6 +246,18 @@ const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
 assert(!/GOOGLE_/.test(dockerfile), 'Dockerfile has no GOOGLE_ variable');
 const healthcheck = dockerfile.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n').match(/HEALTHCHECK[\s\S]*?(?:\n(?=[A-Z]+\s)|$)/);
 assert(!!healthcheck && /\/api\/v1\/health\b/.test(healthcheck[0]), 'the Dockerfile HEALTHCHECK targets /api/v1/health', healthcheck && healthcheck[0]);
+// Global tsx installs in a Dockerfile: the pinned version, or null for an unpinned install. Comments are ignored.
+function globalTsxPins(text: string): (string | null)[] {
+  const code = text.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n');
+  return [...code.matchAll(/npm\s+(?:install|i)\s+(?:-g|--global)\s+tsx(?:@(\S+))?(?=\s|$)/g)].map((m) => m[1] ?? null);
+}
+assert(JSON.stringify(globalTsxPins('RUN npm install -g tsx\n')) === '[null]', 'globalTsxPins reports an unpinned install as null');
+assert(JSON.stringify(globalTsxPins('RUN npm install -g tsx@4.23.13\r\n')) === '["4.23.13"]', 'globalTsxPins reads a pinned version from a CRLF line');
+assert(globalTsxPins('# RUN npm install -g tsx\n').length === 0, 'globalTsxPins ignores a commented-out install');
+const tsxPins = globalTsxPins(dockerfile);
+assert(tsxPins.length === 1 && /^\d+\.\d+\.\d+$/.test(tsxPins[0] ?? ''), 'the Dockerfile installs tsx globally exactly once, at an exact version (not ^, ~ or latest)', tsxPins);
+assert(tsxPins[0] === lock.packages?.['node_modules/tsx']?.version, 'the Dockerfile tsx version equals the package-lock.json node_modules/tsx version', { dockerfile: tsxPins[0], lock: lock.packages?.['node_modules/tsx']?.version });
+assert(/^CMD \["tsx", "server\/index\.ts"\]\s*$/m.test(dockerfile), 'the Dockerfile still starts the server with CMD ["tsx", "server/index.ts"]');
 const envExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
 assert(/^LOCAL_AUTH_SECRET=/m.test(envExample), '.env.example contains LOCAL_AUTH_SECRET=');
 assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has no VITE_FIREBASE / VITE_GCP / VITE_GCS');
