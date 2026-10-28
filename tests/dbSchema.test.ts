@@ -154,7 +154,10 @@ const PROGRAM_SCOPED = ['control_assessments', 'control_assessment_events', 'evi
 const FK_TABLES = PROGRAM_SCOPED.filter((t) => t !== 'control_assessment_events');
 const programsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS programs (');
 const programsBlock = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt, TABLES_SQL.indexOf('\n  );', programsAt));
-const programDdl = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt);
+// The program DDL proper: the assessment-objectives tables that follow it are new tables with their own inline key (pinned further down)
+const objectivesAt = TABLES_SQL.indexOf('-- Assessment objectives');
+const programDdl = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt, objectivesAt > programsAt ? objectivesAt : undefined);
+const objectivesDdl = objectivesAt < 0 ? '' : TABLES_SQL.slice(objectivesAt);
 assert(programsAt >= 0 && TABLES_SQL.includes('CREATE TABLE IF NOT EXISTS programs ('), 'P1: programs is created by initDb');
 assert(RLS_TENANT_TABLES.some((r) => r.table === 'programs' && r.tenantColumn === 'tenant_id'), 'P1: programs is in RLS_TENANT_TABLES on tenant_id (FORCE RLS and the tenant policy)');
 assert(programsBlock.includes('CONSTRAINT unq_programs_tenant_id UNIQUE (tenant_id, id)'), 'P1: programs carries the (tenant_id, id) key the composite foreign keys point at');
@@ -204,7 +207,8 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify(PROGRAM_SCOPED), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables', RLS_PROGRAM_TABLES);
+const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES]), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -237,6 +241,42 @@ for (const t of PROGRAM_SCOPED) {
   assert(programDdl.includes(guard) && programDdl.includes('ALTER TABLE ' + t + ' ADD CONSTRAINT ' + c + ' CHECK (program_id IS NOT NULL) NOT VALID;'), 'P5: ' + t + ': program_id IS NOT NULL check, NOT VALID, added once');
 }
 assert((programDdl.match(/NOT VALID/g) || []).length === PROGRAM_SCOPED.length, 'P5: exactly the six NOT VALID checks');
+
+console.log('\n--- Assessment objectives (control_objectives, control_objective_events) ---');
+const objTable = (name: string): string => {
+  const start = objectivesDdl.indexOf('CREATE TABLE IF NOT EXISTS ' + name + ' (');
+  return start < 0 ? '' : objectivesDdl.slice(start, objectivesDdl.indexOf('\n  );', start));
+};
+const objectivesTable = objTable('control_objectives');
+const objectiveEvents = objTable('control_objective_events');
+assert(objectivesTable !== '' && objectiveEvents !== '', 'OBJ: both tables are created (IF NOT EXISTS), after the program DDL');
+assert(objectivesAt > programsAt && objectivesDdl.indexOf('CREATE TABLE IF NOT EXISTS control_objectives (') >= 0, 'OBJ: the objectives DDL follows the program DDL');
+assert(objectivesTable.includes('CONSTRAINT unq_control_objectives_program_objective UNIQUE (tenant_id, program_id, objective_id)'), 'OBJ: one row per (tenant_id, program_id, objective_id)');
+assert(
+  objectivesTable.includes('CONSTRAINT fk_control_objectives_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE'),
+  'OBJ: the inline composite program key cascades (deleting a program removes its objectives)'
+);
+assert((objectivesDdl.match(/FOREIGN KEY/g) || []).length === 1 && !/FOREIGN KEY|REFERENCES/.test(objectiveEvents), 'OBJ: the events table has no foreign key (the history outlives the row and the program)');
+assert(/program_id VARCHAR\(64\) NOT NULL/.test(objectivesTable) && /program_id VARCHAR\(64\) NOT NULL/.test(objectiveEvents), 'OBJ: program_id is NOT NULL on both tables (no legacy rows)');
+assert(
+  objectiveEvents.includes("CONSTRAINT control_objective_events_sha_check CHECK ((old_narrative_sha256 IS NULL OR old_narrative_sha256 ~ '^[0-9a-f]{64}$') AND new_narrative_sha256 ~ '^[0-9a-f]{64}$')") &&
+    objectiveEvents.includes('CONSTRAINT control_objective_events_length_check CHECK ((old_narrative_length IS NULL OR old_narrative_length >= 0) AND new_narrative_length >= 0)'),
+  'OBJ: an event carries a SHA-256 and a length of the narrative, validated by CHECKs'
+);
+assert(!/^\s+narrative\s/m.test(objectiveEvents) && /^\s+narrative TEXT/m.test(objectivesTable), 'OBJ: the events table has no narrative text column');
+assert(
+  objectivesDdl.includes("ALTER TABLE control_objectives ADD CONSTRAINT control_objectives_status_check CHECK (status IN ('MET', 'NOT_MET', 'IN_PROGRESS', 'NOT_STARTED', 'NOT_APPLICABLE'))") &&
+    objectivesDdl.indexOf('DROP CONSTRAINT IF EXISTS control_objectives_status_check') < objectivesDdl.indexOf('ADD CONSTRAINT control_objectives_status_check'),
+  'OBJ: the status CHECK is dropped and re-added (the five assessment statuses)'
+);
+assert(objectivesDdl.includes("ADD CONSTRAINT control_objective_events_source_check CHECK (source IN ('human', 'browser-import', 'clone'))"), 'OBJ: the event source CHECK lists human, browser-import and clone');
+assert(
+  objectivesDdl.includes('CREATE INDEX IF NOT EXISTS idx_control_objectives_control ON control_objectives (tenant_id, program_id, control_id);') &&
+    objectivesDdl.includes('CREATE INDEX IF NOT EXISTS idx_control_objective_events_objective ON control_objective_events (tenant_id, program_id, objective_id, created_at DESC);'),
+  'OBJ: the two indexes exist'
+);
+assert(OBJECTIVE_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'OBJ: both tables are in RLS_TENANT_TABLES on tenant_id');
+assert(!objectivesDdl.includes('NOT VALID') && !objectivesDdl.includes('SET NOT NULL'), 'OBJ: no NOT VALID check and no SET NOT NULL (the new tables need neither)');
 
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);

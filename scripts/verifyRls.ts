@@ -14,7 +14,7 @@
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
- *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies and the NOT VALID program_required checks are in the catalog, and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them.
+ *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies and the NOT VALID program_required checks are in the catalog, and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them. 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check).
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
@@ -23,6 +23,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective'));
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -715,13 +717,77 @@ async function verifyProgramIsolation() {
     const checks = await pool.query(
       "SELECT conrelid::regclass::text AS tbl, conname, convalidated FROM pg_constraint WHERE conname LIKE '%_program_required' AND connamespace = current_schema()::regnamespace"
     );
-    for (const t of RLS_PROGRAM_TABLES) {
+    for (const t of LEGACY_PROGRAM_TABLES) {
       const c = checks.rows.find((x) => x.conname === t + '_program_required');
       check(Boolean(c) && c.convalidated === false, '8d. ' + t + ': the program_required check exists and is NOT VALID (validated later)', JSON.stringify(c));
     }
 
+    // 8f. assessment objectives: the same isolation on control_objectives and control_objective_events
+    const insertObjective = 'INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, narrative, updated_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id';
+    const insertObjectiveEvent =
+      "INSERT INTO control_objective_events (tenant_id, program_id, control_id, objective_id, source, actor, new_status, narrative_changed, new_narrative_sha256, new_narrative_length, evidence_changed) VALUES ($1, $2, 'AC.L2-3.1.3', 'AC.L2-3.1.3[a]', 'human', 'rls_verify_actor', 'MET', true, $3, 0, false) RETURNING id";
+    const SHA = 'a'.repeat(64);
+    const OBJ = 'AC.L2-3.1.3[a]';
+    const objForeign = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertObjective, [TENANT_X, defaultY, 'AC.L2-3.1.3', OBJ, 'rls_verify_text', 'rls_verify_actor'], { code: '23503', constraint: 'fk_control_objectives_program' });
+    check(objForeign.ok, "8f. control_objectives: tenant X cannot attach a row to tenant Y's program (composite foreign key, 23503)", objForeign.detail);
+    const o1 = await queryWithProgram(scopeA, insertObjective, [TENANT_X, programA, 'AC.L2-3.1.3', OBJ, 'rls_verify_text', 'rls_verify_actor']);
+    check(o1.rows.length === 1, '8f. control_objectives: under program A the objective is inserted');
+    const objBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM control_objectives WHERE program_id = $1', [programA]);
+    const objBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM control_objectives WHERE tenant_id = $1', [TENANT_X]);
+    check(objBSeesA.rows.length === 0 && objBSeesAny.rows.length === 0, "8f. control_objectives: program B cannot read program A's row (0 rows, by program or by tenant)", 'saw ' + objBSeesA.rows.length + ' / ' + objBSeesAny.rows.length);
+    const objBUpdates = await queryWithProgram(scopeB, "UPDATE control_objectives SET narrative = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    check((objBUpdates.rowCount ?? 0) === 0, "8f. control_objectives: program B cannot update program A's row (0 rows)", 'updated ' + objBUpdates.rowCount);
+    const objBDeletes = await queryWithProgram(scopeB, 'DELETE FROM control_objectives WHERE program_id = $1', [programA]);
+    check((objBDeletes.rowCount ?? 0) === 0, "8f. control_objectives: program B cannot delete program A's row (0 rows)", 'deleted ' + objBDeletes.rowCount);
+    const objBInserts = await rejectsIn(scopeB, insertObjective, [TENANT_X, programA, 'AC.L2-3.1.3', 'AC.L2-3.1.3[b]', 'rls_verify_text', 'rls_verify_actor'], { code: '42501' });
+    check(objBInserts.ok, '8f. control_objectives: program B cannot insert a row into program A (WITH CHECK, 42501)', objBInserts.detail);
+    const objIntact = await queryWithProgram(scopeA, 'SELECT narrative FROM control_objectives', []);
+    check(objIntact.rows.length === 1 && objIntact.rows[0].narrative === 'rls_verify_text', "8f. control_objectives: program A's row is untouched", JSON.stringify(objIntact.rows));
+    const objInB = await queryWithProgram(scopeB, insertObjective, [TENANT_X, programB, 'AC.L2-3.1.3', OBJ, 'rls_verify_b', 'rls_verify_actor']);
+    check(objInB.rows.length === 1, '8f. control_objectives: the same objective id is its own row in program B (the key includes the program)');
+    const objNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM control_objectives WHERE tenant_id = $1', [TENANT_X]);
+    check(objNoCtx.rows.length === 0, '8f. control_objectives: a tenant context with no program context sees zero rows', 'saw ' + objNoCtx.rows.length);
+    let objNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertObjective, [TENANT_X, programA, 'AC.L2-3.1.3', 'AC.L2-3.1.3[c]', 'rls_verify_text', 'rls_verify_actor']);
+    } catch (err) {
+      objNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(objNoCtxInsert === '42501', '8f. control_objectives: no program context cannot insert a row (42501)', objNoCtxInsert);
+
+    const e1 = await queryWithProgram(scopeA, insertObjectiveEvent, [TENANT_X, programA, SHA]);
+    check(e1.rows.length === 1, '8f. control_objective_events: under program A the event is inserted');
+    const evBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM control_objective_events WHERE program_id = $1', [programA]);
+    const evBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM control_objective_events WHERE tenant_id = $1', [TENANT_X]);
+    check(evBSeesA.rows.length === 0 && evBSeesAny.rows.length === 0, "8f. control_objective_events: program B cannot read program A's event (0 rows)", 'saw ' + evBSeesA.rows.length + ' / ' + evBSeesAny.rows.length);
+    const evBUpdates = await queryWithProgram(scopeB, "UPDATE control_objective_events SET actor = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const evBDeletes = await queryWithProgram(scopeB, 'DELETE FROM control_objective_events WHERE program_id = $1', [programA]);
+    check((evBUpdates.rowCount ?? 0) === 0 && (evBDeletes.rowCount ?? 0) === 0, "8f. control_objective_events: program B can neither update nor delete program A's event (0 rows)", 'updated ' + evBUpdates.rowCount + ', deleted ' + evBDeletes.rowCount);
+    const evBInserts = await rejectsIn(scopeB, insertObjectiveEvent, [TENANT_X, programA, SHA], { code: '42501' });
+    check(evBInserts.ok, '8f. control_objective_events: program B cannot insert an event into program A (WITH CHECK, 42501)', evBInserts.detail);
+    const evNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM control_objective_events WHERE tenant_id = $1', [TENANT_X]);
+    check(evNoCtx.rows.length === 0, '8f. control_objective_events: a tenant context with no program context sees zero rows', 'saw ' + evNoCtx.rows.length);
+    let evNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertObjectiveEvent, [TENANT_X, programA, SHA]);
+    } catch (err) {
+      evNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(evNoCtxInsert === '42501', '8f. control_objective_events: no program context cannot insert an event (42501)', evNoCtxInsert);
+    const evFk = await pool.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'control_objective_events'::regclass AND contype = 'f'");
+    check(evFk.rows[0]?.n === 0, '8f. control_objective_events: no foreign key (the history outlives the program)', JSON.stringify(evFk.rows[0]));
+    const notNull = await pool.query(
+      "SELECT attrelid::regclass::text AS tbl, attnotnull FROM pg_attribute WHERE attname = 'program_id' AND attrelid IN ('control_objectives'::regclass, 'control_objective_events'::regclass) AND NOT attisdropped"
+    );
+    check(notNull.rows.length === 2 && notNull.rows.every((r) => r.attnotnull === true), '8f. program_id is NOT NULL on both objective tables (attnotnull)', JSON.stringify(notNull.rows));
+    await queryWithProgram(scopeA, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+
     await verifyUpgrade();
   } finally {
+    // the history has no foreign key, so a program's delete does not remove its events
+    for (const id of [programA, programB]) {
+      if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+    }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the rows cascade with their program
     }

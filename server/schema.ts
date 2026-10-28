@@ -2,6 +2,7 @@ import { TENANT_ROLES } from '../src/utils/roles';
 import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
 import { FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
+import { OBJECTIVE_CHANGE_SOURCES, OBJECTIVE_STATUSES } from '../src/types/controlObjectives';
 import { VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
@@ -36,6 +37,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_sightings', tenantColumn: 'tenant_id' },
   { table: 'vm_poam_items', tenantColumn: 'tenant_id' },
   { table: 'programs', tenantColumn: 'tenant_id' },
+  { table: 'control_objectives', tenantColumn: 'tenant_id' },
+  { table: 'control_objective_events', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -52,6 +55,8 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'ssp_import_jobs',
   'staged_controls',
   'vm_poam_items',
+  'control_objectives',
+  'control_objective_events',
 ];
 
 export const rlsProgramPolicyName = (table: string): string => `rls_${table}_program_isolation`;
@@ -64,6 +69,8 @@ const fipsStatusList = FIPS_STATUSES.map((s) => `'${s}'`).join(', ');
 const fipsStandardList = FIPS_STANDARDS.map((s) => `'${s}'`).join(', ');
 const assetCategoryList = CMMC_ASSET_CATEGORIES.map((c) => `'${c}'`).join(', ');
 const controlChangeSourceList = CONTROL_CHANGE_SOURCES.map((s) => `'${s}'`).join(', ');
+const objectiveStatusList = OBJECTIVE_STATUSES.map((s) => `'${s}'`).join(', ');
+const objectiveChangeSourceList = OBJECTIVE_CHANGE_SOURCES.map((s) => `'${s}'`).join(', ');
 const vmSourceKindList =VM_SOURCE_KINDS.map((k) => `'${k}'`).join(', ');
 const vmScopeList = VM_TOKEN_SCOPES.map((s) => `'${s}'`).join(', ');
 const vmRunStatusList = VM_RUN_STATUSES.map((s) => `'${s}'`).join(', ');
@@ -662,6 +669,53 @@ export const TABLES_SQL = `
     END IF;
   END
   $$;
+
+  -- Assessment objectives (NIST SP 800-171A / 800-53A): the status, narrative and evidence links of one objective in one program.
+  -- New tables, so program_id is NOT NULL from the start (no legacy rows to backfill) and the program key is inline.
+  CREATE TABLE IF NOT EXISTS control_objectives (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      objective_id VARCHAR(96) NOT NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'NOT_STARTED',
+      narrative TEXT NOT NULL DEFAULT '',
+      linked_evidence_ids TEXT[] NOT NULL DEFAULT '{}',
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_control_objectives_program_objective UNIQUE (tenant_id, program_id, objective_id),
+      CONSTRAINT fk_control_objectives_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
+  );
+  ALTER TABLE control_objectives DROP CONSTRAINT IF EXISTS control_objectives_status_check;
+  ALTER TABLE control_objectives ADD CONSTRAINT control_objectives_status_check CHECK (status IN (${objectiveStatusList}));
+  CREATE INDEX IF NOT EXISTS idx_control_objectives_control ON control_objectives (tenant_id, program_id, control_id);
+
+  -- The narrative may hold CUI, so an event records only its SHA-256 and length, never the text.
+  -- No foreign key to control_objectives or programs: the history outlives the row and its program.
+  CREATE TABLE IF NOT EXISTS control_objective_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      objective_id VARCHAR(96) NOT NULL,
+      source VARCHAR(16) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      old_status VARCHAR(16),
+      new_status VARCHAR(16) NOT NULL,
+      narrative_changed BOOLEAN NOT NULL,
+      old_narrative_sha256 CHAR(64),
+      new_narrative_sha256 CHAR(64) NOT NULL,
+      old_narrative_length INTEGER,
+      new_narrative_length INTEGER NOT NULL,
+      evidence_changed BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT control_objective_events_sha_check CHECK ((old_narrative_sha256 IS NULL OR old_narrative_sha256 ~ '^[0-9a-f]{64}$') AND new_narrative_sha256 ~ '^[0-9a-f]{64}$'),
+      CONSTRAINT control_objective_events_length_check CHECK ((old_narrative_length IS NULL OR old_narrative_length >= 0) AND new_narrative_length >= 0)
+  );
+  ALTER TABLE control_objective_events DROP CONSTRAINT IF EXISTS control_objective_events_source_check;
+  ALTER TABLE control_objective_events ADD CONSTRAINT control_objective_events_source_check CHECK (source IN (${objectiveChangeSourceList}));
+  CREATE INDEX IF NOT EXISTS idx_control_objective_events_objective ON control_objective_events (tenant_id, program_id, objective_id, created_at DESC);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { getDbMode, getTenantProgram, pool, queryWithProgram, queryWithTenant, type ProgramScope, type SqlParam } from './db';
 import { PROGRAM_FRAMEWORK_IDS } from './schema';
 import { readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
+import { __deleteProgramObjectivesForMemory, cloneObjectives } from './controlObjectives';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
 import { getFrameworkControls } from '../src/data/frameworks';
@@ -356,7 +357,8 @@ const DEFAULT_ROLE = 'IT / Security Lead';
  * when the source's catalog has the same id, or when exactly one control of the source's catalog is an EXACT / EQUIVALENT crosswalk
  * match for it (the copy is then written under the target's id). Nothing else is copied: no evidence, SSP imports or POA&M items, and
  * nothing for a control with neither notes nor a role of its own. Each copied row records a history event from `who`. Returns how many
- * controls were copied.
+ * controls were copied. When both programs have the same framework the assessment objectives' narratives are copied too (status reset,
+ * no evidence links; see cloneObjectives).
  */
 export async function cloneProgramContent(source: Program, target: Program, who: ControlChangeActor): Promise<number> {
   if (source.tenantId !== target.tenantId) throw new ProgramError('program_not_found', 'Program not found');
@@ -382,6 +384,11 @@ export async function cloneProgramContent(source: Program, target: Program, who:
       who
     );
     copied++;
+  }
+  // The assessment objectives follow only a clone of the same framework (their ids belong to it): the narratives, never the status or evidence links.
+  if (source.frameworkId === target.frameworkId) {
+    const inTarget = catalogIds(target);
+    await cloneObjectives({ tenantId, programId: source.id }, { tenantId, programId: target.id }, { source: 'clone', actor: who.actor, userId: who.userId }, (id) => inTarget.has(id));
   }
   return copied;
 }
@@ -504,6 +511,7 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
   if (isMemory()) {
     // the answers of the program go with it (in PostgreSQL the foreign key cascades); the history events stay
     await queryWithProgram({ tenantId, programId: id }, 'DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2', [tenantId, id]);
+    __deleteProgramObjectivesForMemory({ tenantId, programId: id });
     memoryPrograms.delete(id);
     return;
   }
