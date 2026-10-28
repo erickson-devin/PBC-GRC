@@ -33,6 +33,11 @@ app.use(cors({
   origin: true,
   credentials: true,
 }));
+// API responses carry tenant data: never cached by a browser or proxy (set before the body parsers so their 400/413 replies have it too).
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 // The ingest route hashes the exact request bytes, so it reads its own raw body
 const jsonParser = express.json({ limit: '15mb' });
 app.use((req, res, next) => (req.path.replace(/\/+$/, '').toLowerCase() === '/api/v1/vm/ingest' ? next() : jsonParser(req, res, next)));

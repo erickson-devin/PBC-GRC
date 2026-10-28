@@ -6,7 +6,7 @@ import { server } from '../server/index';
 /**
  * Evidence download over HTTP: upload (upload-url, then the raw PUT), GET /evidence/:id/file as the owner and as a VIEWER member,
  * the 401 without a token, the no-store and nosniff headers, verify-integrity, an inherited copy's file, and a record whose bytes
- * were never uploaded (404). Runs against the in-memory store and a throw-away vault. Boots the server on port 8080: run it alone.
+ * were never uploaded (404). Section H: every /api response (public, 401, 200, ingest, malformed-JSON 400) carries Cache-Control: no-store. Runs against the in-memory store and a throw-away vault. Boots the server on port 8080: run it alone.
  */
 let passed = 0;
 let total = 0;
@@ -92,6 +92,26 @@ async function run() {
   const file2 = await call('GET', `/evidence/${E2}/file`, owner, T);
   const ver2 = await call('GET', `/evidence/${E2}/verify-integrity`, owner, T);
   assert(up2.status === 201 && file2.status === 404 && ver2.status === 404, 'D8 upload-url without a PUT: /file and verify-integrity are 404', [up2.status, file2.status, ver2.status]);
+
+  console.log('\n--- H: /api no-store ---');
+  const noStore = (r: { headers: Headers }) => r.headers.get('cache-control') === 'no-store';
+  const h1 = await call('GET', '/health', null);
+  assert(h1.status === 200 && noStore(h1) && h1.headers.get('x-content-type-options') === 'nosniff', 'H1 GET /health without a token -> 200, no-store, nosniff', [h1.status, h1.headers.get('cache-control')]);
+  const h2 = await call('GET', '/tenants', null);
+  assert(h2.status === 401 && noStore(h2), 'H2 GET /tenants without a token -> 401, no-store', [h2.status, h2.headers.get('cache-control')]);
+  const h3 = await call('GET', `/evidence/${E}/file`, null);
+  assert(h3.status === 401 && noStore(h3), 'H3 GET /evidence/:id/file without a token -> 401, no-store', [h3.status, h3.headers.get('cache-control')]);
+  const h4 = await call('GET', '/tenants', owner);
+  assert(h4.status === 200 && noStore(h4), 'H4 GET /tenants as the owner -> 200, no-store', [h4.status, h4.headers.get('cache-control')]);
+  const h5 = await call('GET', `/tenants/${T}/assets`, owner, T);
+  assert(h5.status === 200 && noStore(h5), 'H5 GET /tenants/:id/assets as the owner -> 200, no-store', [h5.status, h5.headers.get('cache-control')]);
+  const h6 = await call('POST', '/vm/ingest', null, undefined, {});
+  assert(h6.status === 401 && noStore(h6), 'H6 POST /vm/ingest without Authorization -> 401, no-store', [h6.status, h6.headers.get('cache-control')]);
+  const h7 = await fetch(`${BASE}/tenants`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${owner}` }, body: '{bad' });
+  await h7.text();
+  assert(h7.status === 400 && noStore(h7), 'H7 POST /tenants with a malformed JSON body -> 400, no-store', [h7.status, h7.headers.get('cache-control')]);
+  const h8 = await call('GET', '/auth/config', null);
+  assert(noStore(h8), 'H8 GET /auth/config -> no-store', [h8.status, h8.headers.get('cache-control')]);
 }
 
 run()
