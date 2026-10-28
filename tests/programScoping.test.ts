@@ -2,6 +2,7 @@ import './testEnv';
 import { server } from '../server/index';
 import { readControlAssessments } from '../server/controlAssessments';
 import { getFrameworkControls } from '../src/data/frameworks';
+import { nistControlsWithPrivacy } from '../src/data/programScope';
 
 /**
  * Programs over HTTP (a program is a tenant's authorization boundary): the programs API (create, validate, clone, archive, delete,
@@ -182,6 +183,17 @@ async function run() {
   const defaultAfter = (await call('GET', `/tenants/${T}/programs/${DEFAULT}/metrics`, owner, T)).body;
   assert(l1Controls.status === 200 && l1Controls.body?.framework === 'CMMC_L1' && l1Controls.body?.controls?.length === 17 && seeded.size === 17, '29 a fresh CMMC_L1 program asked for no framework serves its own 17 controls and seeds them there', [l1Controls.body?.framework, l1Controls.body?.controls?.length, seeded.size]);
   assert(JSON.stringify(defaultBefore) === JSON.stringify(defaultAfter) && (await readControlAssessments({ tenantId: T, programId: DEFAULT })).size === 0, '29 the default program\'s rows and metrics are unchanged', [defaultBefore, defaultAfter]);
+
+  console.log('\n--- 30: the privacy baseline widens the control universe of its program only ---');
+  const plusP = await newProgram(T, { name: 'NIST Moderate plus privacy', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true });
+  const PLUS = plusP.body?.program?.id as string;
+  const plainIds = new Set(nistControlsWithPrivacy('MODERATE', false).map((c) => c.id));
+  const privOnly = nistControlsWithPrivacy('MODERATE', true).find((c) => !plainIds.has(c.id))?.id ?? '';
+  const withP = await call('GET', '/controls?framework=NIST_800_53_REV5&baseline=MOD_MOD_MOD', owner, T, undefined, PLUS);
+  assert(plusP.status === 201 && withP.status === 200 && withP.body?.controls?.length === 340 && withP.body.totalCount === 340 && withP.body.privacyBaseline === true, '30 a MODERATE + privacy program lists 340 controls and says privacyBaseline true', [plusP.body, withP.body?.controls?.length, withP.body?.privacyBaseline]);
+  assert(privOnly !== '' && withP.body?.controls?.some((c: Json) => c.id === privOnly), '30 and the list includes a privacy-only control', privOnly);
+  const plainNist = await call('GET', '/controls?framework=NIST_800_53_REV5&baseline=MOD_MOD_MOD', owner, T, undefined, nist.body?.program?.id as string);
+  assert(plainNist.status === 200 && plainNist.body?.controls?.length === 287 && plainNist.body.privacyBaseline === undefined && !plainNist.body.controls.some((c: Json) => c.id === privOnly), '30 a plain MODERATE program lists 287 controls, without the privacy-only control and without the flag', [plainNist.body?.controls?.length, plainNist.body?.privacyBaseline]);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

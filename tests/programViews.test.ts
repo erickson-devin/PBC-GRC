@@ -80,6 +80,19 @@ assert(/getControls\(tenant\.id, \{ framework: tenant\.primaryFramework \}, null
 const onboarding = read('src/components/onboarding/OnboardingModal.tsx');
 assert(/updateProgram\(defaultProgram\.id, \{ boundarySummary/.test(onboarding) && /p\.isDefault/.test(onboarding), 'OnboardingModal.tsx writes the boundary to the default program');
 
+console.log('--- privacy baseline (#20) ---');
+const programForm = read('src/components/programs/ProgramFormModal.tsx');
+assert(/privacyBaseline/.test(programForm) && /type="checkbox"/.test(programForm) && /SP 800-53B privacy baseline/.test(programForm), 'ProgramFormModal.tsx has the privacy baseline checkbox');
+assert(/Privacy baseline: \{program\.privacyBaseline \? 'Yes' : 'No'\}/.test(programForm), 'ProgramFormModal.tsx shows the privacy baseline read-only on an edit');
+assert(/\+ Privacy/.test(read('src/components/layout/ProgramSwitcher.tsx')), 'ProgramSwitcher.tsx chip appends " + Privacy"');
+assert(/\+ Privacy/.test(read('src/components/programs/ProgramsPage.tsx')), 'ProgramsPage.tsx baseline chip appends " + Privacy"');
+assert(/programFrameworkControls\(/.test(read('src/context/AssessmentContext.tsx')) && /privacyBaseline: activeProgram\.privacyBaseline/.test(read('src/context/AssessmentContext.tsx')), 'AssessmentContext.tsx resolves the NIST program controls with the privacy baseline');
+const switcher = read('src/components/layout/FrameworkSwitcher.tsx');
+assert(/activeProgram\?\.privacyBaseline/.test(switcher) && /disabled=\{Boolean\(o\.disabledReason\)\}/.test(switcher), 'FrameworkSwitcher.tsx disables the No PII overlay for a privacy program');
+assert(/activeProgram\?\.privacyBaseline && storedOverlayFilters\.noPiiProcessing/.test(read('src/context/TenantContext.tsx')), 'TenantContext.tsx does not apply No PII processing to a privacy program');
+assert(/value="PRIVACY"/.test(matrix) && /baselines\[selectedBaselineFilter\.toLowerCase\(\)/.test(matrix) && /\+ Privacy/.test(matrix), 'AssessmentMatrix.tsx has the Privacy filter and label');
+assert(/coverage\?\.privacy/.test(ssp), 'SspImportView.tsx marks an import that covered the privacy baseline');
+
 console.log('--- no stale scope identifiers ---');
 for (const rel of FILES) assert(!read(rel).includes('liveControlsTenantId'), `${path.basename(rel)} does not reference liveControlsTenantId`);
 

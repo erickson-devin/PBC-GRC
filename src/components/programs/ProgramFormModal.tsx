@@ -68,6 +68,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
     program?.framework ?? (activeProgram && frameworkOptions.includes(activeProgram.framework) ? activeProgram.framework : frameworkOptions[0] ?? '')
   );
   const [baseline, setBaseline] = useState<string>(program?.baseline ?? '');
+  const [privacyBaseline, setPrivacyBaseline] = useState(false);
   const [description, setDescription] = useState(program?.description ?? '');
   const [boundarySummary, setBoundarySummary] = useState(program?.boundarySummary ?? '');
   const [seed, setSeed] = useState<ProgramSeed>('blank');
@@ -83,7 +84,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
   }, []);
 
   const validation = validateProgramInput(
-    { name, framework, baseline, description, boundarySummary, seed, sourceProgramId },
+    { name, framework, baseline, privacyBaseline, description, boundarySummary, seed, sourceProgramId },
     {
       // In edit mode the framework is whatever the program carries, even when the tenant no longer lists it
       tenantFrameworks: isEdit && program ? [program.framework] : frameworkOptions,
@@ -205,6 +206,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   value={framework}
                   onChange={(e) => {
                     setFramework(e.target.value);
+                    setPrivacyBaseline(false);
                     if (e.target.value !== 'NIST_800_53_REV5') setBaseline('');
                   }}
                   disabled={isSaving}
@@ -248,6 +250,21 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   </select>
                 )}
                 {fieldError('baseline')}
+                {isEdit && program ? (
+                  <p className="mt-1 text-xs text-slate-400">Privacy baseline: {program.privacyBaseline ? 'Yes' : 'No'}</p>
+                ) : (
+                  <label htmlFor={fieldId('privacyBaseline')} className="mt-2 flex items-start gap-2 text-xs text-slate-300">
+                    <input
+                      id={fieldId('privacyBaseline')}
+                      type="checkbox"
+                      checked={privacyBaseline}
+                      onChange={(e) => setPrivacyBaseline(e.target.checked)}
+                      disabled={isSaving}
+                      className="mt-0.5"
+                    />
+                    <span>Also apply the SP 800-53B privacy baseline (the system processes PII)</span>
+                  </label>
+                )}
               </div>
             )}
           </div>

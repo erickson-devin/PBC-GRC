@@ -11,6 +11,7 @@ import {
   deleteProgram,
   ensureDefaultProgram,
   getProgram,
+  getProgramMetrics,
   listPrograms,
   migrateTenantToPrograms,
   unarchiveProgram,
@@ -18,6 +19,8 @@ import {
 } from '../server/programs';
 import { PROGRAM_FRAMEWORK_IDS } from '../server/schema';
 import { FRAMEWORK_REGISTRY } from '../src/data/frameworks/frameworkRegistry';
+import { programFrameworkControls } from '../src/data/programScope';
+import type { OverlayFilters } from '../src/types/framework';
 
 /**
  * The program (authorization boundary) data layer in the in-memory store: no server, no database. Covers the default program and its
@@ -215,6 +218,39 @@ async function main() {
     refused = true;
   }
   assert(refused, "an evidence insert under B for A's program id is refused");
+
+  console.log('\n--- the privacy baseline (issue #20) ---');
+  await mkTenant('t-priv', 'NIST_800_53_REV5', ['NIST_800_53_REV5', 'CMMC_L2']);
+  const privDefault = await ensureDefaultProgram('t-priv');
+  assert(privDefault.privacyBaseline === false && d1.privacyBaseline === false, 'a default program has no privacy baseline', [privDefault.privacyBaseline, d1.privacyBaseline]);
+  const mp = await createProgram('t-priv', { name: 'MOD plus privacy', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true }, 'u');
+  const mod = await createProgram('t-priv', { name: 'MOD plain', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE' }, 'u');
+  const modNull = await createProgram('t-priv', { name: 'MOD null', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: null }, 'u');
+  const modFalse = await createProgram('t-priv', { name: 'MOD false', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: false }, 'u');
+  assert(mp.privacyBaseline === true && (await getProgram('t-priv', mp.id))?.privacyBaseline === true, 'NIST MODERATE with privacyBaseline true -> true');
+  assert(mod.privacyBaseline === false && modNull.privacyBaseline === false && modFalse.privacyBaseline === false, 'NIST without it (or null / false) -> false', [mod.privacyBaseline, modNull.privacyBaseline, modFalse.privacyBaseline]);
+  assert((await codeOf(createProgram('t-priv', { name: 'L2 privacy', frameworkId: 'CMMC_L2', privacyBaseline: true }, 'u'))) === 'invalid_baseline', 'CMMC_L2 with privacyBaseline true -> invalid_baseline');
+  assert((await codeOf(createProgram('t-priv', { name: 'Yes', frameworkId: 'NIST_800_53_REV5', privacyBaseline: 'yes' as unknown as boolean }, 'u'))) === 'invalid_baseline', "a non-boolean ('yes') -> invalid_baseline");
+  assert((await codeOf(updateProgram('t-priv', mp.id, { privacyBaseline: false }))) === 'invalid_baseline', 'update: false on a privacy program -> invalid_baseline');
+  assert((await codeOf(updateProgram('t-priv', mod.id, { privacyBaseline: true }))) === 'invalid_baseline', 'update: true on a program without it -> invalid_baseline');
+  assert((await codeOf(updateProgram('t-priv', mp.id, { privacyBaseline: true, name: 'MOD plus privacy 2' }))) === null && (await getProgram('t-priv', mp.id))?.privacyBaseline === true, 'update: the same value is a no-op (the form can post the whole program back)');
+  assert((await codeOf(updateProgram('t-priv', mod.id, { privacyBaseline: false }))) === null, 'update: false on a program without it is a no-op');
+
+  const union = programFrameworkControls({ framework: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true }, {} as OverlayFilters);
+  const plainMod = programFrameworkControls({ framework: 'NIST_800_53_REV5', baseline: 'MODERATE' }, {} as OverlayFilters);
+  assert((await getProgramMetrics(mp)).total === union.length && union.length === 340, 'metrics total of a MOD+P program is the union (340)', [(await getProgramMetrics(mp)).total, union.length]);
+  assert((await getProgramMetrics(mod)).total === plainMod.length && plainMod.length === 287, 'metrics total of a plain MOD program is unchanged (287)', (await getProgramMetrics(mod)).total);
+
+  const plainIds = new Set(plainMod.map((c) => c.id));
+  const privOnlyId = union.find((c) => !plainIds.has(c.id))?.id ?? '';
+  assert(privOnlyId !== '', 'the union holds a privacy-only control', privOnlyId);
+  const [pSql, pParams] = control('t-priv', mp.id, privOnlyId, 'MET');
+  await queryWithProgram({ tenantId: 't-priv', programId: mp.id }, pSql, [...pParams]);
+  const clonedPlus = await createProgram('t-priv', { name: 'MOD plus privacy clone', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true, seed: { cloneFrom: mp.id } }, 'u');
+  const clonedPlain = await createProgram('t-priv', { name: 'MOD plain clone', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', seed: { cloneFrom: mp.id } }, 'u');
+  const selectIds = async (p: { id: string }) => (await queryWithProgram({ tenantId: 't-priv', programId: p.id }, 'SELECT control_id FROM control_assessments WHERE tenant_id = $1', ['t-priv'])).rows.map((r) => r.control_id);
+  assert((await selectIds(clonedPlus)).includes(privOnlyId), 'clone: a note on a privacy-only control is copied MOD+P -> MOD+P', await selectIds(clonedPlus));
+  assert(!(await selectIds(clonedPlain)).includes(privOnlyId), 'clone: it is not copied to a plain MOD target', await selectIds(clonedPlain));
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

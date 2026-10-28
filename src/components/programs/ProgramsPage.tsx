@@ -25,8 +25,8 @@ function actionError(err: unknown, fallback: string): string {
   return ACTION_MESSAGES[key] ?? (errorMessage(err) || fallback);
 }
 
-const baselineChip = (program: Pick<Program, 'baseline'>) =>
-  program.baseline ? `${program.baseline.charAt(0)}${program.baseline.slice(1).toLowerCase()} baseline` : null;
+const baselineChip = (program: Pick<Program, 'baseline' | 'privacyBaseline'>) =>
+  program.baseline ? `${program.baseline.charAt(0)}${program.baseline.slice(1).toLowerCase()} baseline${program.privacyBaseline ? ' + Privacy' : ''}` : null;
 
 const badgeClass = 'inline-flex items-center shrink-0 rounded-full px-2.5 py-0.5 text-xs font-mono tracking-tight leading-none whitespace-nowrap font-medium';
 const NEUTRAL_BADGE = `${badgeClass} bg-slate-800/60 text-slate-300 border border-slate-700/50`;

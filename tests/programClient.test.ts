@@ -13,7 +13,7 @@ import {
   shouldPersistAssessment,
   validateProgramInput,
 } from '../src/data/programSync';
-import { programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
+import { nistControlsWithPrivacy, programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 import { StorageService } from '../src/services/storageService';
 import { ASSESSMENT_KEY_PREFIX } from '../src/services/browserStorageScrub';
@@ -130,6 +130,51 @@ for (const fw of ['CMMC_L1', 'CMMC_L2'] as const) {
   assert(programFrameworkControls({ framework: fw, baseline: null }, noOverlays).length === getFrameworkControls(fw).length, `B3 ${fw} control count is unchanged by the program helper`);
 }
 assert(programFrameworkControls({ framework: 'CMMC_L2', baseline: null }, { nonNetworkedOnly: true }).length === getFrameworkControls('CMMC_L2', 'ALL_CONTROLS', { nonNetworkedOnly: true }).length, 'B3b overlays pass through');
+
+console.log('\n--- privacy baseline ---');
+const NIST = 'NIST_800_53_REV5';
+const catalog = getFrameworkControls(NIST);
+const modIds = new Set(getFrameworkControls(NIST, 'MODERATE').map((c) => c.id));
+const lowIds = new Set(getFrameworkControls(NIST, 'LOW').map((c) => c.id));
+const highIds = new Set(getFrameworkControls(NIST, 'HIGH').map((c) => c.id));
+const privIds = new Set(catalog.filter((c) => c.baselines?.privacy).map((c) => c.id));
+const unionOf = (a: Set<string>) => new Set([...a, ...privIds]);
+const privOnly = [...privIds].find((id) => !modIds.has(id));
+const modPriv = programFrameworkControls({ framework: NIST, baseline: 'MODERATE', privacyBaseline: true }, noOverlays);
+const modPrivIds = modPriv.map((c) => c.id);
+assert(privIds.size > 0 && privOnly !== undefined, 'PB0 the catalog has privacy controls outside the Moderate baseline', privIds.size);
+assert(modPriv.length === unionOf(modIds).size && new Set(modPrivIds).size === modPriv.length, 'PB1 MODERATE + privacy is the union, each control once', { got: modPriv.length, want: unionOf(modIds).size });
+assert(privOnly !== undefined && modPrivIds.includes(privOnly), 'PB2 a privacy-only control is included', privOnly);
+const catalogOrder = catalog.map((c) => c.id).filter((id) => unionOf(modIds).has(id));
+assert(modPrivIds.join('|') === catalogOrder.join('|'), 'PB3 catalog order is preserved');
+assert(programFrameworkControls({ framework: NIST, baseline: 'MODERATE', privacyBaseline: false }, noOverlays).length === modIds.size && programFrameworkControls({ framework: NIST, baseline: 'MODERATE' }, noOverlays).length === modIds.size, 'PB4 privacy false and the field absent leave the baseline unchanged', modIds.size);
+assert(programFrameworkControls({ framework: 'CMMC_L2', baseline: null, privacyBaseline: true }, noOverlays).length === getFrameworkControls('CMMC_L2').length, 'PB5 CMMC_L2 ignores privacyBaseline');
+const lowPriv = programFrameworkControls({ framework: NIST, baseline: 'LOW', privacyBaseline: true }, noOverlays);
+assert(lowPriv.length === unionOf(lowIds).size && lowPriv.every((c) => c.baselines?.low || c.baselines?.privacy), 'PB6 LOW + privacy: every control is low or privacy', lowPriv.length);
+assert(programFrameworkControls({ framework: NIST, baseline: 'HIGH', privacyBaseline: true }, noOverlays).length === unionOf(highIds).size, 'PB7 HIGH + privacy is the union');
+const tiers: Array<['LOW_LOW_LOW' | 'MOD_MOD_MOD' | 'HIGH_HIGH_HIGH', 'LOW' | 'MODERATE' | 'HIGH']> = [['LOW_LOW_LOW', 'LOW'], ['MOD_MOD_MOD', 'MODERATE'], ['HIGH_HIGH_HIGH', 'HIGH']];
+for (const [tier, level] of tiers) {
+  const want = programFrameworkControls({ framework: NIST, baseline: level, privacyBaseline: true }, noOverlays).map((c) => c.id).join('|');
+  assert(nistControlsWithPrivacy(tier, true).map((c) => c.id).join('|') === want && nistControlsWithPrivacy(level, true).map((c) => c.id).join('|') === want, `PB8 the server helper matches programFrameworkControls for ${tier}`);
+  assert(nistControlsWithPrivacy(tier, false).length === getFrameworkControls(NIST, level).length, `PB8b the server helper without privacy is the plain ${tier} baseline`);
+}
+const noWireless = { nonNetworkedOnly: false, noWireless: true };
+const wirelessCatalog = getFrameworkControls(NIST, 'ALL_CONTROLS', noWireless);
+assert(programFrameworkControls({ framework: NIST, baseline: 'MODERATE', privacyBaseline: true }, noWireless).every((c) => wirelessCatalog.some((w) => w.id === c.id)), 'PB9 overlays that remove controls apply to the privacy part too');
+const pbList = parseProgramList({
+  programs: [
+    { id: 'a', framework: NIST, baseline: 'LOW', privacyBaseline: true },
+    { id: 'b', framework: 'CMMC_L2', privacyBaseline: true },
+    { id: 'c', framework: NIST, baseline: 'HIGH', privacy_baseline: true },
+    { id: 'd', framework: NIST, baseline: 'HIGH', privacyBaseline: 'true' },
+  ],
+});
+assert(pbList.map((p) => p.privacyBaseline).join() === 'true,false,true,false', 'PB10 parseProgramList reads privacyBaseline (camel or snake), NIST only, true only for boolean true', pbList.map((p) => p.privacyBaseline));
+const vPriv = validateProgramInput({ name: 'N', framework: NIST, baseline: 'MODERATE', privacyBaseline: true }, ctx);
+const vPrivCmmc = validateProgramInput({ name: 'N', framework: 'CMMC_L2', privacyBaseline: true }, ctx);
+assert(vPriv.valid && vPriv.value.privacyBaseline === true, 'PB11 NIST MODERATE with privacyBaseline keeps it', vPriv);
+assert(vPrivCmmc.valid && vPrivCmmc.value.privacyBaseline === false && Object.keys(vPrivCmmc.errors).length === 0, 'PB12 CMMC_L2 silently drops privacyBaseline', vPrivCmmc);
+assert((programCreateBody(vPriv.value) as { privacyBaseline?: boolean }).privacyBaseline === true && !('privacyBaseline' in programCreateBody(vPrivCmmc.value)) && !('privacyBaseline' in programCreateBody(validateProgramInput({ name: 'N', framework: NIST, baseline: 'LOW' }, ctx).value)), 'PB13 the create body has privacyBaseline only when set');
 
 console.log('\n--- stale responses and saves ---');
 assert(shouldPersistAssessment('t1::pA', 't1::pB') === false, 'S1 a state of one program is not saved under another');

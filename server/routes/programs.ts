@@ -72,8 +72,9 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * POST /api/v1/tenants/:tenantId/programs
- * Body: { name, frameworkId, baseline?, description?, systemBoundarySummary?, seed?: { cloneFrom: programId } }.
- * 201 { program }. The framework must be enabled for the tenant (403 framework_not_enabled); NIST SP 800-53 takes LOW, MODERATE or HIGH.
+ * Body: { name, frameworkId, baseline?, privacyBaseline?, description?, systemBoundarySummary?, seed?: { cloneFrom: programId } }.
+ * 201 { program }. The framework must be enabled for the tenant (403 framework_not_enabled); NIST SP 800-53 takes LOW, MODERATE or HIGH,
+ * and may add the privacy baseline (privacyBaseline: true; any other framework, or a non-boolean, is a 400 invalid_baseline).
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -92,6 +93,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         name: b.name as string,
         frameworkId: b.frameworkId as string,
         baseline: b.baseline as string | null | undefined,
+        privacyBaseline: b.privacyBaseline as boolean | null | undefined,
         description: b.description as string | undefined,
         systemBoundarySummary: b.systemBoundarySummary as string | undefined,
         seed: (seed ?? null) as { cloneFrom?: string } | null,
@@ -108,7 +110,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * PUT /api/v1/tenants/:tenantId/programs/:id
- * Body: any of { name, description, systemBoundarySummary }. frameworkId and baseline are immutable: sending a different value is a 400.
+ * Body: any of { name, description, systemBoundarySummary }. frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
  */
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -124,6 +126,7 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     patch[field] = b[field] as string;
   }
   if (b.baseline !== undefined) patch.baseline = b.baseline as string | null;
+  if (b.privacyBaseline !== undefined) patch.privacyBaseline = b.privacyBaseline as boolean | null;
   try {
     const program = await updateProgram(tenantId, idOf(req), patch);
     res.json({ program });

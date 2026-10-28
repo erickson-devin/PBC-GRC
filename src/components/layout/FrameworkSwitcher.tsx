@@ -9,7 +9,9 @@ import { useEscapeKey } from '../../hooks/useEscapeKey';
  * stays per browser (decision 8) are the four operational overlays: they tailor which controls apply to the boundary.
  */
 export const FrameworkSwitcher: React.FC = () => {
-  const { activeOverlayFilters, toggleOverlayFilter } = useTenant();
+  const { activeOverlayFilters, toggleOverlayFilter, activeProgram } = useTenant();
+  // A program with the privacy baseline processes PII: the "No PII Processing" overlay cannot apply to it
+  const privacyLocked = Boolean(activeProgram?.privacyBaseline);
 
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -40,6 +42,7 @@ export const FrameworkSwitcher: React.FC = () => {
     iconOn: string;
     buttonOn: string;
     toggle: () => void;
+    disabledReason?: string;
   }[] = [
     {
       // Stand-Alone / Air-Gapped
@@ -80,6 +83,7 @@ export const FrameworkSwitcher: React.FC = () => {
       iconOn: 'text-emerald-400',
       buttonOn: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
       toggle: () => toggleOverlayFilter('noPiiProcessing'),
+      disabledReason: privacyLocked ? 'This program applies the privacy baseline' : undefined,
     },
   ];
 
@@ -133,18 +137,20 @@ export const FrameworkSwitcher: React.FC = () => {
                       <Icon className={`w-3.5 h-3.5 ${o.active ? o.iconOn : 'text-slate-400'}`} />
                       <div>
                         <div className="text-xs font-bold text-slate-300">{o.title}</div>
-                        <div className="text-xs text-slate-400">{o.detail}</div>
+                        <div className="text-xs text-slate-400">{o.disabledReason ?? o.detail}</div>
                       </div>
                     </div>
                     <button
                       type="button"
                       aria-pressed={Boolean(o.active)}
                       aria-label={`${o.title} overlay`}
+                      disabled={Boolean(o.disabledReason)}
+                      title={o.disabledReason}
                       onClick={(e) => {
                         e.stopPropagation();
                         o.toggle();
                       }}
-                      className={`px-2 py-0.5 rounded text-xs font-bold transition-all ${
+                      className={`px-2 py-0.5 rounded text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                         o.active ? o.buttonOn : 'bg-slate-800 text-slate-400 hover:text-slate-300'
                       }`}
                     >

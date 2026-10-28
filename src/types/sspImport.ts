@@ -139,6 +139,8 @@ export interface CoverageReport {
   framework: SspImportFramework;
   /** NIST SP 800-53 only: the baseline the counts below are measured against. */
   baseline?: SspBaseline;
+  /** NIST SP 800-53 only: true when the counts include the SP 800-53B privacy baseline (the program has it, issue #20). */
+  privacy?: boolean;
   totalControls: number;
   foundControls: number;
   /** In-scope control ids the document never mentions. */

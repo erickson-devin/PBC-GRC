@@ -8,6 +8,8 @@ import { getFrameworkControls } from '../src/data/frameworks';
 import { parseParameterTags, collapseTags } from '../src/data/frameworks/parameters';
 import { chunkDocument, isAnchorLine } from '../server/ssp/chunk';
 import { coverageFor, mapDocumentToControls } from '../server/ssp/controlMapper';
+import { privacyCoverage } from '../server/ssp/privacyCoverage';
+import { nistControlsWithPrivacy } from '../src/data/programScope';
 import { explicitControlIds } from '../server/ssp/analyze';
 import { resolveControlId } from '../server/ssp/grounding';
 import { candidatesForSection, controlSupport, DEFAULT_MAX_CANDIDATES } from '../server/ssp/retrieval';
@@ -101,6 +103,17 @@ function chunkAndMapTests() {
   assert(cMod.foundControls === 3 && cLow.foundControls === 1 && cHigh.foundControls === 4 && !cMod.missing.includes('AC-2') && cMod.missing.length === 287 - 3 && cMod.missing.includes('AC-3'), 'only controls inside the baseline count as found; the rest are listed as missing');
   assert(coverageFor(F, undefined, found).baseline === 'MODERATE' && coverageFor('CMMC_L2', null, new Set()).baseline === undefined, 'Moderate unless chosen; CMMC reports have no baseline');
 
+  console.log('\n--- The privacy baseline (issue #20) ---');
+  const privIds = new Set(NIST_800_53_CONTROLS.filter((c) => c.baselines?.privacy).map((c) => c.id));
+  const unionMod = nistControlsWithPrivacy('MODERATE', true);
+  assert(privIds.size === 96 && unionMod.length === 340 && nistControlsWithPrivacy('LOW', true).length === 205 && nistControlsWithPrivacy('HIGH', true).length === 423, 'the privacy baseline has 96 controls and combines to 340 / 205 / 423 with Moderate / Low / High (a catalog change is noticed here)', [privIds.size, unionMod.length]);
+  const modIds = new Set(getFrameworkControls(F, 'MOD_MOD_MOD').map((c) => c.id));
+  const privOnlyId = [...privIds].find((id) => !modIds.has(id)) ?? '';
+  const pc = privacyCoverage('MODERATE', new Set(['AC-1', privOnlyId]));
+  assert(privOnlyId !== '' && pc.totalControls === 340 && pc.foundControls === 2 && pc.privacy === true && pc.framework === F && pc.baseline === 'MODERATE' && !pc.missing.includes('AC-1') && !pc.missing.includes(privOnlyId) && pc.missing.length === 338, 'privacyCoverage counts the security and the privacy-only control it is given and leaves them out of "missing"', { ...pc, missing: pc.missing.length });
+  const pcLow = privacyCoverage('LOW', new Set());
+  assert(pcLow.totalControls === 205 && pcLow.missing.length === pcLow.totalControls && pcLow.foundControls === 0 && privacyCoverage(null, new Set()).baseline === 'MODERATE', 'nothing found -> every control is missing (205 for Low); no baseline means Moderate');
+
   console.log('\n--- What the model may name ---');
   const offered = new Set(['AC-2', 'AC-2(1)']);
   const ok = (raw: unknown) => { const r = resolveControlId(raw, F, offered); return r.ok ? r.controlId : r.reason; };
@@ -166,24 +179,25 @@ function objectiveTests() {
 const jwt = (claims: Record<string, unknown>) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64')}.mock_pbc_signature`;
 const person = (sub: string) => jwt({ sub, email: `${sub}@test.mil`, name: sub, roles: { tenant_unrelated: 'VIEWER' } });
 type Json = Record<string, any>;
-async function call(method: string, p: string, token: string | null, tenant?: string, body?: unknown) {
+async function call(method: string, p: string, token: string | null, tenant?: string, body?: unknown, program?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenant) headers['x-tenant-id'] = tenant;
+  if (program) headers['x-program-id'] = program;
   const res = await fetch(`${BASE}${p}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: (await res.json().catch(() => null)) as Json | null };
 }
-async function upload(token: string, tenant: string, file: Buffer, fields: Record<string, string>) {
+async function upload(token: string, tenant: string, file: Buffer, fields: Record<string, string>, program?: string) {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, v);
   form.append('file', new Blob([new Uint8Array(file)]), 'plan.docx');
-  const res = await fetch(`${BASE}/tenants/${tenant}/ssp-imports`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'x-tenant-id': tenant }, body: form });
+  const res = await fetch(`${BASE}/tenants/${tenant}/ssp-imports`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'x-tenant-id': tenant, ...(program ? { 'x-program-id': program } : {}) }, body: form });
   return { status: res.status, body: (await res.json().catch(() => null)) as Json | null };
 }
-async function waitFor(token: string, tenant: string, jobId: string, ms = 30000): Promise<Json> {
+async function waitFor(token: string, tenant: string, jobId: string, ms = 30000, program?: string): Promise<Json> {
   const until = Date.now() + ms;
   for (;;) {
-    const job = (await call('GET', `/tenants/${tenant}/ssp-imports/${jobId}`, token, tenant)).body?.job as Json;
+    const job = (await call('GET', `/tenants/${tenant}/ssp-imports/${jobId}`, token, tenant, undefined, program)).body?.job as Json;
     if (job && ['READY_FOR_REVIEW', 'FAILED', 'CANCELLED', 'COMMITTED'].includes(job.status)) return job;
     if (Date.now() > until) throw new Error('timed out waiting for the import: ' + JSON.stringify(job?.status));
     await new Promise((r) => setTimeout(r, 80));
@@ -245,6 +259,15 @@ async function apiTests() {
   const cmmc = await upload(owner, nist, docx, { framework: 'CMMC_L2', baseline: 'LOW' });
   const cmmcJob = await waitFor(owner, nist, cmmc.body?.job?.id);
   assert(cmmcJob.baseline === null && cmmcJob.coverage.baseline === undefined && cmmcJob.coverage.totalControls === 110, 'a CMMC import ignores any baseline');
+
+  console.log('\n--- A program with the privacy baseline is measured against the union (issue #20) ---');
+  const plusProgram = (await call('POST', `/tenants/${nist}/programs`, owner, nist, { name: 'Moderate plus privacy', frameworkId: F, baseline: 'MODERATE', privacyBaseline: true })).body?.program?.id as string;
+  const privUp = await upload(owner, nist, docx, { framework: F }, plusProgram);
+  const privJob = await waitFor(owner, nist, privUp.body?.job?.id, 30000, plusProgram);
+  assert(privJob.status === 'READY_FOR_REVIEW' && privJob.coverage?.privacy === true && privJob.coverage.totalControls === 340 && privJob.coverage.baseline === 'MODERATE', 'a rules import into a MODERATE + privacy program is measured against the 340 union', privJob.coverage && { ...privJob.coverage, missing: undefined });
+  const privStaged = ((await call('GET', `/tenants/${nist}/ssp-imports/${privJob.id}/staged`, owner, nist, undefined, plusProgram)).body?.staged ?? []) as Json[];
+  assert(privStaged.map((s) => s.controlId).sort().join() === ids.join() && privJob.coverage.foundControls === privStaged.filter((s) => privJob.coverage.missing.indexOf(s.controlId) < 0).length, 'the staged suggestions are the same as without the privacy baseline', privStaged.map((s) => s.controlId));
+  assert(job.coverage.privacy === undefined && job.coverage.totalControls === 287, 'a plain MODERATE program has no privacy flag and 287 controls (the import above)');
 
   console.log('\n--- With the local model ---');
   fake.chats.length = 0;

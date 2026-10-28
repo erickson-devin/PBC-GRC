@@ -112,6 +112,21 @@ async function apiTests() {
   const nistList = ((await call('GET', `/tenants/${nistId}/programs`, admin, nistId)).body?.programs ?? []) as Json[];
   assert(nistList.length === 1 && nistList[0].frameworkId === 'NIST_800_53_REV5' && nistList[0].baseline === 'MODERATE', 'and a NIST-primary tenant has a MODERATE default program', nistList);
 
+  console.log('\n--- The privacy baseline of a program (issue #20) ---');
+  const privPost = await call('POST', `/tenants/${nistId}/programs`, admin, nistId, { name: 'Moderate plus privacy', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true });
+  assert(privPost.status === 201 && privPost.body?.program.privacyBaseline === true && privPost.body.program.baseline === 'MODERATE', 'POST a NIST MODERATE program with privacyBaseline true -> 201, privacyBaseline true', privPost.body);
+  const cmmcPriv = await call('POST', `/tenants/${nistId}/programs`, admin, nistId, { name: 'L2 plus privacy', frameworkId: 'CMMC_L2', privacyBaseline: true });
+  assert(cmmcPriv.status === 400 && cmmcPriv.body?.code === 'invalid_baseline', 'a CMMC_L2 program with privacyBaseline true -> 400 invalid_baseline', cmmcPriv.body);
+  const stringPriv = await call('POST', `/tenants/${nistId}/programs`, admin, nistId, { name: 'String privacy', frameworkId: 'NIST_800_53_REV5', privacyBaseline: 'true' });
+  assert(stringPriv.status === 400 && stringPriv.body?.code === 'invalid_baseline', "privacyBaseline 'true' (a string) -> 400 invalid_baseline", stringPriv.body);
+  const privOff = await call('PUT', `/tenants/${nistId}/programs/${privPost.body?.program.id}`, admin, nistId, { privacyBaseline: false });
+  assert(privOff.status === 400 && privOff.body?.code === 'invalid_baseline', 'PUT privacyBaseline false on a privacy program -> 400 invalid_baseline', privOff.body);
+  const privSame = await call('PUT', `/tenants/${nistId}/programs/${privPost.body?.program.id}`, admin, nistId, { privacyBaseline: true, description: 'kept' });
+  assert(privSame.status === 200 && privSame.body?.program.privacyBaseline === true, 'PUT with the same value is accepted', privSame.body);
+  const privList = ((await call('GET', `/tenants/${nistId}/programs`, admin, nistId)).body?.programs ?? []) as Json[];
+  assert(privList.find((p) => p.id === privPost.body?.program.id)?.metrics.total === 340, 'GET /programs: metrics.total of a MODERATE + privacy program is 340', privList.map((p) => p.metrics));
+  assert(privList.find((p) => p.isDefault)?.privacyBaseline === false && privList.find((p) => p.isDefault)?.metrics.total === 287, 'while the default MODERATE program has no privacy baseline (287)');
+
   console.log('\n--- Changing a program ---');
   const ownerTok = owner; // owner of l1Id
   const tryOwn = await call('PATCH', `/tenants/${l1Id}`, ownerTok, l1Id, { primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2'] });

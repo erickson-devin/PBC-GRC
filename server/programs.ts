@@ -8,6 +8,8 @@ import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
 import { getFrameworkControls } from '../src/data/frameworks';
 import { getEquivalentControlIds } from '../src/data/frameworks/controlMappings';
+import { programFrameworkControls } from '../src/data/programScope';
+import type { ComplianceFramework, OverlayFilters } from '../src/types/framework';
 
 /**
  * Programs: a tenant's authorization boundaries (an ATO effort or project). Each program has one framework and, for NIST SP 800-53,
@@ -35,6 +37,8 @@ export interface Program {
   description: string;
   frameworkId: string;
   baseline: ProgramBaseline | null;
+  /** The NIST SP 800-53B privacy baseline as an add-on to `baseline` (NIST programs only). Immutable; false for every other program. */
+  privacyBaseline: boolean;
   systemBoundarySummary: string;
   isDefault: boolean;
   archivedAt: string | null;
@@ -73,6 +77,8 @@ export interface NewProgramInput {
   frameworkId: string;
   /** NIST SP 800-53 only (LOW, MODERATE or HIGH; MODERATE when omitted). Any other framework takes none. */
   baseline?: string | null;
+  /** NIST SP 800-53 only: adds the SP 800-53B privacy baseline to the security baseline. Absent, null or false is none. */
+  privacyBaseline?: boolean | null;
   description?: string;
   systemBoundarySummary?: string;
   /** Initial content. Absent or empty is a blank program; `cloneFrom` (a program of the same tenant) copies its notes, see cloneProgramContent. */
@@ -87,6 +93,8 @@ export interface ProgramPatch {
   frameworkId?: string;
   /** Immutable, like frameworkId. */
   baseline?: string | null;
+  /** Immutable, like frameworkId. */
+  privacyBaseline?: boolean | null;
 }
 
 export type ProgramUsage = { evidence: number; imports: number; poam: number };
@@ -122,6 +130,7 @@ function rowToProgram(r: pg.QueryResultRow): Program {
     description: r.description ?? '',
     frameworkId: r.framework_id,
     baseline: (r.baseline ?? null) as ProgramBaseline | null,
+    privacyBaseline: r.privacy_baseline === true,
     systemBoundarySummary: r.system_boundary_summary ?? '',
     isDefault: Boolean(r.is_default),
     archivedAt: r.archived_at ? iso(r.archived_at) : null,
@@ -170,6 +179,7 @@ async function resolveDefaultProgram(tenantId: string): Promise<Program> {
       description: '',
       frameworkId,
       baseline,
+      privacyBaseline: false,
       systemBoundarySummary: '',
       isDefault: true,
       archivedAt: null,
@@ -296,6 +306,14 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   } else if (rawBaseline !== undefined && rawBaseline !== null && rawBaseline !== '') {
     throw new ProgramError('invalid_baseline', 'Only a NIST SP 800-53 program has a baseline');
   }
+  const rawPrivacy = input.privacyBaseline;
+  if (rawPrivacy !== undefined && rawPrivacy !== null && typeof rawPrivacy !== 'boolean') {
+    throw new ProgramError('invalid_baseline', 'The privacy baseline is true or false');
+  }
+  const privacyBaseline = rawPrivacy === true;
+  if (privacyBaseline && frameworkId !== 'NIST_800_53_REV5') {
+    throw new ProgramError('invalid_baseline', 'Only a NIST SP 800-53 program has a privacy baseline');
+  }
   const cloneFrom = input.seed?.cloneFrom;
   if (cloneFrom !== undefined && cloneFrom !== null && typeof cloneFrom !== 'string') throw new ProgramError('program_not_found', 'Program to clone from not found');
 
@@ -314,7 +332,7 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   if (isMemory()) {
     const now = new Date().toISOString();
     program = {
-      id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, systemBoundarySummary,
+      id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary,
       isDefault: false, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
     };
     memoryPrograms.set(program.id, program);
@@ -322,10 +340,10 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
     try {
       const res = await queryWithTenant(
         tenantId,
-        `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, system_boundary_summary, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, privacy_baseline, system_boundary_summary, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
-        [tenantId, name, description, frameworkId, baseline, systemBoundarySummary, by]
+        [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, by]
       );
       program = rowToProgram(res.rows[0]);
     } catch (err) {
@@ -344,9 +362,12 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   return program;
 }
 
-/** The controls a program's framework and baseline define (the whole catalog without a baseline). */
+/** The controls a program's framework and baseline define (the whole catalog without a baseline), the privacy baseline's included when it has one. */
 function catalogIds(program: Program): Set<string> {
-  return new Set(getFrameworkControls(program.frameworkId, program.baseline ?? 'ALL_CONTROLS').map((c) => c.id));
+  const controls = program.privacyBaseline
+    ? programFrameworkControls({ framework: program.frameworkId as ComplianceFramework, baseline: program.baseline, privacyBaseline: true }, {} as OverlayFilters)
+    : getFrameworkControls(program.frameworkId, program.baseline ?? 'ALL_CONTROLS');
+  return new Set(controls.map((c) => c.id));
 }
 
 const DEFAULT_ROLE = 'IT / Security Lead';
@@ -425,6 +446,9 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
   if (patch.baseline !== undefined) {
     const wanted = typeof patch.baseline === 'string' ? (patch.baseline.trim().toUpperCase() || null) : patch.baseline;
     if (wanted !== current.baseline) throw new ProgramError('invalid_baseline', 'The baseline of a program cannot be changed after creation');
+  }
+  if (patch.privacyBaseline !== undefined && (patch.privacyBaseline === true) !== current.privacyBaseline) {
+    throw new ProgramError('invalid_baseline', 'The privacy baseline cannot be changed after creation');
   }
   const name = patch.name === undefined ? current.name : validName(patch.name);
   if (name.toLowerCase() !== current.name.toLowerCase() && (await isNameTaken(tenantId, name, id))) throw nameTaken();

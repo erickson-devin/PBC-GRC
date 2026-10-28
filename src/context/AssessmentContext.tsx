@@ -30,6 +30,7 @@ import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectives
 import { ApiClient } from '../services/apiClient';
 import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
 import { programCacheSegment, programScopeKey, shouldPersistAssessment } from '../data/programSync';
+import { programFrameworkControls } from '../data/programScope';
 import {
   OBJECTIVE_CASCADE_EVENT,
   applyImportResult,
@@ -186,13 +187,20 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Dynamically resolve controls for the currently selected framework, baseline/CIA triad, and overlay filters
   const frameworkControls = useMemo(() => {
     const isNist80053 = activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5';
+    // A NIST program with the privacy baseline adds the SP 800-53B privacy controls to its security baseline (each control once)
+    if (isNist80053 && activeProgram) {
+      return programFrameworkControls(
+        { framework: activeFramework, baseline: activeProgram.baseline ?? null, privacyBaseline: activeProgram.privacyBaseline },
+        activeOverlayFilters
+      );
+    }
     const baseline = isNist80053 ? ciaTriad : activeBaselineTier;
     return getFrameworkControls(
       activeFramework,
       baseline,
       activeOverlayFilters
     );
-  }, [activeFramework, activeBaselineTier, ciaTriad, activeOverlayFilters]);
+  }, [activeFramework, activeBaselineTier, ciaTriad, activeOverlayFilters, activeProgram]);
 
   // Load tenant-isolated assessment state
   // (the program's cache is loaded by the effect below once the program is known; until then this is the tenant / default cache)

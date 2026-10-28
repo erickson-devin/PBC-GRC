@@ -170,6 +170,17 @@ assert(
   ['programs_framework_check', 'programs_baseline_check'].every((c) => TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) >= 0 && TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) < TABLES_SQL.indexOf('ADD CONSTRAINT ' + c)),
   'P1: the two programs checks are dropped before they are added, so a new framework reaches existing databases'
 );
+assert(
+  TABLES_SQL.includes('ALTER TABLE programs ADD COLUMN IF NOT EXISTS privacy_baseline BOOLEAN NOT NULL DEFAULT FALSE;') && !programsBlock.includes('privacy_baseline') && programDdl.includes('privacy_baseline'),
+  'P1: privacy_baseline is added to programs after the CREATE TABLE (so the table block is unchanged), inside the program DDL, false by default'
+);
+assert(
+  TABLES_SQL.includes("ADD CONSTRAINT programs_privacy_check CHECK (NOT privacy_baseline OR framework_id = 'NIST_800_53_REV5')") &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS programs_privacy_check') >= 0 &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS programs_privacy_check') < TABLES_SQL.indexOf('ADD CONSTRAINT programs_privacy_check'),
+  'P1: only a NIST SP 800-53 program can have the privacy baseline (programs_privacy_check, dropped before it is added)'
+);
+assert(TABLES_SQL.includes("ADD CONSTRAINT programs_baseline_check CHECK (baseline IS NULL OR (framework_id = 'NIST_800_53_REV5' AND baseline IN ('LOW', 'MODERATE', 'HIGH')))"), 'P1: programs_baseline_check is unchanged by the privacy baseline');
 for (const t of PROGRAM_SCOPED) {
   assert(TABLES_SQL.includes('ALTER TABLE ' + t + ' ADD COLUMN IF NOT EXISTS program_id VARCHAR(64)'), 'P1: ' + t + ' gets a nullable program_id, idempotently');
 }

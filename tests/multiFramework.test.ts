@@ -146,6 +146,14 @@ async function runMultiFrameworkTests() {
     const totalModControls = nistModRes.body?.controls?.length || 0;
     assert(totalModControls > 0, `NIST 800-53 Moderate returns catalog controls (${totalModControls})`);
 
+    // The HIGH baseline is accepted (it used to fall back to Moderate)
+    const nistHighRes = await makeRequest('/api/v1/controls?framework=NIST_800_53_REV5&baseline=HIGH_HIGH_HIGH', 'GET', TENANT_A_TOKEN, 'tenant-alpha');
+    assert(nistHighRes.status === 200 && nistHighRes.body?.baseline === 'HIGH_HIGH_HIGH', 'GET NIST 800-53 HIGH_HIGH_HIGH is accepted and reported as HIGH_HIGH_HIGH', nistHighRes.body?.baseline);
+    assert(nistHighRes.body?.controls?.length === 370, `NIST 800-53 High returns 370 controls (${nistHighRes.body?.controls?.length})`);
+    assert(nistModRes.body?.baseline === 'MOD_MOD_MOD' && totalModControls === 287, `NIST 800-53 Moderate still returns 287 controls (${totalModControls})`);
+    const nistLowRes = await makeRequest('/api/v1/controls?framework=NIST_800_53_REV5&baseline=LOW_LOW_LOW', 'GET', TENANT_A_TOKEN, 'tenant-alpha');
+    assert(nistLowRes.status === 200 && nistLowRes.body?.baseline === 'LOW_LOW_LOW' && nistLowRes.body?.controls?.length === 149, `NIST 800-53 Low returns 149 controls (${nistLowRes.body?.controls?.length})`);
+
     // Verify alias NIST_800_53_MOD works identically
     const nistAliasRes = await makeRequest('/api/v1/controls?framework=NIST_800_53_MOD', 'GET', TENANT_A_TOKEN, 'tenant-alpha');
     assert(nistAliasRes.status === 200, 'GET NIST_800_53_MOD alias returns HTTP 200');

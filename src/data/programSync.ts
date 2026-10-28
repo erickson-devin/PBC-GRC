@@ -48,6 +48,8 @@ function parseProgram(raw: unknown): Program | null {
     framework,
     // Only NIST SP 800-53 carries a baseline.
     baseline: framework === 'NIST_800_53_REV5' ? readBaseline(raw.baseline) : null,
+    // The privacy-baseline add-on is NIST SP 800-53 only and true only when the server says so.
+    privacyBaseline: framework === 'NIST_800_53_REV5' && (raw.privacyBaseline ?? raw.privacy_baseline) === true,
     boundarySummary: text(raw.boundarySummary ?? raw.systemBoundarySummary ?? raw.system_boundary_summary),
     isDefault: (raw.isDefault ?? raw.is_default) === true,
     archived: raw.archived === true || (typeof archivedAt === 'string' && archivedAt !== ''),
@@ -117,11 +119,12 @@ export type ProgramInputField = 'name' | 'framework' | 'baseline' | 'description
 export interface ProgramValidation {
   valid: boolean;
   errors: Partial<Record<ProgramInputField, string>>;
-  /** The input as it should be sent: trimmed, baseline stripped unless NIST, seed normalised. */
+  /** The input as it should be sent: trimmed, baseline and privacy baseline stripped unless NIST, seed normalised. */
   value: {
     name: string;
     framework: ComplianceFramework | string;
     baseline: ProgramBaseline | null;
+    privacyBaseline: boolean;
     description: string;
     boundarySummary: string;
     seed: 'blank' | 'clone';
@@ -132,7 +135,7 @@ export interface ProgramValidation {
 /**
  * Checks the create form. Name: 1 to 255 characters, unique among the tenant's programs ignoring case (archived ones too; on an
  * edit pass `editingId`). Framework: one the tenant has enabled. Baseline: required for NIST SP 800-53 (LOW, MODERATE or HIGH),
- * dropped for every other framework. Seed: blank, or a clone of an existing program.
+ * dropped for every other framework; the optional privacy baseline is kept only for NIST. Seed: blank, or a clone of an existing program.
  */
 export function validateProgramInput(
   input: ProgramInput,
@@ -167,7 +170,7 @@ export function validateProgramInput(
   return {
     valid: Object.keys(errors).length === 0,
     errors,
-    value: { name, framework: framework ?? String(input.framework ?? ''), baseline, description, boundarySummary, seed, sourceProgramId },
+    value: { name, framework: framework ?? String(input.framework ?? ''), baseline, privacyBaseline: isNist && input.privacyBaseline === true, description, boundarySummary, seed, sourceProgramId },
   };
 }
 
@@ -175,6 +178,7 @@ export function validateProgramInput(
 export function programCreateBody(value: ProgramValidation['value']): Record<string, unknown> {
   const body: Record<string, unknown> = { name: value.name, frameworkId: value.framework, description: value.description, systemBoundarySummary: value.boundarySummary };
   if (value.baseline) body.baseline = value.baseline;
+  if (value.privacyBaseline) body.privacyBaseline = true;
   if (value.seed === 'clone' && value.sourceProgramId) body.seed = { cloneFrom: value.sourceProgramId };
   return body;
 }

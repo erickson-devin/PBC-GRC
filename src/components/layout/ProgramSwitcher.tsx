@@ -8,11 +8,11 @@ import { frameworkLabel } from '../../data/programs';
 import type { Program } from '../../types/program';
 import { ProgramFormModal } from '../programs/ProgramFormModal';
 
-/** "CMMC Level 2", or "NIST SP 800-53 Rev. 5 · Moderate". */
-function programChip(program: Pick<Program, 'framework' | 'baseline'>): string {
+/** "CMMC Level 2", or "NIST SP 800-53 Rev. 5 · Moderate" ("· Moderate + Privacy" with the privacy baseline). */
+function programChip(program: Pick<Program, 'framework' | 'baseline'> & { privacyBaseline?: boolean }): string {
   const label = frameworkLabel(program.framework);
   if (program.framework !== 'NIST_800_53_REV5' || !program.baseline) return label;
-  return `${label} · ${program.baseline.charAt(0)}${program.baseline.slice(1).toLowerCase()}`;
+  return `${label} · ${program.baseline.charAt(0)}${program.baseline.slice(1).toLowerCase()}${program.privacyBaseline ? ' + Privacy' : ''}`;
 }
 
 const chipClass = 'badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-900/80 text-cyan-300 border border-slate-700';

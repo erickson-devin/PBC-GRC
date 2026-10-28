@@ -15,6 +15,7 @@ import {
   CANONICAL_CONTROL_MAPPINGS,
   getCrossFrameworkMappings,
 } from '../../src/data/frameworks';
+import { nistControlsWithPrivacy } from '../../src/data/programScope';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
@@ -62,7 +63,7 @@ function normalizeFrameworkParams(query: Request['query']): {
     framework = 'CMMC_L2';
   } else if (rawFramework === 'NIST_800_53_REV5' || rawFramework === 'NIST_800_53' || rawFramework === 'NIST_SP_800_53') {
     framework = 'NIST_800_53_REV5';
-    baseline = rawBaseline === 'LOW_LOW_LOW' || rawBaseline === 'LOW_LOW_MOD' ? (rawBaseline as BaselineTier) : 'MOD_MOD_MOD';
+    baseline = rawBaseline === 'LOW_LOW_LOW' || rawBaseline === 'LOW_LOW_MOD' || rawBaseline === 'HIGH_HIGH_HIGH' ? (rawBaseline as BaselineTier) : 'MOD_MOD_MOD';
   } else if (rawFramework === 'NIST_800_53_MOD') {
     framework = 'NIST_800_53_REV5';
     baseline = 'MOD_MOD_MOD';
@@ -81,6 +82,7 @@ function normalizeFrameworkParams(query: Request['query']): {
   if (rawBaseline === 'MOD_MOD_MOD') baseline = 'MOD_MOD_MOD';
   else if (rawBaseline === 'LOW_LOW_MOD') baseline = 'LOW_LOW_MOD';
   else if (rawBaseline === 'LOW_LOW_LOW') baseline = 'LOW_LOW_LOW';
+  else if (rawBaseline === 'HIGH_HIGH_HIGH') baseline = 'HIGH_HIGH_HIGH';
 
   // Overlay normalization (tactical / non-networked systems)
   if (rawOverlay === 'NON_NETWORKED' || rawOverlay === 'TACTICAL_NON_NETWORKED' || rawOverlay === 'TACTICAL') {
@@ -175,7 +177,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     if (!(await ensureFrameworkEnabled(req, res, framework, program))) return;
 
     // 1. Resolve canonical controls for the requested framework and overlay
-    const frameworkControls = getFrameworkControls(framework, baseline, overlay);
+    // A NIST program with the privacy baseline serves the union of its security baseline and the SP 800-53B privacy baseline.
+    const withPrivacy = framework === 'NIST_800_53_REV5' && req.program?.frameworkId === 'NIST_800_53_REV5' && req.program.privacyBaseline === true;
+    const frameworkControls = withPrivacy
+      ? nistControlsWithPrivacy(baseline, true, overlay === 'NON_NETWORKED' ? { nonNetworkedOnly: true } : {})
+      : getFrameworkControls(framework, baseline, overlay);
     const targetControlIds = frameworkControls.map(c => c.id);
 
     // 2. Query the active program's assessment records from PostgreSQL (guarded by RLS; a legacy row with no program counts as its own until backfilled)
@@ -267,6 +273,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       framework,
       baseline,
       overlay,
+      ...(withPrivacy ? { privacyBaseline: true } : {}),
       totalCount: controlsList.length,
       controls: controlsList,
     });
