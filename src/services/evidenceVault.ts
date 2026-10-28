@@ -138,9 +138,22 @@ export const EvidenceVault = {
           await del(k);
         }
       }
-    } catch (err) {
-      console.error(`Error clearing evidence vault for tenant ${tenantId}:`, err);
+    } catch {
+      console.error('Error clearing the evidence vault for a tenant');
     }
+  },
+
+  /**
+   * Like clearTenant, but rejects when anything fails (callers that attest a deletion must fail closed), and also removes the
+   * legacy unpartitioned keys (`pbc_evidence_<evidenceId>`) of the given evidence ids, which carry no tenant in the key.
+   */
+  async clearTenantStrict(tenantId: string, legacyEvidenceIds: readonly string[] = []): Promise<void> {
+    const allKeys = await keys();
+    const prefix = `${EVIDENCE_STORE_PREFIX}${tenantId}_`;
+    for (const k of allKeys) {
+      if (typeof k === 'string' && k.startsWith(prefix)) await del(k);
+    }
+    for (const id of legacyEvidenceIds) await del(`${EVIDENCE_STORE_PREFIX}${id}`);
   },
 
   /**

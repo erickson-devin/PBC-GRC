@@ -3,6 +3,8 @@
  * Validates Super Admin offboarding export, 3-pass cryptographic wipe, and certificate generation.
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type { Tenant } from '../src/types/tenant';
 import {
   generateEnclaveHandoverPackage,
@@ -203,6 +205,81 @@ async function runTests() {
       Boolean(cert.certificateSha256 && cert.certificateSha256.length === 64),
       'Certificate of Destruction contains valid 64-character SHA-256 tamper-evident digest',
       `Got: ${cert.certificateSha256}`
+    );
+  }
+
+  // Test Group 2b: browser evidence files are cleared first, and destruction fails closed
+  console.log('\n🧹 Test Group 2b: Evidence File Clearing (fail closed)');
+  {
+    const base = { actorName: 'Devin Erickson', actorEmail: 'devin@pitchblackcyber.com' };
+
+    const calls: string[] = [];
+    let certReturned = false;
+    const okCert = await executeCryptographicDestruction({
+      ...base,
+      tenantId: 'tenant-evidence-spy',
+      clearEvidenceFiles: async (id) => { calls.push(id); },
+    });
+    certReturned = Boolean(okCert.certificateId);
+    assert(
+      calls.length === 1 && calls[0] === 'tenant-evidence-spy' && certReturned,
+      'OD1: evidence clearing is called once with the tenant id and the certificate is still issued',
+      `calls=${JSON.stringify(calls)}`
+    );
+
+    let threw: unknown = null;
+    let failCert: unknown = null;
+    try {
+      failCert = await executeCryptographicDestruction({
+        ...base,
+        tenantId: 'tenant-evidence-fail',
+        clearEvidenceFiles: async () => { throw new Error('idb down'); },
+      });
+    } catch (err) {
+      threw = err;
+    }
+    assert(
+      failCert === null && threw instanceof Error && /no Certificate of Destruction was issued/.test(threw.message),
+      'OD2: a failing evidence clear issues no certificate and surfaces an error',
+      String(threw)
+    );
+
+    let noIdbCert: { certificateId?: string } | null = null;
+    let noIdbErr: unknown = null;
+    try {
+      noIdbCert = await executeCryptographicDestruction({ ...base, tenantId: 'tenant-evidence-noidb' });
+    } catch (err) {
+      noIdbErr = err;
+    }
+    assert(
+      typeof (globalThis as any).indexedDB === 'undefined' && noIdbErr === null && Boolean(noIdbCert?.certificateId),
+      'OD3: without indexedDB and without an injected function there is nothing to clear and the certificate is issued',
+      String(noIdbErr)
+    );
+
+    const engineSrc = readFileSync(join(process.cwd(), 'src/data/storage/offboardingEngine.ts'), 'utf8');
+    assert(
+      !engineSrc.includes('pbc_evidence_${'),
+      'OD4: offboardingEngine no longer removes the dead pbc_evidence_<tenant> localStorage key'
+    );
+
+    const ctxSrc = readFileSync(join(process.cwd(), 'src/context/TenantContext.tsx'), 'utf8');
+    const deleteBody = ctxSrc.slice(ctxSrc.indexOf('const deleteTenant = useCallback'));
+    const deleteFn = deleteBody.slice(0, deleteBody.indexOf('}, ['));
+    assert(
+      deleteFn.includes('EvidenceVault.clearTenant(tenantId)'),
+      'OD5: deleteTenant clears the tenant IndexedDB evidence files'
+    );
+
+    const vaultSrc = readFileSync(join(process.cwd(), 'src/services/evidenceVault.ts'), 'utf8').replace(/\r\n/g, '\n');
+    const strictBody = vaultSrc.slice(vaultSrc.indexOf('async clearTenantStrict('), vaultSrc.indexOf('async clearAll('));
+    assert(
+      engineSrc.includes('EvidenceVault.clearTenantStrict(') && strictBody.length > 0 && !/catch\s*[({]/.test(strictBody),
+      'OD6: destruction defaults to the strict clear, which has no catch (a failure rejects, so no certificate is issued)'
+    );
+    assert(
+      strictBody.includes('legacyEvidenceIds') && strictBody.includes('`${EVIDENCE_STORE_PREFIX}${id}`'),
+      'OD7: the strict clear also removes the legacy unpartitioned keys of the tenant evidence ids'
     );
   }
 
