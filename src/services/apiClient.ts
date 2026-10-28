@@ -1146,6 +1146,49 @@ export const ApiClient = {
   },
 
   /**
+   * GET /api/v1/evidence/:id/file
+   * The evidence file itself. For a server-backed tenant the server is the only home of the file, so it is fetched on demand
+   * and never cached by the browser. The caller must treat the type as untrusted (see previewKind) and revoke any object URL.
+   */
+  async getEvidenceFileBlob(tenantId: string, evidenceId: string, programId?: string | null): Promise<{ blob: Blob; contentType: string }> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/${encodeURIComponent(evidenceId)}/file`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      cache: 'no-store',
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
+    const blob = await res.blob();
+    return { blob, contentType: res.headers.get('content-type') || blob.type || '' };
+  },
+
+  /**
+   * GET /api/v1/evidence/:id/verify-integrity
+   * Never throws: status 0 means the server could not be reached. 404 means the file is not on the server's disk.
+   */
+  async verifyEvidenceIntegrity(
+    tenantId: string,
+    evidenceId: string,
+    programId?: string | null
+  ): Promise<{ status: number; verified?: boolean; currentHash?: string }> {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/${encodeURIComponent(evidenceId)}/verify-integrity`, {
+        method: 'GET',
+        headers: this.getHeaders(tenantId, undefined, programId),
+        cache: 'no-store',
+      });
+      if (!res.ok) return { status: res.status };
+      const data = await res.json().catch(() => null) as { verified?: unknown; currentHash?: unknown } | null;
+      return {
+        status: res.status,
+        verified: typeof data?.verified === 'boolean' ? data.verified : undefined,
+        currentHash: typeof data?.currentHash === 'string' ? data.currentHash : undefined,
+      };
+    } catch {
+      return { status: 0 };
+    }
+  },
+
+  /**
    * GET /api/v1/evidence/config/storage-info
    * Reports the server's active evidence storage provider (local disk).
    */

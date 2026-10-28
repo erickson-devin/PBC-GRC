@@ -1555,6 +1555,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         StorageService.listProgramKeys(tenantId).forEach(key => window.localStorage.removeItem(key));
       } catch {}
     }
+    // evidence files live in IndexedDB, not localStorage
+    void EvidenceVault.clearTenant(tenantId);
 
     // 4. Remove the tenant from the list
     const filtered = liveTenants.filter(t => t.id !== tenantId);

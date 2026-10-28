@@ -19,6 +19,7 @@ import { collectFipsModules } from '../telemetry/fipsValidation';
 import type { EnclaveAsset } from '../../types/telemetry';
 import { getFrameworkControls } from '../frameworks';
 import { purgeTenantData, downloadCertificateOfDestruction } from './retentionPolicy';
+import { EvidenceVault } from '../../services/evidenceVault';
 
 export interface EnclaveHandoverPackage {
   schemaVersion: '2.0.0';
@@ -232,9 +233,25 @@ export async function executeCryptographicDestruction(params: {
   actorName: string;
   actorEmail: string;
   state?: AssessmentState;
+  /** Clears the tenant's evidence files from the browser (IndexedDB). Defaults to EvidenceVault.clearTenantStrict (rejects on failure); injectable for tests. */
+  clearEvidenceFiles?: (tenantId: string) => Promise<void>;
 }): Promise<CertificateOfDestruction> {
   const tenant = resolveTenant(params.tenantId);
   const state = params.state || StorageService.loadAssessment(tenant);
+
+  // 0. Fail closed: evidence files live in IndexedDB. If they cannot be cleared this throws, so no certificate
+  //    is issued or downloaded for a deletion that did not happen.
+  const clearEvidenceFiles = params.clearEvidenceFiles
+    ?? (typeof indexedDB !== 'undefined'
+      ? (id: string) => EvidenceVault.clearTenantStrict(id, (state.evidenceIndex || []).map((e) => e.id))
+      : undefined);
+  if (clearEvidenceFiles) {
+    try {
+      await clearEvidenceFiles(params.tenantId);
+    } catch {
+      throw new Error('Could not clear the enclave\'s evidence files from this browser; no Certificate of Destruction was issued.');
+    }
+  }
 
   // 1. Execute formal NIST SP 800-88 cryptographic wipe and ledger recording
   const cert = await purgeTenantData({
@@ -252,7 +269,6 @@ export async function executeCryptographicDestruction(params: {
       `pbc_cmmc_assessment_v3_${params.tenantId}`,
       `pbc_assessment_${params.tenantId}`,
       `pbc_audit_ledger_${params.tenantId}`,
-      `pbc_evidence_${params.tenantId}`,
       // every other program's assessment cache (pbc_cmmc_assessment_v3_<tenant>::<program>) and the active-program choice
       ...StorageService.listProgramKeys(params.tenantId),
     ];

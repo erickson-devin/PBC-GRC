@@ -1,4 +1,4 @@
-import express, { Router, Request, Response } from 'express';
+import express, { Router, Request, Response, NextFunction } from 'express';
 import type pg from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -13,6 +13,12 @@ const router = Router();
 
 // Read-only roles (ASSESSOR, VIEWER) may GET but never POST / PUT / DELETE (uploads included).
 router.use(requireWriteRole);
+
+// Evidence is controlled data: never let a browser or proxy cache a response (set before send, so sendFile keeps it).
+router.use((_req: Request, res: Response, next: NextFunction): void => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 // Storage: local disk only (server/index.ts refuses any other STORAGE_PROVIDER at startup).
 // The `storageProvider` / `provider` response fields stay (always 'local') so existing clients keep working.
@@ -335,6 +341,7 @@ router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<voi
       const safeDownloadName = String(record.file_name || 'evidence').replace(/[^a-zA-Z0-9._-]/g, '_');
       res.setHeader('Content-Type', record.mime_type || 'application/octet-stream');
       res.setHeader('Content-Disposition', `inline; filename="${safeDownloadName}"`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.sendFile(filePath);
       return;
     }

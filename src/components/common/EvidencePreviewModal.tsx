@@ -14,6 +14,8 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { ErrorBoundary } from './ErrorBoundary';
 import { EvidenceVault } from '../../services/evidenceVault';
+import { ApiClient } from '../../services/apiClient';
+import { previewKind, PreviewKind } from '../../services/evidenceBlobScrub';
 import { generateEvidenceObjectPath } from '../../data/audit/storageDriver';
 import { findControlDefinition } from '../../data/frameworks';
 
@@ -21,12 +23,18 @@ import { DialogOverlay, DialogTitle } from './DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
 const EvidencePreviewModalContent: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
-  const { currentTenant } = useTenant();
+  const { currentTenant, activeProgram } = useTenant();
+  // A server-backed tenant's files live only on the server; a browser-only tenant's live in this browser (IndexedDB)
+  const serverBacked = Boolean(currentTenant.serverBacked);
+  const programId = activeProgram?.id;
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
+  const [kind, setKind] = useState<PreviewKind>('download');
+  const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [hasBlob, setHasBlob] = useState<boolean>(false);
+  const [loadFailed, setLoadFailed] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<boolean>(false);
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
 
@@ -34,30 +42,60 @@ const EvidencePreviewModalContent: React.FC = () => {
     let active = true;
     let createdUrl: string | null = null;
 
-    if (!previewEvidence) {
-      setPreviewUrl(null);
-      setTextContent(null);
-      return;
-    }
+    setPreviewUrl(null);
+    setTextContent(null);
+    setDownloadBlob(null);
+    setLoadFailed(false);
+    setHasBlob(false);
+
+    if (!previewEvidence) return;
 
     setLoading(true);
 
-    EvidenceVault.getFile(currentTenant.id, previewEvidence.id).then(async (result) => {
-      if (!active) return;
-      if (result) {
-        setHasBlob(true);
-        const url = URL.createObjectURL(result.blob);
-        createdUrl = url;
-        setPreviewUrl(url);
-
-        if (result.type.includes('text') || result.name.endsWith('.csv') || result.name.endsWith('.json')) {
-          const text = await result.blob.text();
-          if (active) setTextContent(text.slice(0, 5000));
-        }
+    const load = async () => {
+      let buffer: ArrayBuffer;
+      let type: string;
+      let name: string;
+      if (serverBacked) {
+        // An inherited row shows the file of the evidence it was inherited from
+        const serverId = previewEvidence.id.split('__inh_')[0];
+        const result = await ApiClient.getEvidenceFileBlob(currentTenant.id, serverId, programId ?? null);
+        buffer = await result.blob.arrayBuffer();
+        type = result.contentType;
+        name = previewEvidence.name;
       } else {
-        setHasBlob(false);
-        setPreviewUrl(null);
+        const result = await EvidenceVault.getFile(currentTenant.id, previewEvidence.id);
+        if (!active) return;
+        if (!result) {
+          setLoading(false);
+          return;
+        }
+        buffer = result.buffer;
+        type = result.type;
+        name = result.name;
       }
+      if (!active) return;
+
+      // The type is untrusted: the blob is rebuilt with a type chosen here, so it can never render as HTML or SVG
+      const nextKind = previewKind(type, name);
+      const baseType = type.split(';')[0].trim().toLowerCase();
+      const safeType = nextKind === 'image' ? baseType : nextKind === 'pdf' ? 'application/pdf' : 'application/octet-stream';
+      const blob = new Blob([buffer], { type: safeType });
+      if (nextKind === 'image' || nextKind === 'pdf') {
+        createdUrl = URL.createObjectURL(blob);
+        setPreviewUrl(createdUrl);
+      } else if (nextKind === 'text') {
+        setTextContent(new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 20000))).slice(0, 5000));
+      }
+      setKind(nextKind);
+      setDownloadBlob(blob);
+      setHasBlob(true);
+      setLoading(false);
+    };
+
+    load().catch(() => {
+      if (!active) return;
+      setLoadFailed(true);
       setLoading(false);
     });
 
@@ -67,13 +105,12 @@ const EvidencePreviewModalContent: React.FC = () => {
         URL.revokeObjectURL(createdUrl);
       }
     };
-  }, [previewEvidence, currentTenant.id]);
+  }, [previewEvidence, currentTenant.id, serverBacked, programId]);
 
   if (!previewEvidence) return null;
 
   const control = findControlDefinition(previewEvidence.controlId);
-  const isImage = previewEvidence.mimeType.includes('image') || previewEvidence.name.match(/\.(png|jpg|jpeg|webp|gif)$/i);
-  const isPdf = previewEvidence.mimeType.includes('pdf') || previewEvidence.name.endsWith('.pdf');
+  const isImage = hasBlob ? kind === 'image' : previewKind(previewEvidence.mimeType, previewEvidence.name) === 'image';
 
   const vaultPath = previewEvidence.gcsPath || generateEvidenceObjectPath(
     currentTenant.id,
@@ -83,13 +120,15 @@ const EvidencePreviewModalContent: React.FC = () => {
   );
 
   const handleDownload = () => {
-    if (!previewUrl) return;
+    if (!downloadBlob) return;
+    const url = URL.createObjectURL(downloadBlob);
     const a = document.createElement('a');
-    a.href = previewUrl;
+    a.href = url;
     a.download = previewEvidence.name;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleCopyHash = () => {
@@ -119,7 +158,7 @@ const EvidencePreviewModalContent: React.FC = () => {
               <div className="flex items-center gap-2">
                 <DialogTitle as="h3" className="text-sm font-bold text-white truncate">{previewEvidence.name}</DialogTitle>
                 <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                  <HardDrive className="w-2.5 h-2.5" /> Local Vault
+                  <HardDrive className="w-2.5 h-2.5" /> {serverBacked ? 'Server Vault' : 'Local Vault'}
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -187,9 +226,11 @@ const EvidencePreviewModalContent: React.FC = () => {
         {/* Preview Content */}
         <div className="p-6 overflow-y-auto flex-1 flex items-center justify-center bg-slate-950 min-h-[300px]">
           {loading ? (
-            <div className="text-xs text-slate-400">Loading preview from IndexedDB & verifying SHA-256...</div>
+            <div className="text-xs text-slate-400">{serverBacked ? 'Loading preview from the server...' : 'Loading preview from IndexedDB & verifying SHA-256...'}</div>
+          ) : loadFailed ? (
+            <div className="text-xs text-rose-300" role="alert">This file could not be loaded from the server.</div>
           ) : hasBlob ? (
-            isImage && previewUrl ? (
+            kind === 'image' && previewUrl ? (
               <div className="max-w-full max-h-full flex items-center justify-center p-2">
                 <img
                   src={previewUrl}
@@ -197,7 +238,7 @@ const EvidencePreviewModalContent: React.FC = () => {
                   className="max-h-[60vh] rounded-xl object-contain shadow-lg border border-slate-800"
                 />
               </div>
-            ) : isPdf && previewUrl ? (
+            ) : kind === 'pdf' && previewUrl ? (
               <div className="w-full h-[60vh] rounded-xl overflow-hidden border border-slate-800">
                 <iframe
                   src={previewUrl}
@@ -205,16 +246,16 @@ const EvidencePreviewModalContent: React.FC = () => {
                   className="w-full h-full bg-white"
                 />
               </div>
-            ) : textContent ? (
-              <div className="w-full h-[55vh] overflow-auto p-4 bg-slate-900 border border-slate-800 rounded-xl font-mono text-xs text-slate-300 whitespace-pre-wrap">
+            ) : kind === 'text' && textContent !== null ? (
+              <pre className="w-full h-[55vh] overflow-auto p-4 bg-slate-900 border border-slate-800 rounded-xl font-mono text-xs text-slate-300 whitespace-pre-wrap">
                 {textContent}
-              </div>
+              </pre>
             ) : (
               <div className="text-center space-y-3 p-8">
                 <FileText className="w-12 h-12 text-slate-400 mx-auto" />
                 <p className="text-sm font-semibold text-white">Binary Evidence Artifact</p>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Click the download button above to inspect this artifact locally.
+                  This file type is not shown inline. Click the download button above to inspect this artifact locally.
                 </p>
               </div>
             )
