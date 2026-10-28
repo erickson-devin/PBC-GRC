@@ -113,6 +113,7 @@ export const AuditTrailViewer: React.FC = () => {
       case 'CONTROL_STATUS_UPDATED':
         return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
       case 'CONTROL_NOTES_UPDATED':
+      case 'OBJECTIVE_NARRATIVE_UPDATED':
       case 'TEMPLATE_APPLIED':
         return 'bg-brand-500/15 text-brand-300 border-brand-500/30';
       case 'EVIDENCE_UPLOADED':
@@ -266,6 +267,7 @@ export const AuditTrailViewer: React.FC = () => {
               <option value="ALL">All Actions</option>
               <option value="CONTROL_STATUS_UPDATED">Control Status Updated</option>
               <option value="CONTROL_NOTES_UPDATED">Control Notes Updated</option>
+              <option value="OBJECTIVE_NARRATIVE_UPDATED">Objective Narrative Updated</option>
               <option value="EVIDENCE_UPLOADED">Evidence Uploaded</option>
               <option value="DOCUMENT_GENERATED">Document Generated</option>
               <option value="SPRS_CALCULATED">SPRS Calculated</option>

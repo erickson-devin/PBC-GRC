@@ -1,4 +1,5 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
+import type { ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
 const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
@@ -1048,6 +1049,79 @@ export const ApiClient = {
 
     const data = await res.json();
     return data.control;
+  },
+
+  /**
+   * GET /api/v1/objectives
+   * The program's objective records (status, narrative, evidence links); every role may read them
+   */
+  async getObjectives(tenantId: string, controlId?: string, programId?: string | null): Promise<ObjectiveRecord[]> {
+    const query = controlId ? `?controlId=${encodeURIComponent(controlId)}` : '';
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives${query}`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    const data = await res.json();
+    return Array.isArray(data.objectives) ? data.objectives : [];
+  },
+
+  /**
+   * PUT /api/v1/objectives/:objectiveId
+   * Saves one objective (owner / MSP only); a field left out keeps its stored value, an empty narrative clears it
+   */
+  async putObjective(tenantId: string, input: ObjectiveInput, programId?: string | null): Promise<{ objective: ObjectiveRecord; changed: boolean }> {
+    const { objectiveId, ...body } = input;
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/${encodeURIComponent(objectiveId)}`, {
+      method: 'PUT',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * PUT /api/v1/objectives
+   * Saves up to 500 objectives, all or none
+   */
+  async putObjectivesBulk(tenantId: string, objectives: ObjectiveInput[], programId?: string | null): Promise<{ total: number; changed: number }> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives`, {
+      method: 'PUT',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      body: JSON.stringify({ objectives }),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * POST /api/v1/objectives/import
+   * Moves what a browser kept to the server (up to 5000): insert-only, an id the server already holds differently is a conflict
+   */
+  async importObjectives(tenantId: string, objectives: ObjectiveInput[], programId?: string | null): Promise<{ objectiveId: string; result: ObjectiveImportResult }[]> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/import`, {
+      method: 'POST',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      body: JSON.stringify({ objectives }),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    const data = await res.json();
+    return Array.isArray(data.results) ? data.results : [];
+  },
+
+  /**
+   * GET /api/v1/objectives/:objectiveId/history
+   * Who changed the objective and when (the narrative's SHA-256 and length, never its text)
+   */
+  async getObjectiveHistory(tenantId: string, objectiveId: string, programId?: string | null): Promise<ObjectiveEvent[]> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/${encodeURIComponent(objectiveId)}/history`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    const data = await res.json();
+    return Array.isArray(data.events) ? data.events : [];
   },
 
   /**

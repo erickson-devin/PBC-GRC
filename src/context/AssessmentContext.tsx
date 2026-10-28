@@ -9,6 +9,7 @@ import {
   ControlState,
 } from '../types/cmmc';
 import { AssessmentObjective, ObjectiveStatus } from '../types/assessment';
+import { controlIdOfObjective, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
 import { FrameworkControlDefinition } from '../types/framework';
 import { ReportDocumentType } from '../types/report';
 import {
@@ -29,6 +30,18 @@ import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectives
 import { ApiClient } from '../services/apiClient';
 import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
 import { programCacheSegment, programScopeKey, shouldPersistAssessment } from '../data/programSync';
+import {
+  OBJECTIVE_CASCADE_EVENT,
+  applyImportResult,
+  mergeServerObjectives,
+  objectivesToUpload,
+  pruneResolvedReviews,
+  reconcileObjectives,
+  resolveConflict,
+  stackCascadeFill,
+  type ObjectiveCascadeDetail,
+} from '../data/objectiveSync';
+import { errorMessage } from '../utils/errors';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import {
@@ -110,6 +123,14 @@ interface AssessmentContextType {
   applyAllObjectiveTemplatesForControl: (controlId: string) => void;
   linkEvidenceToObjective: (objectiveId: string, evidenceId: string) => void;
   recalculateControlStatusFromObjectives: (controlId: string) => ControlStatus;
+  /** True while this browser holds objective narratives that are not on the server and this user cannot move them (an owner has to open the organization). */
+  objectivesNeedOwner: boolean;
+  /** Objective ids whose cached narrative differs from the server's (owner / MSP only; empty for everybody else). */
+  objectivePendingReview: string[];
+  /** The server's narrative for an objective ('' when it has none). */
+  serverObjectiveNarrative: (objectiveId: string) => string;
+  /** Settles one conflict: 'browser' saves this browser's text to the server, 'server' keeps the server's. Rejects when the save fails. */
+  resolveObjectiveConflict: (objectiveId: string, choice: 'browser' | 'server') => Promise<void>;
 
   // Artifact & Compliance Export Center Modal
   isExportModalOpen: boolean;
@@ -131,6 +152,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     activeProgram,
     syncError,
     updateLiveControl,
+    liveObjectives,
+    updateLiveObjective,
+    updateLiveObjectivesBulk,
+    importLiveObjectives,
     createLiveEvidenceUploadUrl,
     activeFramework,
     activeBaselineTier,
@@ -635,90 +660,268 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return rollup.calculatedStatus;
   }, [getObjectivesForControl]);
 
-  const updateObjectiveStatus = useCallback((objectiveId: string, status: ObjectiveStatus) => {
-    if (!canEdit) {
-      alert('Read-Only access: You do not have permission to modify objectives for this tenant.');
+  // -------------------------------------------------------------------------
+  // Objectives held by the server. A server-backed tenant's objective status, narrative and evidence links live on the server (owner /
+  // MSP write, everybody reads); this browser keeps only status, evidence links and times for offline reading. Every writer updates the
+  // screen at once and saves through the audited server call: a failed save is reported and rolled back. A browser-only tenant keeps
+  // everything in its own cache.
+  // -------------------------------------------------------------------------
+  const liveObjectivesRef = useRef(liveObjectives);
+  liveObjectivesRef.current = liveObjectives;
+  // The scope whose cache holds narratives that are not on the server and that this user cannot move (viewer / assessor)
+  const [needOwnerScope, setNeedOwnerScope] = useState<string | null>(null);
+  const objectivesNeedOwner = Boolean(currentTenant.serverBacked) && needOwnerScope === programScope;
+  // The scope an upload is running for: one upload at a time
+  const migratingScope = useRef<string | null>(null);
+
+  const isKnownControl = useCallback((controlId: string) => Boolean(findControlDefinition(controlId)), []);
+
+  /** The catalog objective for an id the cache does not hold yet (the server's record is laid over it). */
+  const seedObjective = useCallback((objectiveId: string, controlId: string): AssessmentObjective | undefined => {
+    const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+    return getAssessmentObjectivesForControl(controlId, ctrl?.title, ctrl?.assessmentObjectives).find(o => o.id === objectiveId);
+  }, [frameworkControls]);
+
+  // Merge the server's objectives into the state, only for the scope on screen and only into a state of that scope. The server's
+  // narratives reach the state only once the marker is set (or is set in the same step because nothing is left to upload): before that
+  // the cache is the only copy of its narratives, and the cache would keep the server's too. Cached objectives that are not on the
+  // server yet are uploaded first (owner / MSP), or left alone with a notice (everybody else).
+  useEffect(() => {
+    if (!currentTenant.serverBacked || !liveObjectives || liveScopeKey !== programScope || stateScope !== programScope) return;
+    const reconcileOptions = { canWrite: canEdit, now: new Date().toISOString(), seedFor: seedObjective, isKnownControl };
+    const { outcome } = reconcileObjectives(stateRef.current, liveObjectives, reconcileOptions);
+    if (outcome === 'blocked') {
+      setNeedOwnerScope(programScope);
       return;
     }
+    setNeedOwnerScope(null);
+    if (outcome === 'merged' || outcome === 'marked') {
+      setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== programScope ? prev : reconcileObjectives(prev, liveObjectives, reconcileOptions).state));
+      return;
+    }
+
+    // Upload what this browser holds. Nothing is stripped unless every chunk went through: a failure leaves the cache as it is and
+    // the next load tries again.
+    if (migratingScope.current === programScope) return;
+    migratingScope.current = programScope;
+    const selection = objectivesToUpload(stateRef.current.objectives, isKnownControl);
+    void (async () => {
+      try {
+        const { results, records } = await importLiveObjectives(selection.items);
+        setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== programScope ? prev : applyImportResult(prev, results, new Date().toISOString(), selection.unsendable, records)));
+      } catch {
+        // network or server failure: keep everything, retry on the next load
+      } finally {
+        if (migratingScope.current === programScope) migratingScope.current = null;
+      }
+    })();
+  }, [currentTenant.serverBacked, liveObjectives, liveScopeKey, programScope, stateScope, state.objectivesMigratedAt, canEdit, seedObjective, isKnownControl, importLiveObjectives]);
+
+  // A browser-only tenant's stack cascade (raised by TenantContext.updateStackProfile): fills the empty narratives of this program's objectives
+  useEffect(() => {
+    if (currentTenant.serverBacked) return;
+    const onCascade = (e: Event) => {
+      const detail = (e as CustomEvent<ObjectiveCascadeDetail>).detail;
+      if (!detail || detail.scope !== programScope || !canEdit) return;
+      const current = stateRef.current.objectives || {};
+      const items = stackCascadeFill(frameworkControls.map(c => c.id), detail.profile, id => current[id]?.implementationNarrative ?? '');
+      if (items.length === 0) return;
+      const now = new Date().toISOString();
+      setState(prev => {
+        if (programScopeKey(prev.tenantId, prev.programId) !== programScope) return prev;
+        const objectives = { ...(prev.objectives || {}) };
+        for (const item of items) {
+          if ((objectives[item.objectiveId]?.implementationNarrative || '').trim() !== '') continue;
+          const base = objectives[item.objectiveId] ?? seedObjective(item.objectiveId, item.controlId);
+          if (!base) continue;
+          objectives[item.objectiveId] = { ...base, implementationNarrative: item.narrative ?? '', lastUpdated: now, updatedBy: 'Enclave Stack Auto-Cascade' };
+        }
+        return { ...prev, objectives };
+      });
+    };
+    window.addEventListener(OBJECTIVE_CASCADE_EVENT, onCascade);
+    return () => window.removeEventListener(OBJECTIVE_CASCADE_EVENT, onCascade);
+  }, [currentTenant.serverBacked, programScope, canEdit, frameworkControls, seedObjective]);
+
+  /** True (after telling the user) when objectives cannot be changed right now: read-only role, or a server-backed tenant whose data is not loaded. */
+  const objectiveWriteBlocked = useCallback((what: 'objectives' | 'narratives'): boolean => {
+    if (!canEdit) {
+      alert(`Read-Only access: You do not have permission to modify ${what} for this tenant.`);
+      return true;
+    }
+    if (!notesEditable) {
+      alert(NOTES_NOT_EDITABLE_MESSAGE);
+      return true;
+    }
+    return false;
+  }, [canEdit, notesEditable]);
+
+  /** The state the writers start from, or null while it is not the one on screen (a program switch is settling). */
+  const writableState = useCallback((): AssessmentState | null => {
+    const s = stateRef.current;
+    return programScopeKey(s.tenantId, s.programId) === programScope ? s : null;
+  }, [programScope]);
+
+  /** The cached objectives of a control and the catalog objectives over them. */
+  const objectivesOf = useCallback((s: AssessmentState, controlId: string): AssessmentObjective[] => {
+    const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
+    return getAssessmentObjectivesForControl(controlId, ctrl?.title, ctrl?.assessmentObjectives, s.objectives || {});
+  }, [frameworkControls]);
+
+  // Narratives may contain CUI and the ledger sits in localStorage: record a digest and length only, never text
+  const recordObjectiveNarrativeChange = useCallback((objectiveId: string, previous: string, next: string) => {
+    if (previous === next) return;
+    Promise.all([describeNotesForLedger(previous), describeNotesForLedger(next)])
+      .then(([previousState, newState]) => recordAuditEvent({
+        tenantId: currentTenant.id,
+        metadata: auditMetadata,
+        actorId: currentUser.id,
+        actorEmail: currentUser.email,
+        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+        actionType: 'OBJECTIVE_NARRATIVE_UPDATED',
+        targetEntity: objectiveId,
+        previousState,
+        newState,
+      }))
+      .catch(() => {});
+  }, [currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles]);
+
+  /** After a failed save: shows the server's records again for these ids. Only once the cache holds no narrative that has not been uploaded. */
+  const revertObjectives = useCallback((ids: string[], scope: string) => {
+    const live = liveObjectivesRef.current;
+    setState(prev => {
+      if (!prev.objectivesMigratedAt || programScopeKey(prev.tenantId, prev.programId) !== scope) return prev;
+      const objectives = { ...(prev.objectives || {}) };
+      const serverSubset: Record<string, ObjectiveRecord> = {};
+      for (const id of ids) {
+        const record = live?.[id];
+        if (record) serverSubset[id] = record;
+        else delete objectives[id];
+      }
+      return { ...prev, objectives: mergeServerObjectives(objectives, serverSubset, { seedFor: seedObjective, pending: prev.objectivesPendingReview }) };
+    });
+  }, [seedObjective]);
+
+  /** Saves objectives to the server (server-backed tenants), and optionally the rolled-up control change with them. Both calls start now, so both belong to the program on screen at the click. */
+  const saveObjectives = useCallback((inputs: ObjectiveInput[], control?: { id: string; update: Partial<ControlState> }) => {
+    if (!currentTenant.serverBacked || inputs.length === 0) return;
+    const scope = programScope;
+    const objectiveSave = inputs.length === 1
+      ? updateLiveObjective(inputs[0].objectiveId, inputs[0].controlId, { status: inputs[0].status, narrative: inputs[0].narrative, linkedEvidenceIds: inputs[0].linkedEvidenceIds })
+      : updateLiveObjectivesBulk(inputs);
+    const controlSave = control ? updateLiveControl(control.id, control.update) : Promise.resolve(null);
+    void Promise.all([objectiveSave, controlSave]).catch((err: unknown) => {
+      alert(`The objective change could not be saved to the server: ${errorMessage(err) || 'unknown error'}`);
+      revertObjectives(inputs.map(i => i.objectiveId), scope);
+    });
+  }, [currentTenant.serverBacked, programScope, updateLiveObjective, updateLiveObjectivesBulk, updateLiveControl, revertObjectives]);
+
+  // Review of a conflict the one-time upload found: the id keeps its cached narrative until the user picks a text
+  // Ids whose cached narrative is empty or equal to the server's need no decision: they are dropped (this heals caches from older builds)
+  useEffect(() => {
+    if (!currentTenant.serverBacked || !liveObjectives || liveScopeKey !== programScope || stateScope !== programScope) return;
+    if (!stateRef.current.objectivesPendingReview?.length) return;
+    setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== programScope ? prev : pruneResolvedReviews(prev, liveObjectives)));
+  }, [currentTenant.serverBacked, liveObjectives, liveScopeKey, programScope, stateScope, state.objectivesPendingReview]);
+  const objectivePendingReview = useMemo(
+    () => (canEdit && currentTenant.serverBacked && stateScope === programScope ? state.objectivesPendingReview ?? [] : []),
+    [canEdit, currentTenant.serverBacked, stateScope, programScope, state.objectivesPendingReview]
+  );
+  const serverObjectiveNarrative = useCallback((objectiveId: string): string => liveObjectives?.[objectiveId]?.narrative ?? '', [liveObjectives]);
+
+  const resolveObjectiveConflict = useCallback(async (objectiveId: string, choice: 'browser' | 'server'): Promise<void> => {
+    if (!canEdit) throw new Error('Read-Only access: only a tenant owner can resolve this.');
+    const s = writableState();
+    if (!s) throw new Error('The program on screen changed; open it again.');
+    const serverText = liveObjectivesRef.current?.[objectiveId]?.narrative ?? '';
+    if (choice === 'browser') {
+      const controlId = controlIdOfObjective(objectiveId);
+      if (controlId === null) throw new Error('This objective id is not valid, so its text cannot be saved to the server.');
+      const browserText = s.objectives?.[objectiveId]?.implementationNarrative ?? '';
+      if (browserText.trim() === '') throw new Error('This browser has no text for this objective, so there is nothing to save.');
+      // Only the narrative is sent: a stale cached status or evidence list must never overwrite the server's
+      await updateLiveObjective(objectiveId, controlId, { narrative: browserText });
+      recordObjectiveNarrativeChange(objectiveId, serverText, browserText);
+    }
+    setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== programScope ? prev : resolveConflict(prev, objectiveId, choice, serverText)));
+  }, [canEdit, writableState, programScope, updateLiveObjective, recordObjectiveNarrativeChange]);
+
+  const updateObjectiveStatus = useCallback((objectiveId: string, status: ObjectiveStatus) => {
+    if (objectiveWriteBlocked('objectives')) return;
+    const s = writableState();
+    if (!s) return;
 
     const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
     const controlId = match ? match[1] : objectiveId;
 
-    setState(prev => {
-      const existingObjectives = prev.objectives || {};
-      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-      const baseObjectives = getAssessmentObjectivesForControl(
-        controlId,
-        ctrl?.title,
-        ctrl?.assessmentObjectives,
-        existingObjectives
-      );
+    const baseObjectives = objectivesOf(s, controlId);
+    const target = baseObjectives.find(o => o.id === objectiveId) || {
+      id: objectiveId,
+      controlId,
+      letter: match ? match[2] : 'a',
+      text: 'Objective determination',
+      status,
+      prefilledTemplate: '',
+      implementationNarrative: '',
+      linkedEvidenceIds: [],
+      isAutoVerifiedByTelemetry: false,
+    };
 
-      const target = baseObjectives.find(o => o.id === objectiveId) || {
-        id: objectiveId,
-        controlId,
-        letter: match ? match[2] : 'a',
-        text: 'Objective determination',
-        status,
-        prefilledTemplate: '',
-        implementationNarrative: '',
-        linkedEvidenceIds: [],
-        isAutoVerifiedByTelemetry: false,
-      };
+    const now = new Date().toISOString();
+    const updatedObjective: AssessmentObjective = {
+      ...target,
+      status,
+      lastUpdated: now,
+      updatedBy: currentUser.name,
+    };
 
-      const updatedObjective: AssessmentObjective = {
-        ...target,
-        status,
-        lastUpdated: new Date().toISOString(),
-        updatedBy: currentUser.name,
-      };
+    // Recalculate control status according to rollup spec:
+    const allObjs = baseObjectives.map(o => o.id === objectiveId ? updatedObjective : o);
+    const rollup = calculateControlRollup(allObjs);
+    const rolledStatus: ControlStatus = rollup.calculatedStatus;
 
-      const nextObjectives: Record<string, AssessmentObjective> = {
-        ...existingObjectives,
+    const currentCtrl = s.controls[controlId] || {
+      id: controlId,
+      tenantId: currentTenant.id,
+      status: 'NOT_STARTED',
+      implementationNotes: '',
+      responsibleRole: 'IT / Security Lead',
+      lastUpdated: now,
+      tags: [],
+    };
+
+    setState(prev => ({
+      ...prev,
+      objectives: {
+        ...(prev.objectives || {}),
         [objectiveId]: updatedObjective,
-      };
-
-      // Recalculate control status according to rollup spec:
-      const allObjs = baseObjectives.map(o => o.id === objectiveId ? updatedObjective : o);
-      const rollup = calculateControlRollup(allObjs);
-      const rolledStatus: ControlStatus = rollup.calculatedStatus;
-
-      const currentCtrl = prev.controls[controlId] || {
-        id: controlId,
-        tenantId: currentTenant.id,
-        status: 'NOT_STARTED',
-        implementationNotes: '',
-        responsibleRole: 'IT / Security Lead',
-        lastUpdated: new Date().toISOString(),
-        tags: [],
-      };
-
-      const updatedControls = {
+      },
+      controls: {
         ...prev.controls,
         [controlId]: {
-          ...currentCtrl,
+          ...(prev.controls[controlId] || currentCtrl),
           status: rolledStatus,
-          lastUpdated: new Date().toISOString(),
+          lastUpdated: now,
           updatedBy: currentUser.name,
         },
-      };
+      },
+    }));
 
-      if (rolledStatus === 'MET') {
-        const metAfter = Object.entries(updatedControls).filter(
-          ([id, c]) => id !== controlId ? c.status === 'MET' : true
-        ).length;
-        const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
-        if (metAfter === totalRequired) {
-          setTimeout(triggerSprsCelebration, 150);
-        }
+    if (rolledStatus === 'MET') {
+      const metAfter = Object.entries(s.controls).filter(([id, c]) => id !== controlId && c.status === 'MET').length + 1;
+      const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
+      if (metAfter === totalRequired) {
+        setTimeout(triggerSprsCelebration, 150);
       }
+    }
 
-      return {
-        ...prev,
-        objectives: nextObjectives,
-        controls: updatedControls,
-      };
-    });
+    // Save: the objective, and the rolled-up control status when it changed (otherwise the next live merge reverts it)
+    if (currentTenant.serverBacked) {
+      saveObjectives([{ objectiveId, controlId, status }]);
+      if (rolledStatus !== currentCtrl.status) {
+        updateLiveControl(controlId, { status: rolledStatus, updatedBy: currentUser.name });
+      }
+    }
 
     recordAuditEvent({
       tenantId: currentTenant.id,
@@ -728,285 +931,230 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       actorRole: currentUser.roles[currentTenant.id] || 'Operator',
       actionType: 'CONTROL_STATUS_UPDATED',
       targetEntity: objectiveId,
-      previousState: 'STATUS_UPDATE',
-      newState: status,
+      // Both sides are the control's status (the objective click rolls up into it)
+      previousState: currentCtrl.status,
+      newState: rolledStatus,
     }).catch(() => {});
-  }, [canEdit, frameworkControls, currentUser, currentTenant.id, auditMetadata, activeFramework, triggerSprsCelebration]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, updateLiveControl]);
 
   const updateObjectiveNarrative = useCallback((objectiveId: string, narrative: string) => {
-    if (!canEdit) {
-      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
-      return;
-    }
+    if (objectiveWriteBlocked('narratives')) return;
+    const s = writableState();
+    if (!s) return;
 
     const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
     const controlId = match ? match[1] : objectiveId;
 
-    setState(prev => {
-      const existingObjectives = prev.objectives || {};
-      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-      const baseObjectives = getAssessmentObjectivesForControl(
-        controlId,
-        ctrl?.title,
-        ctrl?.assessmentObjectives,
-        existingObjectives
-      );
+    const target = objectivesOf(s, controlId).find(o => o.id === objectiveId);
+    if (!target) return;
+    const previous = target.implementationNarrative || '';
+    if (previous === narrative) return;
 
-      const target = baseObjectives.find(o => o.id === objectiveId);
-      if (!target) return prev;
+    const updatedObjective: AssessmentObjective = {
+      ...target,
+      implementationNarrative: narrative,
+      lastUpdated: new Date().toISOString(),
+      updatedBy: currentUser.name,
+    };
 
-      const updatedObjective: AssessmentObjective = {
-        ...target,
-        implementationNarrative: narrative,
-        lastUpdated: new Date().toISOString(),
-        updatedBy: currentUser.name,
-      };
-
-      return {
-        ...prev,
-        objectives: {
-          ...existingObjectives,
-          [objectiveId]: updatedObjective,
-        },
-      };
-    });
-  }, [canEdit, frameworkControls, currentUser]);
+    setState(prev => ({
+      ...prev,
+      objectives: {
+        ...(prev.objectives || {}),
+        [objectiveId]: updatedObjective,
+      },
+    }));
+    recordObjectiveNarrativeChange(objectiveId, previous, narrative);
+    saveObjectives([{ objectiveId, controlId, narrative }]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, recordObjectiveNarrativeChange, saveObjectives]);
 
   const applyObjectivePrefilledNarrative = useCallback((objectiveId: string) => {
-    if (!canEdit) {
-      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
-      return;
-    }
-
-    if (!notesEditable) {
-      alert(NOTES_NOT_EDITABLE_MESSAGE);
-      return;
-    }
+    if (objectiveWriteBlocked('narratives')) return;
+    const s = writableState();
+    if (!s) return;
 
     const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
     const controlId = match ? match[1] : objectiveId;
 
-    // StrictMode runs updaters twice: send the change to the server once per call
-    let sent = false;
-    setState(prev => {
-      const existingObjectives = prev.objectives || {};
-      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-      const baseObjectives = getAssessmentObjectivesForControl(
-        controlId,
-        ctrl?.title,
-        ctrl?.assessmentObjectives,
-        existingObjectives
-      );
+    const baseObjectives = objectivesOf(s, controlId);
+    const target = baseObjectives.find(o => o.id === objectiveId);
+    if (!target) return;
 
-      const target = baseObjectives.find(o => o.id === objectiveId);
-      if (!target) return prev;
+    const now = new Date().toISOString();
+    const confirmedNarrative = target.prefilledTemplate;
+    const updatedObjective: AssessmentObjective = {
+      ...target,
+      implementationNarrative: confirmedNarrative,
+      status: 'MET',
+      lastUpdated: now,
+      updatedBy: currentUser.name,
+    };
 
-      const confirmedNarrative = target.prefilledTemplate;
-      const updatedObjective: AssessmentObjective = {
-        ...target,
-        implementationNarrative: confirmedNarrative,
-        status: 'MET',
-        lastUpdated: new Date().toISOString(),
-        updatedBy: currentUser.name,
-      };
+    const allObjs = baseObjectives.map(o => o.id === objectiveId ? updatedObjective : o);
+    const total = allObjs.length;
+    let metOrNaCount = 0;
+    let hasNotMet = false;
+    for (const obj of allObjs) {
+      if (obj.status === 'NOT_MET') hasNotMet = true;
+      if (obj.status === 'MET' || obj.status === 'NOT_APPLICABLE') metOrNaCount++;
+    }
 
-      const nextObjectives: Record<string, AssessmentObjective> = {
-        ...existingObjectives,
+    const rolledStatus: ControlStatus = hasNotMet
+      ? 'NOT_MET'
+      : metOrNaCount === total && total > 0
+      ? 'MET'
+      : 'IN_PROGRESS';
+
+    const currentCtrl = s.controls[controlId] || {
+      id: controlId,
+      tenantId: currentTenant.id,
+      status: 'NOT_STARTED',
+      implementationNotes: '',
+      responsibleRole: 'IT / Security Lead',
+      lastUpdated: now,
+      tags: [],
+    };
+
+    let combinedNotes = currentCtrl.implementationNotes || '';
+    const sectionHeader = `[Objective ${target.letter.toUpperCase()} - ${target.text}]:\n${confirmedNarrative}`;
+    if (!combinedNotes.includes(confirmedNarrative)) {
+      combinedNotes = combinedNotes ? `${combinedNotes}\n\n${sectionHeader}` : sectionHeader;
+    }
+
+    setState(prev => ({
+      ...prev,
+      objectives: {
+        ...(prev.objectives || {}),
         [objectiveId]: updatedObjective,
-      };
-
-      const allObjs = baseObjectives.map(o => o.id === objectiveId ? updatedObjective : o);
-      const total = allObjs.length;
-      let metOrNaCount = 0;
-      let hasNotMet = false;
-      for (const obj of allObjs) {
-        if (obj.status === 'NOT_MET') hasNotMet = true;
-        if (obj.status === 'MET' || obj.status === 'NOT_APPLICABLE') metOrNaCount++;
-      }
-
-      const rolledStatus: ControlStatus = hasNotMet
-        ? 'NOT_MET'
-        : metOrNaCount === total && total > 0
-        ? 'MET'
-        : 'IN_PROGRESS';
-
-      const currentCtrl = prev.controls[controlId] || {
-        id: controlId,
-        tenantId: currentTenant.id,
-        status: 'NOT_STARTED',
-        implementationNotes: '',
-        responsibleRole: 'IT / Security Lead',
-        lastUpdated: new Date().toISOString(),
-        tags: [],
-      };
-
-      let combinedNotes = currentCtrl.implementationNotes || '';
-      const sectionHeader = `[Objective ${target.letter.toUpperCase()} - ${target.text}]:\n${confirmedNarrative}`;
-      if (!combinedNotes.includes(confirmedNarrative)) {
-        combinedNotes = combinedNotes ? `${combinedNotes}\n\n${sectionHeader}` : sectionHeader;
-      }
-
-      // Save through the audited server writer; only the fields that change
-      if (!sent) {
-        sent = true;
-        const serverUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
-        if (combinedNotes !== (currentCtrl.implementationNotes || '')) serverUpdate.implementationNotes = combinedNotes;
-        if (rolledStatus !== currentCtrl.status) serverUpdate.status = rolledStatus;
-        if (serverUpdate.implementationNotes !== undefined || serverUpdate.status !== undefined) {
-          updateLiveControl(controlId, serverUpdate);
-        }
-      }
-
-      return {
-        ...prev,
-        objectives: nextObjectives,
-        controls: {
-          ...prev.controls,
-          [controlId]: {
-            ...currentCtrl,
-            status: rolledStatus,
-            implementationNotes: combinedNotes,
-            lastUpdated: new Date().toISOString(),
-            updatedBy: currentUser.name,
-          },
-        },
-      };
-    });
-  }, [canEdit, notesEditable, frameworkControls, currentUser, currentTenant.id, updateLiveControl]);
-
-  const applyAllObjectiveTemplatesForControl = useCallback((controlId: string) => {
-    if (!canEdit) {
-      alert('Read-Only access: You do not have permission to modify narratives for this tenant.');
-      return;
-    }
-    if (!notesEditable) {
-      alert(NOTES_NOT_EDITABLE_MESSAGE);
-      return;
-    }
-
-    // StrictMode runs updaters twice: send the change to the server once per call
-    let sent = false;
-    setState(prev => {
-      const existingObjectives = prev.objectives || {};
-      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-      const baseObjectives = getAssessmentObjectivesForControl(
-        controlId,
-        ctrl?.title,
-        ctrl?.assessmentObjectives,
-        existingObjectives
-      );
-
-      const nextObjectives = { ...existingObjectives };
-      const narrativeSections: string[] = [];
-
-      baseObjectives.forEach(obj => {
-        const narrative = obj.prefilledTemplate;
-        nextObjectives[obj.id] = {
-          ...obj,
-          status: 'MET',
-          implementationNarrative: narrative,
-          lastUpdated: new Date().toISOString(),
-          updatedBy: currentUser.name,
-        };
-        narrativeSections.push(`[Objective ${obj.letter.toUpperCase()} - ${obj.text}]:\n${narrative}`);
-      });
-
-      const currentCtrl = prev.controls[controlId] || {
-        id: controlId,
-        tenantId: currentTenant.id,
-        status: 'NOT_STARTED',
-        implementationNotes: '',
-        responsibleRole: 'IT / Security Lead',
-        lastUpdated: new Date().toISOString(),
-        tags: [],
-      };
-
-      const updatedControls = {
+      },
+      controls: {
         ...prev.controls,
         [controlId]: {
-          ...currentCtrl,
-          status: 'MET' as ControlStatus,
-          implementationNotes: narrativeSections.join('\n\n'),
-          lastUpdated: new Date().toISOString(),
+          ...(prev.controls[controlId] || currentCtrl),
+          status: rolledStatus,
+          implementationNotes: combinedNotes,
+          lastUpdated: now,
           updatedBy: currentUser.name,
         },
+      },
+    }));
+    recordObjectiveNarrativeChange(objectiveId, target.implementationNarrative || '', confirmedNarrative);
+
+    // Save through the audited server writers; only the control fields that change
+    const controlUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
+    if (combinedNotes !== (currentCtrl.implementationNotes || '')) controlUpdate.implementationNotes = combinedNotes;
+    if (rolledStatus !== currentCtrl.status) controlUpdate.status = rolledStatus;
+    const controlChanged = controlUpdate.implementationNotes !== undefined || controlUpdate.status !== undefined;
+    saveObjectives(
+      [{ objectiveId, controlId, status: 'MET', narrative: confirmedNarrative }],
+      controlChanged ? { id: controlId, update: controlUpdate } : undefined
+    );
+  }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, currentTenant.id, recordObjectiveNarrativeChange, saveObjectives]);
+
+  const applyAllObjectiveTemplatesForControl = useCallback((controlId: string) => {
+    if (objectiveWriteBlocked('narratives')) return;
+    const s = writableState();
+    if (!s) return;
+
+    const now = new Date().toISOString();
+    const baseObjectives = objectivesOf(s, controlId);
+    const nextObjectives = { ...(s.objectives || {}) };
+    const narrativeSections: string[] = [];
+    const inputs: ObjectiveInput[] = [];
+
+    baseObjectives.forEach(obj => {
+      const narrative = obj.prefilledTemplate;
+      nextObjectives[obj.id] = {
+        ...obj,
+        status: 'MET',
+        implementationNarrative: narrative,
+        lastUpdated: now,
+        updatedBy: currentUser.name,
       };
-
-      const metAfter = Object.entries(updatedControls).filter(
-        ([id, c]) => id !== controlId ? c.status === 'MET' : true
-      ).length;
-      const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
-      if (metAfter === totalRequired) {
-        setTimeout(triggerSprsCelebration, 150);
-      }
-
-      // Save through the audited server writer; only the fields that change
-      if (!sent) {
-        sent = true;
-        const newNotes = narrativeSections.join('\n\n');
-        const serverUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
-        if (newNotes !== (currentCtrl.implementationNotes || '')) serverUpdate.implementationNotes = newNotes;
-        if (currentCtrl.status !== 'MET') serverUpdate.status = 'MET';
-        if (serverUpdate.implementationNotes !== undefined || serverUpdate.status !== undefined) {
-          updateLiveControl(controlId, serverUpdate);
-        }
-      }
-
-      return {
-        ...prev,
-        objectives: nextObjectives,
-        controls: updatedControls,
-      };
+      narrativeSections.push(`[Objective ${obj.letter.toUpperCase()} - ${obj.text}]:\n${narrative}`);
+      inputs.push({ objectiveId: obj.id, controlId, status: 'MET', narrative });
+      recordObjectiveNarrativeChange(obj.id, obj.implementationNarrative || '', narrative);
     });
-  }, [canEdit, notesEditable, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration, updateLiveControl]);
+
+    const currentCtrl = s.controls[controlId] || {
+      id: controlId,
+      tenantId: currentTenant.id,
+      status: 'NOT_STARTED',
+      implementationNotes: '',
+      responsibleRole: 'IT / Security Lead',
+      lastUpdated: now,
+      tags: [],
+    };
+
+    const newNotes = narrativeSections.join('\n\n');
+    setState(prev => ({
+      ...prev,
+      objectives: { ...(prev.objectives || {}), ...nextObjectives },
+      controls: {
+        ...prev.controls,
+        [controlId]: {
+          ...(prev.controls[controlId] || currentCtrl),
+          status: 'MET' as ControlStatus,
+          implementationNotes: newNotes,
+          lastUpdated: now,
+          updatedBy: currentUser.name,
+        },
+      },
+    }));
+
+    const metAfter = Object.entries(s.controls).filter(([id, c]) => id !== controlId && c.status === 'MET').length + 1;
+    const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
+    if (metAfter === totalRequired) {
+      setTimeout(triggerSprsCelebration, 150);
+    }
+
+    // Save through the audited server writers: one bulk write for the objectives, and the control only for the fields that change
+    const controlUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
+    if (newNotes !== (currentCtrl.implementationNotes || '')) controlUpdate.implementationNotes = newNotes;
+    if (currentCtrl.status !== 'MET') controlUpdate.status = 'MET';
+    const controlChanged = controlUpdate.implementationNotes !== undefined || controlUpdate.status !== undefined;
+    saveObjectives(inputs, controlChanged ? { id: controlId, update: controlUpdate } : undefined);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration, recordObjectiveNarrativeChange, saveObjectives]);
 
   const linkEvidenceToObjective = useCallback((objectiveId: string, evidenceId: string) => {
-    if (!canEdit) return;
+    if (objectiveWriteBlocked('objectives')) return;
+    const s = writableState();
+    if (!s) return;
 
     const match = objectiveId.match(/^(.+?)\[([a-z0-9]+)\]$/i);
     const controlId = match ? match[1] : objectiveId;
 
-    setState(prev => {
-      const existingObjectives = prev.objectives || {};
-      const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-      const baseObjectives = getAssessmentObjectivesForControl(
-        controlId,
-        ctrl?.title,
-        ctrl?.assessmentObjectives,
-        existingObjectives
-      );
+    const target = objectivesOf(s, controlId).find(o => o.id === objectiveId) || {
+      id: objectiveId,
+      controlId,
+      letter: match ? match[2] : 'a',
+      text: 'Objective determination',
+      status: 'NOT_STARTED' as ObjectiveStatus,
+      prefilledTemplate: '',
+      implementationNarrative: '',
+      linkedEvidenceIds: [],
+      isAutoVerifiedByTelemetry: false,
+    };
 
-      const target = baseObjectives.find(o => o.id === objectiveId) || {
-        id: objectiveId,
-        controlId,
-        letter: match ? match[2] : 'a',
-        text: 'Objective determination',
-        status: 'NOT_STARTED' as ObjectiveStatus,
-        prefilledTemplate: '',
-        implementationNarrative: '',
-        linkedEvidenceIds: [],
-        isAutoVerifiedByTelemetry: false,
-      };
+    const currentLinked = target.linkedEvidenceIds || [];
+    const updatedLinked = currentLinked.includes(evidenceId)
+      ? currentLinked.filter(id => id !== evidenceId)
+      : [...currentLinked, evidenceId];
 
-      const currentLinked = target.linkedEvidenceIds || [];
-      const updatedLinked = currentLinked.includes(evidenceId)
-        ? currentLinked.filter(id => id !== evidenceId)
-        : [...currentLinked, evidenceId];
-
-      return {
-        ...prev,
-        objectives: {
-          ...existingObjectives,
-          [objectiveId]: {
-            ...target,
-            linkedEvidenceIds: updatedLinked,
-            lastUpdated: new Date().toISOString(),
-            updatedBy: currentUser.name,
-          },
+    setState(prev => ({
+      ...prev,
+      objectives: {
+        ...(prev.objectives || {}),
+        [objectiveId]: {
+          ...target,
+          linkedEvidenceIds: updatedLinked,
+          lastUpdated: new Date().toISOString(),
+          updatedBy: currentUser.name,
         },
-      };
-    });
-  }, [canEdit, frameworkControls, currentUser]);
+      },
+    }));
+    saveObjectives([{ objectiveId, controlId, linkedEvidenceIds: updatedLinked }]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, saveObjectives]);
 
   // Action: Update SSP Metadata with RBAC Check
   const updateSSPMetadata = useCallback((metadata: Partial<SSPMetadata>) => {
@@ -1238,6 +1386,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       imported.tenantId = currentTenant.id;
       imported.programId = programId;
       imported.lastSaved = new Date().toISOString();
+      // The upload marker and the review list describe this browser's cache, never a backup file's
+      imported.objectivesMigratedAt = stateRef.current.objectivesMigratedAt;
+      imported.objectivesPendingReview = stateRef.current.objectivesPendingReview;
+      if (!imported.objectivesMigratedAt) delete imported.objectivesMigratedAt;
+      if (!imported.objectivesPendingReview) delete imported.objectivesPendingReview;
 
       // A server-backed tenant's notes, status and roles live on the server: send each control that differs from the
       // current state through the audited writer (one PUT per control, sequential, only the changed fields)
@@ -1256,6 +1409,15 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
       setState(imported);
+      // Objectives of a server-backed tenant go to the server in chunks of 500 (each chunk all-or-nothing)
+      if (currentTenant.serverBacked) {
+        const objectiveUploads = objectivesToUpload(imported.objectives, isKnownControl).items;
+        if (objectiveUploads.length > 0) {
+          updateLiveObjectivesBulk(objectiveUploads).catch((err: unknown) => {
+            alert(`The objectives of the imported file could not all be saved to the server: ${errorMessage(err) || 'unknown error'}`);
+          });
+        }
+      }
       if (serverUpdates.length > 0) {
         const IMPORT_PUT_CAP = 1000;
         if (serverUpdates.length > IMPORT_PUT_CAP) {
@@ -1272,7 +1434,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
       return false;
     }
-  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, updateLiveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, updateLiveControl, updateLiveObjectivesBulk, isKnownControl]);
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
@@ -1333,6 +1495,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     applyAllObjectiveTemplatesForControl,
     linkEvidenceToObjective,
     recalculateControlStatusFromObjectives,
+    objectivesNeedOwner,
+    objectivePendingReview,
+    serverObjectiveNarrative,
+    resolveObjectiveConflict,
   }), [
     state,
     notesStatus,
@@ -1370,6 +1536,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     applyAllObjectiveTemplatesForControl,
     linkEvidenceToObjective,
     recalculateControlStatusFromObjectives,
+    objectivesNeedOwner,
+    objectivePendingReview,
+    serverObjectiveNarrative,
+    resolveObjectiveConflict,
   ]);
 
   return (
