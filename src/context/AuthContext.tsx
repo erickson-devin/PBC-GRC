@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { User, AuthProviderType } from '../types/tenant';
 import { useTenant, ANONYMOUS_USER } from './TenantContext';
-import { ApiClient, LocalLoginResponse, MfaEnrolmentStart, MfaStage, SetupInput, SetupResult } from '../services/apiClient';
+import { ApiClient, ApiError, LocalLoginResponse, MfaEnrolmentStart, MfaStage, SetupInput, SetupResult } from '../services/apiClient';
+import { onSessionRejected, holdSessionSignal, releaseSessionSignal, reportResponseStatus } from '../services/sessionSignal';
 import { errorMessage } from '../utils/errors';
 import { buildUserProfile } from '../utils/userProfile';
 
@@ -65,6 +66,8 @@ const AUTH_USER_KEY = 'pbc_session_auth_user_v2';
 const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
 // Two booleans about the signed-in account (must change the password / has a second factor). No secret, code or token is ever stored here.
 const AUTH_FLAGS_KEY = 'pbc_session_flags_v2';
+// Shown on the sign-in screen after the server ended the session. Memory only.
+const SESSION_ENDED_MESSAGE = 'Your session has ended. Please sign in again.';
 
 const readStoredFlags = (): { mustChangePassword: boolean; enrolled: boolean } => {
   try {
@@ -101,6 +104,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [idToken, setIdToken] = useState<string | null>(() => {
     return localStorage.getItem(AUTH_TOKEN_KEY) || null;
   });
+  // The session-ended listener compares against the latest token without re-subscribing on every change
+  const idTokenRef = useRef(idToken);
+  idTokenRef.current = idToken;
 
   // Authenticated state check
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -261,15 +267,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string, code?: string): Promise<void> => {
-    const session = await ApiClient.changePassword(currentPassword, newPassword, code, idToken ?? undefined);
-    setIdToken(session.token);
-    setCurrentUser(prev => ({ ...prev, idToken: session.token }));
-    setMustChangePassword(false);
-    setMfaEnrolled(session.mfaEnrolled);
-    // The tenant / programs / data loads read the stored token: store the new one first rather than wait for the effect
-    try { localStorage.setItem(AUTH_TOKEN_KEY, session.token); } catch {}
-    // The roles cached so far are provisional: load the real ones now that the server accepts requests again
-    syncAuthUser({ ...tenantUser, idToken: session.token }, currentTenant.id);
+    // The old token stops being valid the moment the password changes: its in-flight requests must not sign the person out
+    const previous = idToken ?? ApiClient.getToken();
+    holdSessionSignal(previous);
+    try {
+      const session = await ApiClient.changePassword(currentPassword, newPassword, code, idToken ?? undefined);
+      setIdToken(session.token);
+      setCurrentUser(prev => ({ ...prev, idToken: session.token }));
+      setMustChangePassword(false);
+      setMfaEnrolled(session.mfaEnrolled);
+      // The tenant / programs / data loads read the stored token: store the new one first rather than wait for the effect
+      try { localStorage.setItem(AUTH_TOKEN_KEY, session.token); } catch {}
+      releaseSessionSignal(previous);
+      // The roles cached so far are provisional: load the real ones now that the server accepts requests again
+      syncAuthUser({ ...tenantUser, idToken: session.token }, currentTenant.id);
+    } catch (err) {
+      // A 401 here is a genuinely dead session (a wrong current password is a 403): report it now that the hold is lifted
+      if (err instanceof ApiError && err.status === 401) {
+        releaseSessionSignal(previous);
+        reportResponseStatus(401, previous, ApiClient.getToken());
+      }
+      throw err;
+    } finally {
+      releaseSessionSignal(previous);
+    }
   }, [idToken, syncAuthUser, tenantUser, currentTenant.id]);
 
   /**
@@ -332,6 +353,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.location.hash = '';
     }
   }, [resetForSignOut]);
+
+  // The server stopped accepting this session (deleted / disabled account, rotated secret, expiry): sign out and say why
+  useEffect(() => onSessionRejected((token) => {
+    if (!token || token !== idTokenRef.current) return;
+    void logout();
+    setAuthError(SESSION_ENDED_MESSAGE);
+  }), [logout]);
 
   const openAuthModal = useCallback((_mode: 'signin' = 'signin', redirectUrl?: string) => {
     if (redirectUrl) {

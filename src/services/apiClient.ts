@@ -27,6 +27,7 @@ import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
+import { bearerFromHeaders, reportResponseStatus } from './sessionSignal';
 
 function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
@@ -111,11 +112,15 @@ function baseApiError(status: number, body: unknown): ApiError {
 
 /** fetch() wrapper: network failures become ApiError(0) so the UI can say "cannot reach the server". */
 async function apiFetch(input: string, init: RequestInit): Promise<Response> {
+  let res: Response;
   try {
-    return await fetch(input, init);
+    res = await fetch(input, init);
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
   }
+  // A 401 on the stored session's own bearer means the server ended the session: tell the app (see sessionSignal.ts)
+  void reportResponseStatus(res.status, bearerFromHeaders(init.headers), ApiClient.getToken());
+  return res;
 }
 
 /** Settings accepted when creating or updating a tenant (the license tier is never client-controlled). */
@@ -708,7 +713,7 @@ export const ApiClient = {
   async listMyTenants(token?: string): Promise<ServerTenant[] | null> {
     const bearer = token ?? this.getToken();
     if (!bearer) return null;
-    const res = await fetch(`${API_BASE_URL}/api/v1/tenants`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
       headers: { Authorization: `Bearer ${bearer}` },
     });
     if (res.status === 401) return null;
@@ -726,7 +731,7 @@ export const ApiClient = {
     const bearer = token ?? this.getToken();
     if (!bearer) return null;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/me`, { headers: { Authorization: `Bearer ${bearer}` } });
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/me`, { headers: { Authorization: `Bearer ${bearer}` } });
       if (!res.ok) return null;
       const data = (await res.json()) as { isPlatformAdmin?: unknown };
       return { isPlatformAdmin: data.isPlatformAdmin === true };
@@ -740,7 +745,7 @@ export const ApiClient = {
     const bearer = token ?? this.getToken();
     if (!bearer) return null;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { Authorization: `Bearer ${bearer}` } });
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { Authorization: `Bearer ${bearer}` } });
       if (!res.ok) return null;
       const data = (await res.json()) as { admins?: Array<{ email?: unknown }> };
       return (data.admins ?? []).map((a) => String(a.email ?? '')).filter(Boolean);
@@ -971,7 +976,7 @@ export const ApiClient = {
     if (options?.overlay && options.overlay !== 'NONE') query.set('overlay', options.overlay);
 
     const queryString = query.toString() ? `?${query.toString()}` : '';
-    const res = await fetch(`${API_BASE_URL}/api/v1/controls${queryString}`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/controls${queryString}`, {
       method: 'GET',
       headers: this.getHeaders(tenantId, undefined, programId),
     });
@@ -1025,7 +1030,7 @@ export const ApiClient = {
     updates: Partial<ControlState>,
     programId?: string | null
   ): Promise<ControlState> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/controls/${encodeURIComponent(controlId)}`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/controls/${encodeURIComponent(controlId)}`, {
       method: 'PUT',
       headers: this.getHeaders(tenantId, undefined, programId),
       body: JSON.stringify({
@@ -1055,7 +1060,7 @@ export const ApiClient = {
       throw new Error('Not authenticated: ID token not found');
     }
 
-    const res = await fetch(`${API_BASE_URL}/api/v1/evidence`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence`, {
       method: 'GET',
       headers: this.getHeaders(tenantId, undefined, programId),
     });
@@ -1078,7 +1083,7 @@ export const ApiClient = {
     token?: string | null
   ): Promise<{ provider: string; localStoragePath: string; isAirGapped: boolean } | null> {
     // The caller can pass the session token itself: right after sign-in it is not in browser storage yet.
-    const res = await fetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
       method: 'GET',
       headers: this.getHeaders(tenantId, token ? { Authorization: `Bearer ${token}` } : undefined),
     });
@@ -1102,7 +1107,7 @@ export const ApiClient = {
     },
     programId?: string | null
   ): Promise<UploadUrlResponse> {
-    const res = await fetch(`${API_BASE_URL}/api/v1/evidence/upload-url`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/upload-url`, {
       method: 'POST',
       headers: this.getHeaders(tenantId, undefined, programId),
       body: JSON.stringify(payload),
@@ -1139,7 +1144,7 @@ export const ApiClient = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const res = await fetch(targetUrl, {
+    const res = await apiFetch(targetUrl, {
       method: 'PUT',
       headers,
       body: file,

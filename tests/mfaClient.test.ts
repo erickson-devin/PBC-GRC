@@ -214,6 +214,13 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   const applyBody = fnBody('const applySession = useCallback', 'const loginWithEmailPassword');
   assert(/session\.mustChangePassword\s*\)/.test(applyBody) && /skipServerSync/.test(fnBody('const handleUserSession = useCallback', 'const applySession')), 'applySession hands the forced-change flag to the sign-in sync, which skips the server calls');
 
+  const logoutRegion = fnBody('const logout = useCallback', 'const openAuthModal');
+  assert(/onSessionRejected\(/.test(logoutRegion) && /idTokenRef\.current/.test(logoutRegion), 'a session the server rejected signs the person out (and only for the token still in use)');
+  assert(authLf.includes("'Your session has ended. Please sign in again.'"), 'the sign-out message after a rejected session is plain');
+  const changeRegion = fnBody('const changePassword = useCallback', 'const registerWithInvite');
+  const setItemAt = changeRegion.indexOf('localStorage.setItem(AUTH_TOKEN_KEY');
+  assert(/holdSessionSignal\(/.test(changeRegion) && setItemAt >= 0 && changeRegion.indexOf('releaseSessionSignal(', setItemAt) > setItemAt, 'changePassword holds the old token\'s signal and releases it after the new token is stored');
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');
