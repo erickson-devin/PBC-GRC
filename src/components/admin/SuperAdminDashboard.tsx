@@ -48,7 +48,7 @@ import {
   executeCryptographicDestruction,
 } from '../../data/storage/offboardingEngine';
 import { CertificateOfDestruction } from '../../types/audit';
-import type { ControlState } from '../../types/cmmc';
+import type { ControlState, EvidenceItem } from '../../types/cmmc';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
@@ -291,11 +291,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       const assets = await getAssetBackend(tenant.id, assetBackendMode({ serverBacked: tenant.serverBacked })).list().catch(() => undefined);
       // A live tenant's implementation notes live on the server; the browser cache may be empty or stale. Never hand over a package with missing notes.
       let controlStates: Record<string, ControlState> | undefined;
+      // The evidence list is server-only too: the browser cache of a live tenant no longer holds it.
+      let evidenceList: EvidenceItem[] | undefined;
       if (tenant.serverBacked) {
         try {
           // null: the tenant's default program (the handover package is not scoped to whichever program this browser has open)
-          const list = await ApiClient.getControls(tenant.id, { framework: tenant.primaryFramework }, null);
+          const [list, evidence] = await Promise.all([
+            ApiClient.getControls(tenant.id, { framework: tenant.primaryFramework }, null),
+            ApiClient.getEvidence(tenant.id, null),
+          ]);
           controlStates = Object.fromEntries(list.map(c => [c.id, c]));
+          evidenceList = evidence;
         } catch (err: unknown) {
           // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.
           const notMember = err instanceof ApiError && err.status === 403;
@@ -308,7 +314,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           return;
         }
       }
-      await generateEnclaveHandoverPackage(tenant.id, tenant, assets, controlStates);
+      await generateEnclaveHandoverPackage(tenant.id, tenant, assets, controlStates, evidenceList);
       setNotificationToast({
         type: 'success',
         message: `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,

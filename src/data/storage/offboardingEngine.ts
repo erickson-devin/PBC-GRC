@@ -109,10 +109,13 @@ export async function generateEnclaveHandoverPackage(
   /** The enclave's asset inventory, when the caller has it (the server holds it for live tenants): states the CMMC scope in the SSP. */
   assets?: ReadonlyArray<EnclaveAsset>,
   /** The server's control states (the source of truth for live tenants, including implementation notes the browser cache may lack). Overrides the cached controls per id. */
-  controlStates?: Record<string, ControlState>
+  controlStates?: Record<string, ControlState>,
+  /** The server's evidence list (the browser cache of a live tenant no longer holds it). Used instead of the cached list. */
+  evidenceIndex?: ReadonlyArray<EvidenceItem>
 ): Promise<EnclaveHandoverPackage> {
   const tenant = resolveTenant(tenantId, tenantData);
   const state: AssessmentState = StorageService.loadAssessment(tenant);
+  const evidenceForPackage: ReadonlyArray<EvidenceItem> = evidenceIndex ?? state.evidenceIndex ?? [];
   const ledger: AuditLogEntry[] = loadLedger(tenantId);
 
   const primaryFw = tenant.primaryFramework || 'CMMC_L1';
@@ -141,7 +144,7 @@ export async function generateEnclaveHandoverPackage(
     },
     controls,
     controlsForReport,
-    state.evidenceIndex
+    [...evidenceForPackage]
   );
 
   // Generate structured POA&M entries
@@ -174,7 +177,7 @@ export async function generateEnclaveHandoverPackage(
       inProgressCount: sspDocument.summaryMetrics.inProgressCount,
       notMetCount: sspDocument.summaryMetrics.notMetCount,
       completionPercentage: sspDocument.summaryMetrics.completionPercentage,
-      evidenceItemsCount: state.evidenceIndex?.length || 0,
+      evidenceItemsCount: evidenceForPackage.length,
       poamEntriesCount: poamMatrix.length,
       auditLogCount: ledger.length,
     },
@@ -182,7 +185,7 @@ export async function generateEnclaveHandoverPackage(
       systemSecurityPlan: sspDocument,
       poamMatrix,
     },
-    evidenceIndex: state.evidenceIndex || [],
+    evidenceIndex: [...evidenceForPackage],
     auditLedger: ledger,
   };
 

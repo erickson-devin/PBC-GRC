@@ -24,6 +24,7 @@ import {
 } from '../data/tenantSync';
 import { EvidenceVault } from '../services/evidenceVault';
 import { StorageService, createInitialState } from '../services/storageService';
+import { stripTenantRegistryForCache } from '../services/browserStorageScrub';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { clearLocalEnclaveAssets, getEnclaveAssets, isDemoSeedAsset } from '../data/telemetry/assetRegistry';
 import type { AssetInput } from '../data/telemetry/assetScope';
@@ -104,7 +105,7 @@ export function buildInviteUrl(token: string): string {
     const origin = window.location.origin;
     return `${origin}/accept-invite?token=${encodeURIComponent(token)}`;
   }
-  return `https://grc.pitchblackcyber.com/accept-invite?token=${encodeURIComponent(token)}`;
+  return `/accept-invite?token=${encodeURIComponent(token)}`;
 }
 
 /**
@@ -505,7 +506,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Sync storage
   useEffect(() => {
-    localStorage.setItem(LIVE_TENANTS_STORAGE_KEY, JSON.stringify(deduplicateTenants(liveTenants)));
+    localStorage.setItem(LIVE_TENANTS_STORAGE_KEY, JSON.stringify(stripTenantRegistryForCache(deduplicateTenants(liveTenants))));
   }, [liveTenants]);
 
   useEffect(() => {

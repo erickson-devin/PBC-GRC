@@ -23,6 +23,7 @@ import {
 import { StorageService, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { useEvidenceBlobScrub } from '../hooks/useEvidenceBlobScrub';
+import { useLocalAssetScrub } from '../hooks/useLocalAssetScrub';
 import { computeSha256 } from '../services/evidenceIntegrity';
 import { generateEvidenceObjectPath } from '../data/audit/storageDriver';
 import { computeDomainStats } from '../data/frameworks/domainStats';
@@ -295,6 +296,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Server-backed tenants keep evidence files only on the server: remove a leftover browser copy once the server verifies it
   useEvidenceBlobScrub();
+
+  // Same for a leftover browser-local asset list, once the server holds every asset in it
+  useLocalAssetScrub();
 
   // Auto-save state changes under the scope's own cache key. Never save a state under a scope it was not loaded for: while a
   // program switch is settling `state` still belongs to the previous program and must not land in the new program's key.
