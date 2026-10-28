@@ -12,8 +12,12 @@
 import type { AssessmentState } from '../types/cmmc';
 import { redactLedgerNotesExcerpts } from '../data/audit/auditLogger';
 import type { AuditLogEntry } from '../types/audit';
+import type { EnclaveAsset } from '../types/telemetry';
+import { isDemoSeedAsset } from '../data/telemetry/assetRegistry';
 
 export const ASSESSMENT_KEY_PREFIX = 'pbc_cmmc_assessment_v3_';
+export const ENCLAVE_ASSETS_KEY_PREFIX = 'pbc_enclave_assets_v1_';
+export const ACCRETION_CONFIG_KEY_PREFIX = 'pbc_accretion_cfg_v1_';
 export const LEGACY_ASSESSMENT_KEY_PREFIX = 'pbc_assessment_';
 export const LEDGER_KEY_PREFIX = 'pbc_audit_ledger_';
 export const TENANT_REGISTRY_KEYS = ['pbc_live_tenants_v4', 'pbc_tenants_registry_v3'];
@@ -24,17 +28,92 @@ export interface ScrubStorage {
   key(index: number): string | null;
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
 export interface BrowserStorageScrubResult {
   scrubbed: number;
   narrativesRemoved: number;
+  evidenceItemsCleared: number;
   keptBrowserOnly: number;
   malformed: number;
   failed: number;
   registryUnreadable: boolean;
   ledgersRedacted: number;
   ledgerEntriesRedacted: number;
+  accretionKeysRemoved: number;
+  assetListsRemoved: number;
+  assetListsKept: number;
+  registryEntriesStripped: number;
+}
+
+/** Tenant registry text a server tenant keeps on the server only (the browser copy holds it for browser-only tenants). */
+export const SERVER_TENANT_TEXT_FIELDS = ['systemName', 'systemOwner', 'industry'] as const;
+
+/**
+ * Returns a copy of the tenant list where every server-backed entry has its server-held text fields blanked ('' because
+ * the Tenant type requires strings). Browser-only entries are untouched. Never mutates the input; idempotent.
+ */
+export function stripTenantRegistryForCache<T extends { serverBacked?: boolean }>(list: ReadonlyArray<T>): T[] {
+  return list.map((tenant) => {
+    if (!tenant || typeof tenant !== 'object' || tenant.serverBacked !== true) return tenant;
+    const record = tenant as unknown as Record<string, unknown>;
+    let copy: Record<string, unknown> | null = null;
+    for (const field of SERVER_TENANT_TEXT_FIELDS) {
+      if (field in record && record[field] !== '' && record[field] != null) {
+        if (!copy) copy = { ...record };
+        copy[field] = '';
+      }
+    }
+    return copy ? (copy as unknown as T) : tenant;
+  });
+}
+
+/** Returns a copy of the state with an empty evidence list: a server tenant's live list replaces it. Never mutates the input. */
+export function stripEvidenceIndexForCache(state: AssessmentState): AssessmentState {
+  return { ...state, evidenceIndex: [] };
+}
+
+function isDemoOnlyAssetList(list: unknown[], tenantId: string): boolean {
+  return list.every(
+    (item) => !!item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string' && isDemoSeedAsset(item as { id: string }, tenantId)
+  );
+}
+
+const normalizeHost = (h: unknown): string => (typeof h === 'string' ? h.trim().toLowerCase() : '');
+
+/** Same rule as server/vm/assetMatch.ts normalizeMac: separator- and case-insensitive; empty for a missing or all-zero MAC. */
+function normalizeMac(mac: unknown): string {
+  const m = (typeof mac === 'string' ? mac : '').replace(/[:.\-\s]/g, '').toLowerCase();
+  return m === '' || /^0+$/.test(m) ? '' : m;
+}
+
+/**
+ * Decides whether a browser-local asset list of a server tenant can be dropped: only when every real (non demo-seed)
+ * local asset has a match on the server (equal host name, or equal MAC). `unmatched` counts those without a match.
+ */
+export function planLocalAssetCleanup(
+  local: ReadonlyArray<EnclaveAsset>,
+  server: ReadonlyArray<EnclaveAsset>,
+  tenantId: string
+): { removable: boolean; unmatched: number } {
+  const hosts = new Set<string>();
+  const macs = new Set<string>();
+  for (const s of server) {
+    const h = normalizeHost(s?.hostName);
+    if (h) hosts.add(h);
+    const m = normalizeMac(s?.macAddress);
+    if (m) macs.add(m);
+  }
+  let unmatched = 0;
+  for (const asset of local) {
+    if (asset && typeof asset.id === 'string' && isDemoSeedAsset(asset, tenantId)) continue;
+    const h = normalizeHost(asset?.hostName);
+    const m = normalizeMac(asset?.macAddress);
+    if ((h && hosts.has(h)) || (m && macs.has(m))) continue;
+    unmatched++;
+  }
+  return { removable: unmatched === 0, unmatched };
 }
 
 /** Returns a copy of the state with `implementationNotes` removed from every control. Never mutates the input. */
@@ -70,17 +149,18 @@ export function stripObjectiveNarrativesForCache(state: AssessmentState): Assess
 }
 
 /** Strips notes (and, once migrated, objective narratives) from a stored assessment JSON string. Never throws; returns the same string when unchanged. */
-export function scrubAssessmentJson(raw: string): {
+export function scrubAssessmentJson(raw: string, options: { clearEvidence?: boolean } = {}): {
   changed: boolean;
   json: string | null;
   strippedControls: number;
   strippedObjectives: number;
+  clearedEvidence: number;
   malformed?: boolean;
 } {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.controls || typeof parsed.controls !== 'object') {
-      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, malformed: true };
+      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, malformed: true };
     }
     let stripped = 0;
     for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
@@ -101,10 +181,19 @@ export function scrubAssessmentJson(raw: string): {
         }
       }
     }
-    if (stripped === 0 && strippedObjectives === 0) return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0 };
-    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives };
+    // The evidence list (file names, descriptions) is server-only for a live tenant. Cleared only for a registered server
+    // tenant: an unregistered id may be a failed move's leftover whose files never reached the server (#83).
+    let clearedEvidence = 0;
+    if (options.clearEvidence !== false && Array.isArray(parsed.evidenceIndex) && parsed.evidenceIndex.length > 0) {
+      clearedEvidence = parsed.evidenceIndex.length;
+      parsed.evidenceIndex = [];
+    }
+    if (stripped === 0 && strippedObjectives === 0 && clearedEvidence === 0) {
+      return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0 };
+    }
+    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives, clearedEvidence };
   } catch {
-    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, malformed: true };
+    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, malformed: true };
   }
 }
 
@@ -133,19 +222,22 @@ function listKeys(storage: ScrubStorage): string[] {
   return keys;
 }
 
-/** Ids of tenants that are not server-backed, or null when no registry key holds a readable array. */
-function readBrowserOnlyIds(storage: ScrubStorage): Set<string> | null {
+/** Ids of browser-only and of server-backed tenants (plus the registry key and list), or null when no registry key holds a readable array. */
+function readRegistryIds(
+  storage: ScrubStorage
+): { browserOnly: Set<string>; serverBacked: Set<string>; key: string; list: unknown[] } | null {
   for (const registryKey of TENANT_REGISTRY_KEYS) {
     try {
       const raw = storage.getItem(registryKey);
       if (!raw) continue;
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) continue;
-      const ids = new Set<string>();
+      const browserOnly = new Set<string>();
+      const serverBacked = new Set<string>();
       for (const t of parsed) {
-        if (t && typeof t === 'object' && typeof t.id === 'string' && t.serverBacked !== true) ids.add(t.id);
+        if (t && typeof t === 'object' && typeof t.id === 'string') (t.serverBacked !== true ? browserOnly : serverBacked).add(t.id);
       }
-      return ids;
+      return { browserOnly, serverBacked, key: registryKey, list: parsed };
     } catch {
       // try the next registry key
     }
@@ -157,20 +249,26 @@ function emptyResult(): BrowserStorageScrubResult {
   return {
     scrubbed: 0,
     narrativesRemoved: 0,
+    evidenceItemsCleared: 0,
     keptBrowserOnly: 0,
     malformed: 0,
     failed: 0,
     registryUnreadable: false,
     ledgersRedacted: 0,
     ledgerEntriesRedacted: 0,
+    accretionKeysRemoved: 0,
+    assetListsRemoved: 0,
+    assetListsKept: 0,
+    registryEntriesStripped: 0,
   };
 }
 
 function logCounts(r: BrowserStorageScrubResult, log: (message: string) => void): void {
-  if (r.scrubbed + r.malformed + r.ledgersRedacted === 0) return;
+  if (r.scrubbed + r.malformed + r.ledgersRedacted + r.accretionKeysRemoved + r.assetListsRemoved + r.registryEntriesStripped === 0) return;
   log(
-    `[storage-scrub] assessments scrubbed ${r.scrubbed} (${r.narrativesRemoved} objective narratives), kept browser-only ${r.keptBrowserOnly}, malformed ${r.malformed}, ` +
-      `ledgers redacted ${r.ledgersRedacted} (${r.ledgerEntriesRedacted} entries)`
+    `[storage-scrub] assessments scrubbed ${r.scrubbed} (${r.narrativesRemoved} objective narratives, ${r.evidenceItemsCleared} evidence items), kept browser-only ${r.keptBrowserOnly}, malformed ${r.malformed}, ` +
+      `ledgers redacted ${r.ledgersRedacted} (${r.ledgerEntriesRedacted} entries), ` +
+      `accretion keys removed ${r.accretionKeysRemoved}, asset lists removed ${r.assetListsRemoved} (kept ${r.assetListsKept}), registry entries stripped ${r.registryEntriesStripped}`
   );
 }
 
@@ -191,10 +289,54 @@ export function runAssessmentCacheScrub(
     result.failed++;
     return result;
   }
-  const browserOnly = readBrowserOnlyIds(storage);
-  if (!browserOnly) {
+  // Discovery-tool settings hold a secret and live on the server now: removed even when the registry cannot be read.
+  for (const key of keys) {
+    if (!key.startsWith(ACCRETION_CONFIG_KEY_PREFIX)) continue;
+    try {
+      storage.removeItem(key);
+      result.accretionKeysRemoved++;
+    } catch {
+      result.failed++;
+    }
+  }
+  const registry = readRegistryIds(storage);
+  if (!registry) {
     result.registryUnreadable = true;
+    if (log) logCounts(result, log);
     return result;
+  }
+  const { browserOnly, serverBacked } = registry;
+  // Server tenants keep their descriptive text on the server; rewrite the registry only when something changes.
+  try {
+    const stripped = stripTenantRegistryForCache(registry.list as Array<{ serverBacked?: boolean }>);
+    const changedCount = stripped.filter((entry, i) => entry !== registry.list[i]).length;
+    if (changedCount > 0) {
+      storage.setItem(registry.key, JSON.stringify(stripped));
+      result.registryEntriesStripped = changedCount;
+    }
+  } catch {
+    result.failed++;
+  }
+  // A server tenant's browser-local asset list goes when it is empty or only the old demo fleet; real assets stay
+  // until the asset hook has confirmed the server holds them.
+  for (const key of keys) {
+    if (!key.startsWith(ENCLAVE_ASSETS_KEY_PREFIX)) continue;
+    const id = key.slice(ENCLAVE_ASSETS_KEY_PREFIX.length);
+    if (!serverBacked.has(id)) continue;
+    try {
+      const raw = storage.getItem(key);
+      if (raw === null) continue;
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) continue;
+      if (isDemoOnlyAssetList(list, id)) {
+        storage.removeItem(key);
+        result.assetListsRemoved++;
+      } else {
+        result.assetListsKept++;
+      }
+    } catch {
+      // unreadable value: left alone
+    }
   }
   for (const key of keys) {
     const prefix = key.startsWith(ASSESSMENT_KEY_PREFIX)
@@ -204,19 +346,22 @@ export function runAssessmentCacheScrub(
         : null;
     if (!prefix) continue;
     try {
-      if (browserOnly.has(key.slice(prefix.length))) {
+      const id = key.slice(prefix.length);
+      if (browserOnly.has(id)) {
         result.keptBrowserOnly++;
         continue;
       }
       const raw = storage.getItem(key);
       if (raw === null) continue;
-      const scrub = scrubAssessmentJson(raw);
+      // A program's cache key is `<tenant>::<program>` (server tenants only)
+      const scrub = scrubAssessmentJson(raw, { clearEvidence: serverBacked.has(id.split('::')[0]) });
       if (scrub.malformed) {
         result.malformed++;
       } else if (scrub.changed && scrub.json !== null) {
         storage.setItem(key, scrub.json);
         result.scrubbed++;
         result.narrativesRemoved += scrub.strippedObjectives;
+        result.evidenceItemsCleared += scrub.clearedEvidence;
       }
     } catch {
       result.failed++;

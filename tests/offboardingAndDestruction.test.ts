@@ -11,6 +11,7 @@ import {
   executeCryptographicDestruction,
 } from '../src/data/storage/offboardingEngine';
 import { computeSha256 } from '../src/data/audit/auditLogger';
+import { createInitialState } from '../src/services/storageService';
 
 // Polyfill minimal localStorage for Node environment if absent
 if (typeof (global as any).localStorage === 'undefined') {
@@ -148,6 +149,32 @@ async function runTests() {
         || overridden.complianceSummary.metCount !== withStates.complianceSummary.metCount,
       'O3: controlStates overrides the cached status in the report summary',
       `met ${withStates.complianceSummary.metCount}->${overridden.complianceSummary.metCount}, notMet ${withStates.complianceSummary.notMetCount}->${overridden.complianceSummary.notMetCount}`
+    );
+  }
+
+  // Test Group 1c: a live tenant's evidence list comes from the server, not the browser cache
+  console.log('\n🗂️ Test Group 1c: Server Evidence List in the Handover Package');
+  {
+    const srvTenant: Tenant = { ...testTenant, id: 'tenant-srv-evidence-01', serverBacked: true };
+    const cached = createInitialState(srvTenant);
+    cached.evidenceIndex = [{ id: 'ev-cached-1', tenantId: srvTenant.id, fileName: 'cached.pdf' } as any];
+    localStorage.setItem(`pbc_cmmc_assessment_v3_${srvTenant.id}`, JSON.stringify(cached));
+
+    const serverItem = { id: 'ev-srv-1', tenantId: srvTenant.id, fileName: 'server.pdf' } as any;
+    const withList = await generateEnclaveHandoverPackage(srvTenant.id, srvTenant, undefined, undefined, [serverItem]);
+    assert(
+      withList.evidenceIndex.length === 1 && withList.evidenceIndex[0].id === 'ev-srv-1' && withList.complianceSummary.evidenceItemsCount === 1,
+      'OB-E1: the evidence list passed in is the one the package holds'
+    );
+    const withoutList = await generateEnclaveHandoverPackage(srvTenant.id, srvTenant);
+    assert(
+      withoutList.evidenceIndex.length === 0 && withoutList.complianceSummary.evidenceItemsCount === 0,
+      'OB-E2: a server tenant without a passed list gets none of the cached items'
+    );
+    const dashSrc = readFileSync(join(process.cwd(), 'src/components/admin/SuperAdminDashboard.tsx'), 'utf8');
+    assert(
+      dashSrc.includes('ApiClient.getEvidence(tenant.id') && /generateEnclaveHandoverPackage\(tenant\.id, tenant, assets, controlStates, evidenceList\)/.test(dashSrc),
+      'OB-E3: SuperAdminDashboard fetches the server evidence list and passes it as the fifth argument'
     );
   }
 

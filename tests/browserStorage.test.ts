@@ -11,6 +11,9 @@ import {
   LEDGER_KEY_PREFIX,
   stripImplementationNotesForCache,
   stripObjectiveNarrativesForCache,
+  stripEvidenceIndexForCache,
+  stripTenantRegistryForCache,
+  planLocalAssetCleanup,
   scrubAssessmentJson,
   computeNotesStatus,
   runBrowserStorageScrub,
@@ -296,6 +299,142 @@ async function main() {
     'src/services/storageService.ts',
   ].sort();
   assert(JSON.stringify(writers) === JSON.stringify(allowed), 'S13 the set of src files that write browser storage equals the reviewed allow-list', writers);
+
+  console.log('\n--- Evidence index (server tenants never cache it) ---');
+  const EVMARK = 'CUI-FILE-55';
+  const withEvidence = (tenantId: string): AssessmentState => ({
+    ...makeState(tenantId, ''),
+    evidenceIndex: [
+      { id: 'ev-1', tenantId, fileName: `a-${EVMARK}.pdf` } as any,
+      { id: 'ev-2', tenantId, fileName: `b-${EVMARK}.pdf` } as any,
+    ],
+  });
+  globalStore.clear();
+  StorageService.saveAssessment('srv1', withEvidence('srv1'));
+  const e1Raw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!;
+  assert((JSON.parse(e1Raw) as AssessmentState).evidenceIndex.length === 0 && !e1Raw.includes(EVMARK), 'E1 saveAssessment for a server tenant stores no evidence index');
+  globalStore.clear();
+  StorageService.saveAssessment('brw1', withEvidence('brw1'), { keepNotes: true });
+  const e2Raw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'brw1')!;
+  assert((JSON.parse(e2Raw) as AssessmentState).evidenceIndex.length === 2 && e2Raw.includes(EVMARK), 'E2 keepNotes keeps the evidence index');
+  const evSrc = withEvidence('srv1');
+  assert(stripEvidenceIndexForCache(evSrc).evidenceIndex.length === 0 && evSrc.evidenceIndex.length === 2, 'E2b the strip helper never mutates its input');
+  globalStore.clear();
+  globalStore.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withEvidence('srv1')));
+  globalStore.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', JSON.stringify(withEvidence('brw1')));
+  assert(StorageService.loadAssessment(makeTenant('srv1', true)).evidenceIndex.length === 0, 'E3a loadAssessment blanks a cached evidence index for a server tenant');
+  assert(StorageService.loadAssessment(makeTenant('brw1', false)).evidenceIndex.length === 2, 'E3b loadAssessment keeps it for a browser-only tenant');
+
+  const stE = new MemoryStorage();
+  stE.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'brw1' }]));
+  stE.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withEvidence('srv1')));
+  const brwEvRaw = JSON.stringify(withEvidence('brw1'));
+  stE.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', brwEvRaw);
+  const logsE: string[] = [];
+  const rE4 = await runBrowserStorageScrub(stE, (m) => logsE.push(m));
+  assert(
+    rE4.evidenceItemsCleared === 2 && rE4.keptBrowserOnly === 1 && (JSON.parse(stE.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!) as AssessmentState).evidenceIndex.length === 0 && stE.getItem(ASSESSMENT_KEY_PREFIX + 'brw1') === brwEvRaw,
+    'E4 start-up scrub clears the server tenant evidence index and leaves the browser-only one',
+    rE4
+  );
+  stE.setCalls.length = 0;
+  const rE5 = await runBrowserStorageScrub(stE, () => undefined);
+  assert(rE5.evidenceItemsCleared === 0 && stE.setCalls.length === 0, 'E5 a second run writes nothing', rE5);
+  assert(logsE.length === 1 && !logsE[0].includes('srv1') && !logsE[0].includes(EVMARK), 'E6 the log line holds no tenant id and no file name', logsE);
+
+  const stE7 = new MemoryStorage();
+  stE7.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }]));
+  stE7.setItem(ASSESSMENT_KEY_PREFIX + 'srv1::prog2', JSON.stringify(withEvidence('srv1')));
+  stE7.setItem(ASSESSMENT_KEY_PREFIX + 'orphan9', JSON.stringify(withEvidence('orphan9')));
+  const rE7 = await runBrowserStorageScrub(stE7, () => undefined);
+  assert(
+    rE7.evidenceItemsCleared === 2 &&
+      (JSON.parse(stE7.getItem(ASSESSMENT_KEY_PREFIX + 'srv1::prog2')!) as AssessmentState).evidenceIndex.length === 0 &&
+      (JSON.parse(stE7.getItem(ASSESSMENT_KEY_PREFIX + 'orphan9')!) as AssessmentState).evidenceIndex.length === 2,
+    'E7 a server program cache loses its evidence index; an unregistered id (failed-move leftover) keeps it',
+    rE7
+  );
+
+  console.log('\n--- Asset cache and discovery keys ---');
+  const NOTE7 = 'CUI-NOTE-7';
+  const realAssets = JSON.stringify([{ id: 'a-1', hostName: 'WS-01', macAddress: '', notes: NOTE7 }]);
+  const demoOnly = JSON.stringify([{ id: 'asset-ws-01-srv2' }, { id: 'asset-srv-02-srv2' }]);
+  const stA = new MemoryStorage();
+  stA.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'srv2', serverBacked: true }, { id: 'srv3', serverBacked: true }, { id: 'brw1' }]));
+  stA.setItem('pbc_enclave_assets_v1_srv1', '[]');
+  stA.setItem('pbc_enclave_assets_v1_srv2', demoOnly);
+  stA.setItem('pbc_enclave_assets_v1_srv3', realAssets);
+  stA.setItem('pbc_enclave_assets_v1_brw1', realAssets);
+  stA.setItem('pbc_enclave_assets_v1_orphan9', realAssets);
+  const logsA: string[] = [];
+  const rA1 = await runBrowserStorageScrub(stA, (m) => logsA.push(m));
+  assert(
+    rA1.assetListsRemoved === 2 && rA1.assetListsKept === 1 && stA.getItem('pbc_enclave_assets_v1_srv1') === null && stA.getItem('pbc_enclave_assets_v1_srv2') === null &&
+      stA.getItem('pbc_enclave_assets_v1_srv3') === realAssets && stA.getItem('pbc_enclave_assets_v1_brw1') === realAssets && stA.getItem('pbc_enclave_assets_v1_orphan9') === realAssets,
+    'A1 empty and demo-only lists of server tenants go; real lists, browser-only and unregistered lists stay',
+    rA1
+  );
+  const rA2 = await runBrowserStorageScrub(stA, () => undefined);
+  assert(rA2.assetListsRemoved === 0 && rA2.accretionKeysRemoved === 0, 'A2 a second run removes nothing', rA2);
+  const stA3 = new MemoryStorage();
+  stA3.setItem('pbc_live_tenants_v4', 'garbage');
+  stA3.setItem('pbc_enclave_assets_v1_srv1', '[]');
+  const rA3 = await runBrowserStorageScrub(stA3, () => undefined);
+  assert(rA3.registryUnreadable && rA3.assetListsRemoved === 0 && stA3.getItem('pbc_enclave_assets_v1_srv1') === '[]', 'A3 an unreadable registry removes no asset list', rA3);
+  const stA4 = new MemoryStorage();
+  stA4.setItem('pbc_live_tenants_v4', 'garbage');
+  stA4.setItem('pbc_accretion_cfg_v1_srv1', '{"secret":"x"}');
+  stA4.setItem('pbc_accretion_cfg_v1_brw1', '{"secret":"y"}');
+  stA4.setItem('pbc_unrelated', 'keep');
+  const rA4 = await runBrowserStorageScrub(stA4, () => undefined);
+  assert(rA4.accretionKeysRemoved === 2 && stA4.getItem('pbc_accretion_cfg_v1_srv1') === null && stA4.getItem('pbc_accretion_cfg_v1_brw1') === null && stA4.getItem('pbc_unrelated') === 'keep', 'A4 discovery settings keys are removed even with an unreadable registry', rA4);
+  const rA4b = await runBrowserStorageScrub(stA4, () => undefined);
+  assert(rA4b.accretionKeysRemoved === 0, 'A4b a second run removes nothing', rA4b);
+  assert(logsA.length === 1 && !/srv\d|brw1|orphan9/.test(logsA[0]) && !logsA[0].includes(NOTE7), 'A5 the log line holds no tenant id and no note', logsA);
+
+  console.log('\n--- planLocalAssetCleanup ---');
+  const mkAsset = (id: string, hostName: string, macAddress = ''): any => ({ id, hostName, macAddress });
+  assert(planLocalAssetCleanup([mkAsset('a', '  WS-01 ')], [mkAsset('s', 'ws-01')], 't1').removable, 'P1 host names match trimmed and case-insensitive');
+  assert(planLocalAssetCleanup([mkAsset('a', 'x', 'AA:BB:CC:00:11:22')], [mkAsset('s', 'y', 'aa-bb-cc-00-11-22')], 't1').removable, 'P2 MACs match across formats');
+  const p3 = planLocalAssetCleanup([mkAsset('a', 'A'), mkAsset('b', 'B')], [mkAsset('s', 'A')], 't1');
+  assert(!p3.removable && p3.unmatched === 1, 'P3 [A,B] against [A] is not removable, 1 unmatched', p3);
+  const p4 = planLocalAssetCleanup([], [], 't1');
+  assert(p4.removable && p4.unmatched === 0, 'P4 an empty local list is removable', p4);
+  assert(planLocalAssetCleanup([mkAsset('asset-ws-01-t1', 'D')], [], 't1').removable, 'P5 a demo-only list is removable against an empty server list');
+  const p6 = planLocalAssetCleanup([mkAsset('a', 'A', '00:00:00:00:00:00')], [mkAsset('s', 'B', '00:00:00:00:00:00')], 't1');
+  assert(!p6.removable && p6.unmatched === 1, 'P6 all-zero MACs never match', p6);
+
+  const readSrc = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
+  assert(readSrc('src/context/AssessmentContext.tsx').includes('useLocalAssetScrub()'), 'P7 AssessmentContext mounts useLocalAssetScrub()');
+  const hookSrc = readSrc('src/hooks/useLocalAssetScrub.ts');
+  assert(hookSrc.includes('serverBacked') && hookSrc.includes('planLocalAssetCleanup(') && hookSrc.includes('clearLocalEnclaveAssets('), 'P8 the hook is gated on serverBacked, plans, and clears the list');
+
+  console.log('\n--- Tenant registry text ---');
+  const regInput = [
+    { id: 's1', serverBacked: true, name: 'Acme', cageCode: 'CAGE1', samStatus: 'ACTIVE', systemName: 'SYS-MARK', systemOwner: 'OWNER-MARK', industry: 'IND-MARK', systemBoundaryScope: 'B', domain: 'acme.test', isConfigured: true, primaryFramework: 'CMMC_L1' },
+    { id: 'b1', systemName: 'SYS-MARK' },
+  ];
+  const regBefore = JSON.stringify(regInput);
+  const regOut = stripTenantRegistryForCache(regInput as any[]);
+  assert(
+    regOut[0].systemName === '' && regOut[0].systemOwner === '' && regOut[0].industry === '' && regOut[0].name === 'Acme' && regOut[0].cageCode === 'CAGE1' && regOut[0].samStatus === 'ACTIVE' &&
+      regOut[0].systemBoundaryScope === 'B' && regOut[0].domain === 'acme.test' && regOut[0].isConfigured === true && regOut[0].primaryFramework === 'CMMC_L1' && regOut[1].systemName === 'SYS-MARK',
+    'R1 a server entry loses its three text fields only; a browser-only entry is untouched'
+  );
+  assert(JSON.stringify(regInput) === regBefore, 'R1b the input is not mutated');
+  assert(JSON.stringify(stripTenantRegistryForCache(regOut)) === JSON.stringify(regOut), 'R2 stripping is idempotent');
+  const stR = new MemoryStorage();
+  stR.setItem('pbc_live_tenants_v4', regBefore);
+  stR.setItem(ASSESSMENT_KEY_PREFIX + 's1', JSON.stringify(makeState('s1', `n ${MARKER}`)));
+  const rR3 = await runBrowserStorageScrub(stR, () => undefined);
+  const storedReg = JSON.parse(stR.getItem('pbc_live_tenants_v4')!);
+  assert(rR3.registryEntriesStripped === 1 && storedReg[0].systemName === '' && storedReg[0].name === 'Acme' && storedReg[1].systemName === 'SYS-MARK', 'R3 the start-up scrub writes the stripped registry', rR3);
+  assert(rR3.scrubbed === 1 && !stR.getItem(ASSESSMENT_KEY_PREFIX + 's1')!.includes(MARKER), 'R4 the same run still scrubs a server assessment notes', rR3);
+  stR.setCalls.length = 0;
+  const rR3b = await runBrowserStorageScrub(stR, () => undefined);
+  assert(rR3b.registryEntriesStripped === 0 && stR.setCalls.length === 0, 'R3b a second run does not write the registry', rR3b);
+  const tcLine = readSrc('src/context/TenantContext.tsx').split(/\r?\n/).find((l) => l.includes('localStorage.setItem(LIVE_TENANTS_STORAGE_KEY')) || '';
+  assert(tcLine.includes('stripTenantRegistryForCache('), 'R5 TenantContext writes the stripped registry', tcLine);
 
   console.log('\n--- computeNotesStatus ---');
   const base = { serverBacked: true, liveControlsTenantId: null as string | null, tenantId: 't', syncError: null as string | null, hasToken: true };

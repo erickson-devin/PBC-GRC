@@ -17,6 +17,7 @@ import { compileNistSSP } from '../src/data/reports/documentCompilers';
 import { getFrameworkControls } from '../src/data/frameworks';
 const cmmcL1Controls = getFrameworkControls('CMMC_L1');
 import { parseAssetsCsv, parseServerAssets, summarizeScope } from '../src/data/telemetry/assetScope';
+import { discoveryEndpointUrl } from '../src/data/telemetry/assetRegistry';
 import type { ReportMetadata } from '../src/types/report';
 
 /**
@@ -67,6 +68,12 @@ function pureTests() {
   const noCat = parseAssetsCsv('hostName,ipAddress\nA,1.1.1.1');
   assert(noCat.assets.length === 0 && /no cmmcAssetCategory column/.test(noCat.errors[0]), 'a CSV without a category column imports nothing (never silently CUI)');
   assert(parseAssetsCsv('hostName').assets.length === 0 && parseAssetsCsv('').errors.length === 1, 'an empty CSV is an error');
+
+  console.log('\n--- Discovery endpoint URL ---');
+  assert(discoveryEndpointUrl('http://grc.local:3000', 't1') === 'http://grc.local:3000/api/v1/tenants/t1/assets/discovery', 'the URL is built from the install origin');
+  assert(discoveryEndpointUrl('https://10.0.0.5/', 'a b') === 'https://10.0.0.5/api/v1/tenants/a%20b/assets/discovery', 'a trailing slash is dropped and the tenant id is encoded');
+  assert(discoveryEndpointUrl('', 't1') === '/api/v1/tenants/t1/assets/discovery', 'an empty origin gives a relative path');
+  assert(!/pitchblackcyber/i.test(discoveryEndpointUrl('http://grc.local', 't1') + discoveryEndpointUrl('', 't1')), 'the URL never names the vendor domain');
 
   console.log('\n--- Server response parser ---');
   const parsed = parseServerAssets([
