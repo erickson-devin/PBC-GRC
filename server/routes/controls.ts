@@ -62,7 +62,7 @@ function normalizeFrameworkParams(query: Request['query']): {
     framework = 'CMMC_L2';
   } else if (rawFramework === 'NIST_800_53_REV5' || rawFramework === 'NIST_800_53' || rawFramework === 'NIST_SP_800_53') {
     framework = 'NIST_800_53_REV5';
-    baseline = rawBaseline === 'LOW_LOW_LOW' || rawBaseline === 'LOW_LOW_MOD' ? (rawBaseline as BaselineTier) : 'MOD_MOD_MOD';
+    baseline = rawBaseline === 'LOW_LOW_LOW' || rawBaseline === 'LOW_LOW_MOD' || rawBaseline === 'HIGH_HIGH_HIGH' ? (rawBaseline as BaselineTier) : 'MOD_MOD_MOD';
   } else if (rawFramework === 'NIST_800_53_MOD') {
     framework = 'NIST_800_53_REV5';
     baseline = 'MOD_MOD_MOD';
@@ -82,6 +82,7 @@ function normalizeFrameworkParams(query: Request['query']): {
   else if (rawBaseline === 'LOW_LOW_MOD') baseline = 'LOW_LOW_MOD';
   else if (rawBaseline === 'LOW_LOW_LOW') baseline = 'LOW_LOW_LOW';
 
+  else if (rawBaseline === 'HIGH_HIGH_HIGH') baseline = 'HIGH_HIGH_HIGH';
   // Overlay normalization (tactical / non-networked systems)
   if (rawOverlay === 'NON_NETWORKED' || rawOverlay === 'TACTICAL_NON_NETWORKED' || rawOverlay === 'TACTICAL') {
     overlay = 'NON_NETWORKED';
