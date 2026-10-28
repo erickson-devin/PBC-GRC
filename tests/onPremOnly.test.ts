@@ -143,6 +143,33 @@ for (const e of LEGACY_EXEMPT) {
   assert(hits.length === 0, `${e.token} appears only in ${e.allowedIn.join(' and ')}`, hits.slice(0, 10));
 }
 
+// The install never points at the vendor's hosted domain: URLs are built from the install's own origin. Only the legal
+// text (website link) and the sidebar (Photon link, tracked separately) may carry one.
+console.log('\n--- Vendor URLs ---');
+const VENDOR_URL = /https?:\/\/[A-Za-z0-9.-]*pitchblackcyber\.com/i;
+const VENDOR_URL_ALLOWED = ['src/components/common/LegalModal.tsx', 'src/components/layout/Sidebar.tsx'];
+{
+  const hits: string[] = [];
+  for (const [file, body] of text) {
+    if (VENDOR_URL_ALLOWED.includes(file)) continue;
+    body.split(/\r?\n/).forEach((line, i) => {
+      if (VENDOR_URL.test(line)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 120)}`);
+    });
+  }
+  assert(hits.length === 0, `a pitchblackcyber.com URL appears only in ${VENDOR_URL_ALLOWED.join(' and ')}`, hits.slice(0, 10));
+}
+
+// The Accretion modal has no fake sensor key: the endpoint is built from the install's own origin.
+{
+  const registry = (text.get('src/data/telemetry/assetRegistry.ts') ?? '').replace(/\r\n/g, '\n');
+  const modal = (text.get('src/components/telemetry/AccretionIntegrationModal.tsx') ?? '').replace(/\r\n/g, '\n');
+  assert(registry.length > 0 && !registry.includes('acc_live_sk_'), 'assetRegistry.ts generates no acc_live_sk_ key');
+  assert(!registry.includes('pbc_accretion_cfg_v1_'), 'assetRegistry.ts keeps no pbc_accretion_cfg_v1_ browser config');
+  assert(modal.length > 0 && !modal.includes('secretKey'), 'AccretionIntegrationModal.tsx has no secretKey');
+  assert(modal.includes('discoveryEndpointUrl('), 'AccretionIntegrationModal.tsx builds the URL with discoveryEndpointUrl(');
+  assert(modal.includes('/api/v1/vm/ingest'), 'AccretionIntegrationModal.tsx points scheduled pushes at /api/v1/vm/ingest');
+}
+
 console.log('\n  Whole-file exemptions (catalog content, never edited): src/data/frameworks/**, src/data/stigs/**, src/data/cmmcLevel1Controls.ts, scripts/seed80053Objectives.ts, *.generated.json');
 assert(files.length > 100, 'the scan actually covered the repository', files.length);
 assert(text.has('server/index.ts') && text.has('package.json') && text.has('docker-compose.yml') && text.has('Dockerfile') && text.has('.env.example'), 'the scan includes server, package.json, compose, Dockerfile and .env.example');

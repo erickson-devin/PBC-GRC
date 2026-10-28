@@ -2,17 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   X,
   Radio,
-  Key,
   Copy,
   Check,
-  RotateCcw,
   Sparkles,
   Terminal,
   Code,
   CheckCircle2,
   Loader2,
 } from 'lucide-react';
-import { getAccretionApiConfig, rotateAccretionSecretKey } from '../../data/telemetry/assetRegistry';
+import { discoveryEndpointUrl } from '../../data/telemetry/assetRegistry';
 import type { AssetBackend } from '../../services/assetService';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
@@ -37,40 +35,26 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
   backend,
 }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [config, setConfig] = useState(() => getAccretionApiConfig(tenantId));
-  const [showSecret, setShowSecret] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
-  const [confirmRotate, setConfirmRotate] = useState(false);
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<AccretionIngestResult | null>(null);
   const [selectedSnippetTab, setSelectedSnippetTab] = useState<'curl' | 'python' | 'json'>('curl');
 
   useEffect(() => {
     if (isOpen) {
-      setConfig(getAccretionApiConfig(tenantId));
       setSimulationResult(null);
       setSimulationError(null);
-      setConfirmRotate(false);
     }
   }, [isOpen, tenantId]);
 
   if (!isOpen) return null;
 
+  const webhookUrl = discoveryEndpointUrl(typeof window === 'undefined' ? '' : window.location.origin, tenantId);
+
   const handleCopy = (text: string, fieldId: string) => {
     copyToClipboard(text);
     setCopiedField(fieldId);
     setTimeout(() => setCopiedField(null), 2500);
-  };
-
-  // Two-step inline confirmation: a blocking confirm() dialog is neither accessible nor testable
-  const handleRotateKey = () => {
-    if (!confirmRotate) {
-      setConfirmRotate(true);
-      return;
-    }
-    const newKey = rotateAccretionSecretKey(tenantId);
-    setConfig(prev => ({ ...prev, secretKey: newKey }));
-    setConfirmRotate(false);
   };
 
   const handleRunSimulation = async () => {
@@ -93,8 +77,8 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
     }
   };
 
-  const curlSnippet = `curl -X POST ${config.webhookUrl} \\
-  -H "Authorization: Bearer ${config.secretKey}" \\
+  const curlSnippet = `curl -X POST ${webhookUrl} \\
+  -H "Authorization: Bearer <SESSION_TOKEN>" \\
   -H "Content-Type: application/json" \\
   -d '{
     "items": [
@@ -113,9 +97,9 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
 
   const pythonSnippet = `import requests
 
-url = "${config.webhookUrl}"
+url = "${webhookUrl}"
 headers = {
-    "Authorization": "Bearer ${config.secretKey}",
+    "Authorization": "Bearer <SESSION_TOKEN>",
     "Content-Type": "application/json"
 }
 payload = {
@@ -251,11 +235,11 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
             <input
               type="text"
               readOnly
-              value={config.webhookUrl}
+              value={webhookUrl}
               className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-cyan-300 select-all"
             />
             <button
-              onClick={() => handleCopy(config.webhookUrl, 'url')}
+              onClick={() => handleCopy(webhookUrl, 'url')}
               className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"
             >
               {copiedField === 'url' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -264,51 +248,10 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
           </div>
         </div>
 
-        {/* ─── API Secret Key ─── */}
-        <div className="space-y-2">
-          <label className="block text-xs font-bold text-slate-300 flex items-center justify-between">
-            <span className="flex items-center gap-1.5">
-              <Key className="w-4 h-4 text-amber-400" />
-              <span>Accretion Ingestion Secret Key</span>
-            </span>
-            <button
-              onClick={() => setShowSecret(!showSecret)}
-              className="text-xs text-slate-400 hover:text-white"
-            >
-              {showSecret ? 'Hide Key' : 'Reveal Key'}
-            </button>
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type={showSecret ? 'text' : 'password'}
-              readOnly
-              value={config.secretKey}
-              className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-amber-300 select-all"
-            />
-            <button
-              onClick={() => handleCopy(config.secretKey, 'key')}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"
-            >
-              {copiedField === 'key' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedField === 'key' ? 'Copied' : 'Copy'}</span>
-            </button>
-            <button
-              onClick={handleRotateKey}
-              className={confirmRotate
-                ? 'px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white border border-rose-500 text-xs font-bold transition-colors shrink-0'
-                : 'p-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors shrink-0'}
-              title="Rotate Secret Key"
-            >
-              {confirmRotate ? <span>Confirm: sensors must be re-keyed</span> : <RotateCcw className="w-4 h-4" />}
-            </button>
-          </div>
-          <p className="text-xs text-amber-300/90">
-            Sensor API keys are not accepted by the server yet: the endpoint above currently needs a signed-in Tenant Owner / MSP Admin session token.
-          </p>
-          <p className="text-xs text-slate-400">
-            Pass in HTTP Header: <code className="text-cyan-400">Authorization: Bearer {config.secretKey.slice(0, 14)}...</code>
-          </p>
-        </div>
+        {/* ─── Authentication note ─── */}
+        <p className="text-xs text-slate-400">
+          This endpoint accepts a signed-in Tenant Owner or MSP Admin session (<code className="text-cyan-400">Authorization: Bearer &lt;SESSION_TOKEN&gt;</code>). There is no separate sensor key. For scheduled machine pushes, use a VM service token with <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).
+        </p>
 
         {/* ─── Payload Format Code Snippets ─── */}
         <div className="space-y-2">

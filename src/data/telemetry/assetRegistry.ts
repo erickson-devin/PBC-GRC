@@ -18,7 +18,6 @@ import { computeSha256 } from '../audit/cryptoUtils';
 import { recordAuditEvent } from '../audit/auditLogger';
 
 const ASSET_REGISTRY_STORAGE_KEY_PREFIX = 'pbc_enclave_assets_v1_';
-const ACCRETION_CONFIG_KEY_PREFIX = 'pbc_accretion_cfg_v1_';
 
 // ---------------------------------------------------------------------------
 // 1. UUID Generator Helper
@@ -384,48 +383,12 @@ export function confirmDiscoveredAsset(
 }
 
 // ---------------------------------------------------------------------------
-// 9. Accretion Webhook & API Secret Key Configuration
+// 9. Discovery endpoint
 // ---------------------------------------------------------------------------
 
-export function getAccretionApiConfig(tenantId: string): { webhookUrl: string; secretKey: string } {
-  const key = `${ACCRETION_CONFIG_KEY_PREFIX}${tenantId}`;
-  let secret = '';
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.secretKey) {
-        secret = parsed.secretKey;
-      }
-    }
-  } catch (err) {
-    console.warn('[AssetRegistry] Failed to read Accretion API config:', err);
-  }
-
-  if (!secret) {
-    secret = `acc_live_sk_${Math.random().toString(36).substring(2, 12)}_${Date.now().toString(36)}`;
-    try {
-      localStorage.setItem(key, JSON.stringify({ secretKey: secret }));
-    } catch {
-      // Storage fallback
-    }
-  }
-
-  return {
-    webhookUrl: `https://grc.pitchblackcyber.com/api/v1/tenants/${tenantId}/assets/discovery`,
-    secretKey: secret,
-  };
-}
-
-export function rotateAccretionSecretKey(tenantId: string): string {
-  const key = `${ACCRETION_CONFIG_KEY_PREFIX}${tenantId}`;
-  const newSecret = `acc_live_sk_${Math.random().toString(36).substring(2, 12)}_${Date.now().toString(36)}`;
-  try {
-    localStorage.setItem(key, JSON.stringify({ secretKey: newSecret }));
-  } catch {
-    // Storage fallback
-  }
-  return newSecret;
+/** The discovery endpoint of this install (built from its own origin; an empty origin gives a relative path). */
+export function discoveryEndpointUrl(origin: string, tenantId: string): string {
+  return `${origin.replace(/\/+$/, '')}/api/v1/tenants/${encodeURIComponent(tenantId)}/assets/discovery`;
 }
 
 // ---------------------------------------------------------------------------
