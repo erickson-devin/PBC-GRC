@@ -22,6 +22,7 @@ import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks';
 import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
+import { ApiClient } from '../../services/apiClient';
 
 import { copyToClipboard } from '../../utils/clipboard';
 export const EvidenceVaultView: React.FC = () => {
@@ -34,7 +35,7 @@ export const EvidenceVaultView: React.FC = () => {
     setSelectedControlId,
   } = useAssessment();
 
-  const { currentTenant, canEdit, activeFramework } = useTenant();
+  const { currentTenant, canEdit, activeFramework, activeProgram } = useTenant();
 
   const currentFrameworkDef = useMemo(() => {
     return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -113,12 +114,24 @@ export const EvidenceVaultView: React.FC = () => {
   };
 
   const handleDownloadFile = async (item: EvidenceItem) => {
-    const fileData = await EvidenceVault.getFile(currentTenant.id, item.id);
-    if (!fileData) {
-      alert('This evidence file does not have local binary storage attached (metadata reference only).');
-      return;
+    let blob: Blob;
+    if (currentTenant.serverBacked) {
+      // The server is the only home of this file; an inherited row downloads the file it was inherited from
+      try {
+        blob = (await ApiClient.getEvidenceFileBlob(currentTenant.id, item.id.split('__inh_')[0], activeProgram?.id ?? null)).blob;
+      } catch {
+        alert('This file could not be loaded from the server.');
+        return;
+      }
+    } else {
+      const fileData = await EvidenceVault.getFile(currentTenant.id, item.id);
+      if (!fileData) {
+        alert('This evidence file does not have local binary storage attached (metadata reference only).');
+        return;
+      }
+      blob = fileData.blob;
     }
-    const url = URL.createObjectURL(fileData.blob);
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = item.name;
@@ -155,7 +168,7 @@ export const EvidenceVaultView: React.FC = () => {
         <div>
           <h2 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
             <Paperclip className="w-6 h-6 text-brand-400" />
-            Evidence Vault (Local)
+            Evidence Vault ({currentTenant.serverBacked ? 'Server' : 'Local'})
           </h2>
           <p className="text-xs text-slate-400 mt-1">
             Tenant-isolated evidence storage with client-side SHA-256 immutability verification for <strong>{currentTenant.name}</strong>.
@@ -169,7 +182,7 @@ export const EvidenceVaultView: React.FC = () => {
           </span>
           <span className="px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-400 font-mono flex items-center gap-1.5">
             <HardDrive className="w-3.5 h-3.5" />
-            Local Vault
+            {currentTenant.serverBacked ? 'Server Vault' : 'Local Vault'}
           </span>
         </div>
       </div>
@@ -203,7 +216,7 @@ export const EvidenceVaultView: React.FC = () => {
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <Upload className="w-4 h-4 text-brand-400" />
-              Upload Evidence to Control (Local Vault + SHA-256 Pipeline)
+              Upload Evidence to Control ({currentTenant.serverBacked ? 'Server Vault' : 'Local Vault'} + SHA-256 Pipeline)
             </span>
           </div>
 
@@ -329,7 +342,7 @@ export const EvidenceVaultView: React.FC = () => {
                             <div className="flex items-center gap-2">
                               <p className="font-semibold text-white truncate max-w-xs">{item.name}</p>
                               <span className="text-xs font-bold px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                Local Vault
+                                {currentTenant.serverBacked ? 'Server Vault' : 'Local Vault'}
                               </span>
                             </div>
                             <p className="text-xs text-slate-400 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>

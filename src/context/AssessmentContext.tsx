@@ -22,6 +22,7 @@ import {
 } from '../data/frameworks';
 import { StorageService, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
+import { useEvidenceBlobScrub } from '../hooks/useEvidenceBlobScrub';
 import { computeSha256 } from '../services/evidenceIntegrity';
 import { generateEvidenceObjectPath } from '../data/audit/storageDriver';
 import { computeDomainStats } from '../data/frameworks/domainStats';
@@ -291,6 +292,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       });
     }
   }, [liveControls, liveEvidence, liveScopeKey, programScope, stateScope, currentTenant.id]);
+
+  // Server-backed tenants keep evidence files only on the server: remove a leftover browser copy once the server verifies it
+  useEvidenceBlobScrub();
 
   // Auto-save state changes under the scope's own cache key. Never save a state under a scope it was not loaded for: while a
   // program switch is settling `state` still belongs to the previous program and must not land in the new program's key.
@@ -1265,8 +1269,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (uploadResp) {
         // Upload binary to the local evidence vault via the server-relative URL
         await ApiClient.uploadEvidenceFile(uploadResp.uploadUrl, file, file.type, currentTenant.id, programId ?? null);
-        // Save in local IndexedDB vault for client-side preview
-        await EvidenceVault.saveFile(currentTenant.id, uploadResp.evidenceId, file, uploadResp.gcsPath, fileHash);
 
         // Cross-Framework Evidence Inheritance:
         // Associate upload with mapped controls in local state
@@ -1296,10 +1298,12 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return uploadResp.evidence;
       }
     } catch {
-      // Fallback to local vault
+      // Browser-only tenants fall back to the local vault below
     }
+    // A server-backed tenant's file lives only on the server: it is never kept in this browser instead
+    if (currentTenant.serverBacked) throw new Error('The evidence file was not saved to the server.');
 
-    // Offline fallback: keep the file in the local vault
+    // Browser-only tenants: keep the file in the local vault
     const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const gcsPath = generateEvidenceObjectPath(currentTenant.id, controlId, evidenceId, file.name);
 
@@ -1357,7 +1361,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }).catch(() => {});
 
     return newItem;
-  }, [canEdit, currentTenant.id, programId, programScope, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, createLiveEvidenceUploadUrl]);
+  }, [canEdit, currentTenant.id, currentTenant.serverBacked, programId, programScope, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, createLiveEvidenceUploadUrl]);
 
   // Action: Remove Evidence
   const removeEvidence = useCallback(async (evidenceId: string) => {
