@@ -7,6 +7,9 @@ import { DEFAULT_BLANK_TENANT } from '../src/context/TenantContext';
 import { ComplianceFramework } from '../src/types/framework';
 import { Tenant } from '../src/types/tenant';
 import { FRAMEWORK_REGISTRY } from '../src/data/frameworks';
+import { extractOwnerEmail, initialOwnerEmail, ownerEmailChanged } from '../src/utils/systemOwner';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -230,6 +233,30 @@ async function runTests() {
       activeFramework === 'HIPAA_SECURITY',
       'Active framework automatically synchronized to new primary when previous framework was de-scoped'
     );
+  }
+
+  // System owner contact helpers
+  {
+    console.log('\n--- System owner contact helpers ---');
+    assert(extractOwnerEmail('alex@example.com') === 'alex@example.com', 'extractOwnerEmail: plain email');
+    assert(extractOwnerEmail('Alex Mercer (alex@example.com)') === 'alex@example.com', 'extractOwnerEmail: parenthesised email');
+    assert(extractOwnerEmail('Alex <alex@example.com>') === 'alex@example.com', 'extractOwnerEmail: angle-bracket email');
+    assert(extractOwnerEmail('Alex (CISO)') === '', 'extractOwnerEmail: non-email parenthetical is empty');
+    assert(extractOwnerEmail('Alex Mercer') === '', 'extractOwnerEmail: plain name is empty');
+    assert(extractOwnerEmail(undefined) === '', 'extractOwnerEmail: undefined is empty');
+    assert(
+      initialOwnerEmail({ systemOwner: 'wave4-check@pbc.test' }) === 'wave4-check@pbc.test',
+      'initialOwnerEmail keeps the existing email (never invents admin@<domain>)'
+    );
+    assert(initialOwnerEmail({ systemOwner: 'Alex Mercer' }) === '', 'initialOwnerEmail: name without email is empty');
+    assert(ownerEmailChanged('a@x.test', ' A@X.test ') === false, 'ownerEmailChanged: case/whitespace-only difference is unchanged');
+    assert(ownerEmailChanged('a@x.test', 'b@x.test') === true, 'ownerEmailChanged: different email is changed');
+    assert(ownerEmailChanged('a@x.test', '  ') === false, 'ownerEmailChanged: cleared field is not a change');
+    assert(ownerEmailChanged('', 'b@x.test') === true, 'ownerEmailChanged: new email over empty pre-fill is changed');
+
+    const modalSrc = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'EditEnclaveModal.tsx'), 'utf8');
+    assert(!modalSrc.includes('admin@${'), 'EditEnclaveModal no longer invents admin@<domain>');
+    assert(modalSrc.includes('ownerEmailChanged('), 'EditEnclaveModal gates the owner update on ownerEmailChanged');
   }
 
   // Summary
