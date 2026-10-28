@@ -17,6 +17,7 @@ import {
   mergeServerTenants,
   parseServerTenants,
   pickActiveTenantId,
+  provisionalRoleForTenant,
   serverTenantToTenant,
   toServerPatch,
   ServerTenantPatch,
@@ -319,7 +320,10 @@ interface TenantContextType {
   deleteTenant: (tenantId: string) => void;
   switchUserRole: (role: TenantRole) => void;
   switchUser: (user: User) => void;
-  syncAuthUser: (user: User, preferredTenantId?: string) => void;
+  /** `skipServerSync`: only adopt the profile (the forced password change is pending; the change re-syncs). */
+  syncAuthUser: (user: User, preferredTenantId?: string, options?: { skipServerSync?: boolean }) => void;
+  /** Sign-out: forgets the cached tenants, roles, team and programs so the next sign-in starts empty. */
+  resetForSignOut: () => void;
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
   // Live Sync Engine (PostgreSQL)
   liveControls: Record<string, ControlState> | null;
@@ -1201,7 +1205,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ...prevUser,
         roles: {
           ...prevUser.roles,
-          [existing.id]: prevUser.roles[existing.id] || 'TENANT_OWNER',
+          // A tenant that exists on the server starts read-only until the sync brings the real role
+          [existing.id]: existing.serverBacked ? 'VIEWER' : (prevUser.roles[existing.id] || 'TENANT_OWNER'),
         },
       }));
       return existing;
@@ -1417,6 +1422,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updatedAt: new Date().toISOString(),
     });
 
+    // A server-backed tenant's team and roles belong to the server: a local rewrite would only show roles nobody holds
+    if (liveTenantsRef.current.find(t => t.id === tenantId)?.serverBacked) return;
+
     // 2. Reassign team member roles for this tenant
     setTeamMembers(prev => {
       const list = prev[tenantId] || [];
@@ -1510,6 +1518,34 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   /**
+   * Sign-out: the tenant list, roles, team and programs in this browser belong to the person who just left. Per-tenant
+   * assessment caches and the audit ledger stay (offline caches, keyed by tenant and program).
+   */
+  const resetForSignOut = useCallback(() => {
+    syncInFlight.current = null;
+    programsSeq.current++;
+    dropLiveData();
+    commitPrograms({ tenantId: '', programs: NO_PROGRAMS, status: 'idle', activeId: null });
+    setLiveTenants([DEFAULT_BLANK_TENANT]);
+    setLiveActiveTenantId(DEFAULT_BLANK_TENANT.id);
+    setCurrentUser(ANONYMOUS_USER);
+    setTeamMembers({});
+    setInvitations([]);
+    setIsOnboardingModalOpen(false);
+    setTenantSync({ status: 'idle', lastSyncedAt: null, error: null });
+    try {
+      [LIVE_TENANTS_STORAGE_KEY, LIVE_ACTIVE_TENANT_ID_KEY, CURRENT_USER_KEY, TEAM_MEMBERS_STORAGE_KEY].forEach(k => localStorage.removeItem(k));
+      const programPrefix = activeProgramStorageKey('');
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(programPrefix)) localStorage.removeItem(k);
+      }
+    } catch {
+      // storage unavailable: nothing was cached
+    }
+  }, [commitPrograms, dropLiveData]);
+
+  /**
    * Domain-based auto-tenant matching with deduplication
    */
   const resolveTenantForEmail = useCallback((email: string): { tenant: Tenant; role: TenantRole } => {
@@ -1520,33 +1556,26 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const domain = parts[1]; // e.g. "pitchblackcyber.com"
     const domainPrefix = domain.split('.')[0]; // e.g. "pitchblackcyber"
-    const normalizedPrefix = normalizeOrgName(domainPrefix);
 
-    // 1. Match existing tenants by domain or normalized name
-    const matchedLive = liveTenants.find(t =>
-      (t.domain && t.domain.toLowerCase() === domain) ||
-      normalizeOrgName(t.name) === normalizedPrefix ||
-      t.name.toLowerCase().includes(domainPrefix)
-    );
+    // 1. Match existing tenants by the exact email domain only (a name that merely contains it proves nothing)
+    const matchedLive = liveTenants.find(t => t.domain && t.domain.toLowerCase() === domain);
 
     if (matchedLive) {
-      const isAssessorDomain = domain.includes('audit') || domain.includes('c3pao') || domain.includes('assessor');
-      const role: TenantRole = isAssessorDomain ? 'ASSESSOR' : 'TENANT_OWNER';
       setLiveActiveTenantId(matchedLive.id);
-      return { tenant: matchedLive, role };
+      return { tenant: matchedLive, role: provisionalRoleForTenant(matchedLive, domain) };
     }
 
     // 2. Initialize single blank tenant enclave for first-time defense contractor domain
     const formattedTitle = domainPrefix.charAt(0).toUpperCase() + domainPrefix.slice(1) + ' LLC';
     const newBlankTenant = initializeBlankTenant(email, domain, formattedTitle);
 
-    return { tenant: newBlankTenant, role: 'TENANT_OWNER' };
+    return { tenant: newBlankTenant, role: provisionalRoleForTenant(newBlankTenant, domain) };
   }, [liveTenants, currentTenant, currentRole, initializeBlankTenant]);
 
   /**
    * Synchronize authenticated user with Tenant state
    */
-  const syncAuthUser = useCallback((user: User, preferredTenantId?: string) => {
+  const syncAuthUser = useCallback((user: User, preferredTenantId?: string, options: { skipServerSync?: boolean } = {}) => {
     setCurrentUser(user);
     if (preferredTenantId && liveTenants.some(t => t.id === preferredTenantId)) {
       setLiveActiveTenantId(preferredTenantId);
@@ -1556,7 +1585,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     // Reconcile tenants and roles with the server, then load live data for the active tenant
-    if (user.idToken || ApiClient.getToken()) {
+    if (!options.skipServerSync && (user.idToken || ApiClient.getToken())) {
       void syncTenantsFromServer(user.idToken || undefined)
         .then(() => refreshPrograms(preferredTenantId))
         .then(() => refreshLiveData(preferredTenantId));
@@ -1856,6 +1885,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchUserRole,
     switchUser,
     syncAuthUser,
+    resetForSignOut,
     resolveTenantForEmail,
     liveControls,
     liveScopeKey,
@@ -1936,6 +1966,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchUserRole,
     switchUser,
     syncAuthUser,
+    resetForSignOut,
     resolveTenantForEmail,
     liveControls,
     liveScopeKey,

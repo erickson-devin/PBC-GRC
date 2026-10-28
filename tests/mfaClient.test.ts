@@ -203,6 +203,16 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   const storedKeys = Array.from(authCtx.matchAll(/const (AUTH_[A-Z_]+_KEY) = '([^']+)'/g)).map((m) => m[2]);
   assert(storedKeys.length === 3 && storedKeys.every((k) => /^pbc_session_(auth_user|id_token|flags)_v2$/.test(k)), 'AuthContext stores exactly three keys: the user, the token and two account flags', storedKeys);
   assert(/const \[mfaChallenge, setMfaChallenge\] = useState/.test(authCtx) && !/localStorage\.setItem\([^)]*[Cc]hallenge/.test(authCtx), 'the pending second step is React state only');
+  const authLf = authCtx.replace(/\r?\n/g, '\n');
+  const fnBody = (head: string, tail: string) => {
+    const start = authLf.indexOf(head);
+    const end = authLf.indexOf(tail, start);
+    return start >= 0 && end > start ? authLf.slice(start, end) : '';
+  };
+  assert(/syncAuthUser\(/.test(fnBody('const changePassword = useCallback', 'const registerWithInvite')), 'changePassword re-syncs the tenants and roles after the change');
+  assert(/resetForSignOut\(\)/.test(fnBody('const logout = useCallback', 'const openAuthModal')), 'logout clears the cached tenant state');
+  const applyBody = fnBody('const applySession = useCallback', 'const loginWithEmailPassword');
+  assert(/session\.mustChangePassword\s*\)/.test(applyBody) && /skipServerSync/.test(fnBody('const handleUserSession = useCallback', 'const applySession')), 'applySession hands the forced-change flag to the sign-in sync, which skips the server calls');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

@@ -1,4 +1,6 @@
 import './testEnv';
+import fs from 'fs';
+import path from 'path';
 // Framework (program) settings are decided by platform administrators: this test's actor is listed as one.
 process.env.PLATFORM_ADMIN_EMAILS = 'u_sync_owner@test.mil';
 import { server } from '../server/index';
@@ -7,7 +9,9 @@ import {
   isValidCageCode,
   mergeServerTenants,
   parseServerTenants,
+  isPasswordChangeRequired,
   pickActiveTenantId,
+  provisionalRoleForTenant,
   serverTenantToTenant,
   ServerTenant,
   toServerPatch,
@@ -101,6 +105,33 @@ function pureTests() {
   const r2 = mergeServerTenants([local({ id: 'a', serverBacked: true })], [srv({ id: 'a', role: 'TENANT_OWNER' })], NOW);
   assert(applyRoleSync({ a: 'VIEWER' }, r2).a === 'TENANT_OWNER' && canRoleWrite('TENANT_OWNER'), 'an upgrade is picked up too');
   assert(roles1.legacy === 'TENANT_OWNER', 'roles for tenants the server did not mention are left alone');
+
+  console.log('\n--- Provisional role before the server has answered ---');
+  assert(provisionalRoleForTenant({ serverBacked: true }, 'pbc.test') === 'VIEWER', 'a server-backed tenant starts as VIEWER (least privilege)');
+  assert(provisionalRoleForTenant({ serverBacked: true }, 'acme-c3pao.com') === 'VIEWER', 'even for an assessor domain: the server decides');
+  assert(provisionalRoleForTenant({ serverBacked: false }, 'pbc.test') === 'TENANT_OWNER', 'a browser-only draft stays TENANT_OWNER (onboarding wizard)');
+  assert(provisionalRoleForTenant({}, 'acme-audit.com') === 'ASSESSOR', 'a draft on an assessor domain is ASSESSOR');
+  assert(!canRoleWrite(provisionalRoleForTenant({ serverBacked: true }, 'pbc.test')), 'the provisional role of a server tenant cannot write');
+  const rProv = (role: TenantRole) => mergeServerTenants([local({ id: 'a', serverBacked: true })], [srv({ id: 'a', role })], NOW);
+  assert(applyRoleSync({ a: 'VIEWER' }, rProv('TENANT_OWNER')).a === 'TENANT_OWNER', 'a provisional VIEWER becomes the server TENANT_OWNER');
+  assert(applyRoleSync({ a: 'VIEWER' }, rProv('VIEWER')).a === 'VIEWER', 'a provisional VIEWER stays the server VIEWER');
+  assert(isPasswordChangeRequired(403, { error: 'x', reason: 'password_change_required' }), '403 password_change_required is recognised');
+  assert(!isPasswordChangeRequired(403, { reason: 'other' }) && !isPasswordChangeRequired(401, { reason: 'password_change_required' }) && !isPasswordChangeRequired(403, null), 'other 403s, other statuses and empty bodies are not');
+
+  console.log('\n--- Static checks: sign-in tenant matching and owner hand-over ---');
+  const tenantCtx = fs.readFileSync(path.join(process.cwd(), 'src/context/TenantContext.tsx'), 'utf8').replace(/\r?\n/g, '\n');
+  const bodyOf = (src: string, head: string, tail: string) => {
+    const start = src.indexOf(head);
+    const end = src.indexOf(tail, start);
+    return start >= 0 && end > start ? src.slice(start, end) : '';
+  };
+  const resolveBody = bodyOf(tenantCtx, 'const resolveTenantForEmail = useCallback', 'const syncAuthUser = useCallback');
+  assert(resolveBody.length > 0 && !resolveBody.includes('.includes(domainPrefix)') && !resolveBody.includes('normalizeOrgName(t.name)'), 'resolveTenantForEmail matches by domain only (no name matching)');
+  assert(resolveBody.includes('provisionalRoleForTenant(') && !resolveBody.includes("role: 'TENANT_OWNER'"), 'resolveTenantForEmail takes its role from provisionalRoleForTenant');
+  const ownerBody = bodyOf(tenantCtx, 'const updateTenantOwner = useCallback', 'const deleteTenant = useCallback');
+  const guardAt = ownerBody.indexOf('serverBacked');
+  assert(guardAt > 0 && ownerBody.indexOf('setTeamMembers') > guardAt, 'updateTenantOwner checks serverBacked before it touches the local team');
+  assert(tenantCtx.includes("existing.serverBacked ? 'VIEWER'"), 'initializeBlankTenant gives a server-backed match VIEWER, not TENANT_OWNER');
 
   console.log('\n--- Revocation and account switching ---');
   const mine = [local({ id: 'a', serverBacked: true }), local({ id: 'b', serverBacked: true }), local({ id: 'legacy' })];

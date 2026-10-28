@@ -12,7 +12,7 @@ export interface UploadUrlResponse {
   evidence: EvidenceItem;
 }
 
-import { ServerTenant, parseServerTenants } from '../data/tenantSync';
+import { ServerTenant, isPasswordChangeRequired, parseServerTenants } from '../data/tenantSync';
 import {
   ServerInvitation,
   ServerMember,
@@ -712,6 +712,8 @@ export const ApiClient = {
       headers: { Authorization: `Bearer ${bearer}` },
     });
     if (res.status === 401) return null;
+    // A temporary password must be changed first: nothing to load yet, and not an error (the change triggers a new sync)
+    if (res.status === 403 && isPasswordChangeRequired(res.status, await res.json().catch(() => null))) return null;
     if (!res.ok) throw new Error(`Failed to load your tenants (HTTP ${res.status})`);
     return parseServerTenants(await res.json());
   },
