@@ -169,6 +169,48 @@ Changing `DB_DATA_DIR` on an existing installation points PostgreSQL at a differ
 again there and the old data stays where it was. The Unraid installation also runs `OLLAMA_MODEL=llama3.2:3b` with
 `OLLAMA_NUM_CTX=4096` (the model the CMMC import is tuned for), set the same way.
 
+## Upgrading to a new release (no wipe)
+
+A release never needs the database wiped. At startup the server applies its schema in place (`CREATE ... IF NOT EXISTS`,
+`ADD COLUMN IF NOT EXISTS`, constraints dropped and re-added), and data that predates a feature is adopted on first use (for
+example, each tenant's existing rows move into its "Default Authorization Boundary" program the first time the tenant is
+used). If a release seems to need a wipe, that is a bug: report it instead.
+
+What makes an upgrade safe is the release routine around it:
+
+1. **Back up first.** Create the backup folder once, then before every deploy (`app_db` and `postgres` are this install's
+   `POSTGRES_DB` and `POSTGRES_USER`; use yours):
+
+   ```bash
+   docker exec singularity-db pg_dump -U postgres -Fc app_db > /mnt/user/appdata/singularity/backups/app_db-$(date +%F-%H%M).dump
+   ```
+
+   The dump holds control narratives and other CUI: keep the backup folder on the enclave host, with the same access
+   controls as the database directory.
+2. **Keep `.env` the same between deploys.** In particular `POSTGRES_DB`, `APP_DB_USER`, `LOCAL_AUTH_SECRET`,
+   `MFA_ENCRYPTION_KEY` and every path in the table above. Each one changed by accident looks like data loss: a different
+   database name or `DB_DATA_DIR` starts an empty database beside the real one (the real one is untouched), and a different
+   `LOCAL_AUTH_SECRET` signs everyone out (and, without `MFA_ENCRYPTION_KEY`, ends every enrolled factor; see "Secrets and
+   rotation" above). Changing `POSTGRES_PASSWORD` or `APP_DB_PASSWORD` in `.env` does not change the role's password once
+   the database exists: run `docker exec -it singularity-db psql -U postgres -d app_db -c "\password app_user"` (or
+   `postgres`) and then update `.env`.
+3. **Deploy**, then check: `GET /api/v1/health` reports the new `buildCommit` and `"database":"connected"`, and you can sign in.
+4. **If something is wrong, restore** the dump taken in step 1 (stop the app container first so nothing writes meanwhile):
+
+   ```bash
+   docker stop singularity-app
+   docker exec -i singularity-db pg_restore -U postgres -d app_db --clean --if-exists < /mnt/user/appdata/singularity/backups/app_db-<date>.dump
+   docker start singularity-app
+   ```
+
+**Is the app looking at the right database?** If everyone is signed out and nobody can sign in after a deploy, check before
+changing anything: `docker inspect singularity-db --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'`
+shows the data directory in use, `docker exec singularity-db psql -U postgres -l` lists the databases, and
+`docker exec singularity-db psql -U postgres -d app_db -c "SELECT count(*) FROM local_users"` shows whether accounts exist.
+`PLATFORM_ADMIN_EMAILS` closes the first-time setup wizard: on an empty database with it set, create the administrator with
+`docker exec -e LOCAL_USER_PASSWORD singularity-app tsx scripts/createLocalUser.ts <email> "<name>"` (set
+`LOCAL_USER_PASSWORD` in the shell first, for example with `read -rs LOCAL_USER_PASSWORD && export LOCAL_USER_PASSWORD`).
+
 ## Existing data volume (already initialised before this change)
 
 The init script only runs when the volume is first created. For an existing deployment, run once as the admin user:
