@@ -602,6 +602,10 @@ export const TABLES_SQL = `
   ALTER TABLE programs ADD CONSTRAINT programs_framework_check CHECK (framework_id IN (${programFrameworkList}));
   ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_baseline_check;
   ALTER TABLE programs ADD CONSTRAINT programs_baseline_check CHECK (baseline IS NULL OR (framework_id = 'NIST_800_53_REV5' AND baseline IN ('LOW', 'MODERATE', 'HIGH')));
+  -- The privacy baseline (NIST SP 800-53B) is an immutable add-on to a NIST program's security baseline; false for every other program.
+  ALTER TABLE programs ADD COLUMN IF NOT EXISTS privacy_baseline BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_privacy_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_privacy_check CHECK (NOT privacy_baseline OR framework_id = 'NIST_800_53_REV5');
   -- One default program per tenant, and program names are unique per tenant ignoring case.
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default;
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name));

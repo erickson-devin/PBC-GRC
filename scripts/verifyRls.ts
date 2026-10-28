@@ -782,6 +782,25 @@ async function verifyProgramIsolation() {
     check(notNull.rows.length === 2 && notNull.rows.every((r) => r.attnotnull === true), '8f. program_id is NOT NULL on both objective tables (attnotnull)', JSON.stringify(notNull.rows));
     await queryWithProgram(scopeA, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
 
+    // 8g. the privacy baseline (issue #20): only a NIST SP 800-53 program may carry it (programs_privacy_check)
+    const privacyCode = async (sql: string, params: (string | boolean | null)[]): Promise<string> => {
+      try {
+        await queryWithTenant(TENANT_X, sql, params);
+        return 'no error';
+      } catch (err) {
+        return String((err as { code?: string }).code) + ' ' + String((err as { constraint?: string }).constraint);
+      }
+    };
+    const insertPrivacy = "INSERT INTO programs (tenant_id, name, framework_id, baseline, privacy_baseline) VALUES ($1, $2, $3, $4, $5) RETURNING id";
+    const cmmcPrivacy = await privacyCode(insertPrivacy, [TENANT_X, 'rls_verify_p8_priv_cmmc', 'CMMC_L2', null, true]);
+    check(cmmcPrivacy === '23514 programs_privacy_check', '8g. programs: a CMMC program with privacy_baseline TRUE is refused (23514, programs_privacy_check)', cmmcPrivacy);
+    const nistPrivacy = await privacyCode(insertPrivacy, [TENANT_X, 'rls_verify_p8_priv_nist', 'NIST_800_53_REV5', 'MODERATE', true]);
+    check(nistPrivacy === 'no error', '8g. programs: a NIST program with privacy_baseline TRUE is accepted', nistPrivacy);
+    const cmmcUpdate = await privacyCode("UPDATE programs SET privacy_baseline = TRUE WHERE name = $1", ['rls_verify_p8_a']);
+    check(cmmcUpdate === '23514 programs_privacy_check', '8g. programs: updating a CMMC program to privacy_baseline TRUE is refused (23514, programs_privacy_check)', cmmcUpdate);
+    const privacyDefault = await queryWithTenant(TENANT_X, "SELECT privacy_baseline FROM programs WHERE name = 'rls_verify_p8_a'", []);
+    check(privacyDefault.rows[0]?.privacy_baseline === false, '8g. programs: privacy_baseline defaults to FALSE', JSON.stringify(privacyDefault.rows));
+
     await verifyUpgrade();
   } finally {
     // the history has no foreign key, so a program's delete does not remove its events

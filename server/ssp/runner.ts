@@ -1,12 +1,14 @@
 import crypto from 'crypto';
 import type { ProgramScope } from '../db';
 import { readControlAssessments } from '../controlAssessments';
+import { getProgram } from '../programs';
 import { errorMessage } from '../../src/utils/errors';
 import { analyzeDocumentWithAi } from './analyze';
 import { chunkDocument } from './chunk';
 import { ANALYZER_ID, mapDocumentToControls } from './controlMapper';
 import { ExtractionError, detectDocumentKind, extractDocument } from './extract';
 import { OllamaClient, OllamaError } from './ollama';
+import { privacyCoverage } from './privacyCoverage';
 import { readUploadedPolicy } from './policyVault';
 import { getJob, replaceStaged, updateJob } from './store';
 import { SSP_JOB_TERMINAL, type MappingResult, type SspImportJob } from './types';
@@ -156,6 +158,11 @@ async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
         analyzer = ANALYZER_ID;
         progress = { ...progress, warning: `The AI analysis could not be completed (${reason}) so these are the rule-based results.` };
       }
+    }
+
+    // A NIST program with the privacy baseline is measured against the security baseline plus the privacy baseline (the staged suggestions stay as they are)
+    if (job.framework === 'NIST_800_53_REV5' && (await getProgram(scope.tenantId, scope.programId))?.privacyBaseline === true) {
+      mapping = { ...mapping, coverage: privacyCoverage(job.baseline, new Set(mapping.staged.map((s) => s.controlId))) };
     }
 
     // Remember what each control looks like NOW, so the commit can tell if it changed while this was being reviewed
