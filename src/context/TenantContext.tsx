@@ -35,7 +35,6 @@ import {
   activeProgramStorageKey,
   isCurrentResponse,
   pickActiveProgramId,
-  programCacheSegment,
   programScopeKey,
 } from '../data/programSync';
 import { programBaselineToCia } from '../data/programScope';
@@ -45,8 +44,9 @@ import {
   mergeServerInvitations,
   toTenantInvitation,
 } from '../data/teamSync';
-import { getCascadedObjectiveNarrative } from '../data/frameworks/policyCompiler';
-import { NIST_800_171A_REGISTRY } from '../data/frameworks/assessmentObjectives';
+import { findControlDefinition, getFrameworkControls } from '../data/frameworks';
+import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
+import { OBJECTIVE_CASCADE_EVENT, applyImportResult, chunkItems, objectivesToUpload, stackCascadeFill } from '../data/objectiveSync';
 import {
   ComplianceFramework,
   BaselineTier,
@@ -301,7 +301,7 @@ interface TenantContextType {
    * Moves a tenant that only exists in this browser to the server: creates it there, then ports its assessment and
    * evidence files to the new server-generated id. Browser-only team members and invitations are not carried over.
    */
-  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number }>;
+  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }>;
 
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
@@ -333,6 +333,8 @@ interface TenantContextType {
    */
   liveScopeKey: string | null;
   liveEvidence: EvidenceItem[] | null;
+  /** The program's objective records from the server (by objective id), loaded with the controls for the same `liveScopeKey`. */
+  liveObjectives: Record<string, ObjectiveRecord> | null;
   // Programs (authorization boundaries) of the active tenant
   /** The tenant's programs, archived ones included (empty for a browser-only tenant). */
   programs: Program[];
@@ -369,6 +371,12 @@ interface TenantContextType {
     programToFetch?: string | null
   ) => Promise<void>;
   updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState | null>;
+  /** Saves one objective (status, narrative, evidence links) to the program that is on screen when the call starts. Rejects when the server refuses or is unreachable. */
+  updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'>) => Promise<ObjectiveRecord>;
+  /** Saves many objectives (500 per request, each request all-or-nothing). Rejects when a request fails. */
+  updateLiveObjectivesBulk: (items: ObjectiveInput[]) => Promise<void>;
+  /** Moves browser-cached objectives to the server (5000 per request, insert-only); resolves with every id's result, rejects when a request fails. */
+  importLiveObjectives: (items: ObjectiveInput[]) => Promise<{ results: { objectiveId: string; result: ObjectiveImportResult }[]; records: Record<string, ObjectiveRecord> }>;
   createLiveEvidenceUploadUrl: (payload: {
     controlId: string;
     fileName: string;
@@ -691,7 +699,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     target: Tenant,
     override: ServerTenantPatch = {},
     activate = true
-  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number }> => {
+  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
     const base = toServerPatch(target);
     const created = await createTenantOnServer(
       { ...base, ...override, name: (override.name ?? target.name).trim() },
@@ -713,6 +721,19 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       )
     );
     const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
+
+    // The objective narratives, status and evidence links of the default program move too (insert-only: a new tenant holds none yet)
+    const legacyState = StorageService.loadAssessment(target);
+    const objectiveUpload = objectivesToUpload(legacyState.objectives, controlId => Boolean(findControlDefinition(controlId)));
+    const objectiveResults: { objectiveId: string; result: ObjectiveImportResult }[] = [];
+    let objectivesFailed = 0;
+    for (const chunk of chunkItems(objectiveUpload.items, MAX_OBJECTIVE_IMPORT)) {
+      try {
+        objectiveResults.push(...(await ApiClient.importObjectives(created.id, chunk, null)));
+      } catch {
+        objectivesFailed += chunk.length;
+      }
+    }
 
     // The CMMC asset inventory is server-owned too. A demo fleet that an older version seeded into this browser is never
     // carried over (it is not this tenant's data).
@@ -748,7 +769,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (assetsFailed === 0) clearLocalEnclaveAssets(target.id);
     // The new tenant may already be active and showing its (still empty) inventory: tell every asset view to reload
     notifyAssetsChanged(created.id);
-    StorageService.migrateAssessment(target, created.id);
+    const migratedState = StorageService.migrateAssessment(target, created.id);
+    // Only a complete upload marks the cache: until then (and for any failure) the cached narratives stay and the next load retries
+    if (objectivesFailed === 0) {
+      StorageService.saveAssessment(created.id, applyImportResult(migratedState, objectiveResults, new Date().toISOString(), objectiveUpload.unsendable));
+    }
     const evidenceFilesMoved = await EvidenceVault.moveTenant(target.id, created.id);
     setLiveTenants(prev => prev.filter(t => t.id !== target.id));
     setInvitations(prev => prev.filter(i => i.tenantId !== target.id));
@@ -762,17 +787,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       delete roles[target.id];
       return { ...prev, roles };
     });
-    return { tenant: created, evidenceFilesMoved, controlsFailed, assetsMoved, assetsFailed };
+    return { tenant: created, evidenceFilesMoved, controlsFailed, objectivesFailed, assetsMoved, assetsFailed };
   }, [createTenantOnServer]);
 
   /** "Move to server": the user-facing action for tenants that only exist in this browser. */
-  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number }> => {
+  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!target) throw new ApiError(404, 'That tenant was not found.');
-    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, controlsFailed: 0, assetsMoved: 0, assetsFailed: 0 };
+    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0 };
     if (target.isConfigured === false) throw new ApiError(409, 'Finish this tenant\'s setup wizard first; it creates the tenant on the server.');
     const moved = await migrateTenantToServer(target, {}, target.id === currentTenantIdRef.current);
-    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, controlsFailed: moved.controlsFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed };
+    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed };
   }, [migrateTenantToServer]);
 
 
@@ -783,6 +808,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // (tenant, or tenant::program): nothing may be merged, shown as loaded or saved unless it matches the scope on screen.
   const [liveControls, setLiveControls] = useState<Record<string, ControlState> | null>(null);
   const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
+  const [liveObjectives, setLiveObjectives] = useState<Record<string, ObjectiveRecord> | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [liveScopeKey, setLiveScopeKey] = useState<string | null>(null);
@@ -803,6 +829,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveSeq.current++;
     setLiveControls(null);
     setLiveEvidence(null);
+    setLiveObjectives(null);
     setLiveScopeKey(null);
   }, []);
   /** The program a tenant's requests go to right now (null: none known yet, the server serves its default program). */
@@ -1000,6 +1027,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (serverTenant && !serverTenant.serverBacked) {
       setLiveControls(null);
       setLiveEvidence(null);
+      setLiveObjectives(null);
       setLiveScopeKey(null);
       return;
     }
@@ -1027,9 +1055,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const ov = overlayToFetch || (activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
 
     try {
-      const [controlsList, evidenceList] = await Promise.all([
+      const [controlsList, evidenceList, objectivesList] = await Promise.all([
         ApiClient.getControls(targetTenantId, { framework: fw, baseline: bl, overlay: ov }, programId),
         ApiClient.getEvidence(targetTenantId, programId),
+        ApiClient.getObjectives(targetTenantId, undefined, programId),
       ]);
       if (!isCurrentResponse(seq, liveSeq.current)) return;
 
@@ -1037,9 +1066,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       for (const ctrl of controlsList) {
         controlsMap[ctrl.id] = ctrl;
       }
+      const objectivesMap: Record<string, ObjectiveRecord> = {};
+      for (const obj of objectivesList) {
+        objectivesMap[obj.objectiveId] = obj;
+      }
 
       setLiveControls(controlsMap);
       setLiveEvidence(evidenceList);
+      setLiveObjectives(objectivesMap);
       setLiveScopeKey(scope);
     } catch (err: unknown) {
       if (!isCurrentResponse(seq, liveSeq.current)) return;
@@ -1062,6 +1096,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       liveSeq.current++;
       setLiveControls(null);
       setLiveEvidence(null);
+      setLiveObjectives(null);
       setLiveScopeKey(null);
       setIsSyncing(false);
     }
@@ -1086,6 +1121,57 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return null;
     }
   }, [currentTenant.id, scopeNow, programIdFor]);
+
+  /** Re-reads the objectives of `scope` and shows them, unless the scope on screen has changed meanwhile. */
+  const reloadLiveObjectives = useCallback(async (scope: string, programId: string | null): Promise<Record<string, ObjectiveRecord>> => {
+    const list = await ApiClient.getObjectives(currentTenant.id, undefined, programId);
+    const map: Record<string, ObjectiveRecord> = {};
+    for (const o of list) map[o.objectiveId] = o;
+    if (scopeNow(currentTenant.id) === scope) setLiveObjectives(map);
+    return map;
+  }, [currentTenant.id, scopeNow]);
+
+  // Unlike updateLiveControl, the objective writers reject: the narrative is only on the server, so the UI must be able to say it was not saved
+  const updateLiveObjective = useCallback(async (
+    objectiveId: string,
+    controlId: string,
+    patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'>
+  ): Promise<ObjectiveRecord> => {
+    // The program (and so the scope) is fixed when the edit starts
+    const scope = scopeNow(currentTenant.id);
+    const programId = programIdFor(currentTenant.id);
+    const { objective } = await ApiClient.putObjective(currentTenant.id, { objectiveId, controlId, ...patch }, programId);
+    if (scopeNow(currentTenant.id) === scope) {
+      setLiveObjectives(prev => ({ ...(prev ?? {}), [objectiveId]: objective }));
+    }
+    return objective;
+  }, [currentTenant.id, scopeNow, programIdFor]);
+
+  const updateLiveObjectivesBulk = useCallback(async (items: ObjectiveInput[]): Promise<void> => {
+    if (items.length === 0) return;
+    const scope = scopeNow(currentTenant.id);
+    const programId = programIdFor(currentTenant.id);
+    for (const chunk of chunkItems(items, MAX_OBJECTIVE_BULK)) {
+      await ApiClient.putObjectivesBulk(currentTenant.id, chunk, programId);
+    }
+    // The bulk answer carries counts only: read the program's records back
+    await reloadLiveObjectives(scope, programId);
+  }, [currentTenant.id, scopeNow, programIdFor, reloadLiveObjectives]);
+
+  const importLiveObjectives = useCallback(async (
+    items: ObjectiveInput[]
+  ): Promise<{ results: { objectiveId: string; result: ObjectiveImportResult }[]; records: Record<string, ObjectiveRecord> }> => {
+    const scope = scopeNow(currentTenant.id);
+    const programId = programIdFor(currentTenant.id);
+    const results: { objectiveId: string; result: ObjectiveImportResult }[] = [];
+    for (const chunk of chunkItems(items, MAX_OBJECTIVE_IMPORT)) {
+      results.push(...(await ApiClient.importObjectives(currentTenant.id, chunk, programId)));
+    }
+    // What the import created is on the server now: show it (the caller's marker keeps it out of this browser's cache). The records
+    // also tell the caller which conflicts are about the narrative text; a failed read rejects, and the next load retries.
+    const records = await reloadLiveObjectives(scope, programId);
+    return { results, records };
+  }, [currentTenant.id, scopeNow, programIdFor, reloadLiveObjectives]);
 
   const createLiveEvidenceUploadUrl = useCallback(async (payload: {
     controlId: string;
@@ -1355,46 +1441,24 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateStackProfile = useCallback((profile: EnclaveStackProfile) => {
     updateTenant(currentTenant.id, { stackProfile: profile });
 
-    // Cascade tailored stack narratives to all assessment objectives in local storage
-    try {
-      // The active program's cache (the default program keeps the legacy key)
-      const segment = programCacheSegment(activeProgram);
-      const tenantKey = StorageService.getAssessmentKey(currentTenant.id, segment);
-      const raw = localStorage.getItem(tenantKey);
-      if (raw) {
-        const assessment = JSON.parse(raw);
-        const objectives = { ...(assessment.objectives || {}) };
-
-        Object.values(NIST_800_171A_REGISTRY).forEach((ctrlReg) => {
-          ctrlReg.objectives.forEach((obj) => {
-            const objId = `${ctrlReg.controlNumber}[${obj.letter}]`;
-            const tailoredNarrative = getCascadedObjectiveNarrative(ctrlReg.controlNumber, obj.letter, profile);
-            const existing = objectives[objId];
-            objectives[objId] = {
-              id: objId,
-              controlId: ctrlReg.controlNumber,
-              letter: obj.letter,
-              text: obj.text,
-              status: existing?.status || 'NOT_STARTED',
-              prefilledTemplate: tailoredNarrative,
-              implementationNarrative: tailoredNarrative,
-              linkedEvidenceIds: existing?.linkedEvidenceIds || [],
-              isAutoVerifiedByTelemetry: existing?.isAutoVerifiedByTelemetry || false,
-              lastUpdated: new Date().toISOString(),
-              updatedBy: 'Enclave Stack Auto-Cascade',
-            };
-          });
-        });
-
-        assessment.objectives = objectives;
-        assessment.lastSaved = new Date().toISOString();
-        // Server-backed tenants never keep implementation notes in this browser (Phase 5.6)
-        StorageService.saveAssessment(currentTenant.id, assessment, { keepNotes: !currentTenant.serverBacked, segment });
-      }
-    } catch (e) {
-      console.warn('Failed to cascade stack profile to assessment storage:', e);
+    // Cascade tailored stack narratives to the objectives of the active program's framework, filling only the empty ones: a narrative
+    // somebody wrote is never overwritten. (SP 800-53 programs have their own objective ids and no stack templates: nothing to cascade.)
+    if (activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5') return;
+    const scope = scopeNow(currentTenant.id);
+    if (!currentTenant.serverBacked) {
+      // Browser-only: the assessment state owns the cache, so it applies the cascade itself
+      window.dispatchEvent(new CustomEvent(OBJECTIVE_CASCADE_EVENT, { detail: { scope, profile } }));
+      return;
     }
-  }, [currentTenant.id, currentTenant.serverBacked, activeProgram, updateTenant]);
+    // Server-backed: the server's narratives decide what is empty; without them loaded (or without write access) nothing is touched
+    if (!canEdit || !liveObjectives || liveScopeKey !== scope) return;
+    const controlIds = getFrameworkControls(activeFramework, activeBaselineTier, activeOverlayFilters).map(c => c.id);
+    const items = stackCascadeFill(controlIds, profile, id => liveObjectives[id]?.narrative ?? '');
+    if (items.length === 0) return;
+    updateLiveObjectivesBulk(items).catch((e: unknown) => {
+      console.warn('[Stack cascade] Could not save the generated objective narratives:', errorMessage(e));
+    });
+  }, [currentTenant.id, currentTenant.serverBacked, canEdit, activeFramework, activeBaselineTier, activeOverlayFilters, liveObjectives, liveScopeKey, scopeNow, updateLiveObjectivesBulk, updateTenant]);
 
   const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
     setLiveTenants(prev =>
@@ -1890,6 +1954,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveControls,
     liveScopeKey,
     liveEvidence,
+    liveObjectives,
     programs,
     activeProgram,
     programsStatus,
@@ -1912,6 +1977,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     migrateLocalTenantToServer,
     refreshLiveData,
     updateLiveControl,
+    updateLiveObjective,
+    updateLiveObjectivesBulk,
+    importLiveObjectives,
     createLiveEvidenceUploadUrl,
     activeFramework,
     setActiveFramework,
@@ -1971,6 +2039,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveControls,
     liveScopeKey,
     liveEvidence,
+    liveObjectives,
     programs,
     activeProgram,
     programsStatus,
@@ -1993,6 +2062,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     migrateLocalTenantToServer,
     refreshLiveData,
     updateLiveControl,
+    updateLiveObjective,
+    updateLiveObjectivesBulk,
+    importLiveObjectives,
     createLiveEvidenceUploadUrl,
     activeFramework,
     setActiveFramework,

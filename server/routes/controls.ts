@@ -334,7 +334,7 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
       control: updated,
     });
   } catch (err: unknown) {
-    console.error(`[Controls API] Error updating control ${controlId} for tenant ${tenantId}:`, err);
+    console.error(`[Controls API] Error updating control ${controlId} for tenant ${tenantId}:`, errorMessage(err));
     res.status(500).json({
       error: `Failed to update control ${controlId}`,
       details: errorMessage(err),

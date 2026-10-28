@@ -10,6 +10,7 @@ import {
   LEGACY_ASSESSMENT_KEY_PREFIX,
   LEDGER_KEY_PREFIX,
   stripImplementationNotesForCache,
+  stripObjectiveNarrativesForCache,
   scrubAssessmentJson,
   computeNotesStatus,
   runBrowserStorageScrub,
@@ -198,6 +199,76 @@ async function main() {
   const p2Raw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 't1::p2');
   assert(p2Raw !== null && !p2Raw.includes(MARKER), 'S15a saveAssessment with a segment writes <key>::p2 without the notes');
   assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 't1') === 'legacy-untouched', 'S15b the legacy key is untouched by a program save');
+
+  console.log('\n--- Objective narratives ---');
+  const NARR = 'CUI-NARRATIVE-123';
+  const withObjectives = (tenantId: string, migratedAt?: string, pending?: string[]): AssessmentState => ({
+    ...makeState(tenantId, ''),
+    objectives: {
+      'obj-1': { objectiveId: 'obj-1', status: 'MET', implementationNarrative: `n1 ${NARR}`, linkedEvidenceIds: ['ev-1'], updatedBy: 'a@x.com', lastUpdated: '2026-01-02' } as any,
+      'obj-2': { objectiveId: 'obj-2', status: 'NOT_MET', implementationNarrative: `n2 ${NARR}`, linkedEvidenceIds: [], updatedBy: 'b@x.com', lastUpdated: '2026-01-03' } as any,
+    },
+    ...(migratedAt ? { objectivesMigratedAt: migratedAt } : {}),
+    ...(pending ? { objectivesPendingReview: pending } : {}),
+  });
+  const reg = JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'brw1' }]);
+
+  // O1 (a): no marker keeps the narratives, in the scrub and in saveAssessment
+  const so1 = new MemoryStorage();
+  so1.setItem('pbc_live_tenants_v4', reg);
+  so1.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withObjectives('srv1')));
+  const ro1 = await runBrowserStorageScrub(so1, () => undefined);
+  assert(ro1.narrativesRemoved === 0 && so1.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(NARR), 'O1a start-up scrub keeps narratives when objectivesMigratedAt is not set', ro1);
+  globalStore.clear();
+  StorageService.saveAssessment('srv1', withObjectives('srv1'));
+  assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(NARR), 'O1b saveAssessment keeps narratives when objectivesMigratedAt is not set');
+  const unmarked = withObjectives('srv1');
+  assert(stripObjectiveNarrativesForCache(unmarked) === unmarked, 'O1c the strip helper returns the same state without the marker');
+
+  // O2 (b): marker removes narratives, keeps the other fields
+  const so2 = new MemoryStorage();
+  so2.setItem('pbc_live_tenants_v4', reg);
+  so2.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withObjectives('srv1', '2026-02-01T00:00:00Z')));
+  const ro2 = await runBrowserStorageScrub(so2, () => undefined);
+  const stored2 = JSON.parse(so2.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!) as AssessmentState;
+  const o2 = stored2.objectives!['obj-1'] as any;
+  assert(ro2.narrativesRemoved === 2 && ro2.scrubbed === 1 && !JSON.stringify(stored2).includes(NARR), 'O2a the marker makes the start-up scrub remove every narrative (counted)', ro2);
+  assert(o2.status === 'MET' && o2.linkedEvidenceIds[0] === 'ev-1' && o2.updatedBy === 'a@x.com' && o2.lastUpdated === '2026-01-02' && !('implementationNarrative' in o2) && stored2.objectivesMigratedAt === '2026-02-01T00:00:00Z', 'O2b status, linkedEvidenceIds, updatedBy, lastUpdated and the marker are kept');
+  const pure = withObjectives('srv1', '2026-02-01T00:00:00Z');
+  const pureOut = stripObjectiveNarrativesForCache(pure);
+  assert(!JSON.stringify(pureOut).includes(NARR) && (pure.objectives!['obj-1'] as any).implementationNarrative === `n1 ${NARR}`, 'O2c the strip helper removes narratives and never mutates its input');
+
+  // O3 (c): a pending-review id keeps its narrative
+  const so3 = new MemoryStorage();
+  so3.setItem('pbc_live_tenants_v4', reg);
+  so3.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withObjectives('srv1', '2026-02-01T00:00:00Z', ['obj-2'])));
+  const ro3 = await runBrowserStorageScrub(so3, () => undefined);
+  const stored3 = JSON.parse(so3.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!) as AssessmentState;
+  assert(ro3.narrativesRemoved === 1 && !('implementationNarrative' in (stored3.objectives!['obj-1'] as any)) && (stored3.objectives!['obj-2'] as any).implementationNarrative === `n2 ${NARR}`, 'O3a the scrub keeps the narrative of a pending-review id', ro3);
+  const pend = stripObjectiveNarrativesForCache(withObjectives('srv1', '2026-02-01T00:00:00Z', ['obj-2']));
+  assert((pend.objectives!['obj-2'] as any).implementationNarrative === `n2 ${NARR}` && !('implementationNarrative' in (pend.objectives!['obj-1'] as any)), 'O3b the strip helper keeps the narrative of a pending-review id');
+
+  // O4 (d): a browser-only tenant is never stripped
+  const so4 = new MemoryStorage();
+  so4.setItem('pbc_live_tenants_v4', reg);
+  const brwRaw = JSON.stringify(withObjectives('brw1', '2026-02-01T00:00:00Z'));
+  so4.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', brwRaw);
+  so4.setCalls.length = 0;
+  const ro4 = await runBrowserStorageScrub(so4, () => undefined);
+  assert(ro4.keptBrowserOnly === 1 && ro4.narrativesRemoved === 0 && so4.setCalls.length === 0 && so4.getItem(ASSESSMENT_KEY_PREFIX + 'brw1') === brwRaw, 'O4 a browser-only tenant with the marker is untouched', ro4);
+
+  // O5 (e): idempotent
+  so2.setCalls.length = 0;
+  const ro5 = await runBrowserStorageScrub(so2, () => undefined);
+  assert(ro5.scrubbed === 0 && ro5.narrativesRemoved === 0 && so2.setCalls.length === 0, 'O5a a second scrub run changes nothing', ro5);
+  assert(JSON.stringify(stripObjectiveNarrativesForCache(pureOut)) === JSON.stringify(pureOut), 'O5b the strip helper is idempotent');
+
+  // O6 (f): saveAssessment of a server-backed tenant with the marker stores no narrative text
+  globalStore.clear();
+  StorageService.saveAssessment('srv1', withObjectives('srv1', '2026-02-01T00:00:00Z'));
+  const savedRaw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!;
+  const savedObj = (JSON.parse(savedRaw) as AssessmentState).objectives!['obj-1'] as any;
+  assert(!savedRaw.includes(NARR) && !savedRaw.includes('implementationNarrative') && savedObj.status === 'MET' && savedObj.linkedEvidenceIds[0] === 'ev-1', 'O6 saveAssessment with the marker stores no narrative but keeps the other objective fields');
 
   console.log('\n--- Static checks ---');
   const root = process.cwd();

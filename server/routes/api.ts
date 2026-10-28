@@ -4,6 +4,7 @@ import invitesRouter from './invites';
 import vmIngestRouter from './vmIngest';
 import controlsRouter from './controls';
 import evidenceRouter from './evidence';
+import objectivesRouter from './objectives';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
@@ -70,6 +71,7 @@ router.post('/tenants', authOnlyMiddleware, createTenantHandler);
 // Everything else is protected by authentication AND tenant membership
 // Controls and evidence belong to a program (authorization boundary): programContext resolves it from x-program-id (default program without it)
 router.use('/controls', authMiddleware, programContext, controlsRouter);
+router.use('/objectives', authMiddleware, programContext, objectivesRouter);
 router.use('/evidence', authMiddleware, programContext, evidenceRouter);
 router.use('/tenants', authMiddleware, tenantsRouter);
 

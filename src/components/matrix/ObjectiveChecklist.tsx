@@ -42,9 +42,12 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     applyAllObjectiveTemplatesForControl,
     linkEvidenceToObjective,
     setPreviewEvidence,
+    notesEditable,
   } = useAssessment();
 
-  const { canEdit } = useTenant();
+  // Objective status, narratives and evidence links of a server-backed tenant live on the server: no editing until they are loaded
+  const { canEdit: roleCanEdit } = useTenant();
+  const canEdit = roleCanEdit && notesEditable;
 
   // Retrieve objectives for this control
   const objectives = getObjectivesForControl(controlId);
@@ -201,6 +204,11 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
 
   return (
     <div className="space-y-6">
+      {roleCanEdit && !notesEditable && (
+        <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          Objectives are not loaded from the server, so they cannot be edited right now.
+        </p>
+      )}
       {/* ── Top Rollup Summary & Quick Actions ── */}
       <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1.5">

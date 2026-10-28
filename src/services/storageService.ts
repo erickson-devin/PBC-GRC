@@ -2,7 +2,7 @@ import { AssessmentState, ControlState, SSPMetadata } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { getFrameworkControls } from '../data/frameworks';
-import { ASSESSMENT_KEY_PREFIX, stripImplementationNotesForCache } from './browserStorageScrub';
+import { ASSESSMENT_KEY_PREFIX, stripImplementationNotesForCache, stripObjectiveNarrativesForCache } from './browserStorageScrub';
 import { activeProgramStorageKey } from '../data/programSync';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
@@ -147,7 +147,7 @@ export const StorageService = {
    */
   saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean; segment?: string | null } = {}): void {
     try {
-      const base: AssessmentState = options.keepNotes ? state : stripImplementationNotesForCache(state);
+      const base: AssessmentState = options.keepNotes ? state : stripObjectiveNarrativesForCache(stripImplementationNotesForCache(state));
       const payload: AssessmentState = {
         ...base,
         tenantId,

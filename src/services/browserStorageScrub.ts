@@ -28,6 +28,7 @@ export interface ScrubStorage {
 
 export interface BrowserStorageScrubResult {
   scrubbed: number;
+  narrativesRemoved: number;
   keptBrowserOnly: number;
   malformed: number;
   failed: number;
@@ -47,17 +48,39 @@ export function stripImplementationNotesForCache(state: AssessmentState): Assess
   return { ...state, controls };
 }
 
-/** Strips notes from a stored assessment JSON string. Never throws; returns the same string when unchanged. */
+/**
+ * Returns a copy of the state without objective `implementationNarrative` (possible CUI), except for ids in
+ * `objectivesPendingReview`. A no-op (same object) until `objectivesMigratedAt` is set: before the server holds the
+ * narratives, the cache is their only copy. Never mutates the input.
+ */
+export function stripObjectiveNarrativesForCache(state: AssessmentState): AssessmentState {
+  if (!state.objectivesMigratedAt || !state.objectives) return state;
+  const pending = new Set(Array.isArray(state.objectivesPendingReview) ? state.objectivesPendingReview : []);
+  const objectives: Record<string, any> = {};
+  for (const [id, objective] of Object.entries(state.objectives)) {
+    if (pending.has(id) || !objective || typeof objective !== 'object') {
+      objectives[id] = objective;
+      continue;
+    }
+    const copy: Record<string, unknown> = { ...(objective as unknown as Record<string, unknown>) };
+    delete copy.implementationNarrative;
+    objectives[id] = copy;
+  }
+  return { ...state, objectives };
+}
+
+/** Strips notes (and, once migrated, objective narratives) from a stored assessment JSON string. Never throws; returns the same string when unchanged. */
 export function scrubAssessmentJson(raw: string): {
   changed: boolean;
   json: string | null;
   strippedControls: number;
+  strippedObjectives: number;
   malformed?: boolean;
 } {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.controls || typeof parsed.controls !== 'object') {
-      return { changed: false, json: null, strippedControls: 0, malformed: true };
+      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, malformed: true };
     }
     let stripped = 0;
     for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
@@ -66,10 +89,22 @@ export function scrubAssessmentJson(raw: string): {
         stripped++;
       }
     }
-    if (stripped === 0) return { changed: false, json: raw, strippedControls: 0 };
-    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped };
+    // Objective narratives go only once the client has marked them as uploaded; ids under review keep theirs.
+    let strippedObjectives = 0;
+    if (parsed.objectivesMigratedAt && parsed.objectives && typeof parsed.objectives === 'object') {
+      const pending = new Set<unknown>(Array.isArray(parsed.objectivesPendingReview) ? parsed.objectivesPendingReview : []);
+      for (const [id, objective] of Object.entries(parsed.objectives as Record<string, unknown>)) {
+        if (pending.has(id)) continue;
+        if (objective && typeof objective === 'object' && 'implementationNarrative' in (objective as object)) {
+          delete (objective as Record<string, unknown>).implementationNarrative;
+          strippedObjectives++;
+        }
+      }
+    }
+    if (stripped === 0 && strippedObjectives === 0) return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0 };
+    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives };
   } catch {
-    return { changed: false, json: null, strippedControls: 0, malformed: true };
+    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, malformed: true };
   }
 }
 
@@ -121,6 +156,7 @@ function readBrowserOnlyIds(storage: ScrubStorage): Set<string> | null {
 function emptyResult(): BrowserStorageScrubResult {
   return {
     scrubbed: 0,
+    narrativesRemoved: 0,
     keptBrowserOnly: 0,
     malformed: 0,
     failed: 0,
@@ -133,7 +169,7 @@ function emptyResult(): BrowserStorageScrubResult {
 function logCounts(r: BrowserStorageScrubResult, log: (message: string) => void): void {
   if (r.scrubbed + r.malformed + r.ledgersRedacted === 0) return;
   log(
-    `[storage-scrub] assessments scrubbed ${r.scrubbed}, kept browser-only ${r.keptBrowserOnly}, malformed ${r.malformed}, ` +
+    `[storage-scrub] assessments scrubbed ${r.scrubbed} (${r.narrativesRemoved} objective narratives), kept browser-only ${r.keptBrowserOnly}, malformed ${r.malformed}, ` +
       `ledgers redacted ${r.ledgersRedacted} (${r.ledgerEntriesRedacted} entries)`
   );
 }
@@ -180,6 +216,7 @@ export function runAssessmentCacheScrub(
       } else if (scrub.changed && scrub.json !== null) {
         storage.setItem(key, scrub.json);
         result.scrubbed++;
+        result.narrativesRemoved += scrub.strippedObjectives;
       }
     } catch {
       result.failed++;

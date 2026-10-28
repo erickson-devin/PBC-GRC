@@ -98,6 +98,10 @@ export interface AssessmentState {
   evidenceIndex: EvidenceItem[];
   lastSaved: string;
   objectives?: Record<string, AssessmentObjective>;
+  /** ISO time the client set once every cached objective narrative of this cache key is on the server; until then narratives stay in the cache. */
+  objectivesMigratedAt?: string;
+  /** Objective ids the server reported as conflicts; their narratives stay in the cache until the user resolves them. */
+  objectivesPendingReview?: string[];
 }
 
 export interface DomainStat {
