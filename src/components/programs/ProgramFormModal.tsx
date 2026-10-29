@@ -4,7 +4,7 @@ import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { useTenant } from '../../context/TenantContext';
 import { useProgram } from '../../hooks/useProgram';
-import { PROGRAM_FRAMEWORKS, frameworkLabel } from '../../data/programs';
+import { PROGRAM_FRAMEWORKS, frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { PROGRAM_NAME_MAX, PROGRAM_TEXT_MAX, normalizeProgramFramework, validateProgramInput } from '../../data/programSync';
 import type { ProgramInputField } from '../../data/programSync';
 import type { Program, ProgramBaseline, ProgramSeed } from '../../types/program';

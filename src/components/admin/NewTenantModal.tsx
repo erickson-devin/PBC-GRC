@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { Tenant, TenantInvitation } from '../../types/tenant';
-import { programSummary } from '../../data/programs';
+import { frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { ErrorNotice } from '../common/ErrorNotice';
@@ -119,7 +119,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
         enabledFrameworks,
       });
 
-      setRequestedProgram(programSummary(primaryFramework, enabledFrameworks).text);
+      setRequestedProgram(frameworkPolicySummary(primaryFramework, enabledFrameworks).text);
       setCreatedResult(result);
       if (onTenantCreated) {
         onTenantCreated(result.tenant, result.invitation, result.inviteUrl);
@@ -207,10 +207,10 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
                   <span>Assessment Program:</span>
                   <span className="font-bold text-brand-300 text-right">
-                    {programSummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text}
+                    {frameworkPolicySummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text}
                   </span>
                 </div>
-                {requestedProgram && requestedProgram !== programSummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text && (
+                {requestedProgram && requestedProgram !== frameworkPolicySummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text && (
                   <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200">
                     You asked for <strong>{requestedProgram}</strong>, but the server recorded the program above. Only a platform administrator
                     can set an enclave&apos;s frameworks (the server&apos;s PLATFORM_ADMIN_EMAILS list).

@@ -14,7 +14,7 @@ import {
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
 import { AuthProviderType, TenantInvitation } from '../types/tenant';
-import { programSummary } from '../data/programs';
+import { frameworkPolicySummary } from '../data/tenantFrameworkPolicy';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { errorMessage } from '../utils/errors';
 import { MfaChallengeForm } from '../components/auth/MfaChallengeForm';
@@ -430,7 +430,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Assessment Program</span>
                     <span className="font-semibold text-slate-200 mt-0.5 block">
-                      {programSummary(invitation?.primaryFramework, invitation?.enabledFrameworks).text}
+                      {frameworkPolicySummary(invitation?.primaryFramework, invitation?.enabledFrameworks).text}
                     </span>
                   </div>
                 </div>

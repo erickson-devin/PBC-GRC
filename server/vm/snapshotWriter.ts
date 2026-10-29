@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import path from 'path';
-import { getTenantProgram, queryWithProgram } from '../db';
+import { getTenantFrameworkPolicy, queryWithProgram } from '../db';
 import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { listAgentAssetCandidates, listAssets } from '../assets';
@@ -133,7 +133,7 @@ export async function writeSnapshotEvidence(
     files.push({ key: s.key, fileName: s.fileName, absPath: written.absPath, sha256: written.sha256, size: written.size, mimeType: s.mimeType });
   }
 
-  const controls = snapshotControlIds(await getTenantProgram(tenantId), frameworksDefiningControl);
+  const controls = snapshotControlIds(await getTenantFrameworkPolicy(tenantId), frameworksDefiningControl);
   const description = `Automated vulnerability management snapshot ${day}`;
   const evidenceIds: string[] = [];
   const inheritedEvidenceIds: string[] = [];

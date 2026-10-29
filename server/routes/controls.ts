@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import type pg from 'pg';
-import { getTenantProgram, queryWithProgram, type ProgramScope } from '../db';
+import { getTenantFrameworkPolicy, queryWithProgram, type ProgramScope } from '../db';
 import { CONTROL_STATUSES, listControlAssessmentEvents, writeControlAssessment } from '../controlAssessments';
-import { ensureControlInProgram, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
+import { ensureControlInFrameworkPolicy, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
   ComplianceFramework,
@@ -168,13 +168,13 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   const scope = scopeOf(req);
 
   try {
-    // Framework segregation: a tenant serves the frameworks of its assessment program (the allow-list); a framework asked for
+    // Framework segregation: a tenant serves the frameworks of its framework policy (its licensed frameworks); a framework asked for
     // explicitly stays allowed under it (the crosswalk view). With none asked for, the active program's own framework.
-    const program = await getTenantProgram(tenantId);
+    const policy = await getTenantFrameworkPolicy(tenantId);
     const asked = req.query.framework_id || req.query.framework;
     const query = !asked && req.program ? { ...req.query, framework_id: req.program.frameworkId } : req.query;
     const { framework, baseline, overlay } = normalizeFrameworkParams(query);
-    if (!(await ensureFrameworkEnabled(req, res, framework, program))) return;
+    if (!(await ensureFrameworkEnabled(req, res, framework, policy))) return;
 
     // 1. Resolve canonical controls for the requested framework and overlay
     // A NIST program with the privacy baseline serves the union of its security baseline and the SP 800-53B privacy baseline.
@@ -315,7 +315,7 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
 
   const effectiveUser = updatedBy || req.user?.name || req.user?.email || 'Compliance Assessor';
 
-  if (!(await ensureControlInProgram(req, res, String(controlId)))) return;
+  if (!(await ensureControlInFrameworkPolicy(req, res, String(controlId)))) return;
 
   try {
     const written = await writeControlAssessment(
@@ -356,7 +356,7 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
 router.get('/:controlId/history', async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.tenantId!;
   const controlId = String(req.params.controlId);
-  if (!(await ensureControlInProgram(req, res, controlId))) return;
+  if (!(await ensureControlInFrameworkPolicy(req, res, controlId))) return;
 
   const rawLimit = typeof req.query.limit === 'string' ? req.query.limit : '';
   const limit = /^\d+$/.test(rawLimit) ? Math.min(200, Math.max(1, Number(rawLimit))) : 50;

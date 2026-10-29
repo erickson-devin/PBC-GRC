@@ -1,4 +1,4 @@
-import { PROGRAM_FRAMEWORKS } from './programs';
+import { PROGRAM_FRAMEWORKS } from './tenantFrameworkPolicy';
 import type { ComplianceFramework } from '../types/framework';
 import type { Program, ProgramBaseline, ProgramInput, ProgramMetrics } from '../types/program';
 
