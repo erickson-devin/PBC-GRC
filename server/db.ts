@@ -612,8 +612,18 @@ export async function initDb(): Promise<void> {
     const ver = await client.query("SELECT current_setting('server_version_num') AS num, current_setting('server_version') AS version");
     assertSupportedPostgresVersion(ver.rows[0]?.num, ver.rows[0]?.version);
 
-    // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts)
-    await client.query(buildSchemaSql());
+    // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts). The schema's own warnings
+    // (a table still waiting for the program_id backfill, ssp_documents kept because it holds rows) name tables only: show them here,
+    // where the operator looks, not just in the PostgreSQL log.
+    const onNotice = (n: { severity?: string; message?: string }) => {
+      if (n.severity === 'WARNING') console.warn(`[PostgreSQL] ${n.message}`);
+    };
+    client.on('notice', onNotice);
+    try {
+      await client.query(buildSchemaSql());
+    } finally {
+      client.off('notice', onNotice);
+    }
 
     // Seed canonical control mappings if not present
     for (const m of CANONICAL_CONTROL_MAPPINGS) {

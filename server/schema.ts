@@ -25,7 +25,6 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'control_assessments', tenantColumn: 'tenant_id' },
   { table: 'control_assessment_events', tenantColumn: 'tenant_id' },
   { table: 'evidence_metadata', tenantColumn: 'tenant_id' },
-  { table: 'ssp_documents', tenantColumn: 'tenant_id' },
   { table: 'tenant_invitations', tenantColumn: 'tenant_id' },
   { table: 'enclave_assets', tenantColumn: 'tenant_id' },
   { table: 'ssp_import_jobs', tenantColumn: 'tenant_id' },
@@ -58,6 +57,20 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'control_objectives',
   'control_objective_events',
 ];
+
+/**
+ * The legacy tables whose program_id column was added nullable and is finalized (validated, NOT NULL) once every row has a program.
+ * Must equal PROGRAM_SCOPED_TABLES in server/programs.ts (not imported: that file imports this one). The two objective tables are NOT NULL
+ * from creation and are not listed.
+ */
+export const PROGRAM_BACKFILL_TABLES = [
+  'control_assessments',
+  'control_assessment_events',
+  'evidence_metadata',
+  'ssp_import_jobs',
+  'staged_controls',
+  'vm_poam_items',
+] as const;
 
 export const rlsProgramPolicyName = (table: string): string => `rls_${table}_program_isolation`;
 
@@ -179,23 +192,21 @@ export const TABLES_SQL = `
   );
   ALTER TABLE evidence_metadata ALTER COLUMN sync_status SET DEFAULT 'local_storage';
 
-  CREATE TABLE IF NOT EXISTS ssp_documents (
-      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-      tenant_id VARCHAR(64) NOT NULL,
-      system_name VARCHAR(255) NOT NULL,
-      organization_name VARCHAR(255) NOT NULL,
-      cage_code VARCHAR(20),
-      sam_status VARCHAR(32) DEFAULT 'ACTIVE',
-      system_owner VARCHAR(255) NOT NULL,
-      author_name VARCHAR(255) NOT NULL,
-      assessment_date DATE NOT NULL DEFAULT CURRENT_DATE,
-      system_boundary_scope TEXT NOT NULL,
-      system_environment TEXT NOT NULL,
-      cloud_service_providers TEXT NOT NULL,
-      version VARCHAR(32) DEFAULT '1.0.0',
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT unq_tenant_ssp UNIQUE (tenant_id)
-  );
+  -- ssp_documents had no reader or writer (issue #25). It is dropped where it is empty; a table that still holds rows is kept with
+  -- FORCE RLS restored (the probe has to lift FORCE: with no tenant context FORCE hides every row, so "empty" would always be true).
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ssp_documents' AND relkind = 'r' AND relnamespace = current_schema()::regnamespace) THEN
+      ALTER TABLE ssp_documents NO FORCE ROW LEVEL SECURITY;
+      IF NOT EXISTS (SELECT 1 FROM ssp_documents) THEN
+        DROP TABLE ssp_documents;
+      ELSE
+        ALTER TABLE ssp_documents FORCE ROW LEVEL SECURITY;
+        RAISE WARNING 'ssp_documents still holds rows and was not dropped';
+      END IF;
+    END IF;
+  END
+  $$;
 
   -- Invitations to join a tenant. The secret token is NEVER stored: only its SHA-256 hash, so a database leak does not
   -- hand out working invitations. An invitation is single-use (accepted_at) and can be revoked or expire.
@@ -580,8 +591,9 @@ export const TABLES_SQL = `
 
   -- Programs (authorization boundaries), additive data layer: a tenant owns several programs, each with one framework (and, for
   -- NIST SP 800-53, one baseline). All program DDL lives here, after the VM and local_users blocks (tests pin their layout).
-  -- program_id stays nullable at the column level (server/programs.ts backfills it lazily, per tenant, under that tenant's RLS context);
-  -- the NOT VALID checks, the per-program unique key and the program row policies (buildProgramRlsSql) at the end enforce it.
+  -- program_id starts nullable at the column level (server/programs.ts backfills it lazily, per tenant, under that tenant's RLS context);
+  -- the NOT VALID checks, the per-program unique key and the program row policies (buildProgramRlsSql) enforce it meanwhile, and
+  -- buildProgramIdNotNullSql (the last step of buildSchemaSql) finalizes each table once none of its rows lacks a program.
   CREATE TABLE IF NOT EXISTS programs (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
       tenant_id VARCHAR(64) NOT NULL,
@@ -650,25 +662,26 @@ export const TABLES_SQL = `
 
   -- program_id is required on every new or changed row. Each check is added unvalidated: it applies to writes from now on without
   -- scanning the table (a plain NOT NULL column constraint scans every row whatever the row policies say, and would stop the boot on a
-  -- row that is not backfilled yet). Validating the checks is a later step, once every tenant's rows are backfilled.
+  -- row that is not backfilled yet). Validating them is buildProgramIdNotNullSql's job; a table it has already finalized (column
+  -- NOT NULL, check dropped) must not get its check back, or every boot would scan it again.
   DO $$
   BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'control_assessments_program_required' AND conrelid = 'control_assessments'::regclass) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'control_assessments_program_required' AND conrelid = 'control_assessments'::regclass) AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'control_assessments'::regclass AND attname = 'program_id' AND attnotnull) THEN
       ALTER TABLE control_assessments ADD CONSTRAINT control_assessments_program_required CHECK (program_id IS NOT NULL) NOT VALID;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'control_assessment_events_program_required' AND conrelid = 'control_assessment_events'::regclass) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'control_assessment_events_program_required' AND conrelid = 'control_assessment_events'::regclass) AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'control_assessment_events'::regclass AND attname = 'program_id' AND attnotnull) THEN
       ALTER TABLE control_assessment_events ADD CONSTRAINT control_assessment_events_program_required CHECK (program_id IS NOT NULL) NOT VALID;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evidence_metadata_program_required' AND conrelid = 'evidence_metadata'::regclass) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'evidence_metadata_program_required' AND conrelid = 'evidence_metadata'::regclass) AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'evidence_metadata'::regclass AND attname = 'program_id' AND attnotnull) THEN
       ALTER TABLE evidence_metadata ADD CONSTRAINT evidence_metadata_program_required CHECK (program_id IS NOT NULL) NOT VALID;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ssp_import_jobs_program_required' AND conrelid = 'ssp_import_jobs'::regclass) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ssp_import_jobs_program_required' AND conrelid = 'ssp_import_jobs'::regclass) AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'ssp_import_jobs'::regclass AND attname = 'program_id' AND attnotnull) THEN
       ALTER TABLE ssp_import_jobs ADD CONSTRAINT ssp_import_jobs_program_required CHECK (program_id IS NOT NULL) NOT VALID;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'staged_controls_program_required' AND conrelid = 'staged_controls'::regclass) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'staged_controls_program_required' AND conrelid = 'staged_controls'::regclass) AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'staged_controls'::regclass AND attname = 'program_id' AND attnotnull) THEN
       ALTER TABLE staged_controls ADD CONSTRAINT staged_controls_program_required CHECK (program_id IS NOT NULL) NOT VALID;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vm_poam_items_program_required' AND conrelid = 'vm_poam_items'::regclass) THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vm_poam_items_program_required' AND conrelid = 'vm_poam_items'::regclass) AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'vm_poam_items'::regclass AND attname = 'program_id' AND attnotnull) THEN
       ALTER TABLE vm_poam_items ADD CONSTRAINT vm_poam_items_program_required CHECK (program_id IS NOT NULL) NOT VALID;
     END IF;
   END
@@ -875,7 +888,44 @@ ${policies}
 `;
 }
 
+/**
+ * Finalizes program_id on the legacy tables (issue #24): per table, VALIDATE the NOT VALID check, SET NOT NULL (PostgreSQL skips the
+ * scan once a valid check proves it), then drop the now redundant check. VALIDATE scans the table whatever the row policies say, so a
+ * row without a program raises check_violation: that table stays as it is (nullable, check NOT VALID) and the boot goes on. Only
+ * check_violation is tolerated; any other error still fails the boot. The warning names the table, never row data.
+ */
+export function buildProgramIdNotNullSql(tables: readonly string[] = PROGRAM_BACKFILL_TABLES): string {
+  const blocks = tables
+    .map(
+      (t) => `    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${t}_program_required' AND conrelid = '${t}'::regclass) THEN
+      BEGIN
+        ALTER TABLE ${t} VALIDATE CONSTRAINT ${t}_program_required;
+        ALTER TABLE ${t} ALTER COLUMN program_id SET NOT NULL;
+        ALTER TABLE ${t} DROP CONSTRAINT ${t}_program_required;
+      EXCEPTION WHEN check_violation THEN
+        RAISE WARNING '${t}: rows without a program remain; program_id stays nullable until every tenant is backfilled';
+      END;
+    END IF;`,
+    )
+    .join('\n');
+
+  return `
+  DO $$
+  BEGIN
+${blocks}
+  END
+  $$;
+`;
+}
+
+/** Rows still without a program, per table and tenant: counts only, never row content. Needs a session that can see every tenant. */
+export function buildLegacyProgramRowCountSql(tables: readonly string[] = PROGRAM_BACKFILL_TABLES): string {
+  return tables
+    .map((t) => `SELECT '${t}' AS table_name, tenant_id, count(*)::int AS n FROM ${t} WHERE program_id IS NULL GROUP BY tenant_id`)
+    .join('\nUNION ALL\n');
+}
+
 /** Complete, idempotent schema bootstrap executed by initDb(). */
 export function buildSchemaSql(): string {
-  return `${TABLES_SQL}\n${buildRlsSql()}\n${buildProgramRlsSql()}`;
+  return `${TABLES_SQL}\n${buildRlsSql()}\n${buildProgramRlsSql()}\n${buildProgramIdNotNullSql()}`;
 }

@@ -1,10 +1,10 @@
 import { assertSupportedPostgresVersion, buildPoolConfig } from '../server/db';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
-import { DISCOVERY_POLICIES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildProgramRlsSql, buildRlsSql, buildSchemaSql, rlsPolicyName, rlsProgramPolicyName } from '../server/schema';
+import { DISCOVERY_POLICIES, PROGRAM_BACKFILL_TABLES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildLegacyProgramRowCountSql, buildProgramIdNotNullSql, buildProgramRlsSql, buildRlsSql, buildSchemaSql, rlsPolicyName, rlsProgramPolicyName } from '../server/schema';
 
 /**
  * Pure checks (no database needed) on the schema bootstrap and the pool configuration:
- *  - tenant_users and ssp_documents are created by initDb;
+ *  - tenant_users is created by initDb; ssp_documents is dropped;
  *  - EVERY tenant-bound table gets ENABLE + FORCE ROW LEVEL SECURITY and a policy;
  *  - DATABASE_URL selects a standard connection string, otherwise the existing Unix socket / TCP logic.
  * Live enforcement against PostgreSQL itself is covered by `npm run db:verify-rls` (needs a real database).
@@ -26,7 +26,15 @@ const rls = buildRlsSql();
 
 console.log('--- initDb creates the membership and SSP tables ---');
 assert(/CREATE TABLE IF NOT EXISTS tenant_users/.test(schema), 'tenant_users is created');
-assert(/CREATE TABLE IF NOT EXISTS ssp_documents/.test(schema), 'ssp_documents is created');
+assert(!/CREATE TABLE IF NOT EXISTS ssp_documents/.test(schema), 'D1: ssp_documents is no longer created (issue #25)');
+assert(!RLS_TENANT_TABLES.some((t) => t.table === 'ssp_documents') && !buildRlsSql().includes('ssp_documents'), 'D2: ssp_documents has no tenant policy any more');
+const sspNoForce = TABLES_SQL.indexOf('ALTER TABLE ssp_documents NO FORCE ROW LEVEL SECURITY;');
+const sspProbe = TABLES_SQL.indexOf('IF NOT EXISTS (SELECT 1 FROM ssp_documents) THEN');
+const sspDrop = TABLES_SQL.indexOf('DROP TABLE ssp_documents;');
+const sspReforce = TABLES_SQL.indexOf('ALTER TABLE ssp_documents FORCE ROW LEVEL SECURITY;');
+assert(0 < sspNoForce && sspNoForce < sspProbe && sspProbe < sspDrop && sspDrop < sspReforce, 'D3: ssp_documents is dropped only after an empty probe, and FORCE RLS is restored when rows remain', [sspNoForce, sspProbe, sspDrop, sspReforce]);
+assert((schema.match(/NO FORCE ROW LEVEL SECURITY/g) || []).length === 1, 'D4: the ssp_documents probe is the only NO FORCE in the schema');
+assert(TABLES_SQL.includes('relnamespace = current_schema()::regnamespace'), 'D5: the ssp_documents lookup is limited to the current schema');
 assert(/CREATE TABLE IF NOT EXISTS local_users/.test(schema) && /password_hash/.test(schema) && !/\bpassword\s+VARCHAR/i.test(schema), 'local_users stores a password hash only, never a password column');
 assert(schema.includes('CONSTRAINT unq_local_users_email UNIQUE (email)'), 'local user emails are unique');
 assert(/UNIQUE \(user_id, tenant_id\)/.test(TABLES_SQL), 'tenant_users is unique per (user, tenant) so the upsert works');
@@ -213,7 +221,7 @@ assert(
   'P1: the four program indexes exist'
 );
 assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);'), 'P1: the per-program control key is added');
-assert(!programDdl.includes('SET NOT NULL'), 'P1: program_id is never made NOT NULL with SET NOT NULL (it scans every row, whatever the row policies say)');
+assert(!programDdl.includes('SET NOT NULL'), 'P1: the program DDL never runs SET NOT NULL; buildProgramIdNotNullSql does, after VALIDATE (a bare SET NOT NULL scans every row, whatever the row policies say)');
 assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).length === RLS_TENANT_TABLES.length, 'P1: buildRlsSql() holds only the tenant policies (the program policies are buildProgramRlsSql())');
 
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
@@ -252,6 +260,25 @@ for (const t of PROGRAM_SCOPED) {
   assert(programDdl.includes(guard) && programDdl.includes('ALTER TABLE ' + t + ' ADD CONSTRAINT ' + c + ' CHECK (program_id IS NOT NULL) NOT VALID;'), 'P5: ' + t + ': program_id IS NOT NULL check, NOT VALID, added once');
 }
 assert((programDdl.match(/NOT VALID/g) || []).length === PROGRAM_SCOPED.length, 'P5: exactly the six NOT VALID checks');
+
+console.log('\n--- Finalizing program_id (issue #24) ---');
+const fin = buildProgramIdNotNullSql();
+assert(schema.includes(fin) && schema.indexOf(fin) > schema.indexOf(programRls), 'N1: buildSchemaSql() finalizes program_id after the program policies');
+assert(JSON.stringify(PROGRAM_BACKFILL_TABLES) === JSON.stringify(PROGRAM_SCOPED), 'N2: PROGRAM_BACKFILL_TABLES is the six program-scoped legacy tables');
+for (const t of PROGRAM_SCOPED) {
+  const c = t + '_program_required';
+  const v = fin.indexOf('ALTER TABLE ' + t + ' VALIDATE CONSTRAINT ' + c + ';');
+  const n = fin.indexOf('ALTER TABLE ' + t + ' ALTER COLUMN program_id SET NOT NULL;');
+  const d = fin.indexOf('ALTER TABLE ' + t + ' DROP CONSTRAINT ' + c + ';');
+  assert(fin.includes("conname = '" + c + "' AND conrelid = '" + t + "'::regclass") && 0 <= v && v < n && n < d, 'N3: ' + t + ': VALIDATE, then SET NOT NULL, then drop the check, behind the constraint guard', [v, n, d]);
+}
+assert((fin.match(/EXCEPTION WHEN check_violation THEN/g) || []).length === PROGRAM_SCOPED.length && !/WHEN OTHERS/.test(fin), 'N4: only a row without a program (check_violation) is tolerated per table; any other error still fails the boot');
+assert(!fin.includes('control_objective') && !fin.includes('NOT VALID'), 'N5: the objective tables are not touched and nothing is added unvalidated');
+for (const t of PROGRAM_SCOPED) {
+  assert(programDdl.includes("AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = '" + t + "'::regclass AND attname = 'program_id' AND attnotnull)"), 'N6: ' + t + ': a finalized table never gets its NOT VALID check back');
+}
+const cnt = buildLegacyProgramRowCountSql();
+assert((cnt.match(/WHERE program_id IS NULL GROUP BY tenant_id/g) || []).length === 6 && !/implementation_notes|file_name|description|narrative/.test(cnt), 'N7: the legacy row count selects counts per table and tenant only, never row content');
 
 console.log('\n--- Assessment objectives (control_objectives, control_objective_events) ---');
 const objTable = (name: string): string => {

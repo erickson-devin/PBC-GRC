@@ -74,6 +74,7 @@
     "auth:create-user": "tsx scripts/createLocalUser.ts",
     "auth:reset-mfa": "tsx scripts/resetLocalUserMfa.ts",
     "db:verify-rls": "tsx scripts/verifyRls.ts",
+    "db:backfill-program-ids": "tsx scripts/backfillProgramIds.ts",
     "db:verify-vm": "tsx scripts/verifyVmLive.ts",
     "test:sprs": "tsx tests/sprsScoring.test.ts",
     "test:rbac": "tsx tests/rbac.test.ts",
