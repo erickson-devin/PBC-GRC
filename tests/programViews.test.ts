@@ -77,7 +77,7 @@ assert(/activeProgram\?\.boundarySummary/.test(exportModal) && /activeProgram\.n
 const builder = read('src/components/ssp/SSPBuilder.tsx');
 assert(/activeProgram\?\.boundarySummary/.test(builder) && /activeProgram\.name/.test(builder), 'SSPBuilder.tsx uses the program boundary summary and name');
 const admin = read('src/components/admin/SuperAdminDashboard.tsx');
-assert(/getControls\(tenant\.id, \{ framework: tenant\.primaryFramework \}, null\)/.test(admin), 'SuperAdminDashboard.tsx exports the default program (null)');
+assert(/getControls: \(t, p\) => ApiClient\.getControls\(t, undefined, p\)/.test(admin) && /buildProgramHandover\(tenant, selection/.test(admin), 'SuperAdminDashboard.tsx exports each chosen program with its own framework (#27)');
 const onboarding = read('src/components/onboarding/OnboardingModal.tsx');
 assert(/updateProgram\(defaultProgram\.id, \{ boundarySummary/.test(onboarding) && /p\.isDefault/.test(onboarding), 'OnboardingModal.tsx writes the boundary to the default program');
 

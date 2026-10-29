@@ -8,6 +8,13 @@ import { ComplianceFramework } from '../src/types/framework';
 import { Tenant } from '../src/types/tenant';
 import { FRAMEWORK_REGISTRY } from '../src/data/frameworks';
 import { extractOwnerEmail, initialOwnerEmail, ownerEmailChanged } from '../src/utils/systemOwner';
+import {
+  buildEnclaveEditUpdates,
+  currentFrameworkSelection,
+  frameworksChanged,
+  normalizeFrameworkSelection,
+} from '../src/utils/enclaveEdit';
+import { toServerPatch } from '../src/data/tenantSync';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -257,6 +264,71 @@ async function runTests() {
     const modalSrc = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'EditEnclaveModal.tsx'), 'utf8');
     assert(!modalSrc.includes('admin@${'), 'EditEnclaveModal no longer invents admin@<domain>');
     assert(modalSrc.includes('ownerEmailChanged('), 'EditEnclaveModal gates the owner update on ownerEmailChanged');
+  }
+
+  // Issue #28: one save is one update (one PATCH), frameworks only when they changed
+  {
+    console.log('\n--- One save, one update ---');
+    const T = { primaryFramework: 'CMMC_L1' as ComplianceFramework, enabledFrameworks: ['CMMC_L1'] as ComplianceFramework[] };
+    const sel = (primary: ComplianceFramework, enabled: ComplianceFramework[]) => ({ primary, enabled });
+    assert(!frameworksChanged(sel('CMMC_L1', ['CMMC_L1']), sel('CMMC_L1', ['CMMC_L1'])), 'frameworksChanged: the same selection is unchanged');
+    assert(
+      !frameworksChanged(sel('CMMC_L1', ['CMMC_L1', 'NIST_800_53_REV5']), sel('CMMC_L1', ['NIST_800_53_REV5', 'CMMC_L1'])),
+      'frameworksChanged: the order of the enabled list does not matter'
+    );
+    assert(frameworksChanged(sel('CMMC_L1', ['CMMC_L1', 'CMMC_L2']), sel('CMMC_L2', ['CMMC_L1', 'CMMC_L2'])), 'frameworksChanged: another primary is a change');
+    assert(frameworksChanged(sel('CMMC_L1', ['CMMC_L1']), sel('CMMC_L1', ['CMMC_L1', 'CMMC_L2'])), 'frameworksChanged: another enabled set is a change');
+    assert(
+      normalizeFrameworkSelection('CMMC_L2', ['CMMC_L1']).enabled.join() === 'CMMC_L2,CMMC_L1',
+      'normalizeFrameworkSelection puts a missing primary first'
+    );
+    assert(normalizeFrameworkSelection('CMMC_L1', ['CMMC_L1', 'CMMC_L1']).enabled.join() === 'CMMC_L1', 'normalizeFrameworkSelection de-duplicates');
+    assert(
+      currentFrameworkSelection({ primaryFramework: undefined, enabledFrameworks: [] }).enabled.join() === 'CMMC_L1',
+      'currentFrameworkSelection falls back to CMMC_L1 and the primary'
+    );
+
+    const base = { name: ' Acme Renamed ', cageCode: 'zz9yx', primaryFramework: 'CMMC_L1' as ComplianceFramework, enabledFrameworks: ['CMMC_L1'] as ComplianceFramework[], newOwnerEmail: null };
+    const plain = buildEnclaveEditUpdates(T, base);
+    assert(Object.keys(plain.updates).sort().join() === 'cageCode,name', 'unchanged frameworks are not part of the update', Object.keys(plain.updates));
+    assert(plain.updates.name === 'Acme Renamed' && plain.updates.cageCode === 'ZZ9YX' && plain.frameworksChanged === false, 'the name is trimmed, the CAGE code upper-cased');
+    const plainPatch = toServerPatch(plain.updates);
+    assert(!('primaryFramework' in plainPatch) && !('enabledFrameworks' in plainPatch), 'so the PATCH carries no framework field (a non-administrator can save)', plainPatch);
+
+    const widened = buildEnclaveEditUpdates(T, { ...base, enabledFrameworks: ['CMMC_L1', 'CMMC_L2'] });
+    assert(
+      widened.updates.enabledFrameworks?.join() === 'CMMC_L1,CMMC_L2' && widened.updates.primaryFramework === 'CMMC_L1' && widened.frameworksChanged === true,
+      'changed frameworks are part of the same update'
+    );
+    const owned = buildEnclaveEditUpdates(T, { ...base, newOwnerEmail: 'jane.doe@x.test' });
+    assert(owned.updates.systemOwner === 'Jane Doe (jane.doe@x.test)', 'a changed owner is part of the same update, as "Name (email)"', owned.updates.systemOwner);
+    const noCage = buildEnclaveEditUpdates(T, { ...base, cageCode: '' });
+    assert(noCage.updates.cageCode === 'PENDING' && !('cageCode' in toServerPatch(noCage.updates)), 'an empty CAGE code is PENDING and never sent');
+
+    const src = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'EditEnclaveModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    assert((src.match(/\bupdateTenant\(/g) ?? []).length === 1, 'EditEnclaveModal calls updateTenant once');
+    assert(!src.includes('updateTenantFrameworkScope'), 'EditEnclaveModal no longer calls updateTenantFrameworkScope');
+    assert(src.includes('buildEnclaveEditUpdates('), 'EditEnclaveModal builds its update with buildEnclaveEditUpdates');
+    assert(/if \(ownerChanged && !tenant\.serverBacked\) updateTenantOwner\(/.test(src), 'the owner hand-over of a browser-only tenant still runs, and only there');
+  }
+
+  // Issue #29(a): the platform administrator's screens say "licensed frameworks", not "assessment program"
+  {
+    console.log('\n--- Licensed frameworks wording ---');
+    const files: [string, string[]][] = [
+      ['EditEnclaveModal', ['src', 'components', 'admin', 'EditEnclaveModal.tsx']],
+      ['NewTenantModal', ['src', 'components', 'admin', 'NewTenantModal.tsx']],
+      ['SuperAdminDashboard', ['src', 'components', 'admin', 'SuperAdminDashboard.tsx']],
+      ['FinanceProvisioningLog', ['src', 'components', 'admin', 'FinanceProvisioningLog.tsx']],
+      ['AcceptInvitePage', ['src', 'pages', 'AcceptInvitePage.tsx']],
+    ];
+    for (const [label, parts] of files) {
+      const text = readFileSync(join(process.cwd(), ...parts), 'utf8');
+      assert(!/assessment program/i.test(text), `${label} does not say "assessment program"`);
+      assert(text.includes('Licensed Frameworks'), `${label} says "Licensed Frameworks"`);
+    }
+    const finance = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'FinanceProvisioningLog.tsx'), 'utf8');
+    assert(!finance.includes('>Program:<'), 'FinanceProvisioningLog has no bare "Program:" filter label');
   }
 
   // Summary

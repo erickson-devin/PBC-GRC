@@ -128,7 +128,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
             <span>Enclave Provisioning Log</span>
           </h2>
           <p className="text-xs text-slate-400">
-            Every enclave a platform administrator has provisioned, the assessment program it was set up for, and whether its owner has claimed it.
+            Every enclave a platform administrator has provisioned, the frameworks it is licensed for, and whether its owner has claimed it.
           </p>
         </div>
 
@@ -150,7 +150,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
         </div>
 
         <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
-          <div className="text-xs font-mono uppercase tracking-wider text-emerald-400">Assessment Programs</div>
+          <div className="text-xs font-mono uppercase tracking-wider text-emerald-400">Primary Frameworks</div>
           <div className="text-xl font-black text-emerald-400 mt-1">{stats.programs.length}</div>
           <div className="text-xs text-slate-400 mt-0.5">
             {stats.programs.map(([fw, n]) => `${n} ${frameworkLabel(fw)}`).join(' • ') || 'No enclaves yet'}
@@ -167,7 +167,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
       {/* Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400">Program:</span>
+          <span className="text-xs text-slate-400">Primary framework:</span>
           <div className="inline-flex flex-wrap rounded-lg bg-slate-950 p-0.5 border border-slate-800 text-xs">
             {[['ALL', `All (${records.length})`], ...stats.programs.map(([fw, n]) => [fw, `${frameworkLabel(fw)} (${n})`])].map(([id, label]) => (
               <button
@@ -222,7 +222,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
             <tr>
               <th className="py-3 px-4">Date Provisioned</th>
               <th className="py-3 px-4">Client Name & Boundary</th>
-              <th className="py-3 px-4">Assessment Program</th>
+              <th className="py-3 px-4">Licensed Frameworks</th>
               <th className="py-3 px-4">Provisioned By</th>
               <th className="py-3 px-4">Invite Status</th>
               <th className="py-3 px-4 text-right">Actions</th>
@@ -265,7 +265,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
                       </div>
                     </td>
 
-                    {/* Assessment Program */}
+                    {/* Licensed Frameworks */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       <span
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono text-xs font-semibold"

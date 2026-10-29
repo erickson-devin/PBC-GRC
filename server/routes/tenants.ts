@@ -367,7 +367,7 @@ router.patch('/:tenantId', async (req: Request, res: Response): Promise<void> =>
   }
 
   if ((parsed.value.primaryFramework !== undefined || parsed.value.enabledFrameworks !== undefined) && !(await isPlatformAdminUser(req.user))) {
-    res.status(403).json({ error: "Forbidden: only a platform administrator can change a tenant's assessment program (its frameworks)" });
+    res.status(403).json({ error: "Forbidden: only a platform administrator can change a tenant's licensed frameworks" });
     return;
   }
 

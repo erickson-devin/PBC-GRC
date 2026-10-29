@@ -134,7 +134,7 @@ async function apiTests() {
   console.log('\n--- Changing a program ---');
   const ownerTok = owner; // owner of l1Id
   const tryOwn = await call('PATCH', `/tenants/${l1Id}`, ownerTok, l1Id, { primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2'] });
-  assert(tryOwn.status === 403 && /platform administrator/i.test(tryOwn.body?.error ?? ''), "a tenant owner cannot widen their own tenant's program (403, with the reason)", tryOwn.body);
+  assert(tryOwn.status === 403 && /platform administrator/i.test(tryOwn.body?.error ?? '') && /licensed frameworks/.test(tryOwn.body?.error ?? ''), "a tenant owner cannot widen their own tenant's program (403, with the reason)", tryOwn.body);
   assert((await call('PATCH', `/tenants/${l1Id}`, ownerTok, l1Id, { systemName: 'Renamed By Owner' })).status === 200, 'but can still edit their tenant\'s other settings');
   assert((await mine(owner)).find((t) => t.id === l1Id)?.enabledFrameworks.join() === 'CMMC_L1', 'the program is unchanged after the refused attempt');
   // the administrator is not a member of l1Id: they must be to edit it (membership rules are unchanged); they edit the tenants they own
@@ -143,12 +143,24 @@ async function apiTests() {
   assert(!JSON.stringify(widen.body).match(/licen|annual|price/i), 'and the response carries no license tier');
   await call('PATCH', `/tenants/${l2Id}`, admin, l2Id, { enabledFrameworks: ['CMMC_L2'] }); // back to L2 only for the enforcement tests below
 
+  // Issue #28: the edit form sends ONE PATCH carrying every changed field
+  const onePatch = await call('PATCH', `/tenants/${l2Id}`, admin, l2Id, { name: 'Dedicated CMMC L2 Renamed', cageCode: 'ab12c', systemOwner: 'Jane Doe (jane.doe@test.mil)', enabledFrameworks: ['CMMC_L2', 'SOC_2_TYPE_II'] });
+  const onePatched = onePatch.body?.tenant as Json | undefined;
+  assert(
+    onePatch.status === 200 && onePatched?.name === 'Dedicated CMMC L2 Renamed' && onePatched?.cageCode === 'AB12C' && onePatched?.systemOwner === 'Jane Doe (jane.doe@test.mil)' && onePatched?.enabledFrameworks.join() === 'CMMC_L2,SOC_2_TYPE_II',
+    'one PATCH with the name, CAGE code, owner and frameworks applies all of them', onePatch.body
+  );
+  assert((await call('PATCH', `/tenants/${l2Id}`, admin, l2Id, { name: 'Dedicated CMMC L2', enabledFrameworks: ['CMMC_L2'] })).status === 200, 'and one PATCH restores the name and the frameworks');
+  const mixedRefused = await call('PATCH', `/tenants/${l1Id}`, ownerTok, l1Id, { name: 'Should Not Stick', enabledFrameworks: ['CMMC_L1', 'CMMC_L2'] });
+  assert(mixedRefused.status === 403, 'a tenant owner sending a name together with frameworks in one PATCH is refused (403)', mixedRefused.body);
+  assert((await mine(owner)).find((t) => t.id === l1Id)?.name === 'Self Service Org', 'and nothing of that PATCH is applied in part (the name is unchanged)');
+
   console.log('\n--- Framework segregation: the server only serves the frameworks of the tenant\'s program ---');
   const ctl = (t: string, tok: string, q = '') => call('GET', `/controls${q}`, tok, t);
   const l1Default = await ctl(l1Id, owner);
   assert(l1Default.status === 200 && l1Default.body?.controls.length === 17, 'a CMMC Level 1 tenant asking for no framework gets its own (17 controls)', l1Default.body?.controls?.length);
   const l1AsksL2 = await ctl(l1Id, owner, '?framework_id=CMMC_L2');
-  assert(l1AsksL2.status === 403 && l1AsksL2.body?.code === 'framework_not_enabled' && /not part of this tenant's assessment program/.test(l1AsksL2.body?.error), 'a Level 1 tenant cannot read Level 2 controls (403)', l1AsksL2.body);
+  assert(l1AsksL2.status === 403 && l1AsksL2.body?.code === 'framework_not_enabled' && /not one of this tenant's licensed frameworks/.test(l1AsksL2.body?.error) && !/assessment program/i.test(l1AsksL2.body?.error), 'a Level 1 tenant cannot read Level 2 controls (403)', l1AsksL2.body);
   for (const fw of ['NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY']) assert((await ctl(l1Id, owner, `?framework_id=${fw}`)).status === 403, `...nor ${fw}`);
   assert((await ctl(l1Id, owner, '?framework_id=CMMC_L1')).status === 200, 'but can read its own framework when asking explicitly');
 
