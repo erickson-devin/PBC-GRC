@@ -28,9 +28,10 @@ import { stripTenantRegistryForCache } from '../services/browserStorageScrub';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { clearLocalEnclaveAssets, getEnclaveAssets, isDemoSeedAsset } from '../data/telemetry/assetRegistry';
 import { notifyAssetsChanged } from '../services/assetService';
+import { clearEnclaveFleet } from '../data/telemetry/assetTelemetryEngine';
 import { keys as idbKeys, get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import { listLocalEvidenceCopies, moveLocalEvidenceCopy, moveLocalEvidenceKey, remapEvidenceLinks, sha256Hex } from '../services/localEvidenceCopies';
-import { recordFailedMove } from '../services/failedMoves';
+import { recordFailedControlMove, recordFailedMove } from '../services/failedMoves';
 import { pushAssetsToServer } from '../services/assetMove';
 import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
 import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
@@ -726,6 +727,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       )
     );
     const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
+    const failedControls = legacyControls.filter((_, i) => pushed[i].status === 'rejected');
 
     const legacyState = StorageService.loadAssessment(target);
 
@@ -803,6 +805,21 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     // The new tenant may already be active and showing its (still empty) inventory: tell every asset view to reload
     notifyAssetsChanged(created.id);
+    // The old browser-only tenant's scan results (host names, IPs) stay in no browser storage once it lives on the server (#86)
+    clearEnclaveFleet(target.id);
+    // migrateAssessment strips the notes of the old cache, so the failed answers are kept apart first (ids in the record, the
+    // answers under their own key) and the control matrix can offer a retry
+    if (failedControls.length > 0) {
+      try {
+        recordFailedControlMove(
+          localStorage,
+          { fromTenantId: target.id, toTenantId: created.id, at: new Date().toISOString(), controlIds: failedControls.map(c => c.id) },
+          Object.fromEntries(failedControls.map(c => [c.id, { status: c.status, implementationNotes: c.implementationNotes || '', responsibleRole: c.responsibleRole, updatedBy: c.updatedBy }]))
+        );
+      } catch {
+        // Best effort: nothing more can be done here
+      }
+    }
     const migratedState = StorageService.migrateAssessment(target, created.id);
     // Only a complete upload marks the cache: until then (and for any failure) the cached narratives stay and the next load retries
     if (objectivesFailed === 0) {

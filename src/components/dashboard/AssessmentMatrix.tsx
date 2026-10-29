@@ -24,6 +24,7 @@ import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { ControlCard } from './ControlCard';
+import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 
 interface AssessmentMatrixProps {
   onSelectControl?: (controlId: string) => void;
@@ -50,6 +51,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     activeProgram,
     activeOverlayFilters,
     toggleNonNetworkedOverlay,
+    canEdit,
   } = useTenant();
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
@@ -188,7 +190,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
   return (
     <div className="space-y-6 animate-fadeIn">
-      
+      {canEdit && <FailedMoveControlsNotice />}
+
       {/* Top Header & Framework Target Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
