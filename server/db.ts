@@ -440,6 +440,20 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     return { rows, command: 'DELETE', rowCount: rows.length, oid: 0, fields: [] };
   }
 
+  // 3c. UPDATE evidence_metadata SET file_size = $1, file_hash = $2, gcs_path = $3, sync_status = $4 WHERE id = $5 AND tenant_id = $6 AND (program_id = $7 OR program_id IS NULL)
+  // (the upload PUT). Same program policy as the SELECT/DELETE: only a row of the active tenant and program is written; otherwise 0 rows.
+  if (/^UPDATE\s+evidence_metadata\s+SET\s+file_size\s*=\s*\$1\s*,\s*file_hash\s*=\s*\$2\s*,\s*gcs_path\s*=\s*\$3\s*,\s*sync_status\s*=\s*\$4\s+WHERE\s+id\s*=\s*\$5\s+AND\s+tenant_id\s*=\s*\$6/i.test(normalized)) {
+    const item = memoryEvidence.get(params[4]);
+    if (item && item.id === params[4] && item.tenant_id === tenantId && params[5] === tenantId && inProgram(item.program_id)) {
+      item.file_size = params[0];
+      item.file_hash = params[1];
+      item.gcs_path = params[2];
+      item.sync_status = params[3];
+      return { rows: [], command: 'UPDATE', rowCount: 1, oid: 0, fields: [] };
+    }
+    return { rows: [], command: 'UPDATE', rowCount: 0, oid: 0, fields: [] };
+  }
+
   // 4. INSERT into evidence_metadata (with Cross-Framework Evidence Inheritance)
   if (/INSERT\s+INTO\s+evidence_metadata/i.test(normalized)) {
     // A statement that names the program_id column passes it as its LAST parameter; the slots before it keep their meaning.

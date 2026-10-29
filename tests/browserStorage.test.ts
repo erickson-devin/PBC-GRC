@@ -298,6 +298,7 @@ async function main() {
     'src/data/telemetry/assetRegistry.ts',
     'src/data/telemetry/assetTelemetryEngine.ts',
     'src/services/browserStorageScrub.ts',
+    'src/services/failedMoves.ts',
     'src/services/storageService.ts',
   ].sort();
   assert(JSON.stringify(writers) === JSON.stringify(allowed), 'S13 the set of src files that write browser storage equals the reviewed allow-list', writers);
