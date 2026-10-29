@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type pg from 'pg';
-import { getDbMode, getTenantProgram, pool, queryWithProgram, queryWithTenant, type ProgramScope, type SqlParam } from './db';
+import { getDbMode, getTenantFrameworkPolicy, pool, queryWithProgram, queryWithTenant, type ProgramScope, type SqlParam } from './db';
 import { PROGRAM_FRAMEWORK_IDS } from './schema';
 import { readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
 import { __deleteProgramObjectivesForMemory, cloneObjectives } from './controlObjectives';
@@ -170,7 +170,7 @@ async function resolveDefaultProgram(tenantId: string): Promise<Program> {
   if (isMemory()) {
     const existing = [...memoryPrograms.values()].find((p) => p.tenantId === tenantId && p.isDefault);
     if (existing) return existing;
-    const { frameworkId, baseline } = defaultFramework((await getTenantProgram(tenantId))?.primaryFramework);
+    const { frameworkId, baseline } = defaultFramework((await getTenantFrameworkPolicy(tenantId))?.primaryFramework);
     const now = new Date().toISOString();
     const program: Program = {
       id: crypto.randomUUID(),
@@ -294,7 +294,7 @@ async function isNameTaken(tenantId: string, name: string, exceptId?: string): P
 export async function createProgram(tenantId: string, input: NewProgramInput, createdBy: string | null, cloner?: ControlChangeActor): Promise<Program> {
   const name = validName(input.name);
   const frameworkId = programFramework(input.frameworkId);
-  const enabled = (await getTenantProgram(tenantId))?.enabledFrameworks;
+  const enabled = (await getTenantFrameworkPolicy(tenantId))?.enabledFrameworks;
   if (!frameworkId || (enabled && !enabled.some((f) => programFramework(f) === frameworkId))) {
     throw new ProgramError('framework_not_enabled', `Framework ${String(input.frameworkId)} is not enabled for this tenant`);
   }

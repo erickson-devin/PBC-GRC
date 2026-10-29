@@ -14,7 +14,10 @@ const store = new Map<string, string>();
 import { server } from '../server/index';
 import { isPlatformAdmin, platformAdminEmails } from '../server/auth/platformAdmin';
 import { frameworksDefiningControl } from '../server/middleware/frameworkGuard';
-import { DEFAULT_PROGRAM_FRAMEWORK, frameworkLabel, programSummary } from '../src/data/programs';
+import { DEFAULT_PRIMARY_FRAMEWORK, frameworkLabel, frameworkPolicySummary } from '../src/data/tenantFrameworkPolicy';
+import { getTenantFrameworkPolicy } from '../server/db';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Assessment programs (they replace the commercial license tier): the platform-administrator role, who may set a tenant's
@@ -55,9 +58,10 @@ function unitTests() {
 
   console.log('\n--- Program labels ---');
   assert(frameworkLabel('CMMC_L2') === 'CMMC Level 2' && frameworkLabel('NIST_800_53_REV5') === 'NIST SP 800-53 Rev. 5' && frameworkLabel('X') === 'X', 'frameworks have readable labels (unknown ids pass through)');
-  const prog = programSummary('CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
+  const prog = frameworkPolicySummary('CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
   assert(prog.primary === 'CMMC Level 2' && prog.additional.length === 1 && prog.text === 'CMMC Level 2 + NIST SP 800-53 Rev. 5', 'a program reads "primary + additional"', prog);
-  assert(programSummary(undefined, undefined).text === frameworkLabel(DEFAULT_PROGRAM_FRAMEWORK) && programSummary('CMMC_L1', ['CMMC_L1', 'CMMC_L1']).additional.length === 0, 'the default program is CMMC Level 1; duplicates collapse');
+  assert(frameworkPolicySummary(undefined, undefined).text === frameworkLabel(DEFAULT_PRIMARY_FRAMEWORK) && frameworkPolicySummary('CMMC_L1', ['CMMC_L1', 'CMMC_L1']).additional.length === 0, 'the default program is CMMC Level 1; duplicates collapse');
+  assert(DEFAULT_PRIMARY_FRAMEWORK === 'CMMC_L1' && frameworkPolicySummary(undefined, undefined).text === 'CMMC Level 1', 'R1: the default primary framework is CMMC_L1 and reads "CMMC Level 1"');
 
   console.log('\n--- Which frameworks define a control ---');
   assert(frameworksDefiningControl('AC.L1-3.1.1').has('CMMC_L1') && frameworksDefiningControl('AC.L1-3.1.1').has('CMMC_L2'), 'a Level 1 practice is also part of Level 2');
@@ -177,6 +181,9 @@ async function apiTests() {
   assert((await ctl(l2Id, admin, '?framework_id=SOC_2_TYPE_II')).status === 200, 'after an administrator adds SOC 2, the tenant is served SOC 2');
   await call('PATCH', `/tenants/${l2Id}`, admin, l2Id, { enabledFrameworks: ['CMMC_L2'] });
   assert((await ctl(l2Id, admin, '?framework_id=SOC_2_TYPE_II')).status === 403, 'and after it is removed, no longer');
+  const policyNow = await getTenantFrameworkPolicy(l2Id);
+  assert(policyNow?.primaryFramework === 'CMMC_L2' && JSON.stringify(policyNow.enabledFrameworks) === JSON.stringify(['CMMC_L2']), 'R3: getTenantFrameworkPolicy returns the tenant\'s primary and enabled frameworks', policyNow);
+  assert((await getTenantFrameworkPolicy('no_such_tenant_r2')) === null, 'R2: a tenant with no record has no framework policy (null)');
 
   console.log('\n--- Tenants are independent ---');
   assert((await ctl(l1Id, owner, '?framework_id=CMMC_L2')).status === 403 && (await ctl(l2Id, admin, '?framework_id=CMMC_L2')).status === 200, "one tenant's program never leaks into another's");
@@ -197,6 +204,22 @@ async function apiTests() {
   assert((await ApiClient.listPlatformAdmins(admin))?.length === 2 && (await ApiClient.listPlatformAdmins(owner)) === null, 'the console can load the administrator list; a non-administrator gets null');
   const pv = await ApiClient.previewInvite(inv.body?.token);
   assert(pv?.primaryFramework === 'CMMC_L2' && pv.enabledFrameworks[0] === 'CMMC_L2', 'previewInvite returns the program to the accept page');
+
+  console.log('\n--- The old allow-list names are gone ---');
+  assert(!fs.existsSync(path.join(process.cwd(), 'src/data/programs.ts')) && fs.existsSync(path.join(process.cwd(), 'src/data/tenantFrameworkPolicy.ts')), 'R4: src/data/programs.ts moved to src/data/tenantFrameworkPolicy.ts');
+  const skip = new Set([path.join('src', 'data', 'frameworks'), path.join('src', 'data', 'stigs'), path.join('server', 'ssp')]);
+  const oldName = /\bgetTenantProgram\b|\bTenantProgram\b|ensureControlInProgram|\bprogramSummary\b|\bprogramOf\b|data\/programs['"]/;
+  const stale: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) { if (!skip.has(rel)) walk(rel); continue; }
+      if (/\.(ts|tsx)$/.test(entry.name) && oldName.test(fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n'))) stale.push(rel);
+    }
+  };
+  walk('server');
+  walk('src');
+  assert(stale.length === 0, 'R4: no source file under server/ or src/ still uses the old allow-list names', stale);
 }
 
 async function run() {

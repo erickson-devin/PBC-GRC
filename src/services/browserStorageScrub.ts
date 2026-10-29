@@ -20,6 +20,7 @@ export const ENCLAVE_ASSETS_KEY_PREFIX = 'pbc_enclave_assets_v1_';
 export const ACCRETION_CONFIG_KEY_PREFIX = 'pbc_accretion_cfg_v1_';
 export const LEGACY_ASSESSMENT_KEY_PREFIX = 'pbc_assessment_';
 export const LEDGER_KEY_PREFIX = 'pbc_audit_ledger_';
+export const FLEET_KEY_PREFIX = 'pbc_enclave_fleet_v1_';
 export const TENANT_REGISTRY_KEYS = ['pbc_live_tenants_v4', 'pbc_tenants_registry_v3'];
 
 /** The slice of the Storage interface the scrub needs (a Map-backed fake satisfies it in tests). */
@@ -45,6 +46,8 @@ export interface BrowserStorageScrubResult {
   assetListsRemoved: number;
   assetListsKept: number;
   registryEntriesStripped: number;
+  fleetCachesRemoved: number;
+  failingAssetListsCleared: number;
 }
 
 /** Tenant registry text a server tenant keeps on the server only (the browser copy holds it for browser-only tenants). */
@@ -137,6 +140,17 @@ export function stripImplementationNotesForCache(state: AssessmentState): Assess
   return { ...state, controls };
 }
 
+/** Returns a copy of the state with `failingAssets` (host names, IPs, scan output) removed from every control. Never mutates the input. */
+export function stripFailingAssetsForCache(state: AssessmentState): AssessmentState {
+  const controls: Record<string, any> = {};
+  for (const [id, control] of Object.entries(state.controls || {})) {
+    const copy: Record<string, unknown> = { ...(control as unknown as Record<string, unknown>) };
+    delete copy.failingAssets;
+    controls[id] = copy;
+  }
+  return { ...state, controls };
+}
+
 /**
  * Returns a copy of the state without objective `implementationNarrative` (possible CUI), except for ids in
  * `objectivesPendingReview`. A no-op (same object) until `objectivesMigratedAt` is set: before the server holds the
@@ -165,12 +179,13 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
   strippedControls: number;
   strippedObjectives: number;
   clearedEvidence: number;
+  clearedFailingAssets: number;
   malformed?: boolean;
 } {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.controls || typeof parsed.controls !== 'object') {
-      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, malformed: true };
+      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, malformed: true };
     }
     let stripped = 0;
     for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
@@ -198,12 +213,22 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
       clearedEvidence = parsed.evidenceIndex.length;
       parsed.evidenceIndex = [];
     }
-    if (stripped === 0 && strippedObjectives === 0 && clearedEvidence === 0) {
-      return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0 };
+    // Failing-asset lists (host names, IPs, scan output) are session-only for a live tenant: same condition as the evidence.
+    let clearedFailingAssets = 0;
+    if (options.clearEvidence !== false) {
+      for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
+        if (control && typeof control === 'object' && 'failingAssets' in (control as object)) {
+          delete (control as Record<string, unknown>).failingAssets;
+          clearedFailingAssets++;
+        }
+      }
     }
-    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives, clearedEvidence };
+    if (stripped === 0 && strippedObjectives === 0 && clearedEvidence === 0 && clearedFailingAssets === 0) {
+      return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0 };
+    }
+    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives, clearedEvidence, clearedFailingAssets };
   } catch {
-    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, malformed: true };
+    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, malformed: true };
   }
 }
 
@@ -270,15 +295,18 @@ function emptyResult(): BrowserStorageScrubResult {
     assetListsRemoved: 0,
     assetListsKept: 0,
     registryEntriesStripped: 0,
+    fleetCachesRemoved: 0,
+    failingAssetListsCleared: 0,
   };
 }
 
 function logCounts(r: BrowserStorageScrubResult, log: (message: string) => void): void {
-  if (r.scrubbed + r.malformed + r.ledgersRedacted + r.accretionKeysRemoved + r.assetListsRemoved + r.registryEntriesStripped === 0) return;
+  if (r.scrubbed + r.malformed + r.ledgersRedacted + r.accretionKeysRemoved + r.assetListsRemoved + r.registryEntriesStripped + r.fleetCachesRemoved + r.failingAssetListsCleared === 0) return;
   log(
     `[storage-scrub] assessments scrubbed ${r.scrubbed} (${r.narrativesRemoved} objective narratives, ${r.evidenceItemsCleared} evidence items), kept browser-only ${r.keptBrowserOnly}, malformed ${r.malformed}, ` +
       `ledgers redacted ${r.ledgersRedacted} (${r.ledgerEntriesRedacted} entries), ` +
-      `accretion keys removed ${r.accretionKeysRemoved}, asset lists removed ${r.assetListsRemoved} (kept ${r.assetListsKept}), registry entries stripped ${r.registryEntriesStripped}`
+      `accretion keys removed ${r.accretionKeysRemoved}, asset lists removed ${r.assetListsRemoved} (kept ${r.assetListsKept}), registry entries stripped ${r.registryEntriesStripped}, ` +
+      `fleet caches removed ${r.fleetCachesRemoved}, failing-asset lists cleared ${r.failingAssetListsCleared}`
   );
 }
 
@@ -348,6 +376,17 @@ export function runAssessmentCacheScrub(
       // unreadable value: left alone
     }
   }
+  // A server tenant's fleet scan data (host names, IPs, scan output) is session-only: any browser copy goes.
+  for (const key of keys) {
+    if (!key.startsWith(FLEET_KEY_PREFIX)) continue;
+    if (!serverBacked.has(key.slice(FLEET_KEY_PREFIX.length))) continue;
+    try {
+      storage.removeItem(key);
+      result.fleetCachesRemoved++;
+    } catch {
+      result.failed++;
+    }
+  }
   for (const key of keys) {
     const prefix = key.startsWith(ASSESSMENT_KEY_PREFIX)
       ? ASSESSMENT_KEY_PREFIX
@@ -372,6 +411,7 @@ export function runAssessmentCacheScrub(
         result.scrubbed++;
         result.narrativesRemoved += scrub.strippedObjectives;
         result.evidenceItemsCleared += scrub.clearedEvidence;
+        result.failingAssetListsCleared += scrub.clearedFailingAssets;
       }
     } catch {
       result.failed++;

@@ -5,7 +5,7 @@
  *   (or the DB_HOST / DB_USER / DB_PASS / DB_NAME variables the server uses)
  *
  * Runs initDb(), then proves:
- *   1. every tenant-bound table has RLS enabled AND forced (so even the table owner is subject to it);
+ *   1. every tenant-bound table has RLS enabled AND forced (so even the table owner is subject to it), and ssp_documents is gone (or kept with FORCE);
  *   2. the connecting role can be subject to RLS at all (superusers and BYPASSRLS roles always bypass it);
  *   3. with no tenant context a query sees zero rows, with a tenant context it sees only that tenant's rows,
  *      and a write for a different tenant is rejected.
@@ -14,7 +14,7 @@
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
- *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies and the NOT VALID program_required checks are in the catalog, and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them. 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check).
+ *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check).
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
@@ -71,6 +71,9 @@ async function main() {
     check(row?.relrowsecurity === true, `${table}: row security enabled`);
     check(row?.relforcerowsecurity === true, `${table}: row security FORCED`);
   }
+  // ssp_documents had no reader or writer (issue #25): dropped where empty, otherwise kept with FORCE restored
+  const ssp = await pool.query("SELECT relforcerowsecurity FROM pg_class WHERE relname = 'ssp_documents' AND relkind = 'r' AND relnamespace = current_schema()::regnamespace");
+  check(ssp.rows.length === 0 || ssp.rows[0].relforcerowsecurity === true, 'ssp_documents is dropped (or, if it still holds rows, kept with row security FORCED)', JSON.stringify(ssp.rows));
 
   console.log('\n--- 2. Connecting role ---');
   const role = await pool.query('SELECT current_user AS name, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user');
@@ -729,9 +732,17 @@ async function verifyProgramIsolation() {
     const checks = await pool.query(
       "SELECT conrelid::regclass::text AS tbl, conname, convalidated FROM pg_constraint WHERE conname LIKE '%_program_required' AND connamespace = current_schema()::regnamespace"
     );
+    const legacyNotNull = await pool.query(
+      "SELECT c.relname, a.attnotnull FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid WHERE a.attname = 'program_id' AND c.relname = ANY($1) AND c.relnamespace = current_schema()::regnamespace",
+      [LEGACY_PROGRAM_TABLES]
+    );
     for (const t of LEGACY_PROGRAM_TABLES) {
       const c = checks.rows.find((x) => x.conname === t + '_program_required');
-      check(Boolean(c) && c.convalidated === false, '8d. ' + t + ': the program_required check exists and is NOT VALID (validated later)', JSON.stringify(c));
+      const nn = legacyNotNull.rows.find((x) => x.relname === t)?.attnotnull;
+      // finalized (NOT NULL, check dropped) or still waiting for a backfill (nullable, check NOT VALID)
+      const finalized = nn === true && !c;
+      const waiting = nn === false && Boolean(c) && c.convalidated === false;
+      check(finalized || waiting, '8d. ' + t + ': program_id is ' + (finalized ? 'finalized (NOT NULL, no check)' : 'waiting for a backfill (nullable, check NOT VALID)'), JSON.stringify({ attnotnull: nn, check: c }));
     }
 
     // 8f. assessment objectives: the same isolation on control_objectives and control_objective_events
@@ -833,7 +844,7 @@ async function verifyProgramIsolation() {
  */
 async function verifyUpgrade() {
   const SCHEMA = 'rls_verify_upgrade';
-  const { buildSchemaSql, buildProgramRlsSql } = await import('../server/schema');
+  const { buildSchemaSql } = await import('../server/schema');
   const { migrateTenantToPrograms } = await import('../server/programs');
   const setSearchPath = async (path: string | null) => {
     // every connection of the pool (max 10) takes the setting, so queryWithTenant and migrateTenantToPrograms run in the schema as well
@@ -855,9 +866,10 @@ async function verifyUpgrade() {
   try {
     await setSearchPath(SCHEMA + ', public');
     await pool.query(buildSchemaSql());
-    // the legacy state: no program on the rows, no program policy yet and no program_required checks
+    // the legacy state: program_id nullable and unchecked, no program policy yet (a fresh schema is already finalized)
     for (const t of ['control_assessments', 'evidence_metadata']) {
-      await pool.query('ALTER TABLE ' + t + ' DROP CONSTRAINT ' + t + '_program_required');
+      await pool.query('ALTER TABLE ' + t + ' DROP CONSTRAINT IF EXISTS ' + t + '_program_required');
+      await pool.query('ALTER TABLE ' + t + ' ALTER COLUMN program_id DROP NOT NULL');
       await pool.query('DROP POLICY rls_' + t + '_program_isolation ON ' + t);
     }
     const defaultId = await mkProgram(T, 'rls_verify_up_default', true);
@@ -868,7 +880,22 @@ async function verifyUpgrade() {
       "INSERT INTO evidence_metadata (id, tenant_id, control_id, file_name, file_size, mime_type, gcs_path, file_hash) VALUES ('rls_verify_up_ev', $1, 'AC.L1-3.1.1', 'old.pdf', 5, 'application/pdf', '/vault/old', 'h')",
       [T]
     );
-    await pool.query(buildProgramRlsSql()); // the upgrade: the policies arrive over rows that have no program
+    // 8h. the upgrade: the policies arrive over rows that have no program, and the finalize step must tolerate them
+    const waitingState = async () =>
+      (
+        await pool.query(
+          "SELECT c.relname, a.attnotnull, EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = c.oid AND k.conname = c.relname || '_program_required') AS has_check, (SELECT bool_and(k.convalidated) FROM pg_constraint k WHERE k.conrelid = c.oid AND k.conname = c.relname || '_program_required') AS validated FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid WHERE a.attname = 'program_id' AND c.relname IN ('control_assessments', 'evidence_metadata') AND c.relnamespace = current_schema()::regnamespace ORDER BY c.relname"
+        )
+      ).rows;
+    let rerun = 'resolved';
+    try {
+      await pool.query(buildSchemaSql());
+    } catch (err) {
+      rerun = 'code ' + (err as { code?: string }).code;
+    }
+    check(rerun === 'resolved', '8h1. the schema script resolves (the boot goes on) while rows without a program exist', rerun);
+    const waiting = await waitingState();
+    check(waiting.length === 2 && waiting.every((r) => r.attnotnull === false && r.has_check === true && r.validated === false), '8h2. a table with such rows stays nullable with its NOT VALID program_required check', JSON.stringify(waiting));
     const underDefault = await queryWithProgram({ tenantId: T, programId: defaultId }, 'SELECT program_id FROM control_assessments WHERE tenant_id = $1', [T]);
     check(underDefault.rows.length === 1 && underDefault.rows[0].program_id === null, '8e. a legacy row (no program) is visible under the default program', JSON.stringify(underDefault.rows));
     const underOther = await queryWithProgram({ tenantId: T, programId: otherId }, 'SELECT program_id FROM control_assessments WHERE tenant_id = $1', [T]);
@@ -882,6 +909,17 @@ async function verifyUpgrade() {
     check(adopted.rows.length === 1 && adopted.rows[0].program_id === defaultId && adoptedEv.rows[0]?.program_id === defaultId, '8e. the rows now hold the default program id', JSON.stringify([adopted.rows, adoptedEv.rows]));
     const again = await migrateTenantToPrograms(T);
     check(again.total === 0, '8e. a second migration changes nothing', JSON.stringify(again));
+    await pool.query(buildSchemaSql());
+    const finalized = await waitingState();
+    check(finalized.length === 2 && finalized.every((r) => r.attnotnull === true && r.has_check === false), '8h3. once the rows are adopted the schema script makes program_id NOT NULL and drops the check', JSON.stringify(finalized));
+    let third = 'resolved';
+    try {
+      await pool.query(buildSchemaSql());
+    } catch (err) {
+      third = 'code ' + (err as { code?: string }).code;
+    }
+    const afterThird = await waitingState();
+    check(third === 'resolved' && JSON.stringify(afterThird) === JSON.stringify(finalized), '8h4. a further run resolves, changes nothing and does not add the check back', third + ' ' + JSON.stringify(afterThird));
     const stillHidden = await queryWithProgram({ tenantId: T, programId: otherId }, 'SELECT 1 FROM control_assessments WHERE tenant_id = $1', [T]);
     check(stillHidden.rows.length === 0, '8e. the adopted row stays invisible to the other program', 'saw ' + stillHidden.rows.length);
   } catch (err) {

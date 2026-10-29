@@ -612,8 +612,18 @@ export async function initDb(): Promise<void> {
     const ver = await client.query("SELECT current_setting('server_version_num') AS num, current_setting('server_version') AS version");
     assertSupportedPostgresVersion(ver.rows[0]?.num, ver.rows[0]?.version);
 
-    // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts)
-    await client.query(buildSchemaSql());
+    // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts). The schema's own warnings
+    // (a table still waiting for the program_id backfill, ssp_documents kept because it holds rows) name tables only: show them here,
+    // where the operator looks, not just in the PostgreSQL log.
+    const onNotice = (n: { severity?: string; message?: string }) => {
+      if (n.severity === 'WARNING') console.warn(`[PostgreSQL] ${n.message}`);
+    };
+    client.on('notice', onNotice);
+    try {
+      await client.query(buildSchemaSql());
+    } finally {
+      client.off('notice', onNotice);
+    }
 
     // Seed canonical control mappings if not present
     for (const m of CANONICAL_CONTROL_MAPPINGS) {
@@ -1020,23 +1030,23 @@ export function getMemoryTenantName(tenantId: string): string | null {
   return memoryTenants.get(tenantId)?.name ?? null;
 }
 
-/** The assessment program of a tenant: its primary framework and every framework it may use. */
-export interface TenantProgram {
+/** The framework policy of a tenant: its primary framework and every framework it is licensed for. */
+export interface TenantFrameworkPolicy {
   primaryFramework: string;
   enabledFrameworks: string[];
 }
 
-export function getMemoryTenantProgram(tenantId: string): TenantProgram | null {
+export function getMemoryTenantFrameworkPolicy(tenantId: string): TenantFrameworkPolicy | null {
   const t = memoryTenants.get(tenantId);
   return t ? { primaryFramework: t.primaryFramework, enabledFrameworks: t.enabledFrameworks } : null;
 }
 
 /**
- * The program of a tenant, or null when there is no tenant record (dev fallback / unknown tenant). Runs under the
+ * The framework policy of a tenant, or null when there is no tenant record (dev fallback / unknown tenant). Runs under the
  * tenant's RLS context. Used to enforce framework segregation: a tenant only serves the frameworks it has enabled.
  */
-export async function getTenantProgram(tenantId: string): Promise<TenantProgram | null> {
-  if (isMemoryMode()) return getMemoryTenantProgram(tenantId);
+export async function getTenantFrameworkPolicy(tenantId: string): Promise<TenantFrameworkPolicy | null> {
+  if (isMemoryMode()) return getMemoryTenantFrameworkPolicy(tenantId);
   const res = await queryWithTenant(tenantId, 'SELECT primary_framework, enabled_frameworks FROM tenants WHERE id = $1', [tenantId]);
   const row = res.rows[0];
   if (!row) return null;

@@ -6,7 +6,7 @@ import { ProgramFormModal } from './ProgramFormModal';
 import { useTenant } from '../../context/TenantContext';
 import { useProgram } from '../../hooks/useProgram';
 import { ApiClient } from '../../services/apiClient';
-import { frameworkLabel } from '../../data/programs';
+import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import type { Program, ProgramMetrics } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
 

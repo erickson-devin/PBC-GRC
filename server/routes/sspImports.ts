@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import path from 'path';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
-import { getTenantProgram, type ProgramScope } from '../db';
+import { getTenantFrameworkPolicy, type ProgramScope } from '../db';
 import { ensureDefaultProgram } from '../programs';
 import { ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { ensureActiveTenant } from './tenantGuards';
@@ -64,8 +64,8 @@ const cleanFileName = (name: string): string => path.basename(name.replace(/\\/g
 
 /** GET /capabilities: what this install can do and what the caller may do. */
 router.get('/capabilities', async (req: Request, res: Response): Promise<void> => {
-  const program = await getTenantProgram(req.tenantId!);
-  const enabled = program?.enabledFrameworks ?? ['CMMC_L1'];
+  const policy = await getTenantFrameworkPolicy(req.tenantId!);
+  const enabled = policy?.enabledFrameworks ?? ['CMMC_L1'];
   const ai = await new OllamaClient().getStatus();
   const aiAvailable = ai.enabled && ai.reachable && ai.modelPresent;
   res.json({

@@ -12,6 +12,7 @@ import { AssessmentState, ControlState, EvidenceItem } from '../../types/cmmc';
 import { CompiledDocument, POAMEntry } from '../../types/report';
 import { CertificateOfDestruction, AuditLogEntry } from '../../types/audit';
 import { StorageService } from '../../services/storageService';
+import { FLEET_KEY_PREFIX } from '../../services/browserStorageScrub';
 import { loadLedger, computeSha256, canonicalJson } from '../audit/auditLogger';
 import { compileNistSSP, generatePOAMEntries } from '../reports/documentCompilers';
 import { summarizeScope } from '../telemetry/assetScope';
@@ -272,6 +273,7 @@ export async function executeCryptographicDestruction(params: {
       `pbc_cmmc_assessment_v3_${params.tenantId}`,
       `pbc_assessment_${params.tenantId}`,
       `pbc_audit_ledger_${params.tenantId}`,
+      `${FLEET_KEY_PREFIX}${params.tenantId}`,
       // every other program's assessment cache (pbc_cmmc_assessment_v3_<tenant>::<program>) and the active-program choice
       ...StorageService.listProgramKeys(params.tenantId),
     ];

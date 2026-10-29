@@ -13,7 +13,7 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { ApiClient } from '../../services/apiClient';
 import { getFrameworkControls } from '../../data/frameworks';
-import { frameworkLabel } from '../../data/programs';
+import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { canRoleReviewSspImports } from '../../utils/roles';
 import { errorMessage } from '../../utils/errors';
 import {

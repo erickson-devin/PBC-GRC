@@ -62,6 +62,7 @@ import {
   getEnclaveFleet,
   aggregateAssetTelemetry,
   applyBoundaryTelemetryToControls,
+  fleetStorageMode,
 } from '../data/telemetry/assetTelemetryEngine';
 
 export type NavigationTab =
@@ -233,14 +234,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [exportModalInitialDocType, setExportModalInitialDocType] = useState<ReportDocumentType | undefined>(undefined);
 
   // Boundary Telemetry & Fleet State
-  const [fleetAssets, setFleetAssets] = useState<AssetTelemetryRecord[]>(() => getEnclaveFleet(currentTenant.id));
+  const [fleetAssets, setFleetAssets] = useState<AssetTelemetryRecord[]>(() => getEnclaveFleet(currentTenant.id, fleetStorageMode(currentTenant)));
   const [boundaryAggregation, setBoundaryAggregation] = useState<BoundaryAggregationResult | null>(null);
 
   const refreshBoundaryTelemetry = useCallback(async () => {
     try {
-      const boundary = await aggregateAssetTelemetry(currentTenant.id);
+      const boundary = await aggregateAssetTelemetry(currentTenant.id, fleetStorageMode(currentTenant));
       setBoundaryAggregation(boundary);
-      setFleetAssets(getEnclaveFleet(currentTenant.id));
+      setFleetAssets(getEnclaveFleet(currentTenant.id, fleetStorageMode(currentTenant)));
 
       setState(prev => ({
         ...prev,
@@ -249,10 +250,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       return boundary;
     } catch {
-      const fallback = await aggregateAssetTelemetry(currentTenant.id);
+      const fallback = await aggregateAssetTelemetry(currentTenant.id, fleetStorageMode(currentTenant));
       return fallback;
     }
-  }, [currentTenant.id]);
+  }, [currentTenant.id, currentTenant.serverBacked]);
 
   // Initial boundary evaluation on mount / tenant switch / program switch (the reloaded program's controls get the telemetry too)
   useEffect(() => {

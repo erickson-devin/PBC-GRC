@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type pg from 'pg';
-import { getDbMode, getMemoryTenantName, getMemoryTenantProgram, getTenantRole, pool, upsertTenantMember } from './db';
+import { getDbMode, getMemoryTenantName, getMemoryTenantFrameworkPolicy, getTenantRole, pool, upsertTenantMember } from './db';
 import { isTenantRole, maxRole } from '../src/utils/roles';
 import type { TenantRole } from '../src/types/tenant';
 
@@ -327,11 +327,11 @@ export async function previewInvitation(token: string): Promise<InvitationPrevie
   if (isMemory()) {
     const m = [...memoryInvitations.values()].find((i) => i.tokenHash === tokenHash);
     if (!m) return null;
-    const program = getMemoryTenantProgram(m.tenantId);
+    const policy = getMemoryTenantFrameworkPolicy(m.tenantId);
     return {
       tenantId: m.tenantId, tenantName: getMemoryTenantName(m.tenantId) ?? m.tenantId, email: m.email, role: m.role, expiresAt: m.expiresAt,
       status: statusOf(m), createdBy: m.createdBy,
-      primaryFramework: program?.primaryFramework ?? 'CMMC_L1', enabledFrameworks: program?.enabledFrameworks ?? ['CMMC_L1'],
+      primaryFramework: policy?.primaryFramework ?? 'CMMC_L1', enabledFrameworks: policy?.enabledFrameworks ?? ['CMMC_L1'],
     };
   }
 

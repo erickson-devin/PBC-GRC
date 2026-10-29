@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { queryWithProgram, type ProgramScope } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
-import { ensureControlInProgram } from '../middleware/frameworkGuard';
+import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { errorMessage } from '../../src/utils/errors';
 import { VM_SNAPSHOT_ACTOR } from '../vm/snapshot';
 
@@ -123,7 +123,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
   }
 
   // Framework segregation: evidence can only be attached to a control inside this tenant's assessment program
-  if (!(await ensureControlInProgram(req, res, controlId))) return;
+  if (!(await ensureControlInFrameworkPolicy(req, res, controlId))) return;
 
   const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const cleanFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');

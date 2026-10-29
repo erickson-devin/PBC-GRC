@@ -36,7 +36,7 @@ import { useTenant, buildInviteUrl } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
 import { Tenant, TenantInvitation } from '../../types/tenant';
-import { frameworkLabel, programSummary } from '../../data/programs';
+import { frameworkLabel, frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 import { ApiClient, ApiError, type LocalAccount } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { NewTenantModal } from './NewTenantModal';
@@ -781,11 +781,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       <td className="py-3.5 px-4">
                         <span
                           className="badge inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-brand-500/20 text-brand-300 border border-brand-500/30"
-                          title={programSummary(t.primaryFramework, t.enabledFrameworks).text}
+                          title={frameworkPolicySummary(t.primaryFramework, t.enabledFrameworks).text}
                         >
-                          <Shield className="w-3 h-3" /> {programSummary(t.primaryFramework, t.enabledFrameworks).primary}
-                          {programSummary(t.primaryFramework, t.enabledFrameworks).additional.length > 0 &&
-                            ` +${programSummary(t.primaryFramework, t.enabledFrameworks).additional.length}`}
+                          <Shield className="w-3 h-3" /> {frameworkPolicySummary(t.primaryFramework, t.enabledFrameworks).primary}
+                          {frameworkPolicySummary(t.primaryFramework, t.enabledFrameworks).additional.length > 0 &&
+                            ` +${frameworkPolicySummary(t.primaryFramework, t.enabledFrameworks).additional.length}`}
                         </span>
                       </td>
 

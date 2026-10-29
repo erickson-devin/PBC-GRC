@@ -3,7 +3,7 @@ import { getFrameworkControls } from '../../src/data/frameworks';
 import { NIST_800_171A_REGISTRY, normalizeControlNumber } from '../../src/data/frameworks/assessmentObjectives';
 import { findVagueWording, resolveParameters } from '../../src/data/frameworks/parameters';
 import type { ComplianceFramework, ControlParameter, FrameworkControlDefinition } from '../../src/types/framework';
-import { frameworksDefiningControl, ensureControlInProgram } from '../middleware/frameworkGuard';
+import { frameworksDefiningControl, ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { OllamaClient, OllamaError } from '../ssp/ollama';
 import { WordingError, suggestWording, type WordingRequest } from '../ssp/parameterWording';
 import { ensureActiveTenant } from './tenantGuards';
@@ -153,7 +153,7 @@ router.post('/parameter-wording', async (req: Request, res: Response): Promise<v
     res.status(400).json({ error: 'controlId is required' });
     return;
   }
-  if (!(await ensureControlInProgram(req, res, controlId))) return;
+  if (!(await ensureControlInFrameworkPolicy(req, res, controlId))) return;
   const control = findControl(controlId);
   if (!control) {
     res.status(404).json({ error: 'Unknown control' });

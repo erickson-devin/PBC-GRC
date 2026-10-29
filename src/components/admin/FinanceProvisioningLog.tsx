@@ -14,7 +14,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { Tenant, TenantInvitation } from '../../types/tenant';
-import { frameworkLabel, programSummary } from '../../data/programs';
+import { frameworkLabel, frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 
 import { copyToClipboard } from '../../utils/clipboard';
 interface FinanceProvisioningLogProps {
@@ -54,7 +54,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
       ) || invitations.find((inv) => inv.tenantId === tenant.id);
 
       const primaryFramework = tenant.primaryFramework || onboardingInvite?.primaryFramework || 'CMMC_L1';
-      const program = programSummary(primaryFramework, tenant.enabledFrameworks ?? onboardingInvite?.enabledFrameworks);
+      const program = frameworkPolicySummary(primaryFramework, tenant.enabledFrameworks ?? onboardingInvite?.enabledFrameworks);
       const provisionedDate = tenant.createdAt || onboardingInvite?.createdAt || new Date().toISOString();
       const provisionedBy = onboardingInvite?.invitedBy || 'Unknown';
       const inviteStatus = onboardingInvite?.status || 'ACCEPTED';

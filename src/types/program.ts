@@ -6,7 +6,7 @@ export type ProgramBaseline = 'LOW' | 'MODERATE' | 'HIGH';
 /**
  * A program: one authorization boundary (an ATO effort or project) of a tenant, with one framework and, for NIST SP 800-53,
  * one baseline (and optionally the SP 800-53B privacy baseline on top of it). All are fixed at creation. Control answers, evidence, SSP imports and POA&M items belong to one program.
- * Not to be confused with `src/data/programs.ts`, the tenant's licensed frameworks.
+ * Not to be confused with `src/data/tenantFrameworkPolicy.ts`, the tenant's licensed frameworks.
  */
 export interface Program {
   id: string;

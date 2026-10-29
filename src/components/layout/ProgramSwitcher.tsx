@@ -4,7 +4,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { useProgram } from '../../hooks/useProgram';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
-import { frameworkLabel } from '../../data/programs';
+import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import type { Program } from '../../types/program';
 import { ProgramFormModal } from '../programs/ProgramFormModal';
 

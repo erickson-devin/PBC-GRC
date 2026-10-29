@@ -30,7 +30,7 @@ import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
 import { PROGRAM_TEXT_MAX } from '../../data/programSync';
 import { errorMessage } from '../../utils/errors';
-import { programSummary } from '../../data/programs';
+import { frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
   edrSolution: 'DEFENDER_FOR_ENDPOINT',
@@ -697,7 +697,7 @@ export const EnclaveSettings: React.FC = () => {
           </div>
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
             <span className="text-slate-400 block text-xs">Licensed Frameworks</span>
-            <span className="text-cyan-300 font-bold">{programSummary(currentTenant.primaryFramework, currentTenant.enabledFrameworks).text}</span>
+            <span className="text-cyan-300 font-bold">{frameworkPolicySummary(currentTenant.primaryFramework, currentTenant.enabledFrameworks).text}</span>
           </div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type { ProgramScope } from '../db';
 import { importObjectives, listObjectiveEvents, readObjectives, writeObjective, writeObjectivesBulk, type ObjectiveActor } from '../controlObjectives';
-import { ensureControlInProgram } from '../middleware/frameworkGuard';
+import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, controlIdOfObjective, validateObjectiveInput, type ObjectiveInput } from '../../src/types/controlObjectives';
 import { errorMessage } from '../../src/utils/errors';
@@ -56,7 +56,7 @@ function listFrom(req: Request, res: Response, max: number): ObjectiveInput[] | 
 /** True when every control the inputs name is allowed in the tenant's program; otherwise the 403 is already sent. */
 async function ensureControls(req: Request, res: Response, inputs: ObjectiveInput[]): Promise<boolean> {
   for (const controlId of new Set(inputs.map((i) => i.controlId))) {
-    if (!(await ensureControlInProgram(req, res, controlId))) return false;
+    if (!(await ensureControlInFrameworkPolicy(req, res, controlId))) return false;
   }
   return true;
 }
@@ -125,7 +125,7 @@ router.get('/:objectiveId/history', async (req: Request, res: Response): Promise
     res.status(400).json({ error: 'objectiveId must look like CONTROL-ID[a]' });
     return;
   }
-  if (!(await ensureControlInProgram(req, res, controlId))) return;
+  if (!(await ensureControlInFrameworkPolicy(req, res, controlId))) return;
   const rawLimit = typeof req.query.limit === 'string' ? req.query.limit : '';
   const limit = /^\d+$/.test(rawLimit) ? Math.min(200, Math.max(1, Number(rawLimit))) : 50;
   try {
@@ -149,7 +149,7 @@ router.put('/:objectiveId', async (req: Request, res: Response): Promise<void> =
     return;
   }
   const item = input as unknown as ObjectiveInput;
-  if (!(await ensureControlInProgram(req, res, item.controlId))) return;
+  if (!(await ensureControlInFrameworkPolicy(req, res, item.controlId))) return;
   try {
     const { record, changed } = await writeObjective(scopeOf(req), item, actorOf(req));
     res.json({ objective: record, changed });

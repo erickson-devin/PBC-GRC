@@ -15,7 +15,7 @@ import {
 import { FailingAssetInfo } from '../../types/telemetry';
 import { ControlDefinition } from '../../types/cmmc';
 import { FrameworkControlDefinition } from '../../types/framework';
-import { remediateAssetRule } from '../../data/telemetry/assetTelemetryEngine';
+import { remediateAssetRule, fleetStorageMode } from '../../data/telemetry/assetTelemetryEngine';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 
@@ -61,7 +61,7 @@ export const AssetRemediationDrawer: React.FC<AssetRemediationDrawerProps> = ({
 
     setRemediatingAssetId(assetId);
     try {
-      await remediateAssetRule(currentTenant.id, assetId, asset.failedRule);
+      await remediateAssetRule(currentTenant.id, assetId, asset.failedRule, fleetStorageMode(currentTenant));
       if (refreshBoundaryTelemetry) {
         await refreshBoundaryTelemetry();
       }

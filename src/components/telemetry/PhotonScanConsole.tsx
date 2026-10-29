@@ -36,7 +36,7 @@ import {
 } from '../../data/telemetry/scapIngestEngine';
 import { AssetComplianceTable } from './AssetComplianceTable';
 import { AssetInventoryManager } from './AssetInventoryManager';
-import { ingestScanReportToAsset } from '../../data/telemetry/assetTelemetryEngine';
+import { ingestScanReportToAsset, fleetStorageMode } from '../../data/telemetry/assetTelemetryEngine';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { errorMessage } from '../../utils/errors';
 
@@ -272,7 +272,7 @@ export const PhotonScanConsole: React.FC = () => {
       );
 
       // Ingest scan report directly into fleet asset telemetry and refresh boundary rollup
-      await ingestScanReportToAsset(lastReport, currentTenant.id);
+      await ingestScanReportToAsset(lastReport, currentTenant.id, fleetStorageMode(currentTenant));
       if (refreshBoundaryTelemetry) {
         await refreshBoundaryTelemetry();
       }
@@ -310,7 +310,7 @@ export const PhotonScanConsole: React.FC = () => {
         `[${new Date().toISOString()}] ✖ Ingestion error: ${errorMessage(err) || 'Unknown error'}`,
       ]);
     }
-  }, [lastReport, scanStatus, updateControlStatus, currentTenant.id]);
+  }, [lastReport, scanStatus, updateControlStatus, currentTenant.id, currentTenant.serverBacked]);
 
   // -----------------------------------------------------------------------
   // Clear Terminal

@@ -176,6 +176,25 @@ A release never needs the database wiped. At startup the server applies its sche
 example, each tenant's existing rows move into its "Default Authorization Boundary" program the first time the tenant is
 used). If a release seems to need a wipe, that is a bug: report it instead.
 
+Once a table has no row without a program, startup also finalizes its `program_id` column (the NOT VALID check is validated,
+the column becomes NOT NULL and the check is dropped). This never blocks the boot: if a table still has rows that no tenant has
+adopted yet, startup logs a warning such as `evidence_metadata: rows without a program remain; program_id stays nullable until
+every tenant is backfilled` and tries again at the next start. Tenants that are used adopt their rows on their own. To finish
+the job for tenants that nobody uses, take a backup (step 1 below), pick a quiet window (the discovery briefly locks the six
+tables) and run the operator script, `--dry-run` first:
+
+```bash
+docker exec singularity-app tsx scripts/backfillProgramIds.ts --all --dry-run
+docker exec singularity-app tsx scripts/backfillProgramIds.ts --all
+```
+
+It prints table names, tenant ids and row counts only, and exits 0 once `program_id` is NOT NULL on all six tables. You can
+also name tenants instead of `--all`. A tenant whose `tenant_id` has no tenant record is listed too and gets a default program
+like any other.
+
+The unused `ssp_documents` table is dropped at startup when it is empty; a table that still holds rows is kept and logs a
+warning (`ssp_documents still holds rows and was not dropped`).
+
 What makes an upgrade safe is the release routine around it:
 
 1. **Back up first.** Create the backup folder once, then before every deploy (`app_db` and `postgres` are this install's

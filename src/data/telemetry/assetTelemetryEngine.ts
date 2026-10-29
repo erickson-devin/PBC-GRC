@@ -20,8 +20,7 @@ import {
 import { ControlStatus, ControlState } from '../../types/cmmc';
 import { SCAP_RULE_MAPPINGS, cmmcIdToControlKey } from './scapIngestEngine';
 import { computeSha256 } from '../audit/cryptoUtils';
-
-const FLEET_STORAGE_KEY_PREFIX = 'pbc_enclave_fleet_v1_';
+import { FLEET_KEY_PREFIX } from '../../services/browserStorageScrub';
 
 // ---------------------------------------------------------------------------
 // 1. Deterministic Asset Identifier Generator
@@ -41,33 +40,71 @@ export function generateAssetId(hostName: string, ipAddress: string): string {
 // 2. Storage Persistence Helpers
 // ---------------------------------------------------------------------------
 
-export function getEnclaveFleet(tenantId: string): AssetTelemetryRecord[] {
+/**
+ * Where a tenant's fleet scan data lives. Host names, IPs and scan output are never kept in browser storage for a
+ * server-backed tenant: the fleet stays in memory for the session. Browser-only tenants have no other home for it.
+ */
+export type FleetStorageMode = 'browser' | 'memory';
+
+export function fleetStorageMode(t: { serverBacked?: boolean }): FleetStorageMode {
+  return t.serverBacked ? 'memory' : 'browser';
+}
+
+// Session-only fleets of server-backed tenants (fail-safe default of every function below)
+const memoryFleets = new Map<string, AssetTelemetryRecord[]>();
+
+export function getEnclaveFleet(tenantId: string, mode: FleetStorageMode = 'memory'): AssetTelemetryRecord[] {
+  if (mode === 'memory') return memoryFleets.get(tenantId) ?? [];
   try {
-    const raw = localStorage.getItem(`${FLEET_STORAGE_KEY_PREFIX}${tenantId}`);
+    const raw = localStorage.getItem(`${FLEET_KEY_PREFIX}${tenantId}`);
     if (raw) {
       const parsed: AssetTelemetryRecord[] = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed;
       }
     }
-  } catch (err) {
-    console.warn('[AssetTelemetry] Error reading fleet storage:', err);
+  } catch {
+    console.warn('[AssetTelemetry] Could not read the fleet cache');
   }
 
   // A fleet only ever contains hosts that were actually scanned
   return [];
 }
 
-export function saveEnclaveFleet(fleet: AssetTelemetryRecord[], tenantId: string): void {
+export function saveEnclaveFleet(fleet: AssetTelemetryRecord[], tenantId: string, mode: FleetStorageMode = 'memory'): void {
+  if (mode === 'memory') {
+    memoryFleets.set(tenantId, fleet);
+    // Remove any leftover browser copy
+    try {
+      localStorage.removeItem(`${FLEET_KEY_PREFIX}${tenantId}`);
+    } catch {
+      // storage unavailable: nothing to remove
+    }
+    return;
+  }
   try {
-    localStorage.setItem(`${FLEET_STORAGE_KEY_PREFIX}${tenantId}`, JSON.stringify(fleet));
-  } catch (err) {
-    console.error('[AssetTelemetry] Error saving fleet storage:', err);
+    localStorage.setItem(`${FLEET_KEY_PREFIX}${tenantId}`, JSON.stringify(fleet));
+  } catch {
+    console.error('[AssetTelemetry] Could not save the fleet cache');
   }
 }
 
-export function saveAssetRecord(record: AssetTelemetryRecord, tenantId: string): AssetTelemetryRecord[] {
-  const fleet = getEnclaveFleet(tenantId);
+/** Forgets a tenant's fleet everywhere: the session copy and the browser copy. */
+export function clearEnclaveFleet(tenantId: string): void {
+  memoryFleets.delete(tenantId);
+  try {
+    localStorage.removeItem(`${FLEET_KEY_PREFIX}${tenantId}`);
+  } catch {
+    // storage unavailable: nothing to remove
+  }
+}
+
+export function saveAssetRecord(
+  record: AssetTelemetryRecord,
+  tenantId: string,
+  mode: FleetStorageMode = 'memory'
+): AssetTelemetryRecord[] {
+  const fleet = getEnclaveFleet(tenantId, mode);
   const existingIdx = fleet.findIndex(a => a.assetId === record.assetId || a.ipAddress === record.ipAddress);
   
   let updatedFleet: AssetTelemetryRecord[];
@@ -78,7 +115,7 @@ export function saveAssetRecord(record: AssetTelemetryRecord, tenantId: string):
     updatedFleet = [...fleet, record];
   }
 
-  saveEnclaveFleet(updatedFleet, tenantId);
+  saveEnclaveFleet(updatedFleet, tenantId, mode);
   return updatedFleet;
 }
 
@@ -88,7 +125,8 @@ export function saveAssetRecord(record: AssetTelemetryRecord, tenantId: string):
 
 export async function ingestScanReportToAsset(
   report: ScapScanReport,
-  tenantId: string
+  tenantId: string,
+  mode: FleetStorageMode = 'memory'
 ): Promise<AssetTelemetryRecord> {
   const assetId = generateAssetId(report.hostName, report.targetIp);
 
@@ -141,7 +179,7 @@ export async function ingestScanReportToAsset(
     ruleResults,
   };
 
-  saveAssetRecord(record, tenantId);
+  saveAssetRecord(record, tenantId, mode);
   return record;
 }
 
@@ -155,8 +193,11 @@ export async function ingestScanReportToAsset(
  * - If 1+ assets fail mapped STIG rules for Control X -> Control X = NOT_MET (or IN_PROGRESS)
  * Stores non-compliant asset listings directly on each control's metadata.
  */
-export async function aggregateAssetTelemetry(tenantId: string): Promise<BoundaryAggregationResult> {
-  const fleet = getEnclaveFleet(tenantId);
+export async function aggregateAssetTelemetry(
+  tenantId: string,
+  mode: FleetStorageMode = 'memory'
+): Promise<BoundaryAggregationResult> {
+  const fleet = getEnclaveFleet(tenantId, mode);
   const now = new Date().toISOString();
 
   // Map each CMMC control to evaluated assets
@@ -306,9 +347,10 @@ export function applyBoundaryTelemetryToControls(
 export async function remediateAssetRule(
   tenantId: string,
   assetId: string,
-  ruleIdOrFailedRule: string
+  ruleIdOrFailedRule: string,
+  mode: FleetStorageMode = 'memory'
 ): Promise<BoundaryAggregationResult> {
-  const fleet = getEnclaveFleet(tenantId);
+  const fleet = getEnclaveFleet(tenantId, mode);
   const targetAsset = fleet.find(a => a.assetId === assetId);
 
   if (targetAsset) {
@@ -331,8 +373,8 @@ export async function remediateAssetRule(
       : 100;
     targetAsset.lastScanTimestamp = new Date().toISOString();
 
-    saveEnclaveFleet(fleet, tenantId);
+    saveEnclaveFleet(fleet, tenantId, mode);
   }
 
-  return await aggregateAssetTelemetry(tenantId);
+  return await aggregateAssetTelemetry(tenantId, mode);
 }
