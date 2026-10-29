@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useId, useMemo } from 'react';
 import {
   Server,
   Monitor,
@@ -19,6 +19,10 @@ import {
   Radio,
   Zap,
   ShieldCheck,
+  Archive,
+  Info,
+  PlusCircle,
+  MinusCircle,
 } from 'lucide-react';
 import {
   EnclaveAsset,
@@ -26,7 +30,7 @@ import {
   AssetSourceOrigin,
   AccretionIngestResult,
 } from '../../types/telemetry';
-import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES } from '../../data/telemetry/assetScope';
+import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, summarizeScope } from '../../data/telemetry/assetScope';
 import { describeFipsModule } from '../../data/telemetry/fipsValidation';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useTenant } from '../../context/TenantContext';
@@ -36,6 +40,10 @@ import { errorMessage } from '../../utils/errors';
 import { FailedMoveAssetsNotice } from './FailedMoveAssetsNotice';
 import { AddAssetModal } from './AddAssetModal';
 import { AccretionIntegrationModal } from './AccretionIntegrationModal';
+import { ConfirmBoundaryChangeDialog } from './ConfirmBoundaryChangeDialog';
+import { useProgramAssets } from '../../hooks/useProgramAssets';
+import { boundaryAssets, membershipLabels } from '../../data/programAssets';
+import { BoundaryChangePlan, BoundaryFilter, boundaryBlockMessage, boundaryEditBlock, boundaryErrorMessage, emptyTableMessage, matchesBoundaryFilter, planBoundaryChange, rowChangeNeedsConfirm, summaryCaption } from '../../data/boundaryView';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AssetInventoryManagerProps {
@@ -49,7 +57,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   onSelectAsset,
   selectedHost,
 }) => {
-  const { currentTenant } = useTenant();
+  const { currentTenant, activeProgram, programs, programsStatus } = useTenant();
   // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,6 +76,20 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
   const [notification, setNotification] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Boundary membership (issue #26): which assets the active program declares. Server-backed tenants only: a browser-only tenant has no programs.
+  const boundary = useProgramAssets();
+  const showBoundary = programsStatus !== 'unsupported';
+  const [boundaryFilterChoice, setBoundaryFilter] = useState<BoundaryFilter>('ALL');
+  const [pendingBoundary, setPendingBoundary] = useState<BoundaryChangePlan | null>(null);
+  const boundaryReasonId = useId();
+  const boundaryFilterRef = useRef<HTMLSelectElement>(null);
+  const programName = activeProgram?.name ?? 'This program';
+  const boundaryReady = showBoundary && activeProgram !== null && boundary.status === 'ready';
+  // The filter applies only while the boundary is known; otherwise the whole inventory is shown
+  const boundaryFilter: BoundaryFilter = boundaryReady ? boundaryFilterChoice : 'ALL';
+  const boundaryBlock = boundaryEditBlock({ supported: showBoundary, canEdit, hasActiveProgram: activeProgram !== null, archived: Boolean(activeProgram?.archived), status: boundary.status });
+  const columnCount = showBoundary ? 8 : 7;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,7 +126,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       showNotification(`✓ Asset ${assetData.hostName} updated.`);
     } else {
       await backend.create(assetData);
-      showNotification(`✓ Asset ${assetData.hostName} registered to the enclave boundary.`);
+      showNotification(showBoundary && boundary.declared ? `✓ Asset ${assetData.hostName} registered to the inventory. It is not in ${programName} until you add it.` : `✓ Asset ${assetData.hostName} registered to the inventory.`);
     }
     setEditingAsset(null);
   };
@@ -159,6 +181,41 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     void reload();
   };
 
+  /** One PATCH with the delta; the hook reloads the memberships (and tells the SSP export). */
+  const applyBoundaryChange = async (plan: BoundaryChangePlan): Promise<void> => {
+    if (plan.direction === 'add') await boundary.add(plan.ids);
+    else await boundary.remove(plan.ids);
+  };
+
+  const announceBoundaryChange = (plan: BoundaryChangePlan) => {
+    const what = plan.ids.length === 1 && plan.sampleNames.length === 1 ? plan.sampleNames[0] : `${plan.ids.length} assets`;
+    showNotification(plan.direction === 'add' ? `✓ ${what} added to ${programName}.` : `✓ ${what} removed from ${programName}.`);
+    // A row hidden by the In / Not-in filter, or a bulk button now disabled, cannot keep focus: move it to the filter
+    requestAnimationFrame(() => {
+      if (!document.activeElement || document.activeElement === document.body) boundaryFilterRef.current?.focus();
+    });
+  };
+
+  const handleRowBoundaryToggle = async (asset: EnclaveAsset, add: boolean) => {
+    if (boundaryBlock !== null || busy) return;
+    const plan = planBoundaryChange([asset], boundary.activeIds, add ? 'add' : 'remove', assets.length);
+    if (plan.ids.length === 0) return;
+    if (rowChangeNeedsConfirm(plan.direction, plan.membersBefore)) {
+      setPendingBoundary(plan);
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      await applyBoundaryChange(plan);
+      announceBoundaryChange(plan);
+    } catch (err: unknown) {
+      setActionError(boundaryErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Unconfirmed Discovered Assets
   const unconfirmedAssets = assets.filter(a => a.discoveryStatus === 'UNCONFIRMED_DISCOVERY');
 
@@ -180,12 +237,19 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
     const matchesOs = selectedOs === 'ALL' || a.osProfile === selectedOs;
 
-    return matchesSearch && matchesCategory && matchesOs;
+    const matchesBoundary = matchesBoundaryFilter(a.id, boundaryFilter, boundary.activeIds);
+
+    return matchesSearch && matchesCategory && matchesOs && matchesBoundary;
   });
 
-  // Summary Metrics
-  const totalCount = summary.total;
-  const scoredAssets = assets.filter(a => a.complianceScore !== null);
+  // The cards show the whole inventory, or the active program's SSP boundary under "In {program}" (D2: an undeclared program's boundary is the whole inventory)
+  const cardAssets = useMemo(
+    () => (boundaryFilter === 'IN' ? boundaryAssets(assets, [...boundary.activeIds], boundary.declared) : assets),
+    [boundaryFilter, assets, boundary.activeIds, boundary.declared]
+  );
+  const cardSummary = useMemo(() => (cardAssets === assets ? summary : summarizeScope(cardAssets)), [cardAssets, assets, summary]);
+  const totalCount = cardSummary.total;
+  const scoredAssets = cardAssets.filter(a => a.complianceScore !== null);
   const avgComplianceScore = scoredAssets.length > 0
     ? Math.round(scoredAssets.reduce((sum, a) => sum + (a.complianceScore || 0), 0) / scoredAssets.length)
     : null; // nothing scanned yet: there is no average to show (never a flattering 100%)
@@ -270,6 +334,39 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
     );
   };
 
+  // The programs whose boundary declares this asset; archived ones are marked, the active program's chip is highlighted
+  const renderProgramChips = (asset: EnclaveAsset) => {
+    if (boundary.status === 'loading') return <span className="text-xs text-slate-400">Loading…</span>;
+    if (boundary.status !== 'ready') return <span className="text-xs text-slate-400">—</span>;
+    const labels = membershipLabels(asset.id, boundary.memberships, programs);
+    if (labels.length === 0) return <span className="text-xs text-slate-400">No program</span>;
+    const hidden = labels.slice(3);
+    const hiddenText = hidden.map(l => `${l.name}${l.archived ? ' (archived)' : ''}`).join(', ');
+    return (
+      <ul className="flex flex-wrap gap-1" aria-label={`Programs that declare ${asset.hostName}`}>
+        {labels.slice(0, 3).map(l => (
+          <li key={l.id}>
+            <span className={`badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${
+              l.archived ? 'bg-slate-900 text-slate-400 border-dashed border-slate-600'
+              : l.id === activeProgram?.id ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+              : 'bg-slate-800 text-slate-300 border-slate-700'}`}>
+              {l.archived && <Archive className="w-2.5 h-2.5" aria-hidden="true" />}
+              <span className="truncate max-w-[9rem]" title={l.name}>{l.name}</span>
+              {l.archived && <span>(archived)</span>}
+            </span>
+          </li>
+        ))}
+        {hidden.length > 0 && (
+          <li>
+            <span className="badge inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-800 text-slate-400 border-slate-700" title={hiddenText}>
+              +{hidden.length} more<span className="sr-only">: {hiddenText}</span>
+            </span>
+          </li>
+        )}
+      </ul>
+    );
+  };
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 space-y-5">
       
@@ -335,7 +432,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       {!canEdit && (
         <div role="status" className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">
           <Lock className="w-4 h-4 text-slate-400 shrink-0" />
-          <span>Read-only: only a Tenant Owner or MSP Admin can change the asset inventory and the CMMC scoping.</span>
+          <span>Read-only: only a Tenant Owner or MSP Admin can change the asset inventory, the CMMC scoping{showBoundary ? ' and which assets a program declares' : ''}.</span>
         </div>
       )}
 
@@ -344,6 +441,23 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         <div className="flex items-center justify-between gap-3">
           <ErrorNotice message={loadError} className="flex-1" />
           <button onClick={() => void reload()} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">Retry</button>
+        </div>
+      )}
+
+      {showBoundary && boundary.status === 'error' && (
+        <div className="flex items-center justify-between gap-3">
+          <ErrorNotice message="The program boundaries could not be loaded, so membership is not shown and cannot be changed. The inventory itself is unaffected." className="flex-1" />
+          <button type="button" onClick={() => void boundary.reload()} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">Retry</button>
+        </div>
+      )}
+
+      {boundaryReady && activeProgram && !boundary.declared && (
+        <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+          <p>
+            <strong className="text-amber-100">{activeProgram.name}</strong> has not declared its assets: its SSP boundary uses the whole inventory.
+            {canEdit ? ' Tick "In this boundary" on the assets it covers, or filter the list and use "Add shown to boundary".' : ' A Tenant Owner or MSP Admin can declare them.'}
+          </p>
         </div>
       )}
 
@@ -383,6 +497,10 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         </div>
       )}
 
+      <p role="status" className="sr-only">{notification ?? ''}</p>
+
+      {showBoundary && <p className="text-xs text-slate-400" aria-live="polite">{summaryCaption({ filter: boundaryFilter, programName, declared: boundary.declared, members: boundary.activeIds.size, inventoryTotal: summary.total })}</p>}
+
       {/* ─── Summary Statistics Header: the boundary, by CMMC category ─── */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
@@ -390,8 +508,8 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
             <span className="text-xs font-semibold text-slate-400">In-Scope Assets</span>
             <Server className="w-4 h-4 text-cyan-400" />
           </div>
-          <p className="text-2xl font-black text-white mt-1.5">{summary.inScope}</p>
-          <span className="text-xs text-slate-400">{totalCount} registered{summary.unconfirmed > 0 ? `, ${summary.unconfirmed} unclassified` : ''}</span>
+          <p className="text-2xl font-black text-white mt-1.5">{cardSummary.inScope}</p>
+          <span className="text-xs text-slate-400">{totalCount} {boundaryFilter === 'IN' ? 'in this boundary' : 'registered'}{cardSummary.unconfirmed > 0 ? `, ${cardSummary.unconfirmed} unclassified` : ''}</span>
         </div>
 
         {CMMC_ASSET_CATEGORIES.filter(c => c !== 'OUT_OF_SCOPE').map(cat => {
@@ -402,7 +520,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                 <span className={`text-xs font-semibold ${style.text}`}>{CATEGORY_INFO[cat].label}</span>
                 <style.Icon className={`w-4 h-4 shrink-0 ${style.icon}`} />
               </div>
-              <p className={`text-2xl font-black mt-1.5 ${style.text}`}>{summary.byCategory[cat]}</p>
+              <p className={`text-2xl font-black mt-1.5 ${style.text}`}>{cardSummary.byCategory[cat]}</p>
               <span className="text-xs text-slate-400">{CATEGORY_INFO[cat].short}</span>
             </div>
           );
@@ -419,12 +537,13 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
       </div>
 
       {/* ─── Search & Category / OS Filter Toolbar ─── */}
-      <div className="flex flex-col sm:flex-row items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap xl:flex-nowrap items-center gap-3">
         {/* Search */}
-        <div className="relative flex-1 w-full">
+        <div className="relative flex-1 w-full sm:min-w-[14rem]">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
+            aria-label="Search assets"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search by name, IP, MAC, owner, or notes..."
@@ -435,6 +554,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         {/* Category Filter */}
         <div className="relative w-full sm:w-72">
           <select
+            aria-label="CMMC category filter"
             value={selectedCategory}
             onChange={e => setSelectedCategory(e.target.value)}
             className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-8"
@@ -453,6 +573,7 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
         {/* OS Profile Filter */}
         <div className="relative w-full sm:w-40">
           <select
+            aria-label="OS profile filter"
             value={selectedOs}
             onChange={e => setSelectedOs(e.target.value)}
             className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-8"
@@ -467,11 +588,57 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
           </select>
           <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
+
+        {/* Boundary Filter: the active program's declared assets (server-backed tenants only) */}
+        {showBoundary && (
+          <div className="relative w-full sm:w-56">
+            <select
+              ref={boundaryFilterRef}
+              aria-label="Boundary filter"
+              value={boundaryFilter}
+              disabled={!boundaryReady}
+              onChange={e => setBoundaryFilter(e.target.value as BoundaryFilter)}
+              className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-8 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="ALL">All assets (tenant inventory)</option>
+              <option value="IN">{`In ${programName}`}</option>
+              <option value="NOT_IN">{`Not in ${programName}`}</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        )}
       </div>
+
+      {showBoundary && canEdit && (() => {
+        const addPlan = planBoundaryChange(filteredAssets, boundary.activeIds, 'add', assets.length);
+        const removePlan = planBoundaryChange(filteredAssets, boundary.activeIds, 'remove', assets.length);
+        const blocked = boundaryBlock !== null || busy;
+        return (
+          <div role="group" aria-label={`Boundary of ${programName}`} className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+            <p className="flex-1 text-xs text-slate-300">
+              {boundaryBlock
+                ? <span id={boundaryReasonId}>{boundaryBlockMessage(boundaryBlock, programName)}</span>
+                : <>Changes apply to <strong className="text-white">{programName}</strong> for everyone who works in it. "Shown" means the assets your filters list.</>}
+            </p>
+            <button type="button" onClick={() => setPendingBoundary(addPlan)} disabled={blocked || addPlan.ids.length === 0}
+              aria-describedby={boundaryBlock ? boundaryReasonId : undefined}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-cyan-500/20 text-cyan-200 border-cyan-500/40 hover:bg-cyan-500/30">
+              <PlusCircle className="w-3.5 h-3.5" aria-hidden="true" />
+              Add shown to boundary ({addPlan.ids.length})
+            </button>
+            <button type="button" onClick={() => setPendingBoundary(removePlan)} disabled={blocked || removePlan.ids.length === 0}
+              aria-describedby={boundaryBlock ? boundaryReasonId : undefined}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700">
+              <MinusCircle className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+              Remove shown from boundary ({removePlan.ids.length})
+            </button>
+          </div>
+        );
+      })()}
 
       {/* ─── Inventory Asset Table ─── */}
       <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
-        <table className="w-full text-left text-xs border-collapse">
+        <table aria-busy={busy || undefined} className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="border-b border-slate-800 bg-slate-900/80 text-slate-400 font-semibold">
               <th className="py-2.5 px-3">Endpoint / Hostname</th>
@@ -480,22 +647,21 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
               <th className="py-2.5 px-3">CMMC Scope Category</th>
               <th className="py-2.5 px-3">Last STIG Scan</th>
               <th className="py-2.5 px-3">Compliance Score</th>
+              {showBoundary && <th className="py-2.5 px-3">Programs</th>}
               <th className="py-2.5 px-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
             {loading ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-400" role="status">
+                <td colSpan={columnCount} className="py-8 text-center text-slate-400" role="status">
                   Loading the asset inventory…
                 </td>
               </tr>
             ) : filteredAssets.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-400">
-                  {assets.length === 0
-                    ? 'No assets registered yet. Add the systems that make up your CMMC assessment boundary and give each its category.'
-                    : 'No enclave assets match your active filters.'}
+                <td colSpan={columnCount} className="py-8 text-center text-slate-400">
+                  {emptyTableMessage({ assetCount: assets.length, filter: boundaryFilter, programName, declared: boundary.declared })}
                 </td>
               </tr>
             ) : (
@@ -652,6 +818,28 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                         <span className="text-xs font-mono text-slate-400">Unscored</span>
                       )}
                     </td>
+
+                    {/* Programs: the boundaries that declare this asset, and the toggle for the active program */}
+                    {showBoundary && (
+                      <td className="py-3 px-3 min-w-[11rem]">
+                        <div className="space-y-1.5">
+                          {canEdit && activeProgram && boundary.status === 'ready' && (
+                            <label className={`inline-flex items-center gap-1.5 text-xs font-semibold ${boundaryBlock ? 'text-slate-400 cursor-not-allowed' : 'text-slate-200 cursor-pointer'}`}>
+                              <input
+                                type="checkbox"
+                                checked={boundary.activeIds.has(asset.id)}
+                                disabled={boundaryBlock !== null || !canEdit || Boolean(activeProgram?.archived)}
+                                aria-describedby={boundaryBlock ? boundaryReasonId : undefined}
+                                onChange={e => void handleRowBoundaryToggle(asset, e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-slate-600 bg-slate-800 accent-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:opacity-50"
+                              />
+                              <span>In this boundary<span className="sr-only"> ({asset.hostName})</span></span>
+                            </label>
+                          )}
+                          {renderProgramChips(asset)}
+                        </div>
+                      </td>
+                    )}
 
                     {/* Actions Menu */}
                     <td className="py-3 px-3 text-right">
@@ -827,6 +1015,16 @@ BASTION-01,10.0.50.10,ubuntu2204,SECURITY_PROTECTION,00:50:56:B2:11,SSH jump hos
         </DialogOverlay>
       )}
 
+      {/* ─── Boundary change confirmation (bulk, or a change that declares the first / removes the last asset) ─── */}
+      {pendingBoundary && activeProgram && (
+        <ConfirmBoundaryChangeDialog
+          plan={pendingBoundary}
+          programName={activeProgram.name}
+          onConfirm={() => applyBoundaryChange(pendingBoundary)}
+          onClose={() => setPendingBoundary(null)}
+          onSaved={announceBoundaryChange}
+        />
+      )}
 
     </div>
   );

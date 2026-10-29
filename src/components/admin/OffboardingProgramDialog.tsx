@@ -27,6 +27,7 @@ export const OffboardingProgramDialog: React.FC<OffboardingProgramDialogProps> =
   const [programs, setPrograms] = useState<Program[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [choice, setChoice] = useState<string>('all');
+  const [declaredCounts, setDeclaredCounts] = useState<Record<string, number> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +40,9 @@ export const OffboardingProgramDialog: React.FC<OffboardingProgramDialogProps> =
         if (cancelled) return;
         setError(err instanceof ApiError && err.status === 403 ? NOT_MEMBER_MESSAGE : 'The programs of this enclave could not be loaded from the server.');
       });
+    ApiClient.listProgramAssetMemberships(tenant.id)
+      .then((m) => { if (!cancelled) setDeclaredCounts(Object.fromEntries(Object.entries(m).map(([id, ids]) => [id, ids.length]))); })
+      .catch(() => { /* the counts are a hint only */ });
     return () => { cancelled = true; };
   }, [tenant.id]);
 
@@ -60,7 +64,7 @@ export const OffboardingProgramDialog: React.FC<OffboardingProgramDialogProps> =
           <span>Export offboarding package</span>
         </DialogTitle>
         <p className="text-xs text-slate-300 leading-relaxed">
-          Each program of this enclave has its own controls, notes and evidence. Each package states the whole asset inventory of the enclave.
+          Each program of this enclave has its own controls, notes and evidence. A program that has declared its assets states only those; a program that has not states the whole asset inventory of the enclave.
         </p>
         <ErrorNotice message={error} />
         {!programs && !error && <p role="status" className="text-xs text-slate-400">Loading programs…</p>}
@@ -76,7 +80,7 @@ export const OffboardingProgramDialog: React.FC<OffboardingProgramDialogProps> =
                 <input type="radio" name={groupName} value={p.id} checked={choice === p.id} onChange={() => setChoice(p.id)} className="mt-0.5" />
                 <span>
                   <span className="font-semibold">{p.name}</span>
-                  <span className="text-slate-400"> · {frameworkLabel(p.framework)}{p.isDefault ? ' (default)' : ''}{p.archived ? ' (archived)' : ''}</span>
+                  <span className="text-slate-400"> · {frameworkLabel(p.framework)}{p.isDefault ? ' (default)' : ''}{p.archived ? ' (archived)' : ''}{declaredCounts ? (declaredCounts[p.id] ? ` · ${declaredCounts[p.id]} declared asset${declaredCounts[p.id] === 1 ? '' : 's'}` : ' · whole inventory') : ''}</span>
                 </span>
               </label>
             ))}

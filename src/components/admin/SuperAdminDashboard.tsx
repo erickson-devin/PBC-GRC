@@ -308,6 +308,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             listPrograms: (t, o) => ApiClient.listPrograms(t, o),
             getControls: (t, p) => ApiClient.getControls(t, undefined, p),
             getEvidence: (t, p) => ApiClient.getEvidence(t, p),
+            getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p),
           });
         } catch (err: unknown) {
           // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.
@@ -316,7 +317,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             type: 'error',
             message: notMember
               ? NOT_MEMBER_MESSAGE
-              : 'Implementation notes could not be loaded from the server; the handover package was not generated.',
+              : 'The program data could not be loaded from the server; the handover package was not generated.',
           });
           return;
         }

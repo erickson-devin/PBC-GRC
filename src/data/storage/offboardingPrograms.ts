@@ -9,6 +9,7 @@ import type { Program } from '../../types/program';
 import type { ControlState, EvidenceItem } from '../../types/cmmc';
 import type { EnclaveAsset } from '../../types/telemetry';
 import { computeSha256, canonicalJson } from '../audit/auditLogger';
+import { boundaryAssets } from '../programAssets';
 import { generateEnclaveHandoverPackage, type EnclaveHandoverPackage } from './offboardingEngine';
 
 export type HandoverSelection = { kind: 'all' } | { kind: 'program'; programId: string };
@@ -18,6 +19,8 @@ export interface HandoverDeps {
   listPrograms: (tenantId: string, options: { includeArchived: boolean }) => Promise<Program[]>;
   getControls: (tenantId: string, programId: string) => Promise<ControlState[]>;
   getEvidence: (tenantId: string, programId: string) => Promise<EvidenceItem[]>;
+  /** The assets the program declares (issue #26). A failure rejects the export: never a package with the wrong boundary. */
+  getProgramAssets?: (tenantId: string, programId: string) => Promise<{ declared: boolean; assetIds: string[] }>;
 }
 
 export interface EnclaveHandoverBundle {
@@ -40,7 +43,7 @@ export interface HandoverResult {
 /**
  * Builds the handover for one program, or for every program (archived ones included, flagged in their package) of a
  * tenant. One program downloads its package; "all" downloads one bundle file (browsers block several downloads in a row).
- * Each package states the tenant-wide asset inventory. An unknown program id rejects with "Program not found".
+ * Each package states its program's declared assets, or the whole inventory while the program declares none. An unknown program id rejects with "Program not found".
  */
 export async function buildProgramHandover(
   tenant: Tenant,
@@ -60,7 +63,13 @@ export async function buildProgramHandover(
     const list = await deps.getControls(tenant.id, program.id);
     const evidence = await deps.getEvidence(tenant.id, program.id);
     const states = Object.fromEntries(list.map((c) => [c.id, c]));
-    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, assets, states, evidence, { program, download: single }));
+    // The program's declared assets (issue #26), or the whole inventory while it declares none
+    let programAssets = assets;
+    if (assets && deps.getProgramAssets) {
+      const membership = await deps.getProgramAssets(tenant.id, program.id);
+      programAssets = boundaryAssets(assets, membership.assetIds, membership.declared);
+    }
+    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single }));
   }
   if (single) return { packages, bundle: null };
 
