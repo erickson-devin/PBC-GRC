@@ -160,7 +160,7 @@ router.delete('/:assetId', async (req: Request, res: Response): Promise<void> =>
       res.status(404).json({ error: 'Asset not found', code: 'not_found' });
       return;
     }
-    console.log(`[Assets API] ${req.user?.uid} removed asset ${existing.hostName} (${existing.id}) from ${req.tenantId}`);
+    console.log(`[Assets API] ${req.user?.uid} removed asset ${existing.id} from ${req.tenantId}`);
     res.json({ removed: existing.id });
   } catch (err) {
     sendAssetError(res, err, 'Failed to delete asset');
