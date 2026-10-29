@@ -16,11 +16,16 @@ import {
   Sparkles,
   Save,
   Check,
+  Server,
 } from 'lucide-react';
 import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { collectFipsModules } from '../../data/telemetry/fipsValidation';
+import { useProgramAssets } from '../../hooks/useProgramAssets';
+import { boundaryAssets } from '../../data/programAssets';
+import { summarizeScope } from '../../data/telemetry/assetScope';
+import { exportBoundaryLine } from '../../data/boundaryView';
 import { useTenant } from '../../context/TenantContext';
 import {
   ReportDocumentType,
@@ -71,10 +76,22 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     canEdit,
   } = useTenant();
 
-  // The asset inventory defines the SSP boundary summary. Until it has loaded (or if it cannot be loaded) the SSP states
-  // no asset counts rather than a wrong zero.
-  const { assets: inventory, summary: assetScope, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
-  const cryptoModules = useMemo(() => collectFipsModules(inventory), [inventory]);
+  // The SSP boundary summary and FIPS list: the active program's declared assets, or the whole inventory while it declares
+  // none (issue #26, D2). Until both the inventory and the boundary have loaded (or if either cannot be loaded) the SSP
+  // states no asset counts rather than a wrong zero or the wrong boundary.
+  const { assets: inventory, summary: inventorySummary, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
+  const boundary = useProgramAssets({ enabled: isOpen });
+  const boundaryList = useMemo(
+    () => (boundary.status === 'ready' ? boundaryAssets(inventory, [...boundary.activeIds], boundary.declared) : inventory),
+    [boundary.status, boundary.activeIds, boundary.declared, inventory]
+  );
+  const assetScope = useMemo(() => summarizeScope(boundaryList), [boundaryList]);
+  const cryptoModules = useMemo(() => collectFipsModules(boundaryList), [boundaryList]);
+  const scopeUnavailable = assetsLoading || Boolean(assetsError) || boundary.status === 'loading' || boundary.status === 'error';
+  const boundaryLine = exportBoundaryLine({
+    assetsLoading, assetsError: Boolean(assetsError), status: boundary.status, programName: activeProgram?.name ?? null,
+    declared: boundary.declared, boundary: assetScope, inventory: inventorySummary,
+  });
 
   // Document Type selection: default dynamically to the active framework's standard report
   const [selectedDocType, setSelectedDocType] = useState<ReportDocumentType>(() => {
@@ -168,14 +185,14 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       selectedDocType,
       {
         ...formData,
-        assetScope: assetsLoading || assetsError ? undefined : assetScope,
-        cryptoModules: assetsLoading || assetsError ? undefined : cryptoModules,
+        assetScope: scopeUnavailable ? undefined : assetScope,
+        cryptoModules: scopeUnavailable ? undefined : cryptoModules,
       },
       frameworkControls,
       state.controls,
       state.evidenceIndex
     );
-  }, [selectedDocType, formData, assetScope, cryptoModules, assetsLoading, assetsError, frameworkControls, state.controls, state.evidenceIndex]);
+  }, [selectedDocType, formData, assetScope, cryptoModules, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex]);
 
   // Export handlers
   const handleDownloadHtml = () => {
@@ -410,6 +427,12 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     <span className="text-emerald-400 font-medium">{formData.operationalStatus}</span>
                   </div>
                 </div>
+
+                {/* Which assets this document states (issue #26) */}
+                <p data-testid="ssp-boundary-scope" className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300">
+                  <Server className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>{boundaryLine}</span>
+                </p>
 
                 {/* Executive Posture Score Box */}
                 <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between flex-wrap gap-3">

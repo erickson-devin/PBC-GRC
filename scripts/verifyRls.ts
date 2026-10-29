@@ -14,7 +14,7 @@
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
- *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check).
+ *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
@@ -23,8 +23,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables and program_events are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events and program_assets are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets');
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -881,8 +881,48 @@ async function verifyProgramIsolation() {
     await queryWithTenant(TENANT_X, 'UPDATE programs SET vm_target = FALSE WHERE name = $1', ['rls_verify_p8_a']);
     await queryWithProgram(scopeA, "DELETE FROM program_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
 
+    // 8j. boundary asset membership (issue #26): program_assets isolation, the composite foreign keys, and the cascade from an asset delete
+    const mkAsset = async (tenant: string, name: string): Promise<string> =>
+      String((await queryWithTenant(tenant, "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, $2, 'CUI_ASSET') RETURNING id", [tenant, name])).rows[0]?.id);
+    const assetX = await mkAsset(TENANT_X, 'rls_verify_p8_asset_x');
+    const assetY = await mkAsset(TENANT_Y, 'rls_verify_p8_asset_y');
+    const insertMember = 'INSERT INTO program_assets (tenant_id, program_id, asset_id, added_by) VALUES ($1, $2, $3, $4) RETURNING asset_id';
+    const pa1 = await queryWithProgram(scopeA, insertMember, [TENANT_X, programA, assetX, 'rls_verify_actor']);
+    check(pa1.rows.length === 1, '8j. program_assets: under program A the membership row is inserted');
+    const paBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_assets WHERE program_id = $1', [programA]);
+    const paBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_assets WHERE tenant_id = $1', [TENANT_X]);
+    check(paBSeesA.rows.length === 0 && paBSeesAny.rows.length === 0, "8j. program_assets: program B cannot read program A's membership (0 rows, by program or by tenant)", 'saw ' + paBSeesA.rows.length + ' / ' + paBSeesAny.rows.length);
+    const paBUpdates = await queryWithProgram(scopeB, "UPDATE program_assets SET added_by = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const paBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_assets WHERE program_id = $1', [programA]);
+    check((paBUpdates.rowCount ?? 0) === 0 && (paBDeletes.rowCount ?? 0) === 0, "8j. program_assets: program B can neither update nor delete program A's membership (0 rows)", 'updated ' + paBUpdates.rowCount + ', deleted ' + paBDeletes.rowCount);
+    const paBInserts = await rejectsIn(scopeB, insertMember, [TENANT_X, programA, assetX, 'rls_verify_actor'], { code: '42501' });
+    check(paBInserts.ok, '8j. program_assets: program B cannot insert a membership into program A (WITH CHECK, 42501)', paBInserts.detail);
+    const paNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_assets WHERE tenant_id = $1', [TENANT_X]);
+    check(paNoCtx.rows.length === 0, '8j. program_assets: a tenant context with no program context sees zero rows', 'saw ' + paNoCtx.rows.length);
+    let paNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertMember, [TENANT_X, programA, assetX, 'rls_verify_actor']);
+    } catch (err) {
+      paNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(paNoCtxInsert === '42501', '8j. program_assets: no program context cannot insert a membership (42501)', paNoCtxInsert);
+    const paStillThere = await queryWithProgram(scopeA, 'SELECT asset_id FROM program_assets WHERE program_id = $1', [programA]);
+    check(paStillThere.rows.length === 1 && paStillThere.rows[0].asset_id === assetX, "8j. program_assets: program A's membership is untouched", JSON.stringify(paStillThere.rows));
+    const paForeignAsset = await rejectsIn(scopeA, insertMember, [TENANT_X, programA, assetY, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_assets_asset' });
+    check(paForeignAsset.ok, "8j. program_assets: tenant X cannot take tenant Y's asset (composite foreign key, 23503)", paForeignAsset.detail);
+    // the session runs in Y's default program so the program policy passes; (X, Y's program) does not exist, so the foreign key refuses it
+    const paForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertMember, [TENANT_X, defaultY, assetX, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_assets_program' });
+    check(paForeignProgram.ok, "8j. program_assets: tenant X cannot attach an asset to tenant Y's program (composite foreign key, 23503)", paForeignProgram.detail);
+    // a foreign-key cascade is not filtered by row security: the asset delete (tenant context only) removes the membership that program A owns
+    await queryWithTenant(TENANT_X, 'DELETE FROM enclave_assets WHERE id = $1', [assetX]);
+    const paCascade = await queryWithProgram(scopeA, 'SELECT 1 FROM program_assets WHERE program_id = $1', [programA]);
+    check(paCascade.rows.length === 0, "8j. program_assets: deleting an asset (tenant context only) removes its membership rows through the cascade", 'saw ' + paCascade.rows.length);
+
     await verifyUpgrade();
   } finally {
+    for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined); // the membership rows cascade with their asset
+    }
     // the history has no foreign key, so a program's delete does not remove its events
     for (const id of [programA, programB]) {
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);

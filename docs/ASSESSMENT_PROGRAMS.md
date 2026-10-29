@@ -45,3 +45,18 @@ the next request. Frameworks are never mixed across tenants: each tenant's data 
 ## The invitation
 
 The invitation page shows the program the server holds for the tenant, so the invited owner sees exactly what was provisioned.
+
+## Boundary assets per program
+
+Assets stay in one tenant-wide inventory. A program can declare which of them lie inside its authorization boundary
+(`program_assets`, one row per tenant, program and asset; an asset may belong to several programs):
+
+* `GET /api/v1/tenants/:tenantId/programs/:id/assets` returns `{ programId, declared, assetIds, summary }`. A program that has
+  declared no asset (`declared: false`) uses the **whole inventory**, so existing tenants see no change; its `summary` is then the
+  summary of the inventory.
+* `PATCH` on the same path takes `{ add?: string[], remove?: string[] }` (deltas) and is for TENANT_OWNER and MSP_ADMIN. An id that is
+  not in the tenant's inventory is `400 unknown_assets`, a malformed body `400 invalid_asset_ids`, an archived program `409 program_archived`.
+* `GET /api/v1/tenants/:tenantId/programs/asset-memberships` lists the declared ids of every program, archived ones included.
+* Each change is recorded in the program history as `assets_changed` (counts and asset ids, never a host name or address).
+* Deleting an asset or a program removes its membership. New assets are not added to any program automatically, and the
+  vulnerability-management pipeline (snapshots, findings, POA&M items) still reads the whole inventory.

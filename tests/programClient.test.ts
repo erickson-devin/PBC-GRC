@@ -14,7 +14,8 @@ import {
   shouldPersistAssessment,
   validateProgramInput,
 } from '../src/data/programSync';
-import { nistControlsWithPrivacy, programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
+import { boundaryAssets, membershipDelta, membershipLabels, parseAssetMemberships, parseProgramAssets } from '../src/data/programAssets';
+import { nistControlsWithPrivacy,programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
 import { describeOverlayChange, menuLockReason, overlayLockReason, overlayLockText, overlayScopeNote, overlaySaveErrorMessage, programOverlayLabels, summarizeOverlayChange } from '../src/data/overlayScoping';
 import type { OverlayLock, OverlayLockContext } from '../src/data/overlayScoping';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
@@ -306,6 +307,27 @@ async function headers() {
     const metrics = await ApiClient.getProgramMetrics('t1', 'p1');
     assert(calls[0].url === '/api/v1/tenants/t1/programs/p1/metrics' && metrics.evidenceCount === 5 && metrics.documented === 112, 'H9 getProgramMetrics reads the metrics endpoint');
 
+    // Boundary asset membership (#26): named in the URL, so never an x-program-id
+    stub(200, { programId: 'p1', declared: true, assetIds: ['a1'], added: 1, removed: 0 });
+    const updated = await ApiClient.updateProgramAssets('t1', 'p1', { add: ['a1'] });
+    assert(
+      calls[0].url === '/api/v1/tenants/t1/programs/p1/assets' && calls[0].init.method === 'PATCH' && calls[0].init.body === '{"add":["a1"]}'
+        && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === undefined && updated.assetIds.join() === 'a1',
+      'PA-C1 updateProgramAssets is a PATCH on /programs/:id/assets with the delta body, x-tenant-id and no x-program-id',
+      { url: calls[0].url, body: calls[0].init.body }
+    );
+    stub(200, { programId: 'p1', declared: true, assetIds: ['a1', 5, null] });
+    const got = await ApiClient.getProgramAssets('t1', 'p1');
+    assert(
+      calls[0].url === '/api/v1/tenants/t1/programs/p1/assets' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === undefined
+        && got.assetIds.join() === 'a1' && got.declared === true && got.summary.total === 0,
+      'PA-C2 getProgramAssets is a GET on the same URL and keeps only string ids',
+      got
+    );
+    stub(200, { memberships: [{ programId: 'p1', archived: false, assetIds: ['a1'] }] });
+    const mem = await ApiClient.listProgramAssetMemberships('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/programs/asset-memberships' && headerOf(calls[0], 'x-program-id') === undefined && mem.p1?.join() === 'a1', 'PA-C2b listProgramAssetMemberships reads asset-memberships', calls[0].url);
+
     stub(200, {});
     await ApiClient.uploadEvidenceFile('/api/v1/evidence/x', new Blob(['x']), 'text/plain', 't1', 'p1');
     assert(headerOf(calls[0], 'x-program-id') === 'p1' && headerOf(calls[0], 'x-tenant-id') === 't1', 'H10 uploadEvidenceFile sends x-program-id');
@@ -433,6 +455,26 @@ assert(
 );
 assert(JSON.stringify(programOverlayLabels({ noWireless: true, nonNetworkedOnly: true })) === '["Air-gapped","No wireless"]' && programOverlayLabels({}).length === 0 && programOverlayLabels(undefined).length === 0, 'O13 programOverlayLabels lists the active ones in menu order');
 
+console.log('\n--- Boundary asset membership helpers (programAssets.ts) ---');
+const pam = parseAssetMemberships({ memberships: [{ programId: 'p1', assetIds: ['a1'] }, { programId: '', assetIds: [] }, null] });
+assert(JSON.stringify(pam) === '{"p1":["a1"]}' && JSON.stringify(parseAssetMemberships(null)) === '{}', 'PA-C3 parseAssetMemberships maps program id to ids, drops bad rows, null gives {}', pam);
+const ba1 = { id: 'a1', cmmcAssetCategory: 'CUI_ASSET' as const };
+const ba2 = { id: 'a2', cmmcAssetCategory: 'SECURITY_PROTECTION' as const };
+assert(
+  boundaryAssets([ba1, ba2], ['a1'], true).map((a) => a.id).join() === 'a1' && boundaryAssets([ba1, ba2], [], false).map((a) => a.id).join() === 'a1,a2' && boundaryAssets([ba1], ['zz'], true).length === 0,
+  'PA-C4 boundaryAssets: the members when declared, the whole inventory when not, nothing when the member is gone'
+);
+const delta = membershipDelta(new Set(['a', 'b']), new Set(['b', 'c']));
+assert(JSON.stringify(delta) === '{"add":["c"],"remove":["a"]}', 'PA-C5 membershipDelta gives the ids to add and to remove', delta);
+const pas = parseProgramAssets({ programId: 'p1', assetIds: ['a1'], summary: { total: 3, inScope: 2, byCategory: { CUI_ASSET: 2, bogus: 9 } } });
+assert(pas.declared === true && pas.summary.total === 3 && pas.summary.byCategory.CUI_ASSET === 2 && !('bogus' in pas.summary.byCategory) && !parseProgramAssets(null).declared, 'PA-C3b parseProgramAssets derives declared, keeps only known summary fields, and null is undeclared', pas);
+const labels = membershipLabels(
+  'a1',
+  { p1: ['a1'], p2: ['a1'], p3: ['a2'] },
+  [{ id: 'p2', name: 'Lab', archived: true, isDefault: false }, { id: 'p1', name: 'Main', archived: false, isDefault: true }, { id: 'p3', name: 'Other', archived: false, isDefault: false }]
+);
+assert(JSON.stringify(labels) === '[{"id":"p1","name":"Main","archived":false,"isDefault":true},{"id":"p2","name":"Lab","archived":true,"isDefault":false}]', 'PA-C5b membershipLabels lists the programs of an asset with their id, default first, archived flagged', labels);
+
 async function main() {
   await headers();
 
@@ -456,6 +498,14 @@ async function main() {
   const leaked = tenantWide.filter((x) => /programId/.test(x.params)).map((x) => x.name);
   assert(tenantWide.length > 20 && leaked.length === 0, 'T2c no tenant-wide method takes a programId', { leaked, checked: tenantWide.length });
   assert(/getHeaders\(tenantId: string, extraHeaders\?: HeadersInit, programId\?: string \| null\)/.test(api), 'T2d getHeaders accepts an optional programId');
+
+  const hookSource = fs.readFileSync(path.join(root, 'src/hooks/useProgramAssets.ts'), 'utf8');
+  assert(!/localStorage|sessionStorage|setItem|console\./.test(hookSource), 'PA-C6 useProgramAssets uses no browser storage and no console');
+  assert(
+    /options\?: \{ enabled\?: boolean \}/.test(hookSource) && /status: ProgramAssetsStatus/.test(hookSource) && /activeIds: ReadonlySet<string>/.test(hookSource) && /export function subscribeProgramAssets/.test(hookSource) && /add: \(ids: string\[\]\) => Promise<void>/.test(hookSource) && /unknown_assets/.test(hookSource) && /program_not_found/.test(hookSource) && /409/.test(hookSource) && /refreshPrograms\(tenantId\)/.test(hookSource),
+    'PA-C8 useProgramAssets exposes status, enabled, a memoised ReadonlySet, add/remove that reject, a notifier, and reloads on a stale refusal'
+  );
+  assert(['listProgramAssetMemberships', 'getProgramAssets', 'updateProgramAssets'].every((n) => byName.has(n) && !scoped.includes(n) && !/programId\?/.test(byName.get(n)?.params ?? '')), 'PA-C7 the membership methods are in the apiClient and take the program id as a plain argument');
 
   const syncSource = fs.readFileSync(path.join(root, 'src/data/programSync.ts'), 'utf8');
   assert(!/\.setItem\(/.test(syncSource), 'T2e programSync.ts writes no browser storage');

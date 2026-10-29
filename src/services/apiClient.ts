@@ -27,6 +27,8 @@ import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, S
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
+import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
+import type { ProgramAssets } from '../data/programAssets';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 import { bearerFromHeaders, reportResponseStatus } from './sessionSignal';
 
@@ -551,6 +553,24 @@ export const ApiClient = {
   /** GET .../programs/:programId/metrics */
   async getProgramMetrics(tenantId: string, programId: string): Promise<ProgramMetrics> {
     return parseProgramMetrics(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/metrics`, { tenantId }));
+  },
+
+  /** GET .../programs/asset-memberships: { programId: assetIds } for every program, archived ones included. */
+  async listProgramAssetMemberships(tenantId: string): Promise<Record<string, string[]>> {
+    return parseAssetMemberships(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs/asset-memberships`, { tenantId }));
+  },
+
+  /** GET .../programs/:programId/assets: the assets the program declares inside its boundary (none declared means the whole inventory). */
+  async getProgramAssets(tenantId: string, programId: string): Promise<ProgramAssets> {
+    return parseProgramAssets(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/assets`, { tenantId }));
+  },
+
+  /** PATCH .../programs/:programId/assets with ids to add and remove. Owner / MSP admin only; an archived program refuses it. */
+  async updateProgramAssets(tenantId: string, programId: string, change: { add?: string[]; remove?: string[] }): Promise<ProgramAssets> {
+    const body: { add?: string[]; remove?: string[] } = {};
+    if (change.add?.length) body.add = change.add;
+    if (change.remove?.length) body.remove = change.remove;
+    return parseProgramAssets(await authedJson('PATCH', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/assets`, { tenantId, body }));
   },
 
   // ---------------------------------------------------------------- team: members and invitations

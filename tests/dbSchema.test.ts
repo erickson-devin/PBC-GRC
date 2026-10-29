@@ -165,7 +165,8 @@ const programsBlock = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt, TABLES_
 // The program DDL proper: the assessment-objectives tables that follow it are new tables with their own inline key (pinned further down)
 const objectivesAt = TABLES_SQL.indexOf('-- Assessment objectives');
 const programDdl = programsAt < 0 ? '' : TABLES_SQL.slice(programsAt, objectivesAt > programsAt ? objectivesAt : undefined);
-const objectivesDdl = objectivesAt < 0 ? '' : TABLES_SQL.slice(objectivesAt);
+const membershipAt = TABLES_SQL.indexOf('-- Boundary asset membership');
+const objectivesDdl = objectivesAt < 0 ? '' : TABLES_SQL.slice(objectivesAt, membershipAt > objectivesAt ? membershipAt : undefined);
 assert(programsAt >= 0 && TABLES_SQL.includes('CREATE TABLE IF NOT EXISTS programs ('), 'P1: programs is created by initDb');
 assert(RLS_TENANT_TABLES.some((r) => r.table === 'programs' && r.tenantColumn === 'tenant_id'), 'P1: programs is in RLS_TENANT_TABLES on tenant_id (FORCE RLS and the tenant policy)');
 assert(programsBlock.includes('CONSTRAINT unq_programs_tenant_id UNIQUE (tenant_id, id)'), 'P1: programs carries the (tenant_id, id) key the composite foreign keys point at');
@@ -218,9 +219,9 @@ assert(peAt > objectivesAt && programEvents !== '', 'P1: program_events is creat
 assert(!/FOREIGN KEY|REFERENCES/.test(programEvents) && /program_id VARCHAR\(64\) NOT NULL/.test(programEvents), 'P1: program_events has no foreign key (the history outlives the program) and a NOT NULL program_id');
 assert(!/^\s+(name|description|notes|narrative)\s/m.test(programEvents) && /old_value JSONB,/.test(programEvents) && /new_value JSONB NOT NULL/.test(programEvents), 'P1: program_events holds JSON values only, no name, description, notes or narrative column');
 assert(
-  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared'))") &&
+  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed'))") &&
     TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS program_events_kind_check') < TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check'),
-  'P1: the event kind CHECK lists the four kinds, dropped before it is added'
+  'P1: the event kind CHECK lists the five kinds, dropped before it is added'
 );
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);'), 'P1: program_events is indexed by program and time');
 assert(RLS_TENANT_TABLES.some((r) => r.table === 'program_events' && r.tenantColumn === 'tenant_id') && !PROGRAM_BACKFILL_TABLES.includes('program_events' as never), 'P1: program_events is a tenant and program RLS table but is not backfilled');
@@ -262,7 +263,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables and program_events', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events and program_assets', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -350,6 +351,28 @@ assert(
 );
 assert(OBJECTIVE_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'OBJ: both tables are in RLS_TENANT_TABLES on tenant_id');
 assert(!objectivesDdl.includes('NOT VALID') && !objectivesDdl.includes('SET NOT NULL'), 'OBJ: no NOT VALID check and no SET NOT NULL (the new tables need neither)');
+
+console.log('\n--- Boundary asset membership (program_assets, issue #26) ---');
+const paAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_assets (');
+const paBlock = paAt < 0 ? '' : TABLES_SQL.slice(paAt, TABLES_SQL.indexOf('\n  );', paAt));
+assert(paAt > peAt && peAt > 0 && membershipAt > peAt && membershipAt < paAt, 'PA1: program_assets is created after program_events, under its own heading');
+assert(
+  paBlock.includes('CONSTRAINT pk_program_assets PRIMARY KEY (tenant_id, program_id, asset_id)') &&
+    paBlock.includes('CONSTRAINT fk_program_assets_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
+    paBlock.includes('CONSTRAINT fk_program_assets_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE') &&
+    /program_id VARCHAR\(64\) NOT NULL/.test(paBlock),
+  'PA2: composite primary key, both composite foreign keys cascade, program_id is NOT NULL'
+);
+assert(paBlock !== '' && !/asset_name|host_name|ip_address|mac_address|description|notes/.test(paBlock), 'PA3: program_assets holds ids only (no name, address, description or notes column)');
+assert(
+  RLS_TENANT_TABLES.some((r) => r.table === 'program_assets' && r.tenantColumn === 'tenant_id') &&
+    RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 1] === 'program_assets' &&
+    !PROGRAM_BACKFILL_TABLES.includes('program_assets' as never),
+  'PA4: program_assets is a tenant table, the last program table, and is not backfilled'
+);
+assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_assets_asset ON program_assets (tenant_id, asset_id);'), 'PA5: program_assets is indexed by asset');
+const afterMembership = membershipAt < 0 ? '' : TABLES_SQL.slice(membershipAt);
+assert(afterMembership !== '' && !afterMembership.includes('NOT VALID') && !afterMembership.includes('SET NOT NULL'), 'PA6: no NOT VALID check and no SET NOT NULL after the membership heading');
 
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);

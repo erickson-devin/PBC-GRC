@@ -15,6 +15,7 @@ import { programFrameworkControls, scopingToOverlays } from '../src/data/program
 import { getFrameworkControls } from '../src/data/frameworks';
 import type { Program } from '../src/types/program';
 import { computeSha256, canonicalJson } from '../src/data/audit/auditLogger';
+import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetScope';
 import { createInitialState } from '../src/services/storageService';
 
 // Polyfill minimal localStorage for Node environment if absent
@@ -242,6 +243,31 @@ async function runTests() {
       'OB-P7: one program fetches only its own controls and evidence'
     );
 
+    // OB-P10: the package states the program's declared assets, or the whole inventory while it declares none (issue #26)
+    const bAssets = [
+      { id: 'a1', hostName: 'H1', cmmcAssetCategory: 'CUI_ASSET' },
+      { id: 'a2', hostName: 'H2', cmmcAssetCategory: 'CUI_ASSET' },
+    ] as any[];
+    const declaredNarrative = boundaryNarrative(summarizeScope([bAssets[0]]));
+    const wholeNarrative = boundaryNarrative(summarizeScope(bAssets));
+    const declaredPkg = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, bAssets, {
+      ...deps, getProgramAssets: async () => ({ declared: true, assetIds: ['a1'] }),
+    });
+    const undeclaredPkg = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, bAssets, {
+      ...deps, getProgramAssets: async () => ({ declared: false, assetIds: [] }),
+    });
+    assert(
+      declaredNarrative !== wholeNarrative
+        && JSON.stringify(declaredPkg.packages[0].reports.systemSecurityPlan).includes(declaredNarrative)
+        && JSON.stringify(undeclaredPkg.packages[0].reports.systemSecurityPlan).includes(wholeNarrative),
+      'OB-P10: a declared program states only its assets; an undeclared one states the whole inventory'
+    );
+    let failedClosed: unknown = null;
+    try {
+      await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, bAssets, { ...deps, getProgramAssets: async () => { throw new Error('boom'); } });
+    } catch (err) { failedClosed = err; }
+    assert(failedClosed instanceof Error, 'OB-P10b: if the declared assets cannot be read the export rejects (no package with the wrong boundary)');
+
     let notFound: unknown = null;
     try { await buildProgramHandover(progTenant, { kind: 'program', programId: 'nope' }, undefined, deps); } catch (err) { notFound = err; }
     assert(notFound instanceof Error && /not found/.test(notFound.message), 'OB-P8: an unknown program rejects with "not found"');
@@ -259,7 +285,10 @@ async function runTests() {
     assert(dialogSrc.includes('<DialogOverlay') && dialogSrc.includes('includeArchived: true') && dialogSrc.includes('<legend'), 'OB-U2: the chooser is a dialog with a legend, listing archived programs too');
     assert(!/console\./.test(dialogSrc), 'OB-U3: the chooser logs nothing');
     assert(dialogSrc.includes('You are not a member of this tenant') && dashSrc2.includes('NOT_MEMBER_MESSAGE'), 'OB-U4: the not-a-member text is still shown');
-    assert(!/getProgramAssets|getProgramAssetIds/.test(dialogSrc + dashSrc2), 'OB-U5: every package states the tenant-wide inventory (per-program assets are not wired yet)');
+    assert(
+      dashSrc2.includes('getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p)') && dialogSrc.includes('declared its assets') && !dialogSrc.includes('Each package states the whole asset inventory'),
+      'OB-U5: the handover follows the program\'s declared assets (the dashboard reads them, the chooser says so)'
+    );
   }
 
   // Test Group 2: NIST SP 800-88 Cryptographic Sanitization & Destruction Protocol

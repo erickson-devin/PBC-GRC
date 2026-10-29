@@ -65,6 +65,8 @@ export type ProgramErrorCode =
   | 'program_not_empty'
   | 'invalid_scoping'
   | 'invalid_vm_target'
+  | 'invalid_asset_ids'
+  | 'unknown_assets'
   | 'program_is_vm_target'
   | 'not_implemented';
 
@@ -115,7 +117,7 @@ export interface ProgramActor {
   userId: string | null;
 }
 
-export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared';
+export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared' | 'assets_changed';
 
 /** One entry of a program's history. Holds booleans and ids only (never a name or a description), so it carries no CUI. */
 export interface ProgramEvent {
@@ -203,7 +205,7 @@ function rowToEvent(r: pg.QueryResultRow): ProgramEvent {
 }
 
 /** Records one event in a transaction (PostgreSQL): the program policy of program_events needs the program as the current one. */
-async function insertEventTx(q: Query, tenantId: string, programId: string, kind: ProgramEventKind, who: ProgramActor, oldValue: Record<string, unknown> | null, newValue: Record<string, unknown>): Promise<void> {
+export async function insertEventTx(q: Query, tenantId: string, programId: string, kind: ProgramEventKind, who: ProgramActor, oldValue: Record<string, unknown> | null, newValue: Record<string, unknown>): Promise<void> {
   await q('SELECT set_config($1, $2, true)', ['app.current_program_id', programId]);
   await q(
     `INSERT INTO program_events (tenant_id, program_id, kind, actor, actor_user_id, old_value, new_value)
@@ -212,7 +214,7 @@ async function insertEventTx(q: Query, tenantId: string, programId: string, kind
   );
 }
 
-function pushMemoryEvent(tenantId: string, programId: string, kind: ProgramEventKind, who: ProgramActor, oldValue: Record<string, unknown> | null, newValue: Record<string, unknown>): void {
+export function pushMemoryEvent(tenantId: string, programId: string, kind: ProgramEventKind, who: ProgramActor, oldValue: Record<string, unknown> | null, newValue: Record<string, unknown>): void {
   memoryProgramEvents.push({
     id: crypto.randomUUID(), tenantId, programId, kind, actor: who.actor.slice(0, 255), actorUserId: who.userId ? who.userId.slice(0, 128) : null,
     oldValue, newValue, createdAt: new Date().toISOString(),
@@ -233,10 +235,10 @@ export async function listProgramEvents(scope: ProgramScope, limit = 100): Promi
   return res.rows.map(rowToEvent);
 }
 
-type Query = (text: string, params?: SqlParam[]) => Promise<pg.QueryResult>;
+export type Query = (text: string, params?: SqlParam[]) => Promise<pg.QueryResult>;
 
 /** One PostgreSQL transaction under the tenant's RLS context. */
-async function inTenantTx<T>(tenantId: string, fn: (q: Query) => Promise<T>): Promise<T> {
+export async function inTenantTx<T>(tenantId: string, fn: (q: Query) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
