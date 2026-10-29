@@ -24,6 +24,10 @@ import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { ApiClient } from '../../services/apiClient';
 import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
+import { ConfirmDiscardLocalCopyDialog } from './ConfirmDiscardLocalCopyDialog';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { useLocalEvidenceCopies } from '../../hooks/useLocalEvidenceCopies';
+import type { LocalEvidenceCopy } from '../../services/localEvidenceCopies';
 
 import { copyToClipboard } from '../../utils/clipboard';
 export const EvidenceVaultView: React.FC = () => {
@@ -55,8 +59,24 @@ export const EvidenceVaultView: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [pendingDelete, setPendingDelete] = useState<EvidenceItem | null>(null);
 
+  const local = useLocalEvidenceCopies();
+  const [pendingDiscard, setPendingDiscard] = useState<LocalEvidenceCopy | null>(null);
+  const [controlChoice, setControlChoice] = useState<Record<string, string>>({});
+  const [localMessage, setLocalMessage] = useState<string | null>(null);
+  const programLabel = activeProgram?.name ?? 'the default program';
+
   // A tenant or program switch closes a pending confirmation: it named another boundary's file
-  useEffect(() => { setPendingDelete(null); }, [currentTenant.id, activeProgram?.id]);
+  useEffect(() => { setPendingDelete(null); setPendingDiscard(null); setLocalMessage(null); }, [currentTenant.id, activeProgram?.id]);
+
+  const handleUploadLocal = async (copy: LocalEvidenceCopy, controlId: string) => {
+    setLocalMessage(null);
+    const result = await local.upload(copy, controlId);
+    if (result.status === 'moved') setLocalMessage('Uploaded to the server and removed from this browser.');
+    else if (result.status === 'uploadedUnverified') setLocalMessage('Uploaded. The server copy could not be checked against this one yet, so the browser copy is kept and checked again next time.');
+    else if (result.status === 'needsControl') setLocalMessage('Choose a control first.');
+    else if (result.status === 'missing') setLocalMessage('This file is no longer in this browser.');
+    else setLocalMessage('Not uploaded. The file stays in this browser; try again.');
+  };
 
   // Synchronize targetControlId when framework controls change
   useEffect(() => {
@@ -215,6 +235,62 @@ export const EvidenceVaultView: React.FC = () => {
           <p className="text-xs text-slate-400 mt-1">SHA-256 Checksums Verified</p>
         </div>
       </div>
+
+      {/* Evidence files that exist only in this browser (never uploaded, or left behind by an older version) */}
+      {currentTenant.serverBacked && (local.copies.length > 0 || local.status === 'error') && (
+        <section aria-labelledby="local-copies-heading" className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/40 space-y-3">
+          <div>
+            <h3 id="local-copies-heading" className="text-sm font-bold text-amber-200 flex items-center gap-2">
+              <HardDrive className="w-4 h-4" aria-hidden="true" /> Only in this browser ({local.copies.length})
+            </h3>
+            <p className="text-xs text-slate-300 mt-1">
+              These evidence files are stored in this browser but not on the server, so nobody else can see them. {canEdit
+                ? <>Upload each one to {programLabel}, or discard it. Nothing here is deleted automatically.</>
+                : <>Only an editor can upload or discard them.</>}
+            </p>
+          </div>
+          {local.status === 'error' && (
+            <div className="flex items-center justify-between gap-3">
+              <ErrorNotice message={local.error} className="flex-1" />
+              <button type="button" onClick={local.refresh} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">Check again</button>
+            </div>
+          )}
+          <ul aria-label="Evidence files only in this browser" className="divide-y divide-amber-500/20">
+            {local.copies.map((copy, i) => {
+              const valid = (id: string | null) => !!id && frameworkControls.some(c => c.id === id);
+              const chosen = controlChoice[copy.key] ?? (valid(copy.controlId) ? copy.controlId! : '');
+              const busy = local.busyKey !== null;
+              return (
+                <li key={copy.key} className="py-2.5 flex flex-col sm:flex-row sm:items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-white text-xs truncate">{copy.name}</p>
+                    <p className="text-xs text-slate-400 font-mono">{Math.round(copy.size / 1024)} KB · {copy.uploadedAt.split('T')[0]}</p>
+                  </div>
+                  {canEdit && (<>
+                    <label htmlFor={`local-copy-control-${i}`} className="sr-only">Control for {copy.name}</label>
+                    <select id={`local-copy-control-${i}`} value={chosen} disabled={busy}
+                      onChange={(e) => setControlChoice(prev => ({ ...prev, [copy.key]: e.target.value }))}
+                      className="w-full sm:w-64 text-xs rounded-xl px-3 py-2 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500">
+                      <option value="" disabled>Choose a control</option>
+                      {frameworkControls.map(c => <option key={c.id} value={c.id}>{c.id} - {c.title}</option>)}
+                    </select>
+                    <button type="button" disabled={busy || !chosen || Boolean(activeProgram?.archived)} onClick={() => void handleUploadLocal(copy, chosen)}
+                      className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
+                      <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>{local.busyKey === copy.key ? 'Uploading…' : 'Upload to server'}</span>
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => setPendingDiscard(copy)} aria-label={`Discard ${copy.name}`}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold border bg-rose-950/40 text-rose-300 border-rose-800/50 hover:bg-rose-900/50 disabled:opacity-50">
+                      Discard
+                    </button>
+                  </>)}
+                </li>
+              );
+            })}
+          </ul>
+          <p role="status" aria-live="polite" className="text-xs text-amber-200">{localMessage}</p>
+        </section>
+      )}
 
       {/* Quick Upload Box */}
       {canEdit ? (
@@ -454,6 +530,8 @@ export const EvidenceVaultView: React.FC = () => {
           onDeleted={() => requestAnimationFrame(() => searchInputRef.current?.focus())}
         />
       )}
+
+      {canEdit && pendingDiscard && <ConfirmDiscardLocalCopyDialog copy={pendingDiscard} onConfirm={() => local.discard(pendingDiscard)} onClose={() => setPendingDiscard(null)} onDiscarded={() => requestAnimationFrame(() => searchInputRef.current?.focus())} />}
     </div>
   );
 };

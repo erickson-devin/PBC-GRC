@@ -4,13 +4,7 @@ import { useTenant } from '../context/TenantContext';
 import { ApiClient } from '../services/apiClient';
 import { runEvidenceBlobScrub } from '../services/evidenceBlobScrub';
 import { programScopeKey } from '../data/programSync';
-
-async function sha256Hex(data: ArrayBuffer): Promise<string | null> {
-  const subtle = typeof crypto !== 'undefined' ? crypto.subtle : undefined;
-  if (!subtle) return null;
-  const digest = await subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
+import { sha256Hex } from '../services/localEvidenceCopies';
 
 /**
  * For a server-backed tenant the server is the only home of evidence files, so a browser copy left by an older version is removed,
