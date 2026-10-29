@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { overlayLockReason } from '../src/data/overlayScoping';
 
 /**
  * Multi-program wave 4 (P5): static checks that the views follow the active program (SSP import re-keyed and pinned, labels,
@@ -88,10 +89,32 @@ assert(/\+ Privacy/.test(read('src/components/layout/ProgramSwitcher.tsx')), 'Pr
 assert(/\+ Privacy/.test(read('src/components/programs/ProgramsPage.tsx')), 'ProgramsPage.tsx baseline chip appends " + Privacy"');
 assert(/programFrameworkControls\(/.test(read('src/context/AssessmentContext.tsx')) && /privacyBaseline: activeProgram\.privacyBaseline/.test(read('src/context/AssessmentContext.tsx')), 'AssessmentContext.tsx resolves the NIST program controls with the privacy baseline');
 const switcher = read('src/components/layout/FrameworkSwitcher.tsx');
-assert(/activeProgram\?\.privacyBaseline/.test(switcher) && /disabled=\{Boolean\(o\.disabledReason\)\}/.test(switcher), 'FrameworkSwitcher.tsx disables the No PII overlay for a privacy program');
-assert(/activeProgram\?\.privacyBaseline && storedOverlayFilters\.noPiiProcessing/.test(read('src/context/TenantContext.tsx')), 'TenantContext.tsx does not apply No PII processing to a privacy program');
+assert(/overlayLockReason\(/.test(switcher) && /aria-disabled=\{locked \|\| undefined\}/.test(switcher) && /o\.disabledReason \? reasonId/.test(switcher), 'FrameworkSwitcher.tsx gives each locked overlay a reason through aria-describedby');
+{
+  const privacyProgram = { framework: 'NIST_800_53_REV5', privacyBaseline: true, archived: false };
+  const lockCtx = { serverBacked: true, programsStatus: 'ready' as const, canManagePrograms: true, framework: 'NIST_800_53_REV5', program: privacyProgram };
+  assert(overlayLockReason('noPiiProcessing', lockCtx) === 'privacy', 'overlayScoping.ts locks No PII processing on a privacy program');
+  assert(overlayLockReason('noWireless', lockCtx) === null, 'overlayScoping.ts leaves the other overlays open on a privacy program');
+}
 assert(/value="PRIVACY"/.test(matrix) && /baselines\[selectedBaselineFilter\.toLowerCase\(\)/.test(matrix) && /\+ Privacy/.test(matrix), 'AssessmentMatrix.tsx has the Privacy filter and label');
 assert(/coverage\?\.privacy/.test(ssp), 'SspImportView.tsx marks an import that covered the privacy baseline');
+
+console.log('--- overlays are a program setting (#22) ---');
+assert(/\{!isEdit && isNist && \(/.test(programForm) && /OVERLAY_KEYS\.map\(/.test(programForm) && /Operational overlays \(optional\)/.test(programForm), 'ProgramFormModal.tsx offers the overlays at creation, for NIST only');
+assert(/key === 'noPiiProcessing' && privacyBaseline/.test(programForm) && /setScoping\(\{ nonNetworkedOnly: false \}\)/.test(programForm), 'ProgramFormModal.tsx locks No PII on the privacy baseline and clears the overlays on a framework change');
+assert(
+  /setScoping\(privacyBaseline \? \{ \.\.\.next, noPiiProcessing: false \} : next\)/.test(programForm) && /onChange=\{\(e\) => chooseSource\(e\.target\.value\)\}/.test(programForm) && /source\.framework !== 'NIST_800_53_REV5'/.test(programForm),
+  'ProgramFormModal.tsx prefills a NIST clone source\'s overlays (visible and changeable; the server does not copy them)'
+);
+assert(programForm.includes('Overlays: {programOverlayLabels(program.scoping)'), 'ProgramFormModal.tsx shows the overlays read-only on an edit');
+assert(/programOverlayLabels\(program\.scoping\)/.test(read('src/components/programs/ProgramsPage.tsx')), 'ProgramsPage.tsx shows an overlays chip on each program card');
+assert(/resetLock === null \?/.test(matrix) && /<ConfirmOverlayChangeDialog/.test(matrix) && !/onClick=\{toggleNonNetworkedOverlay\}/.test(matrix), 'AssessmentMatrix.tsx gates and confirms Reset Overlay');
+assert(switcher.includes('<ConfirmOverlayChangeDialog') && switcher.includes('menuLockReason(') && switcher.includes('aria-disabled={locked || undefined}') && switcher.includes('aria-describedby={describedBy}')
+  && !switcher.includes('Saved in this browser;') && !switcher.includes('kept in this browser') && !/\sdisabled=\{/.test(switcher), 'FrameworkSwitcher.tsx confirms a change and uses aria-disabled with described reasons');
+assert(/if \(pendingRef\.current\) return;/.test(switcher) && switcher.indexOf('<ConfirmOverlayChangeDialog') > switcher.indexOf('{isOpen && ('), 'FrameworkSwitcher.tsx survives clicks in the portalled dialog');
+const overlayDialog = read('src/components/programs/ConfirmOverlayChangeDialog.tsx');
+assert(overlayDialog.includes('role="alertdialog"') && overlayDialog.includes('z-[60]') && overlayDialog.includes('max-h-[90vh]') && overlayDialog.includes('autoFocus')
+  && overlayDialog.includes('<ErrorNotice') && overlayDialog.includes('overlaySaveErrorMessage(err)') && !overlayDialog.includes('console.'), 'ConfirmOverlayChangeDialog.tsx follows the alertdialog pattern');
 
 console.log('--- no stale scope identifiers ---');
 for (const rel of FILES) assert(!read(rel).includes('liveControlsTenantId'), `${path.basename(rel)} does not reference liveControlsTenantId`);

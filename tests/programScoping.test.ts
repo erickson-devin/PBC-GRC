@@ -1,4 +1,6 @@
 import './testEnv';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { server } from '../server/index';
 import { readControlAssessments } from '../server/controlAssessments';
 import { getFrameworkControls } from '../src/data/frameworks';
@@ -194,6 +196,44 @@ async function run() {
   assert(privOnly !== '' && withP.body?.controls?.some((c: Json) => c.id === privOnly), '30 and the list includes a privacy-only control', privOnly);
   const plainNist = await call('GET', '/controls?framework=NIST_800_53_REV5&baseline=MOD_MOD_MOD', owner, T, undefined, nist.body?.program?.id as string);
   assert(plainNist.status === 200 && plainNist.body?.controls?.length === 287 && plainNist.body.privacyBaseline === undefined && !plainNist.body.controls.some((c: Json) => c.id === privOnly), '30 a plain MODERATE program lists 287 controls, without the privacy-only control and without the flag', [plainNist.body?.controls?.length, plainNist.body?.privacyBaseline]);
+
+  console.log('\n--- C1-C12: the program decides the baseline and overlays of GET /controls ---');
+  const NIST = 'NIST_800_53_REV5';
+  const nsRes = await newProgram(T, { name: 'NIST Scoped', frameworkId: NIST, baseline: 'MODERATE', scoping: { noWireless: true } });
+  const NS = nsRes.body?.program?.id as string;
+  assert(nsRes.status === 201 && JSON.stringify(nsRes.body?.program?.scoping) === JSON.stringify({ noWireless: true }), 'C1 a MODERATE NIST program created with { noWireless: true } -> 201 and the scoping is stored', nsRes.body);
+  const noWirelessLen = getFrameworkControls(NIST, 'MOD_MOD_MOD', { nonNetworkedOnly: false, noWireless: true }).length;
+  const c2 = await call('GET', '/controls', owner, T, undefined, NS);
+  assert(c2.status === 200 && c2.body?.controls?.length === noWirelessLen && !c2.body.controls.some((x: Json) => x.id === 'AC-18') && c2.body.scopedByProgram === true && c2.body.overlays?.noWireless === true, 'C2 no query: the program\'s baseline and overlay (no AC-18, scopedByProgram true)', [c2.status, c2.body?.controls?.length, noWirelessLen]);
+  const c3 = await call('GET', `/controls?framework=${NIST}&baseline=LOW_LOW_LOW&overlay=NONE`, owner, T, undefined, NS);
+  assert(c3.status === 200 && c3.body?.controls?.length === noWirelessLen && c3.body.baseline === 'MOD_MOD_MOD', 'C3 a query asking for LOW and no overlay is ignored for the program\'s own framework', [c3.body?.controls?.length, c3.body?.baseline]);
+  const c4 = await call('GET', `/controls?framework=${NIST}&overlay=NON_NETWORKED`, owner, T, undefined, NS);
+  assert(c4.status === 200 && c4.body?.controls?.length === noWirelessLen && c4.body.controls.some((x: Json) => x.id === 'SC-7') && c4.body.overlay === 'NONE', 'C4 ?overlay=NON_NETWORKED is ignored too (SC-7 stays)', [c4.body?.controls?.length, c4.body?.overlay]);
+  const c5Put = await call('PUT', `/tenants/${T}/programs/${NS}`, owner, T, { scoping: { nonNetworkedOnly: true } });
+  const nonNetIds = getFrameworkControls(NIST, 'MOD_MOD_MOD', { nonNetworkedOnly: true }).map((c) => c.id);
+  const nonNetLen = nonNetIds.length;
+  const c5 = await call('GET', '/controls', owner, T, undefined, NS);
+  // The air-gapped overlay removes SC-7 and also AC-18 (no wireless on a stand-alone system), so the set must equal the catalog's
+  const c5Ids = (c5.body?.controls ?? []).map((x: Json) => x.id);
+  assert(c5Put.status === 200 && c5.status === 200 && c5Ids.length === nonNetLen && nonNetIds.every((id) => c5Ids.includes(id)) && !c5Ids.includes('SC-7') && c5.body.overlay === 'NON_NETWORKED', 'C5 the owner switches the program to nonNetworkedOnly: the catalog\'s air-gapped set (no SC-7), overlay NON_NETWORKED', [c5Put.status, c5Ids.length, nonNetLen]);
+  const c6Assessor = await call('PUT', `/tenants/${T}/programs/${NS}`, assessor, T, { scoping: { nonNetworkedOnly: true } });
+  const c6Bogus = await call('PUT', `/tenants/${T}/programs/${NS}`, owner, T, { scoping: { bogus: true } });
+  assert(c6Assessor.status === 403 && c6Bogus.status === 400 && c6Bogus.body?.code === 'invalid_scoping', 'C6 an ASSESSOR cannot change the scoping (403); an unknown key -> 400 invalid_scoping', [c6Assessor.status, c6Bogus.status, c6Bogus.body]);
+  const c7 = await call('GET', `/tenants/${T}/programs/${NS}/events`, viewer, T);
+  assert(c7.status === 200 && c7.body?.events?.[0]?.kind === 'scoping_changed' && !JSON.stringify(c7.body).includes('NIST Scoped'), 'C7 a VIEWER reads the events: the newest is scoping_changed, and no program name in them', c7.body);
+  const c8 = await newProgram(T, { name: 'NIST Privacy Scoped', frameworkId: NIST, baseline: 'MODERATE', privacyBaseline: true, scoping: { noPiiProcessing: true } });
+  assert(c8.status === 400 && c8.body?.code === 'invalid_scoping', 'C8 noPiiProcessing on a program with the privacy baseline -> 400 invalid_scoping', c8.body);
+  const c9Create = await newProgram(T, { name: 'L2 scoped', frameworkId: 'CMMC_L2', scoping: { noWireless: true } });
+  const c9 = await call('GET', '/controls?framework=CMMC_L2&overlay=NON_NETWORKED', owner, T);
+  assert(c9Create.status === 400 && c9Create.body?.code === 'invalid_scoping' && c9.status === 200 && c9.body?.controls?.length === getFrameworkControls('CMMC_L2').length, 'C9 a CMMC program cannot be scoped (400); a CMMC program ignores ?overlay=NON_NETWORKED', [c9Create.body, c9.body?.controls?.length]);
+  const c10 = await call('GET', `/controls?framework=${NIST}&baseline=HIGH_HIGH_HIGH`, owner, T);
+  assert(c10.status === 200 && c10.body?.scopedByProgram === false && c10.body.controls?.length === getFrameworkControls(NIST, 'HIGH_HIGH_HIGH').length, 'C10 the crosswalk view of another framework keeps the query baseline (scopedByProgram false)', [c10.body?.controls?.length, c10.body?.scopedByProgram]);
+  const c11Arch = await call('POST', `/tenants/${T}/programs/${NS}/archive`, owner, T);
+  const c11 = await call('PUT', `/tenants/${T}/programs/${NS}`, owner, T, { scoping: { noWireless: true } });
+  assert(c11Arch.status === 200 && c11.status === 409 && c11.body?.code === 'program_archived', 'C11 an archived program\'s scoping cannot be changed (409 program_archived)', [c11Arch.status, c11.status, c11.body]);
+  const routeSource = readFileSync(join(process.cwd(), 'server', 'routes', 'controls.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const getHandler = routeSource.slice(routeSource.indexOf("router.get('/', async"), routeSource.indexOf("router.put('/:controlId'"));
+  assert(getHandler.includes('errorMessage(err)') && !/console\.(error|warn)\([^;]*,\s*err\)/.test(routeSource), 'C12 no controls route logs the whole error object (it can carry a row\'s notes)');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

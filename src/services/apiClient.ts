@@ -95,7 +95,9 @@ export function mfaErrorMessage(status: number, body: unknown): string {
 /** Turns a failed response into an ApiError carrying the server's `reason` (when it sent one). */
 function apiErrorFromResponse(status: number, body: unknown): ApiError {
   const err = baseApiError(status, body);
-  const reason = bodyReason(body);
+  // The programs routes send their machine-readable code as `code`
+  const code = (body as { code?: unknown } | null)?.code;
+  const reason = bodyReason(body) ?? (typeof code === 'string' && code ? code : undefined);
   if (reason) err.reason = reason;
   return err;
 }
@@ -515,10 +517,11 @@ export const ApiClient = {
 
   /** PUT /api/v1/tenants/:id/programs/:programId: name, description and boundary summary. */
   async updateProgram(tenantId: string, programId: string, updates: ProgramUpdate): Promise<Program> {
-    const body: Record<string, string> = {};
+    const body: Record<string, unknown> = {};
     if (updates.name !== undefined) body.name = updates.name;
     if (updates.description !== undefined) body.description = updates.description;
     if (updates.boundarySummary !== undefined) body.systemBoundarySummary = updates.boundarySummary;
+    if (updates.scoping !== undefined) body.scoping = updates.scoping;
     const program = parseProgramResponse(await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId, body }));
     if (!program) throw new ApiError(502, 'The server sent back a program this version of the app does not understand.');
     return program;

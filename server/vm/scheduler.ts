@@ -1,5 +1,4 @@
 import { errorMessage } from '../../src/utils/errors';
-import { ensureDefaultProgram } from '../programs';
 import { enumerateSchedulerSources, setSourceStaleSince } from './store';
 import type { SchedulerSourceRow } from './store';
 import { latestSnapshotAt, runVmSnapshot } from './snapshotWriter';
@@ -60,7 +59,7 @@ export async function runVmSchedulerTick(opts: { now?: Date; onlyTenantIds?: str
           else result.staleSet += 1;
         }
         if (snapshotDue(await latestSnapshotAt(tenantId), now.getTime(), cfg.snapshotIntervalHours)) {
-          await runVmSnapshot(tenantId, { now, trigger: 'scheduler', programId: (await ensureDefaultProgram(tenantId)).id });
+          await runVmSnapshot(tenantId, { now, trigger: 'scheduler' });
           result.snapshots.push(tenantId);
         }
       } catch (err: unknown) {

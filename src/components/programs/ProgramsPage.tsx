@@ -7,6 +7,7 @@ import { useTenant } from '../../context/TenantContext';
 import { useProgram } from '../../hooks/useProgram';
 import { ApiClient } from '../../services/apiClient';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
+import { programOverlayLabels } from '../../data/overlayScoping';
 import type { Program, ProgramMetrics } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
 
@@ -275,6 +276,7 @@ export const ProgramsPage: React.FC = () => {
     const isActive = activeProgram?.id === program.id;
     const busy = busyId === program.id;
     const baseline = baselineChip(program);
+    const overlayLabels = programOverlayLabels(program.scoping);
     const nameId = `${uid}-${program.id}`;
     return (
       <li key={program.id} aria-labelledby={nameId} className={`rounded-2xl bg-slate-900/60 border p-5 space-y-4 ${isActive ? 'border-brand-500/40 shadow-sm shadow-brand-500/10' : 'border-slate-800'}`}>
@@ -290,6 +292,7 @@ export const ProgramsPage: React.FC = () => {
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={STATUS_BADGE}>{frameworkLabel(program.framework)}</span>
             {baseline && <span className={NEUTRAL_BADGE}>{baseline}</span>}
+            {overlayLabels.length > 0 && <span className={NEUTRAL_BADGE} title="Operational overlays saved with this program">Overlays: {overlayLabels.join(', ')}</span>}
           </div>
           {(program.boundarySummary || program.description) && (
             <p className="text-xs text-slate-400 leading-relaxed line-clamp-3 whitespace-pre-line">{program.boundarySummary || program.description}</p>

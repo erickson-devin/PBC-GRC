@@ -4,7 +4,7 @@ import path from 'path';
 import { countAssets, createAgentReportedAsset, listAgentAssetCandidates, MAX_ASSETS_PER_TENANT, recordAgentReport } from '../assets';
 import { localStorageRoot, resolveTenantLocalPath } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
-import { ensureDefaultProgram } from '../programs';
+import { resolveVmTargetProgram } from '../programs';
 import type { VmRun } from '../../src/types/vm';
 import { normalizeWazuh, type NormalizedHost } from './adapters/wazuh';
 import { kindKey, planAssetMatches } from './assetMatch';
@@ -138,8 +138,8 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     else throw new RunFailure(`No normalizer for ${kind} yet.`);
 
     const now = new Date().toISOString();
-    // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's default program (decision 6).
-    const programId = (await ensureDefaultProgram(tenantId)).id;
+    // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the default program when none is set, decision 6).
+    const programId = (await resolveVmTargetProgram(tenantId)).program.id;
     const summary = await withVmTenantTx(tenantId, async (client): Promise<RunSummary> => {
       const pgClient = client ?? undefined;
       let candidates = await listAgentAssetCandidates(tenantId, pgClient);
@@ -198,7 +198,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
 
       let poam = 0;
       if (isPoamAutocreateEnabled()) {
-        const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client);
+        const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client, programId);
         const drafts = planPoamItems(overdue, linked, now);
         await insertPoamItems(tenantId, drafts, client, programId);
         poam = drafts.length;

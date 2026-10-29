@@ -1,6 +1,6 @@
 import { getFrameworkControls } from './frameworks/frameworkRegistry';
 import type { CiaTriadSelection, ComplianceFramework, FrameworkControlDefinition, ImpactLevel, OverlayFilters } from '../types/framework';
-import type { Program, ProgramBaseline } from '../types/program';
+import type { Program, ProgramBaseline, ProgramScoping } from '../types/program';
 
 /**
  * What a program's framework and baseline mean for the controls shown. Pure; the catalogs in src/data/frameworks are read, not changed.
@@ -35,6 +35,40 @@ function addPrivacyControls(security: FrameworkControlDefinition[], overlays: Pa
   const all = getFrameworkControls('NIST_800_53_REV5', 'ALL_CONTROLS', overlays);
   for (const c of all) if (c.baselines?.privacy) ids.add(c.id);
   return all.filter((c) => ids.has(c.id));
+}
+
+/** The four overlay keys a program's scoping may hold (the keys of OverlayFilters). */
+export const PROGRAM_SCOPING_KEYS = ['nonNetworkedOnly', 'noWireless', 'noMobileDevices', 'noPiiProcessing'] as const;
+
+/**
+ * Checks the scoping (overlays) a program is created or edited with and returns it in stored form: only the keys set to true. Refuses
+ * anything but a plain object, an unknown key, a value that is not a boolean, `noPiiProcessing` on a program with the privacy
+ * baseline, and any true key on a program that is not NIST SP 800-53 (CMMC assesses every requirement). Absent or null is `{}`. Pure.
+ */
+export function normalizeProgramScoping(
+  raw: unknown,
+  program: { frameworkId: string; privacyBaseline?: boolean }
+): { ok: true; value: ProgramScoping } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: {} };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'The scoping is an object of overlay switches' };
+  const known: readonly string[] = PROGRAM_SCOPING_KEYS;
+  const value: ProgramScoping = {};
+  for (const [key, flag] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known.includes(key)) return { ok: false, error: `Unknown scoping key: ${key}` };
+    if (typeof flag !== 'boolean') return { ok: false, error: `The scoping key ${key} is true or false` };
+    if (flag) value[key as keyof ProgramScoping] = true;
+  }
+  if (Object.keys(value).length === 0) return { ok: true, value };
+  const isNist = program.frameworkId === 'NIST_800_53_REV5' || program.frameworkId === 'nist-800-53-r5';
+  if (!isNist) return { ok: false, error: 'Only a NIST SP 800-53 program can be scoped' };
+  if (value.noPiiProcessing && program.privacyBaseline === true) return { ok: false, error: 'A program with the privacy baseline cannot exclude PII processing' };
+  return { ok: true, value };
+}
+
+/** The overlay switches a program's scoping stands for (every key present). */
+export function scopingToOverlays(scoping: ProgramScoping | null | undefined): OverlayFilters {
+  const s = scoping ?? {};
+  return { nonNetworkedOnly: !!s.nonNetworkedOnly, noWireless: !!s.noWireless, noMobileDevices: !!s.noMobileDevices, noPiiProcessing: !!s.noPiiProcessing };
 }
 
 /** The controls of a program: its framework's catalog, narrowed by the baseline (NIST SP 800-53, plus the privacy baseline when the program has it) and the overlays. */

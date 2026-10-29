@@ -554,8 +554,8 @@ async function run() {
   poamPayload.hosts[0].findings = [{ vuln_id: 'CVE-2024-0003', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }];
   const poamIngest = await ingest(tokenA, Buffer.from(JSON.stringify(poamPayload)));
   await __drainVmWorkerForTests();
-  const poamItems = (await loadSnapshotFindings(A)).poam;
   const defaultA = await ensureDefaultProgram(A);
+  const poamItems = (await loadSnapshotFindings(A, defaultA.id)).poam;
   assert(poamIngest.status === 202 && poamItems.length >= 1, 'an overdue finding creates an automatic POA&M item', [poamIngest.status, poamItems.length]);
   assert(poamItems.every((p) => p.programId === defaultA.id), "every automatic POA&M item carries the tenant's default program id", poamItems.map((p) => p.programId));
   assert((await countOpenPoamItems({ tenantId: A, programId: defaultA.id })) === poamItems.filter((p) => p.status === 'OPEN' || p.status === 'IN_PROGRESS').length, 'the default program counts those items as its open POA&M');

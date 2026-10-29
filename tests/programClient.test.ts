@@ -6,6 +6,7 @@ import {
   isCurrentResponse,
   parseProgramList,
   parseProgramMetrics,
+  parseProgramResponse,
   pickActiveProgramId,
   programCacheSegment,
   programCreateBody,
@@ -14,6 +15,8 @@ import {
   validateProgramInput,
 } from '../src/data/programSync';
 import { nistControlsWithPrivacy, programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
+import { describeOverlayChange, menuLockReason, overlayLockReason, overlayLockText, overlayScopeNote, overlaySaveErrorMessage, programOverlayLabels, summarizeOverlayChange } from '../src/data/overlayScoping';
+import type { OverlayLock, OverlayLockContext } from '../src/data/overlayScoping';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 import { StorageService } from '../src/services/storageService';
 import { ASSESSMENT_KEY_PREFIX } from '../src/services/browserStorageScrub';
@@ -355,10 +358,80 @@ async function headers() {
       delErr = e as { status?: number; message?: string };
     }
     assert(delErr?.status === 409 && delErr.message === 'This program is archived', 'H16b a 409 rejects with its status and the server message', delErr);
+    // B2: the programs routes send { error, code }; the ApiError carries the code as its reason
+    stub(400, { error: 'Unknown scoping key', code: 'invalid_scoping' });
+    let scopeErr: { status?: number; reason?: string } | null = null;
+    try {
+      await ApiClient.updateProgram('t1', 'p1', { scoping: { noWireless: true } });
+    } catch (e) {
+      scopeErr = e as { status?: number; reason?: string };
+    }
+    assert(scopeErr?.status === 400 && scopeErr.reason === 'invalid_scoping', 'B2 an { error, code } 400 body gives an ApiError whose reason is the code', scopeErr);
+    stub(200, { program: { id: 'p1', framework: 'NIST_800_53_REV5', baseline: 'MODERATE', name: 'N', scoping: { noWireless: true } } });
+    await ApiClient.updateProgram('t1', 'p1', { scoping: { noWireless: true } });
+    const scopeBody = JSON.parse(String(calls[0].init.body)) as { scoping?: Record<string, boolean>; name?: string };
+    assert(calls[0].init.method === 'PUT' && scopeBody.scoping?.noWireless === true && !('name' in scopeBody), 'P5s updateProgram sends the scoping object', scopeBody);
   } finally {
     globalThis.fetch = realFetch;
   }
 }
+
+console.log('\n--- Program scoping (#22) ---');
+const NISTID = 'NIST_800_53_REV5';
+const sc1 = parseProgramResponse({ program: { id: 'p', frameworkId: NISTID, baseline: 'MODERATE', scoping: { noWireless: true, bogus: true } } });
+assert(sc1 !== null && Object.keys(sc1.scoping).length === 0, 'P5g scoping with an unknown key is refused whole and shows as {}', sc1?.scoping);
+const sc2 = parseProgramResponse({ program: { id: 'p', frameworkId: NISTID, baseline: 'MODERATE', scoping: { noWireless: true } } });
+assert(JSON.stringify(sc2?.scoping) === '{"noWireless":true}', 'P5h valid scoping parses', sc2?.scoping);
+const sc3 = parseProgramResponse({ program: { id: 'p', frameworkId: NISTID, baseline: 'MODERATE', privacy_baseline: true, scoping: { noPiiProcessing: true } } });
+assert(sc3 !== null && Object.keys(sc3.scoping).length === 0, 'P5i noPiiProcessing on a privacy program shows as {}', sc3?.scoping);
+const sc4 = parseProgramResponse({ program: { id: 'p', frameworkId: NISTID, baseline: 'MODERATE' } });
+assert(sc4 !== null && Object.keys(sc4.scoping).length === 0 && sc4.vmTarget === false, 'P5j no scoping gives {} and vmTarget defaults to false', sc4);
+assert(parseProgramResponse({ program: { id: 'p', frameworkId: NISTID, baseline: 'LOW', vm_target: true } })?.vmTarget === true && parseProgramResponse({ program: { id: 'p', frameworkId: NISTID, baseline: 'LOW', vmTarget: true } })?.vmTarget === true, 'P5k vm_target and vmTarget both read as vmTarget true');
+const nistCtx = { tenantFrameworks: [NISTID, 'CMMC_L2'], existing: [] };
+const sv1 = validateProgramInput({ name: 'x', framework: NISTID, baseline: 'MODERATE', scoping: { noWireless: true } }, nistCtx);
+assert(sv1.valid && (programCreateBody(sv1.value).scoping as { noWireless?: boolean }).noWireless === true, 'P5l a NIST create body carries the scoping', programCreateBody(sv1.value));
+const sv2 = validateProgramInput({ name: 'x', framework: NISTID, baseline: 'MODERATE', scoping: { noWireless: false, nonNetworkedOnly: false } }, nistCtx);
+assert(sv2.valid && !('scoping' in programCreateBody(sv2.value)), 'P5m all-false scoping sends no scoping key', programCreateBody(sv2.value));
+assert(!!validateProgramInput({ name: 'x', framework: 'CMMC_L2', scoping: { noWireless: true } }, nistCtx).errors.scoping, 'P5n a CMMC program with an overlay on is an error');
+assert(!!validateProgramInput({ name: 'x', framework: NISTID, baseline: 'MODERATE', privacyBaseline: true, scoping: { noPiiProcessing: true } }, nistCtx).errors.scoping, 'P5o No PII on a privacy program is an error');
+
+console.log('\n--- Overlay helpers (overlayScoping.ts) ---');
+const lockCtx: OverlayLockContext = { serverBacked: true, programsStatus: 'ready', canManagePrograms: true, framework: NISTID, program: { framework: NISTID, privacyBaseline: false, archived: false } };
+assert(menuLockReason({ ...lockCtx, programsStatus: 'loading' }) === 'loading' && menuLockReason({ ...lockCtx, programsStatus: 'idle' }) === 'loading', 'O1 loading and idle lock as loading');
+assert(menuLockReason({ ...lockCtx, programsStatus: 'error' }) === 'unavailable' && menuLockReason({ ...lockCtx, program: null }) === 'unavailable', 'O2 error, or ready without a program, is unavailable');
+assert(menuLockReason({ ...lockCtx, program: { framework: NISTID, privacyBaseline: false, archived: true } }) === 'archived', 'O3 an archived program is locked');
+const cmmcProgram = { framework: 'CMMC_L2' as const, privacyBaseline: false, archived: false };
+assert(menuLockReason({ ...lockCtx, program: cmmcProgram }) === 'not_nist' && menuLockReason({ ...lockCtx, program: cmmcProgram, canManagePrograms: false }) === 'not_nist', 'O4 a CMMC program is not_nist whatever the role');
+assert(menuLockReason({ ...lockCtx, canManagePrograms: false }) === 'cannot_manage' && menuLockReason(lockCtx) === null, 'O5 NIST without the role is cannot_manage, with it null');
+const privCtx: OverlayLockContext = { ...lockCtx, program: { framework: NISTID, privacyBaseline: true, archived: false } };
+assert(overlayLockReason('noPiiProcessing', privCtx) === 'privacy' && overlayLockReason('noPiiProcessing', { ...privCtx, canManagePrograms: false }) === 'privacy' && overlayLockReason('noWireless', privCtx) === null, 'O6 No PII on a privacy program is privacy, the others stay open');
+const browserCtx: OverlayLockContext = { serverBacked: false, programsStatus: 'unsupported', canManagePrograms: true, framework: NISTID, program: null };
+assert(menuLockReason(browserCtx) === null && menuLockReason({ ...browserCtx, framework: 'CMMC_L1' }) === 'not_nist' && menuLockReason({ ...browserCtx, canManagePrograms: false }) === 'cannot_manage', 'O7 a browser-only tenant: NIST open, CMMC not_nist, no role cannot_manage');
+const allLocks: OverlayLock[] = ['loading', 'unavailable', 'archived', 'not_nist', 'privacy', 'cannot_manage'];
+assert(allLocks.every((l) => overlayLockText(l, NISTID).length > 0), 'O8a every lock has text');
+assert(overlayLockText('not_nist', 'CMMC_L2').includes('N/A') && overlayLockText('not_nist', 'CMMC_L2').includes('assessment objectives') && !overlayScopeNote(true).includes('browser') && overlayScopeNote(false).includes('this browser'), 'O8 the CMMC text points to N/A objectives and the scope note names the browser only when browser-only');
+const ovProg = { framework: NISTID, baseline: 'MODERATE' as const };
+const sumOn = summarizeOverlayChange(ovProg, noOverlays, 'noWireless');
+const wirelessOn = programFrameworkControls(ovProg, { nonNetworkedOnly: false, noWireless: true }).length;
+assert(
+  sumOn.turningOn === true && sumOn.before === programFrameworkControls(ovProg, noOverlays).length && sumOn.after === wirelessOn && sumOn.changedIds.includes('AC-18')
+    && sumOn.changedIds.length === sumOn.before - sumOn.after && sumOn.sampleIds.length === Math.min(5, sumOn.changedIds.length) && sumOn.moreCount === sumOn.changedIds.length - sumOn.sampleIds.length,
+  'O9 turning No Wireless on removes AC-18 and the counts add up', { before: sumOn.before, after: sumOn.after }
+);
+const sumOff = summarizeOverlayChange(ovProg, { nonNetworkedOnly: false, noWireless: true }, 'noWireless');
+assert(sumOff.turningOn === false && sumOff.after > sumOff.before && sumOff.changedIds.includes('AC-18'), 'O10 turning it off returns AC-18', { before: sumOff.before, after: sumOff.after });
+assert(
+  describeOverlayChange({ turningOn: true, before: 10, after: 9, changedIds: ['A'] }) === '1 control leaves the scope of this program: it goes from 10 to 9 controls.'
+    && describeOverlayChange({ turningOn: false, before: 8, after: 10, changedIds: ['A', 'B'] }) === '2 controls return to the scope of this program: it goes from 8 to 10 controls.'
+    && describeOverlayChange({ turningOn: true, before: 5, after: 5, changedIds: [] }) === 'No control of this program depends on this overlay: it keeps 5 controls.',
+  'O11 the change sentences'
+);
+assert(
+  overlaySaveErrorMessage({ status: 409 }).includes('archived') && overlaySaveErrorMessage({ status: 400, reason: 'invalid_scoping' }).includes('did not accept') && overlaySaveErrorMessage({ status: 403 }).includes('role')
+    && overlaySaveErrorMessage({ status: 0 }).includes('could not be reached') && overlaySaveErrorMessage({ code: 'overlay_locked' }).includes('right now') && !overlaySaveErrorMessage(new Error('secret-note')).includes('secret-note'),
+  'O12 the save error texts, and the server text is never echoed'
+);
+assert(JSON.stringify(programOverlayLabels({ noWireless: true, nonNetworkedOnly: true })) === '["Air-gapped","No wireless"]' && programOverlayLabels({}).length === 0 && programOverlayLabels(undefined).length === 0, 'O13 programOverlayLabels lists the active ones in menu order');
 
 async function main() {
   await headers();
@@ -421,7 +494,15 @@ async function main() {
   assert(!/ACTIVE_FRAMEWORK_KEY|ACTIVE_BASELINE_TIER_KEY|getItem\('pbc_active_cia_triad'\)|setItem\('pbc_active_cia_triad'/.test(tenantCtx), 'T6j the per-browser framework, baseline and CIA keys are no longer read or written');
   const legacy = tenantCtx.slice(tenantCtx.indexOf('const LEGACY_STORAGE_KEYS'), tenantCtx.indexOf('];', tenantCtx.indexOf('const LEGACY_STORAGE_KEYS')));
   assert(['pbc_active_framework_v1', 'pbc_active_baseline_tier_v1', 'pbc_active_cia_triad'].every((k) => legacy.includes(`'${k}'`)), 'T6k the per-browser framework, baseline and CIA keys are purged as legacy keys');
-  assert(/pbc_active_overlay_filters_v1/.test(tenantCtx) && !/pbc_active_overlay_filters_v1/.test(legacy), 'T6l overlays stay per browser (not purged)');
+  assert(!/localStorage\.setItem\(ACTIVE_OVERLAY_FILTERS_KEY/.test(tenantCtx) && legacy.includes("'pbc_active_overlay_filters_v1'"), 'T6l the browser-wide overlay key is purged as a legacy key and no longer written');
+  assert(/scopingToOverlays\(activeProgram\?\.scoping/.test(tenantCtx), 'P5a a server-backed tenant\'s overlays are derived from the active program');
+  const toggleBody = tenantCtx.slice(tenantCtx.indexOf('const toggleOverlayFilter = useCallback'), tenantCtx.indexOf('const toggleNonNetworkedOverlay = useCallback'));
+  assert(toggleBody.includes('updateProgram(program.id, { scoping:') && toggleBody.includes('overlayLockReason(') && toggleBody.includes("code: 'overlay_locked'"), 'P5b toggleOverlayFilter saves through updateProgram and rejects when the overlays are locked');
+  const serverPart = toggleBody.slice(toggleBody.indexOf('const current = scopingToOverlays'));
+  assert(!/localStorage/.test(serverPart) && !/setActiveOverlayFilters/.test(tenantCtx), 'P5c nothing is written to browser storage for a server-backed tenant, and setActiveOverlayFilters is gone');
+  assert(/overlayFiltersStorageKey = \(tenantId: string\) => `pbc_overlay_filters_\$\{tenantId\}`/.test(tenantCtx) && /removeItem\(overlayFiltersStorageKey\(tenantId\)\)/.test(tenantCtx), 'P5d a browser-only tenant keeps its overlays under pbc_overlay_filters_<tenantId>, removed by deleteTenant');
+  assert(/toggleOverlayFilter: \(key: keyof OverlayFilters\) => Promise<void>/.test(tenantCtx) && /toggleNonNetworkedOverlay: \(\) => Promise<void>/.test(tenantCtx), 'P5e the toggles return Promises');
+  assert(/body\.scoping = updates\.scoping/.test(api), 'P5f updateProgram sends scoping');
   assert(/programsStatus: ProgramsStatus = !currentTenant\.serverBacked \? 'unsupported'/.test(tenantCtx), 'T6m a browser-only tenant has programs status unsupported');
   assert(/ciaTriad = useMemo<CiaTriadSelection>\(\(\) => programBaselineToCia\(activeProgram\?\.baseline\)/.test(tenantCtx) && /activeProgram\?\.framework \?\? currentTenant\.primaryFramework/.test(tenantCtx), 'T6n the framework and CIA triad are derived from the active program');
   assert(/StorageService\.listProgramKeys\(tenantId\)/.test(tenantCtx) && /listProgramKeys\(params\.tenantId\)/.test(read('src/data/storage/offboardingEngine.ts')), 'T6o deleteTenant and the offboarding purge remove the program caches');

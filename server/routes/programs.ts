@@ -9,6 +9,8 @@ import {
   getProgram,
   getProgramMetrics,
   listPrograms,
+  listProgramEvents,
+  setVmTargetProgram,
   unarchiveProgram,
   updateProgram,
   type Program,
@@ -38,6 +40,9 @@ const STATUS_BY_CODE: Record<ProgramErrorCode, number> = {
   program_archived: 409,
   program_is_default: 409,
   program_not_empty: 409,
+  invalid_scoping: 400,
+  invalid_vm_target: 400,
+  program_is_vm_target: 409,
   not_implemented: 501,
 };
 
@@ -72,9 +77,11 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * POST /api/v1/tenants/:tenantId/programs
- * Body: { name, frameworkId, baseline?, privacyBaseline?, description?, systemBoundarySummary?, seed?: { cloneFrom: programId } }.
+ * Body: { name, frameworkId, baseline?, privacyBaseline?, scoping?, description?, systemBoundarySummary?, seed?: { cloneFrom: programId } }.
  * 201 { program }. The framework must be enabled for the tenant (403 framework_not_enabled); NIST SP 800-53 takes LOW, MODERATE or HIGH,
  * and may add the privacy baseline (privacyBaseline: true; any other framework, or a non-boolean, is a 400 invalid_baseline).
+ * `scoping` (NIST SP 800-53 only) is an object of the overlay switches that are on: { nonNetworkedOnly?, noWireless?, noMobileDevices?, noPiiProcessing? };
+ * anything else is a 400 invalid_scoping.
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -94,6 +101,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         frameworkId: b.frameworkId as string,
         baseline: b.baseline as string | null | undefined,
         privacyBaseline: b.privacyBaseline as boolean | null | undefined,
+        scoping: b.scoping,
         description: b.description as string | undefined,
         systemBoundarySummary: b.systemBoundarySummary as string | undefined,
         seed: (seed ?? null) as { cloneFrom?: string } | null,
@@ -110,7 +118,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * PUT /api/v1/tenants/:tenantId/programs/:id
- * Body: any of { name, description, systemBoundarySummary }. frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
+ * Body: any of { name, description, systemBoundarySummary, scoping }. frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
  */
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -127,11 +135,51 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   }
   if (b.baseline !== undefined) patch.baseline = b.baseline as string | null;
   if (b.privacyBaseline !== undefined) patch.privacyBaseline = b.privacyBaseline as boolean | null;
+  if (b.scoping !== undefined) {
+    if (b.scoping === null || typeof b.scoping !== 'object' || Array.isArray(b.scoping)) {
+      res.status(400).json({ error: 'Invalid scoping: expected an object of overlay switches', code: 'invalid_scoping' });
+      return;
+    }
+    patch.scoping = b.scoping;
+  }
+  const who = req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor';
   try {
-    const program = await updateProgram(tenantId, idOf(req), patch);
+    const program = await updateProgram(tenantId, idOf(req), patch, { actor: who, userId: req.user?.uid ?? null });
     res.json({ program });
   } catch (err: unknown) {
     fail(res, err, 'update the program');
+  }
+});
+
+/**
+ * PUT /api/v1/tenants/:tenantId/programs/:id/vm-target
+ * Makes the program the tenant's VM target (the program that receives vulnerability-management snapshots and POA&M items); the flag of
+ * the previous target is cleared. 200 { program, previousId, openPoamInPrevious }: existing data stays in the previous target, and
+ * openPoamInPrevious is how many open POA&M items it still holds. Only a CMMC_L1 / CMMC_L2 program (400 invalid_vm_target), not an
+ * archived one (409 program_archived).
+ */
+router.put('/:id/vm-target', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const who = req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor';
+  try {
+    const result = await setVmTargetProgram(req.tenantId!, idOf(req), { actor: who, userId: req.user?.uid ?? null });
+    console.log(`[Programs API] ${req.user?.uid} set program ${result.program.id} as the VM target in ${req.tenantId}`);
+    res.json(result);
+  } catch (err: unknown) {
+    fail(res, err, 'set the VM target');
+  }
+});
+
+/** GET /api/v1/tenants/:tenantId/programs/:id/events[?limit=n] -> { events }: scoping and VM target changes, newest first (booleans and ids only). */
+router.get('/:id/events', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const program = await getProgram(req.tenantId!, idOf(req));
+    if (!program) throw new ProgramError('program_not_found', 'Program not found');
+    const limit = Number(req.query.limit);
+    res.json({ events: await listProgramEvents({ tenantId: program.tenantId, programId: program.id }, Number.isFinite(limit) && limit > 0 ? limit : undefined) });
+  } catch (err: unknown) {
+    fail(res, err, 'read the program events');
   }
 });
 

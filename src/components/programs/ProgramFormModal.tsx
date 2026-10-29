@@ -7,6 +7,9 @@ import { useProgram } from '../../hooks/useProgram';
 import { PROGRAM_FRAMEWORKS, frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { PROGRAM_NAME_MAX, PROGRAM_TEXT_MAX, normalizeProgramFramework, validateProgramInput } from '../../data/programSync';
 import type { ProgramInputField } from '../../data/programSync';
+import { OVERLAY_DETAILS, OVERLAY_KEYS, OVERLAY_TITLES, programOverlayLabels } from '../../data/overlayScoping';
+import { scopingToOverlays } from '../../data/programScope';
+import type { OverlayFilters } from '../../types/framework';
 import type { Program, ProgramBaseline, ProgramSeed } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
 
@@ -69,6 +72,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
   );
   const [baseline, setBaseline] = useState<string>(program?.baseline ?? '');
   const [privacyBaseline, setPrivacyBaseline] = useState(false);
+  const [scoping, setScoping] = useState<OverlayFilters>({ nonNetworkedOnly: false });
   const [description, setDescription] = useState(program?.description ?? '');
   const [boundarySummary, setBoundarySummary] = useState(program?.boundarySummary ?? '');
   const [seed, setSeed] = useState<ProgramSeed>('blank');
@@ -84,7 +88,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
   }, []);
 
   const validation = validateProgramInput(
-    { name, framework, baseline, privacyBaseline, description, boundarySummary, seed, sourceProgramId },
+    { name, framework, baseline, privacyBaseline, scoping, description, boundarySummary, seed, sourceProgramId },
     {
       // In edit mode the framework is whatever the program carries, even when the tenant no longer lists it
       tenantFrameworks: isEdit && program ? [program.framework] : frameworkOptions,
@@ -97,7 +101,15 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
     ? { name: validation.errors.name, description: validation.errors.description, boundarySummary: validation.errors.boundarySummary }
     : validation.errors;
   const isNist = framework === 'NIST_800_53_REV5';
-  const shown = (field: ProgramInputField) => (showErrors ? errors[field] : undefined);
+  // A clone does not copy overlays on the server: choosing a NIST source prefills its overlays here, where they can still be changed
+  const chooseSource = (id: string) => {
+    setSourceProgramId(id);
+    const source = openPrograms.find((p) => p.id === id);
+    if (!isNist || !source || source.framework !== 'NIST_800_53_REV5') return;
+    const next = scopingToOverlays(source.scoping);
+    setScoping(privacyBaseline ? { ...next, noPiiProcessing: false } : next);
+  };
+  const shown =(field: ProgramInputField) => (showErrors ? errors[field] : undefined);
 
   const close = () => {
     if (isSaving) return; // do not abandon a request that is in flight
@@ -207,6 +219,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   onChange={(e) => {
                     setFramework(e.target.value);
                     setPrivacyBaseline(false);
+                    setScoping({ nonNetworkedOnly: false });
                     if (e.target.value !== 'NIST_800_53_REV5') setBaseline('');
                   }}
                   disabled={isSaving}
@@ -251,14 +264,17 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                 )}
                 {fieldError('baseline')}
                 {isEdit && program ? (
-                  <p className="mt-1 text-xs text-slate-400">Privacy baseline: {program.privacyBaseline ? 'Yes' : 'No'}</p>
+                  <>
+                    <p className="mt-1 text-xs text-slate-400">Privacy baseline: {program.privacyBaseline ? 'Yes' : 'No'}</p>
+                    <p className="mt-1 text-xs text-slate-400">Overlays: {programOverlayLabels(program.scoping).join(', ') || 'None'}. Change them from the Overlays menu in the header.</p>
+                  </>
                 ) : (
                   <label htmlFor={fieldId('privacyBaseline')} className="mt-2 flex items-start gap-2 text-xs text-slate-300">
                     <input
                       id={fieldId('privacyBaseline')}
                       type="checkbox"
                       checked={privacyBaseline}
-                      onChange={(e) => setPrivacyBaseline(e.target.checked)}
+                      onChange={(e) => { setPrivacyBaseline(e.target.checked); if (e.target.checked) setScoping((s) => ({ ...s, noPiiProcessing: false })); }}
                       disabled={isSaving}
                       className="mt-0.5"
                     />
@@ -268,6 +284,39 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
               </div>
             )}
           </div>
+
+          {!isEdit && isNist && (
+            <fieldset className="space-y-2 rounded-xl border border-slate-800 p-3" disabled={isSaving} aria-describedby={`${fieldId('scoping')}-help`}>
+              <legend className="px-1 text-xs font-medium text-slate-300">Operational overlays (optional)</legend>
+              <p id={`${fieldId('scoping')}-help`} className="text-xs text-slate-400">
+                Tick the ones that describe this system. Each removes the controls that cannot apply to it, for everyone who works in this program, and lowers its control count. A Tenant Owner or MSP Admin can change them later from the Overlays menu in the header; every change is recorded.
+              </p>
+              {OVERLAY_KEYS.map((key) => {
+                const piiLocked = key === 'noPiiProcessing' && privacyBaseline;
+                const id = fieldId(`overlay-${key}`);
+                return (
+                  <label key={key} htmlFor={id} className={`flex items-start gap-2 text-xs ${piiLocked ? 'text-slate-400' : 'text-slate-300'}`}>
+                    <input
+                      id={id}
+                      type="checkbox"
+                      checked={!piiLocked && Boolean(scoping[key])}
+                      disabled={piiLocked}
+                      aria-describedby={`${id}-detail`}
+                      onChange={(e) => setScoping((s) => ({ ...s, [key]: e.target.checked }))}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-semibold">{OVERLAY_TITLES[key]}</span>
+                      <span id={`${id}-detail`} className="block text-slate-400">
+                        {piiLocked ? 'Not available with the privacy baseline (the system processes PII).' : OVERLAY_DETAILS[key]}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+              {fieldError('scoping')}
+            </fieldset>
+          )}
 
           <div>
             <label htmlFor={fieldId('description')} className="block text-xs font-medium text-slate-300 mb-1">
@@ -321,7 +370,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   disabled={openPrograms.length === 0}
                   onChange={() => {
                     setSeed('clone');
-                    if (!sourceProgramId && openPrograms.length > 0) setSourceProgramId(activeProgram?.id ?? openPrograms[0].id);
+                    if (!sourceProgramId && openPrograms.length > 0) chooseSource(activeProgram?.id ?? openPrograms[0].id);
                   }}
                 />
                 <span>Clone from an existing program (copies notes and responsible roles, not evidence, imports or POA&M items)</span>
@@ -332,7 +381,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   <select
                     id={fieldId('source')}
                     value={sourceProgramId}
-                    onChange={(e) => setSourceProgramId(e.target.value)}
+                    onChange={(e) => chooseSource(e.target.value)}
                     className={inputClass}
                     {...errorProps('seed')}
                   >

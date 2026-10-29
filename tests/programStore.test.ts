@@ -12,8 +12,11 @@ import {
   ensureDefaultProgram,
   getProgram,
   getProgramMetrics,
+  listProgramEvents,
   listPrograms,
   migrateTenantToPrograms,
+  resolveVmTargetProgram,
+  setVmTargetProgram,
   unarchiveProgram,
   updateProgram,
 } from '../server/programs';
@@ -251,6 +254,79 @@ async function main() {
   const selectIds = async (p: { id: string }) => (await queryWithProgram({ tenantId: 't-priv', programId: p.id }, 'SELECT control_id FROM control_assessments WHERE tenant_id = $1', ['t-priv'])).rows.map((r) => r.control_id);
   assert((await selectIds(clonedPlus)).includes(privOnlyId), 'clone: a note on a privacy-only control is copied MOD+P -> MOD+P', await selectIds(clonedPlus));
   assert(!(await selectIds(clonedPlain)).includes(privOnlyId), 'clone: it is not copied to a plain MOD target', await selectIds(clonedPlain));
+
+  console.log('\n--- scoping (issue #22) ---');
+  await mkTenant('t-sc', 'NIST_800_53_REV5', ['NIST_800_53_REV5', 'CMMC_L2']);
+  const who = { actor: 'Owner', userId: 'owner-1' };
+  const n1s = await createProgram('t-sc', { name: 'N1', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', scoping: { noWireless: true } }, 'u');
+  const scEvents = await listProgramEvents({ tenantId: 't-sc', programId: n1s.id });
+  assert(JSON.stringify(n1s.scoping) === JSON.stringify({ noWireless: true }) && scEvents.length === 1 && scEvents[0].kind === 'scoping_set', 'S1: a scoped program stores the scoping and records one scoping_set event', [n1s.scoping, scEvents.map((e) => e.kind)]);
+  const s2 = await createProgram('t-sc', { name: 'N2', frameworkId: 'NIST_800_53_REV5', scoping: { noWireless: false, nonNetworkedOnly: true } }, 'u');
+  assert(JSON.stringify(s2.scoping) === JSON.stringify({ nonNetworkedOnly: true }), 'S2: a false switch is dropped', s2.scoping);
+  assert((await codeOf(createProgram('t-sc', { name: 'N3', frameworkId: 'NIST_800_53_REV5', scoping: { bogus: true } }, 'u'))) === 'invalid_scoping', 'S3: an unknown key -> invalid_scoping');
+  assert((await codeOf(createProgram('t-sc', { name: 'N4', frameworkId: 'NIST_800_53_REV5', scoping: { noWireless: 'yes' } }, 'u'))) === 'invalid_scoping', 'S4: a non-boolean value -> invalid_scoping');
+  assert((await codeOf(createProgram('t-sc', { name: 'N5', frameworkId: 'NIST_800_53_REV5', privacyBaseline: true, scoping: { noPiiProcessing: true } }, 'u'))) === 'invalid_scoping', 'S5: noPiiProcessing on a privacy program -> invalid_scoping');
+  assert((await codeOf(createProgram('t-sc', { name: 'L2 scoped', frameworkId: 'CMMC_L2', scoping: { noWireless: true } }, 'u'))) === 'invalid_scoping', 'S6: a true switch on a CMMC program -> invalid_scoping');
+  const l2plain = await createProgram('t-sc', { name: 'L2 plain', frameworkId: 'CMMC_L2', scoping: {} }, 'u');
+  assert(JSON.stringify(l2plain.scoping) === '{}', 'S6: a CMMC program with an empty scoping is created', l2plain.scoping);
+  const s7 = await updateProgram('t-sc', n1s.id, { scoping: { noMobileDevices: true } }, who);
+  const ev7 = await listProgramEvents({ tenantId: 't-sc', programId: n1s.id });
+  assert(
+    JSON.stringify(s7.scoping) === JSON.stringify({ noMobileDevices: true }) && ev7.length === 2 && ev7[0].kind === 'scoping_changed' &&
+      JSON.stringify(ev7[0].oldValue) === JSON.stringify({ noWireless: true }) && JSON.stringify(ev7[0].newValue) === JSON.stringify({ noMobileDevices: true }) &&
+      ev7[0].actor === 'Owner' && ev7[0].actorUserId === 'owner-1',
+    'S7: changing the scoping records scoping_changed with the old and new switches (newest first)', ev7
+  );
+  await updateProgram('t-sc', n1s.id, { scoping: { noMobileDevices: true } }, who);
+  assert((await listProgramEvents({ tenantId: 't-sc', programId: n1s.id })).length === 2, 'S8: the same scoping again records nothing');
+  const n1Archived = await createProgram('t-sc', { name: 'N1 archived', frameworkId: 'NIST_800_53_REV5', scoping: { noWireless: true } }, 'u');
+  await archiveProgram('t-sc', n1Archived.id);
+  assert((await codeOf(updateProgram('t-sc', n1Archived.id, { scoping: { noMobileDevices: true } }, who))) === 'program_archived', 'S9: an archived program takes no scoping change -> program_archived');
+  const unscoped = programFrameworkControls({ framework: 'NIST_800_53_REV5', baseline: 'MODERATE' }, {} as OverlayFilters).length;
+  const scopedWw = programFrameworkControls({ framework: 'NIST_800_53_REV5', baseline: 'MODERATE' }, { nonNetworkedOnly: false, noWireless: true }).length;
+  const wwProgram = await createProgram('t-sc', { name: 'N wireless', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', scoping: { noWireless: true } }, 'u');
+  const wwMetrics = await getProgramMetrics(wwProgram);
+  assert(wwMetrics.total === scopedWw && scopedWw < unscoped, 'S10: the metrics total follows the overlays of the program', [wwMetrics.total, scopedWw, unscoped]);
+  const dSc = await ensureDefaultProgram('t-sc');
+  const resolvedSc = await resolveVmTargetProgram('t-sc');
+  assert(JSON.stringify(dSc.scoping) === '{}' && dSc.vmTarget === false && resolvedSc.program.id === dSc.id && resolvedSc.explicit === false, 'S11: the default program has no scoping and is not a target; with no target it is the fallback', [dSc, resolvedSc.explicit]);
+
+  console.log('\n--- the VM target (issue #21) ---');
+  await mkTenant('t-vm', 'CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
+  const dVm = await ensureDefaultProgram('t-vm');
+  const vmA = await createProgram('t-vm', { name: 'Target A', description: 'secret boundary text', frameworkId: 'CMMC_L2' }, 'u');
+  const vmB = await createProgram('t-vm', { name: 'Target B', frameworkId: 'CMMC_L2' }, 'u');
+  const vmN = await createProgram('t-vm', { name: 'Target N', frameworkId: 'NIST_800_53_REV5' }, 'u');
+  const r1 = await setVmTargetProgram('t-vm', vmA.id, who);
+  const res1 = await resolveVmTargetProgram('t-vm');
+  assert((await getProgram('t-vm', vmA.id))?.vmTarget === true && res1.program.id === vmA.id && res1.explicit === true && r1.program.vmTarget === true, 'V1: setting a CMMC program makes it the explicit target', [r1.previousId, res1.explicit]);
+  assert(r1.previousId === dVm.id, 'V1: the first target replaces the default program as the receiver (previousId)', r1.previousId);
+  const r2 = await setVmTargetProgram('t-vm', vmB.id, who);
+  const vmEvA = await listProgramEvents({ tenantId: 't-vm', programId: vmA.id });
+  const vmEvB = await listProgramEvents({ tenantId: 't-vm', programId: vmB.id });
+  assert(
+    (await getProgram('t-vm', vmA.id))?.vmTarget === false && (await getProgram('t-vm', vmB.id))?.vmTarget === true && r2.previousId === vmA.id &&
+      vmEvA.some((e) => e.kind === 'vm_target_cleared') && vmEvA.some((e) => e.kind === 'vm_target_set') && vmEvB.some((e) => e.kind === 'vm_target_set') && typeof r2.openPoamInPrevious === 'number',
+    'V2: switching moves the flag, reports the previous target and records set / cleared events', [r2.previousId, vmEvA.map((e) => e.kind), vmEvB.map((e) => e.kind)]
+  );
+  const evBBefore = (await listProgramEvents({ tenantId: 't-vm', programId: vmB.id })).length;
+  const again = await setVmTargetProgram('t-vm', vmB.id, who);
+  assert(again.previousId === null && (await listProgramEvents({ tenantId: 't-vm', programId: vmB.id })).length === evBBefore, 'V2: choosing the current target again records nothing');
+  assert((await codeOf(setVmTargetProgram('t-vm', vmN.id, who))) === 'invalid_vm_target', 'V3: a NIST program cannot be the target -> invalid_vm_target');
+  const vmArch = await createProgram('t-vm', { name: 'Target Archived', frameworkId: 'CMMC_L2' }, 'u');
+  await archiveProgram('t-vm', vmArch.id);
+  assert((await codeOf(setVmTargetProgram('t-vm', vmArch.id, who))) === 'program_archived', 'V3: an archived program cannot be the target -> program_archived');
+  assert((await codeOf(setVmTargetProgram('t-vm', 'nope', who))) === 'program_not_found', 'V3: an unknown program -> program_not_found');
+  assert((await codeOf(archiveProgram('t-vm', vmB.id))) === 'program_is_vm_target' && (await codeOf(deleteProgram('t-vm', vmB.id))) === 'program_is_vm_target', 'V4: the target can be neither archived nor deleted -> program_is_vm_target');
+  const r5 = await setVmTargetProgram('t-vm', dVm.id, who);
+  const res5 = await resolveVmTargetProgram('t-vm');
+  assert(
+    r5.program.id === dVm.id && res5.program.id === dVm.id && (await listPrograms('t-vm', { includeArchived: true })).filter((p) => p.vmTarget).length === 1,
+    'V5: the default program can be the target and then is the only flagged one', res5.program.id
+  );
+  const allEvents = (await Promise.all([vmA, vmB, dVm, n1s, wwProgram].map((p) => listProgramEvents({ tenantId: p.tenantId, programId: p.id })))).flat();
+  const eventJson = JSON.stringify(allEvents);
+  assert(allEvents.length > 0 && !['Target A', 'Target B', 'N wireless', 'secret boundary text', DEFAULT_PROGRAM_NAME].some((s) => eventJson.includes(s)),'V6: events hold no program name or description', allEvents.length);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
