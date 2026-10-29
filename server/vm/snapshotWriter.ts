@@ -5,7 +5,7 @@ import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { listAgentAssetCandidates, listAssets } from '../assets';
 import { writeControlAssessment, type ControlChangeActor } from '../controlAssessments';
-import { ensureDefaultProgram } from '../programs';
+import { getProgram, resolveVmTargetProgram } from '../programs';
 import { localStorageRoot, readTenantFile, isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { listRunsSince, listSources } from './store';
 import { loadSnapshotFindings } from './findingsStore';
@@ -48,7 +48,7 @@ export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnap
   const assets = await listAssets(tenantId);
   // AssetRecord has no last_vuln_seen_at: join the candidate list by id.
   const seen = new Map((await listAgentAssetCandidates(tenantId)).map((c) => [c.id, c.lastVulnSeenAt]));
-  const { findings, kevVulnIds, poam } = await loadSnapshotFindings(tenantId, programId ?? (await ensureDefaultProgram(tenantId)).id);
+  const { findings, kevVulnIds, poam } = await loadSnapshotFindings(tenantId, programId ?? (await resolveVmTargetProgram(tenantId)).program.id);
   return {
     snapshotId,
     tenantId,
@@ -119,6 +119,7 @@ export async function writeSnapshotEvidence(
   md: string,
   now: Date,
   programId: string,
+  controlFrameworks?: string[],
 ): Promise<WrittenSnapshotEvidence> {
   const scope = { tenantId, programId };
   const keys = snapshotFileKeys(report.snapshotId);
@@ -133,7 +134,8 @@ export async function writeSnapshotEvidence(
     files.push({ key: s.key, fileName: s.fileName, absPath: written.absPath, sha256: written.sha256, size: written.size, mimeType: s.mimeType });
   }
 
-  const controls = snapshotControlIds(await getTenantFrameworkPolicy(tenantId), frameworksDefiningControl);
+  // An explicit VM target program decides the control list from its own framework; otherwise the tenant's allow-list does.
+  const controls = snapshotControlIds(controlFrameworks ? { enabledFrameworks: controlFrameworks } : await getTenantFrameworkPolicy(tenantId), frameworksDefiningControl);
   const description = `Automated vulnerability management snapshot ${day}`;
   const evidenceIds: string[] = [];
   const inheritedEvidenceIds: string[] = [];
@@ -224,6 +226,8 @@ export async function applySnapshotNotes(
 export interface VmSnapshotSummary {
   id: string;
   createdAt: string;
+  /** The program the evidence and notes were written to (the tenant's VM target program). */
+  programId: string;
   criteriaMet: boolean;
   evidenceIds: string[];
   controls: string[];
@@ -258,12 +262,21 @@ export async function runVmSnapshot(
     const now = opts.now ?? new Date();
     const cfg = getVmSnapshotConfig();
     const snapshotId = newSnapshotId(now.getTime());
-    // Snapshot evidence and notes belong to the tenant's default program (decision 6); the control set is still the allow-list's.
-    const programId = opts.programId ?? (await ensureDefaultProgram(tenantId)).id;
+    // Snapshot evidence and notes belong to the tenant's VM target program (the default program when none is set, decision 6).
+    // Only an explicit target decides the control list; without one the allow-list's control set stays as it was.
+    let target: { program: { id: string; frameworkId: string }; explicit: boolean };
+    if (opts.programId) {
+      const chosen = await getProgram(tenantId, opts.programId);
+      if (!chosen) throw new Error('VM snapshot program not found');
+      target = { program: chosen, explicit: true };
+    } else {
+      target = await resolveVmTargetProgram(tenantId);
+    }
+    const programId = target.program.id;
     const input = await loadSnapshotInput(tenantId, now, cfg, snapshotId, programId);
     const report = computeSnapshot(input);
     const md = renderSnapshotMarkdown(report);
-    const written = await writeSnapshotEvidence(tenantId, report, md, now, programId);
+    const written = await writeSnapshotEvidence(tenantId, report, md, now, programId, target.explicit ? [target.program.frameworkId] : undefined);
     await applySnapshotNotes(tenantId, report, written.evidenceByControl, {
       source: 'vm-snapshot',
       actor: opts.triggeredBy?.actor ?? VM_SNAPSHOT_ACTOR,
@@ -277,6 +290,7 @@ export async function runVmSnapshot(
       snapshot: {
         id: snapshotId,
         createdAt: now.toISOString(),
+        programId,
         criteriaMet: report.criteria.met,
         evidenceIds: written.evidenceIds,
         controls: written.controls,
@@ -310,9 +324,9 @@ const SNAPSHOT_FILE = /^(vmsnap_[A-Za-z0-9_-]+)\.(json|md)$/;
 
 /** The snapshot evidence rows of a tenant (base rows only), newest first. The memory store ignores WHERE, so filter here too. */
 async function snapshotRows(tenantId: string): Promise<SnapshotRow[]> {
-  // evidence_metadata is program-scoped: the snapshot evidence lives in the tenant's default program
+  // evidence_metadata is program-scoped: the snapshot evidence lives in the tenant's VM target program (the default when none is set)
   const res = await queryWithProgram(
-    { tenantId, programId: (await ensureDefaultProgram(tenantId)).id },
+    { tenantId, programId: (await resolveVmTargetProgram(tenantId)).program.id },
     'SELECT id, control_id, file_name, gcs_path, file_hash, sync_status, uploaded_by, uploaded_at FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = $2 ORDER BY uploaded_at DESC',
     [tenantId, VM_SNAPSHOT_ACTOR],
   );

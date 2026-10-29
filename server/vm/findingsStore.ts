@@ -317,6 +317,7 @@ export async function listPoamCandidates(
   tenantId: string,
   now: string,
   client: pg.PoolClient | null,
+  programId?: string | null,
 ): Promise<{ candidates: PoamCandidate[]; linked: LinkedPoamItem[] }> {
   if (isMemory()) {
     const names = new Map((await listAssets(tenantId)).map((a) => [a.id, a.hostName]));
@@ -325,7 +326,8 @@ export async function listPoamCandidates(
       .map((f) => ({ finding: { ...f }, assetName: names.get(f.assetId) ?? '', kev: Boolean(memoryVulns.get(f.vulnId)?.kev) }));
     const ids = new Set(candidates.map((x) => x.finding.id));
     const linked = [...memoryPoam.values()]
-      .filter((p) => p.tenantId === tenantId && p.findingId !== null && ids.has(p.findingId))
+      // PostgreSQL sees only the transaction's program through RLS; the memory store filters the same way
+      .filter((p) => p.tenantId === tenantId && (!programId || p.programId === programId) && p.findingId !== null && ids.has(p.findingId))
       .map((p) => ({ findingId: p.findingId as string, status: p.status, createdAt: p.createdAt }));
     return { candidates, linked };
   }
@@ -426,13 +428,13 @@ export async function markRunNormalized(tenantId: string, runId: string, finishe
 /**
  * Everything the snapshot evaluates, in one tenant transaction: every finding (any status), the ids of the vulnerabilities
  * on the known-exploited list that the tenant has findings for, and the POA&M items of `programId` (the VM target program: the
- * tenant's default program, which the caller resolves).
+ * tenant's default program unless one is set, which the caller resolves).
  */
 export async function loadSnapshotFindings(tenantId: string, programId: string): Promise<{ findings: VmFinding[]; kevVulnIds: string[]; poam: VmPoamItem[] }> {
   if (isMemory()) {
     const findings = [...memoryFindings.values()].filter((f) => f.tenantId === tenantId).map((f) => ({ ...f }));
     const kevVulnIds = [...new Set(findings.map((f) => f.vulnId))].filter((id) => memoryVulns.get(id)?.kev);
-    const poam = [...memoryPoam.values()].filter((p) => p.tenantId === tenantId).map((p) => ({ ...p }));
+    const poam = [...memoryPoam.values()].filter((p) => p.tenantId === tenantId && p.programId === programId).map((p) => ({ ...p }));
     return { findings, kevVulnIds, poam };
   }
   return withVmTenantTx(tenantId, async (client) => {

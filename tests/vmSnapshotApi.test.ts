@@ -14,6 +14,7 @@ import { readControlAssessments } from '../server/controlAssessments';
 import { createProgram, ensureDefaultProgram } from '../server/programs';
 import { queryWithProgram } from '../server/db';
 import { readTenantFile } from '../server/evidence/storage';
+import { insertPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
 
 /**
  * Vulnerability-management Phase 5 over HTTP: the snapshot endpoints (evidence files and rows, inheritance, control notes,
@@ -359,6 +360,64 @@ async function run() {
   const evBAfter = await evidenceIn(scopeB);
   const evDefaultAfter = await evidenceIn(scopeDefault);
   assert(postB.status === 201 && evBAfter.length === 0 && evDefaultAfter.length > evDefault.length, 'A26 a snapshot requested with x-program-id of the second program still lands in the default program', [postB.status, evBAfter.length, evDefaultAfter.length]);
+
+  console.log('\n--- A27: the VM target program receives the snapshot ---');
+  const setB = await call('PUT', `/tenants/${L1}/programs/${programB.id}/vm-target`, owner1, L1);
+  const setBViewer = await call('PUT', `/tenants/${L1}/programs/${programB.id}/vm-target`, viewer, L1);
+  assert(setB.status === 200 && setB.body?.program?.vmTarget === true && setBViewer.status === 403, 'A27a the owner sets the second program as the VM target (200, vmTarget true); a VIEWER gets 403', [setB.status, setB.body?.program?.vmTarget, setBViewer.status]);
+
+  const evDefaultBefore27 = (await evidenceIn(scopeDefault)).length;
+  __resetVmSnapshotLimiterForTests();
+  const post27 = await snapshotPost(L1, owner1);
+  const snap27 = (post27.body?.snapshot ?? {}) as Json;
+  const evB27 = await evidenceIn(scopeB);
+  const evDefault27 = await evidenceIn(scopeDefault);
+  assert(post27.status === 201 && snap27.programId === programB.id, 'A27b a manual snapshot without a header lands in the target program (201, snapshot.programId)', [post27.status, snap27.programId]);
+  assert(Array.isArray(snap27.controls) && snap27.controls.length > 0 && evB27.length === 2 * snap27.controls.length * (1 + INHERITED_TARGETS.length), 'A27b the target program holds 2 files x controls x (1 + inheritance targets) evidence rows', [evB27.length, snap27.controls]);
+  assert(evDefault27.length === evDefaultBefore27, 'A27b the default program gains no evidence rows', [evDefault27.length, evDefaultBefore27]);
+
+  const liveB27 = await readControlAssessments(scopeB);
+  assert(String(liveB27.get('SI.L1-3.14.1')?.notes).includes(VM_NOTES_BEGIN), 'A27c the target program carries the snapshot block on SI.L1-3.14.1');
+
+  const list27 = await call('GET', `/tenants/${L1}/vm/snapshots`, owner1, L1);
+  const latest27 = await call('GET', `/tenants/${L1}/vm/snapshot/latest`, owner1, L1);
+  assert(list27.body?.totalCount === 1 && list27.body?.snapshots?.[0]?.id === snap27.id && latest27.status === 200 && latest27.body?.report?.snapshotId === snap27.id, 'A27d the listing and the latest snapshot follow the target program', [list27.body?.totalCount, list27.body?.snapshots?.[0]?.id, latest27.status]);
+
+  const tick27 = await __runVmSchedulerTickForTests({ now: new Date(Date.now() + 169 * HOUR), onlyTenantIds: [L1] });
+  const evB27b = await evidenceIn(scopeB);
+  assert(tick27.snapshots.includes(L1) && evB27b.length > evB27.length, 'A27e the scheduler writes its due snapshot into the target program', [tick27, evB27b.length, evB27.length]);
+
+  const archiveB = await call('POST', `/tenants/${L1}/programs/${programB.id}/archive`, owner1, L1);
+  assert(archiveB.status === 409 && archiveB.body?.code === 'program_is_vm_target', 'A27f archiving the VM target is refused (409 program_is_vm_target)', [archiveB.status, archiveB.body]);
+
+  const draft = {
+    findingId: 'fnd_a27g_' + crypto.randomBytes(4).toString('hex'),
+    controlId: 'RA.L2-3.11.3' as const,
+    weakness: 'A27g',
+    mitigation: '' as const,
+    owner: '' as const,
+    scheduledCompletion: null,
+    status: 'OPEN' as const,
+    createdBy: 'system:vm-worker' as const,
+  };
+  await insertPoamItems(L1, [draft], null, defaultL1.id);
+  const poamB = (await loadSnapshotFindings(L1, programB.id)).poam;
+  const poamDefault = (await loadSnapshotFindings(L1, defaultL1.id)).poam;
+  assert(poamB.length === 0 && poamDefault.length >= 1, 'A27g the snapshot input holds only the program\'s own POA&M items (memory matches RLS)', [poamB.length, poamDefault.length]);
+
+  const src = (f: string) => fs.readFileSync(path.join(process.cwd(), f), 'utf8').replace(/\r\n/g, '\n');
+  const workerSrc = src('server/vm/worker.ts');
+  assert(workerSrc.includes('resolveVmTargetProgram(') && !workerSrc.includes('ensureDefaultProgram('), 'A27h the worker resolves the VM target program and no longer the default');
+  assert(!src('server/routes/vm.ts').includes('ensureDefaultProgram('), 'A27h the snapshot route no longer pins the default program');
+
+  const setDefault = await call('PUT', `/tenants/${L1}/programs/${defaultL1.id}/vm-target`, owner1, L1);
+  const evBBefore27i = (await evidenceIn(scopeB)).length;
+  const evDefaultBefore27i = (await evidenceIn(scopeDefault)).length;
+  __resetVmSnapshotLimiterForTests();
+  const post27i = await snapshotPost(L1, owner1);
+  const evBAfter27i = (await evidenceIn(scopeB)).length;
+  const evDefaultAfter27i = (await evidenceIn(scopeDefault)).length;
+  assert(setDefault.status === 200 && post27i.status === 201 && evDefaultAfter27i > evDefaultBefore27i && evBAfter27i === evBBefore27i, 'A27i moving the target back to the default program sends the next snapshot there and none to the second program', [setDefault.status, post27i.status, evDefaultBefore27i, evDefaultAfter27i, evBBefore27i, evBAfter27i]);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
