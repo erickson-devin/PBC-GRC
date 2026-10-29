@@ -16,6 +16,7 @@ import {
   type Program,
   type ProgramPatch,
 } from '../programs';
+import { changeProgramAssets, getProgramBoundary, listAssetMemberships, parseAssetChange } from '../programAssets';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { ensureActiveTenant } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
@@ -42,6 +43,8 @@ const STATUS_BY_CODE: Record<ProgramErrorCode, number> = {
   program_not_empty: 409,
   invalid_scoping: 400,
   invalid_vm_target: 400,
+  invalid_asset_ids: 400,
+  unknown_assets: 400,
   program_is_vm_target: 409,
   not_implemented: 501,
 };
@@ -72,6 +75,22 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     res.json({ tenantId, totalCount: withMetrics.length, programs: withMetrics });
   } catch (err: unknown) {
     fail(res, err, 'list the programs');
+  }
+});
+
+/**
+ * GET /api/v1/tenants/:tenantId/programs/asset-memberships
+ * -> { memberships: [{ programId, archived, assetIds }] }: the assets each program declares in its boundary, every program (archived
+ * ones included) in the order of the program list. Declared before the /:id routes.
+ */
+router.get('/asset-memberships', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  try {
+    await ensureDefaultProgram(tenantId);
+    res.json({ memberships: await listAssetMemberships(tenantId) });
+  } catch (err: unknown) {
+    fail(res, err, 'list the asset memberships');
   }
 });
 
@@ -167,6 +186,40 @@ router.put('/:id/vm-target', async (req: Request, res: Response): Promise<void> 
     res.json(result);
   } catch (err: unknown) {
     fail(res, err, 'set the VM target');
+  }
+});
+
+/**
+ * GET /api/v1/tenants/:tenantId/programs/:id/assets
+ * -> { programId, declared, assetIds, summary }: the assets the program declares in its boundary. `declared` is false when it names none,
+ * and then `summary` (summarizeScope) covers the whole inventory.
+ */
+router.get('/:id/assets', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    res.json(await getProgramBoundary(req.tenantId!, idOf(req)));
+  } catch (err: unknown) {
+    fail(res, err, 'read the program assets');
+  }
+});
+
+/**
+ * PATCH /api/v1/tenants/:tenantId/programs/:id/assets
+ * Body: { add?: string[], remove?: string[] } (deltas, so two editors do not overwrite each other). 200 { programId, declared, assetIds, added, removed }.
+ * 400 invalid_asset_ids (bad shape, nothing to change, an id in both lists, more than 5000 ids), 400 unknown_assets ({ count }: not in this
+ * tenant's inventory), 404 program_not_found, 409 program_archived. Records an assets_changed event (counts and ids) when something changed.
+ */
+router.patch('/:id/assets', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const who = req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor';
+  try {
+    const result = await changeProgramAssets(req.tenantId!, idOf(req), parseAssetChange(req.body), { actor: who, userId: req.user?.uid ?? null });
+    if (result.added + result.removed > 0) {
+      console.log(`[Programs API] ${req.user?.uid} changed the assets of program ${result.programId} in ${req.tenantId} (+${result.added} -${result.removed})`);
+    }
+    res.json(result);
+  } catch (err: unknown) {
+    fail(res, err, 'change the program assets');
   }
 });
 
