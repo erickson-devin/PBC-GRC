@@ -16,6 +16,8 @@ import { getFrameworkControls } from '../../data/frameworks';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { canRoleReviewSspImports } from '../../utils/roles';
 import { errorMessage } from '../../utils/errors';
+import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
+import { unsavedSspImportDrafts } from '../../services/unsavedText';
 import {
   SSP_BASELINES,
   SSP_DEFAULT_BASELINE,
@@ -272,6 +274,8 @@ export const SspImportView: React.FC = () => {
   const staged = detail?.staged ?? [];
   const current = staged.find((s) => s.id === selectedId) ?? null;
   const open = detail?.job.status === 'READY_FOR_REVIEW';
+  // Edits to the staged text that are not saved yet are reported to the unsaved-text rescue (staged text may be CUI: ids only in labels)
+  useUnsavedTextProvider(() => unsavedSspImportDrafts(drafts, staged));
 
   const decide = async (item: StagedControlView, state: SspReviewState) => {
     if (!detail) return;

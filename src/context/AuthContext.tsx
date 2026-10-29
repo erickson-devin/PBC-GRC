@@ -5,6 +5,8 @@ import { ApiClient, ApiError, LocalLoginResponse, MfaEnrolmentStart, MfaStage, S
 import { onSessionRejected, holdSessionSignal, releaseSessionSignal, reportResponseStatus } from '../services/sessionSignal';
 import { errorMessage } from '../utils/errors';
 import { buildUserProfile } from '../utils/userProfile';
+import { SESSION_VERIFY_TIMEOUT_MS, initialSessionCheck, nextSessionCheck, type SessionCheck } from '../data/sessionVerification';
+import { reconcileRescuedTextOnSignIn, rescueUnsavedText } from '../services/unsavedText';
 
 /** A sign-in that is not finished: the person still has to enter a code ('verify') or enrol an authenticator ('enrol'). Lives in React state only. */
 export interface MfaChallenge {
@@ -21,6 +23,12 @@ interface AuthContextType {
   idToken: string | null;
   isAuthenticated: boolean;
   loading: boolean;
+  /**
+   * Whether the stored session was confirmed by the server since the page loaded: 'verifying' until the first tenant sync
+   * answers (an 8 s limit), 'offline' when the server could not be reached (the cache is shown), 'verified' once it accepted
+   * the session, 'none' when there is nothing to verify (signed out, or just signed in).
+   */
+  sessionCheck: SessionCheck;
   authError: string | null;
   isAuthModalOpen: boolean;
   redirectPath: string | null;
@@ -87,7 +95,7 @@ const toChallenge = (p: { stage: MfaStage; mfaToken: string; expiresAt: string; 
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { resolveTenantForEmail, syncAuthUser, resetForSignOut, currentUser: tenantUser, currentTenant } = useTenant();
+  const { resolveTenantForEmail, syncAuthUser, resetForSignOut, currentUser: tenantUser, currentTenant, tenantSync } = useTenant();
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
@@ -107,12 +115,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // The session-ended listener compares against the latest token without re-subscribing on every change
   const idTokenRef = useRef(idToken);
   idTokenRef.current = idToken;
+  // The unsaved-text rescue needs to know whose text it is, from inside the synchronous session-ended listener
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
 
   // Authenticated state check
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const saved = localStorage.getItem(AUTH_USER_KEY);
     return Boolean(saved);
   });
+
+  // A reload with a stored session verifies it with the server before the app shows (see data/sessionVerification.ts)
+  const [sessionCheck, setSessionCheck] = useState<SessionCheck>(() => initialSessionCheck(
+    Boolean(localStorage.getItem(AUTH_TOKEN_KEY)),
+    Boolean(localStorage.getItem(AUTH_USER_KEY)),
+  ));
 
   const [mustChangePassword, setMustChangePassword] = useState<boolean>(() => readStoredFlags().mustChangePassword);
   const [mfaEnrolled, setMfaEnrolled] = useState<boolean>(() => readStoredFlags().enrolled);
@@ -180,6 +197,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /** Enters the app with a complete session. */
   const applySession = useCallback(async (session: LocalLoginResponse) => {
+    // Text rescued from an ended session is kept only for the same person: a different one wipes it
+    reconcileRescuedTextOnSignIn(session.user.id);
+    setSessionCheck((c) => nextSessionCheck(c, { type: 'signedIn' }));
     // While the forced password change is pending the server answers nothing else: no tenant / programs / data sync yet
     // (changePassword runs it with the new token).
     await handleUserSession(session.user.email, session.user.name, 'password', session.token, session.user.id, session.mustChangePassword);
@@ -337,6 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const logout = useCallback(async () => {
     resetForSignOut();
+    setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
     setIsAuthenticated(false);
     setIdToken(null);
     setMustChangePassword(false);
@@ -357,9 +378,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // The server stopped accepting this session (deleted / disabled account, rotated secret, expiry): sign out and say why
   useEffect(() => onSessionRejected((token) => {
     if (!token || token !== idTokenRef.current) return;
+    // Before anything is torn down: keep the unsaved text of the open editors in memory so it can be copied after sign-in
+    rescueUnsavedText(currentUserRef.current.id);
     void logout();
     setAuthError(SESSION_ENDED_MESSAGE);
   }), [logout]);
+
+  // The first tenant sync of a reload answered: the stored session is confirmed, dead, or could not be checked
+  useEffect(() => {
+    const outcome = tenantSync.outcome;
+    if (!outcome || (sessionCheck !== 'verifying' && sessionCheck !== 'offline')) return;
+    if (outcome === 'password_change_required') setMustChangePassword(true);
+    if (outcome === 'rejected' && isAuthenticated) {
+      // Normally the session signal has signed out already; this keeps the path complete if it did not
+      rescueUnsavedText(currentUserRef.current.id);
+      void logout();
+      setAuthError(SESSION_ENDED_MESSAGE);
+      return;
+    }
+    setSessionCheck((c) => nextSessionCheck(c, { type: 'sync', outcome }));
+  }, [tenantSync.outcome, sessionCheck, isAuthenticated, logout]);
+
+  // The server did not answer in time: show the cached app with the offline notice (a late 401 still signs out)
+  useEffect(() => {
+    if (sessionCheck !== 'verifying') return;
+    const timer = setTimeout(() => setSessionCheck((c) => nextSessionCheck(c, { type: 'timeout' })), SESSION_VERIFY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [sessionCheck]);
 
   const openAuthModal = useCallback((_mode: 'signin' = 'signin', redirectUrl?: string) => {
     if (redirectUrl) {
@@ -386,6 +431,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     idToken,
     isAuthenticated,
     loading,
+    sessionCheck,
     authError,
     isAuthModalOpen,
     redirectPath,
@@ -412,6 +458,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     idToken,
     isAuthenticated,
     loading,
+    sessionCheck,
     authError,
     isAuthModalOpen,
     redirectPath,

@@ -126,6 +126,12 @@ async function apiFetch(input: string, init: RequestInit): Promise<Response> {
   return res;
 }
 
+/** What GET /api/v1/tenants answered (see ApiClient.listMyTenantsResult). */
+export type ListMyTenantsResult =
+  | { kind: 'ok'; tenants: ServerTenant[] }
+  | { kind: 'rejected' }
+  | { kind: 'password_change_required' };
+
 /** Settings accepted when creating or updating a tenant (the license tier is never client-controlled). */
 export interface TenantSettingsInput {
   name?: string;
@@ -715,16 +721,27 @@ export const ApiClient = {
    * accepted (401), so callers can treat "not signed in" differently from a real failure (which throws).
    */
   async listMyTenants(token?: string): Promise<ServerTenant[] | null> {
+    const result = await this.listMyTenantsResult(token);
+    return result.kind === 'ok' ? result.tenants : null;
+  },
+
+  /**
+   * Same request as listMyTenants, but says WHY there is nothing to load: 'rejected' (401, the session is dead) or
+   * 'password_change_required' (the session is alive). Any other failure throws an ApiError that keeps its status
+   * (0 = cannot reach the server), so the caller can tell an outage from a dead session.
+   */
+  async listMyTenantsResult(token?: string): Promise<ListMyTenantsResult> {
     const bearer = token ?? this.getToken();
-    if (!bearer) return null;
+    if (!bearer) return { kind: 'rejected' };
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
       headers: { Authorization: `Bearer ${bearer}` },
     });
-    if (res.status === 401) return null;
+    if (res.status === 401) return { kind: 'rejected' };
+    const body = res.ok ? null : await res.json().catch(() => null);
     // A temporary password must be changed first: nothing to load yet, and not an error (the change triggers a new sync)
-    if (res.status === 403 && isPasswordChangeRequired(res.status, await res.json().catch(() => null))) return null;
-    if (!res.ok) throw new Error(`Failed to load your tenants (HTTP ${res.status})`);
-    return parseServerTenants(await res.json());
+    if (res.status === 403 && isPasswordChangeRequired(res.status, body)) return { kind: 'password_change_required' };
+    if (!res.ok) throw apiErrorFromResponse(res.status, body);
+    return { kind: 'ok', tenants: parseServerTenants(await res.json()) };
   },
 
   /**

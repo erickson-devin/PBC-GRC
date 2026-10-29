@@ -29,7 +29,9 @@ import { generateEvidenceObjectPath } from '../data/audit/storageDriver';
 import { computeDomainStats } from '../data/frameworks/domainStats';
 import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives';
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
-import { ApiClient } from '../services/apiClient';
+import { ApiClient, ApiError } from '../services/apiClient';
+import { unsavedControlNotes } from '../services/unsavedText';
+import { useUnsavedTextProvider } from '../hooks/useUnsavedTextProvider';
 import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
 import { programCacheSegment, programScopeKey, shouldPersistAssessment } from '../data/programSync';
 import { programFrameworkControls } from '../data/programScope';
@@ -369,6 +371,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // -------------------------------------------------------------------------
   const liveControlsRef = useRef(liveControls);
   liveControlsRef.current = liveControls;
+  // Notes typed but not on the server yet are reported to the unsaved-text rescue (a session the server ends takes them with it).
+  // Server-backed tenants only: a browser-only tenant keeps its notes in the browser cache. Read through refs: the rescue runs synchronously.
+  const liveScopeKeyRef = useRef(liveScopeKey);
+  liveScopeKeyRef.current = liveScopeKey;
+  const serverBackedRef = useRef(currentTenant.serverBacked);
+  serverBackedRef.current = currentTenant.serverBacked;
+  useUnsavedTextProvider(() => {
+    const s = stateRef.current;
+    if (!serverBackedRef.current || programScopeKey(s.tenantId, s.programId) !== liveScopeKeyRef.current) return [];
+    return unsavedControlNotes(s.controls, liveControlsRef.current);
+  });
   const programScopeRef = useRef(programScope);
   programScopeRef.current = programScope;
   const [controlSaveError, setControlSaveError] = useState<ControlSaveFailure | null>(null);
@@ -886,7 +899,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // The control part reports its own failure (saveControl never rejects), apart from the objective part
     if (control) void saveControl(control.id, control.update);
     void objectiveSave.catch((err: unknown) => {
-      alert(`The objective change could not be saved to the server: ${errorMessage(err) || 'unknown error'}`);
+      // A 401 means the session has ended: the sign-in screen says so, and an alert here would come after the sign-out
+      if (!(err instanceof ApiError && err.status === 401)) {
+        alert(`The objective change could not be saved to the server: ${errorMessage(err) || 'unknown error'}`);
+      }
       revertObjectives(inputs.map(i => i.objectiveId), scope);
     });
   }, [currentTenant.serverBacked, programScope, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives]);

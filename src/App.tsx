@@ -32,12 +32,15 @@ import { PolicyLibraryView } from './views/PolicyLibraryView';
 import { SspImportView } from './components/sspImport/SspImportView';
 import { ProgramsPage } from './components/programs/ProgramsPage';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { SessionVerifyingScreen } from './components/auth/SessionVerifyingScreen';
+import { UnsavedTextBanner } from './components/auth/UnsavedTextBanner';
+import { shouldHoldForVerification } from './data/sessionVerification';
 
 
 import { AppRoute, initialTabFromUrl, resolveRoot, routeFromUrl } from './utils/appRoute';
 const AppContent: React.FC = () => {
   const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
-  const { isAuthenticated, mustChangePassword, loading: authLoading } = useAuth();
+  const { isAuthenticated, mustChangePassword, loading: authLoading, sessionCheck } = useAuth();
   const {
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
@@ -168,11 +171,11 @@ const AppContent: React.FC = () => {
 
   // Unknown paths (and /) never show a page of their own: they go to the app when signed in, to the login page otherwise.
   useEffect(() => {
-    if (currentRoute !== 'root' || authLoading || setup.state === 'checking') return;
+    if (currentRoute !== 'root' || authLoading || setup.state === 'checking' || shouldHoldForVerification(sessionCheck)) return;
     const next = resolveRoot(isAuthenticated);
     window.history.replaceState(null, '', next === 'app' ? '/#app' : '/#login');
     setCurrentRoute(next);
-  }, [currentRoute, authLoading, isAuthenticated, setup.state]);
+  }, [currentRoute, authLoading, isAuthenticated, setup.state, sessionCheck]);
 
   const navigateToApp = useCallback(() => {
     // Always back to the site root: with a path like /login still in the URL, "/login#app" would resolve to the login page
@@ -189,7 +192,15 @@ const AppContent: React.FC = () => {
 
   // A temporary password (administrator reset, or an account created from the command line) must be replaced before anything else:
   // the server refuses every other request until then, so the app is not rendered at all.
-  if (isAuthenticated && mustChangePassword) return <PasswordChangeScreen />;
+  // A reload with a stored session waits for the server's first answer: a session it already ended must not flash the
+  // workspace (or the password-change screen) from the cache
+  if (shouldHoldForVerification(sessionCheck)) return <SessionVerifyingScreen />;
+  if (isAuthenticated && mustChangePassword) return (
+    <>
+      <PasswordChangeScreen />
+      <UnsavedTextBanner />
+    </>
+  );
 
   return (
     <>
@@ -319,6 +330,8 @@ const AppContent: React.FC = () => {
         isOpen={isStackSurveyModalOpen}
         onClose={() => setIsStackSurveyModalOpen(false)}
       />
+      {/* Unsaved text rescued when the server ended a session (memory only): shown on every route, revealed to the same user only */}
+      <UnsavedTextBanner />
     </>
   );
 };

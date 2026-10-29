@@ -25,6 +25,8 @@ import { calculateControlRollup } from '../../data/frameworks/assessmentObjectiv
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { planConfirmAll, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
+import { unsavedObjectiveDrafts } from '../../services/unsavedText';
 
 interface ObjectiveChecklistProps {
   controlId: string;
@@ -45,10 +47,11 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     linkEvidenceToObjective,
     setPreviewEvidence,
     notesEditable,
+    serverObjectiveNarrative,
   } = useAssessment();
 
   // Objective status, narratives and evidence links of a server-backed tenant live on the server: no editing until they are loaded
-  const { canEdit: roleCanEdit } = useTenant();
+  const { canEdit: roleCanEdit, currentTenant } = useTenant();
   const canEdit = roleCanEdit && notesEditable;
 
   // Retrieve objectives for this control
@@ -62,6 +65,13 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   // Local state for expanded pre-filled cards and narrative edits
   const [expandedTemplates, setExpandedTemplates] = useState<Record<string, boolean>>({});
   const [editingNarratives, setEditingNarratives] = useState<Record<string, string>>({});
+  // A narrative typed here and not saved yet is reported to the unsaved-text rescue (the draft dies with this component)
+  // Compared with what the server confirmed, not the local copy: a save updates that copy before the server answers, so text
+  // whose save is still in flight (or refused because the session ended) counts as unsaved. A browser-only tenant has no server copy.
+  useUnsavedTextProvider(() => unsavedObjectiveDrafts(
+    editingNarratives,
+    Object.fromEntries(objectives.map((o) => [o.id, currentTenant.serverBacked ? serverObjectiveNarrative(o.id) : o.implementationNarrative])),
+  ));
   const [appliedNoticeId, setAppliedNoticeId] = useState<string | null>(null);
   const [bulkNotice, setBulkNotice] = useState<boolean>(false);
   const [showEvidenceSelectorForId, setShowEvidenceSelectorForId] = useState<string | null>(null);

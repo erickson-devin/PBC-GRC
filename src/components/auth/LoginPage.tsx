@@ -97,9 +97,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
             {/* Error Banner */}
             {authError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-center justify-between">
+              <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-center justify-between gap-3">
                 <span>{authError}</span>
-                <button onClick={clearAuthError} className="text-rose-400 hover:text-white">✕</button>
+                <button type="button" onClick={clearAuthError} aria-label="Dismiss this message" className="shrink-0 text-rose-400 hover:text-white">✕</button>
               </div>
             )}
 

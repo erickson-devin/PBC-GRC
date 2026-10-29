@@ -10,6 +10,7 @@ import {
   EnclaveStackProfile,
 } from '../types/tenant';
 import { errorMessage } from '../utils/errors';
+import { outcomeFromSyncError, type SyncOutcome } from '../data/sessionVerification';
 import { canRoleWrite, isTenantRole } from '../utils/roles';
 import {
   applyRoleSync,
@@ -223,6 +224,8 @@ export interface TenantSyncState {
   status: 'idle' | 'syncing' | 'synced' | 'error';
   lastSyncedAt: string | null;
   error: string | null;
+  /** What the latest sync learned about the session (null until one answers, and after sign-out). */
+  outcome: SyncOutcome | null;
 }
 
 /** 'unsupported': a browser-only tenant has no server, so no programs (one implicit default boundary). */
@@ -570,7 +573,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // ── Server → client tenant synchronisation ─────────────────────────────────────────────────────────────
   // The server decides which tenants a user belongs to and what role they hold. localStorage is only a cache:
   // after every sign-in (and on reload of a signed-in session) it is reconciled with GET /api/v1/tenants.
-  const [tenantSync, setTenantSync] = useState<TenantSyncState>({ status: 'idle', lastSyncedAt: null, error: null });
+  const [tenantSync, setTenantSync] = useState<TenantSyncState>({ status: 'idle', lastSyncedAt: null, error: null, outcome: null });
   const liveTenantsRef = useRef(liveTenants);
   liveTenantsRef.current = liveTenants;
   const syncInFlight = useRef<Promise<Tenant[] | null> | null>(null);
@@ -597,14 +600,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const run = (async (): Promise<Tenant[] | null> => {
       setTenantSync((prev) => ({ ...prev, status: 'syncing', error: null }));
       try {
-        const [server, platform] = await Promise.all([ApiClient.listMyTenants(token), ApiClient.getPlatformStatus(token)]);
+        const [listed, platform] = await Promise.all([ApiClient.listMyTenantsResult(token), ApiClient.getPlatformStatus(token)]);
         // The server decides who administers this platform; an unknown answer never grants rights
         if (platform) setCurrentUser((prev) => (prev.isSuperAdmin === platform.isPlatformAdmin ? prev : { ...prev, isSuperAdmin: platform.isPlatformAdmin }));
-        if (server === null) {
-          // The session was not accepted: nothing to reconcile, and nothing server-backed may be trusted.
-          setTenantSync((prev) => ({ ...prev, status: 'idle' }));
+        if (listed.kind !== 'ok') {
+          // The session was not accepted (rejected), or the password must be changed first: nothing to reconcile, and
+          // nothing server-backed may be trusted. The outcome tells the two apart.
+          setTenantSync((prev) => ({ ...prev, status: 'idle', outcome: listed.kind }));
           return null;
         }
+        const server = listed.tenants;
 
         const result = mergeServerTenants(liveTenantsRef.current, server, new Date(), { placeholderIds: [DEFAULT_BLANK_TENANT.id] });
         setLiveTenants(result.tenants);
@@ -612,12 +617,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setLiveActiveTenantId((prev) => pickActiveTenantId(prev, result.tenants, result.serverTenantIds, [DEFAULT_BLANK_TENANT.id]));
         // A user who already has tenants on the server does not need the first-run wizard
         if (server.length > 0) setIsOnboardingModalOpen(false);
-        setTenantSync({ status: 'synced', lastSyncedAt: new Date().toISOString(), error: null });
+        setTenantSync({ status: 'synced', lastSyncedAt: new Date().toISOString(), error: null, outcome: 'verified' });
         return result.tenants;
       } catch (err: unknown) {
         // Offline or server error: keep the cache, but say so. The server still enforces every request.
         console.warn('[Tenants] Could not sync tenants from the server:', errorMessage(err));
-        setTenantSync((prev) => ({ ...prev, status: 'error', error: errorMessage(err) || 'Tenant sync failed' }));
+        setTenantSync((prev) => ({ ...prev, status: 'error', error: errorMessage(err) || 'Tenant sync failed', outcome: outcomeFromSyncError(err) }));
         return null;
       }
     })();
@@ -1680,7 +1685,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setTeamMembers({});
     setInvitations([]);
     setIsOnboardingModalOpen(false);
-    setTenantSync({ status: 'idle', lastSyncedAt: null, error: null });
+    setTenantSync({ status: 'idle', lastSyncedAt: null, error: null, outcome: null });
     try {
       [LIVE_TENANTS_STORAGE_KEY, LIVE_ACTIVE_TENANT_ID_KEY, CURRENT_USER_KEY, TEAM_MEMBERS_STORAGE_KEY].forEach(k => localStorage.removeItem(k));
       const programPrefix = activeProgramStorageKey('');
