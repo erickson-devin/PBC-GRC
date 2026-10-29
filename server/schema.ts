@@ -39,6 +39,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'control_objectives', tenantColumn: 'tenant_id' },
   { table: 'control_objective_events', tenantColumn: 'tenant_id' },
   { table: 'program_events', tenantColumn: 'tenant_id' },
+  { table: 'program_assets', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -58,6 +59,7 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'control_objectives',
   'control_objective_events',
   'program_events',
+  'program_assets',
 ];
 
 /**
@@ -764,8 +766,22 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   ALTER TABLE program_events DROP CONSTRAINT IF EXISTS program_events_kind_check;
-  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared'));
+  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed'));
   CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);
+
+  -- Boundary asset membership (issue #26): the assets a program declares inside its boundary. Assets stay tenant-wide
+  -- (enclave_assets); one asset may belong to several programs. Ids only: never a host name, address or note.
+  CREATE TABLE IF NOT EXISTS program_assets (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      asset_id VARCHAR(64) NOT NULL,
+      added_by VARCHAR(255),
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_assets PRIMARY KEY (tenant_id, program_id, asset_id),
+      CONSTRAINT fk_program_assets_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_assets_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_assets_asset ON program_assets (tenant_id, asset_id);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
