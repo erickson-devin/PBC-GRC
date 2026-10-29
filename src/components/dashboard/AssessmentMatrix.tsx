@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Filter,
@@ -23,6 +23,8 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
+import { ConfirmOverlayChangeDialog } from '../programs/ConfirmOverlayChangeDialog';
+import { overlayLockReason, summarizeOverlayChange } from '../../data/overlayScoping';
 import { ControlCard } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 
@@ -52,7 +54,13 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     activeOverlayFilters,
     toggleNonNetworkedOverlay,
     canEdit,
+    canManagePrograms,
+    programsStatus,
   } = useTenant();
+
+  const [confirmReset, setConfirmReset] = useState(false);
+  const progressRef = useRef<HTMLDivElement>(null);
+  const resetLock = overlayLockReason('nonNetworkedOnly', { serverBacked: Boolean(currentTenant.serverBacked), programsStatus, canManagePrograms, framework: activeFramework, program: activeProgram });
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
@@ -259,17 +267,33 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               </p>
             </div>
           </div>
-          <button
-            onClick={toggleNonNetworkedOverlay}
-            className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold text-xs transition-colors shrink-0"
-          >
-            Reset Overlay
-          </button>
+          {resetLock === null ? (
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              onClick={() => setConfirmReset(true)}
+              className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold text-xs transition-colors shrink-0"
+            >
+              Reset Overlay
+            </button>
+          ) : (
+            <span className="text-xs text-amber-200/80 shrink-0">{currentTenant.serverBacked ? 'Set on the program' : 'Set in this browser'}</span>
+          )}
         </div>
       )}
 
+      {confirmReset && (
+        <ConfirmOverlayChangeDialog
+          summary={summarizeOverlayChange({ framework: activeFramework, baseline: activeProgram?.baseline ?? null, privacyBaseline: activeProgram?.privacyBaseline }, activeOverlayFilters, 'nonNetworkedOnly')}
+          serverBacked={Boolean(currentTenant.serverBacked)}
+          onConfirm={toggleNonNetworkedOverlay}
+          onClose={() => setConfirmReset(false)}
+          onSaved={() => progressRef.current?.focus()}
+        />
+      )}
+
       {/* Progress & Baseline Mini-Bar */}
-      <div className="stitch-card p-4 space-y-2">
+      <div ref={progressRef} tabIndex={-1} className="stitch-card p-4 space-y-2 outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50">
         <div className="flex items-center justify-between text-xs font-medium">
           <span className="text-slate-400">
             Enclave Progress: <strong className="text-white">{currentTenant.name}</strong> • <span className="text-brand-300">{currentFrameworkDef.shortName}</span>

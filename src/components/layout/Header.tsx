@@ -99,7 +99,7 @@ export const Header: React.FC<HeaderProps> = () => {
           {/* Top-Nav Program Switcher (the program holds the framework and baseline; doubles as the scope badge) */}
           <ProgramSwitcher />
 
-          {/* Operational overlays (kept per browser) */}
+          {/* Operational overlays (NIST SP 800-53: saved with the program) */}
           <FrameworkSwitcher />
         </div>
 

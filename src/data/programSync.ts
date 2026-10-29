@@ -1,6 +1,7 @@
 import { PROGRAM_FRAMEWORKS } from './tenantFrameworkPolicy';
 import type { ComplianceFramework } from '../types/framework';
-import type { Program, ProgramBaseline, ProgramInput, ProgramMetrics } from '../types/program';
+import type { Program, ProgramBaseline, ProgramInput, ProgramMetrics, ProgramScoping } from '../types/program';
+import { normalizeProgramScoping } from './programScope';
 
 /**
  * Programs as the client reads them: the server's list and metrics bodies, the active-program choice, the scope keys that keep one
@@ -41,6 +42,10 @@ function parseProgram(raw: unknown): Program | null {
   if (!framework) return null;
   const name = text(raw.name).trim();
   const archivedAt = raw.archivedAt ?? raw.archived_at;
+  const privacyBaseline = framework === 'NIST_800_53_REV5' && (raw.privacyBaseline ?? raw.privacy_baseline) === true;
+  // The server's overlays; one this version cannot read is shown as none (never thrown)
+  const scopingResult = normalizeProgramScoping(raw.scoping, { frameworkId: framework, privacyBaseline });
+  const scoping: ProgramScoping = scopingResult.ok ? scopingResult.value : {};
   const program: Program = {
     id,
     name: name || 'Untitled program',
@@ -49,8 +54,10 @@ function parseProgram(raw: unknown): Program | null {
     // Only NIST SP 800-53 carries a baseline.
     baseline: framework === 'NIST_800_53_REV5' ? readBaseline(raw.baseline) : null,
     // The privacy-baseline add-on is NIST SP 800-53 only and true only when the server says so.
-    privacyBaseline: framework === 'NIST_800_53_REV5' && (raw.privacyBaseline ?? raw.privacy_baseline) === true,
+    privacyBaseline,
     boundarySummary: text(raw.boundarySummary ?? raw.systemBoundarySummary ?? raw.system_boundary_summary),
+    scoping,
+    vmTarget: (raw.vmTarget ?? raw.vm_target) === true,
     isDefault: (raw.isDefault ?? raw.is_default) === true,
     archived: raw.archived === true || (typeof archivedAt === 'string' && archivedAt !== ''),
   };
@@ -114,7 +121,7 @@ export function programCacheSegment(program: Pick<Program, 'id' | 'isDefault'> |
   return !program || program.isDefault ? null : program.id;
 }
 
-export type ProgramInputField = 'name' | 'framework' | 'baseline' | 'description' | 'boundarySummary' | 'seed';
+export type ProgramInputField = 'name' | 'framework' | 'baseline' | 'description' | 'boundarySummary' | 'scoping' | 'seed';
 
 export interface ProgramValidation {
   valid: boolean;
@@ -127,6 +134,8 @@ export interface ProgramValidation {
     privacyBaseline: boolean;
     description: string;
     boundarySummary: string;
+    /** The overlays that are on (NIST SP 800-53 only); `{}` when none. */
+    scoping: ProgramScoping;
     seed: 'blank' | 'clone';
     sourceProgramId: string | null;
   };
@@ -167,10 +176,15 @@ export function validateProgramInput(
   const sourceProgramId = seed === 'clone' && typeof input.sourceProgramId === 'string' && input.sourceProgramId.trim() ? input.sourceProgramId.trim() : null;
   if (seed === 'clone' && !sourceProgramId) errors.seed = 'Choose the program to clone from.';
 
+  const privacyBaseline = isNist && input.privacyBaseline === true;
+  const scopingResult = normalizeProgramScoping(input.scoping, { frameworkId: framework ?? '', privacyBaseline });
+  if (!scopingResult.ok) errors.scoping = 'These overlays cannot be applied to this program: they are for NIST SP 800-53 programs only, and No PII Processing is not available with the privacy baseline.';
+  const scoping: ProgramScoping = scopingResult.ok ? scopingResult.value : {};
+
   return {
     valid: Object.keys(errors).length === 0,
     errors,
-    value: { name, framework: framework ?? String(input.framework ?? ''), baseline, privacyBaseline: isNist && input.privacyBaseline === true, description, boundarySummary, seed, sourceProgramId },
+    value: { name, framework: framework ?? String(input.framework ?? ''), baseline, privacyBaseline, description, boundarySummary, scoping, seed, sourceProgramId },
   };
 }
 
@@ -179,6 +193,7 @@ export function programCreateBody(value: ProgramValidation['value']): Record<str
   const body: Record<string, unknown> = { name: value.name, frameworkId: value.framework, description: value.description, systemBoundarySummary: value.boundarySummary };
   if (value.baseline) body.baseline = value.baseline;
   if (value.privacyBaseline) body.privacyBaseline = true;
+  if (Object.keys(value.scoping).length > 0) body.scoping = value.scoping;
   if (value.seed === 'clone' && value.sourceProgramId) body.seed = { cloneFrom: value.sourceProgramId };
   return body;
 }

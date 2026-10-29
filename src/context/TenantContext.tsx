@@ -34,14 +34,15 @@ import { listLocalEvidenceCopies, moveLocalEvidenceCopy, moveLocalEvidenceKey, r
 import { recordFailedControlMove, recordFailedMove } from '../services/failedMoves';
 import { pushAssetsToServer } from '../services/assetMove';
 import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
-import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
+import type { Program, ProgramBaseline, ProgramInput, ProgramScoping, ProgramUpdate } from '../types/program';
 import {
   activeProgramStorageKey,
   isCurrentResponse,
   pickActiveProgramId,
   programScopeKey,
 } from '../data/programSync';
-import { programBaselineToCia } from '../data/programScope';
+import { programBaselineToCia, scopingToOverlays } from '../data/programScope';
+import { overlayLockReason } from '../data/overlayScoping';
 import {
   ServerInvitation,
   buildTeam,
@@ -65,11 +66,23 @@ const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
 const LIVE_ACTIVE_TENANT_ID_KEY = 'pbc_live_active_tenant_v4';
 const CURRENT_USER_KEY = 'pbc_active_user_v4';
 const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
-// Overlays stay per browser (a program setting later); the framework, baseline tier and CIA triad now come from the active program
-const ACTIVE_OVERLAY_FILTERS_KEY = 'pbc_active_overlay_filters_v1';
+// The framework, baseline tier, CIA triad and overlays come from the active program. Only a browser-only tenant keeps its overlays here.
+const overlayFiltersStorageKey = (tenantId: string) => `pbc_overlay_filters_${tenantId}`;
+
+/** A browser-only tenant's saved overlays (all off when none or unreadable). */
+function readBrowserOverlayFilters(tenantId: string): OverlayFilters {
+  try {
+    const saved = localStorage.getItem(overlayFiltersStorageKey(tenantId));
+    if (saved) return scopingToOverlays(JSON.parse(saved) as ProgramScoping);
+  } catch {
+    // overlay filters storage load fallback
+  }
+  return { nonNetworkedOnly: false };
+}
 
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [
+  'pbc_active_overlay_filters_v1', // one browser-wide overlay choice: overlays belong to the program (or to a browser-only tenant's own key) now
   'pbc_active_framework_v1', // per-browser framework / baseline / CIA choices: derived from the active program now
   'pbc_active_baseline_tier_v1',
   'pbc_active_cia_triad',
@@ -399,9 +412,9 @@ interface TenantContextType {
   /** The active program's baseline as a tier (LOW / MODERATE / HIGH; LOW_LOW_LOW without one). */
   activeBaselineTier: BaselineTier;
   activeOverlayFilters: OverlayFilters;
-  setActiveOverlayFilters: React.Dispatch<React.SetStateAction<OverlayFilters>>;
-  toggleNonNetworkedOverlay: () => void;
-  toggleOverlayFilter: (key: keyof OverlayFilters) => void;
+  /** Save the overlay with the active program (or this browser's tenant key); reject, saving nothing, when overlays are locked. */
+  toggleNonNetworkedOverlay: () => Promise<void>;
+  toggleOverlayFilter: (key: keyof OverlayFilters) => Promise<void>;
   /** The active program's baseline as a triad (all controls without a baseline). Read-only: the baseline is fixed when the program is created. */
   ciaTriad: CiaTriadSelection;
   /** @deprecated No effect: the CIA triad follows the program's baseline. Removed with the CIA editor of the old framework menu. */
@@ -1016,47 +1029,21 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (target) switchProgram(target.id);
   }, [switchProgram]);
 
-  // Overlays stay per browser until they become a program setting
-  const [storedOverlayFilters, setActiveOverlayFilters] = useState<OverlayFilters>(() => {
-    try {
-      const saved = localStorage.getItem(ACTIVE_OVERLAY_FILTERS_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // overlay filters storage load fallback
-    }
-    return { nonNetworkedOnly: false };
-  });
-  // A program that applies the privacy baseline processes PII: "No PII processing" does not apply to it, whatever this browser saved
+  // Overlays are a setting of the active program (NIST SP 800-53 only; the server's normaliser already drops the privacy conflict).
+  // A tenant that only exists in this browser has no programs: its overlays live under its own key.
+  const [browserOverlays, setBrowserOverlays] = useState<{ tenantId: string; filters: OverlayFilters } | null>(null);
+  const browserOverlayFilters = useMemo<OverlayFilters>(
+    () => (browserOverlays && browserOverlays.tenantId === currentTenant.id ? browserOverlays.filters : readBrowserOverlayFilters(currentTenant.id)),
+    [browserOverlays, currentTenant.id]
+  );
   const activeOverlayFilters = useMemo<OverlayFilters>(
-    () => (activeProgram?.privacyBaseline && storedOverlayFilters.noPiiProcessing ? { ...storedOverlayFilters, noPiiProcessing: false } : storedOverlayFilters),
-    [storedOverlayFilters, activeProgram?.privacyBaseline]
+    () => (currentTenant.serverBacked ? scopingToOverlays(activeProgram?.scoping ?? {}) : activeFramework === 'NIST_800_53_REV5' ? browserOverlayFilters : { nonNetworkedOnly: false }),
+    [currentTenant.serverBacked, activeProgram?.scoping, activeFramework, browserOverlayFilters]
   );
 
   // The CIA triad follows the program's baseline: the old per-browser editor has no effect any more
   const setCiaImpact = useCallback((_dimension: 'confidentiality' | 'integrity' | 'availability', _level: ImpactLevel) => {}, []);
   const toggleAllControlsApplied = useCallback(() => {}, []);
-
-  const toggleOverlayFilter = useCallback((key: keyof OverlayFilters) => {
-    setActiveOverlayFilters(prev => {
-      const next = { ...prev, [key]: !prev[key] };
-      try {
-        localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-  }, []);
-
-  const toggleNonNetworkedOverlay = useCallback(() => {
-    toggleOverlayFilter('nonNetworkedOnly');
-  }, [toggleOverlayFilter]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(ACTIVE_OVERLAY_FILTERS_KEY, JSON.stringify(storedOverlayFilters));
-    } catch {}
-  }, [storedOverlayFilters]);
 
   // ============================================================================
   // Express API Live Sync Engine (Row-Level Security Tenant Isolation)
@@ -1281,6 +1268,36 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Creating, editing, archiving and deleting programs: TENANT_OWNER and MSP_ADMIN (the server enforces it)
   const canManagePrograms = canEdit;
+
+  /**
+   * Turns one overlay on or off. A server-backed tenant saves it with the active program (shared, audited by the server) and the
+   * promise settles once the programs are re-read; a browser-only tenant keeps it under its own key. Rejects, saving nothing, when
+   * the overlays are locked right now (the UI shows the reason and does not call it then). Never writes browser storage for a
+   * server-backed tenant.
+   */
+  const toggleOverlayFilter = useCallback(async (key: keyof OverlayFilters): Promise<void> => {
+    const tenantId = currentTenantIdRef.current;
+    const serverBacked = Boolean(liveTenantsRef.current.find(t => t.id === tenantId)?.serverBacked);
+    const ps = programsRef.current;
+    const program = serverBacked && ps.tenantId === tenantId ? ps.programs.find(p => p.id === ps.activeId && !p.archived) ?? null : null;
+    const lock = overlayLockReason(key, { serverBacked, programsStatus, canManagePrograms, framework: activeFramework, program });
+    if (lock) throw Object.assign(new Error('Overlays cannot be changed for this program right now.'), { code: 'overlay_locked' });
+    if (!serverBacked || !program) {
+      const current = readBrowserOverlayFilters(tenantId);
+      const next: OverlayFilters = { ...current, [key]: !current[key] };
+      try {
+        localStorage.setItem(overlayFiltersStorageKey(tenantId), JSON.stringify(next));
+      } catch {
+        // storage unavailable: the choice only lasts for this session
+      }
+      setBrowserOverlays({ tenantId, filters: next });
+      return;
+    }
+    const current = scopingToOverlays(program.scoping);
+    await updateProgram(program.id, { scoping: { ...current, [key]: !current[key] } });
+  }, [programsStatus, canManagePrograms, activeFramework, updateProgram]);
+
+  const toggleNonNetworkedOverlay = useCallback((): Promise<void> => toggleOverlayFilter('nonNetworkedOnly'), [toggleOverlayFilter]);
 
   const canManageTenant = useMemo(() => {
     return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';
@@ -1613,6 +1630,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         window.localStorage.removeItem(`pbc_cmmc_assessment_v3_${tenantId}`);
         window.localStorage.removeItem(`pbc_assessment_${tenantId}`);
         window.localStorage.removeItem(`pbc_audit_ledger_${tenantId}`);
+        window.localStorage.removeItem(overlayFiltersStorageKey(tenantId));
         // every other program's assessment cache (pbc_cmmc_assessment_v3_<tenant>::<program>) and the active-program choice
         StorageService.listProgramKeys(tenantId).forEach(key => window.localStorage.removeItem(key));
       } catch {}
@@ -2052,7 +2070,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setActiveFramework,
     activeBaselineTier,
     activeOverlayFilters,
-    setActiveOverlayFilters,
     toggleNonNetworkedOverlay,
     toggleOverlayFilter,
     ciaTriad,
@@ -2138,7 +2155,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setActiveFramework,
     activeBaselineTier,
     activeOverlayFilters,
-    setActiveOverlayFilters,
     toggleNonNetworkedOverlay,
     toggleOverlayFilter,
     ciaTriad,
