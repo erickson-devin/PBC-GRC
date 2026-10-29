@@ -5,6 +5,7 @@ import { getFrameworkControls } from '../data/frameworks';
 import {
   ASSESSMENT_KEY_PREFIX,
   stripEvidenceIndexForCache,
+  stripFailingAssetsForCache,
   stripImplementationNotesForCache,
   stripObjectiveNarrativesForCache,
 } from './browserStorageScrub';
@@ -106,6 +107,8 @@ export const StorageService = {
         // until the server copy loads. Browser-only tenants keep their (only) copy.
         for (const ctrl of Object.values(parsed.controls)) {
           ctrl.implementationNotes = tenant.serverBacked ? '' : typeof ctrl.implementationNotes === 'string' ? ctrl.implementationNotes : '';
+          // Failing-asset lists (host names, IPs, scan output) are session-only for a live tenant
+          if (tenant.serverBacked) delete ctrl.failingAssets;
         }
         // The evidence list (file names, descriptions) is likewise server-only for a live tenant; the live list replaces it.
         if (tenant.serverBacked) parsed.evidenceIndex = [];
@@ -154,7 +157,7 @@ export const StorageService = {
    */
   saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean; segment?: string | null } = {}): void {
     try {
-      const base: AssessmentState = options.keepNotes ? state : stripEvidenceIndexForCache(stripObjectiveNarrativesForCache(stripImplementationNotesForCache(state)));
+      const base: AssessmentState = options.keepNotes ? state : stripEvidenceIndexForCache(stripObjectiveNarrativesForCache(stripFailingAssetsForCache(stripImplementationNotesForCache(state))));
       const payload: AssessmentState = {
         ...base,
         tenantId,

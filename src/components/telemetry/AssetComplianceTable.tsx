@@ -14,7 +14,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { AssetTelemetryRecord } from '../../types/telemetry';
-import { getEnclaveFleet } from '../../data/telemetry/assetTelemetryEngine';
+import { getEnclaveFleet, fleetStorageMode } from '../../data/telemetry/assetTelemetryEngine';
 import { useTenant } from '../../context/TenantContext';
 
 interface AssetComplianceTableProps {
@@ -35,14 +35,14 @@ export const AssetComplianceTable: React.FC<AssetComplianceTableProps> = ({
 
   const loadFleet = () => {
     setIsRefreshing(true);
-    const data = getEnclaveFleet(currentTenant.id);
+    const data = getEnclaveFleet(currentTenant.id, fleetStorageMode(currentTenant));
     setFleet(data);
     setTimeout(() => setIsRefreshing(false), 300);
   };
 
   useEffect(() => {
     loadFleet();
-  }, [currentTenant.id]);
+  }, [currentTenant.id, currentTenant.serverBacked]);
 
   const filteredFleet = fleet.filter(asset =>
     asset.hostName.toLowerCase().includes(searchQuery.toLowerCase()) ||
