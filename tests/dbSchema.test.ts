@@ -189,6 +189,41 @@ assert(
   'P1: only a NIST SP 800-53 program can have the privacy baseline (programs_privacy_check, dropped before it is added)'
 );
 assert(TABLES_SQL.includes("ADD CONSTRAINT programs_baseline_check CHECK (baseline IS NULL OR (framework_id = 'NIST_800_53_REV5' AND baseline IN ('LOW', 'MODERATE', 'HIGH')))"), 'P1: programs_baseline_check is unchanged by the privacy baseline');
+assert(
+  TABLES_SQL.includes("ALTER TABLE programs ADD COLUMN IF NOT EXISTS scoping JSONB NOT NULL DEFAULT '{}'::jsonb;") && !programsBlock.includes('scoping') && programDdl.includes('scoping JSONB'),
+  'P1: scoping is added to programs after the CREATE TABLE (table block unchanged), inside the program DDL, an empty object by default'
+);
+assert(
+  ['programs_scoping_check', 'programs_scoping_privacy_check', 'programs_scoping_framework_check', 'programs_vm_target_check'].every((c) => TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) >= 0 && TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) < TABLES_SQL.indexOf('ADD CONSTRAINT ' + c)),
+  'P1: the scoping and vm_target checks are dropped before they are added'
+);
+assert(
+  TABLES_SQL.includes("CHECK (jsonb_typeof(scoping) = 'object' AND (scoping - ARRAY['nonNetworkedOnly', 'noWireless', 'noMobileDevices', 'noPiiProcessing']) = '{}'::jsonb AND NOT jsonb_path_exists(scoping, '$.* ? (@ != true)'))"),
+  'P1: scoping is an object of the four known overlay keys, each only ever true'
+);
+assert(
+  TABLES_SQL.includes("ADD CONSTRAINT programs_scoping_privacy_check CHECK (NOT (privacy_baseline AND scoping ? 'noPiiProcessing'))") &&
+    TABLES_SQL.includes("ADD CONSTRAINT programs_scoping_framework_check CHECK (scoping = '{}'::jsonb OR framework_id = 'NIST_800_53_REV5')"),
+  'P1: a privacy program keeps its PII controls, and only a NIST SP 800-53 program can be scoped'
+);
+assert(
+  TABLES_SQL.includes('ALTER TABLE programs ADD COLUMN IF NOT EXISTS vm_target BOOLEAN NOT NULL DEFAULT FALSE;') && !programsBlock.includes('vm_target') &&
+    TABLES_SQL.includes("ADD CONSTRAINT programs_vm_target_check CHECK (NOT vm_target OR (archived_at IS NULL AND framework_id IN ('CMMC_L1', 'CMMC_L2')))"),
+  'P1: vm_target is added after the CREATE TABLE; the target is a live CMMC L1/L2 program'
+);
+assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_vm_target ON programs (tenant_id) WHERE vm_target;'), 'P1: at most one VM target program per tenant');
+const peAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_events (');
+const programEvents = peAt < 0 ? '' : TABLES_SQL.slice(peAt, TABLES_SQL.indexOf('\n  );', peAt));
+assert(peAt > objectivesAt && programEvents !== '', 'P1: program_events is created (IF NOT EXISTS) at the end of the DDL');
+assert(!/FOREIGN KEY|REFERENCES/.test(programEvents) && /program_id VARCHAR\(64\) NOT NULL/.test(programEvents), 'P1: program_events has no foreign key (the history outlives the program) and a NOT NULL program_id');
+assert(!/^\s+(name|description|notes|narrative)\s/m.test(programEvents) && /old_value JSONB,/.test(programEvents) && /new_value JSONB NOT NULL/.test(programEvents), 'P1: program_events holds JSON values only, no name, description, notes or narrative column');
+assert(
+  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared'))") &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS program_events_kind_check') < TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check'),
+  'P1: the event kind CHECK lists the four kinds, dropped before it is added'
+);
+assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);'), 'P1: program_events is indexed by program and time');
+assert(RLS_TENANT_TABLES.some((r) => r.table === 'program_events' && r.tenantColumn === 'tenant_id') && !PROGRAM_BACKFILL_TABLES.includes('program_events' as never), 'P1: program_events is a tenant and program RLS table but is not backfilled');
 for (const t of PROGRAM_SCOPED) {
   assert(TABLES_SQL.includes('ALTER TABLE ' + t + ' ADD COLUMN IF NOT EXISTS program_id VARCHAR(64)'), 'P1: ' + t + ' gets a nullable program_id, idempotently');
 }
@@ -227,7 +262,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES]), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables and program_events', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(

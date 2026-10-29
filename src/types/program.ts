@@ -1,7 +1,10 @@
-import type { ComplianceFramework } from './framework';
+import type { ComplianceFramework, OverlayFilters } from './framework';
 
 /** NIST SP 800-53 baseline of a program, as the server holds it (upper case). Privacy is not a value; it is the separate `privacyBaseline` add-on. */
 export type ProgramBaseline = 'LOW' | 'MODERATE' | 'HIGH';
+
+/** The overlays of a program (NIST SP 800-53 only), as the server stores them: only the switches that are on, always true. */
+export type ProgramScoping = { nonNetworkedOnly?: true; noWireless?: true; noMobileDevices?: true; noPiiProcessing?: true };
 
 /**
  * A program: one authorization boundary (an ATO effort or project) of a tenant, with one framework and, for NIST SP 800-53,
@@ -17,6 +20,10 @@ export interface Program {
   /** NIST SP 800-53 only: the SP 800-53B privacy baseline is added to the security baseline. False for every other program. */
   privacyBaseline: boolean;
   boundarySummary: string;
+  /** The overlays of the program; `{}` when none is on (and for every non-NIST program). */
+  scoping: ProgramScoping;
+  /** True for the tenant's VM target: the program that receives vulnerability-management snapshots and POA&M items. */
+  vmTarget: boolean;
   isDefault: boolean;
   archived: boolean;
   createdAt?: string;
@@ -43,6 +50,8 @@ export interface ProgramInput {
   privacyBaseline?: boolean;
   description?: string;
   boundarySummary?: string;
+  /** NIST SP 800-53 only. */
+  scoping?: Partial<OverlayFilters>;
   seed?: ProgramSeed;
   sourceProgramId?: string | null;
 }
@@ -52,4 +61,5 @@ export interface ProgramUpdate {
   name?: string;
   description?: string;
   boundarySummary?: string;
+  scoping?: Partial<OverlayFilters>;
 }

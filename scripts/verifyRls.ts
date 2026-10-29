@@ -14,7 +14,7 @@
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
- *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check).
+ *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check).
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
@@ -23,8 +23,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective'));
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables and program_events are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events');
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -824,11 +824,69 @@ async function verifyProgramIsolation() {
     const privacyDefault = await queryWithTenant(TENANT_X, "SELECT privacy_baseline FROM programs WHERE name = 'rls_verify_p8_a'", []);
     check(privacyDefault.rows[0]?.privacy_baseline === false, '8g. programs: privacy_baseline defaults to FALSE', JSON.stringify(privacyDefault.rows));
 
+    // 8i. program scoping and the VM target (issues #21, #22): program_events isolation, the scoping CHECKs, the one-target-per-tenant key
+    const insertProgramEvent = "INSERT INTO program_events (tenant_id, program_id, kind, actor, new_value) VALUES ($1, $2, $3, 'rls_verify_actor', '{\"noWireless\":true}'::jsonb) RETURNING id";
+    const pe1 = await queryWithProgram(scopeA, insertProgramEvent, [TENANT_X, programA, 'scoping_set']);
+    check(pe1.rows.length === 1, '8i. program_events: under program A the event is inserted');
+    const peBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_events WHERE program_id = $1', [programA]);
+    const peBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_events WHERE tenant_id = $1', [TENANT_X]);
+    check(peBSeesA.rows.length === 0 && peBSeesAny.rows.length === 0, "8i. program_events: program B cannot read program A's event (0 rows, by program or by tenant)", 'saw ' + peBSeesA.rows.length + ' / ' + peBSeesAny.rows.length);
+    const peBUpdates = await queryWithProgram(scopeB, "UPDATE program_events SET actor = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const peBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_events WHERE program_id = $1', [programA]);
+    check((peBUpdates.rowCount ?? 0) === 0 && (peBDeletes.rowCount ?? 0) === 0, "8i. program_events: program B can neither update nor delete program A's event (0 rows)", 'updated ' + peBUpdates.rowCount + ', deleted ' + peBDeletes.rowCount);
+    const peBInserts = await rejectsIn(scopeB, insertProgramEvent, [TENANT_X, programA, 'scoping_set'], { code: '42501' });
+    check(peBInserts.ok, '8i. program_events: program B cannot insert an event into program A (WITH CHECK, 42501)', peBInserts.detail);
+    const peNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_events WHERE tenant_id = $1', [TENANT_X]);
+    check(peNoCtx.rows.length === 0, '8i. program_events: a tenant context with no program context sees zero rows', 'saw ' + peNoCtx.rows.length);
+    let peNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertProgramEvent, [TENANT_X, programA, 'scoping_set']);
+    } catch (err) {
+      peNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(peNoCtxInsert === '42501', '8i. program_events: no program context cannot insert an event (42501)', peNoCtxInsert);
+    const peBadKind = await rejectsIn(scopeA, insertProgramEvent, [TENANT_X, programA, 'rls_verify_bogus_kind'], { code: '23514', constraint: 'program_events_kind_check' });
+    check(peBadKind.ok, '8i. program_events: an unknown kind is refused (23514, program_events_kind_check)', peBadKind.detail);
+    const peFk = await pool.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'program_events'::regclass AND contype = 'f'");
+    check(peFk.rows[0]?.n === 0, '8i. program_events: no foreign key (the history outlives the program)', JSON.stringify(peFk.rows[0]));
+    const peNotNull = await pool.query("SELECT attnotnull FROM pg_attribute WHERE attrelid = 'program_events'::regclass AND attname = 'program_id' AND NOT attisdropped");
+    check(peNotNull.rows.length === 1 && peNotNull.rows[0].attnotnull === true, '8i. program_events: program_id is NOT NULL (attnotnull)', JSON.stringify(peNotNull.rows));
+
+    const insertScoped = "INSERT INTO programs (tenant_id, name, framework_id, baseline, scoping) VALUES ($1, $2, 'NIST_800_53_REV5', 'MODERATE', $3::jsonb)";
+    const scopingBogus = await privacyCode(insertScoped, [TENANT_X, 'rls_verify_p8_scope_bogus', '{"bogus":true}']);
+    check(scopingBogus === '23514 programs_scoping_check', '8i. programs: an unknown scoping key is refused (23514, programs_scoping_check)', scopingBogus);
+    const scopingFalse = await privacyCode(insertScoped, [TENANT_X, 'rls_verify_p8_scope_false', '{"noWireless":false}']);
+    check(scopingFalse === '23514 programs_scoping_check', '8i. programs: a scoping value of false is refused, only true is stored (23514, programs_scoping_check)', scopingFalse);
+    const scopingOk = await privacyCode(insertScoped, [TENANT_X, 'rls_verify_p8_scope_ok', '{"noWireless":true}']);
+    check(scopingOk === 'no error', '8i. programs: a NIST program with {"noWireless":true} is accepted', scopingOk);
+    const scopingPrivacy = await privacyCode(
+      "INSERT INTO programs (tenant_id, name, framework_id, baseline, privacy_baseline, scoping) VALUES ($1, $2, 'NIST_800_53_REV5', 'MODERATE', TRUE, '{\"noPiiProcessing\":true}'::jsonb)",
+      [TENANT_X, 'rls_verify_p8_scope_priv']
+    );
+    check(scopingPrivacy === '23514 programs_scoping_privacy_check', '8i. programs: a privacy program with {"noPiiProcessing":true} is refused (23514, programs_scoping_privacy_check)', scopingPrivacy);
+    const scopingCmmc = await privacyCode(
+      "INSERT INTO programs (tenant_id, name, framework_id, scoping) VALUES ($1, $2, 'CMMC_L2', '{\"noWireless\":true}'::jsonb)",
+      [TENANT_X, 'rls_verify_p8_scope_cmmc']
+    );
+    check(scopingCmmc === '23514 programs_scoping_framework_check', '8i. programs: a CMMC program with {"noWireless":true} is refused (23514, programs_scoping_framework_check)', scopingCmmc);
+
+    const targetA = await privacyCode('UPDATE programs SET vm_target = TRUE WHERE name = $1', ['rls_verify_p8_a']);
+    check(targetA === 'no error', '8i. programs: a live CMMC program can be the VM target', targetA);
+    const targetB = await privacyCode('UPDATE programs SET vm_target = TRUE WHERE name = $1', ['rls_verify_p8_b']);
+    check(targetB === '23505 unq_programs_vm_target', '8i. programs: a second VM target in the same tenant is refused (23505, unq_programs_vm_target)', targetB);
+    const archiveTarget = await privacyCode('UPDATE programs SET archived_at = NOW() WHERE name = $1', ['rls_verify_p8_a']);
+    check(archiveTarget === '23514 programs_vm_target_check', '8i. programs: archiving the VM target is refused (23514, programs_vm_target_check)', archiveTarget);
+    const targetNist = await privacyCode('UPDATE programs SET vm_target = TRUE WHERE name = $1', ['rls_verify_p8_priv_nist']);
+    check(targetNist === '23514 programs_vm_target_check', '8i. programs: a NIST program cannot be the VM target (23514, programs_vm_target_check)', targetNist);
+    await queryWithTenant(TENANT_X, 'UPDATE programs SET vm_target = FALSE WHERE name = $1', ['rls_verify_p8_a']);
+    await queryWithProgram(scopeA, "DELETE FROM program_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+
     await verifyUpgrade();
   } finally {
     // the history has no foreign key, so a program's delete does not remove its events
     for (const id of [programA, programB]) {
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM program_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
     }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the rows cascade with their program

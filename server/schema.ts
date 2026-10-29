@@ -38,6 +38,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'programs', tenantColumn: 'tenant_id' },
   { table: 'control_objectives', tenantColumn: 'tenant_id' },
   { table: 'control_objective_events', tenantColumn: 'tenant_id' },
+  { table: 'program_events', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -56,12 +57,13 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'vm_poam_items',
   'control_objectives',
   'control_objective_events',
+  'program_events',
 ];
 
 /**
  * The legacy tables whose program_id column was added nullable and is finalized (validated, NOT NULL) once every row has a program.
- * Must equal PROGRAM_SCOPED_TABLES in server/programs.ts (not imported: that file imports this one). The two objective tables are NOT NULL
- * from creation and are not listed.
+ * Must equal PROGRAM_SCOPED_TABLES in server/programs.ts (not imported: that file imports this one). The two objective tables and program_events
+ * are NOT NULL from creation and are not listed.
  */
 export const PROGRAM_BACKFILL_TABLES = [
   'control_assessments',
@@ -618,6 +620,20 @@ export const TABLES_SQL = `
   ALTER TABLE programs ADD COLUMN IF NOT EXISTS privacy_baseline BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_privacy_check;
   ALTER TABLE programs ADD CONSTRAINT programs_privacy_check CHECK (NOT privacy_baseline OR framework_id = 'NIST_800_53_REV5');
+  -- Scope overlays (issue #22): booleans only, known keys only, only true is stored; NIST SP 800-53 programs only, and a privacy
+  -- program keeps its PII controls. Set at creation, changed by owner/admin (each change is a program_events row).
+  ALTER TABLE programs ADD COLUMN IF NOT EXISTS scoping JSONB NOT NULL DEFAULT '{}'::jsonb;
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_scoping_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_scoping_check CHECK (jsonb_typeof(scoping) = 'object' AND (scoping - ARRAY['nonNetworkedOnly', 'noWireless', 'noMobileDevices', 'noPiiProcessing']) = '{}'::jsonb AND NOT jsonb_path_exists(scoping, '$.* ? (@ != true)'));
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_scoping_privacy_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_scoping_privacy_check CHECK (NOT (privacy_baseline AND scoping ? 'noPiiProcessing'));
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_scoping_framework_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_scoping_framework_check CHECK (scoping = '{}'::jsonb OR framework_id = 'NIST_800_53_REV5');
+  -- The program that receives the tenant's vulnerability data (issue #21): at most one per tenant, a live CMMC program.
+  ALTER TABLE programs ADD COLUMN IF NOT EXISTS vm_target BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_vm_target_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_vm_target_check CHECK (NOT vm_target OR (archived_at IS NULL AND framework_id IN ('CMMC_L1', 'CMMC_L2')));
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_vm_target ON programs (tenant_id) WHERE vm_target;
   -- One default program per tenant, and program names are unique per tenant ignoring case.
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default;
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name));
@@ -733,6 +749,23 @@ export const TABLES_SQL = `
   ALTER TABLE control_objective_events DROP CONSTRAINT IF EXISTS control_objective_events_source_check;
   ALTER TABLE control_objective_events ADD CONSTRAINT control_objective_events_source_check CHECK (source IN (${objectiveChangeSourceList}));
   CREATE INDEX IF NOT EXISTS idx_control_objective_events_objective ON control_objective_events (tenant_id, program_id, objective_id, created_at DESC);
+
+  -- Program events (issues #21, #22): scoping and VM-target changes. Booleans and ids only, never a name or a note.
+  -- No foreign key to programs: the history outlives the program. program_id is NOT NULL from creation (nothing to backfill).
+  CREATE TABLE IF NOT EXISTS program_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      kind VARCHAR(32) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      old_value JSONB,
+      new_value JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  ALTER TABLE program_events DROP CONSTRAINT IF EXISTS program_events_kind_check;
+  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared'));
+  CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

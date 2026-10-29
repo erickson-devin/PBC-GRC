@@ -8,8 +8,9 @@ import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
 import { getFrameworkControls } from '../src/data/frameworks';
 import { getEquivalentControlIds } from '../src/data/frameworks/controlMappings';
-import { programFrameworkControls } from '../src/data/programScope';
+import { PROGRAM_SCOPING_KEYS, normalizeProgramScoping, programFrameworkControls, scopingToOverlays } from '../src/data/programScope';
 import type { ComplianceFramework, OverlayFilters } from '../src/types/framework';
+import type { ProgramScoping } from '../src/types/program';
 
 /**
  * Programs: a tenant's authorization boundaries (an ATO effort or project). Each program has one framework and, for NIST SP 800-53,
@@ -40,6 +41,10 @@ export interface Program {
   /** The NIST SP 800-53B privacy baseline as an add-on to `baseline` (NIST programs only). Immutable; false for every other program. */
   privacyBaseline: boolean;
   systemBoundarySummary: string;
+  /** The overlays of the program (NIST SP 800-53 only): the switches that are on, `{}` otherwise. Booleans only. */
+  scoping: ProgramScoping;
+  /** The tenant's VM target: receives the vulnerability-management snapshots and POA&M items. At most one per tenant, CMMC_L1 / CMMC_L2 only. */
+  vmTarget: boolean;
   isDefault: boolean;
   archivedAt: string | null;
   createdBy: string | null;
@@ -58,6 +63,9 @@ export type ProgramErrorCode =
   | 'program_archived'
   | 'framework_immutable'
   | 'program_not_empty'
+  | 'invalid_scoping'
+  | 'invalid_vm_target'
+  | 'program_is_vm_target'
   | 'not_implemented';
 
 export class ProgramError extends Error {
@@ -79,6 +87,8 @@ export interface NewProgramInput {
   baseline?: string | null;
   /** NIST SP 800-53 only: adds the SP 800-53B privacy baseline to the security baseline. Absent, null or false is none. */
   privacyBaseline?: boolean | null;
+  /** NIST SP 800-53 only: the overlays that are on (see normalizeProgramScoping). Absent is none. */
+  scoping?: unknown;
   description?: string;
   systemBoundarySummary?: string;
   /** Initial content. Absent or empty is a blank program; `cloneFrom` (a program of the same tenant) copies its notes, see cloneProgramContent. */
@@ -95,6 +105,29 @@ export interface ProgramPatch {
   baseline?: string | null;
   /** Immutable, like frameworkId. */
   privacyBaseline?: boolean | null;
+  /** Mutable (the owner or an admin): replaces the scoping as a whole. */
+  scoping?: unknown;
+}
+
+/** Who made a change, as the program events record it. */
+export interface ProgramActor {
+  actor: string;
+  userId: string | null;
+}
+
+export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared';
+
+/** One entry of a program's history. Holds booleans and ids only (never a name or a description), so it carries no CUI. */
+export interface ProgramEvent {
+  id: string;
+  tenantId: string;
+  programId: string;
+  kind: ProgramEventKind;
+  actor: string;
+  actorUserId: string | null;
+  oldValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown>;
+  createdAt: string;
 }
 
 export type ProgramUsage = { evidence: number; imports: number; poam: number };
@@ -104,10 +137,12 @@ export type MigrationCounts = Record<ProgramScopedTable, number> & { total: numb
 
 const memoryPrograms = new Map<string, Program>(); // key: id
 const migratedTenants = new Set<string>(); // tenants whose legacy rows were adopted by their default program in this process
+const memoryProgramEvents: ProgramEvent[] = []; // oldest first; the history outlives a deleted program, as in PostgreSQL (no foreign key)
 
 /** Test hook. */
 export function __resetProgramsForTests(): void {
   memoryPrograms.clear();
+  memoryProgramEvents.length = 0;
   migratedTenants.clear();
 }
 
@@ -122,6 +157,17 @@ function programFramework(id: unknown): string | null {
   return (PROGRAM_FRAMEWORK_IDS as readonly string[]).includes(canonical) ? canonical : null;
 }
 
+/** The switches of a stored scoping that are on; the database CHECK already keeps anything else out. */
+function scopingFromRow(raw: unknown): ProgramScoping {
+  const out: ProgramScoping = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const key of PROGRAM_SCOPING_KEYS) if ((raw as Record<string, unknown>)[key] === true) out[key] = true;
+  }
+  return out;
+}
+
+const sameScoping = (a: ProgramScoping, b: ProgramScoping): boolean => PROGRAM_SCOPING_KEYS.every((k) => Boolean(a[k]) === Boolean(b[k]));
+
 function rowToProgram(r: pg.QueryResultRow): Program {
   return {
     id: r.id,
@@ -132,12 +178,59 @@ function rowToProgram(r: pg.QueryResultRow): Program {
     baseline: (r.baseline ?? null) as ProgramBaseline | null,
     privacyBaseline: r.privacy_baseline === true,
     systemBoundarySummary: r.system_boundary_summary ?? '',
+    scoping: scopingFromRow(r.scoping),
+    vmTarget: r.vm_target === true,
     isDefault: Boolean(r.is_default),
     archivedAt: r.archived_at ? iso(r.archived_at) : null,
     createdBy: r.created_by ?? null,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
+}
+
+function rowToEvent(r: pg.QueryResultRow): ProgramEvent {
+  return {
+    id: r.id,
+    tenantId: r.tenant_id,
+    programId: r.program_id,
+    kind: r.kind,
+    actor: r.actor,
+    actorUserId: r.actor_user_id ?? null,
+    oldValue: r.old_value ?? null,
+    newValue: r.new_value ?? {},
+    createdAt: iso(r.created_at),
+  };
+}
+
+/** Records one event in a transaction (PostgreSQL): the program policy of program_events needs the program as the current one. */
+async function insertEventTx(q: Query, tenantId: string, programId: string, kind: ProgramEventKind, who: ProgramActor, oldValue: Record<string, unknown> | null, newValue: Record<string, unknown>): Promise<void> {
+  await q('SELECT set_config($1, $2, true)', ['app.current_program_id', programId]);
+  await q(
+    `INSERT INTO program_events (tenant_id, program_id, kind, actor, actor_user_id, old_value, new_value)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+    [tenantId, programId, kind, who.actor.slice(0, 255), who.userId ? who.userId.slice(0, 128) : null, oldValue === null ? null : JSON.stringify(oldValue), JSON.stringify(newValue)]
+  );
+}
+
+function pushMemoryEvent(tenantId: string, programId: string, kind: ProgramEventKind, who: ProgramActor, oldValue: Record<string, unknown> | null, newValue: Record<string, unknown>): void {
+  memoryProgramEvents.push({
+    id: crypto.randomUUID(), tenantId, programId, kind, actor: who.actor.slice(0, 255), actorUserId: who.userId ? who.userId.slice(0, 128) : null,
+    oldValue, newValue, createdAt: new Date().toISOString(),
+  });
+}
+
+/** A program's history, newest first (at most `limit`, 1 to 500, 100 by default), through the program policy of program_events. */
+export async function listProgramEvents(scope: ProgramScope, limit = 100): Promise<ProgramEvent[]> {
+  const n = Math.max(1, Math.min(500, Math.floor(Number.isFinite(limit) ? limit : 100)));
+  if (isMemory()) {
+    return memoryProgramEvents.filter((e) => e.tenantId === scope.tenantId && e.programId === scope.programId).reverse().slice(0, n);
+  }
+  const res = await queryWithProgram(
+    scope,
+    'SELECT * FROM program_events WHERE tenant_id = $1 AND program_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3',
+    [scope.tenantId, scope.programId, n]
+  );
+  return res.rows.map(rowToEvent);
 }
 
 type Query = (text: string, params?: SqlParam[]) => Promise<pg.QueryResult>;
@@ -181,6 +274,8 @@ async function resolveDefaultProgram(tenantId: string): Promise<Program> {
       baseline,
       privacyBaseline: false,
       systemBoundarySummary: '',
+      scoping: {},
+      vmTarget: false,
       isDefault: true,
       archivedAt: null,
       createdBy: null,
@@ -314,6 +409,9 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   if (privacyBaseline && frameworkId !== 'NIST_800_53_REV5') {
     throw new ProgramError('invalid_baseline', 'Only a NIST SP 800-53 program has a privacy baseline');
   }
+  const scopingCheck = normalizeProgramScoping(input.scoping, { frameworkId, privacyBaseline });
+  if (!scopingCheck.ok) throw new ProgramError('invalid_scoping', scopingCheck.error);
+  const scoping = scopingCheck.value;
   const cloneFrom = input.seed?.cloneFrom;
   if (cloneFrom !== undefined && cloneFrom !== null && typeof cloneFrom !== 'string') throw new ProgramError('program_not_found', 'Program to clone from not found');
 
@@ -328,24 +426,30 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   const description = typeof input.description === 'string' ? input.description : '';
   const systemBoundarySummary = typeof input.systemBoundarySummary === 'string' ? input.systemBoundarySummary : '';
   const by = createdBy ? createdBy.slice(0, 255) : null;
+  const who: ProgramActor = { actor: by ?? cloner?.actor ?? 'System', userId: cloner?.userId ?? null };
   let program: Program;
   if (isMemory()) {
     const now = new Date().toISOString();
     program = {
       id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary,
-      isDefault: false, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
+      scoping, vmTarget: false, isDefault: false, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
     };
     memoryPrograms.set(program.id, program);
+    pushMemoryEvent(tenantId, program.id, 'scoping_set', who, null, scoping);
   } else {
     try {
-      const res = await queryWithTenant(
-        tenantId,
-        `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, privacy_baseline, system_boundary_summary, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING *`,
-        [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, by]
-      );
-      program = rowToProgram(res.rows[0]);
+      // the program and its first event in one transaction: a program never exists without the record of how it was scoped
+      program = await inTenantTx(tenantId, async (q) => {
+        const res = await q(
+          `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, privacy_baseline, system_boundary_summary, scoping, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+           RETURNING *`,
+          [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, JSON.stringify(scoping), by]
+        );
+        const created = rowToProgram(res.rows[0]);
+        await insertEventTx(q, tenantId, created.id, 'scoping_set', who, null, scoping);
+        return created;
+      });
     } catch (err) {
       if ((err as { code?: string })?.code === '23505') throw nameTaken();
       throw err;
@@ -421,7 +525,15 @@ export async function cloneProgramContent(source: Program, target: Program, who:
  */
 export async function getProgramMetrics(program: Program): Promise<ProgramMetrics> {
   const scope = { tenantId: program.tenantId, programId: program.id };
-  const catalog = catalogIds(program);
+  // the overlays of the program narrow the count (the card matches the matrix); a clone still copies the whole catalog (catalogIds)
+  const catalog = PROGRAM_SCOPING_KEYS.some((k) => program.scoping[k])
+    ? new Set(
+        programFrameworkControls(
+          { framework: program.frameworkId as ComplianceFramework, baseline: program.baseline, privacyBaseline: program.privacyBaseline },
+          scopingToOverlays(program.scoping)
+        ).map((c) => c.id)
+      )
+    : catalogIds(program);
   let documented = 0;
   for (const [controlId, a] of await readControlAssessments(scope)) {
     if (catalog.has(controlId) && (a.status === 'MET' || stripDelimitedBlocks(a.notes).trim() !== '')) documented++;
@@ -436,10 +548,20 @@ async function requireProgram(tenantId: string, id: string): Promise<Program> {
   return program;
 }
 
-/** Edits the name, description and boundary summary. The framework and the baseline cannot change; an archived program takes no writes. */
-export async function updateProgram(tenantId: string, id: string, patch: ProgramPatch): Promise<Program> {
+/**
+ * Edits the name, description, boundary summary and scoping. The framework and the baseline cannot change; an archived program takes no
+ * writes. A scoping that differs from the stored one records a `scoping_changed` event (old and new switches, `who`); one that does not
+ * records nothing.
+ */
+export async function updateProgram(tenantId: string, id: string, patch: ProgramPatch, who: ProgramActor = { actor: 'System', userId: null }): Promise<Program> {
   const current = await requireProgram(tenantId, id);
   if (current.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be edited');
+  let wantedScoping: ProgramScoping | null = null; // null: leave the scoping as it is
+  if (patch.scoping !== undefined) {
+    const check = normalizeProgramScoping(patch.scoping, current);
+    if (!check.ok) throw new ProgramError('invalid_scoping', check.error);
+    wantedScoping = check.value;
+  }
   if (patch.frameworkId !== undefined && programFramework(patch.frameworkId) !== current.frameworkId) {
     throw new ProgramError('framework_immutable', 'The framework of a program cannot be changed after creation');
   }
@@ -456,20 +578,28 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
   const summary = typeof patch.systemBoundarySummary === 'string' ? patch.systemBoundarySummary : current.systemBoundarySummary;
 
   if (isMemory()) {
-    const next: Program = { ...current, name, description, systemBoundarySummary: summary, updatedAt: new Date().toISOString() };
+    const scoping = wantedScoping ?? current.scoping;
+    const next: Program = { ...current, name, description, systemBoundarySummary: summary, scoping, updatedAt: new Date().toISOString() };
     memoryPrograms.set(id, next);
+    if (!sameScoping(current.scoping, scoping)) pushMemoryEvent(tenantId, id, 'scoping_changed', who, current.scoping, scoping);
     return next;
   }
   try {
-    const res = await queryWithTenant(
-      tenantId,
-      `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, updated_at = NOW()
-        WHERE tenant_id = $1 AND id = $2
-        RETURNING *`,
-      [tenantId, id, name, description, summary]
-    );
-    if (!res.rows[0]) throw new ProgramError('program_not_found', 'Program not found');
-    return rowToProgram(res.rows[0]);
+    return await inTenantTx(tenantId, async (q) => {
+      const locked = await q('SELECT * FROM programs WHERE tenant_id = $1 AND id = $2 FOR UPDATE', [tenantId, id]);
+      if (!locked.rows[0]) throw new ProgramError('program_not_found', 'Program not found');
+      const before = rowToProgram(locked.rows[0]);
+      if (before.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be edited');
+      const scoping = wantedScoping ?? before.scoping;
+      const res = await q(
+        `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, scoping = $6::jsonb, updated_at = NOW()
+          WHERE tenant_id = $1 AND id = $2
+          RETURNING *`,
+        [tenantId, id, name, description, summary, JSON.stringify(scoping)]
+      );
+      if (!sameScoping(before.scoping, scoping)) await insertEventTx(q, tenantId, id, 'scoping_changed', who, before.scoping, scoping);
+      return rowToProgram(res.rows[0]);
+    });
   } catch (err) {
     if ((err as { code?: string })?.code === '23505') throw nameTaken();
     throw err;
@@ -479,6 +609,7 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
 async function setArchived(tenantId: string, id: string, archived: boolean): Promise<Program> {
   const current = await requireProgram(tenantId, id);
   if (current.isDefault) throw new ProgramError('program_is_default', 'The default program cannot be archived');
+  if (archived && current.vmTarget) throw new ProgramError('program_is_vm_target', 'The VM target program cannot be archived: choose another target first');
   if ((current.archivedAt !== null) === archived) return current;
   if (isMemory()) {
     const now = new Date().toISOString();
@@ -528,6 +659,7 @@ export async function countProgramUsage(scope: ProgramScope): Promise<ProgramUsa
 export async function deleteProgram(tenantId: string, id: string): Promise<void> {
   const current = await requireProgram(tenantId, id);
   if (current.isDefault) throw new ProgramError('program_is_default', 'The default program cannot be deleted');
+  if (current.vmTarget) throw new ProgramError('program_is_vm_target', 'The VM target program cannot be deleted: choose another target first');
   const usage = await countProgramUsage({ tenantId, programId: id });
   if (usage.evidence + usage.imports + usage.poam > 0) {
     throw new ProgramError('program_not_empty', 'The program still holds evidence, SSP imports or POA&M items', { ...usage });
@@ -545,4 +677,69 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     if ((err as { code?: string })?.code === '23503') throw new ProgramError('program_not_empty', 'The program still holds evidence, SSP imports or POA&M items', { ...usage });
     throw err;
   }
+}
+
+/** Frameworks whose programs can receive vulnerability-management snapshots (the snapshot control set is CMMC). */
+const VM_TARGET_FRAMEWORKS: readonly string[] = ['CMMC_L1', 'CMMC_L2'];
+
+/**
+ * The program that receives the tenant's vulnerability-management data: the active program flagged `vmTarget`, else the default program
+ * (`explicit: false`). Creates the default program and adopts the legacy rows on first use, like ensureDefaultProgram.
+ */
+export async function resolveVmTargetProgram(tenantId: string): Promise<{ program: Program; explicit: boolean }> {
+  const fallback = await ensureDefaultProgram(tenantId);
+  const target = (await listPrograms(tenantId)).find((p) => p.vmTarget);
+  return target ? { program: target, explicit: true } : { program: fallback, explicit: false };
+}
+
+/**
+ * Makes a program the tenant's VM target (one per tenant: the flag of any other program is cleared). The program must exist, not be
+ * archived (program_archived) and be CMMC_L1 / CMMC_L2 (invalid_vm_target); the default program qualifies when it is one. Existing
+ * evidence, notes and POA&M items stay in the previous target: `openPoamInPrevious` counts that program's open items, so the caller can
+ * warn. Records `vm_target_set` in the new target and `vm_target_cleared` in the program that lost the flag. Choosing the program that
+ * already is the target changes and records nothing. `previousId` is the program that received the data until now (the default
+ * program when no target was set), null only when that is the program chosen.
+ */
+export async function setVmTargetProgram(
+  tenantId: string,
+  id: string,
+  who: ProgramActor
+): Promise<{ program: Program; previousId: string | null; openPoamInPrevious: number }> {
+  const chosen = await requireProgram(tenantId, id);
+  if (chosen.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be the VM target');
+  if (!VM_TARGET_FRAMEWORKS.includes(chosen.frameworkId)) {
+    throw new ProgramError('invalid_vm_target', 'Only a CMMC Level 1 or Level 2 program can be the VM target');
+  }
+  const before = await resolveVmTargetProgram(tenantId);
+  const previousId = before.program.id === id ? null : before.program.id;
+  let program: Program;
+  if (isMemory()) {
+    if (chosen.vmTarget) return { program: chosen, previousId: null, openPoamInPrevious: 0 };
+    const now = new Date().toISOString();
+    const cleared = [...memoryPrograms.values()].filter((p) => p.tenantId === tenantId && p.vmTarget && p.id !== id);
+    for (const p of cleared) memoryPrograms.set(p.id, { ...p, vmTarget: false, updatedAt: now });
+    program = { ...chosen, vmTarget: true, updatedAt: now };
+    memoryPrograms.set(id, program);
+    pushMemoryEvent(tenantId, id, 'vm_target_set', who, { vmTarget: false }, { vmTarget: true });
+    for (const p of cleared) pushMemoryEvent(tenantId, p.id, 'vm_target_cleared', who, { vmTarget: true }, { vmTarget: false });
+  } else {
+    const changed = await inTenantTx(tenantId, async (q) => {
+      const rows = (await q('SELECT * FROM programs WHERE tenant_id = $1 FOR UPDATE', [tenantId])).rows.map(rowToProgram);
+      const locked = rows.find((p) => p.id === id);
+      if (!locked) throw new ProgramError('program_not_found', 'Program not found');
+      if (locked.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be the VM target');
+      if (locked.vmTarget) return { program: locked, cleared: [] as Program[], same: true };
+      const cleared = rows.filter((p) => p.vmTarget && p.id !== id);
+      // clear first: the unique index allows one target per tenant
+      await q('UPDATE programs SET vm_target = FALSE, updated_at = NOW() WHERE tenant_id = $1 AND vm_target AND id <> $2', [tenantId, id]);
+      const res = await q('UPDATE programs SET vm_target = TRUE, updated_at = NOW() WHERE tenant_id = $1 AND id = $2 RETURNING *', [tenantId, id]);
+      await insertEventTx(q, tenantId, id, 'vm_target_set', who, { vmTarget: false }, { vmTarget: true });
+      for (const p of cleared) await insertEventTx(q, tenantId, p.id, 'vm_target_cleared', who, { vmTarget: true }, { vmTarget: false });
+      return { program: rowToProgram(res.rows[0]), cleared, same: false };
+    });
+    if (changed.same) return { program: changed.program, previousId: null, openPoamInPrevious: 0 };
+    program = changed.program;
+  }
+  const openPoamInPrevious = previousId ? await countOpenPoamItems({ tenantId, programId: previousId }) : 0;
+  return { program, previousId, openPoamInPrevious };
 }
