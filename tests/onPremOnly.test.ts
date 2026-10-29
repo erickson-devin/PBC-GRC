@@ -7,7 +7,7 @@ import path from 'path';
  * identifier creeps back into the repository, and it pins the network shape of docker-compose.yml.
  *
  * Part 1 scans code and config for removed-cloud tokens. It deliberately does NOT scan prose: the customer-CSP default text
- * (OnboardingModal, documentCompilers, offboardingEngine, ArtifactExportModal, SSPBuilder) describes the customer's own cloud
+ * (documentCompilers, offboardingEngine, ArtifactExportModal, SSPBuilder) describes the customer's own cloud
  * provider and stays. Catalog content (below) is exempt because it must never be edited.
  * Part 2 reads docker-compose.yml textually (no YAML library).
  */

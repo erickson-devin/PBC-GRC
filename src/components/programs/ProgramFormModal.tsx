@@ -9,9 +9,12 @@ import { PROGRAM_NAME_MAX, PROGRAM_TEXT_MAX, normalizeProgramFramework, validate
 import type { ProgramInputField } from '../../data/programSync';
 import { OVERLAY_DETAILS, OVERLAY_KEYS, OVERLAY_TITLES, programOverlayLabels } from '../../data/overlayScoping';
 import { scopingToOverlays } from '../../data/programScope';
+import { defaultCloneSourceId } from '../../data/programCloneSource';
 import type { OverlayFilters } from '../../types/framework';
 import type { Program, ProgramBaseline, ProgramSeed } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
+import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
+import { unsavedProgramFields } from '../../services/unsavedText';
 
 interface ProgramFormModalProps {
   mode: 'create' | 'edit';
@@ -33,7 +36,7 @@ const baselineLabel = (b: ProgramBaseline | null | undefined) => BASELINE_OPTION
 /** The server's refusals, in plain language (the server's own message is used for anything else). */
 const SERVER_MESSAGES: Record<string, string> = {
   program_name_taken: 'A program with this name already exists. Names are compared ignoring case; choose another one.',
-  framework_not_enabled: 'That framework is not enabled for this organization. Ask a platform administrator or the tenant owner to enable it first.',
+  framework_not_enabled: 'That framework is not one of this organization\'s licensed frameworks. Ask a platform administrator to add it first.',
   program_limit: 'This organization has reached the maximum number of programs. Archive and delete one that is no longer needed first.',
   framework_immutable: 'The framework and baseline of a program cannot be changed after it is created.',
 };
@@ -75,6 +78,12 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
   const [scoping, setScoping] = useState<OverlayFilters>({ nonNetworkedOnly: false });
   const [description, setDescription] = useState(program?.description ?? '');
   const [boundarySummary, setBoundarySummary] = useState(program?.boundarySummary ?? '');
+  // Text typed here and not saved yet is reported to the unsaved-text rescue (the name is not text worth rescuing)
+  useUnsavedTextProvider(() => unsavedProgramFields(
+    { description, boundarySummary },
+    isEdit && program ? program : {},
+    isEdit && program ? program.id : null,
+  ));
   const [seed, setSeed] = useState<ProgramSeed>('blank');
   const [sourceProgramId, setSourceProgramId] = useState<string>('');
   const [showErrors, setShowErrors] = useState(false);
@@ -102,10 +111,10 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
     : validation.errors;
   const isNist = framework === 'NIST_800_53_REV5';
   // A clone does not copy overlays on the server: choosing a NIST source prefills its overlays here, where they can still be changed
-  const chooseSource = (id: string) => {
+  const chooseSource = (id: string, fw: string = framework) => {
     setSourceProgramId(id);
     const source = openPrograms.find((p) => p.id === id);
-    if (!isNist || !source || source.framework !== 'NIST_800_53_REV5') return;
+    if (fw !== 'NIST_800_53_REV5' || !source || source.framework !== 'NIST_800_53_REV5') return;
     const next = scopingToOverlays(source.scoping);
     setScoping(privacyBaseline ? { ...next, noPiiProcessing: false } : next);
   };
@@ -221,6 +230,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                     setPrivacyBaseline(false);
                     setScoping({ nonNetworkedOnly: false });
                     if (e.target.value !== 'NIST_800_53_REV5') setBaseline('');
+                    if (seed === 'clone') chooseSource(defaultCloneSourceId(openPrograms, activeProgram?.id, e.target.value), e.target.value);
                   }}
                   disabled={isSaving}
                   className={inputClass}
@@ -370,7 +380,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   disabled={openPrograms.length === 0}
                   onChange={() => {
                     setSeed('clone');
-                    if (!sourceProgramId && openPrograms.length > 0) chooseSource(activeProgram?.id ?? openPrograms[0].id);
+                    if (!sourceProgramId && openPrograms.length > 0) chooseSource(defaultCloneSourceId(openPrograms, activeProgram?.id, framework));
                   }}
                 />
                 <span>Clone from an existing program (copies notes and responsible roles, not evidence, imports or POA&M items)</span>
