@@ -33,6 +33,7 @@ import { useTenant } from '../../context/TenantContext';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
+import { FailedMoveAssetsNotice } from './FailedMoveAssetsNotice';
 import { AddAssetModal } from './AddAssetModal';
 import { AccretionIntegrationModal } from './AccretionIntegrationModal';
 
@@ -327,6 +328,9 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
 
       {/* Browser-only tenant: its assets live in this browser until it is moved to the server. The notice also stays to confirm the move. */}
       {canEdit && <LegacyTenantNotice tenant={currentTenant} variant="inline" />}
+
+      {/* Assets that did not reach the server during that move: retry them here */}
+      {canEdit && <FailedMoveAssetsNotice />}
 
       {!canEdit && (
         <div role="status" className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">

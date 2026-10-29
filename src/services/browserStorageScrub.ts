@@ -97,6 +97,16 @@ export function planLocalAssetCleanup(
   server: ReadonlyArray<EnclaveAsset>,
   tenantId: string
 ): { removable: boolean; unmatched: number } {
+  const unmatched = unmatchedLocalAssets(local, server, tenantId).length;
+  return { removable: unmatched === 0, unmatched };
+}
+
+/** The real (non demo-seed) local assets with no match on the server (equal host name, or equal MAC). */
+export function unmatchedLocalAssets(
+  local: ReadonlyArray<EnclaveAsset>,
+  server: ReadonlyArray<EnclaveAsset>,
+  tenantId: string
+): EnclaveAsset[] {
   const hosts = new Set<string>();
   const macs = new Set<string>();
   for (const s of server) {
@@ -105,15 +115,15 @@ export function planLocalAssetCleanup(
     const m = normalizeMac(s?.macAddress);
     if (m) macs.add(m);
   }
-  let unmatched = 0;
+  const unmatched: EnclaveAsset[] = [];
   for (const asset of local) {
     if (asset && typeof asset.id === 'string' && isDemoSeedAsset(asset, tenantId)) continue;
     const h = normalizeHost(asset?.hostName);
     const m = normalizeMac(asset?.macAddress);
     if ((h && hosts.has(h)) || (m && macs.has(m))) continue;
-    unmatched++;
+    unmatched.push(asset);
   }
-  return { removable: unmatched === 0, unmatched };
+  return unmatched;
 }
 
 /** Returns a copy of the state with `implementationNotes` removed from every control. Never mutates the input. */
