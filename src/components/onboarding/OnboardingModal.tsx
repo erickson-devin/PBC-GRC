@@ -16,6 +16,12 @@ import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { SamStatus } from '../../types/tenant';
 import { errorMessage } from '../../utils/errors';
+import {
+  DEFAULT_CLOUD_PROVIDERS,
+  defaultBoundaryNarrative,
+  refreshBoundaryNarrative,
+  refreshSystemName,
+} from '../../data/onboardingDefaults';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface OnboardingModalProps {
@@ -46,12 +52,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     currentTenant.systemOwner || `${currentUser.name} (System Owner)`
   );
   const [boundaryScope, setBoundaryScope] = useState(
-    currentTenant.systemBoundaryScope ||
-      `The boundary for ${currentTenant.name || 'our organization'} encompasses corporate identity management (Microsoft Entra ID / Google Workspace), enterprise cloud enclaves, secure corporate endpoints, and internal network infrastructure used to process, store, or transmit Federal Contract Information (FCI).`
+    currentTenant.systemBoundaryScope || defaultBoundaryNarrative(currentTenant.name || '')
   );
-  const [cloudProviders, setCloudProviders] = useState(
-    'Microsoft 365, Google Cloud Platform (Cloud Storage & Cloud SQL), Cloudflare'
-  );
+  const [cloudProviders, setCloudProviders] = useState(DEFAULT_CLOUD_PROVIDERS);
+  // The organization name the proposed system name / narrative were derived from (they follow a change of it on step 1)
+  const [derivedOrg, setDerivedOrg] = useState(currentTenant.name || '');
 
   // Sync initial values if currentTenant changes
   useEffect(() => {
@@ -64,10 +69,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         currentTenant.systemName || `${currentTenant.name || 'Corporate'} Information Network (CIN)`
       );
       setSystemOwner(currentTenant.systemOwner || `${currentUser.name} (System Owner)`);
-      setBoundaryScope(
-        currentTenant.systemBoundaryScope ||
-          `The boundary for ${currentTenant.name || 'our organization'} encompasses corporate identity management, enterprise cloud enclaves, secure corporate endpoints, and internal network infrastructure used for Federal Contract Information (FCI).`
-      );
+      setBoundaryScope(currentTenant.systemBoundaryScope || defaultBoundaryNarrative(currentTenant.name || ''));
+      setDerivedOrg(currentTenant.name || '');
       setStep(1);
       setError(null);
     }
@@ -82,6 +85,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       return;
     }
     setError(null);
+    setSystemName((s) => refreshSystemName(s, derivedOrg, orgName));
+    setBoundaryScope((b) => refreshBoundaryNarrative(b, derivedOrg, orgName));
+    setDerivedOrg(orgName.trim());
     setStep(2);
   };
 
@@ -366,6 +372,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 </label>
                 <input
                   type="text"
+                  placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
                   value={cloudProviders}
                   onChange={(e) => setCloudProviders(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"

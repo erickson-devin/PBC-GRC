@@ -428,7 +428,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   </div>
 
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Assessment Program</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Licensed Frameworks</span>
                     <span className="font-semibold text-slate-200 mt-0.5 block">
                       {frameworkPolicySummary(invitation?.primaryFramework, invitation?.enabledFrameworks).text}
                     </span>

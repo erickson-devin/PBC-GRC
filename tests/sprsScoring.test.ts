@@ -11,6 +11,10 @@ import {
   getSprsPointDeduction,
   isSspComplete,
 } from '../src/data/reports/sprsCompiler';
+import fs from 'fs';
+import path from 'path';
+import { remediationPriorities } from '../src/data/reports/remediationPriority';
+import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 import { CMMC_LEVEL_2_CONTROLS as CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls';
 import type { ControlState, ControlStatus } from '../src/types/cmmc';
 import type { ReportMetadata } from '../src/types/report';
@@ -158,6 +162,39 @@ const scored = generateSprsAssessmentSummary(CONTROLS, allMet, meta) as { sprsMe
 assert(
   scored.sprsMetrics.activeSprsScore === 110 && scored.sprsMetrics.compliancePosture === 'Full NIST SP 800-171 Compliance',
   'summary reports 110 with a complete SSP'
+);
+
+console.log('\n--- Dashboard remediation priority (SPRS points only for CMMC L2) ---');
+const stateOf = (status: ControlStatus) => ({ status } as ControlState);
+const l2Top = remediationPriorities('CMMC_L2', CONTROLS, {});
+const fivePointIds = CONTROLS.filter((c) => getSprsPointDeduction(c.id) === 5).slice(0, 2).map((c) => c.id);
+assert(
+  l2Top.length === 3 && l2Top[0].control.id === sspId && l2Top[1].control.id === fivePointIds[0] && l2Top[2].control.id === fivePointIds[1],
+  'CMMC L2: the SSP requirement ranks first, then the 5-point requirements in catalog order', l2Top.map((r) => r.control.id)
+);
+const remMixed: Record<string, ControlState> = { [fivePointIds[0]]: stateOf('MET'), [idOf('3.1.3')]: stateOf('IN_PROGRESS') };
+const oldFormula = CONTROLS
+  .filter((c) => remMixed[c.id]?.status !== 'MET')
+  .map((c) => ({ control: c, weight: getSprsPointDeduction(c.id), status: remMixed[c.id]?.status || 'NOT_STARTED' }))
+  .sort((a, b) => (b.weight === 0 ? 100 : b.weight) - (a.weight === 0 ? 100 : a.weight))
+  .slice(0, 3);
+assert(JSON.stringify(remediationPriorities('CMMC_L2', CONTROLS, remMixed).map((r) => [r.control.id, r.weight, r.status])) === JSON.stringify(oldFormula.map((r) => [r.control.id, r.weight, r.status])), 'CMMC L2: the ranking equals the previous inline formula for a remMixed state', oldFormula.map((r) => r.control.id));
+const N = getFrameworkControls('NIST_800_53_REV5', 'MODERATE');
+const nistTop = remediationPriorities('NIST_800_53_REV5', N, { [N[5].id]: stateOf('NOT_MET'), [N[0].id]: stateOf('IN_PROGRESS') });
+assert(
+  JSON.stringify(nistTop.map((r) => r.control.id)) === JSON.stringify([N[5].id, N[0].id, N[1].id]) && nistTop.every((r) => r.weight === null),
+  'NIST 800-53: not met first, then in progress, then not started, with no SPRS weight', nistTop.map((r) => r.control.id)
+);
+const l1Top = remediationPriorities('CMMC_L1', getFrameworkControls('CMMC_L1'), {});
+assert(l1Top.length === 3 && l1Top.every((r) => r.weight === null), 'CMMC L1: no SPRS weight');
+assert(remediationPriorities('CMMC_L2', CONTROLS, states('MET')).length === 0 && remediationPriorities('NIST_800_53_REV5', N, Object.fromEntries(N.map((c) => [c.id, stateOf('MET')]))).length === 0, 'every control met: nothing to remediate');
+const overviewSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'dashboard', 'ComplianceOverview.tsx'), 'utf8').replace(/\r\n/g, '\n');
+assert(
+  overviewSrc.includes("const showSprs = activeFramework === 'CMMC_L2'") &&
+    /showSprs \? 'Top unmet controls ranked by SPRS point impact'/.test(overviewSrc) &&
+    /showSprs \? 'Resolving 5-pt controls/.test(overviewSrc) &&
+    overviewSrc.includes('remediationPriorities(activeFramework'),
+  'the dashboard shows SPRS wording only when showSprs (CMMC L2) and uses remediationPriorities'
 );
 
 console.log('\n================================================================');

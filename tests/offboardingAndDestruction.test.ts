@@ -10,7 +10,11 @@ import {
   generateEnclaveHandoverPackage,
   executeCryptographicDestruction,
 } from '../src/data/storage/offboardingEngine';
-import { computeSha256 } from '../src/data/audit/auditLogger';
+import { buildProgramHandover } from '../src/data/storage/offboardingPrograms';
+import { programFrameworkControls, scopingToOverlays } from '../src/data/programScope';
+import { getFrameworkControls } from '../src/data/frameworks';
+import type { Program } from '../src/types/program';
+import { computeSha256, canonicalJson } from '../src/data/audit/auditLogger';
 import { createInitialState } from '../src/services/storageService';
 
 // Polyfill minimal localStorage for Node environment if absent
@@ -171,11 +175,91 @@ async function runTests() {
       withoutList.evidenceIndex.length === 0 && withoutList.complianceSummary.evidenceItemsCount === 0,
       'OB-E2: a server tenant without a passed list gets none of the cached items'
     );
-    const dashSrc = readFileSync(join(process.cwd(), 'src/components/admin/SuperAdminDashboard.tsx'), 'utf8');
+    const dashSrc = readFileSync(join(process.cwd(), 'src/components/admin/SuperAdminDashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
     assert(
-      dashSrc.includes('ApiClient.getEvidence(tenant.id') && /generateEnclaveHandoverPackage\(tenant\.id, tenant, assets, controlStates, evidenceList\)/.test(dashSrc),
-      'OB-E3: SuperAdminDashboard fetches the server evidence list and passes it as the fifth argument'
+      /ApiClient\.getEvidence\(\s*\w+,\s*\w+\)/.test(dashSrc) && /getControls\(\s*\w+,\s*undefined,\s*\w+\)/.test(dashSrc) && dashSrc.includes('generateEnclaveHandoverPackage(tenant.id, tenant, assets)'),
+      'OB-E3: SuperAdminDashboard fetches the server controls and evidence of a chosen program, and keeps the direct call for a browser-only tenant'
     );
+  }
+
+  // Test Group 1d: the handover per program (issue #27)
+  console.log('\n🧭 Test Group 1d: Handover Package per Program');
+  {
+    const progTenant: Tenant = { ...testTenant, id: 'tenant-programs-01', serverBacked: true };
+    const mk = (over: Partial<Program>): Program => ({
+      id: 'p-default', name: 'Default program', description: '', framework: 'CMMC_L1', baseline: null, privacyBaseline: false, boundarySummary: '',
+      scoping: {}, vmTarget: false, isDefault: true, archived: false, ...over,
+    });
+    const nistLow = mk({ id: 'p-nist-low', name: 'NIST Low', framework: 'NIST_800_53_REV5', baseline: 'LOW', isDefault: false });
+    const opts = (program: Program) => ({ program, download: false });
+
+    const p1 = await generateEnclaveHandoverPackage(progTenant.id, progTenant, undefined, {}, [], opts(nistLow));
+    const expected1 = programFrameworkControls(nistLow, scopingToOverlays({})).length;
+    assert(p1.program?.id === 'p-nist-low' && p1.complianceSummary.totalControls === expected1, 'OB-P1: a program package holds that program\'s catalog and names the program', `${p1.complianceSummary.totalControls} vs ${expected1}`);
+
+    const withBoundary = await generateEnclaveHandoverPackage(progTenant.id, progTenant, undefined, {}, [], opts({ ...nistLow, boundarySummary: 'LAB-BOUNDARY-77' }));
+    assert(JSON.stringify(withBoundary.reports.systemSecurityPlan).includes('LAB-BOUNDARY-77'), 'OB-P2: the SSP uses the program\'s boundary text');
+
+    const noWireless = { ...nistLow, scoping: { noWireless: true as const } };
+    const p3 = await generateEnclaveHandoverPackage(progTenant.id, progTenant, undefined, {}, [], opts(noWireless));
+    assert(
+      p3.complianceSummary.totalControls === programFrameworkControls(noWireless, scopingToOverlays(noWireless.scoping)).length && p3.complianceSummary.totalControls <= p1.complianceSummary.totalControls,
+      'OB-P3: the program\'s overlays narrow its package'
+    );
+
+    const plain = await generateEnclaveHandoverPackage(testTenant.id, testTenant, undefined, undefined, undefined, { download: false });
+    assert(plain.program === undefined && plain.complianceSummary.totalControls === getFrameworkControls('CMMC_L1').length, 'OB-P4: without a program the package is the tenant\'s primary framework, as before');
+
+    const freshId = 'tenant-programs-nocache-01';
+    await generateEnclaveHandoverPackage(freshId, { ...progTenant, id: freshId }, undefined, {}, [], opts(nistLow));
+    assert(localStorage.getItem(`pbc_cmmc_assessment_v3_${freshId}`) === null, 'OB-P5: a program package neither reads nor writes the browser cache');
+
+    // Fake server: records what is asked
+    const programs = [
+      mk({ id: 'p-b', name: 'Second', isDefault: false, archived: true }),
+      mk({ id: 'p-a', name: 'First', isDefault: true }),
+    ];
+    const controlCalls: string[] = [];
+    const evidenceCalls: string[] = [];
+    const deps = {
+      listPrograms: async () => programs,
+      getControls: async (_t: string, p: string) => { controlCalls.push(p); return []; },
+      getEvidence: async (_t: string, p: string) => { evidenceCalls.push(p); return [{ id: `ev-${p}`, tenantId: progTenant.id, fileName: 'f.pdf' } as any]; },
+    };
+    const all = await buildProgramHandover(progTenant, { kind: 'all' }, undefined, deps);
+    assert(
+      all.packages.length === 2 && all.packages[0].program?.id === 'p-a' && all.packages[1].program?.archived === true
+        && controlCalls.join() === 'p-a,p-b' && all.bundle?.integrityChecksum.length === 64 && all.bundle.programCount === 2,
+      'OB-P6: "all programs" builds one package per program (default first, archived flagged) and one bundle',
+      controlCalls.join()
+    );
+
+    controlCalls.length = 0;
+    evidenceCalls.length = 0;
+    const one = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-b' }, undefined, deps);
+    assert(
+      one.packages.length === 1 && one.bundle === null && controlCalls.join() === 'p-b' && one.packages[0].evidenceIndex[0]?.id === 'ev-p-b' && evidenceCalls.join() === 'p-b',
+      'OB-P7: one program fetches only its own controls and evidence'
+    );
+
+    let notFound: unknown = null;
+    try { await buildProgramHandover(progTenant, { kind: 'program', programId: 'nope' }, undefined, deps); } catch (err) { notFound = err; }
+    assert(notFound instanceof Error && /not found/.test(notFound.message), 'OB-P8: an unknown program rejects with "not found"');
+
+    if (all.bundle) {
+      const { integrityChecksum, ...rest } = all.bundle;
+      assert(await computeSha256(canonicalJson(rest)) === integrityChecksum, 'OB-P9: the bundle checksum covers everything but itself');
+    } else {
+      assert(false, 'OB-P9: the bundle checksum covers everything but itself');
+    }
+
+    const dialogSrc = readFileSync(join(process.cwd(), 'src/components/admin/OffboardingProgramDialog.tsx'), 'utf8');
+    const dashSrc2 = readFileSync(join(process.cwd(), 'src/components/admin/SuperAdminDashboard.tsx'), 'utf8');
+    assert(dashSrc2.includes('OffboardingProgramDialog') && dashSrc2.includes('buildProgramHandover('), 'OB-U1: the dashboard opens the program chooser and builds the handover per program');
+    assert(dialogSrc.includes('<DialogOverlay') && dialogSrc.includes('includeArchived: true') && dialogSrc.includes('<legend'), 'OB-U2: the chooser is a dialog with a legend, listing archived programs too');
+    assert(!/console\./.test(dialogSrc), 'OB-U3: the chooser logs nothing');
+    assert(dialogSrc.includes('You are not a member of this tenant') && dashSrc2.includes('NOT_MEMBER_MESSAGE'), 'OB-U4: the not-a-member text is still shown');
+    assert(!/getProgramAssets|getProgramAssetIds/.test(dialogSrc + dashSrc2), 'OB-U5: every package states the tenant-wide inventory (per-program assets are not wired yet)');
   }
 
   // Test Group 2: NIST SP 800-88 Cryptographic Sanitization & Destruction Protocol

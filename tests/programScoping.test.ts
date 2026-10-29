@@ -158,7 +158,7 @@ async function run() {
   const cloned = await ctrl(T, CLONE);
   const cloneEvents = ((await call('GET', `/controls/${AC1}/history`, owner, T, undefined, CLONE)).body?.events ?? []) as Json[];
   assert(clone.status === 201 && cloned?.implementationNotes === 'A text' && cloned?.status === 'NOT_STARTED', '25 a clone of A carries A\'s notes with the status reset to NOT_STARTED', [clone.body, cloned]);
-  assert(cloneEvents.length === 1 && cloneEvents[0].source === 'human' && cloneEvents[0].actorUserId === 'u_ps_admin', '25 each copied row records a human event under the requesting user', cloneEvents);
+  assert(cloneEvents.length === 1 && cloneEvents[0].source === 'clone' && cloneEvents[0].actorUserId === 'u_ps_admin', '25 each copied row records a clone event under the requesting user', cloneEvents);
   const cloneImports = await call('GET', `/tenants/${T}/ssp-imports`, owner, T, undefined, CLONE);
   assert((await evIn(CLONE)).length === 0 && cloneImports.status === 200 && (cloneImports.body?.jobs ?? []).length === 0, '25 the clone has no evidence and no SSP imports', cloneImports.body);
   assert((await ctrl(T, A))?.implementationNotes === 'A text', '25 and cloning left A untouched');

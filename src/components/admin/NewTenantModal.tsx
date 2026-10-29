@@ -190,7 +190,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <span>Enclave Successfully Isolated & Provisioned!</span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Enclave <strong className="text-white">{createdResult.tenant.name}</strong> has been created as its own isolated tenant: separate data under row-level security and its own evidence partition. It serves only the frameworks of its assessment program.
+                  Enclave <strong className="text-white">{createdResult.tenant.name}</strong> has been created as its own isolated tenant: separate data under row-level security and its own evidence partition. It serves only its licensed frameworks.
                 </p>
               </div>
 
@@ -205,14 +205,14 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <span className="font-mono text-white font-semibold">{createdResult.tenant.cageCode || 'PENDING'}</span>
                 </div>
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-slate-400 font-medium">
-                  <span>Assessment Program:</span>
+                  <span>Licensed Frameworks:</span>
                   <span className="font-bold text-brand-300 text-right">
                     {frameworkPolicySummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text}
                   </span>
                 </div>
                 {requestedProgram && requestedProgram !== frameworkPolicySummary(createdResult.tenant.primaryFramework, createdResult.tenant.enabledFrameworks).text && (
                   <p role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-200">
-                    You asked for <strong>{requestedProgram}</strong>, but the server recorded the program above. Only a platform administrator
+                    You asked for <strong>{requestedProgram}</strong>, but the server recorded the frameworks above. Only a platform administrator
                     can set an enclave&apos;s frameworks (the server&apos;s PLATFORM_ADMIN_EMAILS list).
                   </p>
                 )}
@@ -379,7 +379,7 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                   <div className="flex items-center gap-2">
                     <Shield className="w-4 h-4 text-brand-400" />
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                      Assessment Program
+                      Licensed Frameworks
                     </span>
                   </div>
                   <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60">
@@ -404,14 +404,14 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
                     ))}
                   </select>
                   <p className="text-xs text-slate-400 mt-1">
-                    The tenant opens on this framework. Only a platform administrator can set the program; for anyone else the server records the default (CMMC Level 1).
+                    The tenant opens on this framework. Only a platform administrator can set the licensed frameworks; for anyone else the server records the default (CMMC Level 1).
                   </p>
                 </div>
 
                 {/* Additional Active Frameworks */}
                 <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
                   <label className="block text-xs font-semibold text-slate-400">
-                    Additional frameworks in this program
+                    Additional licensed frameworks
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
                     {ALL_FRAMEWORKS.map(fw => {

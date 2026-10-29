@@ -75,6 +75,12 @@ function schemaTests() {
   const stmts = [...src.matchAll(/(SELECT|UPDATE|DELETE)[^`'"]*?enclave_assets[^`'"]*/g)].map((m) => m[0]);
   assert(stmts.length >= 4 && stmts.every((s) => /tenant_id\s*=\s*\$/.test(s) || /\$\{sets/.test(s)), 'every SELECT / UPDATE / DELETE filters by tenant_id', stmts);
   assert(/set_config\(\$1, \$2, true\)', \['app\.current_tenant_id', tenantId\]/.test(src), 'every PostgreSQL transaction sets app.current_tenant_id first');
+
+  // Host names, addresses and notes may describe a CUI boundary: the API's logs carry ids only.
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'routes', 'assets.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const logLines = routeSrc.split('\n').filter((l) => /console\.\w+\(/.test(l));
+  assert(logLines.length > 0 && !logLines.some((l) => /hostName/.test(l)), 'no console line of the assets routes contains hostName', logLines);
+  assert(!logLines.some((l) => /ipAddress|macAddress|notes/.test(l)), 'no console line of the assets routes contains ipAddress, macAddress or notes', logLines);
 }
 
 function validationTests() {

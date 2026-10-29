@@ -48,7 +48,8 @@ import {
   executeCryptographicDestruction,
 } from '../../data/storage/offboardingEngine';
 import { CertificateOfDestruction } from '../../types/audit';
-import type { ControlState, EvidenceItem } from '../../types/cmmc';
+import { buildProgramHandover, type HandoverSelection } from '../../data/storage/offboardingPrograms';
+import { OffboardingProgramDialog, NOT_MEMBER_MESSAGE } from './OffboardingProgramDialog';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
@@ -189,6 +190,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [copiedEnclaveId, setCopiedEnclaveId] = useState<string | null>(null);
   const [exportingTenantId, setExportingTenantId] = useState<string | null>(null);
+  // The live tenant whose program choice (for the offboarding handover) is open
+  const [offboardingProgramTenant, setOffboardingProgramTenant] = useState<Tenant | null>(null);
   const [notificationToast, setNotificationToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
 
   // Invitations and teams of server-backed tenants live on the server: load them for every tenant the admin manages
@@ -283,41 +286,48 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   };
 
   // Enclave Handover Package Export
-  const handleExportOffboarding = async (tenant: Tenant) => {
-    setExportingTenantId(tenant.id);
+  // A live tenant first chooses which program(s) to hand over (each has its own controls, notes and evidence); a browser-only tenant has one boundary.
+  const handleExportOffboarding = (tenant: Tenant) => {
     setFloatingMenu(null);
+    if (tenant.serverBacked) {
+      setOffboardingProgramTenant(tenant);
+      return;
+    }
+    void runOffboardingExport(tenant, null);
+  };
+
+  const runOffboardingExport = async (tenant: Tenant, selection: HandoverSelection | null) => {
+    setExportingTenantId(tenant.id);
     try {
       // The CMMC scope in the SSP comes from the asset inventory. If it cannot be read, the SSP simply states no counts.
       const assets = await getAssetBackend(tenant.id, assetBackendMode({ serverBacked: tenant.serverBacked })).list().catch(() => undefined);
-      // A live tenant's implementation notes live on the server; the browser cache may be empty or stale. Never hand over a package with missing notes.
-      let controlStates: Record<string, ControlState> | undefined;
-      // The evidence list is server-only too: the browser cache of a live tenant no longer holds it.
-      let evidenceList: EvidenceItem[] | undefined;
-      if (tenant.serverBacked) {
+      if (tenant.serverBacked && selection) {
+        // A live tenant's notes and evidence live on the server; the browser cache may be empty or stale. Never hand over a package with missing notes.
         try {
-          // null: the tenant's default program (the handover package is not scoped to whichever program this browser has open)
-          const [list, evidence] = await Promise.all([
-            ApiClient.getControls(tenant.id, { framework: tenant.primaryFramework }, null),
-            ApiClient.getEvidence(tenant.id, null),
-          ]);
-          controlStates = Object.fromEntries(list.map(c => [c.id, c]));
-          evidenceList = evidence;
+          await buildProgramHandover(tenant, selection, assets, {
+            listPrograms: (t, o) => ApiClient.listPrograms(t, o),
+            getControls: (t, p) => ApiClient.getControls(t, undefined, p),
+            getEvidence: (t, p) => ApiClient.getEvidence(t, p),
+          });
         } catch (err: unknown) {
           // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.
           const notMember = err instanceof ApiError && err.status === 403;
           setNotificationToast({
             type: 'error',
             message: notMember
-              ? 'You are not a member of this tenant, so its implementation notes cannot be read. Add yourself to the tenant (or ask an owner to export) before generating the handover package.'
+              ? NOT_MEMBER_MESSAGE
               : 'Implementation notes could not be loaded from the server; the handover package was not generated.',
           });
           return;
         }
+      } else {
+        await generateEnclaveHandoverPackage(tenant.id, tenant, assets);
       }
-      await generateEnclaveHandoverPackage(tenant.id, tenant, assets, controlStates, evidenceList);
       setNotificationToast({
         type: 'success',
-        message: `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,
+        message: selection?.kind === 'all'
+          ? `Offboarding bundle (all programs) for "${tenant.name}" exported and downloaded successfully.`
+          : `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,
       });
     } catch (err: unknown) {
       console.error('Failed to export offboarding package:', err);
@@ -476,7 +486,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const pendingInvitesCount = invitations.filter(i => i.status === 'PENDING').length;
   const activeEnclavesCount = tenants.filter(t => !t.isSuspended).length;
   const suspendedEnclavesCount = tenants.filter(t => t.isSuspended).length;
-  // Enclaves per assessment program (their primary framework)
+  // Enclaves per primary framework
   const programCounts = tenants.reduce<Record<string, number>>((acc, t) => {
     const key = t.primaryFramework || 'CMMC_L1';
     acc[key] = (acc[key] ?? 0) + 1;
@@ -617,7 +627,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
           <div className="stitch-card p-5 space-y-1">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Assessment Programs
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Primary Frameworks
             </span>
             <p className="text-3xl font-black text-emerald-400 font-mono mt-1">
               {programsInUse}
@@ -715,7 +725,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 <tr>
                   <th className="py-3 px-4">Organization & Boundary</th>
                   <th className="py-3 px-4">CAGE / SAM</th>
-                  <th className="py-3 px-4">Assessment Program</th>
+                  <th className="py-3 px-4">Licensed Frameworks</th>
                   <th className="py-3 px-4">Framework Scope</th>
                   <th className="py-3 px-4">System Owner</th>
                   <th className="py-3 px-4">Status</th>
@@ -881,7 +891,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               <span>Platform Administrators{serverAdmins ? ` (${serverAdmins.length})` : ''}</span>
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              The operators of this installation. Only they can provision enclaves for a specific assessment program and use this console.
+              The operators of this installation. Only they can provision enclaves, set their licensed frameworks and use this console.
               They are the addresses in the server setting <code className="text-cyan-300 font-mono">PLATFORM_ADMIN_EMAILS</code>: edit it in the
               server&apos;s <code className="font-mono">.env</code> and restart the app. See <code className="font-mono">docs/ASSESSMENT_PROGRAMS.md</code>.
             </p>
@@ -906,7 +916,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       {email === currentUser.email.toLowerCase() && <span className="ml-2 text-xs font-sans text-cyan-300">(you)</span>}
                     </td>
                     <td className="py-3.5 px-4 text-slate-300">Server configuration</td>
-                    <td className="py-3.5 px-4 text-slate-300">Provision tenants and set their assessment program</td>
+                    <td className="py-3.5 px-4 text-slate-300">Provision tenants and set their licensed frameworks</td>
                   </tr>
                 ))}
                 {serverAdmins !== null && serverAdmins.length === 0 && (
@@ -1369,6 +1379,19 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           });
         }}
       />
+
+      {/* Offboarding handover: which program(s) to export */}
+      {offboardingProgramTenant && (
+        <OffboardingProgramDialog
+          tenant={offboardingProgramTenant}
+          onClose={() => setOffboardingProgramTenant(null)}
+          onConfirm={(selection) => {
+            const target = offboardingProgramTenant;
+            setOffboardingProgramTenant(null);
+            void runOffboardingExport(target, selection);
+          }}
+        />
+      )}
 
       {/* 3. Edit Invitation Modal */}
       <EditInvitationModal

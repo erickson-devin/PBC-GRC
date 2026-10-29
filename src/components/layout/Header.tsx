@@ -10,8 +10,10 @@ import {
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
 import { BrowserOnlyNotesBanner } from '../common/BrowserOnlyNotesBanner';
+import { SessionOfflineNotice } from './SessionOfflineNotice';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { useAuth } from '../../context/AuthContext';
 import { getFrameworkTitle } from '../../data/frameworks';
 import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { TenantSwitcher } from './TenantSwitcher';
@@ -35,6 +37,8 @@ export const Header: React.FC<HeaderProps> = () => {
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework } = useTenant();
+  // The server could not confirm the session on load: the app shows this browser's data, so the badge must not say "live"
+  const { sessionCheck } = useAuth();
   const totalCount = metrics.totalControls || frameworkControls.length || 1;
   const frameworkTitle = getFrameworkTitle(activeFramework);
 
@@ -79,9 +83,15 @@ export const Header: React.FC<HeaderProps> = () => {
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold text-sm sm:text-base text-white tracking-tight">Event Horizon: Singularity</span>
-                <span className="text-xs uppercase font-bold px-1.5 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
-                  LIVE ENCLAVE
-                </span>
+                {sessionCheck === 'offline' ? (
+                  <span className="text-xs uppercase font-bold px-1.5 py-0.5 rounded-full border bg-amber-500/20 text-amber-300 border-amber-500/40">
+                    OFFLINE
+                  </span>
+                ) : (
+                  <span className="text-xs uppercase font-bold px-1.5 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+                    LIVE ENCLAVE
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 font-medium">
                 Pitch Black Cyber • {frameworkControls.length} Controls
@@ -197,6 +207,9 @@ export const Header: React.FC<HeaderProps> = () => {
         </div>
 
       </div>
+
+      {/* The server could not confirm the session on load: cached data is shown (non-blocking, hideable) */}
+      <SessionOfflineNotice />
 
       {/* Browser-only tenants: their notes have no other copy (persistent, not dismissable) */}
       <BrowserOnlyNotesBanner />

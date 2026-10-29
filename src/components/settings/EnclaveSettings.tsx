@@ -30,6 +30,8 @@ import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
 import { PROGRAM_TEXT_MAX } from '../../data/programSync';
 import { errorMessage } from '../../utils/errors';
+import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
+import { unsavedProgramFields } from '../../services/unsavedText';
 import { frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 const DEFAULT_STACK: EnclaveStackProfile = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
@@ -66,6 +68,10 @@ export const EnclaveSettings: React.FC = () => {
   const [boundaryError, setBoundaryError] = useState<string | null>(null);
   const boundaryText = activeProgram ? activeProgram.boundarySummary : currentTenant.systemBoundaryScope;
   const canEditBoundary = Boolean(activeProgram) && canManagePrograms && !activeProgram?.archived;
+  // A boundary description being edited and not saved yet is reported to the unsaved-text rescue
+  useUnsavedTextProvider(() => (editingBoundary && activeProgram
+    ? unsavedProgramFields({ description: '', boundarySummary: boundaryDraft }, { boundarySummary: activeProgram.boundarySummary }, activeProgram.id)
+    : []));
 
   const saveBoundary = async () => {
     if (!activeProgram) return;

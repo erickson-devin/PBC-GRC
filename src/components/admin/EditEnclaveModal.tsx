@@ -14,6 +14,7 @@ import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { initialOwnerEmail, ownerEmailChanged } from '../../utils/systemOwner';
+import { buildEnclaveEditUpdates } from '../../utils/enclaveEdit';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface EditEnclaveModalProps {
@@ -37,7 +38,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
   tenant,
   onSaved,
 }) => {
-  const { updateTenant, updateTenantFrameworkScope, updateTenantOwner } = useTenant();
+  const { updateTenant, updateTenantOwner } = useTenant();
 
   const [name, setName] = useState('');
   const [cageCode, setCageCode] = useState('');
@@ -94,33 +95,24 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      const cleanCage = (cageCode.trim() || 'PENDING').toUpperCase();
-      const updatedTenant: Partial<Tenant> = {
-        name: name.trim(),
-        cageCode: cleanCage,
+      // The SSP system-owner contact changes only if the user changed it
+      const ownerChanged = ownerEmailChanged(initialOwner, ownerEmail);
+      const { updates } = buildEnclaveEditUpdates(tenant, {
+        name,
+        cageCode,
         primaryFramework,
         enabledFrameworks,
-      };
+        newOwnerEmail: ownerChanged ? ownerEmail : null,
+      });
 
-      // 1. Update basic tenant metadata
-      updateTenant(tenant.id, updatedTenant);
-
-      // 2. Update multi-framework scope
-      updateTenantFrameworkScope(tenant.id, enabledFrameworks, primaryFramework);
-
-      // 3. Update the SSP system-owner contact only if the user changed it
-      const ownerChanged = ownerEmailChanged(initialOwner, ownerEmail);
-      if (ownerChanged) {
-        updateTenantOwner(tenant.id, ownerEmail.trim());
-      }
+      // One update, so one PATCH for a server-backed tenant: all of it is applied or none of it (frameworks only when changed)
+      updateTenant(tenant.id, updates);
+      // A browser-only tenant makes no request: this only hands the local team roles over
+      if (ownerChanged && !tenant.serverBacked) updateTenantOwner(tenant.id, ownerEmail.trim());
 
       setShowSuccessToast(true);
       if (onSaved) {
-        onSaved({
-          ...tenant,
-          ...updatedTenant,
-          systemOwner: ownerChanged ? ownerEmail.trim() : tenant.systemOwner,
-        } as Tenant);
+        onSaved({ ...tenant, ...updates } as Tenant);
       }
 
       setTimeout(() => {
@@ -226,12 +218,12 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
               </div>
             </div>
 
-            {/* Row 3: Assessment program (primary framework + enabled frameworks) */}
+            {/* Row 3: Licensed frameworks (primary framework + enabled frameworks) */}
             <div className="space-y-3 pt-1 border-t border-slate-800/80">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                   <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Assessment Program</span>
+                  <span>Licensed Frameworks</span>
                 </label>
                 <span className="text-xs text-slate-400 font-mono">
                   Only these frameworks are served to this enclave

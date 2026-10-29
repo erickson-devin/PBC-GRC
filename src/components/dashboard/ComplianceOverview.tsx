@@ -17,7 +17,8 @@ import {
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
-import { calculateSprsScore, formatSprsScore, getSprsPointDeduction } from '../../data/reports/sprsCompiler';
+import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
+import { remediationPriorities } from '../../data/reports/remediationPriority';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { storagePathLabel } from '../../data/audit/storageDriver';
 import { DomainCards } from './DomainCards';
@@ -48,19 +49,14 @@ export const ComplianceOverview: React.FC = () => {
   const notMetPct = totalCount > 0 ? (metrics.notMetCount / totalCount) * 100 : 0;
   const notStartedPct = totalCount > 0 ? (metrics.notStartedCount / totalCount) * 100 : 0;
 
-  // High-Yield Remediation: Top 3 unmet controls sorted by SPRS point impact (5-pt > 3-pt > 1-pt)
-  const highYieldRemediations = useMemo(() => {
-    return frameworkControls
-      .filter((c) => state.controls[c.id]?.status !== 'MET')
-      .map((c) => ({
-        control: c,
-        weight: getSprsPointDeduction(c.id),
-        status: state.controls[c.id]?.status || 'NOT_STARTED',
-      }))
-      // The SSP requirement (3.12.4) has weight 0 but blocks scoring entirely, so it always ranks first.
-      .sort((a, b) => (b.weight === 0 ? 100 : b.weight) - (a.weight === 0 ? 100 : a.weight))
-      .slice(0, 3);
-  }, [frameworkControls, state.controls]);
+  // SPRS points exist only for CMMC Level 2; every other framework gets the same list without them.
+  const showSprs = activeFramework === 'CMMC_L2';
+
+  // High-Yield Remediation: Top 3 unmet controls (CMMC L2: sorted by SPRS point impact, 5-pt > 3-pt > 1-pt)
+  const highYieldRemediations = useMemo(
+    () => remediationPriorities(activeFramework, frameworkControls, state.controls),
+    [activeFramework, frameworkControls, state.controls]
+  );
 
   const handleRemediateControl = (controlId: string) => {
     setSelectedControlId(controlId);
@@ -285,7 +281,7 @@ export const ComplianceOverview: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-white tracking-tight">High-Yield Remediation Priority</h3>
-                  <p className="text-xs text-slate-400">Top unmet controls ranked by SPRS point impact</p>
+                  <p className="text-xs text-slate-400">{showSprs ? 'Top unmet controls ranked by SPRS point impact' : 'Top unmet controls, not met first'}</p>
                 </div>
               </div>
               <span className="px-2 py-0.5 rounded-md text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
@@ -300,7 +296,7 @@ export const ComplianceOverview: React.FC = () => {
                 </div>
                 <p className="text-xs font-bold text-emerald-300">All High-Yield Controls Satisfied</p>
                 <p className="text-xs text-slate-400">
-                  Zero high-deduction requirements remaining. Your active enclave satisfies full baseline scoring.
+                  {showSprs ? 'Zero high-deduction requirements remaining.' : 'Every control in scope is met.'} Your active enclave satisfies full baseline scoring.
                 </p>
               </div>
             ) : (
@@ -324,15 +320,17 @@ export const ComplianceOverview: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold border ${
-                        weight === 5
-                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                          : weight === 3
-                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                          : 'bg-slate-700 text-slate-300 border-slate-600'
-                      }`}>
-                        -{weight} SPRS PTS
-                      </span>
+                      {weight !== null && (
+                        <span className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold border ${
+                          weight === 5
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                            : weight === 3
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            : 'bg-slate-700 text-slate-300 border-slate-600'
+                        }`}>
+                          -{weight} SPRS PTS
+                        </span>
+                      )}
                       <span className="text-xs font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400">
                         {status.replace('_', ' ')}
                       </span>
@@ -345,7 +343,7 @@ export const ComplianceOverview: React.FC = () => {
           </div>
 
           <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-            <span>Resolving 5-pt controls yields immediate SPRS recovery</span>
+            <span>{showSprs ? 'Resolving 5-pt controls yields immediate SPRS recovery' : 'Not met controls are listed first'}</span>
             <button
               onClick={() => setActiveTab('controls')}
               className="text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1 transition-colors"

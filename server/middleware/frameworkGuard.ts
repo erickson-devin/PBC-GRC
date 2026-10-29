@@ -31,7 +31,7 @@ export function frameworksDefiningControl(controlId: string): Set<string> {
 }
 
 const refusal = (what: string, policy: TenantFrameworkPolicy): string =>
-  `Forbidden: ${what} is not part of this tenant's assessment program (enabled: ${policy.enabledFrameworks.join(', ')}). A platform administrator can change the program.`;
+  `Forbidden: ${what} is not one of this tenant's licensed frameworks (enabled: ${policy.enabledFrameworks.join(', ')}). A platform administrator can change them.`;
 
 /** True when the request may use `framework`; otherwise writes the 403 and returns false. */
 export async function ensureFrameworkEnabled(req: Request, res: Response, framework: string, policy?: TenantFrameworkPolicy | null): Promise<boolean> {
