@@ -5,7 +5,7 @@
  */
 
 /** Append-only: the CHECK on control_assessment_events.source is re-created from this list on every boot. */
-export const CONTROL_CHANGE_SOURCES = ['human', 'ssp-commit', 'vm-snapshot'] as const;
+export const CONTROL_CHANGE_SOURCES = ['human', 'ssp-commit', 'vm-snapshot', 'clone'] as const;
 export type ControlChangeSource = (typeof CONTROL_CHANGE_SOURCES)[number];
 
 export interface ControlAssessmentEvent {

@@ -425,7 +425,7 @@ async function main() {
     const eventsY = await queryWithProgram(scopeY, "SELECT 1 FROM control_assessment_events WHERE actor LIKE 'rls_verify%' OR tenant_id = $1", [TENANT_X]);
     check(eventsY.rows.length === 0, "control_assessment_events: tenant Y sees none of tenant X's events, even by naming the tenant", `saw ${eventsY.rows.length}`);
     const badSource = await rejectsIn(scopeX, insertEvent, [TENANT_X, 'robot', goodSha, programX], { code: '23514', constraint: 'control_assessment_events_source_check' });
-    check(badSource.ok, "control_assessment_events: a source outside human, ssp-commit, vm-snapshot is refused (source_check)", badSource.detail);
+    check(badSource.ok, "control_assessment_events: a source outside human, ssp-commit, vm-snapshot, clone is refused (source_check)", badSource.detail);
     const badSha = await rejectsIn(scopeX, insertEvent, [TENANT_X, 'human', 'xyz', programX], { code: '23514', constraint: 'control_assessment_events_sha_check' });
     check(badSha.ok, "control_assessment_events: a notes digest that is not 64 lowercase hex characters is refused (sha_check)", badSha.detail);
   } finally {

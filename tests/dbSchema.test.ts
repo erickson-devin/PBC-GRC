@@ -75,8 +75,8 @@ assert(
 );
 const eventSources = [...(/control_assessment_events_source_check CHECK \(source IN \(([^)]*)\)\)/.exec(TABLES_SQL)?.[1] ?? '').matchAll(/'([^']*)'/g)].map((x) => x[1]);
 assert(
-  JSON.stringify(eventSources) === JSON.stringify(['human', 'ssp-commit', 'vm-snapshot']) && JSON.stringify(eventSources) === JSON.stringify(CONTROL_CHANGE_SOURCES),
-  'the event source CHECK lists human, ssp-commit, vm-snapshot and equals CONTROL_CHANGE_SOURCES', eventSources
+  JSON.stringify(eventSources) === JSON.stringify(['human', 'ssp-commit', 'vm-snapshot', 'clone']) && JSON.stringify(eventSources) === JSON.stringify(CONTROL_CHANGE_SOURCES),
+  'the event source CHECK lists human, ssp-commit, vm-snapshot, clone and equals CONTROL_CHANGE_SOURCES', eventSources
 );
 assert(
   TABLES_SQL.includes('DROP CONSTRAINT IF EXISTS control_assessment_events_source_check') &&

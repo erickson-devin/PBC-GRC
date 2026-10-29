@@ -457,7 +457,7 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   }
   if (source) {
     try {
-      await cloneProgramContent(source, program, cloner ?? { source: 'human', actor: by ?? 'System', userId: null });
+      await cloneProgramContent(source, program, cloner ?? { source: 'clone', actor: by ?? 'System', userId: null });
     } catch (err) {
       await deleteProgram(tenantId, program.id).catch(() => undefined); // do not leave a half-seeded program behind
       throw err;
@@ -481,13 +481,14 @@ const DEFAULT_ROLE = 'IT / Security Lead';
  * stripped) and the responsible role of each control, with the status reset to NOT_STARTED. A control of the target's catalog is copied
  * when the source's catalog has the same id, or when exactly one control of the source's catalog is an EXACT / EQUIVALENT crosswalk
  * match for it (the copy is then written under the target's id). Nothing else is copied: no evidence, SSP imports or POA&M items, and
- * nothing for a control with neither notes nor a role of its own. Each copied row records a history event from `who`. Returns how many
+ * nothing for a control with neither notes nor a role of its own. Each copied row records a history event with source 'clone' and the actor of `who`. Returns how many
  * controls were copied. When both programs have the same framework the assessment objectives' narratives are copied too (status reset,
  * no evidence links; see cloneObjectives).
  */
 export async function cloneProgramContent(source: Program, target: Program, who: ControlChangeActor): Promise<number> {
   if (source.tenantId !== target.tenantId) throw new ProgramError('program_not_found', 'Program not found');
   const tenantId = target.tenantId;
+  const cloneActor: ControlChangeActor = { source: 'clone', actor: who.actor, userId: who.userId };
   const rows = await readControlAssessments({ tenantId, programId: source.id });
   const inSource = catalogIds(source);
   let copied = 0;
@@ -506,7 +507,7 @@ export async function cloneProgramContent(source: Program, target: Program, who:
       { tenantId, programId: target.id },
       targetId,
       () => ({ status: 'NOT_STARTED', notes, role: row.role, updatedBy: who.actor }),
-      who
+      cloneActor
     );
     copied++;
   }

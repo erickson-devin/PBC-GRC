@@ -1,5 +1,6 @@
 import './testEnv';
 import { __resetMemoryTenantsForTests, __seedLegacyRowForTests, createTenantWithOwner, queryWithProgram, queryWithTenant } from '../server/db';
+import { listControlAssessmentEvents } from '../server/controlAssessments';
 import {
   DEFAULT_PROGRAM_NAME,
   MAX_PROGRAMS_PER_TENANT,
@@ -327,6 +328,19 @@ async function main() {
   const allEvents = (await Promise.all([vmA, vmB, dVm, n1s, wwProgram].map((p) => listProgramEvents({ tenantId: p.tenantId, programId: p.id })))).flat();
   const eventJson = JSON.stringify(allEvents);
   assert(allEvents.length > 0 && !['Target A', 'Target B', 'N wireless', 'secret boundary text', DEFAULT_PROGRAM_NAME].some((s) => eventJson.includes(s)),'V6: events hold no program name or description', allEvents.length);
+
+  console.log('\n--- Clone history source ---');
+  await mkTenant('t-clone-src', 'CMMC_L2', ['CMMC_L2']);
+  const dClone = await ensureDefaultProgram('t-clone-src');
+  await queryWithProgram({ tenantId: 't-clone-src', programId: dClone.id }, ...control('t-clone-src', dClone.id, 'AC.L1-3.1.1', 'MET'));
+  const cloned = await createProgram('t-clone-src', { name: 'Clone src', frameworkId: 'CMMC_L2', seed: { cloneFrom: dClone.id } }, 'u');
+  const cloneEv = await listControlAssessmentEvents({ tenantId: 't-clone-src', programId: cloned.id }, 'AC.L1-3.1.1', 10);
+  assert(
+    cloneEv.length === 1 && cloneEv[0].source === 'clone' && cloneEv[0].newStatus === 'NOT_STARTED' && cloneEv[0].actor === 'u' && cloneEv[0].actorUserId === null,
+    'C1: a cloned control records one event with source clone, the status reset and the creator as actor', cloneEv
+  );
+  const srcEv = await listControlAssessmentEvents({ tenantId: 't-clone-src', programId: dClone.id }, 'AC.L1-3.1.1', 10);
+  assert(!srcEv.some((e) => e.source === 'clone'), 'C1: the source program has no clone event', srcEv);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
