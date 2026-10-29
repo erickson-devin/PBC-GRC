@@ -96,6 +96,19 @@ async function run() {
   const ver2 = await call('GET', `/evidence/${E2}/verify-integrity`, owner, T);
   assert(up2.status === 201 && file2.status === 404 && ver2.status === 404, 'D8 upload-url without a PUT: /file and verify-integrity are 404', [up2.status, file2.status, ver2.status]);
 
+  console.log('\n--- D9-D10: a browser copy uploaded without a local hash, an orphan record removed ---');
+  const up9 = await call('POST', '/evidence/upload-url', owner, T, { controlId: AC1, fileName: 'nohash.txt', fileSize: 5, mimeType: 'text/plain', fileHash: 'sha256-unavailable' });
+  const E9 = up9.body?.evidenceId as string;
+  const put9 = await call('PUT', `/evidence/upload-local/${E9}`, owner, T, undefined, 'hello');
+  const ver9 = await call('GET', `/evidence/${E9}/verify-integrity`, owner, T);
+  assert(up9.status === 201 && put9.status === 200 && put9.body?.fileHash === sha256('hello'), 'D9 a placeholder hash at upload-url: the PUT re-computes the real SHA-256', [up9.status, put9.status, put9.body]);
+  assert(ver9.status === 200 && ver9.body?.verified === true && ver9.body?.currentHash === sha256('hello'), 'D9 verify-integrity: verified, and currentHash is the SHA-256 of hello', ver9.body);
+  // A fresh orphan (E2 is deleted by X8 below)
+  const up10 = await call('POST', '/evidence/upload-url', owner, T, { controlId: AC1, fileName: 'orphan.txt', fileHash: sha256('orphan') });
+  const E10 = up10.body?.evidenceId as string;
+  const del10 = await call('DELETE', `/evidence/${E10}`, owner, T);
+  assert(up10.status === 201 && del10.status === 200 && (del10.body?.removedIds ?? []).includes(E10), 'D10 DELETE of a record whose bytes were never uploaded -> 200 and its id is removed', [up10.status, del10.status, del10.body]);
+
   console.log('\n--- H: /api no-store ---');
   const noStore = (r: { headers: Headers }) => r.headers.get('cache-control') === 'no-store';
   const h1 = await call('GET', '/health', null);
