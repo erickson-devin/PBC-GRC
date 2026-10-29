@@ -27,9 +27,11 @@ import { StorageService, createInitialState } from '../services/storageService';
 import { stripTenantRegistryForCache } from '../services/browserStorageScrub';
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import { clearLocalEnclaveAssets, getEnclaveAssets, isDemoSeedAsset } from '../data/telemetry/assetRegistry';
-import type { AssetInput } from '../data/telemetry/assetScope';
 import { notifyAssetsChanged } from '../services/assetService';
-import type { EnclaveAsset } from '../types/telemetry';
+import { keys as idbKeys, get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
+import { listLocalEvidenceCopies, moveLocalEvidenceCopy, moveLocalEvidenceKey, remapEvidenceLinks, sha256Hex } from '../services/localEvidenceCopies';
+import { recordFailedMove } from '../services/failedMoves';
+import { pushAssetsToServer } from '../services/assetMove';
 import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
 import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
 import {
@@ -302,7 +304,7 @@ interface TenantContextType {
    * Moves a tenant that only exists in this browser to the server: creates it there, then ports its assessment and
    * evidence files to the new server-generated id. Browser-only team members and invitations are not carried over.
    */
-  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }>;
+  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }>;
 
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
@@ -702,7 +704,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     target: Tenant,
     override: ServerTenantPatch = {},
     activate = true
-  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
+  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
     const base = toServerPatch(target);
     const created = await createTenantOnServer(
       { ...base, ...override, name: (override.name ?? target.name).trim() },
@@ -725,9 +727,51 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
     const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
 
-    // The objective narratives, status and evidence links of the default program move too (insert-only: a new tenant holds none yet)
     const legacyState = StorageService.loadAssessment(target);
-    const objectiveUpload = objectivesToUpload(legacyState.objectives, controlId => Boolean(findControlDefinition(controlId)));
+
+    // Evidence files kept in this browser are uploaded to the new tenant (default program), one at a time. A file is removed
+    // from the browser only once the server is proven to hold the same bytes; one that fails stays here and is listed in the vault.
+    const evidenceIndexById = new Map((legacyState.evidenceIndex ?? []).map(e => [e.id, e]));
+    const evidenceIdMap: Record<string, string> = {};
+    let evidenceFilesMoved = 0;
+    let evidenceFailed = 0;
+    const localCopies = await listLocalEvidenceCopies({ keys: idbKeys, get: idbGet }, target.id, new Set());
+    for (const copy of localCopies) {
+      const indexed = evidenceIndexById.get(copy.evidenceId);
+      const outcome = await moveLocalEvidenceCopy(
+        {
+          get: idbGet,
+          set: idbSet,
+          del: idbDel,
+          hash: sha256Hex,
+          requestUploadUrl: p => ApiClient.requestUploadUrl(created.id, p, null),
+          uploadFile: (u, b, t) => ApiClient.uploadEvidenceFile(u, b, t, created.id, null),
+          verify: id => ApiClient.verifyEvidenceIntegrity(created.id, id, null),
+          fetchServerBytes: async id => (await ApiClient.getEvidenceFileBlob(created.id, id, null)).blob.arrayBuffer(),
+          deleteServerRecord: id => ApiClient.deleteEvidence(created.id, id, null).then(() => undefined),
+        },
+        {
+          key: copy.key,
+          evidenceId: copy.evidenceId,
+          controlId: indexed?.controlId ?? copy.controlId,
+          description: indexed?.description,
+          targetTenantId: created.id,
+        }
+      );
+      if (outcome.status === 'moved' || outcome.status === 'uploadedUnverified') {
+        evidenceFilesMoved++;
+        evidenceIdMap[copy.evidenceId] = outcome.serverEvidenceId;
+      } else if (outcome.status === 'failed' || outcome.status === 'needsControl') {
+        evidenceFailed++;
+        // A pre-partition (legacy) key is not moved with the tenant's prefix below: re-key it so the new tenant's vault lists it
+        if (!copy.key.startsWith(`pbc_evidence_${target.id}_`)) {
+          await moveLocalEvidenceKey({ get: idbGet, set: idbSet, del: idbDel }, copy.key, created.id, copy.evidenceId);
+        }
+      }
+    }
+
+    // The objective narratives, status and evidence links of the default program move too (insert-only: a new tenant holds none yet)
+    const objectiveUpload = objectivesToUpload(remapEvidenceLinks(legacyState.objectives ?? {}, evidenceIdMap), controlId => Boolean(findControlDefinition(controlId)));
     const objectiveResults: { objectiveId: string; result: ObjectiveImportResult }[] = [];
     let objectivesFailed = 0;
     for (const chunk of chunkItems(objectiveUpload.items, MAX_OBJECTIVE_IMPORT)) {
@@ -741,35 +785,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // The CMMC asset inventory is server-owned too. A demo fleet that an older version seeded into this browser is never
     // carried over (it is not this tenant's data).
     const legacyAssets = getEnclaveAssets(target.id).filter(a => !isDemoSeedAsset(a, target.id));
-    let assetsMoved = 0;
-    let assetsFailed = 0;
-    const toInput = (a: EnclaveAsset): AssetInput => ({
-      hostName: a.hostName, ipAddress: a.ipAddress, macAddress: a.macAddress, osProfile: a.osProfile,
-      cmmcAssetCategory: a.cmmcAssetCategory, status: a.status, sourceOrigin: a.sourceOrigin,
-      discoveryStatus: a.discoveryStatus, accretionMetadata: a.accretionMetadata, lastScannedAt: a.lastScannedAt,
-      complianceScore: a.complianceScore, notes: a.notes, owner: a.owner ?? '',
-      fipsValidationStatus: a.fipsValidationStatus, fipsCertificateNumber: a.fipsCertificateNumber,
-      fipsModuleName: a.fipsModuleName, fipsStandard: a.fipsStandard,
-    });
-    for (let i = 0; i < legacyAssets.length; i += 500) {
-      const chunk = legacyAssets.slice(i, i + 500);
+    const assetPush = await pushAssetsToServer(
+      { bulk: (t, i) => ApiClient.createAssetsBulk(t, i), single: (t, i) => ApiClient.createAsset(t, i) },
+      created.id,
+      legacyAssets
+    );
+    const assetsMoved = assetPush.moved;
+    const assetsFailed = assetPush.failed;
+    if (assetsFailed === 0) clearLocalEnclaveAssets(target.id);
+    else {
+      // The leftovers stay under the old id; remember them (ids and a count only) so the inventory can offer a retry
       try {
-        const res = await ApiClient.createAssetsBulk(created.id, chunk.map(toInput));
-        assetsMoved += res.created.length;
-        assetsFailed += res.skipped.length;
+        recordFailedMove(localStorage, { fromTenantId: target.id, toTenantId: created.id, at: new Date().toISOString(), assetsFailed });
       } catch {
-        // one malformed row rejects the whole request: retry one by one so the good ones still move
-        for (const a of chunk) {
-          try {
-            await ApiClient.createAsset(created.id, toInput(a));
-            assetsMoved++;
-          } catch {
-            assetsFailed++;
-          }
-        }
+        // Best effort: the assets themselves are still in this browser
       }
     }
-    if (assetsFailed === 0) clearLocalEnclaveAssets(target.id);
     // The new tenant may already be active and showing its (still empty) inventory: tell every asset view to reload
     notifyAssetsChanged(created.id);
     const migratedState = StorageService.migrateAssessment(target, created.id);
@@ -777,7 +808,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (objectivesFailed === 0) {
       StorageService.saveAssessment(created.id, applyImportResult(migratedState, objectiveResults, new Date().toISOString(), objectiveUpload.unsendable));
     }
-    const evidenceFilesMoved = await EvidenceVault.moveTenant(target.id, created.id);
+    // Re-keys what is still tenant-keyed (files that failed or could not be checked); the count comes from the upload step above
+    await EvidenceVault.moveTenant(target.id, created.id);
     setLiveTenants(prev => prev.filter(t => t.id !== target.id));
     setInvitations(prev => prev.filter(i => i.tenantId !== target.id));
     setTeamMembers(prev => {
@@ -790,17 +822,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       delete roles[target.id];
       return { ...prev, roles };
     });
-    return { tenant: created, evidenceFilesMoved, controlsFailed, objectivesFailed, assetsMoved, assetsFailed };
+    return { tenant: created, evidenceFilesMoved, evidenceFailed, controlsFailed, objectivesFailed, assetsMoved, assetsFailed };
   }, [createTenantOnServer]);
 
   /** "Move to server": the user-facing action for tenants that only exist in this browser. */
-  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
+  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!target) throw new ApiError(404, 'That tenant was not found.');
-    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0 };
+    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, evidenceFailed: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0 };
     if (target.isConfigured === false) throw new ApiError(409, 'Finish this tenant\'s setup wizard first; it creates the tenant on the server.');
     const moved = await migrateTenantToServer(target, {}, target.id === currentTenantIdRef.current);
-    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed };
+    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, evidenceFailed: moved.evidenceFailed, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed };
   }, [migrateTenantToServer]);
 
 

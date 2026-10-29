@@ -22,7 +22,7 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
   const { migrateLocalTenantToServer } = useTenant();
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [moved, setMoved] = useState<{ tenantId: string; evidenceFilesMoved: number; controlsFailed: number; assetsMoved: number; assetsFailed: number } | null>(null);
+  const [moved, setMoved] = useState<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; assetsMoved: number; assetsFailed: number } | null>(null);
 
   const isLegacy = !tenant.serverBacked && tenant.isConfigured !== false;
 
@@ -35,7 +35,8 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
           {moved.assetsMoved > 0 ? `, ${moved.assetsMoved} asset${moved.assetsMoved === 1 ? '' : 's'}` : ''}
           {moved.evidenceFilesMoved > 0 ? ` and ${moved.evidenceFilesMoved} evidence file${moved.evidenceFilesMoved === 1 ? '' : 's'}` : ''} now live
           under the server-assigned tenant. You can invite your team from Team settings.
-          {moved.assetsFailed > 0 ? ` Warning: ${moved.assetsFailed} asset${moved.assetsFailed === 1 ? ' was' : 's were'} not moved to the server; please add them again in the asset inventory.` : ''}
+          {moved.assetsFailed > 0 ? ` Warning: ${moved.assetsFailed} asset${moved.assetsFailed === 1 ? '' : 's'} could not be moved; ${moved.assetsFailed === 1 ? 'it stays' : 'they stay'} in this browser and you can retry from the asset inventory.` : ''}
+          {moved.evidenceFailed > 0 ? ` Warning: ${moved.evidenceFailed} evidence file${moved.evidenceFailed === 1 ? '' : 's'} could not be uploaded; ${moved.evidenceFailed === 1 ? 'it stays' : 'they stay'} in this browser and ${moved.evidenceFailed === 1 ? 'is' : 'are'} listed under "Only in this browser" in the evidence vault.` : ''}
           {moved.controlsFailed > 0 ? ` Warning: ${moved.controlsFailed} control answer${moved.controlsFailed === 1 ? ' could' : 's could'} not be saved to the server; review them before relying on this assessment.` : ''}
         </span>
       </div>
