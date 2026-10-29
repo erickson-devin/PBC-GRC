@@ -7,6 +7,8 @@ import { requireWriteRole } from '../middleware/roleGuard';
 import {
   ComplianceFramework,
   BaselineTier,
+  FrameworkControlDefinition,
+  OverlayFilters,
   OverlayParameter,
 } from '../../src/types/framework';
 import {
@@ -15,10 +17,13 @@ import {
   CANONICAL_CONTROL_MAPPINGS,
   getCrossFrameworkMappings,
 } from '../../src/data/frameworks';
-import { nistControlsWithPrivacy } from '../../src/data/programScope';
+import { programFrameworkControls, scopingToOverlays } from '../../src/data/programScope';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
+
+/** The tier id of each NIST SP 800-53 program baseline (the CIA level three times). */
+const PROGRAM_BASELINE_TIERS = { LOW: 'LOW_LOW_LOW', MODERATE: 'MOD_MOD_MOD', HIGH: 'HIGH_HIGH_HIGH' } as const;
 
 // Read-only roles (ASSESSOR, VIEWER) may GET but never POST / PUT / DELETE.
 router.use(requireWriteRole);
@@ -173,15 +178,30 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const policy = await getTenantFrameworkPolicy(tenantId);
     const asked = req.query.framework_id || req.query.framework;
     const query = !asked && req.program ? { ...req.query, framework_id: req.program.frameworkId } : req.query;
-    const { framework, baseline, overlay } = normalizeFrameworkParams(query);
+    const params = normalizeFrameworkParams(query);
+    const framework = params.framework;
     if (!(await ensureFrameworkEnabled(req, res, framework, policy))) return;
 
     // 1. Resolve canonical controls for the requested framework and overlay
+    // The program's own framework is scoped by the program (its baseline, overlays and privacy baseline); the query's baseline and
+    // overlay are ignored there. Another framework (the crosswalk view) is a read-only catalog view and keeps the query's.
+    const program = req.program;
+    const own = !!program && framework === program.frameworkId;
+    let baseline: BaselineTier = params.baseline;
+    let overlay: OverlayParameter = params.overlay;
+    let overlays: OverlayFilters = { nonNetworkedOnly: overlay === 'NON_NETWORKED', noWireless: false, noMobileDevices: false, noPiiProcessing: false };
+    let frameworkControls: FrameworkControlDefinition[];
     // A NIST program with the privacy baseline serves the union of its security baseline and the SP 800-53B privacy baseline.
-    const withPrivacy = framework === 'NIST_800_53_REV5' && req.program?.frameworkId === 'NIST_800_53_REV5' && req.program.privacyBaseline === true;
-    const frameworkControls = withPrivacy
-      ? nistControlsWithPrivacy(baseline, true, overlay === 'NON_NETWORKED' ? { nonNetworkedOnly: true } : {})
-      : getFrameworkControls(framework, baseline, overlay);
+    let withPrivacy = false;
+    if (own && program) {
+      baseline = program.baseline ? PROGRAM_BASELINE_TIERS[program.baseline] : 'ALL_CONTROLS';
+      overlays = scopingToOverlays(program.scoping);
+      overlay = overlays.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE';
+      withPrivacy = framework === 'NIST_800_53_REV5' && program.privacyBaseline === true;
+      frameworkControls = programFrameworkControls({ framework, baseline: program.baseline, privacyBaseline: program.privacyBaseline }, overlays);
+    } else {
+      frameworkControls = getFrameworkControls(framework, baseline, overlay);
+    }
     const targetControlIds = frameworkControls.map(c => c.id);
 
     // 2. Query the active program's assessment records from PostgreSQL (guarded by RLS; a legacy row with no program counts as its own until backfilled)
@@ -273,12 +293,14 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       framework,
       baseline,
       overlay,
+      overlays,
+      scopedByProgram: own,
       ...(withPrivacy ? { privacyBaseline: true } : {}),
       totalCount: controlsList.length,
       controls: controlsList,
     });
   } catch (err: unknown) {
-    console.error(`[Controls API] Error fetching controls for tenant ${tenantId}:`, err);
+    console.error(`[Controls API] Error fetching controls for tenant ${tenantId}:`, errorMessage(err));
     res.status(500).json({
       error: 'Failed to fetch control assessments',
       details: errorMessage(err),
@@ -364,7 +386,7 @@ router.get('/:controlId/history', async (req: Request, res: Response): Promise<v
     const events = await listControlAssessmentEvents(scopeOf(req), controlId, limit);
     res.json({ tenantId, controlId, totalCount: events.length, events });
   } catch (err: unknown) {
-    console.error(`[Controls API] Error reading the history of ${controlId} for tenant ${tenantId}:`, err);
+    console.error(`[Controls API] Error reading the history of ${controlId} for tenant ${tenantId}:`, errorMessage(err));
     res.status(500).json({ error: 'Failed to load the control history' });
   }
 });
