@@ -123,10 +123,20 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
   }
 }
 
+/** The service token is a bearer secret: refuse it over plain HTTP, the same rule as token creation (vm.ts). Runs after authentication, so a missing token is still a 401. */
+function requireSecureTransport(req: Request, res: Response, next: NextFunction): void {
+  if (!req.secure && process.env.VM_ALLOW_INSECURE_TOKENS !== 'true') {
+    res.status(403).json({ error: 'The ingest endpoint requires HTTPS', code: 'vm_insecure_transport' });
+    return;
+  }
+  next();
+}
+
 router.post(
   '/ingest',
   vmIngestRateLimiter,
   serviceTokenMiddleware('vm:ingest'),
+  requireSecureTransport,
   vmTokenRateLimiter,
   express.raw({ type: 'application/json', limit: vmIngestMaxBytes(), inflate: false }),
   ingestHandler,

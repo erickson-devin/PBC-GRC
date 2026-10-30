@@ -69,6 +69,8 @@ async function run() {
   assert(file.status === 200 && file.text === 'hello', 'D2 owner: 200 with the uploaded bytes', [file.status, file.text]);
   assert(file.headers.get('cache-control') === 'no-store', 'D2 Cache-Control is exactly no-store', file.headers.get('cache-control'));
   assert(file.headers.get('x-content-type-options') === 'nosniff', 'D2 X-Content-Type-Options is nosniff', file.headers.get('x-content-type-options'));
+  assert(file.headers.get('content-security-policy') === "default-src 'none'; sandbox", "D2 the file response carries Content-Security-Policy: default-src 'none'; sandbox", file.headers.get('content-security-policy'));
+  assert((file.headers.get('content-disposition') ?? '').startsWith('attachment;'), 'D2 Content-Disposition is attachment, never inline', file.headers.get('content-disposition'));
   const anon = await call('GET', `/evidence/${E}/file`, null, T);
   assert(anon.status === 401 && !anon.text.includes('hello'), 'D3 no Authorization -> 401 and the bytes are not in the body', [anon.status, anon.text]);
   const asViewer = await call('GET', `/evidence/${E}/file`, viewer, T);
@@ -128,6 +130,27 @@ async function run() {
   assert(h7.status === 400 && noStore(h7), 'H7 POST /tenants with a malformed JSON body -> 400, no-store', [h7.status, h7.headers.get('cache-control')]);
   const h8 = await call('GET', '/auth/config', null);
   assert(noStore(h8), 'H8 GET /auth/config -> no-store', [h8.status, h8.headers.get('cache-control')]);
+
+  console.log('\n--- H9-H12: security response headers, vault umask ---');
+  const hardened = (r: { headers: Headers }) => {
+    const csp = r.headers.get('content-security-policy') ?? '';
+    return r.headers.get('referrer-policy') === 'no-referrer' && r.headers.get('x-powered-by') === null && r.headers.get('x-xss-protection') === '0' &&
+      (r.headers.get('permissions-policy') ?? '').includes('camera=()') && csp.includes("frame-ancestors 'none'") && csp.includes("script-src 'self'") && !csp.includes('unsafe-eval');
+  };
+  const h9 = await call('GET', '/health', null);
+  assert(h9.status === 200 && hardened(h9), 'H9 GET /health: Referrer-Policy no-referrer, no X-Powered-By, X-XSS-Protection 0, Permissions-Policy, an enforced CSP without unsafe-eval', [...h9.headers.entries()]);
+  const h10 = await fetch('http://127.0.0.1:8080/some/spa/path');
+  await h10.text();
+  assert(hardened(h10) && h10.headers.get('x-frame-options') === 'DENY' && h10.headers.get('x-content-type-options') === 'nosniff', 'H10 a non-API (SPA) path carries the same headers plus X-Frame-Options DENY and nosniff', [...h10.headers.entries()]);
+  assert(h7.headers.get('x-content-type-options') === 'nosniff' && h7.headers.get('referrer-policy') === 'no-referrer', 'H11 the body-parser 400 (malformed JSON) carries the security headers too', [...h7.headers.entries()]);
+  const indexSrc = fs.readFileSync('server/index.ts', 'utf8').replace(/\r\n/g, '\n');
+  const iJson = indexSrc.indexOf('express.json(');
+  assert(indexSrc.indexOf("app.disable('x-powered-by')") >= 0 && indexSrc.indexOf("app.disable('x-powered-by')") < iJson && indexSrc.indexOf("'X-Frame-Options'") >= 0 && indexSrc.indexOf("'X-Frame-Options'") < iJson, 'H12 source: x-powered-by is disabled and the header middleware is registered before the body parsers', [indexSrc.indexOf("app.disable('x-powered-by')"), indexSrc.indexOf("'X-Frame-Options'"), iJson]);
+  const iUmask = indexSrc.indexOf('process.umask(0o077)');
+  assert(iUmask >= 0 && iUmask < indexSrc.indexOf('app.listen'), 'H12 source: process.umask(0o077) is set before app.listen (CUI vault files are owner-only)', iUmask);
+  const evidenceSrc = fs.readFileSync('server/routes/evidence.ts', 'utf8').replace(/\r\n/g, '\n');
+  assert(!/console\.(error|warn)\([^\n]*,\s*(err|dbErr)\)/.test(evidenceSrc) && !/console\.[a-z]+\([^\n]*errorMessage\(/.test(evidenceSrc), 'H13 source: evidence.ts logs no raw error object and no error message (they can carry paths or row values)');
+  assert(!/details:\s*errorMessage\(/.test(evidenceSrc) && !/error:\s*errorMessage\(/.test(evidenceSrc), 'H13 source: evidence.ts never returns a raw error message to the client');
 
   console.log('\n--- X: DELETE /evidence/:id ---');
   const listOf = async (program?: string) => (((await call('GET', '/evidence', owner, T, undefined, undefined, program)).body?.evidence ?? []) as Json[]);
