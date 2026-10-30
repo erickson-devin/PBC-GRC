@@ -9,6 +9,10 @@ import {
   releaseSessionSignal,
   reportResponseStatus,
   resetSessionSignal,
+  sessionEndedMessage,
+  SESSION_ENDED_MESSAGE,
+  SESSION_EXPIRED_MESSAGE,
+  SESSION_REVOKED_MESSAGE,
 } from '../src/services/sessionSignal';
 
 /**
@@ -84,6 +88,20 @@ onSessionRejected((t) => heard.push(t));
 reportResponseStatus(401, 'tokA', 'tokA');
 assert(heard.length === 1, 'a throwing listener does not stop the next one');
 resetSessionSignal();
+
+console.log('\n--- The reason travels with the signal ---');
+resetSessionSignal();
+const heardReasons: Array<[string, string | undefined]> = [];
+onSessionRejected((t, reason) => heardReasons.push([t, reason]));
+reportResponseStatus(401, 'tokA', 'tokA', 'session_expired');
+assert(heardReasons.length === 1 && heardReasons[0][0] === 'tokA' && heardReasons[0][1] === 'session_expired', 'C33-1 the reason reaches the listener');
+reportResponseStatus(401, 'tokB', 'tokB', null);
+assert(heardReasons.length === 2 && heardReasons[1][1] === undefined, 'a null reason reaches the listener as undefined');
+resetSessionSignal();
+
+assert(sessionEndedMessage('session_expired') === SESSION_EXPIRED_MESSAGE && sessionEndedMessage('session_revoked') === SESSION_REVOKED_MESSAGE, 'C33-4 expired and revoked have their own texts');
+assert(['session_missing', 'session_invalid', undefined, null, 'garbage'].every((r) => sessionEndedMessage(r) === SESSION_ENDED_MESSAGE), 'missing, invalid, unknown and absent reasons get the generic text');
+assert([SESSION_ENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SESSION_REVOKED_MESSAGE].every((m) => !/token/i.test(m)), 'no session message mentions a token');
 
 console.log('\n--- Through ApiClient, against a stubbed fetch ---');
 let stored: string | null = 'sess';
@@ -192,6 +210,23 @@ function fresh() {
     r = await attempt(() => ApiClient.listMyTenants());
     const r2 = await attempt(() => ApiClient.getControls('t'));
     assert(r.value === null && r2.error !== undefined && fetchCalls === 0 && signals.length === 0, 'with no stored token no request is sent and nothing signals', { fetchCalls, signals });
+
+    fresh();
+    const reasons: Array<string | undefined> = [];
+    onSessionRejected((_t, reason) => reasons.push(reason));
+    globalThis.fetch = (async () => {
+      const res = { ok: false, status: 401, statusText: '', json: async () => ({ error: 'x', reason: 'session_revoked' }), clone: () => res };
+      return res as unknown as Response;
+    }) as typeof fetch;
+    await attempt(() => ApiClient.listMyTenants());
+    assert(signals.length === 1 && reasons.length === 1 && reasons[0] === 'session_revoked', 'C33-2 a 401 body reason is passed to the listener', { signals, reasons });
+
+    fresh();
+    const reasons2: Array<string | undefined> = [];
+    onSessionRejected((_t, reason) => reasons2.push(reason));
+    stub(401, { error: 'x', reason: 'session_revoked' });
+    await attempt(() => ApiClient.listMyTenants());
+    assert(signals.length === 1 && reasons2.length === 1 && reasons2[0] === undefined, 'C33-3 a response without clone() still signals once, with no reason', { signals, reasons2 });
   } finally {
     globalThis.fetch = realFetch;
     resetSessionSignal();

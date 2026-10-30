@@ -7,7 +7,7 @@ import { initDb, assertDbModeAllowed, getDbMode } from './db';
 import { assertAuthConfig, authStartupWarnings } from './auth/localAuth';
 import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
-import { parseTrustProxy } from './trustProxy';
+import { createForwardedForWarning, parseTrustProxy } from './trustProxy';
 import { startVmScheduler } from './vm/scheduler';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,6 +27,7 @@ try {
   console.error('[FATAL] Invalid TRUST_PROXY:', errorMessage(err));
   process.exit(1);
 }
+app.use(createForwardedForWarning());
 
 // Security & Middlewares
 app.use(cors({

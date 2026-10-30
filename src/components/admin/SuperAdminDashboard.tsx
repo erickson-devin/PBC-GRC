@@ -64,7 +64,6 @@ interface SuperAdminDashboardProps {
 
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   onNavigateToApp,
-  onNavigateToLogin,
 }) => {
   const {
     tenants,
@@ -575,7 +574,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             <button
               onClick={async () => {
                 await logout();
-                if (onNavigateToLogin) onNavigateToLogin();
               }}
               className="px-3 py-1.5 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 border border-rose-900/30 text-xs font-semibold transition-colors"
             >

@@ -104,14 +104,23 @@ when `MFA_REQUIRED` requires it for them (always under `all`; under `privileged`
 
 **Lockout.** A wrong or replayed code counts like a wrong password: five consecutive failures lock the account for 15
 minutes (the same counter as password failures). The password step no longer resets that counter on success when a second
-step follows; the counter is reset when the whole sign-in completes. Each sign-in uses two requests of the 20 per minute per
-IP address allowed (behind a reverse proxy with `TRUST_PROXY` unset, people share the proxy's address).
+step follows; the counter is reset when the whole sign-in completes. The same five-failure lock also applies, in memory, to
+any address typed at the sign-in form whether or not an account exists, so the 429 reveals nothing about which accounts exist
+(that state is per process and is lost on restart; the stored lock on real accounts is not). Each sign-in uses two requests
+of the 20 per minute per IP address allowed. Behind a reverse proxy, set `TRUST_PROXY` to the proxy's address: with it unset,
+people share the proxy's address, and the server logs one `[Proxy]` warning when it sees a forwarded request. Failed sign-in
+log lines name the account by a keyed reference (an HMAC under a key derived from `LOCAL_AUTH_SECRET`), never by its address.
 
 **Forced password change (`must_change_password`, NIST 3.5.9).** A password typed by an operator is temporary. Accounts created with
 `npm run auth:create-user` and accounts whose password a platform administrator reset have `must_change_password` set. Until they change it,
 their session can only call the password-change endpoint (every other request answers 403 `password_change_required`); a
 successful change clears the flag and issues a new session. The change asks for the current password and, when a factor is
 enrolled, a current code.
+
+**Session-ended reasons.** A 401 from the session check carries `reason`: `session_missing` (no bearer), `session_invalid`
+(a token the server cannot trust), `session_expired` (an authentic token past its expiry) or `session_revoked` (an authentic
+token whose account is gone or disabled, or whose sessions were ended by a password change, an MFA reset or an administrator
+action; the three are not told apart). The app's sign-in message follows the reason.
 
 **Platform administrator account actions** (Administration console, `/api/v1/platform/users`, platform administrators only):
 *reset password* (sets a temporary password, removes the person's second factor and recovery codes, ends their sessions,

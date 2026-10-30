@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { AuthProviderType, TenantInvitation } from '../types/tenant';
 import { frameworkPolicySummary } from '../data/tenantFrameworkPolicy';
 import { BrandLogo } from '../components/common/BrandLogo';
+import { ErrorNotice } from '../components/common/ErrorNotice';
 import { errorMessage } from '../utils/errors';
 import { MfaChallengeForm } from '../components/auth/MfaChallengeForm';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
@@ -357,8 +358,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   {tokenError === 'EXPIRED' && 'Defense onboarding tokens expire after 14 days to preserve zero-trust security posture. Please request a refreshed link from your administrator.'}
                   {tokenError === 'CLAIMED' && 'This invitation link has already been accepted and bound to a user account. You may sign in directly with your registered credentials.'}
                   {tokenError === 'REVOKED' && 'This invitation was revoked by the security administrator or enclave owner.'}
-                  {previewError && <span className="mt-2 block text-rose-300">{previewError}</span>}
                 </p>
+                <ErrorNotice message={previewError} className="mt-3 text-left" />
               </div>
 
               {/* Action Buttons */}
@@ -442,12 +443,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
               </div>
 
               {/* Error Alert */}
-              {(claimError || authError) && (
-                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>{claimError || authError}</span>
-                </div>
-              )}
+              <ErrorNotice message={claimError || authError} />
 
               {/* Second step: a code, or setting up an authenticator */}
               {mfaChallenge?.stage === 'verify' && (

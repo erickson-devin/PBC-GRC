@@ -4,7 +4,20 @@
  * Pure: no React and no import from the API client (the client passes the stored token in).
  */
 
-type SessionListener = (token: string) => void;
+type SessionListener = (token: string, reason?: string) => void;
+
+export type SessionEndReason = 'session_missing' | 'session_invalid' | 'session_expired' | 'session_revoked';
+
+export const SESSION_ENDED_MESSAGE = 'Your session has ended. Please sign in again.';
+export const SESSION_EXPIRED_MESSAGE = 'Your session expired. Please sign in again.';
+export const SESSION_REVOKED_MESSAGE = 'Your session ended because your account was updated, for example a password change or an administrator action. Please sign in again. If you cannot sign in, contact your administrator.';
+
+/** The sign-in screen's message after the server ended a session. Unknown or missing reasons get the generic text. */
+export function sessionEndedMessage(reason?: string | null): string {
+  if (reason === 'session_expired') return SESSION_EXPIRED_MESSAGE;
+  if (reason === 'session_revoked') return SESSION_REVOKED_MESSAGE;
+  return SESSION_ENDED_MESSAGE;
+}
 
 const listeners = new Set<SessionListener>();
 const held = new Set<string>();
@@ -41,14 +54,14 @@ export function onSessionRejected(listener: SessionListener): () => void {
 }
 
 /** Reports one response. Signals once per rejected token, never for a held token (e.g. a password change in flight). */
-export function reportResponseStatus(status: number, sentBearer: string | null | undefined, currentToken: string | null | undefined): void {
+export function reportResponseStatus(status: number, sentBearer: string | null | undefined, currentToken: string | null | undefined, reason?: string | null): void {
   if (!isSessionRejection(status, sentBearer, currentToken)) return;
   const token = sentBearer as string;
   if (held.has(token) || token === lastSignalled) return;
   lastSignalled = token;
   for (const listener of [...listeners]) {
     try {
-      listener(token);
+      listener(token, reason ?? undefined);
     } catch {
       // one failing listener must not stop the others
     }

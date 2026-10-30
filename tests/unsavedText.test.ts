@@ -264,6 +264,27 @@ assert(appSrc.indexOf('<UnsavedTextBanner />') > appSrc.indexOf('if (isAuthentic
 
 const loginSrc = read('src/components/auth/LoginPage.tsx');
 assert(/\{authError && \(\s*<div role="alert"/.test(loginSrc) && loginSrc.includes('aria-label="Dismiss this message"'), 'U2-12 the session-ended message is an alert with a named dismiss button');
+assert(
+  ['autoFocus', 'aria-describedby={authError ? alertId : undefined}', 'htmlFor={emailId}', 'htmlFor={passwordId}', 'onClick={dismissError}', 'aria-label="Dismiss this message"'].every((s) => loginSrc.includes(s)),
+  'U2-13 the sign-in page labels its fields, focuses the email and links the alert'
+);
+
+const modalSrc = read('src/components/auth/AuthModal.tsx');
+assert(
+  /\{authError && \(\s*<div role="alert"/.test(modalSrc) && modalSrc.includes('aria-label="Dismiss this message"') && modalSrc.includes('htmlFor={emailId}'),
+  'U2-14 the sign-in modal error is an alert with a named dismiss button and a labelled email field'
+);
+assert(
+  modalSrc.indexOf('const alertId = useId();') > -1 && modalSrc.indexOf('const alertId = useId();') < modalSrc.indexOf('if (!isAuthModalOpen) return null;'),
+  'U2-15 the sign-in modal declares its hooks before the early return'
+);
+
+const inviteSrc = read('src/pages/AcceptInvitePage.tsx');
+assert(
+  inviteSrc.includes('<ErrorNotice message={claimError || authError} />') && inviteSrc.includes('<ErrorNotice message={previewError}') && !inviteSrc.includes('{previewError && <span'),
+  'U2-16 the invitation page shows its errors through ErrorNotice'
+);
+assert(read('src/components/common/ErrorNotice.tsx').includes('role="alert"'), 'U2-17 ErrorNotice is an alert');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

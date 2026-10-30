@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import {
   Lock,
   Mail,
@@ -36,6 +36,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const alertId = useId();
+  const emailId = useId();
+  const passwordId = useId();
+  const emailRef = useRef<HTMLInputElement>(null);
 
   if (!isAuthModalOpen) return null;
 
@@ -69,11 +73,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           
           {/* Close Button */}
           <button
+            type="button"
             onClick={closeAuthModal}
             className="absolute top-5 right-5 w-8 h-8 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             aria-label="Close authentication modal"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" aria-hidden="true" />
           </button>
 
           {/* Header */}
@@ -97,10 +102,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
           {/* Error Banner */}
           {authError && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-start gap-2.5 animate-shake">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div role="alert" id={alertId} className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-start gap-2.5 animate-shake motion-reduce:animate-none">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
               <div className="flex-1 text-xs leading-relaxed">{authError}</div>
-              <button onClick={clearAuthError} className="text-rose-400 hover:text-white">✕</button>
+              <button type="button" onClick={() => { clearAuthError(); emailRef.current?.focus(); }} aria-label="Dismiss this message" className="shrink-0 rounded text-rose-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"><span aria-hidden="true">✕</span></button>
             </div>
           )}
 
@@ -120,10 +125,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
           {!mfaChallenge && (
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">Work Email</label>
+              <label htmlFor={emailId} className="block text-xs font-semibold text-slate-300 mb-1">Work Email</label>
               <div className="relative">
-                <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" aria-hidden="true" />
                 <input
+                  id={emailId}
+                  ref={emailRef}
+                  autoComplete="username"
+                  aria-describedby={authError ? alertId : undefined}
                   type="email"
                   required
                   value={email}
@@ -137,7 +146,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
             {!isForgotPassword && (
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-slate-300">Password</label>
+                  <label htmlFor={passwordId} className="text-xs font-semibold text-slate-300">Password</label>
                   <button
                     type="button"
                     onClick={() => setIsForgotPassword(true)}
@@ -147,8 +156,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   </button>
                 </div>
                 <div className="relative">
-                  <Key className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <Key className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" aria-hidden="true" />
                   <input
+                    id={passwordId}
+                    autoComplete="current-password"
                     type="password"
                     required
                     value={password}

@@ -26,9 +26,13 @@ export class LocalAuthConfigError extends Error {
 }
 
 export class LocalTokenError extends Error {
-  constructor(message: string) {
+  /** Why the token was refused: 'expired' is only ever set after the signature checked out. */
+  readonly code: 'invalid' | 'expired' | 'revoked';
+
+  constructor(message: string, code: 'invalid' | 'expired' | 'revoked' = 'invalid') {
     super(message);
     this.name = 'LocalTokenError';
+    this.code = code;
   }
 }
 
@@ -188,7 +192,7 @@ export function verifyLocalToken(token: string, options: { now?: number; env?: N
   }
   if (claims.purpose !== undefined && claims.purpose !== 'session') throw new LocalTokenError('Token is not a session token');
   if (typeof claims.sub !== 'string' || !claims.sub) throw new LocalTokenError('Token has no subject');
-  if (typeof claims.exp !== 'number' || claims.exp <= now) throw new LocalTokenError('Token expired');
+  if (typeof claims.exp !== 'number' || claims.exp <= now) throw new LocalTokenError('Token expired', 'expired');
 
   return claims as LocalTokenClaims;
 }
@@ -256,7 +260,7 @@ export function verifyMfaPendingToken(
   if (typeof claims.sub !== 'string' || !claims.sub) throw new LocalTokenError('Token has no subject');
   if (typeof claims.ver !== 'number') throw new LocalTokenError('Token has no version');
   if (typeof claims.jti !== 'string' || !claims.jti) throw new LocalTokenError('Token has no identifier');
-  if (typeof claims.exp !== 'number' || claims.exp <= now) throw new LocalTokenError('Token expired');
+  if (typeof claims.exp !== 'number' || claims.exp <= now) throw new LocalTokenError('Token expired', 'expired');
 
   return claims as MfaPendingClaims;
 }

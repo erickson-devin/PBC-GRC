@@ -41,3 +41,6 @@ export function initialTabFromUrl({ pathname, hash }: Pick<UrlParts, 'pathname' 
 
 /** Where '/' and every unknown path end up. */
 export const resolveRoot = (isAuthenticated: boolean): Exclude<AppRoute, 'root'> => (isAuthenticated ? 'app' : 'login');
+
+/** Where a path route goes when its session ends (sign-out, or the server ended it): the sign-in screen, or null to stay. */
+export const routeAfterSessionEnd = (route: AppRoute): 'login' | null => (route === 'admin' ? 'login' : null);

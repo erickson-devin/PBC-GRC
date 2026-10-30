@@ -1,4 +1,4 @@
-import { routeFromUrl, resolveRoot, initialTabFromUrl } from '../src/utils/appRoute';
+import { routeFromUrl, resolveRoot, initialTabFromUrl, routeAfterSessionEnd } from '../src/utils/appRoute';
 import fs from 'fs';
 import path from 'path';
 
@@ -91,6 +91,16 @@ assert(!/>\s*Verified\s*</.test(accountModal) && accountModal.includes('ROLE_LAB
 assert(!read('src/components/layout/TenantSwitcher.tsx').includes('/17 Met'), 'TenantSwitcher: the met count is not hard-coded to 17');
 const frameworkSwitcher = read('src/components/layout/FrameworkSwitcher.tsx');
 assert(!frameworkSwitcher.includes('toggleNonNetworkedOverlay') && frameworkSwitcher.split("toggleOverlayFilter('nonNetworkedOnly', seen)").length - 1 === 1, 'FrameworkSwitcher: one control for the Stand-Alone / Air-Gapped overlay (the scope-menu row), no header duplicate');
+
+// #35: a session that ends on /admin shows the sign-in screen (not /accept-invite: it works without a session and keeps its ?token=)
+assert(routeAfterSessionEnd('admin') === 'login', 'routeAfterSessionEnd: /admin goes to the sign-in screen');
+assert((['app', 'login', 'root', 'setup', 'accept-invite'] as const).every((r) => routeAfterSessionEnd(r) === null), 'routeAfterSessionEnd: every other route stays');
+const appSrc = read('src/App.tsx').replace(/\r\n/g, '\n');
+const sessionEndAt = appSrc.indexOf('routeAfterSessionEnd(currentRoute)');
+const sessionEndReplaceAt = appSrc.indexOf("window.history.replaceState(null, '', '/#login')", sessionEndAt);
+const earlyReturnAt = appSrc.indexOf('if (shouldHoldForVerification(sessionCheck)) return');
+assert(sessionEndAt > 0 && sessionEndReplaceAt > sessionEndAt && earlyReturnAt > sessionEndReplaceAt, 'App: the session-end redirect is an effect declared before the early returns');
+assert(!read('src/components/admin/SuperAdminDashboard.tsx').replace(/\r\n/g, '\n').includes('if (onNavigateToLogin) onNavigateToLogin();'), 'SuperAdminDashboard: sign-out no longer pushes a history entry itself');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

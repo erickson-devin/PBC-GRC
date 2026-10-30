@@ -8,6 +8,7 @@ import { onSessionRejected, resetSessionSignal } from '../src/services/sessionSi
 import {
   SESSION_VERIFY_TIMEOUT_MS,
   initialSessionCheck,
+  mayLoadServerData,
   nextSessionCheck,
   outcomeFromSyncError,
   shouldHoldForVerification,
@@ -162,6 +163,33 @@ function fresh() {
   const tenant = read('src/context/TenantContext.tsx');
   const syncBody = tenant.slice(tenant.indexOf('const syncTenantsFromServer = useCallback'), tenant.indexOf('// Reload with an existing session'));
   assert(syncBody.includes('listMyTenantsResult(') && syncBody.includes('outcome:'), 'the tenant sync uses listMyTenantsResult() and records an outcome');
+
+  // #34: refreshTeam ignores stale answers (per tenant, and across a sign-out)
+  const refreshTeamBody = tenant.slice(tenant.indexOf('const refreshTeam = useCallback'), tenant.indexOf('const refreshAllTeams'));
+  const teamCatchAt = refreshTeamBody.indexOf('catch (err');
+  const teamCatchCheckAt = refreshTeamBody.indexOf('isCurrentResponse(', teamCatchAt);
+  assert(
+    refreshTeamBody.includes('teamEpoch') && refreshTeamBody.split('isCurrentResponse(').length - 1 >= 2
+      && teamCatchCheckAt > teamCatchAt && teamCatchCheckAt < refreshTeamBody.indexOf("console.warn('[Team]"),
+    'T34-1 refreshTeam checks the epoch and sequence on success and before the catch warns'
+  );
+  const resetBody = tenant.slice(tenant.indexOf('const resetForSignOut = useCallback'), tenant.indexOf('Domain-based auto-tenant matching'));
+  assert(resetBody.includes('teamEpoch.current++') && resetBody.includes('setTeamError(null)'), 'T34-2 sign-out invalidates the team loads and clears the team error');
+
+  // #36: no programs or team request during the forced password change
+  assert(
+    mayLoadServerData(true, false) === true && mayLoadServerData(true, true) === false && mayLoadServerData(false, false) === false && mayLoadServerData(false, true) === false,
+    'P36-1 mayLoadServerData: only with a token and not paused'
+  );
+  const programsEffectStart = tenant.indexOf('// Programs follow the active tenant');
+  const programsEffectBody = tenant.slice(programsEffectStart, tenant.indexOf('commitPrograms, serverLoadsPaused]', programsEffectStart) + 40);
+  assert(programsEffectStart > 0 && programsEffectBody.includes('mayLoadServerData(') && programsEffectBody.includes('serverLoadsPaused]'), 'P36-2 the programs effect waits while the loads are paused and re-runs when they resume');
+  const teamEffectStart = tenant.indexOf('// A server-backed tenant\'s team and invitations live on the server');
+  const teamEffectBody = tenant.slice(teamEffectStart, tenant.indexOf('refreshTeam, serverLoadsPaused]', teamEffectStart) + 40);
+  assert(teamEffectStart > 0 && teamEffectBody.includes('mayLoadServerData(') && teamEffectBody.includes('serverLoadsPaused]'), 'P36-3 the team effect waits while the loads are paused and re-runs when they resume');
+  assert(auth.includes('useLayoutEffect(') && auth.includes('setServerLoadsPaused(isAuthenticated && mustChangePassword)'), 'P36-4 AuthContext pauses the loads in a layout effect while the password change is pending');
+  const programsBody = tenant.slice(tenant.indexOf('const refreshPrograms = useCallback'), tenant.indexOf('// Programs follow the active tenant'));
+  assert(programsBody.includes('password_change_required') && programsBody.indexOf('password_change_required') < programsBody.indexOf("console.warn('[Programs]"), 'P36-5 refreshPrograms treats password_change_required as idle, before it warns');
 
   console.log('\n--- Screens ---');
   const verifyingHtml = renderToStaticMarkup(React.createElement(SessionVerifyingScreen));

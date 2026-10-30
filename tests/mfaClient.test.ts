@@ -216,7 +216,8 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
 
   const logoutRegion = fnBody('const logout = useCallback', 'const openAuthModal');
   assert(/onSessionRejected\(/.test(logoutRegion) && /idTokenRef\.current/.test(logoutRegion), 'a session the server rejected signs the person out (and only for the token still in use)');
-  assert(authLf.includes("'Your session has ended. Please sign in again.'"), 'the sign-out message after a rejected session is plain');
+  const signalSrc = fs.readFileSync(path.join(root, 'src/services/sessionSignal.ts'), 'utf8');
+  assert(signalSrc.includes("'Your session has ended. Please sign in again.'") && authLf.includes('sessionEndedMessage('), 'the sign-out message after a rejected session is plain, and chosen by the reason');
   const changeRegion = fnBody('const changePassword = useCallback', 'const registerWithInvite');
   const setItemAt = changeRegion.indexOf('localStorage.setItem(AUTH_TOKEN_KEY');
   assert(/holdSessionSignal\(/.test(changeRegion) && setItemAt >= 0 && changeRegion.indexOf('releaseSessionSignal(', setItemAt) > setItemAt, 'changePassword holds the old token\'s signal and releases it after the new token is stored');

@@ -37,7 +37,7 @@ import { UnsavedTextBanner } from './components/auth/UnsavedTextBanner';
 import { shouldHoldForVerification } from './data/sessionVerification';
 
 
-import { AppRoute, initialTabFromUrl, resolveRoot, routeFromUrl } from './utils/appRoute';
+import { AppRoute, initialTabFromUrl, resolveRoot, routeAfterSessionEnd, routeFromUrl } from './utils/appRoute';
 const AppContent: React.FC = () => {
   const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
   const { isAuthenticated, mustChangePassword, loading: authLoading, sessionCheck } = useAuth();
@@ -161,6 +161,18 @@ const AppContent: React.FC = () => {
       setCurrentRoute('root'); // no wizard once an administrator exists: resolved like any unknown path
     }
   }, [setup.state, currentRoute]);
+
+  // A session that ends on a path route (sign-out, or the server ended it) shows the sign-in screen with its message; replaceState, so Back does not return to the 403
+  const wasAuthenticated = useRef(isAuthenticated);
+  useEffect(() => {
+    const was = wasAuthenticated.current;
+    wasAuthenticated.current = isAuthenticated;
+    if (!was || isAuthenticated) return;
+    const next = routeAfterSessionEnd(currentRoute);
+    if (!next) return;
+    window.history.replaceState(null, '', '/#login');
+    setCurrentRoute(next);
+  }, [isAuthenticated, currentRoute]);
 
   const finishSetup = useCallback(() => {
     setSetup({ state: 'done', tokenRequired: false });
