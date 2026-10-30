@@ -1,11 +1,12 @@
 name: Build and Publish Docker Image
 
-# The image is published ONLY from a push to main (that is, a merged pull request). Pull requests never reach this
-# workflow: they run ci.yml, which only tests. There is deliberately no tag or manual trigger, so no other branch or
-# ref can publish an image.
+# The image is published ONLY from a push to main (a merged pull request: tags sha-<commit> and latest, for testing) or from a
+# SemVer release tag vX.Y.Z on a commit already on main (tags vX.Y.Z, vX.Y and vX). Pull requests never reach this workflow:
+# they run ci.yml, which only tests. There is deliberately no manual trigger and no other tag pattern.
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v[0-9]+.[0-9]+.[0-9]+" ]
 
 env:
   REGISTRY: ghcr.io
@@ -17,8 +18,8 @@ jobs:
 
   build-and-push-image:
     needs: test
-    # Belt and braces: even if the triggers above are edited later, only main may publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Belt and braces: even if the triggers above are edited later, only main or a release tag may publish
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,7 +27,22 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      # The commit actually built (a tag push checks out the tagged commit)
+      - name: Resolve the build commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # A release tag must name a commit already on main and match package.json "version" (what /api/v1/health reports)
+      - name: Check the release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          expected="v$(jq -r .version package.json)"
+          if [ "$expected" != "$GITHUB_REF_NAME" ]; then echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($expected)"; exit 1; fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; fi
 
       # Lowercase the repository name to satisfy Docker registry specifications
       - name: Set lowercase image name
@@ -35,10 +51,10 @@ jobs:
 
       # Set up Docker Buildx for BuildKit features and layer caching
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -47,21 +63,38 @@ jobs:
       # Generate metadata, tags, and labels
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # latest only from the explicit rule below (the default latest=auto would also move it on a release tag)
+          flavor: |
+            latest=false
           tags: |
-            type=raw,value=latest
-            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,enable={{is_default_branch}}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
 
       # Build and push Docker image with GitHub Actions layer caching
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        id: build
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: BUILD_COMMIT=${{ github.sha }}
+          build-args: BUILD_COMMIT=${{ steps.commit.outputs.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The digest operators pin (docs/ON_PREM_DATABASE.md "Releases")
+      - name: Record the image digest
+        run: |
+          {
+            echo "### Published image"
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "Tags:"
+            echo '${{ steps.meta.outputs.tags }}' | sed 's/^/- `/; s/$/`/'
+          } >> "$GITHUB_STEP_SUMMARY"
