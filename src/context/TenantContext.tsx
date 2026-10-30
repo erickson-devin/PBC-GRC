@@ -35,7 +35,7 @@ import { listLocalEvidenceCopies, moveLocalEvidenceCopy, moveLocalEvidenceKey, r
 import { recordFailedControlMove, recordFailedMove } from '../services/failedMoves';
 import { pushAssetsToServer } from '../services/assetMove';
 import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
-import type { Program, ProgramBaseline, ProgramInput, ProgramScoping, ProgramUpdate } from '../types/program';
+import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
 import {
   activeProgramStorageKey,
   isCurrentResponse,
@@ -44,6 +44,7 @@ import {
 } from '../data/programSync';
 import { programBaselineToCia, scopingToOverlays } from '../data/programScope';
 import { isOverlayConflict, overlayLockReason } from '../data/overlayScoping';
+import { overlayFiltersStorageKey, readBrowserOverlayFilters } from '../data/browserOverlays';
 import {
   ServerInvitation,
   buildTeam,
@@ -67,19 +68,6 @@ const LIVE_TENANTS_STORAGE_KEY = 'pbc_live_tenants_v4';
 const LIVE_ACTIVE_TENANT_ID_KEY = 'pbc_live_active_tenant_v4';
 const CURRENT_USER_KEY = 'pbc_active_user_v4';
 const TEAM_MEMBERS_STORAGE_KEY = 'pbc_tenant_team_members_v4';
-// The framework, baseline tier, CIA triad and overlays come from the active program. Only a browser-only tenant keeps its overlays here.
-const overlayFiltersStorageKey = (tenantId: string) => `pbc_overlay_filters_${tenantId}`;
-
-/** A browser-only tenant's saved overlays (all off when none or unreadable). */
-function readBrowserOverlayFilters(tenantId: string): OverlayFilters {
-  try {
-    const saved = localStorage.getItem(overlayFiltersStorageKey(tenantId));
-    if (saved) return scopingToOverlays(JSON.parse(saved) as ProgramScoping);
-  } catch {
-    // overlay filters storage load fallback
-  }
-  return { nonNetworkedOnly: false };
-}
 
 // Legacy keys to purge on initialization
 const LEGACY_STORAGE_KEYS = [

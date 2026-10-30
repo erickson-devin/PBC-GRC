@@ -21,6 +21,8 @@ import type { EnclaveAsset } from '../../types/telemetry';
 import { getFrameworkControls } from '../frameworks';
 import { programFrameworkControls, scopingToOverlays } from '../programScope';
 import type { Program } from '../../types/program';
+import type { OverlayFilters } from '../../types/framework';
+import { browserTenantOverlays } from '../browserOverlays';
 import { purgeTenantData, downloadCertificateOfDestruction } from './retentionPolicy';
 import { EvidenceVault } from '../../services/evidenceVault';
 
@@ -82,7 +84,12 @@ export interface HandoverOptions {
   program?: HandoverProgramRef;
   /** Download the package file (default true). A caller that bundles several packages passes false. */
   download?: boolean;
+  /** A browser-only tenant's overlays, as its matrix uses them; ignored when `program` is set. */
+  overlays?: OverlayFilters;
 }
+
+/** Thrown (and shown to the operator as is) when the evidence files cannot be cleared; it holds no tenant data. */
+export const EVIDENCE_CLEAR_FAILED_MESSAGE = 'Could not clear the enclave\'s evidence files from this browser; no Certificate of Destruction was issued.';
 
 /**
  * Resolves a Tenant entity by ID from storage if not provided directly
@@ -147,7 +154,7 @@ export async function generateEnclaveHandoverPackage(
   const ledger: AuditLogEntry[] = loadLedger(tenantId);
 
   const primaryFw = tenant.primaryFramework || 'CMMC_L1';
-  const controls = program ? programFrameworkControls(program, scopingToOverlays(program.scoping)) : getFrameworkControls(primaryFw);
+  const controls = program ? programFrameworkControls(program, scopingToOverlays(program.scoping)) : getFrameworkControls(primaryFw, 'ALL_CONTROLS', browserTenantOverlays(primaryFw, options.overlays));
   const controlsForReport = { ...state?.controls, ...controlStates };
 
   // Compile official NIST SP 800-18 / NIST SP 800-171 System Security Plan
@@ -295,7 +302,7 @@ export async function executeCryptographicDestruction(params: {
     try {
       await clearEvidenceFiles(params.tenantId);
     } catch {
-      throw new Error('Could not clear the enclave\'s evidence files from this browser; no Certificate of Destruction was issued.');
+      throw new Error(EVIDENCE_CLEAR_FAILED_MESSAGE);
     }
   }
 

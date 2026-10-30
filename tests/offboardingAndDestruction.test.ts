@@ -13,6 +13,7 @@ import {
 import { buildProgramHandover } from '../src/data/storage/offboardingPrograms';
 import { programFrameworkControls, scopingToOverlays } from '../src/data/programScope';
 import { getFrameworkControls } from '../src/data/frameworks';
+import { readBrowserOverlayFilters } from '../src/data/browserOverlays';
 import type { Program } from '../src/types/program';
 import { computeSha256, canonicalJson } from '../src/data/audit/auditLogger';
 import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetScope';
@@ -178,7 +179,7 @@ async function runTests() {
     );
     const dashSrc = readFileSync(join(process.cwd(), 'src/components/admin/SuperAdminDashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
     assert(
-      /ApiClient\.getEvidence\(\s*\w+,\s*\w+\)/.test(dashSrc) && /getControls\(\s*\w+,\s*undefined,\s*\w+\)/.test(dashSrc) && dashSrc.includes('generateEnclaveHandoverPackage(tenant.id, tenant, assets)'),
+      /ApiClient\.getEvidence\(\s*\w+,\s*\w+\)/.test(dashSrc) && /getControls\(\s*\w+,\s*undefined,\s*\w+\)/.test(dashSrc) && dashSrc.includes('generateEnclaveHandoverPackage(tenant.id, tenant, assets, undefined, undefined, { overlays: readBrowserOverlayFilters(tenant.id) })'),
       'OB-E3: SuperAdminDashboard fetches the server controls and evidence of a chosen program, and keeps the direct call for a browser-only tenant'
     );
   }
@@ -210,6 +211,29 @@ async function runTests() {
 
     const plain = await generateEnclaveHandoverPackage(testTenant.id, testTenant, undefined, undefined, undefined, { download: false });
     assert(plain.program === undefined && plain.complianceSummary.totalControls === getFrameworkControls('CMMC_L1').length, 'OB-P4: without a program the package is the tenant\'s primary framework, as before');
+
+    // #131: a browser-only tenant's handover uses the overlays its matrix uses
+    const noOverlays = JSON.stringify({ nonNetworkedOnly: false });
+    assert(JSON.stringify(readBrowserOverlayFilters('tenant-no-overlays-01')) === noOverlays, 'OB-P11: a tenant with no saved overlays reads all off');
+    localStorage.setItem('pbc_overlay_filters_tenant-ov-01', JSON.stringify({ noWireless: true }));
+    const stored = readBrowserOverlayFilters('tenant-ov-01') as any;
+    assert(stored.noWireless === true && Object.keys(stored).length === 4, 'OB-P12: saved overlays read back as the full four-key object', JSON.stringify(stored));
+    localStorage.setItem('pbc_overlay_filters_tenant-ov-bad', '{not json');
+    assert(JSON.stringify(readBrowserOverlayFilters('tenant-ov-bad')) === noOverlays, 'OB-P13: unreadable saved overlays fall back to all off');
+
+    const ov = { nonNetworkedOnly: false, noWireless: true };
+    const nistBrowser: Tenant = { ...testTenant, id: 'tenant-browser-nist-01', primaryFramework: 'NIST_800_53_REV5', enabledFrameworks: ['NIST_800_53_REV5'] };
+    const p13 = await generateEnclaveHandoverPackage(nistBrowser.id, nistBrowser, undefined, undefined, undefined, { download: false, overlays: ov });
+    const p13Unfiltered = getFrameworkControls('NIST_800_53_REV5', 'ALL_CONTROLS', { nonNetworkedOnly: false }).length;
+    const p13Expected = getFrameworkControls('NIST_800_53_REV5', 'ALL_CONTROLS', ov).length;
+    assert(p13.complianceSummary.totalControls === p13Expected && p13Expected < p13Unfiltered, 'OB-P14: a browser-only NIST handover applies the tenant\'s overlays', `${p13.complianceSummary.totalControls} vs ${p13Expected} of ${p13Unfiltered}`);
+
+    const cmmcBrowser: Tenant = { ...testTenant, id: 'tenant-browser-cmmc-01', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L2'] };
+    const p15 = await generateEnclaveHandoverPackage(cmmcBrowser.id, cmmcBrowser, undefined, undefined, undefined, { download: false, overlays: ov });
+    assert(p15.complianceSummary.totalControls === getFrameworkControls('CMMC_L2').length, 'OB-P15: overlays do not change a CMMC browser-only handover');
+
+    const p16 = await generateEnclaveHandoverPackage(progTenant.id, progTenant, undefined, {}, [], { program: nistLow, download: false, overlays: ov });
+    assert(p16.complianceSummary.totalControls === expected1, 'OB-P16: a program wins over the browser overlays', `${p16.complianceSummary.totalControls} vs ${expected1}`);
 
     const freshId = 'tenant-programs-nocache-01';
     await generateEnclaveHandoverPackage(freshId, { ...progTenant, id: freshId }, undefined, {}, [], opts(nistLow));
@@ -285,6 +309,47 @@ async function runTests() {
     assert(dialogSrc.includes('<DialogOverlay') && dialogSrc.includes('includeArchived: true') && dialogSrc.includes('<legend'), 'OB-U2: the chooser is a dialog with a legend, listing archived programs too');
     assert(!/console\./.test(dialogSrc), 'OB-U3: the chooser logs nothing');
     assert(dialogSrc.includes('You are not a member of this tenant') && dashSrc2.includes('NOT_MEMBER_MESSAGE'), 'OB-U4: the not-a-member text is still shown');
+
+    // #134: the dashboard logs an error's name only and shows fixed texts
+    const dashNorm = dashSrc2.replace(/\r\n/g, '\n');
+    const nameOnly = `err instanceof Error ? err.name : 'unknown error'`;
+    const consoleLines = dashNorm.split('\n').filter((l) => /console\.\w+\(/.test(l));
+    assert(
+      consoleLines.length > 0 && consoleLines.every((l) => !/\berr\b|errorMessage\(|err\.message/.test(l.split(nameOnly).join(''))),
+      'OB-L1: no console line of the dashboard carries a raw error'
+    );
+    assert(
+      dashNorm.includes(`console.warn('Clipboard write failed:', ${nameOnly});`)
+        && dashNorm.includes(`console.error('Failed to export offboarding package:', ${nameOnly});`)
+        && dashNorm.includes(`console.error('Cryptographic destruction failed:', ${nameOnly});`),
+      'OB-L2: the three dashboard error logs state the error name only'
+    );
+    assert(
+      !dashNorm.includes('Failed to export offboarding package: ${errorMessage(err)') && !dashNorm.includes('Destruction protocol failed: ${errorMessage(err)'),
+      'OB-L3: the export and destruction toasts no longer show raw error text'
+    );
+    const engineSrc = readFileSync(join(process.cwd(), 'src/data/storage/offboardingEngine.ts'), 'utf8');
+    assert(
+      /export const EVIDENCE_CLEAR_FAILED_MESSAGE\b/.test(engineSrc) && /import \{[^}]*EVIDENCE_CLEAR_FAILED_MESSAGE[^}]*\} from '..\/..\/data\/storage\/offboardingEngine'/.test(dashNorm),
+      'OB-L4: the engine exports the evidence-clear message and the dashboard imports it'
+    );
+    assert(
+      dashNorm.includes('<ErrorNotice message={destructionError}')
+        && dashNorm.includes("role={notificationToast.type === 'error' ? 'alert' : 'status'}")
+        && dashNorm.includes('z-[70]')
+        && dashNorm.includes('aria-label="Dismiss notification"'),
+      'OB-L5: a failed destruction is shown inside the dialog and the toast is an announced, dismissible alert above dialogs'
+    );
+    assert(
+      dashNorm.includes('The invitation link could not be copied')
+        && dashNorm.includes('The enclave ID could not be copied')
+        && dashNorm.includes('A new invitation link was created but could not be copied'),
+      'OB-L6: clipboard failures name what could not be copied, and resend does not claim a copy that failed'
+    );
+    assert(
+      /if \(notificationToast && notificationToast\.type !== 'error'\)/.test(dashNorm),
+      'OB-L7: error toasts are not auto-dismissed'
+    );
     assert(
       dashSrc2.includes('getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p)') && dialogSrc.includes('declared its assets') && !dialogSrc.includes('Each package states the whole asset inventory'),
       'OB-U5: the handover follows the program\'s declared assets (the dashboard reads them, the chooser says so)'

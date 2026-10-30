@@ -592,7 +592,9 @@ async function main() {
   const serverPart = toggleBody.slice(toggleBody.indexOf('const base = seen ?? scopingToOverlays'));
   assert(serverPart.length > 100 && serverPart.includes('expectedScoping: base') && serverPart.includes('isOverlayConflict(err)') && serverPart.includes('refreshPrograms('), 'P5i the server path sends the overlays it started from as expectedScoping and reloads the programs on a conflict', serverPart.length);
   assert(!/localStorage/.test(serverPart) && !/setActiveOverlayFilters/.test(tenantCtx), 'P5c nothing is written to browser storage for a server-backed tenant, and setActiveOverlayFilters is gone');
-  assert(/overlayFiltersStorageKey = \(tenantId: string\) => `pbc_overlay_filters_\$\{tenantId\}`/.test(tenantCtx) && /removeItem\(overlayFiltersStorageKey\(tenantId\)\)/.test(tenantCtx), 'P5d a browser-only tenant keeps its overlays under pbc_overlay_filters_<tenantId>, removed by deleteTenant');
+  // The key and the reader live in src/data/browserOverlays.ts since #131 (the handover engine reads them too); the context imports them
+  const browserOverlaysSrc = read('src/data/browserOverlays.ts');
+  assert(/export const overlayFiltersStorageKey = \(tenantId: string\) => `pbc_overlay_filters_\$\{tenantId\}`/.test(browserOverlaysSrc) && /import \{ overlayFiltersStorageKey, readBrowserOverlayFilters \} from '\.\.\/data\/browserOverlays'/.test(tenantCtx) && /removeItem\(overlayFiltersStorageKey\(tenantId\)\)/.test(tenantCtx), 'P5d a browser-only tenant keeps its overlays under pbc_overlay_filters_<tenantId>, removed by deleteTenant');
   assert(/toggleOverlayFilter: \(key: keyof OverlayFilters, seen\?: OverlayFilters\) => Promise<void>/.test(tenantCtx) && /toggleNonNetworkedOverlay: \(seen\?: OverlayFilters\) => Promise<void>/.test(tenantCtx), 'P5e the toggles return Promises');
   assert(/body\.scoping = updates\.scoping/.test(api), 'P5f updateProgram sends scoping');
   assert(/programsStatus: ProgramsStatus = !currentTenant\.serverBacked \? 'unsupported'/.test(tenantCtx), 'T6m a browser-only tenant has programs status unsupported');
