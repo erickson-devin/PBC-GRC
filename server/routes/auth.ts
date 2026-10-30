@@ -47,7 +47,8 @@ import {
   type LocalUser,
 } from '../auth/localUsers';
 import { previewInvitation, redeemInvitation } from '../invitations';
-import { authOnlyMiddleware } from '../middleware/authMiddleware';
+import { accountLogRef, createLoginThrottle, loginAccountKey } from '../auth/loginThrottle';
+import { SESSION_REVOKED, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
@@ -61,22 +62,11 @@ router.get('/config', (_req: Request, res: Response): void => {
 });
 
 // ---- per-IP throttle (in addition to per-account lockout) -------------------------------------
-const WINDOW_MS = 60_000;
-const MAX_ATTEMPTS_PER_WINDOW = 20;
-const attemptsByIp = new Map<string, number[]>();
-
-function throttled(ip: string): boolean {
-  const now = Date.now();
-  const recent = (attemptsByIp.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
-  recent.push(now);
-  attemptsByIp.set(ip, recent);
-  if (attemptsByIp.size > 10_000) attemptsByIp.clear(); // bound memory under a spray from many addresses
-  return recent.length > MAX_ATTEMPTS_PER_WINDOW;
-}
+const loginThrottle = createLoginThrottle();
 
 /** Test hook. */
 export function __resetLoginThrottleForTests(): void {
-  attemptsByIp.clear();
+  loginThrottle.reset();
 }
 
 const INVALID_CREDENTIALS = { error: 'Invalid email or password' };
@@ -215,8 +205,9 @@ function requireSession(req: Request, res: Response): Promise<boolean> {
  * instead of a session; the session comes from POST /auth/mfa/verify or /auth/mfa/enrol/confirm.
  */
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
-  if (throttled(req.ip || 'unknown')) {
-    res.setHeader('Retry-After', String(WINDOW_MS / 1000));
+  const ipHit = loginThrottle.hitIp(req.ip || 'unknown');
+  if (ipHit.limited) {
+    res.setHeader('Retry-After', String(ipHit.retryAfterSeconds));
     res.status(429).json({ error: 'Too many login attempts. Try again shortly.' });
     return;
   }
@@ -227,11 +218,14 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  const accountKey = loginAccountKey(email);
   try {
     const user = await findLocalUserByEmail(email);
 
-    if (user?.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
-      const retryAfter = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000);
+    // Real accounts lock in the store; every address (real or not) also locks in memory, so the answer never tells them apart.
+    const storeLock = user?.lockedUntil && user.lockedUntil.getTime() > Date.now() ? Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000) : 0;
+    const retryAfter = Math.max(storeLock, loginThrottle.accountLockedFor(accountKey));
+    if (retryAfter > 0) {
       res.setHeader('Retry-After', String(retryAfter));
       res.status(429).json({ error: 'Account temporarily locked after repeated failed sign-ins. Try again later.' });
       return;
@@ -241,10 +235,12 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
     if (!user || user.disabled || !matches) {
       if (user && !user.disabled) await registerFailedLogin(user);
-      console.warn(`[Auth] Failed local login for ${email.toLowerCase()} from ${req.ip}`);
+      loginThrottle.recordAccountFailure(accountKey);
+      console.warn(`[Auth] Failed local login (account ${accountLogRef(email)}) from ${req.ip}`);
       res.status(401).json(INVALID_CREDENTIALS);
       return;
     }
+    loginThrottle.clearAccount(accountKey);
 
     // Step one succeeded. When a second step follows, the failure counter is NOT reset here: otherwise someone who holds
     // the password could reset it between guesses at the code. The final step resets it.
@@ -277,8 +273,9 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
  * told to sign in instead (409 account_exists), and nothing is consumed.
  */
 router.post('/register-with-invite', async (req: Request, res: Response): Promise<void> => {
-  if (throttled(req.ip || 'unknown')) {
-    res.setHeader('Retry-After', String(WINDOW_MS / 1000));
+  const ipHit = loginThrottle.hitIp(req.ip || 'unknown');
+  if (ipHit.limited) {
+    res.setHeader('Retry-After', String(ipHit.retryAfterSeconds));
     res.status(429).json({ error: 'Too many attempts. Try again shortly.' });
     return;
   }
@@ -357,8 +354,9 @@ router.get('/me', authOnlyMiddleware, (req: Request, res: Response): void => {
 // ---- second factor: endpoints -----------------------------------------------------------------
 
 function tooManyAttempts(req: Request, res: Response): boolean {
-  if (!throttled(req.ip || 'unknown')) return false;
-  res.setHeader('Retry-After', String(WINDOW_MS / 1000));
+  const ipHit = loginThrottle.hitIp(req.ip || 'unknown');
+  if (!ipHit.limited) return false;
+  res.setHeader('Retry-After', String(ipHit.retryAfterSeconds));
   res.status(429).json({ error: 'Too many attempts. Try again shortly.' });
   return true;
 }
@@ -405,7 +403,7 @@ router.post('/mfa/verify', async (req: Request, res: Response): Promise<void> =>
     }
     if (!accepted) {
       await registerFailedLogin(user);
-      console.warn(`[Auth] Failed second factor for ${user.email} from ${req.ip}`);
+      console.warn(`[Auth] Failed second factor (account ${accountLogRef(user.email)}) from ${req.ip}`);
       res.status(401).json({ error: 'That code is not valid', reason: 'invalid_code' });
       return;
     }
@@ -437,7 +435,7 @@ async function resolveEnrolSubject(req: Request, res: Response): Promise<{ user:
   if (!(await requireSession(req, res))) return null;
   const user = await findLocalUserById(req.user!.uid);
   if (!user) {
-    res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+    res.status(401).json(SESSION_REVOKED);
     return null;
   }
   return { user, pending: null };
@@ -541,7 +539,7 @@ router.get('/mfa', authOnlyMiddleware, async (req: Request, res: Response): Prom
   try {
     const user = await findLocalUserById(req.user!.uid);
     if (!user) {
-      res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+      res.status(401).json(SESSION_REVOKED);
       return;
     }
     const enrolled = isEnrolled(user);
@@ -573,7 +571,7 @@ router.post('/mfa/recovery-codes', authOnlyMiddleware, async (req: Request, res:
   try {
     const user = await findLocalUserById(req.user!.uid);
     if (!user || user.disabled) {
-      res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+      res.status(401).json(SESSION_REVOKED);
       return;
     }
     if (!isEnrolled(user)) {
@@ -623,14 +621,14 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
   try {
     const user = await findLocalUserById(req.user!.uid);
     if (!user || user.disabled) {
-      res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+      res.status(401).json(SESSION_REVOKED);
       return;
     }
     if (respondIfLocked(res, user)) return;
 
     if (!(await verifyPassword(currentPassword, user.passwordHash))) {
       await registerFailedLogin(user);
-      console.warn(`[Auth] Failed credential change for ${user.email} from ${req.ip}`);
+      console.warn(`[Auth] Failed credential change (account ${accountLogRef(user.email)}) from ${req.ip}`);
       res.status(403).json({ error: 'The current credential is incorrect', reason: 'invalid_current_password' });
       return;
     }
@@ -663,12 +661,12 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
       return;
     }
     if (!(await setLocalUserPassword(user.id, await hashPassword(newPassword)))) {
-      res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+      res.status(401).json(SESSION_REVOKED);
       return;
     }
     const updated = await findLocalUserById(user.id);
     if (!updated) {
-      res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+      res.status(401).json(SESSION_REVOKED);
       return;
     }
     console.log(`[Auth] Sign-in credential changed: ${user.email}`);

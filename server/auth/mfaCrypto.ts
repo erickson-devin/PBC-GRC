@@ -7,7 +7,7 @@ import crypto from 'crypto';
  *  - TOTP secret encryption and the recovery-code pepper (IKM = MFA_ENCRYPTION_KEY when set, else LOCAL_AUTH_SECRET).
  */
 
-export type KeyInfo = 'pbc-grc session-signing v1' | 'pbc-grc totp-secret v1' | 'pbc-grc recovery-pepper v1';
+export type KeyInfo = 'pbc-grc session-signing v1' | 'pbc-grc totp-secret v1' | 'pbc-grc recovery-pepper v1' | 'pbc-grc account-log-ref v1';
 
 export const MIN_MFA_KEY_LENGTH = 32;
 

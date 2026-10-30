@@ -451,7 +451,9 @@ async function run() {
   const s13 = (await signIn(a13)).token as string;
   const dis13 = await call('POST', `/platform/users/${a13.id}/disable`, { token: admTok });
   assert(dis13.status === 200 && dis13.body?.user?.disabled === true, 'disable -> 200');
-  assert((await call('GET', '/auth/me', { token: s13 })).status === 401, 'their session is 401 at once');
+  const me13 = await call('GET', '/auth/me', { token: s13 });
+  assert(me13.status === 401, 'their session is 401 at once');
+  assert(me13.body?.reason === 'session_revoked', 'A33-8: and the reason is session_revoked', me13.body);
   const en13 = await call('POST', `/platform/users/${a13.id}/enable`, { token: admTok });
   assert(en13.status === 200 && en13.body?.user?.disabled === false && en13.body?.user?.mfaEnrolled === false, 'enable -> 200, and the factor is gone', en13.body);
   const l13 = await login(a13.email);
@@ -475,6 +477,7 @@ async function run() {
   assert((await call('GET', '/tenants', { token: s18 })).status === 200, 'a session works');
   await call('POST', `/platform/users/${a18.id}/reset-password`, { token: admTok, body: { newPassword: TEMPPW } });
   assert((await call('GET', '/auth/me', { token: s18 })).status === 401 && (await call('GET', '/tenants', { token: s18 })).status === 401, 'after an admin reset: /auth/me and /tenants -> 401');
+  assert((await call('GET', '/auth/me', { token: s18 })).body?.reason === 'session_revoked', 'A33-9: after an admin reset the reason is session_revoked');
   const b18 = await mk('revoke18b@mfa.mil');
   const sb18 = (await login(b18.email)).body?.token as string;
   await call('POST', `/platform/users/${b18.id}/disable`, { token: admTok });
@@ -486,6 +489,7 @@ async function run() {
   const sc18b = (await login(c18.email)).body?.token as string;
   const changed18 = await call('POST', '/auth/password', { token: sc18a, body: { currentPassword: PW, newPassword: NEWPW } });
   assert(changed18.status === 200 && (await call('GET', '/auth/me', { token: sc18b })).status === 401 && (await call('GET', '/auth/me', { token: changed18.body?.token })).status === 200, 'after the person changes their own credential: other sessions 401, the new one works');
+  assert((await call('GET', '/auth/me', { token: sc18b })).body?.reason === 'session_revoked', 'A33-10: another session after a self password change has reason session_revoked');
   const d18 = await mk('revoke18d@mfa.mil');
   await enrol(d18);
   const sd18 = (await signIn(d18)).token as string;

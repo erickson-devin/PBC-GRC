@@ -1,10 +1,12 @@
 import './testEnv';
 import './localAuthEnv';
 import crypto from 'crypto';
+import fs from 'fs';
 import { server } from '../server/index';
 import {
   LOCAL_TOKEN_AUDIENCE,
   LOCAL_TOKEN_ISSUER,
+  LocalTokenError,
   assertAuthConfig,
   hashPassword,
   signLocalToken,
@@ -13,6 +15,7 @@ import {
   verifyPassword,
 } from '../server/auth/localAuth';
 import { MAX_FAILED_ATTEMPTS, createLocalUser } from '../server/auth/localUsers';
+import { accountLogRef, loginAccountKey } from '../server/auth/loginThrottle';
 import { __resetLoginThrottleForTests } from '../server/routes/auth';
 
 /**
@@ -153,6 +156,33 @@ async function run() {
   assert(locked.status === 429 && Number(locked.headers.get('retry-after')) > 0, `${MAX_FAILED_ATTEMPTS} failures lock the account: even the right password gets 429 + Retry-After`, locked.status);
   assert((await login('ann@enclave.mil', PASSWORD)).status === 200, 'other accounts are unaffected');
 
+  console.log('\n--- Lockout also covers emails with no account (#41) ---');
+  const ghostFails: number[] = [];
+  for (let i = 0; i < MAX_FAILED_ATTEMPTS; i++) ghostFails.push((await login('ghost.lock@enclave.mil', 'bad password ' + i)).status);
+  assert(ghostFails.every((s) => s === 401), 'L41-1: failures against an unknown email answer 401 until the limit', ghostFails);
+  const ghostLocked = await login('ghost.lock@enclave.mil', PASSWORD);
+  assert(
+    ghostLocked.status === 429 && Number(ghostLocked.headers.get('retry-after')) > 0 && JSON.stringify(ghostLocked.body) === JSON.stringify(locked.body),
+    'L41-1: the next attempt is 429 + Retry-After with the same body as a real locked account',
+    { status: ghostLocked.status, body: ghostLocked.body }
+  );
+  assert((await login(' GHOST.LOCK@Enclave.mil ', PASSWORD)).status === 429, 'L41-2: the lock follows the normalised email (case and spaces)');
+  assert((await login('other.unknown@enclave.mil', PASSWORD)).status === 401, 'L41-3: another unknown email is not locked');
+  {
+    const captured: string[] = [];
+    const original = { warn: console.warn, log: console.log };
+    const grab = (...args: unknown[]) => void captured.push(args.map(String).join(' '));
+    console.warn = grab;
+    console.log = grab;
+    try {
+      await login('leak.check@enclave.mil', 'wrong password entirely');
+    } finally {
+      console.warn = original.warn;
+      console.log = original.log;
+    }
+    assert(captured.length > 0 && captured.every((line) => !line.toLowerCase().includes('leak.check')), 'L41-4: a failed login logs no email address', captured);
+  }
+
   console.log('\n--- Per-IP throttle ---');
   __resetLoginThrottleForTests();
   let last = 0;
@@ -179,19 +209,47 @@ async function run() {
   assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: bobToken, tenant: tenantId, body: { status: 'MET' } })).status === 403, 'but the read-only role holds for local users too (403)');
 
   const ghostToken = signLocalToken({ id: 'lu_ghost_no_account', email: 'ghost@enclave.mil', name: 'Ghost' }).token;
-  assert((await call('GET', '/auth/me', { token: ghostToken })).status === 401, 'a validly signed token for a user id with no account -> 401');
+  const ghostMe = await call('GET', '/auth/me', { token: ghostToken });
+  assert(ghostMe.status === 401, 'a validly signed token for a user id with no account -> 401');
+  assert(ghostMe.body?.reason === 'session_revoked', 'A33-5: a token for a vanished account -> reason session_revoked', ghostMe.body);
   assert(verifyLocalToken(bobToken).ver === undefined && (await call('GET', '/auth/me', { token: bobToken })).status === 200, 'a pre-upgrade token without `ver` for a real version-0 user -> 200');
 
   console.log('\n--- Rejections ---');
-  assert((await call('GET', '/controls', { tenant: tenantId })).status === 401, 'no token -> 401');
-  assert((await call('GET', '/auth/me', { token: annToken.slice(0, -3) + 'abc' })).status === 401, 'tampered token -> 401');
+  const noToken = await call('GET', '/controls', { tenant: tenantId });
+  assert(noToken.status === 401, 'no token -> 401');
+  assert(noToken.body?.reason === 'session_missing', 'A33-1: no token -> reason session_missing', noToken.body);
+  const tampered = await call('GET', '/auth/me', { token: annToken.slice(0, -3) + 'abc' });
+  assert(tampered.status === 401, 'tampered token -> 401');
+  assert(tampered.body?.reason === 'session_invalid', 'A33-2: tampered token -> reason session_invalid', tampered.body);
   assert((await call('GET', '/auth/me', { token: forge({ alg: 'HS256' }, { ...goodClaims, sub: 'u_ann' }, 'a-different-secret-that-is-long-enough-xx') })).status === 401, 'token signed with another secret -> 401');
-  assert((await call('GET', '/auth/me', { token: forge({ alg: 'none' }, goodClaims, null) })).status === 401, 'unsigned "alg none" token -> 401');
+  const algNone = await call('GET', '/auth/me', { token: forge({ alg: 'none' }, goodClaims, null) });
+  assert(algNone.status === 401, 'unsigned "alg none" token -> 401');
+  assert(algNone.body?.reason === 'session_invalid', 'A33-3: alg none -> reason session_invalid', algNone.body);
   const foreignIdp = forge({ alg: 'RS256', typ: 'JWT' }, { iss: 'https://securetoken.google.com/grc-tool-507203', sub: 'x', email: 'x@y.z', exp: now + 600 }, null);
   const t0 = Date.now();
   assert((await call('GET', '/auth/me', { token: foreignIdp })).status === 401, 'an RS256 token from another issuer is rejected (401)');
   assert(Date.now() - t0 < 2000, 'and it is rejected instantly: no attempt to fetch remote certificates', Date.now() - t0);
-  assert((await call('GET', '/auth/me', { token: forge({ alg: 'HS256' }, { ...goodClaims, exp: now - 10 }, SECRET) })).status === 401, 'expired local token -> 401');
+  assert((await call('GET', '/auth/me', { token: forge({ alg: 'HS256' }, { ...goodClaims, exp: now - 10 }, SECRET) })).status === 401, 'a token signed with the raw secret (not the derived key) -> 401');
+  const expiredToken = signLocalToken({ id: bob.id, email: 'bob@enclave.mil', name: 'Bob', tokenVersion: 0 }, { now: now - 3600, ttlSeconds: 60 }).token;
+  const expiredMe = await call('GET', '/auth/me', { token: expiredToken });
+  assert(expiredMe.status === 401 && expiredMe.body?.reason === 'session_expired', 'A33-4: a genuinely expired token -> 401 reason session_expired', expiredMe.body);
+  const expiredClaims = verifyLocalToken(annToken);
+  assert((() => {
+    try { verifyLocalToken(annToken, { now: expiredClaims.exp + 5 }); } catch (e) { return e instanceof LocalTokenError && e.code === 'expired'; }
+    return false;
+  })(), 'A33-6: verifyLocalToken past exp throws LocalTokenError code expired');
+  assert((() => {
+    try { verifyLocalToken(annToken.slice(0, -3) + 'abc'); } catch (e) { return e instanceof LocalTokenError && e.code === 'invalid'; }
+    return false;
+  })(), 'A33-6: a tampered token throws code invalid, never expired');
+  assert(!/json\(\{ error: 'Unauthorized: Invalid or expired token' \}\)/.test(fs.readFileSync(new URL('../server/routes/auth.ts', import.meta.url), 'utf8')), 'A33-7: no route answers a bare 401 without a reason');
+  // The account reference in failed-sign-in log lines is keyed by the auth secret: stable, short, and not a plain hash a log reader could match against an address list
+  const ref = accountLogRef(' Ann@Enclave.MIL ');
+  assert(/^[0-9a-f]{12}$/.test(ref) && ref === accountLogRef('ann@enclave.mil'), 'L41-5: accountLogRef is 12 hex chars and ignores case and spacing', ref);
+  assert(!loginAccountKey('ann@enclave.mil').includes(ref) && !ref.includes('ann'), 'L41-5: the log reference is neither the throttle key nor the address', ref);
+  assert(accountLogRef('ann@enclave.mil', { ...process.env, LOCAL_AUTH_SECRET: 'another-secret-for-this-check-0123456789abcdef' }) !== ref, 'L41-5: a different LOCAL_AUTH_SECRET gives a different reference');
+  const authRouteSrc = fs.readFileSync(new URL('../server/routes/auth.ts', import.meta.url), 'utf8');
+  assert(!/console\.\w+\([^)]*\$\{(email|user\.email)[^}]*\}[^)]*[Ff]ailed/.test(authRouteSrc) && !/[Ff]ailed[^\n]*\$\{(email|user\.email)\b/.test(authRouteSrc), 'L41-5: no failed-sign-in log line prints the address');
 
   console.log('\n--- Registration by invitation (how a new person gets an account on an air-gapped install) ---');
   const invite = async (email: string, role = 'ASSESSOR') =>

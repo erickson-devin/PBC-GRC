@@ -168,6 +168,9 @@ async function resolveTenantRole(identity: TokenIdentity, tenantId: string, devM
   return devMockToken && isMockAuthAllowed() ? 'TENANT_OWNER' : 'VIEWER';
 }
 
+/** 401 body for an account that vanished, was disabled or had its sessions revoked after the token passed verification. */
+export const SESSION_REVOKED = { error: 'Unauthorized: Invalid or expired token', reason: 'session_revoked' } as const;
+
 interface Authenticated {
   identity: TokenIdentity;
   /** True for dev/test mock tokens (never produced in production). */
@@ -194,7 +197,7 @@ async function authenticateToken(token: string): Promise<Authenticated> {
   // Tokens minted before the upgrade carry no `ver` and count as version 0.
   const state = await getLocalUserAuthState(claims.sub);
   if (!state || state.disabled || (claims.ver ?? 0) !== state.tokenVersion) {
-    throw new LocalTokenError('Session is no longer valid');
+    throw new LocalTokenError('Session is no longer valid', 'revoked');
   }
   return {
     identity: identityFromClaims(claims as unknown as Record<string, unknown>, {
@@ -213,6 +216,7 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({
       error: 'Unauthorized: Missing or invalid Authorization Bearer header',
+      reason: 'session_missing',
     });
     return;
   }
@@ -220,7 +224,7 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
   const token = authHeader.split('Bearer ')[1]?.trim();
 
   if (!token) {
-    res.status(401).json({ error: 'Unauthorized: Empty bearer token' });
+    res.status(401).json({ error: 'Unauthorized: Empty bearer token', reason: 'session_missing' });
     return;
   }
 
@@ -240,7 +244,8 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
       return;
     }
     console.error('[AuthMiddleware] Token verification failed:', errorMessage(err));
-    res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
+    const reason = err.code === 'expired' ? 'session_expired' : err.code === 'revoked' ? 'session_revoked' : 'session_invalid';
+    res.status(401).json({ error: 'Unauthorized: Invalid or expired token', reason });
     return;
   }
 
