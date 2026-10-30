@@ -6,6 +6,7 @@ import {
   createAssetsBulk,
   deleteAsset,
   getAsset,
+  humanOriginError,
   ingestDiscovery,
   listAssets,
   updateAsset,
@@ -28,6 +29,8 @@ import { errorMessage } from '../../src/utils/errors';
  *   PUT    /:assetId    change fields (including the CMMC category)   TENANT_OWNER / MSP_ADMIN
  *                       and the FIPS module record (Security Protection / CUI assets only)
  *   DELETE /:assetId    remove an asset                                TENANT_OWNER / MSP_ADMIN
+ *
+ * sourceOrigin: PHOTON_AGENT / AGENT_REPORT are refused (400 origin_reserved); the origin is fixed after creation.
  *
  * The RBAC guard is applied here as well as at the tenants router: VIEWER and ASSESSOR are strictly read-only.
  */
@@ -77,6 +80,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ error: parsed.error });
     return;
   }
+  const reserved = humanOriginError(parsed.value.sourceOrigin);
+  if (reserved) {
+    res.status(400).json({ error: reserved, code: 'origin_reserved' });
+    return;
+  }
   try {
     const asset = await createAsset(req.tenantId!, parsed.value, actorOf(req));
     res.status(201).json({ asset });
@@ -102,6 +110,11 @@ router.post('/bulk', async (req: Request, res: Response): Promise<void> => {
     const parsed = validateAssetInput(raw, false);
     if (!parsed.ok) {
       res.status(400).json({ error: `assets[${index}]: ${parsed.error}`, index });
+      return;
+    }
+    const reserved = humanOriginError(parsed.value.sourceOrigin);
+    if (reserved) {
+      res.status(400).json({ error: `assets[${index}]: ${reserved}`, index, code: 'origin_reserved' });
       return;
     }
     inputs.push(parsed.value);
@@ -141,6 +154,20 @@ router.put('/:assetId', async (req: Request, res: Response): Promise<void> => {
     return;
   }
   try {
+    if (parsed.value.sourceOrigin !== undefined) {
+      // the origin is fixed after creation: the stored value is a no-op (never written), any other is refused
+      const current = await getAsset(req.tenantId!, assetIdOf(req));
+      if (!current) {
+        res.status(404).json({ error: 'Asset not found', code: 'not_found' });
+        return;
+      }
+      const reserved = humanOriginError(parsed.value.sourceOrigin, current.sourceOrigin);
+      if (reserved) {
+        res.status(400).json({ error: reserved, code: 'origin_reserved' });
+        return;
+      }
+      delete parsed.value.sourceOrigin;
+    }
     const asset = await updateAsset(req.tenantId!, assetIdOf(req), parsed.value, actorOf(req));
     res.json({ asset });
   } catch (err) {
