@@ -63,8 +63,21 @@ assert(offenders(/components\/landing|marketingPlans|LicenseRequestModal|Pricing
 assert(offenders(/submitLicenseRequest|openLicenseModal|licenseRequests/).length === 0, 'the lead-capture state and its callers are gone', offenders(/submitLicenseRequest|openLicenseModal|licenseRequests/));
 const sandboxRe = /isSandboxMode|SEED_TENANTS|PRESET_USERS|SEED_INVITATIONS|SEED_TEAM_MEMBERS|local-demo|generateDefaultEnclaveAssets|getInvitationByToken|\.isDemo\b/;
 assert(offenders(sandboxRe).length === 0, 'no source file refers to the removed demo sandbox (mode flag, demo tenants/users/seeds, local demo backends)', offenders(sandboxRe));
-const nginx = fs.readFileSync(path.join(root, 'nginx.conf'), 'utf8');
-assert(/location \^~ \/api\//.test(nginx) && /try_files \$uri \$uri\/ \/index\.html/.test(nginx) && !/privacy|terms/i.test(nginx.replace(/#[^\n]*/g, '')), 'nginx.conf is the SPA plus an /api/ proxy, with no routes of the public site');
+const nginx = fs.readFileSync(path.join(root, 'nginx.conf'), 'utf8').replace(/\r\n/g, '\n');
+const nginxCode = nginx.replace(/^\s*#.*$/gm, '');
+assert(/location \^~ \/api\//.test(nginx) && /server 127\.0\.0\.1:3000;/.test(nginx) && !/privacy|terms/i.test(nginx.replace(/#[^\n]*/g, '')), 'nginx.conf is a TLS proxy to the app on 127.0.0.1:3000 with an /api/ location, with no routes of the public site');
+assert(/^\s*ssl_protocols TLSv1\.3;/m.test(nginx) && !/TLSv1\.2|TLSv1\.1/.test(nginxCode), 'nginx.conf allows TLS 1.3 only (TLS 1.2 appears only in a comment)');
+assert(/X-Forwarded-Proto https;/.test(nginx), 'nginx.conf sets X-Forwarded-Proto https');
+assert(/client_max_body_size 100m;/.test(nginx) && /proxy_read_timeout 300s;/.test(nginx), 'nginx.conf allows 100 MB uploads and waits 300 s for the AI helper on /api/');
+assert(/proxy_max_temp_file_size 0;/.test(nginx), 'nginx.conf never spools responses to disk');
+const logFormat = /log_format[^;]*;/.exec(nginxCode);
+assert(!!logFormat && !/\$request\b|\$args|\$query_string|\$http_referer/.test(logFormat[0]), 'the nginx log_format carries no query string and no Referer (invitation tokens travel in the URL)');
+assert(!/location[^{]*\{[^}]*add_header/.test(nginxCode), 'no add_header inside a location block (it would drop the server-level HSTS header there)');
+const tenantCtx = fs.readFileSync(path.join(root, 'src/context/TenantContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
+const financeLog = fs.readFileSync(path.join(root, 'src/components/admin/FinanceProvisioningLog.tsx'), 'utf8').replace(/\r\n/g, '\n');
+for (const [name, src] of [['TenantContext.tsx', tenantCtx], ['FinanceProvisioningLog.tsx', financeLog]] as const) {
+  assert(src.includes('#accept-invite?token=') && !/(?<!#)accept-invite\?token=/.test(src), `${name} builds invitation links with the #accept-invite?token= fragment route, never a path`);
+}
 const serverIndex = fs.readFileSync(path.join(root, 'server/index.ts'), 'utf8');
 assert(!/privacy|terms/i.test(serverIndex), 'the Express server has no static routes for public pages');
 
