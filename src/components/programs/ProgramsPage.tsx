@@ -5,9 +5,12 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { ProgramFormModal } from './ProgramFormModal';
 import { useTenant } from '../../context/TenantContext';
 import { useProgram } from '../../hooks/useProgram';
+import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
+import { useProgramAssets } from '../../hooks/useProgramAssets';
 import { ApiClient } from '../../services/apiClient';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { programOverlayLabels } from '../../data/overlayScoping';
+import { declaredAssetsView, type DeclaredAssetsView } from '../../data/programAssets';
 import type { Program, ProgramMetrics } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
 
@@ -94,6 +97,67 @@ const MetricsRow: React.FC<{ state: MetricsState | undefined }> = ({ state }) =>
         <dd className="text-sm font-bold text-white font-mono">{count(m?.evidenceCount)}</dd>
       </div>
     </dl>
+  );
+};
+
+type DeclaredAssetsState = 'loading' | 'error' | 'no-names' | 'ready';
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** An archived program's declared assets, read-only: host names on screen only (never logged or stored). */
+const DeclaredAssetsBlock: React.FC<{ programName: string; view: DeclaredAssetsView; state: DeclaredAssetsState }> = ({ programName, view, state }) => {
+  const headingId = useId();
+  return (
+    <section aria-labelledby={headingId} aria-busy={state === 'loading'} className="rounded-xl bg-slate-950/50 border border-slate-800 px-3 py-2.5 space-y-2">
+      <h4 id={headingId} className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+        <Server className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+        Declared assets
+      </h4>
+      {state === 'loading' ? (
+        <p className="flex items-center gap-1.5 text-xs text-slate-400"><Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />Loading the declared assets…</p>
+      ) : state === 'error' ? (
+        <p className="text-xs text-slate-400">Not available.</p>
+      ) : !view.declared ? (
+        <p className="text-xs text-slate-400">Declared no assets: its boundary was the whole inventory.</p>
+      ) : (
+        <>
+          <p className="text-xs text-slate-400">{plural(view.count, 'asset', 'assets')} declared inside this boundary.{state === 'no-names' && ' Host names are not available.'}</p>
+          {state === 'ready' && view.names.length > 0 && (
+            <ul aria-label={`Declared assets of ${programName}`} tabIndex={0}
+              className="max-h-40 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5 pr-1 rounded-lg text-xs font-mono text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+              {view.names.map((name, i) => <li key={`${i}-${name}`} className="truncate" title={name}>{name}</li>)}
+            </ul>
+          )}
+          {state === 'ready' && view.unlisted.length > 0 && (
+            <p className="text-xs text-amber-300">{view.unlisted.length === 1 ? '1 declared asset is' : `${view.unlisted.length} declared assets are`} no longer in the inventory.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+};
+
+/** The archived cards, mounted only while the list is open: the memberships and the inventory are read once for the whole list. */
+const ArchivedProgramList: React.FC<{ id: string; programs: Program[]; renderCard: (program: Program, assets?: React.ReactNode) => React.ReactNode }> = ({ id, programs, renderCard }) => {
+  const programAssets = useProgramAssets();
+  const inventory = useEnclaveAssets();
+  const membershipsFailed = programAssets.status === 'error';
+  const inventoryFailed = inventory.error !== null;
+  const loading = !membershipsFailed && (programAssets.status === 'loading' || inventory.loading);
+  const state: DeclaredAssetsState = membershipsFailed ? 'error' : loading ? 'loading' : inventoryFailed ? 'no-names' : 'ready';
+  const views = useMemo(() => Object.fromEntries(programs.map((p) => [p.id, declaredAssetsView(programAssets.memberships[p.id], inventory.assets)])), [programs, programAssets.memberships, inventory.assets]);
+  const show = programAssets.status !== 'unsupported';
+  return (
+    <>
+      {show && (membershipsFailed || inventoryFailed) && (
+        <div className="space-y-2">
+          <ErrorNotice message={membershipsFailed ? 'The declared assets of the archived programs could not be loaded.' : 'The host names of the declared assets could not be loaded.'} />
+          <button type="button" onClick={() => { void programAssets.reload(); void inventory.reload(); }} className={SECONDARY_BUTTON}>Try again</button>
+        </div>
+      )}
+      <ul id={id} className="grid grid-cols-1 xl:grid-cols-2 gap-4" aria-label="Archived programs">
+        {programs.map((p) => renderCard(p, show ? <DeclaredAssetsBlock programName={p.name} view={views[p.id]} state={state} /> : undefined))}
+      </ul>
+    </>
   );
 };
 
@@ -272,7 +336,7 @@ export const ProgramsPage: React.FC = () => {
 
   const readOnly = !canManagePrograms;
 
-  const renderCard = (program: Program) => {
+  const renderCard = (program: Program, assets?: React.ReactNode) => {
     const isActive = activeProgram?.id === program.id;
     const busy = busyId === program.id;
     const baseline = baselineChip(program);
@@ -300,6 +364,7 @@ export const ProgramsPage: React.FC = () => {
         </div>
 
         <MetricsRow state={metrics[program.id]} />
+        {assets}
 
         <div className="flex flex-wrap items-center gap-2">
           {program.archived ? (
@@ -381,7 +446,7 @@ export const ProgramsPage: React.FC = () => {
         </div>
       ) : (
         <ul className="grid grid-cols-1 xl:grid-cols-2 gap-4" aria-label="Programs">
-          {openList.map(renderCard)}
+          {openList.map((p) => renderCard(p))}
         </ul>
       )}
 
@@ -397,11 +462,7 @@ export const ProgramsPage: React.FC = () => {
             {archivedOpen ? <ChevronDown className="w-4 h-4" aria-hidden="true" /> : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
             Archived ({archivedList.length})
           </button>
-          {archivedOpen && (
-            <ul id={`${uid}-archived`} className="grid grid-cols-1 xl:grid-cols-2 gap-4" aria-label="Archived programs">
-              {archivedList.map(renderCard)}
-            </ul>
-          )}
+          {archivedOpen && <ArchivedProgramList id={`${uid}-archived`} programs={archivedList} renderCard={renderCard} />}
         </section>
       )}
 

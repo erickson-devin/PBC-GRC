@@ -5,7 +5,8 @@ import type { Program } from '../types/program';
 
 /**
  * Boundary asset membership (issue #26), pure helpers. Assets stay tenant-wide; a program declares which of them sit inside its
- * boundary. A program that declares none uses the whole inventory (declared: false). Ids only: no host name, address or note.
+ * boundary. A program that declares none uses the whole inventory (declared: false).
+ * Membership is ids only: no host name, address or note. declaredAssetsView joins host names for display on screen only.
  */
 
 /** One program's membership as GET / PATCH .../programs/:id/assets return it. */
@@ -91,4 +92,25 @@ export function membershipLabels(
     .filter((p) => memberships[p.id]?.includes(assetId))
     .map((p) => ({ id: p.id, name: p.name, archived: Boolean(p.archived), isDefault: Boolean(p.isDefault) }));
   return [...labels.filter((l) => l.isDefault), ...labels.filter((l) => !l.isDefault)];
+}
+
+/** What an archived program's card shows: its declared assets as sorted host names, and ids no longer in the inventory. */
+export interface DeclaredAssetsView { declared: boolean; count: number; names: string[]; unlisted: string[] }
+
+export function declaredAssetsView(
+  assetIds: ReadonlyArray<string> | undefined,
+  inventory: ReadonlyArray<{ id: string; hostName?: string }>
+): DeclaredAssetsView {
+  const unique = [...new Set((assetIds ?? []).filter((id) => typeof id === 'string' && id.length > 0))];
+  if (unique.length === 0) return { declared: false, count: 0, names: [], unlisted: [] };
+  const byId = new Map(inventory.map((a) => [a.id, a]));
+  const names: string[] = [];
+  const unlisted: string[] = [];
+  for (const id of unique) {
+    const asset = byId.get(id);
+    if (!asset) unlisted.push(id);
+    else names.push(asset.hostName?.trim() || 'Unnamed asset');
+  }
+  names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  return { declared: true, count: unique.length, names, unlisted };
 }
