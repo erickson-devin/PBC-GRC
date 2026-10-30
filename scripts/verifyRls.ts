@@ -12,10 +12,10 @@
  *   4. tenant DISCOVERY: in user context a user sees only the tenants they belong to (and only their own
  *      membership rows), and that context can never write.
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
- *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest. 3d: the SELECT-only app.event_retention policy on programs (the retention sweep's enumeration) sees nothing without its GUC and can never write.
- *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
+ *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest. 3d: the SELECT-only app.event_retention policy on programs (the retention sweep's enumeration) sees nothing without its GUC and can never write. 3e: the history of a deleted program is untouched by the daily sweep, found by the operator pass (pruneDeletedProgramEvents) and deleted only through the program-confined deletes, and FORCE row security is back afterwards.
+ *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps. The same section proves local_user_password_history: a global table without row security, a bcrypt-only CHECK, a password change records the previous hash and keeps PASSWORD_HISTORY_DEPTH of them (none for a temporary password), and deleting the account deletes its history.
  *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS.
- * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
+ * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
 
@@ -90,6 +90,8 @@ async function main() {
     );
   let scopeX: ProgramScope | null = null;
   let scopeY: ProgramScope | null = null;
+  let zx: ProgramScope | null = null; // 3e: programs that get deleted, so their history is orphaned
+  let zy: ProgramScope | null = null;
   try {
     await add(TENANT_X, 'rls_verify_x1');
     await add(TENANT_Y, 'rls_verify_y1');
@@ -452,9 +454,57 @@ async function main() {
     check(programsDeleted === 0, 'programs: the retention GUC is SELECT-only (a DELETE under it alone removes nothing)', `deleted ${programsDeleted}`);
     const eventsUnderGuc = await underRetention(async (c) => (await c.query('SELECT 1 FROM control_assessment_events')).rows.length);
     check(eventsUnderGuc === 0, 'control_assessment_events: the retention GUC alone exposes no events (the deletes need the tenant and program settings)', `saw ${eventsUnderGuc}`);
+
+    console.log('\n--- 3e. Events of deleted programs (operator pass, issue #150) ---');
+    // the history has no foreign key to programs, so it outlives a deleted program; the daily sweep lists programs and never sees it
+    const { pruneAssessmentEvents, pruneDeletedProgramEvents } = await import('../server/assessmentEventRetention');
+    const zxId = await mkProgram(TENANT_X, 'rls_verify_deleted_x');
+    const zyId = await mkProgram(TENANT_Y, 'rls_verify_deleted_y');
+    zx = { tenantId: TENANT_X, programId: zxId };
+    zy = { tenantId: TENANT_Y, programId: zyId };
+    const insertOldEvent =
+      "INSERT INTO control_assessment_events (tenant_id, control_id, source, actor, new_status, new_role, notes_changed, new_notes_sha256, new_notes_length, program_id, created_at) VALUES ($1, 'AC.L1-3.1.1', 'human', 'rls_verify_actor', 'MET', 'IT / Security Lead', true, $2, 0, $3, NOW() - make_interval(days => $4))";
+    const insertOldObjectiveEvent =
+      "INSERT INTO control_objective_events (tenant_id, program_id, control_id, objective_id, source, actor, new_status, narrative_changed, new_narrative_sha256, new_narrative_length, evidence_changed, created_at) VALUES ($1, $2, 'AC.L1-3.1.1', 'AC.L1-3.1.1[a]', 'human', 'rls_verify_actor', 'MET', true, $3, 0, false, NOW() - make_interval(days => $4))";
+    await queryWithProgram(zx, insertOldEvent, [TENANT_X, goodSha, zxId, 400]);
+    await queryWithProgram(zx, insertOldEvent, [TENANT_X, goodSha, zxId, 400]);
+    await queryWithProgram(zx, insertOldEvent, [TENANT_X, goodSha, zxId, 1]);
+    await queryWithProgram(zx, insertOldObjectiveEvent, [TENANT_X, zxId, goodSha, 400]);
+    await queryWithProgram(zy, insertOldEvent, [TENANT_Y, goodSha, zyId, 400]);
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, zxId]);
+    await queryWithTenant(TENANT_Y, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_Y, zyId]);
+    const countIn = async (scope: ProgramScope, table: 'control_assessment_events' | 'control_objective_events'): Promise<number> =>
+      Number((await queryWithProgram(scope, `SELECT count(*)::int AS n FROM ${table} WHERE actor = 'rls_verify_actor'`, [])).rows[0]?.n);
+    const zxState = async (): Promise<string> => `${await countIn(zx!, 'control_assessment_events')}+${await countIn(zx!, 'control_objective_events')}`;
+    check((await zxState()) === '3+1', "3e. the events of a deleted program are still reachable by its program id (assessment 3, objective 1)", await zxState());
+
+    const daily = await pruneAssessmentEvents({ days: 365, onlyTenantIds: [TENANT_X, TENANT_Y] });
+    check(daily.errors === 0 && !daily.skipped, '3e. the daily sweep over both tenants ends with no error', JSON.stringify(daily));
+    check((await zxState()) === '3+1' && (await countIn(zy, 'control_assessment_events')) === 1, '3e. the daily sweep leaves the history of deleted programs alone (the sweep lists programs)', `${await zxState()}, zy ${await countIn(zy, 'control_assessment_events')}`);
+
+    const dry = await pruneDeletedProgramEvents({ days: 365, dryRun: true, onlyTenantIds: [TENANT_X] });
+    check(dry.errors === 0 && dry.deleted === 2 && dry.deletedObjectives === 1 && dry.scopes === 1, '3e. the operator pass in dry-run counts 2 assessment and 1 objective event in 1 deleted program', JSON.stringify(dry));
+    check((await zxState()) === '3+1', '3e. the dry run changed nothing', await zxState());
+
+    const real = await pruneDeletedProgramEvents({ days: 365, onlyTenantIds: [TENANT_X] });
+    check(real.errors === 0 && real.deleted === 2 && real.deletedObjectives === 1, '3e. the operator pass deletes the old events of the deleted program', JSON.stringify(real));
+    check((await countIn(zx, 'control_assessment_events')) === 1 && (await countIn(zx, 'control_objective_events')) === 0, '3e. the recent event of the deleted program survives, the old objective event is gone', await zxState());
+    check((await countIn(zy, 'control_assessment_events')) === 1, "3e. another tenant's deleted program is untouched (--tenant scope)", `saw ${await countIn(zy, 'control_assessment_events')}`);
+    check((await countIn(scopeX, 'control_assessment_events')) === 1, '3e. the event of a live program is untouched', `saw ${await countIn(scopeX, 'control_assessment_events')}`);
+
+    const forced = await pool.query(
+      "SELECT relname, relforcerowsecurity FROM pg_class WHERE relname IN ('control_assessment_events', 'control_objective_events', 'programs') AND relkind = 'r' AND pg_table_is_visible(oid)"
+    );
+    check(forced.rows.length === 3 && forced.rows.every((r) => r.relforcerowsecurity === true), '3e. FORCE row security is back on control_assessment_events, control_objective_events and programs', JSON.stringify(forced.rows));
+
+    const again = await pruneDeletedProgramEvents({ days: 365, onlyTenantIds: [TENANT_X] });
+    check(again.errors === 0 && again.deleted === 0 && again.deletedObjectives === 0, '3e. a second operator pass deletes nothing', JSON.stringify(again));
   } finally {
-    for (const scope of [scopeX, scopeY]) {
-      if (scope) await queryWithProgram(scope, "DELETE FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+    for (const scope of [scopeX, scopeY, zx, zy]) {
+      if (scope) {
+        await queryWithProgram(scope, "DELETE FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+        await queryWithProgram(scope, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      }
     }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
@@ -550,7 +600,10 @@ async function verifyDiscovery() {
 async function verifyLocalIdentities() {
   console.log('\n--- 7. Local identities: second factor storage (local_users, global table) ---');
   const { buildSchemaSql } = await import('../server/schema');
-  const { confirmTotp, consumeRecoveryCode, consumeTotpStep, replaceRecoveryCodeHashes } = await import('../server/auth/localUsers');
+  const { confirmTotp, consumeRecoveryCode, consumeTotpStep, replaceRecoveryCodeHashes, setLocalUserPassword, isInPasswordHistory, countPasswordHistory } = await import('../server/auth/localUsers');
+  const { hashPassword } = await import('../server/auth/localAuth');
+  const savedDepth = process.env.PASSWORD_HISTORY_DEPTH;
+  process.env.PASSWORD_HISTORY_DEPTH = '2'; // read per call; restored in the finally below
 
   const ID = (n: number) => `rls_verify_lu_${n}`;
   const GOOD_BLOB = `v1.${'A'.repeat(16)}.${'B'.repeat(24)}.${'C'.repeat(22)}`; // the shape encryptTotpSecret produces
@@ -642,7 +695,56 @@ async function verifyLocalIdentities() {
     check((await consumeTotpStep(ID(4), 200)) === false, 'the same TOTP step is refused (replay, 0 rows)');
     check((await consumeTotpStep(ID(4), 199)) === false, 'an older TOTP step is refused (0 rows)');
     check((await consumeTotpStep(ID(4), 201)) === true, 'the next TOTP step is accepted again (1 row)');
+
+    // V11 to V18: the password history (IA.L2-3.5.8, issue #162). The users above hold the placeholder hash 'x'; these need real bcrypt hashes.
+    const histFlags = await pool.query("SELECT relrowsecurity FROM pg_class WHERE relname = 'local_user_password_history' AND relkind = 'r'");
+    check(histFlags.rows[0]?.relrowsecurity === false, 'local_user_password_history: row security is NOT enabled (global identity table)', JSON.stringify(histFlags.rows));
+    check(
+      !RLS_TENANT_TABLES.some((t) => t.table === 'local_user_password_history') && !(RLS_PROGRAM_TABLES as readonly string[]).includes('local_user_password_history'),
+      'local_user_password_history is in neither RLS_TENANT_TABLES nor RLS_PROGRAM_TABLES'
+    );
+    const histFk = await pool.query("SELECT confdeltype FROM pg_constraint WHERE conname = 'fk_local_user_password_history_user'");
+    check(histFk.rows[0]?.confdeltype === 'c', 'local_user_password_history: the foreign key to local_users cascades on delete', JSON.stringify(histFk.rows));
+
+    const passphrase = (n: number) => `rls-verify-history-${n}-passphrase`;
+    const H = [await hashPassword(passphrase(0)), await hashPassword(passphrase(1)), await hashPassword(passphrase(2)), await hashPassword(passphrase(3))];
+    const insertHashedUser = (n: number, hash: string, mustChange = false) =>
+      pool.query("INSERT INTO local_users (id, email, name, password_hash, must_change_password) VALUES ($1, $2, 'rls_verify', $3, $4)", [ID(n), `rls_verify_lu_${n}@example.mil`, hash, mustChange]);
+    const historyHashes = async (n: number): Promise<string[]> =>
+      (await pool.query('SELECT password_hash FROM local_user_password_history WHERE user_id = $1 ORDER BY id DESC', [ID(n)])).rows.map((r) => String(r.password_hash));
+
+    await insertHashedUser(5, H[0]);
+    check(
+      await rejects(() => pool.query("INSERT INTO local_user_password_history (user_id, password_hash) VALUES ($1, 'not-bcrypt')", [ID(5)]), { code: '23514', constraint: 'local_user_password_history_hash_check' }),
+      'a history entry that is not a bcrypt hash is refused (hash_check)', lastRejection
+    );
+
+    check((await setLocalUserPassword(ID(5), H[1])) === true, 'a password change on a known account returns true');
+    const afterFirst = await historyHashes(5);
+    check((await countPasswordHistory(ID(5))) === 1 && afterFirst[0] === H[0], 'the first password change records the replaced hash (history of 1)', `${afterFirst.length} row(s)`);
+
+    check((await setLocalUserPassword(ID(5), H[2])) === true && (await countPasswordHistory(ID(5))) === 2, 'the second change makes a history of 2');
+    check((await setLocalUserPassword(ID(5), H[3])) === true && (await countPasswordHistory(ID(5))) === 2, 'the third change trims the history to PASSWORD_HISTORY_DEPTH (2)');
+    const trimmed = await historyHashes(5);
+    check(trimmed.length === 2 && trimmed[0] === H[2] && trimmed[1] === H[1], 'the history holds the newest previous hashes (newest first)', `${trimmed.length} row(s)`);
+    check((await isInPasswordHistory(ID(5), passphrase(1))) === true, 'a password still in the history is recognized');
+    check((await isInPasswordHistory(ID(5), passphrase(0))) === false, 'a password trimmed from the history is no longer recognized');
+
+    await insertHashedUser(6, H[0], true);
+    check((await setLocalUserPassword(ID(6), H[1])) === true, 'a password change on a temporary-password account returns true');
+    const tempUser = await pool.query('SELECT must_change_password, token_version FROM local_users WHERE id = $1', [ID(6)]);
+    check((await countPasswordHistory(ID(6))) === 0, 'replacing a temporary password records nothing in the history');
+    check(tempUser.rows[0]?.must_change_password === false && tempUser.rows[0]?.token_version === 1, 'the change clears must_change_password and bumps token_version', JSON.stringify(tempUser.rows));
+
+    check((await setLocalUserPassword(ID(5), H[0], { mustChangePassword: true })) === true, 'an admin reset (temporary password) succeeds');
+    const afterReset = await historyHashes(5);
+    check(afterReset.length === 2 && afterReset[0] === H[3], 'an admin reset still records the replaced hash (history stays at 2)', `${afterReset.length} row(s)`);
+
+    await pool.query('DELETE FROM local_users WHERE id = $1', [ID(5)]);
+    check((await countPasswordHistory(ID(5))) === 0, 'deleting the account deletes its password history (cascade)');
   } finally {
+    if (savedDepth === undefined) delete process.env.PASSWORD_HISTORY_DEPTH;
+    else process.env.PASSWORD_HISTORY_DEPTH = savedDepth;
     await pool.query("DELETE FROM local_users WHERE id LIKE 'rls_verify_lu_%'").catch(() => undefined);
   }
 }
