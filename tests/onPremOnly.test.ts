@@ -436,6 +436,9 @@ assert(/^# IMAGE_TAG=v\d+\.\d+\.\d+\s*$/m.test(envExample), '.env.example docume
 const dependabotPath = path.join(root, '.github', 'dependabot.yml');
 const dependabot = fs.existsSync(dependabotPath) ? fs.readFileSync(dependabotPath, 'utf8') : '';
 assert(/package-ecosystem:\s*"docker"/.test(dependabot) && /package-ecosystem:\s*"github-actions"/.test(dependabot) && !/package-ecosystem:\s*"npm"/.test(dependabot), '.github/dependabot.yml watches the docker and github-actions ecosystems, not npm');
+for (const dep of ['node', 'postgres']) {
+  assert(new RegExp(`dependency-name:\\s*"${dep}"\\s*\\r?\\n\\s*update-types:\\s*\\["version-update:semver-major"\\]`).test(dependabot), `.github/dependabot.yml ignores major versions of ${dep} (the pinned majors are tested majors)`);
+}
 for (const wf of ['ci.yml', 'docker-publish.yml']) {
   const lines = fs.readFileSync(path.join(root, '.github', 'workflows', wf), 'utf8').split(/\r?\n/).filter((l) => !/^\s*#/.test(l));
   const uses = lines.map((l) => /^\s*(?:-\s+)?uses:\s*(\S+)(.*)$/.exec(l)).filter((m): m is RegExpExecArray => !!m);

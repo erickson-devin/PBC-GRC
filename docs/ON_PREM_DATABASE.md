@@ -264,7 +264,9 @@ Operators set `IMAGE_TAG=vX.Y.Z` in `.env` (or `vX.Y.Z@sha256:<digest>` for an i
 The Dockerfile base image (`node:22-alpine`), the compose database image (`postgres:16-alpine`), the optional Ollama image
 (`ollama/ollama`, the `ai` profile; `OLLAMA_IMAGE_TAG` overrides it) and the CI actions are
 pinned by digest or commit. Dependabot (`.github/dependabot.yml`) opens a pull request when a newer one exists; a pin
-changes only in a reviewed pull request. The CMMC import is tuned for the `llama3.2:3b` model, not for a server version:
+changes only in a reviewed pull request. Dependabot is told to skip major versions of `node`, `postgres` and `ollama/ollama`:
+the platform is tested on Node 22 LTS and PostgreSQL 16 (`tests/onPremOnly.test.ts` pins both), and a PostgreSQL major
+needs `pg_upgrade` of the data volume, so those are planned releases. Merging a bot PR that moves a major fails CI on `main`. The CMMC import is tuned for the `llama3.2:3b` model, not for a server version:
 change the Ollama pin only in a reviewed pull request and run an SSP import before relying on it.
 
 ## Upgrading to a new release (no wipe)

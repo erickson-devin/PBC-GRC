@@ -1,13 +1,24 @@
 version: 2
 updates:
+  # Base images stay on the supported majors the platform is tested against (Node 22 LTS, PostgreSQL 16:
+  # a PostgreSQL major needs pg_upgrade of the data volume, so it is a planned release, never a bot PR).
+  # Dependabot still proposes digest and minor refreshes within those majors.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ollama/ollama"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
