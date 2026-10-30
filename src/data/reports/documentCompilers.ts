@@ -13,6 +13,7 @@ import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
 import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
+import { sprsAppliesTo } from './sprsCompiler';
 
 /**
  * Resolves the standard recommended document type for a given compliance framework.
@@ -257,7 +258,7 @@ export function compileNistSSP(
       headers: ['Compliance Metric', 'Evaluated Value', 'Compliance Target', 'Status Evaluation'],
       rows: [
         ['Total Framework Controls', controls.length, `${controls.length} Controls`, 'In Scope'],
-        ['Controls MET (Fully Implemented)', metrics.metCount, `${controls.length} Required`, metrics.metCount === controls.length ? '100% SPRS Ready' : 'Action Required'],
+        ['Controls MET (Fully Implemented)', metrics.metCount, `${controls.length} Required`, metrics.metCount === controls.length ? (sprsAppliesTo(metadata.framework) ? '100% SPRS Ready' : 'All controls met') : 'Action Required'],
         ['Controls IN PROGRESS', metrics.inProgressCount, '0 Allowed at Final Audit', metrics.inProgressCount === 0 ? 'Optimal' : `${metrics.inProgressCount} Open`],
         ['Controls NOT MET', metrics.notMetCount, '0 Allowed', metrics.notMetCount === 0 ? 'Compliant' : `${metrics.notMetCount} Deficiencies`],
         ['Overall Readiness Score', `${metrics.completionPercentage}%`, '100%', metrics.completionPercentage === 100 ? 'Fully Compliant' : 'Deficiency Remediation Needed'],

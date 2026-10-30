@@ -388,7 +388,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                     <strong className="text-white font-mono text-sm">0 / 17</strong>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                    <span className="text-slate-400 block">SPRS Status</span>
+                    <span className="text-slate-400 block">Readiness</span>
                     <strong className="text-amber-400 font-mono text-sm">0% Met</strong>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-center">
