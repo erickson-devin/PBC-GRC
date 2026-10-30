@@ -9,6 +9,7 @@ import {
   resetSessionSignal,
   sessionEndedMessage,
   SESSION_ENDED_MESSAGE,
+  SESSION_MISMATCH_MESSAGE,
   SIGNED_OUT_ELSEWHERE_MESSAGE,
   SWITCHED_ELSEWHERE_MESSAGE,
 } from '../src/services/sessionSignal';
@@ -112,6 +113,8 @@ console.log('\n--- messages ---');
 assert(sessionEndedMessage('signed_out_elsewhere') === SIGNED_OUT_ELSEWHERE_MESSAGE && sessionEndedMessage('switched_elsewhere') === SWITCHED_ELSEWHERE_MESSAGE, 'S32-9a each cross-tab reason has its message');
 assert(SIGNED_OUT_ELSEWHERE_MESSAGE !== SESSION_ENDED_MESSAGE && SWITCHED_ELSEWHERE_MESSAGE !== SESSION_ENDED_MESSAGE && !/token/i.test(SIGNED_OUT_ELSEWHERE_MESSAGE) && !/token/i.test(SWITCHED_ELSEWHERE_MESSAGE), 'S32-9b they differ from the generic text and never say token');
 assert(isCrossTabReason('signed_out_elsewhere') && isCrossTabReason('switched_elsewhere') && !isCrossTabReason('session_revoked') && !isCrossTabReason(undefined) && !isCrossTabReason(null), 'S32-9c isCrossTabReason');
+assert(isCrossTabReason('session_mismatch') === true, 'S149-c1 session_mismatch is a cross-tab reason');
+assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && SESSION_MISMATCH_MESSAGE !== SWITCHED_ELSEWHERE_MESSAGE && SESSION_MISMATCH_MESSAGE !== SESSION_ENDED_MESSAGE && !/token/i.test(SESSION_MISMATCH_MESSAGE), 'S149-c1b session_mismatch has its own text, never saying token');
 
 (async () => {
   try {
@@ -202,6 +205,15 @@ assert(isCrossTabReason('signed_out_elsewhere') && isCrossTabReason('switched_el
     await attempt(() => ApiClient.listMyTenants());
     await flush();
     assert(heard.length === 1 && heard[0][0] === 'R1' && heard[0][1] === 'session_revoked', 'S32-20 a server 401 on the own session still signals with its reason', heard);
+
+    fresh();
+    pinTabSession('R1', 'u1');
+    store.set(REF_KEY, 'R1');
+    store.set(USER_KEY, U1);
+    stub(401, { error: 'x', reason: 'session_mismatch' });
+    await attempt(() => ApiClient.listMyTenants());
+    await flush();
+    assert(heard.length === 1 && heard[0][0] === 'R1' && heard[0][1] === 'session_mismatch', 'S149-c2 a server 401 session_mismatch signals once with its reason', heard);
   } finally {
     globalThis.fetch = realFetch;
     resetSessionSignal();
@@ -235,7 +247,10 @@ assert(isCrossTabReason('signed_out_elsewhere') && isCrossTabReason('switched_el
   assert(endSlice.includes('resetForSignOut()') && endSlice.includes('setIsAuthenticated(false)') && endSlice.includes('sessionEndedMessage(reason)') && endSlice.includes('pinTabSession(')
     && !endSlice.includes('ApiClient.signOut') && !endSlice.includes('localStorage.'), 'S32-23 endSessionInThisTab resets this tab only: no server call, no storage');
 
-  const hus = slice(auth, 'const handleUserSession', 'syncAuthUser(userProfile');
+  const signalSrc = read('src/services/sessionSignal.ts');
+  assert(slice(signalSrc, 'export function isCrossTabReason', '\n}').includes("'session_mismatch'"), 'S149-c3 isCrossTabReason accepts session_mismatch');
+
+  const hus = slice(auth,'const handleUserSession', 'syncAuthUser(userProfile');
   const iUser = hus.indexOf('setItem(AUTH_USER_KEY');
   const iRef = hus.indexOf('setItem(AUTH_SESSION_REF_KEY');
   const iPin = hus.indexOf('pinTabSession(');
