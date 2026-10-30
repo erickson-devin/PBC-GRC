@@ -64,6 +64,7 @@ export type ProgramErrorCode =
   | 'framework_immutable'
   | 'program_not_empty'
   | 'invalid_scoping'
+  | 'scoping_conflict'
   | 'invalid_vm_target'
   | 'invalid_asset_ids'
   | 'unknown_assets'
@@ -109,6 +110,8 @@ export interface ProgramPatch {
   privacyBaseline?: boolean | null;
   /** Mutable (the owner or an admin): replaces the scoping as a whole. */
   scoping?: unknown;
+  /** The overlays the client last saw; a mismatch is scoping_conflict and nothing is written. Absent skips the check. */
+  expectedScoping?: unknown;
 }
 
 /** Who made a change, as the program events record it. */
@@ -565,6 +568,12 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
     if (!check.ok) throw new ProgramError('invalid_scoping', check.error);
     wantedScoping = check.value;
   }
+  let expected: ProgramScoping | null = null; // null: no stale-write check
+  if (patch.expectedScoping !== undefined) {
+    const check = normalizeProgramScoping(patch.expectedScoping, current);
+    if (!check.ok) throw new ProgramError('invalid_scoping', check.error);
+    expected = check.value;
+  }
   if (patch.frameworkId !== undefined && programFramework(patch.frameworkId) !== current.frameworkId) {
     throw new ProgramError('framework_immutable', 'The framework of a program cannot be changed after creation');
   }
@@ -581,10 +590,12 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
   const summary = typeof patch.systemBoundarySummary === 'string' ? patch.systemBoundarySummary : current.systemBoundarySummary;
 
   if (isMemory()) {
-    const scoping = wantedScoping ?? current.scoping;
-    const next: Program = { ...current, name, description, systemBoundarySummary: summary, scoping, updatedAt: new Date().toISOString() };
+    const fresh = memoryPrograms.get(id) ?? current; // no await between this read and the set: the compare-and-write is atomic
+    if (expected && !sameScoping(fresh.scoping, expected)) throw new ProgramError('scoping_conflict', 'The overlays of this program changed meanwhile');
+    const scoping = wantedScoping ?? fresh.scoping;
+    const next: Program = { ...fresh, name, description, systemBoundarySummary: summary, scoping, updatedAt: new Date().toISOString() };
     memoryPrograms.set(id, next);
-    if (!sameScoping(current.scoping, scoping)) pushMemoryEvent(tenantId, id, 'scoping_changed', who, current.scoping, scoping);
+    if (!sameScoping(fresh.scoping, scoping)) pushMemoryEvent(tenantId, id, 'scoping_changed', who, fresh.scoping, scoping);
     return next;
   }
   try {
@@ -593,6 +604,7 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
       if (!locked.rows[0]) throw new ProgramError('program_not_found', 'Program not found');
       const before = rowToProgram(locked.rows[0]);
       if (before.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be edited');
+      if (expected && !sameScoping(before.scoping, expected)) throw new ProgramError('scoping_conflict', 'The overlays of this program changed meanwhile');
       const scoping = wantedScoping ?? before.scoping;
       const res = await q(
         `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, scoping = $6::jsonb, updated_at = NOW()
