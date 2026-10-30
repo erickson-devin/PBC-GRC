@@ -6,6 +6,7 @@ import { isMfaRequiredFor } from '../auth/mfaPolicy';
 import { LocalUserExistsError, createLocalUser, deleteLocalUser, normalizeEmail } from '../auth/localUsers';
 import { TenantExistsError, createTenantWithOwner } from '../db';
 import { createInvitation } from '../invitations';
+import { createRateLimiter } from '../middleware/rateLimit';
 import {
   addPlatformAdmin,
   claimSetup,
@@ -40,19 +41,14 @@ const INVITE_DAYS = 14;
 // ---- per-IP throttle: setup is a one-off, so the limit is tight
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = 10;
-const attemptsByIp = new Map<string, number[]>();
+const setupLimiter = createRateLimiter({ windowMs: WINDOW_MS, max: MAX_PER_WINDOW });
 function throttled(ip: string): boolean {
-  const now = Date.now();
-  const recent = (attemptsByIp.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
-  recent.push(now);
-  attemptsByIp.set(ip, recent);
-  if (attemptsByIp.size > 1_000) attemptsByIp.clear();
-  return recent.length > MAX_PER_WINDOW;
+  return setupLimiter.hit(ip).limited;
 }
 
 /** Test hook. */
 export function __resetSetupThrottleForTests(): void {
-  attemptsByIp.clear();
+  setupLimiter.reset();
 }
 
 const slugify = (value: string): string =>

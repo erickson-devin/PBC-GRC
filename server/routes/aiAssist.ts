@@ -6,6 +6,7 @@ import type { ComplianceFramework, ControlParameter, FrameworkControlDefinition 
 import { frameworksDefiningControl, ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { OllamaClient, OllamaError } from '../ssp/ollama';
 import { WordingError, suggestWording, type WordingRequest } from '../ssp/parameterWording';
+import { createRateLimiter } from '../middleware/rateLimit';
 import { ensureActiveTenant } from './tenantGuards';
 import { canRoleWrite } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
@@ -27,18 +28,13 @@ const MAX_CHOICE_CHARS = 200;
 // ---- per-user throttle (the model serves one request at a time; this stops one person monopolising it)
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = 20;
-const hits = new Map<string, number[]>();
+const aiAssistLimiter = createRateLimiter({ windowMs: WINDOW_MS, max: MAX_PER_WINDOW });
 function throttled(key: string): boolean {
-  const now = Date.now();
-  const recent = (hits.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
-  recent.push(now);
-  hits.set(key, recent);
-  if (hits.size > 5_000) hits.clear();
-  return recent.length > MAX_PER_WINDOW;
+  return aiAssistLimiter.hit(key).limited;
 }
 /** Test hook. */
 export function __resetAiAssistThrottleForTests(): void {
-  hits.clear();
+  aiAssistLimiter.reset();
 }
 
 router.use((req: Request, res: Response, next) => {
