@@ -43,7 +43,7 @@ import {
   programScopeKey,
 } from '../data/programSync';
 import { programBaselineToCia, scopingToOverlays } from '../data/programScope';
-import { overlayLockReason } from '../data/overlayScoping';
+import { isOverlayConflict, overlayLockReason } from '../data/overlayScoping';
 import {
   ServerInvitation,
   buildTeam,
@@ -293,7 +293,7 @@ interface TenantContextType {
     tenantId: string,
     enabledFrameworks: ComplianceFramework[],
     primaryFramework: ComplianceFramework
-  ) => void;
+  ) => Promise<void>;
   claimInviteToken: (
     token: string,
     userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; idToken?: string }
@@ -333,7 +333,7 @@ interface TenantContextType {
     systemBoundaryScope?: string;
     cloudServiceProviders?: string;
   }) => Promise<string>; // resolves the final tenant id (a browser-only tenant gets a NEW, server-assigned id)
-  updateTenant: (tenantId: string, updates: Partial<Tenant>) => void;
+  updateTenant: (tenantId: string, updates: Partial<Tenant>) => Promise<void>;
   suspendTenant: (tenantId: string, suspend?: boolean) => void;
   updateTenantOwner: (tenantId: string, newOwnerEmail: string, newOwnerName?: string) => void;
   extendInvitationExpiration: (invitationId: string, days?: number) => Promise<{ expiresAt: string }>;
@@ -416,8 +416,8 @@ interface TenantContextType {
   activeBaselineTier: BaselineTier;
   activeOverlayFilters: OverlayFilters;
   /** Save the overlay with the active program (or this browser's tenant key); reject, saving nothing, when overlays are locked. */
-  toggleNonNetworkedOverlay: () => Promise<void>;
-  toggleOverlayFilter: (key: keyof OverlayFilters) => Promise<void>;
+  toggleNonNetworkedOverlay: (seen?: OverlayFilters) => Promise<void>;
+  toggleOverlayFilter: (key: keyof OverlayFilters, seen?: OverlayFilters) => Promise<void>;
   /** The active program's baseline as a triad (all controls without a baseline). Read-only: the baseline is fixed when the program is created. */
   ciaTriad: CiaTriadSelection;
   /** @deprecated No effect: the CIA triad follows the program's baseline. Removed with the CIA editor of the old framework menu. */
@@ -1280,7 +1280,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    * the overlays are locked right now (the UI shows the reason and does not call it then). Never writes browser storage for a
    * server-backed tenant.
    */
-  const toggleOverlayFilter = useCallback(async (key: keyof OverlayFilters): Promise<void> => {
+  const toggleOverlayFilter = useCallback(async (key: keyof OverlayFilters, seen?: OverlayFilters): Promise<void> => {
     const tenantId = currentTenantIdRef.current;
     const serverBacked = Boolean(liveTenantsRef.current.find(t => t.id === tenantId)?.serverBacked);
     const ps = programsRef.current;
@@ -1298,11 +1298,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setBrowserOverlays({ tenantId, filters: next });
       return;
     }
-    const current = scopingToOverlays(program.scoping);
-    await updateProgram(program.id, { scoping: { ...current, [key]: !current[key] } });
-  }, [programsStatus, canManagePrograms, activeFramework, updateProgram]);
+    // The overlays the confirmation showed (or the stored ones): sent back so a save made over someone else's change is refused
+    const base = seen ?? scopingToOverlays(program.scoping);
+    try {
+      await updateProgram(program.id, { scoping: { ...base, [key]: !base[key] }, expectedScoping: base });
+    } catch (err) {
+      if (isOverlayConflict(err)) await refreshPrograms(tenantId).catch(() => undefined);
+      throw err;
+    }
+  }, [programsStatus, canManagePrograms, activeFramework, updateProgram, refreshPrograms]);
 
-  const toggleNonNetworkedOverlay = useCallback((): Promise<void> => toggleOverlayFilter('nonNetworkedOnly'), [toggleOverlayFilter]);
+  const toggleNonNetworkedOverlay = useCallback((seen?: OverlayFilters): Promise<void> => toggleOverlayFilter('nonNetworkedOnly', seen), [toggleOverlayFilter]);
 
   const canManageTenant = useMemo(() => {
     return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';
@@ -1490,22 +1496,23 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return finalId;
   }, [migrateTenantToServer]);
 
-  const updateTenant = useCallback((tenantId: string, updates: Partial<Tenant>) => {
+  const updateTenant = useCallback(async (tenantId: string, updates: Partial<Tenant>): Promise<void> => {
     // Optimistic local update...
     setLiveTenants(prev => prev.map(t => (t.id === tenantId ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t)));
 
     // ...and for a tenant the server owns, persist the server-owned fields there. If the server refuses (e.g. 403 for a
     // non-owner) or is unreachable, re-sync so the UI snaps back to the authoritative values instead of drifting.
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
-    if (target?.serverBacked) {
-      const patch = toServerPatch(updates);
-      if (Object.keys(patch).length > 0) {
-        ApiClient.updateTenant(tenantId, patch).catch((err: unknown) => {
-          console.warn('[Tenants] Server rejected the tenant update; restoring server values:', errorMessage(err));
-          setTenantSync((prev) => ({ ...prev, status: 'error', error: errorMessage(err) || 'Update was not saved' }));
-          void syncTenantsFromServer(undefined, { force: true });
-        });
-      }
+    if (!target?.serverBacked) return;
+    const patch = toServerPatch(updates);
+    if (Object.keys(patch).length === 0) return;
+    try {
+      await ApiClient.updateTenant(tenantId, patch);
+    } catch (err: unknown) {
+      console.warn('[Tenants] Server rejected the tenant update; restoring server values:', errorMessage(err));
+      setTenantSync((prev) => ({ ...prev, status: 'error', error: errorMessage(err) || 'Update was not saved' }));
+      void syncTenantsFromServer(undefined, { force: true });
+      throw err; // the caller that waits (the enclave modal) shows it; the others ignore it
     }
   }, [syncTenantsFromServer]);
 
@@ -1517,7 +1524,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const validEnabled = enabledFrameworks.length > 0 ? enabledFrameworks : [primaryFramework];
     const validPrimary = validEnabled.includes(primaryFramework) ? primaryFramework : validEnabled[0];
 
-    updateTenant(tenantId, {
+    return updateTenant(tenantId, {
       enabledFrameworks: validEnabled,
       primaryFramework: validPrimary,
     });
@@ -1525,7 +1532,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [updateTenant]);
 
   const updateStackProfile = useCallback((profile: EnclaveStackProfile) => {
-    updateTenant(currentTenant.id, { stackProfile: profile });
+    void updateTenant(currentTenant.id, { stackProfile: profile }).catch(() => undefined); // already logged and re-synced by updateTenant
 
     // Cascade tailored stack narratives to the objectives of the active program's framework, filling only the empty ones: a narrative
     // somebody wrote is never overwritten. (SP 800-53 programs have their own objective ids and no stack templates: nothing to cascade.)
@@ -1567,10 +1574,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const cleanName = newOwnerName?.trim() || cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     // 1. Update tenant systemOwner
-    updateTenant(tenantId, {
+    void updateTenant(tenantId, {
       systemOwner: `${cleanName} (${cleanEmail})`,
       updatedAt: new Date().toISOString(),
-    });
+    }).catch(() => undefined); // already logged and re-synced by updateTenant
 
     // A server-backed tenant's team and roles belong to the server: a local rewrite would only show roles nobody holds
     if (liveTenantsRef.current.find(t => t.id === tenantId)?.serverBacked) return;

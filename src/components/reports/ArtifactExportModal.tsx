@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import {
   X,
   FileText,
@@ -17,6 +17,7 @@ import {
   Save,
   Check,
   Server,
+  Info,
 } from 'lucide-react';
 import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -48,10 +49,13 @@ import {
   formatSprsScore,
   downloadEmassCsv,
   downloadSprsSummaryJson,
+  sprsAppliesTo,
+  emassCsvNotes,
 } from '../../data/reports/sprsCompiler';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { ErrorNotice } from '../common/ErrorNotice';
 interface ArtifactExportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -101,10 +105,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   // Active View Tab: 'preview' | 'metadata' | 'poam' | 'sprs'
   const [activeTab, setActiveTab] = useState<'preview' | 'metadata' | 'poam' | 'sprs'>('preview');
 
-  // Compute live DoD SPRS scoring metrics
+  // Compute live DoD SPRS scoring metrics (CMMC Level 2 only)
   const sprsResult = useMemo(() => {
-    return calculateSprsScore(frameworkControls, state.controls, state.sspMetadata);
-  }, [frameworkControls, state.controls, state.sspMetadata]);
+    return sprsAppliesTo(activeFramework) ? calculateSprsScore(frameworkControls, state.controls, state.sspMetadata) : null;
+  }, [activeFramework, frameworkControls, state.controls, state.sspMetadata]);
 
   // Metadata form local state (allows editing before generation and live preview)
   const meta = state.sspMetadata;
@@ -131,6 +135,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [isExportingJson, setIsExportingJson] = useState<boolean>(false);
+  const [jsonExportError, setJsonExportError] = useState<string | null>(null);
+  const sprsApplies = sprsAppliesTo(activeFramework);
+  const emassHeadingId = useId();
+
+  useEffect(() => { if (!isOpen) setJsonExportError(null); }, [isOpen]);
 
   // Sync state whenever activeFramework or exportModalInitialDocType changes
   useEffect(() => {
@@ -204,11 +213,13 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   };
 
   const handleExportJson = async () => {
+    setJsonExportError(null);
     setIsExportingJson(true);
     try {
       await downloadJsonPackage(compiledDoc, state);
-    } catch (err) {
-      console.error('Failed to export JSON package:', err);
+    } catch {
+      // Fixed text only: the error is never shown or logged
+      setJsonExportError('The JSON package could not be created, so nothing was downloaded. Try again; if it keeps failing, use Download Official Document or Print / Save PDF instead.');
     } finally {
       setIsExportingJson(false);
     }
@@ -360,16 +371,18 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               }`}
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-300" />
-              <span>SPRS / eMASS</span>
-              <span className={`badge text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
-                sprsResult.score === null
-                  ? 'bg-amber-500/20 text-amber-300'
-                  : sprsResult.score >= 0
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'bg-rose-500/20 text-rose-300'
-              }`}>
-                {formatSprsScore(sprsResult)}
-              </span>
+              <span>{sprsApplies ? 'SPRS / eMASS' : 'eMASS'}</span>
+              {sprsApplies && sprsResult && (
+                <span className={`badge text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
+                  sprsResult.score === null
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : sprsResult.score >= 0
+                    ? 'bg-emerald-500/20 text-emerald-300'
+                    : 'bg-rose-500/20 text-rose-300'
+                }`}>
+                  {formatSprsScore(sprsResult)}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -830,7 +843,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
           )}
 
           {/* TAB 4: SPRS / eMASS SUBMISSION ENGINE */}
-          {activeTab === 'sprs' && (
+          {activeTab === 'sprs' && sprsApplies && sprsResult && (
             <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
               <SspGateBanner sprs={sprsResult} />
 
@@ -1015,7 +1028,39 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             </div>
           )}
 
+          {/* TAB 4 (other frameworks): eMASS export only, SPRS scoring is CMMC Level 2 only */}
+          {activeTab === 'sprs' && !sprsApplies && (
+            <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
+              <section aria-labelledby={emassHeadingId} className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl space-y-5">
+                <div className="border-b border-slate-800 pb-5">
+                  <span className="badge px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 uppercase tracking-wider">{frameworkDef.shortName}</span>
+                  <h3 id={emassHeadingId} className="text-xl font-black text-white tracking-tight mt-2">eMASS Control Export</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">A spreadsheet of the {frameworkControls.length} controls of this program, for import into eMASS or a similar tracker.</p>
+                </div>
+                <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed">
+                  <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  <p>SPRS scoring applies only to CMMC Level 2 (NIST SP 800-171), so there is no SPRS score for {frameworkDef.name}.</p>
+                </div>
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">What the CSV contains</h4>
+                  <ul className="list-disc pl-5 text-xs text-slate-400 space-y-1 leading-relaxed">
+                    {emassCsvNotes(activeFramework).map((t) => <li key={t}>{t}</li>)}
+                  </ul>
+                </div>
+                <div className="pt-4 border-t border-slate-800 flex justify-end">
+                  <button type="button" onClick={() => downloadEmassCsv(frameworkControls, state.controls, formData)}
+                    className="w-full sm:w-auto px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm">
+                    <FileSpreadsheet className="w-4 h-4" aria-hidden="true" />
+                    <span>Download eMASS (CSV)</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
+
         </div>
+
+        <ErrorNotice message={jsonExportError} className="mx-5 mb-3 shrink-0" />
 
         {/* Modal Bottom Action Footer */}
         <div className="px-5 py-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
@@ -1041,8 +1086,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
             {/* Export JSON Audit Package */}
             <button
+              type="button"
               onClick={handleExportJson}
               disabled={isExportingJson}
+              aria-busy={isExportingJson || undefined}
               className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-60"
               title="Export machine-readable JSON package with SHA-256 integrity checksum"
             >

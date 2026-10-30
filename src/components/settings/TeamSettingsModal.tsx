@@ -24,6 +24,7 @@ import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyToClipboard } from '../../utils/clipboard';
+import { enclaveSaveErrorMessage } from '../../utils/enclaveEdit';
 interface TeamSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -69,12 +70,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const [busy, setBusy] = useState(false);
   // Destructive actions are confirmed inline (no blocking confirm() dialogs)
   const [pendingAction, setPendingAction] = useState<{ type: 'revoke' | 'remove'; id: string; label: string } | null>(null);
+  const [scopeError, setScopeError] = useState<string | null>(null);
 
   // A server-backed tenant's team lives on the server: load it whenever this screen is opened
   React.useEffect(() => {
     if (isOpen) {
       setNotice(null);
       setActionError(null);
+      setScopeError(null);
       setPendingAction(null);
       void refreshTeam(currentTenant.id);
     }
@@ -224,13 +227,13 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
   const handleSaveScope = async () => {
     setIsSavingScope(true);
+    setScopeError(null);
     try {
       await updateTenantFrameworkScope(currentTenant.id, enabledFrameworks, primaryFramework);
       setScopeSavedMessage(true);
       setTimeout(() => setScopeSavedMessage(false), 3000);
     } catch (err) {
-      console.error('Failed to update tenant framework scope:', err);
-      alert('Failed to save enclave framework scope.');
+      setScopeError(enclaveSaveErrorMessage(err));
     } finally {
       setIsSavingScope(false);
     }
@@ -681,6 +684,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   </div>
                 </div>
 
+                <ErrorNotice message={scopeError} />
+
                 {/* Save Section / Permissions Notice */}
                 <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
                   {!isOwnerOrAdmin ? (
@@ -691,7 +696,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   ) : (
                     <div className="flex items-center gap-2">
                       {scopeSavedMessage && (
-                        <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium animate-fadeIn">
+                        <div role="status" className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium animate-fadeIn">
                           <Check className="w-3.5 h-3.5" />
                           <span>Enclave framework scope saved!</span>
                         </div>

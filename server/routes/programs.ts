@@ -39,6 +39,7 @@ const STATUS_BY_CODE: Record<ProgramErrorCode, number> = {
   program_name_taken: 409,
   program_limit: 409,
   program_archived: 409,
+  scoping_conflict: 409,
   program_is_default: 409,
   program_not_empty: 409,
   invalid_scoping: 400,
@@ -137,7 +138,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * PUT /api/v1/tenants/:tenantId/programs/:id
- * Body: any of { name, description, systemBoundarySummary, scoping }. frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
+ * Body: any of { name, description, systemBoundarySummary, scoping, expectedScoping }. frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
+ * expectedScoping is the overlays the client last saw: when the stored ones differ the answer is 409 scoping_conflict and nothing is written.
  */
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -160,6 +162,13 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
       return;
     }
     patch.scoping = b.scoping;
+  }
+  if (b.expectedScoping !== undefined) {
+    if (b.expectedScoping === null || typeof b.expectedScoping !== 'object' || Array.isArray(b.expectedScoping)) {
+      res.status(400).json({ error: 'Invalid expectedScoping: expected an object of overlay switches', code: 'invalid_scoping' });
+      return;
+    }
+    patch.expectedScoping = b.expectedScoping;
   }
   const who = req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor';
   try {

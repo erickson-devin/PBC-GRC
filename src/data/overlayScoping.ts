@@ -81,6 +81,8 @@ export interface OverlayChangeSummary {
   key: OverlayKey; turningOn: boolean; before: number; after: number;
   /** Ids leaving (turning on) or returning (turning off), catalog order. */
   changedIds: string[]; sampleIds: string[]; moreCount: number;
+  /** The overlays this summary was computed from: sent back as expectedScoping so a stale save is refused. */
+  seen: OverlayFilters;
 }
 export function summarizeOverlayChange(
   program: Pick<Program, 'framework' | 'baseline'> & { privacyBaseline?: boolean },
@@ -93,7 +95,41 @@ export function summarizeOverlayChange(
   const beforeSet = new Set(beforeIds); const afterSet = new Set(afterIds);
   const changedIds = turningOn ? beforeIds.filter((id) => !afterSet.has(id)) : afterIds.filter((id) => !beforeSet.has(id));
   const sampleIds = changedIds.slice(0, sampleSize);
-  return { key, turningOn, before: beforeIds.length, after: afterIds.length, changedIds, sampleIds, moreCount: changedIds.length - sampleIds.length };
+  return { key, turningOn, before: beforeIds.length, after: afterIds.length, changedIds, sampleIds, moreCount: changedIds.length - sampleIds.length, seen: current };
+}
+
+export interface OverlayRemoval { key: OverlayKey; title: string; short: string; removed: number }
+/** What the overlays that are on take out of the control list, each one alone and all together. Counts only. */
+export function overlayRemovals(
+  controlsFor: (o: OverlayFilters) => ReadonlyArray<{ id: string }>, current: OverlayFilters
+): { overlays: OverlayRemoval[]; before: number; after: number; totalRemoved: number } {
+  const none: OverlayFilters = { nonNetworkedOnly: false, noWireless: false, noMobileDevices: false, noPiiProcessing: false };
+  const before = controlsFor(none).length;
+  const overlays = OVERLAY_KEYS.filter((k) => current[k]).map((k) => ({
+    key: k, title: OVERLAY_TITLES[k], short: OVERLAY_SHORT[k], removed: before - controlsFor({ ...none, [k]: true }).length,
+  }));
+  const after = controlsFor(current).length;
+  return { overlays, before, after, totalRemoved: before - after };
+}
+/** The words of the matrix banner. */
+export function overlayBannerText(
+  r: { overlays: ReadonlyArray<{ removed: number }>; before: number; after: number; totalRemoved: number },
+  lock: ReturnType<typeof menuLockReason>
+): { heading: string; summary: string; overlap: string | null; pointer: string } {
+  const n = r.overlays.length;
+  const ctl = (k: number) => (k === 1 ? 'control' : 'controls');
+  const heading = n === 1 ? '1 operational overlay is active' : `${n} operational overlays are active`;
+  const summary = r.totalRemoved === 0
+    ? `No control of this program depends on ${n === 1 ? 'it' : 'them'}: it keeps ${r.before} ${ctl(r.before)}.`
+    : `${r.totalRemoved} of ${r.before} ${ctl(r.before)} are out of scope: this program assesses ${r.after} ${ctl(r.after)}.`;
+  const overlap = n > 1 && r.overlays.reduce((s, o) => s + o.removed, 0) > r.totalRemoved
+    ? 'Some controls are removed by more than one overlay, so the counts above add up to more than the total.'
+    : null;
+  const pointer = lock === null ? 'Change them from the Overlays menu in the header.'
+    : lock === 'cannot_manage' ? 'They are listed in the Overlays menu in the header. Only a Tenant Owner or MSP Admin can change them.'
+    : lock === 'archived' ? 'This program is archived and read-only, so its overlays cannot be changed. They are listed in the Overlays menu in the header.'
+    : 'They are listed in the Overlays menu in the header.';
+  return { heading, summary, overlap, pointer };
 }
 export function describeOverlayChange(s: Pick<OverlayChangeSummary, 'turningOn' | 'before' | 'after' | 'changedIds'>): string {
   const n = s.changedIds.length;
@@ -103,11 +139,17 @@ export function describeOverlayChange(s: Pick<OverlayChangeSummary, 'turningOn' 
     ? `${n} ${word(n)} ${n === 1 ? 'leaves' : 'leave'} the scope of this program: it goes from ${s.before} to ${s.after} ${word(s.after)}.`
     : `${n} ${word(n)} ${n === 1 ? 'returns' : 'return'} to the scope of this program: it goes from ${s.before} to ${s.after} ${word(s.after)}.`;
 }
-/** Never echoes the server's text (the programs route sends `code`, which ApiError drops today, so match on the status too). */
+/** The program's overlays were changed by someone else while the confirmation was open (409 scoping_conflict). */
+export function isOverlayConflict(err: unknown): boolean {
+  const e = (err ?? {}) as { reason?: unknown; code?: unknown };
+  return e.reason === 'scoping_conflict' || e.code === 'scoping_conflict';
+}
+/** Never echoes the server's text (the programs route sends `code`, which apiErrorFromResponse copies into `reason`; match on the status too). */
 export function overlaySaveErrorMessage(err: unknown): string {
   const e = (err ?? {}) as { status?: unknown; reason?: unknown; code?: unknown };
   const code = typeof e.reason === 'string' ? e.reason : typeof e.code === 'string' ? e.code : '';
   if (code === 'overlay_locked') return 'Overlays cannot be changed for this program right now. Nothing was saved.';
+  if (code === 'scoping_conflict') return "Someone else changed this program's overlays while this was open. Nothing was saved. The program has been reloaded: review its overlays in the Overlays menu, and make the change again if it is still needed.";
   if (code === 'program_archived' || e.status === 409) return 'This program was archived meanwhile, so its overlays can no longer be changed. Nothing was saved.';
   if (code === 'invalid_scoping' || e.status === 400) return 'The server did not accept this overlay for this program. Nothing was saved. Reload the page to see the program as it is saved now.';
   if (e.status === 403) return "Your role cannot change this program's overlays. Nothing was saved.";

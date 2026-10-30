@@ -918,6 +918,21 @@ async function verifyProgramIsolation() {
     const paCascade = await queryWithProgram(scopeA, 'SELECT 1 FROM program_assets WHERE program_id = $1', [programA]);
     check(paCascade.rows.length === 0, "8j. program_assets: deleting an asset (tenant context only) removes its membership rows through the cascade", 'saw ' + paCascade.rows.length);
 
+    // 8k. a stale overlay save (issue #115): two concurrent updates that both expect the same overlays; the row lock lets exactly one win
+    const { createProgram, updateProgram } = await import('../server/programs');
+    const raceProgram = await createProgram(TENANT_X, { name: 'rls_verify_scoping_race', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE' }, null);
+    const raceActor = { actor: 'rls_verify_actor', userId: null };
+    const race = await Promise.allSettled([
+      updateProgram(TENANT_X, raceProgram.id, { scoping: { noWireless: true }, expectedScoping: {} }, raceActor),
+      updateProgram(TENANT_X, raceProgram.id, { scoping: { noMobileDevices: true }, expectedScoping: {} }, raceActor),
+    ]);
+    const raceWon = race.filter((r) => r.status === 'fulfilled').length;
+    const raceLost = race.filter((r) => r.status === 'rejected' && (r as PromiseRejectedResult).reason?.code === 'scoping_conflict').length;
+    check(raceWon === 1 && raceLost === 1, '8k. programs: of two concurrent saves that expect the same overlays exactly one succeeds and the other is a scoping_conflict', race.map((r) => r.status + (r.status === 'rejected' ? ':' + String((r.reason as { code?: unknown })?.code) : '')).join(' '));
+    const raceEvents = await queryWithProgram({ tenantId: TENANT_X, programId: raceProgram.id }, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'scoping_changed'", [raceProgram.id]);
+    check(raceEvents.rows.length === 1, '8k. program_events: exactly one scoping_changed event for the program (the refused save wrote nothing)', 'saw ' + raceEvents.rows.length);
+    await queryWithProgram({ tenantId: TENANT_X, programId: raceProgram.id }, "DELETE FROM program_events WHERE program_id = $1", [raceProgram.id]).catch(() => undefined);
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {

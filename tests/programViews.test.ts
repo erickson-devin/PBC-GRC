@@ -67,7 +67,7 @@ assert(/No program uses this framework/.test(inspect), 'InspectDocumentModal.tsx
 assert(/programId=\{activeProgram\?\.id \?\? null\}/.test(inspect), 'InspectDocumentModal.tsx hands the program to ImportAnalysisPanel');
 const matrix = read('src/components/dashboard/AssessmentMatrix.tsx');
 assert(/activeProgram/.test(matrix) && /programLabel/.test(matrix), 'AssessmentMatrix.tsx shows the active program');
-assert(/activeOverlayFilters\.nonNetworkedOnly/.test(matrix) && /Reset Overlay/.test(matrix), 'AssessmentMatrix.tsx keeps the overlay banner');
+assert(matrix.includes('overlayRemovals(') && matrix.includes('overlayBannerText(') && matrix.includes('aria-labelledby={overlayHeadingId}'), 'AssessmentMatrix.tsx shows the overlay banner (what the active overlays remove, labelled by its heading)');
 
 console.log('--- audit, export, SSP, onboarding ---');
 const audit = read('src/components/audit/AuditTrailViewer.tsx');
@@ -110,13 +110,14 @@ assert(
 );
 assert(programForm.includes('Overlays: {programOverlayLabels(program.scoping)'), 'ProgramFormModal.tsx shows the overlays read-only on an edit');
 assert(/programOverlayLabels\(program\.scoping\)/.test(read('src/components/programs/ProgramsPage.tsx')), 'ProgramsPage.tsx shows an overlays chip on each program card');
-assert(/resetLock === null \?/.test(matrix) && /<ConfirmOverlayChangeDialog/.test(matrix) && !/onClick=\{toggleNonNetworkedOverlay\}/.test(matrix), 'AssessmentMatrix.tsx gates and confirms Reset Overlay');
+assert(!matrix.includes('ConfirmOverlayChangeDialog') && !matrix.includes('Reset Overlay') && !matrix.includes('toggleNonNetworkedOverlay') && !matrix.includes('AC-18'), 'AssessmentMatrix.tsx has no reset button: overlays are changed from the header menu, and the banner names no control');
 assert(switcher.includes('<ConfirmOverlayChangeDialog') && switcher.includes('menuLockReason(') && switcher.includes('aria-disabled={locked || undefined}') && switcher.includes('aria-describedby={describedBy}')
   && !switcher.includes('Saved in this browser;') && !switcher.includes('kept in this browser') && !/\sdisabled=\{/.test(switcher), 'FrameworkSwitcher.tsx confirms a change and uses aria-disabled with described reasons');
 assert(/if \(pendingRef\.current\) return;/.test(switcher) && switcher.indexOf('<ConfirmOverlayChangeDialog') > switcher.indexOf('{isOpen && ('), 'FrameworkSwitcher.tsx survives clicks in the portalled dialog');
 const overlayDialog = read('src/components/programs/ConfirmOverlayChangeDialog.tsx');
 assert(overlayDialog.includes('role="alertdialog"') && overlayDialog.includes('z-[60]') && overlayDialog.includes('max-h-[90vh]') && overlayDialog.includes('autoFocus')
   && overlayDialog.includes('<ErrorNotice') && overlayDialog.includes('overlaySaveErrorMessage(err)') && !overlayDialog.includes('console.'), 'ConfirmOverlayChangeDialog.tsx follows the alertdialog pattern');
+assert(overlayDialog.includes('isOverlayConflict(err)') && overlayDialog.includes('{!conflict && (') && overlayDialog.includes('ref={closeRef}'), 'ConfirmOverlayChangeDialog.tsx turns into an error with Close only when the overlays changed meanwhile');
 
 console.log('--- boundary membership (#26) ---');
 const sh = [{ id: 'a1', hostName: 'H1' }, { id: 'a2', hostName: 'H2' }, { id: 'a3', hostName: 'H3' }];

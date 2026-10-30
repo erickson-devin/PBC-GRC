@@ -292,6 +292,23 @@ async function main() {
   const resolvedSc = await resolveVmTargetProgram('t-sc');
   assert(JSON.stringify(dSc.scoping) === '{}' && dSc.vmTarget === false && resolvedSc.program.id === dSc.id && resolvedSc.explicit === false, 'S11: the default program has no scoping and is not a target; with no target it is the fallback', [dSc, resolvedSc.explicit]);
 
+  console.log('\n--- a stale overlay save is refused (issue #115) ---');
+  await mkTenant('t-cf', 'NIST_800_53_REV5', ['NIST_800_53_REV5']);
+  const cfProg = await createProgram('t-cf', { name: 'CF', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', scoping: { noWireless: true } }, 'u');
+  const cfEvents = async () => (await listProgramEvents({ tenantId: 't-cf', programId: cfProg.id })).length;
+  const sc1 = await updateProgram('t-cf', cfProg.id, { scoping: { noMobileDevices: true }, expectedScoping: { noWireless: true } }, who);
+  assert(JSON.stringify(sc1.scoping) === JSON.stringify({ noMobileDevices: true }) && (await cfEvents()) === 2, 'SC1: an expectedScoping that matches is accepted and records the change', [sc1.scoping, await cfEvents()]);
+  assert((await codeOf(updateProgram('t-cf', cfProg.id, { scoping: { noPiiProcessing: true }, expectedScoping: { noWireless: true } }, who))) === 'scoping_conflict', 'SC2: a stale expectedScoping -> scoping_conflict');
+  assert(JSON.stringify((await getProgram('t-cf', cfProg.id))?.scoping) === JSON.stringify({ noMobileDevices: true }) && (await cfEvents()) === 2, 'SC2: nothing was written (scoping unchanged, no new event)');
+  const sc3 = await updateProgram('t-cf', cfProg.id, { scoping: { noWireless: true }, expectedScoping: { nonNetworkedOnly: false, noWireless: false, noMobileDevices: true, noPiiProcessing: false } }, who);
+  assert(JSON.stringify(sc3.scoping) === JSON.stringify({ noWireless: true }), 'SC3: the four-key form with false values is accepted', sc3.scoping);
+  const sc4 = await updateProgram('t-cf', cfProg.id, { name: 'CF renamed' }, who);
+  assert(sc4.name === 'CF renamed', 'SC4: a patch without expectedScoping skips the check');
+  assert((await codeOf(updateProgram('t-cf', cfProg.id, { scoping: {}, expectedScoping: { bogus: true } }, who))) === 'invalid_scoping', 'SC5: an unknown key in expectedScoping -> invalid_scoping');
+  const cfArchived = await createProgram('t-cf', { name: 'CF archived', frameworkId: 'NIST_800_53_REV5', scoping: { noWireless: true } }, 'u');
+  await archiveProgram('t-cf', cfArchived.id);
+  assert((await codeOf(updateProgram('t-cf', cfArchived.id, { scoping: {}, expectedScoping: { noMobileDevices: true } }, who))) === 'program_archived', 'SC6: an archived program is program_archived, not scoping_conflict');
+
   console.log('\n--- the VM target (issue #21) ---');
   await mkTenant('t-vm', 'CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
   const dVm = await ensureDefaultProgram('t-vm');

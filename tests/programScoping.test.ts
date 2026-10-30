@@ -235,6 +235,18 @@ async function run() {
   const getHandler = routeSource.slice(routeSource.indexOf("router.get('/', async"), routeSource.indexOf("router.put('/:controlId'"));
   assert(getHandler.includes('errorMessage(err)') && !/console\.(error|warn)\([^;]*,\s*err\)/.test(routeSource), 'C12 no controls route logs the whole error object (it can carry a row\'s notes)');
 
+  console.log('\n--- C13-C15: a stale overlay save is refused (issue #115) ---');
+  const cfRes = await newProgram(T, { name: 'NIST Conflict', frameworkId: NIST, baseline: 'MODERATE', scoping: { noWireless: true } });
+  const CF = cfRes.body?.program?.id as string;
+  const cfCount = async () => (((await call('GET', `/tenants/${T}/programs/${CF}/events`, viewer, T)).body?.events ?? []) as Json[]).length;
+  const cfBefore = await cfCount();
+  const c13 = await call('PUT', `/tenants/${T}/programs/${CF}`, owner, T, { scoping: { noMobileDevices: true }, expectedScoping: { noPiiProcessing: true } });
+  assert(cfRes.status === 201 && c13.status === 409 && c13.body?.code === 'scoping_conflict' && (await cfCount()) === cfBefore, 'C13 a stale expectedScoping -> 409 scoping_conflict, and no event is recorded', [c13.status, c13.body?.code, cfBefore]);
+  const c14 = await call('PUT', `/tenants/${T}/programs/${CF}`, owner, T, { scoping: { noMobileDevices: true }, expectedScoping: { noWireless: true } });
+  assert(c14.status === 200 && JSON.stringify(c14.body?.program?.scoping) === JSON.stringify({ noMobileDevices: true }), 'C14 a matching expectedScoping -> 200 and the change is saved', [c14.status, c14.body]);
+  const c15 = await call('PUT', `/tenants/${T}/programs/${CF}`, owner, T, { scoping: {}, expectedScoping: 'x' });
+  assert(c15.status === 400 && c15.body?.code === 'invalid_scoping', 'C15 an expectedScoping that is not an object -> 400 invalid_scoping', [c15.status, c15.body]);
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');
