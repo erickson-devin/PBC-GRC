@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import { LocalAuthConfigError, getMfaRequirement, signLocalToken, signMfaPendingToken, validateNewPassword } from '../auth/localAuth';
+import { LocalAuthConfigError, getMfaRequirement, signMfaPendingToken, validateNewPassword } from '../auth/localAuth';
+import { issueSession, rejectCrossSite } from '../auth/session';
 import { isMfaRequiredFor } from '../auth/mfaPolicy';
 import { LocalUserExistsError, createLocalUser, deleteLocalUser, normalizeEmail } from '../auth/localUsers';
 import { TenantExistsError, createTenantWithOwner } from '../db';
@@ -124,6 +125,7 @@ function parseBody(body: unknown): { value: ParsedSetup } | { error: string } {
  * only their hashes; with no mail server on an air-gapped install, the administrator hands the links out).
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
+  if (rejectCrossSite(req, res)) return;
   if (throttled(req.ip || 'unknown')) {
     res.setHeader('Retry-After', String(WINDOW_MS / 1000));
     res.status(429).json({ error: 'Too many attempts. Try again shortly.' });
@@ -237,14 +239,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         });
         return;
       }
-      const { token, claims } = signLocalToken({ id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion }, { amr: ['pwd'] });
       res.status(201).json({
-        token,
-        tokenType: 'Bearer',
-        expiresAt: new Date(claims.exp * 1000).toISOString(),
-        expiresIn: claims.exp - claims.iat,
-        mustChangePassword: false,
-        mfaEnrolled: false,
+        ...issueSession(req, res, { id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion, mustChangePassword: false }, ['pwd'], false),
         ...summary,
       });
     } catch (err: unknown) {

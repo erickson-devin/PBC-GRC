@@ -8,6 +8,7 @@ import { __resetPlatformSetupForTests, isSetupRequired, removePlatformAdmin } fr
 import { __resetSetupThrottleForTests } from '../server/routes/setup';
 import { __resetLoginThrottleForTests } from '../server/routes/auth';
 import { base32Decode, generateTotp } from '../server/auth/totp';
+import { sessionCookieFrom } from './sessionCookieJar';
 
 /**
  * First-time setup wizard: the one public endpoint that creates an administrator. It must work exactly once and then
@@ -39,6 +40,9 @@ async function call(method: string, path: string, opts: { token?: string; tenant
   } catch {
     /* no body */
   }
+  // Mirrors the browser's cookie jar: a session arrives as a cookie, kept as body.token so the existing `body.token` sites keep working via the bearer path.
+  const cookie = sessionCookieFrom(res.headers);
+  if (body && cookie && body.token === undefined) body.token = cookie;
   return { status: res.status, body };
 }
 

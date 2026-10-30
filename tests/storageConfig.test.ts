@@ -69,7 +69,7 @@ assert(noPath.localStoragePath === '' && getStorageConfig().localStoragePath ===
     }) as unknown as typeof fetch;
     const info = await ApiClient.getStorageInfo('tenant-x', 'tok-1');
     assert(seenUrl.endsWith('/api/v1/evidence/config/storage-info'), 'calls the storage-info endpoint');
-    assert(seenHeaders['Authorization'] === 'Bearer tok-1' && seenHeaders['x-tenant-id'] === 'tenant-x', 'sends the given token and the tenant id');
+    assert(seenHeaders['X-PBC-Session'] === 'tok-1' && seenHeaders['x-tenant-id'] === 'tenant-x', 'sends the given token and the tenant id');
     assert(info?.localStoragePath === '/app/data/evidence', 'returns the server path');
 
     globalThis.fetch = (async () => ({ ok: false, status: 401, json: async () => ({}) })) as unknown as typeof fetch;

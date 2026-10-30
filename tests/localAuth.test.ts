@@ -2,7 +2,7 @@ import './testEnv';
 import './localAuthEnv';
 import crypto from 'crypto';
 import fs from 'fs';
-import { server } from '../server/index';
+import app, { server } from '../server/index';
 import {
   LOCAL_TOKEN_AUDIENCE,
   LOCAL_TOKEN_ISSUER,
@@ -17,6 +17,7 @@ import {
 import { MAX_FAILED_ATTEMPTS, createLocalUser } from '../server/auth/localUsers';
 import { accountLogRef, loginAccountKey } from '../server/auth/loginThrottle';
 import { __resetLoginThrottleForTests } from '../server/routes/auth';
+import { rawSetCookie, sessionCookieFrom } from './sessionCookieJar';
 
 /**
  * Air-gapped local authentication: bcrypt passwords, HS256 JWTs and POST /api/v1/auth/login, verified end to end
@@ -48,12 +49,18 @@ const throws = (fn: () => unknown): string | null => {
   }
 };
 
-async function call(method: string, path: string, opts: { token?: string; tenant?: string; body?: unknown } = {}) {
+async function call(method: string, path: string, opts: { token?: string; tenant?: string; body?: unknown; cookie?: string; headers?: Record<string, string> } = {}) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   if (opts.tenant) headers['x-tenant-id'] = opts.tenant;
+  if (opts.cookie) headers.Cookie = `pbc_session=${opts.cookie}`;
+  Object.assign(headers, opts.headers);
   const res = await fetch(`${BASE}${path}`, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
-  return { status: res.status, headers: res.headers, body: (await res.json().catch(() => null)) as Record<string, any> | null };
+  const body = (await res.json().catch(() => null)) as Record<string, any> | null;
+  // Mirrors the browser's cookie jar: a session arrives as a cookie, kept as body.token so the existing `body.token` sites keep working via the bearer path.
+  const cookie = sessionCookieFrom(res.headers);
+  if (body && cookie && body.token === undefined) body.token = cookie;
+  return { status: res.status, headers: res.headers, body };
 }
 const login = (email: string, password: string) => call('POST', '/auth/login', { body: { email, password } });
 
@@ -139,7 +146,7 @@ async function run() {
   const ok = await login('ANN@enclave.mil', PASSWORD);
   assert(ok.status === 200 && typeof ok.body?.token === 'string', 'valid credentials return a token (email is case-insensitive)', ok.status);
   assert(ok.body?.user?.email === 'ann@enclave.mil' && ok.body?.user?.name === 'Ann Analyst' && !('passwordHash' in (ok.body?.user ?? {})), 'user profile returned, no hash');
-  assert(ok.body?.tokenType === 'Bearer' && ok.body?.expiresIn === 8 * 3600, 'token metadata present');
+  assert(ok.body?.tokenType === undefined && ok.body?.expiresIn === 8 * 3600, 'session metadata present, and no tokenType (the token is a cookie)');
   assert(verifyLocalToken(ok.body?.token).sub === ok.body?.user?.id, 'token subject is the user id');
 
   const wrong = await login('ann@enclave.mil', 'wrong password entirely');
@@ -289,6 +296,74 @@ async function run() {
   assert((await register(hireToken, PASSWORD)).status === 409, 'with AUTH_MODE unset the endpoint still exists: a used token -> 409, never 404');
   process.env.AUTH_MODE = noAuthMode;
   assert((await call('GET', '/auth/config')).body?.mode === 'local', '/auth/config reports { mode: "local" }');
+
+  console.log('\n--- Session cookie (#43) ---');
+  __resetLoginThrottleForTests();
+  await createLocalUser({ email: 'cookie43@enclave.mil', name: 'Cookie Holder', password: PASSWORD });
+  const rawLogin = (headers: Record<string, string> = {}) =>
+    fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ email: 'cookie43@enclave.mil', password: PASSWORD }) });
+  const r43 = await rawLogin();
+  const text43 = await r43.text();
+  const json43 = JSON.parse(text43) as Record<string, any>;
+  const line43 = rawSetCookie(r43.headers) ?? '';
+  const cookie43 = sessionCookieFrom(r43.headers) ?? '';
+  assert(
+    r43.status === 200 && /^pbc_session=[^;]+/.test(line43) && /;\s*HttpOnly/i.test(line43) && /;\s*SameSite=Strict/i.test(line43) &&
+      /;\s*Path=\/api(;|$)/.test(line43) && /;\s*Max-Age=28800/.test(line43) && !/;\s*Secure/i.test(line43),
+    'S43-1: login sets pbc_session: HttpOnly, SameSite=Strict, Path=/api, Max-Age=28800 and no Secure over plain HTTP',
+    line43.replace(cookie43, '<value>')
+  );
+  assert(!('token' in json43) && !('tokenType' in json43) && /^[A-Za-z0-9_-]{22}$/.test(json43.sessionRef ?? '') && !text43.includes(cookie43), 'S43-1: the body has no token or tokenType, carries a 22 character sessionRef, and never contains the cookie value');
+  const claims43 = verifyLocalToken(cookie43);
+  assert(claims43.sub === json43.user?.id && claims43.sid === json43.sessionRef, 'S43-2: the cookie is a valid session token whose subject and sid match the body');
+  const marker = { 'X-PBC-Session': 'r' };
+  assert((await call('GET', '/auth/me', { cookie: cookie43, headers: marker })).status === 200, 'S43-3: the cookie plus the marker header authenticates GET /auth/me');
+  const noMarkerMe = await call('GET', '/auth/me', { cookie: cookie43 });
+  const noMarkerPost = await call('POST', '/tenants', { cookie: cookie43, body: { name: 'x' } });
+  assert(
+    noMarkerMe.status === 403 && noMarkerMe.body?.reason === 'csrf_rejected' && noMarkerPost.status === 403 && noMarkerPost.body?.reason === 'csrf_rejected',
+    'S43-4: a cookie without the marker is refused 403 csrf_rejected (GET and POST)',
+    [noMarkerMe.status, noMarkerPost.status]
+  );
+  const fetchSites: number[] = [];
+  for (const site of ['cross-site', 'same-site', 'same-origin', 'none']) fetchSites.push((await call('GET', '/auth/me', { cookie: cookie43, headers: { ...marker, 'Sec-Fetch-Site': site } })).status);
+  assert(JSON.stringify(fetchSites) === JSON.stringify([403, 403, 200, 200]), 'S43-5: Sec-Fetch-Site cross-site and same-site are refused, same-origin and none pass', fetchSites);
+  const noneAtAll = await call('GET', '/auth/me');
+  const garbage = await call('GET', '/auth/me', { cookie: 'garbage', headers: marker });
+  assert(noneAtAll.status === 401 && noneAtAll.body?.reason === 'session_missing' && garbage.status === 401 && garbage.body?.reason === 'session_invalid', 'S43-6: no cookie and no Authorization -> 401 session_missing; a garbage cookie -> 401 session_invalid', [noneAtAll.body, garbage.body]);
+  assert((await call('GET', '/auth/me', { token: cookie43 })).status === 200, 'S43-7: the same value as an Authorization Bearer token works with no marker (the integration path)');
+  const basic43 = await call('GET', '/auth/me', { cookie: cookie43, headers: { ...marker, Authorization: 'Basic x' } });
+  assert(basic43.status === 401 && basic43.body?.reason === 'session_missing', 'S43-8: an Authorization header wins over the cookie (Basic + a valid cookie -> 401 session_missing)', basic43.body);
+  const out43 = await call('POST', '/auth/logout', { cookie: cookie43 });
+  const outLine = rawSetCookie(out43.headers) ?? '';
+  assert(out43.status === 204 && /^pbc_session=;/.test(outLine) && /Expires=Thu, 01 Jan 1970/.test(outLine) && /Path=\/api/.test(outLine), 'S43-9: POST /auth/logout -> 204 and expires the cookie on its path', outLine);
+  assert((await call('POST', '/auth/logout')).status === 204, 'S43-9: logout needs no session (204 without a cookie)');
+  const outCross = await call('POST', '/auth/logout', { cookie: cookie43, headers: { 'Sec-Fetch-Site': 'cross-site' } });
+  assert(outCross.status === 403 && outCross.body?.reason === 'csrf_rejected', 'S43-9: a cross-site logout -> 403 csrf_rejected', outCross.body);
+  const crossLogin = await rawLogin({ 'Sec-Fetch-Site': 'cross-site' });
+  const crossBody = (await crossLogin.json().catch(() => null)) as Record<string, any> | null;
+  assert(crossLogin.status === 403 && crossBody?.reason === 'csrf_rejected' && rawSetCookie(crossLogin.headers) === undefined, 'S43-10: a cross-site login -> 403 csrf_rejected and no cookie is set');
+  assert((await rawLogin({ 'Sec-Fetch-Site': 'same-origin' })).status === 200, 'S43-10: a same-origin login -> 200');
+  app.set('trust proxy', 'loopback');
+  try {
+    const proxied = await rawLogin({ 'X-Forwarded-Proto': 'https' });
+    assert(proxied.status === 200 && /;\s*Secure/i.test(rawSetCookie(proxied.headers) ?? ''), 'S43-11: behind a trusted proxy that says https, the cookie is Secure');
+  } finally {
+    app.set('trust proxy', false);
+  }
+  const NEW43 = 'a different long passphrase 43';
+  const pwOld = sessionCookieFrom((await rawLogin()).headers) ?? '';
+  const pw43 = await fetch(`${BASE}/auth/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: `pbc_session=${pwOld}`, ...marker },
+    body: JSON.stringify({ currentPassword: PASSWORD, newPassword: NEW43 }),
+  });
+  const pwNew = sessionCookieFrom(pw43.headers) ?? '';
+  const oldAfter = await call('GET', '/auth/me', { cookie: pwOld, headers: marker });
+  assert(pw43.status === 200 && pwNew !== '' && pwNew !== pwOld, 'S43-12: changing the password sets a new session cookie');
+  assert(oldAfter.status === 401 && oldAfter.body?.reason === 'session_revoked' && (await call('GET', '/auth/me', { cookie: pwNew, headers: marker })).status === 200, 'S43-12: the old cookie is revoked and the new one works', oldAfter.body);
+  assert((await call('POST', '/vm/ingest', { cookie: pwNew, headers: marker, body: {} })).status === 401, 'S43-13: the VM ingest route does not accept a session cookie');
+  assert(!fs.readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n').includes('cors('), 'S43-14: server/index.ts mounts no CORS middleware');
 
   console.log('\n--- Production hardening (NODE_ENV=production) ---');
   const originalEnv = process.env.NODE_ENV;

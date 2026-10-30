@@ -17,6 +17,7 @@ import { __resetMemoryTenantsForTests, createTenantWithOwner, upsertTenantMember
 import { __resetMemoryInvitationsForTests, createInvitation } from '../server/invitations';
 import { __resetPlatformSetupForTests, addPlatformAdmin } from '../server/platformSetup';
 import { __resetLoginThrottleForTests, __resetMfaStateForTests, __setMfaClockForTests } from '../server/routes/auth';
+import { sessionCookieFrom } from './sessionCookieJar';
 
 /**
  * Second factor (TOTP) for local accounts, end to end through the real server: enrolment, the two-step login, replay and
@@ -48,11 +49,13 @@ function assert(condition: boolean, name: string, detail?: unknown) {
 const bodies: Array<{ path: string; text: string }> = [];
 const allSecrets = new Set<string>();
 
-async function call(method: string, path: string, opts: { token?: string; tenant?: string; body?: unknown; keepThrottle?: boolean } = {}) {
+async function call(method: string, path: string, opts: { token?: string; tenant?: string; body?: unknown; keepThrottle?: boolean; cookie?: string; headers?: Record<string, string> } = {}) {
   if (!opts.keepThrottle) __resetLoginThrottleForTests(); // the per-IP throttle is its own test (M9); the others must not trip it
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   if (opts.tenant) headers['x-tenant-id'] = opts.tenant;
+  if (opts.cookie) headers.Cookie = `pbc_session=${opts.cookie}`;
+  Object.assign(headers, opts.headers);
   const res = await fetch(`${BASE}${path}`, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
   const text = await res.text();
   let body: Record<string, any> | null = null;
@@ -61,6 +64,10 @@ async function call(method: string, path: string, opts: { token?: string; tenant
   } catch {
     /* no body */
   }
+  // Mirrors the browser's cookie jar: a session now arrives as a cookie, so the cookie value is kept as body.token and the existing
+  // `body.token` call sites keep working (they send it back through the bearer path).
+  const cookie = sessionCookieFrom(res.headers);
+  if (body && cookie && body.token === undefined) body.token = cookie;
   if (path === '/auth/mfa/enrol/start') {
     if (typeof body?.secret === 'string') allSecrets.add(body.secret);
   } else {
@@ -148,9 +155,13 @@ async function signIn(a: Acct, factor?: { code?: string; recoveryCode?: string }
 async function admin() {
   const adm = await mk('admin@mfa.mil');
   await addPlatformAdmin({ userId: adm.id, email: adm.email });
-  const token: string = (await login(adm.email)).body?.token;
+  await enrol(adm); // account management is a step-up (#38): the administrator holds a second factor
+  const token = (await signIn(adm)).token as string;
   return { adm, token };
 }
+
+/** An administrator's account action: the body carries a fresh authenticator code (the step-up, #38). */
+const adminAct = (a: Acct, tok: string, path: string, body: Record<string, unknown> = {}) => call('POST', path, { token: tok, body: { ...body, code: fresh(a) } });
 
 const outcome = (r: { status: number; body: Record<string, any> | null }) => r.body?.mfa ?? (r.body?.token ? 'session' : `status ${r.status}`);
 
@@ -373,6 +384,7 @@ async function run() {
     'server/routes/platformUsers.ts',
     'server/routes/setup.ts',
     'server/middleware/authMiddleware.ts',
+    'server/auth/session.ts',
     'scripts/resetLocalUserMfa.ts',
     'scripts/createLocalUser.ts',
   ];
@@ -429,7 +441,7 @@ async function run() {
   const a12 = await mk('reset12@mfa.mil');
   const s12 = await enrol(a12);
   const sOtp12 = (await signIn(a12)).token as string;
-  const reset12 = await call('POST', `/platform/users/${a12.id}/reset-password`, { token: admTok, body: { newPassword: TEMPPW } });
+  const reset12 = await adminAct(adm, admTok, `/platform/users/${a12.id}/reset-password`, { newPassword: TEMPPW });
   assert(reset12.status === 200 && reset12.body?.mustChangePassword === true && /change/i.test(reset12.body?.message ?? ''), 'the admin reset -> 200 and says the person must change the temporary credential', reset12.body);
   const list12 = await call('GET', '/platform/users', { token: admTok });
   const row12 = list12.body?.users?.find((u: any) => u.id === a12.id);
@@ -440,7 +452,7 @@ async function run() {
   assert(after12.status === 200 && typeof after12.body?.token === 'string' && after12.body?.mfaEnrolled === false && after12.body?.mustChangePassword === true, 'mode off: the temporary credential gives a session flagged mustChangePassword, with no factor', after12.body);
   const b12 = await mk('reset12b@mfa.mil');
   await enrol(b12);
-  await call('POST', `/platform/users/${b12.id}/reset-password`, { token: admTok, body: { newPassword: TEMPPW } });
+  await adminAct(adm, admTok, `/platform/users/${b12.id}/reset-password`, { newPassword: TEMPPW });
   setMode('all');
   assert((await login(b12.email, TEMPPW)).body?.mfa === 'enrol', 'mode all: the same login now asks to enrol again');
   setMode('off');
@@ -449,12 +461,12 @@ async function run() {
   const a13 = await mk('disable13@mfa.mil');
   await enrol(a13);
   const s13 = (await signIn(a13)).token as string;
-  const dis13 = await call('POST', `/platform/users/${a13.id}/disable`, { token: admTok });
+  const dis13 = await adminAct(adm, admTok, `/platform/users/${a13.id}/disable`);
   assert(dis13.status === 200 && dis13.body?.user?.disabled === true, 'disable -> 200');
   const me13 = await call('GET', '/auth/me', { token: s13 });
   assert(me13.status === 401, 'their session is 401 at once');
   assert(me13.body?.reason === 'session_revoked', 'A33-8: and the reason is session_revoked', me13.body);
-  const en13 = await call('POST', `/platform/users/${a13.id}/enable`, { token: admTok });
+  const en13 = await adminAct(adm, admTok, `/platform/users/${a13.id}/enable`);
   assert(en13.status === 200 && en13.body?.user?.disabled === false && en13.body?.user?.mfaEnrolled === false, 'enable -> 200, and the factor is gone', en13.body);
   const l13 = await login(a13.email);
   assert(l13.status === 200 && typeof l13.body?.token === 'string' && l13.body?.mfa === undefined && l13.body?.mfaEnrolled === false, 'mode off: login gives a session with no MFA step');
@@ -464,7 +476,7 @@ async function run() {
   const a17 = await mk('disable17@mfa.mil');
   await enrol(a17);
   const pending17 = (await login(a17.email)).body?.mfaToken as string;
-  await call('POST', `/platform/users/${a17.id}/disable`, { token: admTok });
+  await adminAct(adm, admTok, `/platform/users/${a17.id}/disable`);
   const dead17 = await login(a17.email);
   const wrong17 = await login(a13.email, 'definitely the wrong one');
   assert(dead17.status === 401 && dead17.text === wrong17.text, 'step one for a disabled account is byte-identical to a wrong-password answer', [dead17.text, wrong17.text]);
@@ -475,14 +487,14 @@ async function run() {
   const a18 = await mk('revoke18@mfa.mil');
   const s18 = (await login(a18.email)).body?.token as string;
   assert((await call('GET', '/tenants', { token: s18 })).status === 200, 'a session works');
-  await call('POST', `/platform/users/${a18.id}/reset-password`, { token: admTok, body: { newPassword: TEMPPW } });
+  await adminAct(adm, admTok, `/platform/users/${a18.id}/reset-password`, { newPassword: TEMPPW });
   assert((await call('GET', '/auth/me', { token: s18 })).status === 401 && (await call('GET', '/tenants', { token: s18 })).status === 401, 'after an admin reset: /auth/me and /tenants -> 401');
   assert((await call('GET', '/auth/me', { token: s18 })).body?.reason === 'session_revoked', 'A33-9: after an admin reset the reason is session_revoked');
   const b18 = await mk('revoke18b@mfa.mil');
   const sb18 = (await login(b18.email)).body?.token as string;
-  await call('POST', `/platform/users/${b18.id}/disable`, { token: admTok });
+  await adminAct(adm, admTok, `/platform/users/${b18.id}/disable`);
   assert((await call('GET', '/auth/me', { token: sb18 })).status === 401, 'after a disable -> 401');
-  await call('POST', `/platform/users/${b18.id}/enable`, { token: admTok });
+  await adminAct(adm, admTok, `/platform/users/${b18.id}/enable`);
   assert((await call('GET', '/auth/me', { token: sb18 })).status === 401, 'and still 401 after enabling');
   const c18 = await mk('revoke18c@mfa.mil');
   const sc18a = (await login(c18.email)).body?.token as string;
@@ -519,7 +531,7 @@ async function run() {
   const listed = (await call('GET', '/platform/users', { token: admTok })).body?.users ?? [];
   const leakKey = /hash|secret|totp|recovery/i;
   assert(listed.length > 0 && listed.every((u: any) => !Object.keys(u).some((k) => leakKey.test(k))), 'no listed user carries a hash, secret, totp or recovery field');
-  const resetBody = (await call('POST', `/platform/users/${t19Target.id}/reset-password`, { token: admTok, body: { newPassword: TEMPPW } })).body;
+  const resetBody = (await adminAct(adm, admTok, `/platform/users/${t19Target.id}/reset-password`, { newPassword: TEMPPW })).body;
   assert(!Object.keys(resetBody?.user ?? {}).some((k) => leakKey.test(k)) && !JSON.stringify(resetBody).includes(TEMPPW), 'nor does an action response, and it does not echo the credential');
 
   // ------------------------------------------------------------------------------------------------------------ M26
@@ -554,12 +566,129 @@ async function run() {
   const a27 = await mk('resetmfa27@mfa.mil');
   await enrol(a27);
   const s27 = (await signIn(a27)).token as string;
-  const r27 = await call('POST', `/platform/users/${a27.id}/reset-mfa`, { token: admTok });
+  const r27 = await adminAct(adm, admTok, `/platform/users/${a27.id}/reset-mfa`);
   assert(r27.status === 200 && r27.body?.user?.mfaEnrolled === false, 'reset-mfa -> 200, mfaEnrolled false', r27.body);
   assert((await call('GET', '/auth/me', { token: s27 })).status === 401, 'the prior session is 401');
   const l27 = await login(a27.email);
   assert(l27.status === 200 && typeof l27.body?.token === 'string' && l27.body?.mfa === undefined, 'mode off: login gives a session with no MFA step');
   assert((await call('POST', `/platform/users/${a27.id}/reset-mfa`, { token: t19 })).status === 403, 'a non-admin -> 403');
+
+  // ------------------------------------------------------------------------------------------------------------ M29
+  console.log('\n--- M29: administrator step-up (#38) ---');
+  await reset();
+  const { adm: adm29, token: admTok29 } = await admin();
+  const T29 = await mk('step29@mfa.mil');
+  const act29 = (action: string, body: Record<string, unknown> = {}, who: { id?: string; tok?: string } = {}) =>
+    call('POST', `/platform/users/${who.id ?? T29.id}/${action}`, { token: who.tok ?? admTok29, body });
+  const disabled29 = async () => (await findLocalUserByEmail(T29.email))?.disabled;
+  const swallow: string[] = [];
+  const original29 = { log: console.log, info: console.info, warn: console.warn, error: console.error };
+  const capture29 = (on: boolean) => {
+    for (const key of ['log', 'info', 'warn', 'error'] as const) console[key] = on ? (...args: unknown[]) => void swallow.push(util.format(...args)) : original29[key];
+  };
+  const sent29: string[] = [];
+
+  const s1_38 = await act29('disable');
+  assert(s1_38.status === 400 && s1_38.body?.reason === 'code_required' && (await disabled29()) === false, 'S38-1: disabling an account without a code -> 400 code_required, and the target is untouched', s1_38.body);
+  const bad29 = badCode(adm29);
+  sent29.push(bad29);
+  capture29(true);
+  let s2_38;
+  try {
+    s2_38 = await act29('disable', { code: bad29 });
+  } finally {
+    capture29(false);
+  }
+  assert(s2_38.status === 403 && s2_38.body?.reason === 'invalid_code' && (await disabled29()) === false, 'S38-2: a wrong code -> 403 invalid_code, and the target stays enabled', s2_38.body);
+  const c3_38 = fresh(adm29);
+  const s3a_38 = await act29('disable', { code: c3_38 });
+  const s3b_38 = await act29('enable', { code: c3_38 });
+  assert(s3a_38.status === 200 && s3b_38.status === 403 && s3b_38.body?.reason === 'invalid_code' && (await disabled29()) === true, 'S38-3: a code works once: the same code on the next action -> 403 invalid_code, and the target stays disabled', [s3a_38.status, s3b_38.status]);
+
+  const k4_38 = adm29.k;
+  capture29(true);
+  let s4_38: Array<{ status: number }>;
+  try {
+    s4_38 = [
+      await adminAct(adm29, admTok29, `/platform/users/${T29.id}/enable`),
+      await adminAct(adm29, admTok29, `/platform/users/${T29.id}/reset-password`, { newPassword: TEMPPW }),
+      await adminAct(adm29, admTok29, `/platform/users/${T29.id}/reset-mfa`),
+      await adminAct(adm29, admTok29, `/platform/users/${T29.id}/disable`),
+    ];
+  } finally {
+    capture29(false);
+  }
+  for (let k = k4_38 + 1; k <= adm29.k; k++) sent29.push(codeAt(adm29, T + k * STEP));
+  assert(s4_38.every((r) => r.status === 200), 'S38-4: with a fresh code each, enable, reset-password, reset-mfa and disable all succeed (200)', s4_38.map((r) => r.status));
+
+  const c5_38 = fresh(adm29);
+  const s5a_38 = await act29('reset-password', { newPassword: 'short', code: c5_38 });
+  const s5b_38 = await act29('reset-password', { newPassword: TEMPPW, code: c5_38 });
+  assert(s5a_38.status === 400 && s5a_38.body?.reason === 'weak_password' && s5b_38.status === 200, 'S38-5: a rejected new value does not spend the code (400 weak_password, then the same code -> 200)', [s5a_38.status, s5b_38.status]);
+  const c6_38 = fresh(adm29);
+  const s6a_38 = await act29('reset-password', { newPassword: TEMPPW, code: c6_38 }, { id: adm29.id });
+  const s6b_38 = await act29('enable', { code: c6_38 });
+  assert(s6a_38.status === 409 && s6a_38.body?.reason === 'self' && s6b_38.status === 200, 'S38-6: acting on yourself is 409 self before the step-up, so the code is not spent', [s6a_38.status, s6b_38.status]);
+
+  const adm2 = await mk('admin29b@mfa.mil');
+  await addPlatformAdmin({ userId: adm2.id, email: adm2.email });
+  const tok2 = (await login(adm2.email)).body?.token as string;
+  const s7_38: number[] = [];
+  const r7_38: unknown[] = [];
+  for (const mode of ['off', 'all', 'privileged']) {
+    setMode(mode);
+    const r = await act29('disable', { code: '123456' }, { tok: tok2 });
+    s7_38.push(r.status);
+    r7_38.push(r.body?.reason);
+  }
+  setMode('off');
+  assert(s7_38.every((s) => s === 409) && r7_38.every((r) => r === 'mfa_not_enrolled') && (await disabled29()) === false, 'S38-7: an administrator with no second factor of their own -> 409 mfa_not_enrolled in every MFA_REQUIRED mode, target untouched', [s7_38, r7_38]);
+
+  const s8a_38 = await act29('disable', { recoveryCode: adm29.recovery[0] });
+  const s8b_38 = await act29('disable', { code: adm29.recovery[0] });
+  const s8c_38 = await signIn(adm29, { recoveryCode: adm29.recovery[0] });
+  assert(
+    s8a_38.status === 400 && s8a_38.body?.reason === 'code_required' && s8b_38.status === 403 && s8b_38.body?.reason === 'invalid_code' && s8c_38.step2?.status === 200,
+    'S38-8: a recovery code is never a step-up (no code -> 400; as the code -> 403) and is not consumed by it (it still signs in)',
+    [s8a_38.status, s8b_38.status, s8c_38.step2?.status]
+  );
+
+  const swallowed = swallow.join('\n');
+  const stepLines = swallow.filter((l) => l.includes('Step-up'));
+  assert(
+    sent29.every((c) => !swallowed.includes(c)) && stepLines.length > 0 && stepLines.every((l) => !l.includes(adm29.email)) && swallowed.includes('Step-up refused'),
+    'S38-9: the server logged the refusal ("Step-up refused"), with no code that was sent and no address on that line',
+    stepLines
+  );
+
+  const u29 = await mk('plain29@mfa.mil');
+  await enrol(u29);
+  const uTok = (await signIn(u29)).token as string;
+  assert((await act29('disable', { code: fresh(u29) }, { tok: uTok })).status === 403, 'S38-10: a non-administrator with a valid code of their own -> 403');
+
+  const adm3 = await mk('admin29c@mfa.mil');
+  await addPlatformAdmin({ userId: adm3.id, email: adm3.email });
+  await enrol(adm3);
+  const tok3 = (await signIn(adm3)).token as string;
+  const s11_38: Array<{ status: number; body: Record<string, any> | null }> = [];
+  for (let i = 0; i < 5; i++) s11_38.push(await act29('disable', { code: badCode(adm3) }, { tok: tok3 }));
+  const s11last_38 = await act29('disable', { code: fresh(adm3) }, { tok: tok3 });
+  assert(s11_38.every((r) => r.status === 403 && r.body?.reason === 'invalid_code') && s11last_38.status === 429, 'S38-11: five wrong codes lock the administrator: each -> 403 invalid_code, then even a right code -> 429', [s11_38.map((r) => r.status), s11last_38.status]);
+
+  const puSrc = fs.readFileSync('server/routes/platformUsers.ts', 'utf8').replace(/\r\n/g, '\n');
+  const blocks = puSrc.split('router.post(').slice(1);
+  const ordered = (block: string, mutation: string, validation?: string): boolean => {
+    const resolve = block.indexOf('resolveTarget(');
+    const step = block.indexOf('requireAdminStepUp(');
+    const mutate = block.indexOf(mutation);
+    return resolve >= 0 && step > resolve && mutate > step && (validation === undefined || (block.indexOf(validation) > resolve && block.indexOf(validation) < step));
+  };
+  assert(
+    blocks.length === 4 &&
+      ordered(blocks[0], 'setLocalUserPassword(', 'validateNewPassword(') && ordered(blocks[1], 'clearLocalUserMfa(') &&
+      ordered(blocks[2], 'setLocalUserDisabled(') && ordered(blocks[3], 'setLocalUserDisabled('),
+    'S38-12: static: every platform-user mutation resolves the target (and validates the new value) before the step-up, and the step-up comes before the mutation'
+  );
 
   // ------------------------------------------------------------------------------------------------------------ M14
   console.log('\n--- M14: enforcement modes ---');
@@ -758,7 +887,6 @@ async function run() {
   console.log('\n--- M25: a forced password change leaves exactly one request open ---');
   await reset();
   const { adm: adm25, token: admTok25 } = await admin();
-  void adm25;
   const f25 = await mk('forced25@mfa.mil', { mustChangePassword: true });
   const lf = await login(f25.email);
   assert(lf.status === 200 && typeof lf.body?.token === 'string' && lf.body?.mustChangePassword === true, 'a CLI-style account logs in with mustChangePassword: true', lf.body);
@@ -776,13 +904,13 @@ async function run() {
 
   const g25 = await mk('hand25@mfa.mil');
   await enrol(g25);
-  await call('POST', `/platform/users/${g25.id}/reset-password`, { token: admTok25, body: { newPassword: TEMPPW } });
+  await adminAct(adm25, admTok25, `/platform/users/${g25.id}/reset-password`, { newPassword: TEMPPW });
   const lg = await login(g25.email, TEMPPW);
   assert(lg.status === 200 && lg.body?.mustChangePassword === true && lg.body?.mfaEnrolled === false, 'after an admin reset (mode off): a session with mustChangePassword true and no factor', lg.body);
 
   const h25 = await mk('hand25b@mfa.mil');
   await enrol(h25);
-  await call('POST', `/platform/users/${h25.id}/reset-password`, { token: admTok25, body: { newPassword: TEMPPW } });
+  await adminAct(adm25, admTok25, `/platform/users/${h25.id}/reset-password`, { newPassword: TEMPPW });
   setMode('all');
   const lh = await login(h25.email, TEMPPW);
   assert(lh.body?.mfa === 'enrol', 'mode all: the temporary credential leads to enrolment');

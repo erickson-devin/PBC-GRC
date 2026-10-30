@@ -6,6 +6,7 @@ import type { TenantRole } from '../../src/types/tenant';
 import type { Program } from '../programs';
 import { LocalAuthConfigError, LocalTokenError, verifyLocalToken } from '../auth/localAuth';
 import { getLocalUserAuthState } from '../auth/localUsers';
+import { CSRF_REJECTED, hasSessionMarker, isCrossSiteRequest, readSessionCookie } from '../auth/session';
 
 // Extend Express Request interface with authenticated user & tenant context
 declare global {
@@ -212,20 +213,35 @@ async function authenticateToken(token: string): Promise<Authenticated> {
 
 async function handle(req: Request, res: Response, next: NextFunction, requireTenant: boolean): Promise<void> {
   const authHeader = req.headers.authorization;
+  let token: string | null | undefined;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({
-      error: 'Unauthorized: Missing or invalid Authorization Bearer header',
-      reason: 'session_missing',
-    });
-    return;
-  }
+  if (authHeader !== undefined) {
+    // An Authorization header means a script or integration: the cookie is not consulted at all.
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        error: 'Unauthorized: Missing or invalid Authorization Bearer header',
+        reason: 'session_missing',
+      });
+      return;
+    }
 
-  const token = authHeader.split('Bearer ')[1]?.trim();
+    token = authHeader.split('Bearer ')[1]?.trim();
 
-  if (!token) {
-    res.status(401).json({ error: 'Unauthorized: Empty bearer token', reason: 'session_missing' });
-    return;
+    if (!token) {
+      res.status(401).json({ error: 'Unauthorized: Empty bearer token', reason: 'session_missing' });
+      return;
+    }
+  } else {
+    token = readSessionCookie(req);
+    if (!token) {
+      res.status(401).json({ error: 'Unauthorized: no session', reason: 'session_missing' });
+      return;
+    }
+    // A browser attaches the cookie to any request it is made to send: the marker header and Sec-Fetch-Site prove this one came from the SPA.
+    if (!hasSessionMarker(req) || isCrossSiteRequest(req)) {
+      res.status(403).json(CSRF_REJECTED);
+      return;
+    }
   }
 
   let authenticated: Authenticated;
@@ -283,7 +299,8 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
 }
 
 /**
- * Validates incoming Authorization Bearer tokens (locally signed JWTs) and
+ * Validates the session (a locally signed JWT) from the Authorization Bearer header, or, when there is no Authorization header,
+ * from the HttpOnly session cookie (which also needs the X-PBC-Session marker and a same-origin Sec-Fetch-Site), and
  * attaches the verified req.user, plus req.tenantId / req.tenantRole after checking tenant membership.
  */
 export function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {

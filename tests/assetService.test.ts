@@ -12,6 +12,8 @@ const store = new Map<string, string>();
 };
 (globalThis as any).window = { localStorage: (globalThis as any).localStorage };
 
+import { installSessionCookieBridge } from './sessionCookieBridge';
+installSessionCookieBridge();
 import { server } from '../server/index';
 import { compileNistSSP } from '../src/data/reports/documentCompilers';
 import { getFrameworkControls } from '../src/data/frameworks';
@@ -40,7 +42,7 @@ function assert(condition: boolean, name: string, detail?: unknown) {
 const BASE = 'http://127.0.0.1:8080/api/v1';
 const jwt = (claims: Record<string, unknown>) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64')}.mock_pbc_signature`;
 const person = (sub: string) => jwt({ sub, email: `${sub}@test.mil`, name: sub, roles: { tenant_unrelated: 'VIEWER' } });
-const signIn = (token: string) => localStorage.setItem('pbc_session_id_token_v2', token);
+const signIn = (token: string) => localStorage.setItem('pbc_session_ref_v3', token);
 const rejection = async (p: Promise<unknown>) => p.then(() => null, (e: { status?: number; message: string }) => ({ status: e.status, message: e.message }));
 
 function pureTests() {
@@ -180,7 +182,7 @@ async function backendTests() {
   assert((await rejection(be.classify(db.id, 'OUT_OF_SCOPE')))?.status === 403, 'a VIEWER cannot reclassify');
   await be.recordScan('DB-1', '10.0.0.5', 100).catch(() => undefined);
   assert((await be.list()).find((a) => a.id === db.id)?.complianceScore === 87, 'and a read-only scan result is not stored');
-  localStorage.removeItem('pbc_session_id_token_v2');
+  localStorage.removeItem('pbc_session_ref_v3');
   assert((await rejection(be.list()))?.status === 401, 'without a session the backend says "sign in" (401)');
   unsubscribe();
 

@@ -11,6 +11,8 @@ const store = new Map<string, string>();
 };
 (globalThis as any).window = { localStorage: (globalThis as any).localStorage };
 
+import { installSessionCookieBridge } from './sessionCookieBridge';
+installSessionCookieBridge();
 import { server } from '../server/index';
 import { isPlatformAdmin, platformAdminEmails } from '../server/auth/platformAdmin';
 import { frameworksDefiningControl } from '../server/middleware/frameworkGuard';

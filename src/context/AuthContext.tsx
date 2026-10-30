@@ -71,7 +71,8 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_USER_KEY = 'pbc_session_auth_user_v2';
-const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
+// The session reference (a marker, not a credential): the session itself is an HttpOnly cookie the page cannot read.
+const AUTH_SESSION_REF_KEY = 'pbc_session_ref_v3';
 // Two booleans about the signed-in account (must change the password / has a second factor). No secret, code or token is ever stored here.
 const AUTH_FLAGS_KEY = 'pbc_session_flags_v2';
 
@@ -108,7 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [idToken, setIdToken] = useState<string | null>(() => {
-    return localStorage.getItem(AUTH_TOKEN_KEY) || null;
+    return localStorage.getItem(AUTH_SESSION_REF_KEY) || null;
   });
   // The session-ended listener compares against the latest token without re-subscribing on every change
   const idTokenRef = useRef(idToken);
@@ -119,13 +120,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Authenticated state check
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const saved = localStorage.getItem(AUTH_USER_KEY);
-    return Boolean(saved);
+    return Boolean(localStorage.getItem(AUTH_USER_KEY) && localStorage.getItem(AUTH_SESSION_REF_KEY));
   });
 
   // A reload with a stored session verifies it with the server before the app shows (see data/sessionVerification.ts)
   const [sessionCheck, setSessionCheck] = useState<SessionCheck>(() => initialSessionCheck(
-    Boolean(localStorage.getItem(AUTH_TOKEN_KEY)),
+    Boolean(localStorage.getItem(AUTH_SESSION_REF_KEY)),
     Boolean(localStorage.getItem(AUTH_USER_KEY)),
   ));
 
@@ -149,13 +149,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isAuthenticated && currentUser) {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
       if (idToken) {
-        localStorage.setItem(AUTH_TOKEN_KEY, idToken);
+        localStorage.setItem(AUTH_SESSION_REF_KEY, idToken);
       }
       const flags = JSON.stringify({ mustChangePassword, enrolled: mfaEnrolled });
       localStorage.setItem(AUTH_FLAGS_KEY, flags);
     } else {
       localStorage.removeItem(AUTH_USER_KEY);
-      localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(AUTH_SESSION_REF_KEY);
       localStorage.removeItem(AUTH_FLAGS_KEY);
     }
   }, [isAuthenticated, currentUser, idToken, mustChangePassword, mfaEnrolled]);
@@ -204,7 +204,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSessionCheck((c) => nextSessionCheck(c, { type: 'signedIn' }));
     // While the forced password change is pending the server answers nothing else: no tenant / programs / data sync yet
     // (changePassword runs it with the new token).
-    await handleUserSession(session.user.email, session.user.name, 'password', session.token, session.user.id, session.mustChangePassword);
+    await handleUserSession(session.user.email, session.user.name, 'password', session.sessionRef, session.user.id, session.mustChangePassword);
     setMustChangePassword(session.mustChangePassword);
     setMfaEnrolled(session.mfaEnrolled);
     heldSession.current = null;
@@ -294,15 +294,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     holdSessionSignal(previous);
     try {
       const session = await ApiClient.changePassword(currentPassword, newPassword, code, idToken ?? undefined);
-      setIdToken(session.token);
-      setCurrentUser(prev => ({ ...prev, idToken: session.token }));
+      setIdToken(session.sessionRef);
+      setCurrentUser(prev => ({ ...prev, idToken: session.sessionRef }));
       setMustChangePassword(false);
       setMfaEnrolled(session.mfaEnrolled);
       // The tenant / programs / data loads read the stored token: store the new one first rather than wait for the effect
-      try { localStorage.setItem(AUTH_TOKEN_KEY, session.token); } catch {}
+      try { localStorage.setItem(AUTH_SESSION_REF_KEY, session.sessionRef); } catch {}
       releaseSessionSignal(previous);
       // The roles cached so far are provisional: load the real ones now that the server accepts requests again
-      syncAuthUser({ ...tenantUser, idToken: session.token }, currentTenant.id);
+      syncAuthUser({ ...tenantUser, idToken: session.sessionRef }, currentTenant.id);
     } catch (err) {
       // A 401 here is a genuinely dead session (a wrong current password is a 403): report it now that the hold is lifted
       if (err instanceof ApiError && err.status === 401) {
@@ -358,6 +358,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Sign Out
    */
   const logout = useCallback(async () => {
+    void ApiClient.signOut();
     resetForSignOut();
     setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
     setIsAuthenticated(false);
@@ -368,7 +369,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMfaChallenge(null);
     setRecoveryCodesRemaining(null);
     localStorage.removeItem(AUTH_USER_KEY);
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_SESSION_REF_KEY);
     localStorage.removeItem(AUTH_FLAGS_KEY);
     setLoading(false);
     // Back to the login screen (the router resolves an empty hash)

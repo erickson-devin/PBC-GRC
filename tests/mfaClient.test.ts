@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { ApiClient, ApiError, mfaErrorMessage, parseLocalLoginResult } from '../src/services/apiClient';
+import { scrubLegacySessionToken } from '../src/services/legacySessionScrub';
 import { buildUserProfile } from '../src/utils/userProfile';
 import { groupSecret } from '../src/components/auth/MfaEnrolmentPanel';
 
@@ -29,11 +30,11 @@ function throwsApiError(fn: () => unknown, status: number): boolean {
   }
 }
 
-const session = { token: 't', tokenType: 'Bearer', expiresAt: '2030-01-01T00:00:00.000Z', expiresIn: 28800, user: { id: 'lu_1', email: 'ann@enclave.mil', name: 'Ann' } };
+const session = { sessionRef: 'r', expiresAt: '2030-01-01T00:00:00.000Z', expiresIn: 28800, user: { id: 'lu_1', email: 'ann@enclave.mil', name: 'Ann' } };
 
 console.log('--- parseLocalLoginResult ---');
 const s1 = parseLocalLoginResult(session);
-assert(s1.kind === 'session' && s1.kind === 'session' && s1.token === 't' && s1.user.email === 'ann@enclave.mil', 'a session body parses to kind session');
+assert(s1.kind === 'session' && s1.kind === 'session' && s1.sessionRef === 'r' && s1.user.email === 'ann@enclave.mil', 'a session body parses to kind session');
 assert(s1.kind === 'session' && s1.mustChangePassword === false && s1.mfaEnrolled === false, 'the flags default to false when the server sent none');
 const s2 = parseLocalLoginResult({ ...session, mustChangePassword: true, mfaEnrolled: true });
 assert(s2.kind === 'session' && s2.mustChangePassword === true && s2.mfaEnrolled === true, 'mustChangePassword and mfaEnrolled are carried through on the session kind');
@@ -47,7 +48,9 @@ assert(throwsApiError(() => parseLocalLoginResult({}), 502), 'an empty body is a
 assert(throwsApiError(() => parseLocalLoginResult(null), 502) && throwsApiError(() => parseLocalLoginResult('x'), 502), 'null and a string are 502 ApiErrors');
 assert(throwsApiError(() => parseLocalLoginResult({ mfa: 'bogus', mfaToken: 'm' }), 502), 'an unknown mfa stage is a 502 ApiError');
 assert(throwsApiError(() => parseLocalLoginResult({ mfa: 'verify', expiresAt: 'x' }), 502), 'a pending step without a token is a 502 ApiError');
-assert(throwsApiError(() => parseLocalLoginResult({ ...session, token: '' }), 502) && throwsApiError(() => parseLocalLoginResult({ ...session, user: null }), 502), 'a session without a token or user is a 502 ApiError');
+assert(throwsApiError(() => parseLocalLoginResult({ ...session, sessionRef: '' }), 502) && throwsApiError(() => parseLocalLoginResult({ ...session, user: null }), 502), 'a session without a reference or user is a 502 ApiError');
+// C43-1: the old token-style body (no sessionRef) is not a session
+assert(throwsApiError(() => parseLocalLoginResult({ token: 't', user: { email: 'a' }, expiresAt: 'x' }), 502), 'a body with a token but no sessionRef is a 502 ApiError');
 
 console.log('\n--- mfaErrorMessage ---');
 assert(!/session has expired|expired/i.test(mfaErrorMessage(401, { reason: 'invalid_code' })) && /code/i.test(mfaErrorMessage(401, { reason: 'invalid_code' })), 'invalid_code does not say the session expired');
@@ -101,9 +104,9 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
     stub(200, { ...session, mfaEnrolled: true, recoveryCodesRemaining: 3 });
     const verified = await ApiClient.verifyMfa('tok', { recoveryCode: 'ABCDE-FGHJK' });
     const verifyBody = JSON.parse(String(calls[0].init.body));
-    assert(verified.token === 't' && verified.recoveryCodesRemaining === 3 && !('kind' in verified), 'verifyMfa returns the session (without the union tag)');
+    assert(verified.sessionRef === 'r' && verified.recoveryCodesRemaining === 3 && !('kind' in verified), 'verifyMfa returns the session (without the union tag)');
     assert(verifyBody.mfaToken === 'tok' && verifyBody.recoveryCode === 'ABCDE-FGHJK' && !('code' in verifyBody), 'a recovery code is sent as recoveryCode');
-    assert(headerOf(calls[0], 'Authorization') === undefined, 'verifyMfa sends no Authorization header (the pending token travels in the body)');
+    assert(headerOf(calls[0], 'X-PBC-Session') === undefined, 'verifyMfa sends no session marker header (the pending token travels in the body)');
 
     stub(401, { error: 'x', reason: 'invalid_code' });
     err = undefined;
@@ -117,11 +120,11 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
 
     stub(200, { secret: 'GEZDGNBVGY3TQOJQ', otpauthUri: 'otpauth://totp/x', issuer: 'PBC-GRC', accountName: 'ann@enclave.mil', algorithm: 'SHA1', digits: 6, period: 30 });
     const start = await ApiClient.startMfaEnrolment('tok');
-    assert(start.secret === 'GEZDGNBVGY3TQOJQ' && start.digits === 6 && JSON.parse(String(calls[0].init.body)).mfaToken === 'tok' && headerOf(calls[0], 'Authorization') === undefined, 'startMfaEnrolment(token) posts the pending token and no session header');
+    assert(start.secret === 'GEZDGNBVGY3TQOJQ' && start.digits === 6 && JSON.parse(String(calls[0].init.body)).mfaToken === 'tok' && headerOf(calls[0], 'X-PBC-Session') === undefined, 'startMfaEnrolment(token) posts the pending token and no session header');
 
     stub(200, { recoveryCodes: ['AAAAA-BBBBB', 'CCCCC-DDDDD'], enrolledAt: '2030-01-01T00:00:00.000Z', ...session, mfaEnrolled: true });
     const confirmed = await ApiClient.confirmMfaEnrolment('123456', 'tok');
-    assert(confirmed.recoveryCodes.length === 2 && confirmed.session?.token === 't', 'confirmMfaEnrolment on the pending path returns the codes and the session');
+    assert(confirmed.recoveryCodes.length === 2 && confirmed.session?.sessionRef === 'r', 'confirmMfaEnrolment on the pending path returns the codes and the session');
 
     stub(200, { recoveryCodes: ['AAAAA-BBBBB'], enrolledAt: '2030-01-01T00:00:00.000Z' });
     const confirmed2 = await ApiClient.confirmMfaEnrolment('123456');
@@ -135,7 +138,7 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
     stub(200, { ...session, mustChangePassword: false, mfaEnrolled: true });
     const changed = await ApiClient.changePassword('old-old-old-1', 'new-new-new-1', '123456', 'sess');
     const changeBody = JSON.parse(String(calls[0].init.body));
-    assert(changed.token === 't' && changeBody.currentPassword === 'old-old-old-1' && changeBody.newPassword === 'new-new-new-1' && changeBody.code === '123456' && headerOf(calls[0], 'Authorization') === 'Bearer sess', 'changePassword sends the credentials and code with the session and returns the new session');
+    assert(changed.sessionRef === 'r' && changeBody.currentPassword === 'old-old-old-1' && changeBody.newPassword === 'new-new-new-1' && changeBody.code === '123456' && headerOf(calls[0], 'X-PBC-Session') === 'sess', 'changePassword sends the credentials and code with the session and returns the new session');
 
     stub(403, { error: 'You must change your password before continuing', reason: 'password_change_required' });
     err = undefined;
@@ -144,7 +147,9 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
 
     stub(200, { enrolled: true, enrolledAt: '2030-01-01T00:00:00.000Z', recoveryCodesRemaining: 5, required: true, mode: 'all' });
     const status = await ApiClient.getMfaStatus();
-    assert(status.enrolled && status.recoveryCodesRemaining === 5 && status.mode === 'all' && headerOf(calls[0], 'Authorization') === 'Bearer sess', 'getMfaStatus maps the status and sends the session');
+    assert(status.enrolled && status.recoveryCodesRemaining === 5 && status.mode === 'all' && headerOf(calls[0], 'X-PBC-Session') === 'sess', 'getMfaStatus maps the status and sends the session');
+    // C43-2: cookie requests are same-origin and carry no Authorization header
+    assert(calls[0].init.credentials === 'same-origin' && headerOf(calls[0], 'Authorization') === undefined, 'getMfaStatus sends credentials same-origin and no Authorization header');
 
     stub(403, { error: 'x', reason: 'invalid_current_password' });
     err = undefined;
@@ -153,25 +158,44 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
 
     stub(200, { users: [{ id: 'lu_2', email: 'bob@enclave.mil', name: 'Bob', disabled: false, mfaEnrolled: true, mustChangePassword: true, lockedUntil: null, lastLoginAt: null, createdAt: '2030-01-01T00:00:00.000Z' }] });
     const users = await ApiClient.listLocalUsers();
-    assert(users.length === 1 && users[0].mfaEnrolled && users[0].mustChangePassword && headerOf(calls[0], 'Authorization') === 'Bearer sess', 'listLocalUsers maps the accounts and sends the session');
+    assert(users.length === 1 && users[0].mfaEnrolled && users[0].mustChangePassword && headerOf(calls[0], 'X-PBC-Session') === 'sess', 'listLocalUsers maps the accounts and sends the session');
 
     stub(200, { user: users[0], mustChangePassword: true, message: 'ok' });
-    const reset = await ApiClient.adminResetPassword('lu_2', 'a-temporary-pass-1');
+    const reset = await ApiClient.adminResetPassword('lu_2', 'a-temporary-pass-1', '123456');
     assert(calls[0].url.endsWith('/platform/users/lu_2/reset-password') && JSON.parse(String(calls[0].init.body)).newPassword === 'a-temporary-pass-1' && reset.user.id === 'lu_2', 'adminResetPassword posts to the reset-password route');
+    // C38-1: the administrator's own authenticator code travels in the body
+    const resetBody = JSON.parse(String(calls[0].init.body));
+    assert(JSON.stringify(resetBody) === JSON.stringify({ newPassword: 'a-temporary-pass-1', code: '123456' }), 'adminResetPassword sends the new password and the step-up code', resetBody);
     stub(200, { user: users[0] });
-    await ApiClient.adminResetMfa('lu_2');
-    await ApiClient.disableUser('lu_2');
-    await ApiClient.enableUser('lu_2');
+    await ApiClient.adminResetMfa('lu_2', '123456');
+    await ApiClient.disableUser('lu_2', '123456');
+    await ApiClient.enableUser('lu_2', '123456');
     assert(calls.map((c) => c.url.split('/platform/users/')[1]).join(',') === 'lu_2/reset-mfa,lu_2/disable,lu_2/enable', 'reset-mfa, disable and enable post to their routes');
+    // C38-2
+    assert(calls.length === 3 && calls.every((c) => String(c.init.body) === JSON.stringify({ code: '123456' })), 'reset-mfa, disable and enable send exactly { code }', calls.map((c) => c.init.body));
 
     stub(409, { error: 'x', reason: 'self' });
     err = undefined;
-    try { await ApiClient.disableUser('lu_1'); } catch (e) { err = e; }
+    try { await ApiClient.disableUser('lu_1', '123456'); } catch (e) { err = e; }
     assert(err instanceof ApiError && err.status === 409 && err.reason === 'self', 'acting on your own account is a 409 with reason self');
 
     stub(200, { recoveryCodes: ['AAAAA-BBBBB'], recoveryCodesRemaining: 1 });
     const regen = await ApiClient.regenerateRecoveryCodes('123456');
     assert(calls[0].url.endsWith('/auth/mfa/recovery-codes') && regen.recoveryCodes.length === 1 && regen.recoveryCodesRemaining === 1, 'regenerateRecoveryCodes posts the code and returns the new set');
+
+    // C43-3: signOut never throws, whatever the server (or the network) does
+    stub(401, { error: 'x' });
+    let signOutOk = true;
+    try { await ApiClient.signOut(); } catch { signOutOk = false; }
+    assert(signOutOk && calls[0].url.endsWith('/auth/logout') && calls[0].init.method === 'POST', 'signOut posts to /auth/logout and resolves on a 401');
+    calls.length = 0;
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      throw new Error('network down');
+    }) as typeof fetch;
+    signOutOk = true;
+    try { await ApiClient.signOut(); } catch { signOutOk = false; }
+    assert(signOutOk && calls.length === 1 && calls[0].url.endsWith('/auth/logout') && calls[0].init.method === 'POST', 'signOut resolves when the network call throws');
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -201,7 +225,7 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   assert(consoleHits.length === 0, 'no console call in those files mentions a secret, code, recovery code, token or password', consoleHits);
   const authCtx = fs.readFileSync(path.join(root, 'src/context/AuthContext.tsx'), 'utf8');
   const storedKeys = Array.from(authCtx.matchAll(/const (AUTH_[A-Z_]+_KEY) = '([^']+)'/g)).map((m) => m[2]);
-  assert(storedKeys.length === 3 && storedKeys.every((k) => /^pbc_session_(auth_user|id_token|flags)_v2$/.test(k)), 'AuthContext stores exactly three keys: the user, the token and two account flags', storedKeys);
+  assert(storedKeys.length === 3 && storedKeys.every((k) => /^pbc_session_(auth_user_v2|flags_v2|ref_v3)$/.test(k)), 'AuthContext stores exactly three keys: the user, the session reference and two account flags', storedKeys);
   assert(/const \[mfaChallenge, setMfaChallenge\] = useState/.test(authCtx) && !/localStorage\.setItem\([^)]*[Cc]hallenge/.test(authCtx), 'the pending second step is React state only');
   const authLf = authCtx.replace(/\r?\n/g, '\n');
   const fnBody = (head: string, tail: string) => {
@@ -219,8 +243,50 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   const signalSrc = fs.readFileSync(path.join(root, 'src/services/sessionSignal.ts'), 'utf8');
   assert(signalSrc.includes("'Your session has ended. Please sign in again.'") && authLf.includes('sessionEndedMessage('), 'the sign-out message after a rejected session is plain, and chosen by the reason');
   const changeRegion = fnBody('const changePassword = useCallback', 'const registerWithInvite');
-  const setItemAt = changeRegion.indexOf('localStorage.setItem(AUTH_TOKEN_KEY');
+  const setItemAt = changeRegion.indexOf('localStorage.setItem(AUTH_SESSION_REF_KEY');
   assert(/holdSessionSignal\(/.test(changeRegion) && setItemAt >= 0 && changeRegion.indexOf('releaseSessionSignal(', setItemAt) > setItemAt, 'changePassword holds the old token\'s signal and releases it after the new token is stored');
+
+  // C43-4: the client holds no bearer credential and no longer knows the old token key
+  const clientSrc = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8');
+  assert(!clientSrc.includes('Bearer ') && !authCtx.includes('Bearer '), 'apiClient.ts and AuthContext.tsx contain no "Bearer " text');
+  assert(!clientSrc.includes('pbc_session_id_token_v2') && !authCtx.includes('pbc_session_id_token_v2'), 'neither file mentions the old token storage key');
+  assert(!authCtx.includes('sessionStorage'), 'AuthContext.tsx does not touch sessionStorage');
+
+  console.log('\n--- scrubLegacySessionToken ---');
+  const jwtLike = 'h.p.s';
+  const store = new Map<string, string>([
+    ['pbc_session_id_token_v2', jwtLike],
+    ['pbc_session_auth_user_v2', JSON.stringify({ email: 'a@b', idToken: jwtLike })],
+    ['pbc_active_user_v4', JSON.stringify({ name: 'A', idToken: jwtLike })],
+  ]);
+  const mapStorage = {
+    getItem: (k: string) => (store.has(k) ? (store.get(k) as string) : null),
+    setItem: (k: string, v: string) => { store.set(k, v); },
+    removeItem: (k: string) => { store.delete(k); },
+  };
+  assert(scrubLegacySessionToken(mapStorage) === 3, 'the first run changes three things');
+  const scrubbedUser = JSON.parse(store.get('pbc_session_auth_user_v2') as string);
+  const scrubbedActive = JSON.parse(store.get('pbc_active_user_v4') as string);
+  assert(!store.has('pbc_session_id_token_v2') && scrubbedUser.email === 'a@b' && !('idToken' in scrubbedUser) && scrubbedActive.name === 'A' && !('idToken' in scrubbedActive), 'the token key is gone and both user records keep their fields without idToken');
+  assert(scrubLegacySessionToken(mapStorage) === 0, 'a second run changes nothing');
+  store.set('pbc_active_user_v4', JSON.stringify({ name: 'A', idToken: 'abcDEF_-123' }));
+  store.set('pbc_session_auth_user_v2', '{bad');
+  assert(scrubLegacySessionToken(mapStorage) === 0 && JSON.parse(store.get('pbc_active_user_v4') as string).idToken === 'abcDEF_-123' && store.get('pbc_session_auth_user_v2') === '{bad', 'a session reference that is not JWT-shaped is kept and invalid JSON is left alone');
+
+  console.log('\n--- C38: administrator step-up ---');
+  // C38-3
+  assert(/two-step verification/.test(mfaErrorMessage(409, { reason: 'mfa_not_enrolled' })) && !/mfa_/.test(mfaErrorMessage(409, { reason: 'mfa_not_enrolled' })), 'mfa_not_enrolled gets a plain message');
+  // C38-4
+  const dashLf = fs.readFileSync(path.join(root, 'src/components/admin/SuperAdminDashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert(dashLf.includes('id="admin-step-up-code"') && dashLf.includes('autoComplete="one-time-code"') && dashLf.includes('inputMode="numeric"'), 'the account-action dialog has a one-time-code input');
+  const runStart = dashLf.indexOf('const runAccountAction = async');
+  const runBody = dashLf.slice(runStart, dashLf.indexOf('// Destruction state', runStart));
+  const closeBody = dashLf.slice(dashLf.indexOf('const closeAccountAction'), runStart);
+  const apiCalls = runBody.match(/ApiClient\.\w+\([^)]*\)/g) ?? [];
+  assert(runStart > 0 && apiCalls.length === 4 && apiCalls.every((c) => c.includes('stepUpCode')), 'all four account actions pass stepUpCode', apiCalls);
+  const finallyBody = runBody.slice(runBody.indexOf('finally {'));
+  assert(closeBody.includes("setStepUpCode('')") && finallyBody.includes("setStepUpCode('')"), 'the code is cleared on close and in finally');
+  assert(!/console\./.test(runBody) && !/localStorage/.test(runBody), 'runAccountAction neither logs nor stores anything');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
