@@ -12,7 +12,7 @@
  *   4. tenant DISCOVERY: in user context a user sees only the tenants they belong to (and only their own
  *      membership rows), and that context can never write.
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
- *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest.
+ *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest. 3d: the SELECT-only app.event_retention policy on programs (the retention sweep's enumeration) sees nothing without its GUC and can never write.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps.
  *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*"); section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
@@ -428,6 +428,30 @@ async function main() {
     check(badSource.ok, "control_assessment_events: a source outside human, ssp-commit, vm-snapshot, clone is refused (source_check)", badSource.detail);
     const badSha = await rejectsIn(scopeX, insertEvent, [TENANT_X, 'human', 'xyz', programX], { code: '23514', constraint: 'control_assessment_events_sha_check' });
     check(badSha.ok, "control_assessment_events: a notes digest that is not 64 lowercase hex characters is refused (sha_check)", badSha.detail);
+
+    console.log('\n--- 3d. Retention sweep policy (programs, app.event_retention) ---');
+    // the daily history sweep lists every program under this SELECT-only GUC, then deletes under each program's own tenant and program settings
+    const underRetention = async <T>(fn: (c: Awaited<ReturnType<typeof pool.connect>>) => Promise<T>): Promise<T> => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.event_retention', 'on', true)");
+        return await fn(client);
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    const programsNoGuc = await pool.query("SELECT 1 FROM programs WHERE name LIKE 'rls_verify_%'");
+    check(programsNoGuc.rowCount === 0, "programs: no tenant context and no app.event_retention => zero rows visible", `saw ${programsNoGuc.rowCount}`);
+    const programsSeen = await underRetention(async (c) => (await c.query("SELECT tenant_id FROM programs WHERE name LIKE 'rls_verify_%'")).rows.map((r) => String(r.tenant_id)));
+    check(programsSeen.includes(TENANT_X) && programsSeen.includes(TENANT_Y), "programs: app.event_retention = 'on' lists the programs of both tenants", JSON.stringify(programsSeen));
+    const programsUpdated = await underRetention(async (c) => (await c.query('UPDATE programs SET name = name')).rowCount ?? 0);
+    check(programsUpdated === 0, 'programs: the retention GUC is SELECT-only (an UPDATE under it alone changes nothing)', `updated ${programsUpdated}`);
+    const programsDeleted = await underRetention(async (c) => (await c.query("DELETE FROM programs WHERE name LIKE 'rls_verify_%'")).rowCount ?? 0);
+    check(programsDeleted === 0, 'programs: the retention GUC is SELECT-only (a DELETE under it alone removes nothing)', `deleted ${programsDeleted}`);
+    const eventsUnderGuc = await underRetention(async (c) => (await c.query('SELECT 1 FROM control_assessment_events')).rows.length);
+    check(eventsUnderGuc === 0, 'control_assessment_events: the retention GUC alone exposes no events (the deletes need the tenant and program settings)', `saw ${eventsUnderGuc}`);
   } finally {
     for (const scope of [scopeX, scopeY]) {
       if (scope) await queryWithProgram(scope, "DELETE FROM control_assessment_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);

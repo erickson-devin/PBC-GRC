@@ -1,7 +1,14 @@
 import { Router, Request, Response } from 'express';
 import type pg from 'pg';
 import { getTenantFrameworkPolicy, queryWithProgram, type ProgramScope } from '../db';
-import { CONTROL_STATUSES, listControlAssessmentEvents, writeControlAssessment } from '../controlAssessments';
+import {
+  CONTROL_STATUSES,
+  checkExpectedUpdatedAt,
+  listControlAssessmentEvents,
+  parseExpectedUpdatedAt,
+  StaleWriteError,
+  writeControlAssessment,
+} from '../controlAssessments';
 import { ensureControlInFrameworkPolicy, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
@@ -44,6 +51,8 @@ function mapRowToControl(row: pg.QueryResultRow) {
     tags: Array.isArray(row.tags) ? row.tags : [],
     updatedBy: row.updated_by || '',
     lastUpdated: row.updated_at || new Date().toISOString(),
+    /** The stored version stamp (null: no stored row); a write may send it back as expectedUpdatedAt. */
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
   };
 }
 
@@ -252,6 +261,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
               tags: [],
               updatedBy: 'System Initializer',
               lastUpdated: new Date().toISOString(),
+              updatedAt: null,
             });
           }
         } catch {
@@ -264,6 +274,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
             tags: [],
             updatedBy: 'System Initializer',
             lastUpdated: new Date().toISOString(),
+            updatedAt: null,
           });
         }
       }
@@ -279,6 +290,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
           tags: [],
           updatedBy: 'System Initializer',
           lastUpdated: new Date().toISOString(),
+          updatedAt: null,
         });
       }
     }
@@ -335,6 +347,12 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
     return;
   }
 
+  const exp = parseExpectedUpdatedAt(req.body?.expectedUpdatedAt);
+  if (!exp.ok) {
+    res.status(400).json({ error: 'expectedUpdatedAt must be a timestamp or null' });
+    return;
+  }
+
   const effectiveUser = updatedBy || req.user?.name || req.user?.email || 'Compliance Assessor';
 
   if (!(await ensureControlInFrameworkPolicy(req, res, String(controlId)))) return;
@@ -343,12 +361,16 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
     const written = await writeControlAssessment(
       scopeOf(req),
       String(controlId),
-      () => ({
-        status: status || null,
-        notes: implementationNotes ?? null,
-        role: responsibleRole || null,
-        updatedBy: effectiveUser,
-      }),
+      (current) => {
+        // checked on the row read FOR UPDATE, so no other write can land between the check and the upsert
+        if (exp.value !== undefined) checkExpectedUpdatedAt(current, exp.value);
+        return {
+          status: status || null,
+          notes: implementationNotes ?? null,
+          role: responsibleRole || null,
+          updatedBy: effectiveUser,
+        };
+      },
       { source: 'human', actor: req.user?.name || req.user?.email || 'Compliance Assessor', userId: req.user?.uid ?? null }
     );
 
@@ -363,6 +385,10 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
       control: updated,
     });
   } catch (err: unknown) {
+    if (err instanceof StaleWriteError) {
+      res.status(409).json({ error: 'This control was saved by someone else after you loaded it.', code: 'stale_write', current: err.current });
+      return;
+    }
     console.error(`[Controls API] Error updating control ${controlId} for tenant ${tenantId}:`, errorMessage(err));
     res.status(500).json({
       error: `Failed to update control ${controlId}`,

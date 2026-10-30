@@ -1,7 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { CONTROL_CHANGE_SOURCES, type ControlAssessmentEvent, type ControlChangeSource } from '../src/types/controlHistory';
-import { getDbMode, pool, queryWithProgram, type ProgramScope } from './db';
+import { getDbMode, nextStamp, pool, queryWithProgram, type ProgramScope } from './db';
+
+// nextStamp lives in db.ts (the memory emulator there needs it and db.ts cannot import this file without a cycle); re-exported for callers of this module.
+export { nextStamp };
 
 /**
  * Read and write access to a program's control_assessments rows (a program is a tenant's authorization boundary; see server/programs.ts), shared by the control PUT, the SSP commit and the vulnerability-management
@@ -17,6 +20,36 @@ export interface ControlAssessment {
   notes: string;
   role: string;
   updatedAt: string | null;
+  /** Who made the last write (the stored updated_by); only set for a row read under a write. */
+  updatedBy?: string | null;
+}
+
+/** The result of reading a request's `expectedUpdatedAt`: absent (undefined), no row expected (null) or a timestamp string. */
+export function parseExpectedUpdatedAt(raw: unknown): { ok: true; value: string | null | undefined } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, value: raw };
+  if (typeof raw === 'string' && raw.length <= 64 && Number.isFinite(Date.parse(raw))) return { ok: true, value: raw };
+  return { ok: false };
+}
+
+/** True when the stored timestamp is the one the client loaded: null expects no stored row, a string must be the same instant. */
+export function matchesExpected(current: string | null, expected: string | null): boolean {
+  return expected === null ? current === null : current !== null && Date.parse(current) === Date.parse(expected);
+}
+
+/** A write was refused because the row changed after the client loaded it. Carries only the stored stamp and writer, never any text. */
+export class StaleWriteError extends Error {
+  readonly code = 'stale_write';
+  constructor(readonly current: { updatedAt: string | null; updatedBy: string | null }) {
+    super('stale write');
+    this.name = 'StaleWriteError';
+  }
+}
+
+/** Throws StaleWriteError unless the stored row is the version the client loaded. */
+export function checkExpectedUpdatedAt(current: ControlAssessment | null, expected: string | null): void {
+  if (!matchesExpected(current?.updatedAt ?? null, expected)) {
+    throw new StaleWriteError({ updatedAt: current?.updatedAt ?? null, updatedBy: current?.updatedBy ?? null });
+  }
 }
 
 /**
@@ -55,7 +88,7 @@ const UPSERT = `
     responsible_role = COALESCE($5::varchar, control_assessments.responsible_role),
     updated_by = $6,
     program_id = COALESCE(control_assessments.program_id, $7::varchar),
-    updated_at = NOW()
+    updated_at = GREATEST(NOW(), control_assessments.updated_at + interval '1 millisecond')
   RETURNING *;
 `;
 
@@ -129,6 +162,7 @@ function toAssessment(row: pg.QueryResultRow): ControlAssessment {
     notes: row.implementation_notes || '',
     role: row.responsible_role || 'IT / Security Lead',
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+    updatedBy: row.updated_by ?? null,
   };
 }
 
@@ -242,5 +276,54 @@ export async function listControlAssessmentEvents(scope: ProgramScope, controlId
     [scope.tenantId, controlId, scope.programId, limit]
   );
   return res.rows.map(toEvent);
+}
+
+/**
+ * Retention sweep, memory mode: drops the events created before `cutoff` (all scopes, or only the tenants in `onlyTenantIds`).
+ * Returns how many events went (or would go, with `dryRun`) and how many scopes held some.
+ */
+export function pruneMemoryControlAssessmentEvents(
+  cutoff: Date,
+  opts: { dryRun?: boolean; onlyTenantIds?: readonly string[] } = {}
+): { deleted: number; scopes: number } {
+  let deleted = 0;
+  let scopes = 0;
+  const limit = cutoff.getTime();
+  for (const [key, list] of [...memoryEvents]) {
+    if (opts.onlyTenantIds && !opts.onlyTenantIds.includes(list[0]?.tenantId ?? key.split('__')[0])) continue;
+    const keep = list.filter((e) => !(Date.parse(e.createdAt) < limit));
+    const gone = list.length - keep.length;
+    if (!gone) continue;
+    deleted += gone;
+    scopes++;
+    if (!opts.dryRun) memoryEvents.set(key, keep);
+  }
+  return { deleted, scopes };
+}
+
+/**
+ * Retention sweep, PostgreSQL: deletes (or with `dryRun` counts) a scope's events created before `cutoff`, `batchSize` rows per transaction.
+ * The row policies confine the statement to the scope, so another tenant's or program's rows are never touched.
+ */
+export async function pruneControlAssessmentEventsInScope(scope: ProgramScope, cutoff: Date, batchSize: number, dryRun: boolean): Promise<number> {
+  if (dryRun) {
+    const res = await queryWithProgram(
+      scope,
+      'SELECT count(*)::int AS n FROM control_assessment_events WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) AND created_at < $3',
+      [scope.tenantId, scope.programId, cutoff.toISOString()]
+    );
+    return Number(res.rows[0]?.n ?? 0);
+  }
+  let total = 0;
+  for (;;) {
+    const res = await queryWithProgram(
+      scope,
+      'DELETE FROM control_assessment_events WHERE ctid IN (SELECT ctid FROM control_assessment_events WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) AND created_at < $3 LIMIT $4)',
+      [scope.tenantId, scope.programId, cutoff.toISOString(), batchSize]
+    );
+    const n = res.rowCount ?? 0;
+    total += n;
+    if (n < batchSize) return total;
+  }
 }
 

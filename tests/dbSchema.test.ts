@@ -92,6 +92,11 @@ assert(
   TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_assessment_events_control ON control_assessment_events (tenant_id, control_id, created_at DESC);'),
   'the history is indexed by (tenant, control, newest first)'
 );
+assert(
+  TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_assessment_events_created ON control_assessment_events (tenant_id, created_at);') &&
+    TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_objective_events_created ON control_objective_events (tenant_id, created_at);'),
+  'S53-16 both history tables are indexed by (tenant, created_at) for the retention sweep'
+);
 
 console.log('\n--- Tenant discovery policies ("list my tenants") ---');
 const byName = (name: string) => DISCOVERY_POLICIES.find((p) => p.name === name);
@@ -105,7 +110,14 @@ assert(selfPolicy?.using === `user_id = ${userCtx}`, 'tenant_users: a user sees 
 const tokenCtx = "NULLIF(current_setting('app.invite_token_hash', true), '')";
 const vmTokenCtx = "NULLIF(current_setting('app.vm_token_hash', true), '')";
 const vmSchedulerCtx = "NULLIF(current_setting('app.vm_scheduler', true), '')";
-assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx) || p.using.includes(tokenCtx) || p.using.includes(vmTokenCtx) || p.using.includes(vmSchedulerCtx)), "an unset or empty user / invite / vm-token / vm-scheduler context matches nothing (NULLIF, so '' never equals an id or hash)");
+const retentionCtx = "NULLIF(current_setting('app.event_retention', true), '')";
+assert(DISCOVERY_POLICIES.every((p) => p.using.includes(userCtx) || p.using.includes(tokenCtx) || p.using.includes(vmTokenCtx) || p.using.includes(vmSchedulerCtx) || p.using.includes(retentionCtx)), "an unset or empty user / invite / vm-token / vm-scheduler / event-retention context matches nothing (NULLIF, so '' never equals an id or hash)");
+const retentionPolicy = byName('rls_programs_retention_sweep');
+assert(
+  retentionPolicy?.table === 'programs' && retentionPolicy.using === `${retentionCtx} = 'on'`,
+  "S53-17 programs is listable only under app.event_retention = 'on' (the retention sweep's enumeration)",
+  retentionPolicy
+);
 
 console.log('\n--- Invitations ---');
 assert(schema.includes('CREATE TABLE IF NOT EXISTS tenant_invitations'), 'tenant_invitations is created by initDb');

@@ -8,6 +8,7 @@ import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { createForwardedForWarning, parseTrustProxy } from './trustProxy';
 import { startVmScheduler, stopVmScheduler } from './vm/scheduler';
+import { describeRetention, startAssessmentEventRetention, stopAssessmentEventRetention } from './assessmentEventRetention';
 import { SHUTDOWN_CANCEL_MESSAGE, createShutdown, installSignalHandlers, trackedSspJobs } from './shutdown';
 import { cancelJob, isJobActive } from './ssp/runner';
 import { updateJob } from './ssp/store';
@@ -97,6 +98,11 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
     if (vmScheduler) {
       console.log(`[Startup] VM scheduler: tick every ${vmScheduler.tickMinutes} min, snapshot every ${vmScheduler.snapshotIntervalHours} h`);
     }
+    const retention = startAssessmentEventRetention();
+    if (retention) {
+      console.log('[Startup] ' + describeRetention(retention));
+      if (retention.warning) console.warn('[Startup] ' + retention.warning);
+    }
     if (process.env.VM_ALLOW_INSECURE_TOKENS === 'true') {
       console.warn('[Startup] VM_ALLOW_INSECURE_TOKENS=true: service tokens may be created over plain HTTP and will cross the network in clear text');
     }
@@ -112,7 +118,7 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
 installSignalHandlers(createShutdown({
   closeServer: () => new Promise<void>((resolve) => { server.close(() => resolve()); server.closeIdleConnections(); }),
   forceCloseConnections: () => server.closeAllConnections(),
-  stopScheduler: stopVmScheduler,
+  stopScheduler: () => { stopVmScheduler(); stopAssessmentEventRetention(); },
   activeSspJobs: () => trackedSspJobs(isJobActive),
   cancelSspJob: (scope, id) => cancelJob(scope, id),
   isSspJobActive: isJobActive,

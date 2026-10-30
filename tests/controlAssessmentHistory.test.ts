@@ -10,7 +10,7 @@ import { recordReceivedRun } from '../server/vm/store';
 import { __resetVmSnapshotLimiterForTests } from '../server/vm/snapshotWriter';
 import { stopVmScheduler } from '../server/vm/scheduler';
 import { VM_NOTES_BEGIN, VM_NOTES_END } from '../server/vm/snapshot';
-import { buildControlAssessmentEvent, notesDigest } from '../server/controlAssessments';
+import { buildControlAssessmentEvent, matchesExpected, notesDigest, parseExpectedUpdatedAt } from '../server/controlAssessments';
 
 /**
  * Control-assessment history over HTTP: the PUT /controls semantics (a field left out keeps its value, an empty string clears the
@@ -131,6 +131,19 @@ function pureTests() {
   let threw = false;
   try { buildControlAssessmentEvent('t', SI, null, after, { source: 'robot' as never, actor: 'A', userId: null }); } catch { threw = true; }
   assert(threw && JSON.stringify(first).includes('abc') === false, 'E05 an unknown source throws, and an event never carries the notes text', first);
+
+  console.log('\n--- S70-E06-E07: the version-check helpers ---');
+  const pe = [parseExpectedUpdatedAt(undefined), parseExpectedUpdatedAt(null), parseExpectedUpdatedAt('2026-10-30T12:00:00.000Z'), parseExpectedUpdatedAt('yesterday'), parseExpectedUpdatedAt(5), parseExpectedUpdatedAt('x'.repeat(65))];
+  assert(
+    pe[0].ok && (pe[0] as { value?: unknown }).value === undefined && pe[1].ok && (pe[1] as { value?: unknown }).value === null && pe[2].ok && (pe[2] as { value?: unknown }).value === '2026-10-30T12:00:00.000Z' && !pe[3].ok && !pe[4].ok && !pe[5].ok,
+    'S70-E06 parseExpectedUpdatedAt: undefined and null and an ISO string are accepted; "yesterday", 5 and 65 characters are not',
+    pe,
+  );
+  const t0 = '2026-10-30T12:00:00.000Z';
+  assert(
+    matchesExpected(null, null) && !matchesExpected(null, t0) && matchesExpected(t0, '2026-10-30T12:00:00.000+00:00') && !matchesExpected(t0, '2026-10-30T12:00:00.001Z') && !matchesExpected(t0, null),
+    'S70-E07 matchesExpected: null matches only no row; the same instant in another notation matches; one millisecond apart does not',
+  );
 }
 
 async function run() {
@@ -347,6 +360,61 @@ async function run() {
   const inB2 = await eventsIn(B);
   assert(putB.status === 200 && inA2.length === 1 && inB2.length === 1 && inB2[0].oldStatus === null && inA2[0].id !== inB2[0].id, 'H12 a write in B records its own first event (no old values) and adds none to A', [inA2.length, inB2.length, inB2[0]]);
   assert(!(await call('GET', `/controls/${PE}/history`, owner1, T1, undefined, B)).text.includes('Written in'), 'H12 and the history of B carries no notes text either');
+
+  console.log('\n--- S70-01-S70-11: the optimistic version check (expectedUpdatedAt) ---');
+  const SC = 'SC.L1-3.13.1';
+  const u0 = (await controlOf(T1, owner1, SC))?.updatedAt as string;
+  assert(typeof u0 === 'string' && new Date(u0).toISOString() === u0, 'S70-01 GET /controls gives a stored control an ISO updatedAt', u0);
+  const synth = await controlOf(T4, admin, 'AC.L2-3.1.3', 'CMMC_L2');
+  assert(Boolean(synth) && synth.updatedAt === null, 'S70-01 a synthesized control (no stored row) has updatedAt null', synth);
+
+  const v1 = await put(T1, owner1, SC, { implementationNotes: 'V1', expectedUpdatedAt: u0 });
+  const u1 = v1.body?.control?.updatedAt as string;
+  assert(v1.status === 200 && typeof u1 === 'string' && Date.parse(u1) > Date.parse(u0), 'S70-02 a PUT with the loaded updatedAt succeeds and the new updatedAt is later', [v1.status, u0, u1]);
+
+  const evBefore = (await eventsOf(T1, owner1, SC)).length;
+  const stale = await put(T1, owner1, SC, { implementationNotes: 'V2-STALE', expectedUpdatedAt: u0 });
+  const afterStale = await controlOf(T1, owner1, SC);
+  assert(
+    stale.status === 409 && stale.body?.code === 'stale_write' && stale.body?.current?.updatedAt === u1 && typeof stale.body?.current?.updatedBy === 'string' && afterStale?.implementationNotes === 'V1' && (await eventsOf(T1, owner1, SC)).length === evBefore,
+    'S70-03 a PUT with a stale updatedAt -> 409 stale_write naming the stored stamp; the notes and the history are unchanged',
+    stale.body,
+  );
+  assert(!stale.text.includes('V2-STALE') && !stale.text.includes('V1'), 'S70-04 the 409 body carries no notes text', stale.text);
+
+  const noExp = await put(T1, owner1, SC, { implementationNotes: 'V3' });
+  assert(noExp.status === 200, 'S70-05 a PUT without expectedUpdatedAt still succeeds', noExp.body);
+  const staleStatus = await put(T1, owner1, SC, { status: 'MET', expectedUpdatedAt: u0 });
+  assert(staleStatus.status === 409 && staleStatus.body?.code === 'stale_write', 'S70-06 a status-only PUT with a stale updatedAt -> 409 too', staleStatus.body);
+  const nullOnExisting = await put(T1, owner1, SC, { implementationNotes: 'V4', expectedUpdatedAt: null });
+  assert(nullOnExisting.status === 409 && (await controlOf(T1, owner1, SC))?.implementationNotes === 'V3', 'S70-07 expectedUpdatedAt null on a stored row -> 409', nullOnExisting.body);
+
+  const first4 = await put(T4, admin, 'AC.L2-3.1.3', { implementationNotes: 'First.', expectedUpdatedAt: null });
+  const again4 = await put(T4, admin, 'AC.L2-3.1.3', { implementationNotes: 'Second.', expectedUpdatedAt: null });
+  assert(first4.status === 200 && again4.status === 409, 'S70-08 expectedUpdatedAt null on a control never written -> 200 the first time, 409 the second', [first4.status, again4.status]);
+
+  const cur = (await controlOf(T1, owner1, SC))?.updatedAt as string;
+  const notation = await put(T1, owner1, SC, { implementationNotes: 'V5', expectedUpdatedAt: cur.replace('Z', '+00:00') });
+  assert(notation.status === 200, 'S70-09 the same instant in +00:00 notation is accepted', [cur, notation.body]);
+
+  const badText = await put(T1, owner1, SC, { implementationNotes: 'V6', expectedUpdatedAt: 'yesterday' });
+  const badNumber = await put(T1, owner1, SC, { implementationNotes: 'V6', expectedUpdatedAt: 5 });
+  assert(
+    badText.status === 400 && badText.body?.error === 'expectedUpdatedAt must be a timestamp or null' && badNumber.status === 400 && badNumber.body?.error === 'expectedUpdatedAt must be a timestamp or null' && (await controlOf(T1, owner1, SC))?.implementationNotes === 'V5',
+    'S70-10 a value that is not a timestamp or null -> 400 with a fixed message; nothing is written',
+    [badText.body, badNumber.body],
+  );
+
+  let chain = (await controlOf(T1, owner1, SC))?.updatedAt as string;
+  const stamps: string[] = [chain];
+  let allOk = true;
+  for (let i = 0; i < 10; i++) {
+    const r = await put(T1, owner1, SC, { implementationNotes: `Chain ${i}`, expectedUpdatedAt: chain });
+    if (r.status !== 200) { allOk = false; break; }
+    chain = r.body?.control?.updatedAt as string;
+    stamps.push(chain);
+  }
+  assert(allOk && stamps.every((s, i) => i === 0 || Date.parse(s) > Date.parse(stamps[i - 1])), 'S70-11 ten sequential PUTs, each sending the previous updatedAt, all succeed with strictly increasing stamps', stamps);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
