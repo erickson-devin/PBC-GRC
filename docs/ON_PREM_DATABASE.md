@@ -6,8 +6,8 @@ Row-level security (RLS) is what keeps one tenant's data away from another. Post
 `BYPASSRLS` skip RLS entirely**, even with `FORCE ROW LEVEL SECURITY`. The app therefore connects as an ordinary role
 (`grc_app` by default). `docker compose up` creates it automatically on a fresh volume
 (`docker/postgres/10-app-role.sh`). The server checks its own role at startup: a SUPERUSER or BYPASSRLS role is refused
-with `NODE_ENV=production` (and warned about elsewhere), so a `.env` that names `postgres` as `DB_USER` cannot run in
-production by accident.
+unless `NODE_ENV` is `development` or `test` (an unset `NODE_ENV` counts as production), so a `.env` that names `postgres`
+as `DB_USER` cannot run in production by accident.
 
 Required settings (in a `.env` file next to `docker-compose.yml`, or exported):
 
@@ -90,8 +90,8 @@ the password step succeeded; the proof works once.
 | `privileged` | platform administrators (`PLATFORM_ADMIN_EMAILS` and the first administrator), tenant owners (`TENANT_OWNER`) and MSP administrators (`MSP_ADMIN`) |
 | `off` | nobody is required to. Anyone who has already enrolled is still asked for a code at sign-in |
 
-Any other value stops the server at startup. With `off` in production (`NODE_ENV=production`) the server logs a warning at
-startup, because 3.5.3 is then not met by the application.
+Any other value stops the server at startup. With `off` outside development or test (`NODE_ENV` unset counts as
+production) the server logs a warning at startup, because 3.5.3 is then not met by the application.
 
 **Staged rollout (the operator's job; the server does not stage it for you).** Set `MFA_REQUIRED=privileged`, restart, let
 the administrators and tenant owners enrol, then remove the variable (or set `all`) and restart. Whenever a person is
@@ -121,21 +121,34 @@ their session can only call the password-change endpoint (every other request an
 successful change clears the flag and issues a new session. The change asks for the current password and, when a factor is
 enrolled, a current code.
 
+**Password reuse (`PASSWORD_HISTORY_DEPTH`, NIST SP 800-171 3.5.8).** A new password must differ from the current one and
+from the last N passwords (default 5, allowed 0 to 24; any other value stops the server at startup). A reused value answers
+400 `password_reused` and does not count toward the lockout; the two-step code sent with the request is not spent. Only
+bcrypt hashes are kept, in `local_user_password_history`, which is removed with the account. Temporary passwords (an
+administrator's reset, `auth:create-user`) are not recorded, and an administrator's temporary password is not checked
+against the person's history (that would tell the administrator which values the person has used); the person's own
+pre-reset password is recorded. History starts empty after the upgrade that adds this. Lowering N trims at the next change;
+raising it does not bring trimmed entries back. A change costs up to N bcrypt comparisons.
+
 **Browser sessions (cookie).** The session is an HttpOnly cookie `pbc_session` (SameSite=Strict, Path=/api, lifetime = the
 session's, 8 h by default) that page script cannot read and that is never kept in browser storage; the page keeps only a
 random session reference. `Secure` is set when the request is HTTPS: TLS at the proxy with `TRUST_PROXY` naming the proxy and
 the proxy sending `X-Forwarded-Proto: https`; a plain-HTTP LAN install gets a non-Secure cookie. Cookie requests must carry the
-`X-PBC-Session` header, and a cross-site request (`Sec-Fetch-Site`) is refused with 403 `csrf_rejected`. Sign-out
+`X-PBC-Session` header whose value is the session reference returned at sign-in (a request whose header names another
+session than the cookie's answers 401 `session_mismatch`), and a cross-site request (`Sec-Fetch-Site`) is refused with 403
+`csrf_rejected`. Sign-out
 (`POST /api/v1/auth/logout`) clears the cookie. `Authorization: Bearer` still works for scripts; scanners use VM service tokens.
 The API sends no CORS headers (same-origin only). Browsers signed in before this release are signed out once at the upgrade.
 
 **Session-ended reasons.** A 401 from the session check carries `reason`: `session_missing` (no session cookie and no bearer), `session_invalid`
 (a token the server cannot trust), `session_expired` (an authentic token past its expiry) or `session_revoked` (an authentic
 token whose account is gone or disabled, or whose sessions were ended by a password change, an MFA reset or an administrator
-action; the three are not told apart). The app's sign-in message follows the reason. Two more reasons never come from the
-server: the app uses `signed_out_elsewhere` (another tab of the same browser signed out) and `switched_elsewhere` (another
-tab signed in as a different account, replacing the browser's one session cookie). The tab then shows the sign-in screen
-without sending a logout request, so the other tab's session is untouched.
+action; the three are not told apart) or `session_mismatch` (an authentic cookie, but the tab's `X-PBC-Session` reference
+belongs to another session: another tab replaced the browser's one cookie and this tab had not yet noticed). The app's
+sign-in message follows the reason. Two reasons never come from the server: the app uses `signed_out_elsewhere` (another
+tab of the same browser signed out) and `switched_elsewhere` (another tab signed in as a different account, replacing the
+browser's one session cookie). For these two and for `session_mismatch` the tab shows the sign-in screen without sending a
+logout request, so the other tab's session is untouched.
 
 **Platform administrator account actions** (Administration console, `/api/v1/platform/users`, platform administrators only):
 *reset password* (sets a temporary password, removes the person's second factor and recovery codes, ends their sessions,
@@ -217,6 +230,29 @@ docker exec singularity-app npm run db:prune-assessment-events -- --dry-run
 (`--days N` overrides the setting for that run; `--tenant <id>` limits it.) The first start after the upgrade that adds this
 builds two indexes on the history tables; on a large history that takes a moment and holds up writes while it runs.
 
+## Releases
+
+A release is an annotated SemVer tag `vX.Y.Z` on a commit that is already on `main` and whose `package.json` `version` is
+`X.Y.Z`. The release pull request bumps `package.json` and the `docker-compose.yml` default (`IMAGE_TAG`) together; a test
+enforces that they match. After the merge:
+
+```bash
+git tag -a vX.Y.Z <merge commit> -m "vX.Y.Z" && git push origin vX.Y.Z
+```
+
+The publish workflow reruns CI, refuses a tag that does not match `package.json` or is not on `main`, and publishes
+`vX.Y.Z`, `vX.Y` and `vX` to `ghcr.io/erickson-devin/pbc-grc`. The run summary lists the image digest. `sha-<commit>` and
+`latest` keep following `main` and are for testing only: nothing shipped references them.
+
+Operators set `IMAGE_TAG=vX.Y.Z` in `.env` (or `vX.Y.Z@sha256:<digest>` for an immutable pin). To verify an image:
+`docker buildx imagetools inspect ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows its digest before a pull, and after a pull
+`docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows it; once running,
+`GET /api/v1/health` reports `version` (from `package.json`) and `buildCommit`.
+
+The Dockerfile base image (`node:22-alpine`), the compose database image (`postgres:16-alpine`) and the CI actions are
+pinned by digest or commit. Dependabot (`.github/dependabot.yml`) opens a pull request when a newer one exists; a pin
+changes only in a reviewed pull request.
+
 ## Upgrading to a new release (no wipe)
 
 A release never needs the database wiped. At startup the server applies its schema in place (`CREATE ... IF NOT EXISTS`,
@@ -259,16 +295,16 @@ What makes an upgrade safe is the release routine around it:
    Both hold CUI: keep the backup folder on the enclave host (or on media with the same access controls as the database
    directory), never on a shared drive. `pg_dump` does not include roles: a restore to a new host creates the application
    role first (the init script does it on a fresh volume; "Existing data volume" below does it by hand).
-2. **Keep `.env` the same between deploys.** In particular `POSTGRES_DB`, `APP_DB_USER`, `LOCAL_AUTH_SECRET`,
+2. **Keep `.env` the same between deploys, apart from `IMAGE_TAG`.** In particular `POSTGRES_DB`, `APP_DB_USER`, `LOCAL_AUTH_SECRET`,
    `MFA_ENCRYPTION_KEY` and every path in the table above. Each one changed by accident looks like data loss: a different
    database name or `DB_DATA_DIR` starts an empty database beside the real one (the real one is untouched), and a different
    `LOCAL_AUTH_SECRET` signs everyone out (and, without `MFA_ENCRYPTION_KEY`, ends every enrolled factor; see "Secrets and
    rotation" above). Changing `POSTGRES_PASSWORD` or `APP_DB_PASSWORD` in `.env` does not change the role's password once
    the database exists: run `docker exec -it singularity-db psql -U postgres -d cmmc_compliance_db -c "\password grc_app"` (or
    `postgres`) and then update `.env`.
-3. **Deploy**: set the image to the release you mean to run (a `sha-<commit>` tag, never `latest`, so that a rollback has a
-   name), then `docker compose pull && docker compose up -d`. Then check: `GET /api/v1/health` reports the new
-   `buildCommit` and `"database":"connected"`, and you can sign in. Read `docker compose logs singularity-app` for
+3. **Deploy**: set `IMAGE_TAG` in `.env` to the release you mean to run (`vX.Y.Z`, never `latest`, so that a rollback has
+   a name; see "Releases"), then `docker compose pull && docker compose up -d`. Then check: `GET /api/v1/health` reports
+   the new `version`, `buildCommit` and `"database":"connected"`, and you can sign in. Read `docker compose logs singularity-app` for
    `[Startup]` warnings and `[PostgreSQL]` notes (backfill, `ssp_documents`).
 4. **If something is wrong, restore** the dump taken in step 1 (stop the app container first so nothing writes meanwhile):
 
@@ -279,9 +315,9 @@ What makes an upgrade safe is the release routine around it:
    docker start singularity-app
    ```
 
-   **A rollback is this restore plus the previous image tag**, not the previous tag alone: an older release re-creates
-   narrower check constraints at startup, and rows written by the newer release can make that fail, so the old image may
-   not boot against the newer data. Restore the dump taken in step 1, then start the old tag.
+   **A rollback is this restore plus the previous `IMAGE_TAG`**, not the previous release alone: an older release
+   re-creates narrower check constraints at startup, and rows written by the newer release can make that fail, so the old
+   image may not boot against the newer data. Restore the dump taken in step 1, then set `IMAGE_TAG` back and start.
 
 **Stopping the app.** `docker stop singularity-app` (or `docker compose down`) sends SIGTERM, which the server handles: it
 stops accepting connections, cancels any SSP import that is running or queued (the import shows "The server was shut down
@@ -330,6 +366,12 @@ production) set `DB_MODE=memory` explicitly, e.g. in `.env`:
 ```
 DB_MODE=memory
 ```
+
+`DB_MODE=memory` and `ALLOW_DEV_MOCK_TOKENS=true` run only with `NODE_ENV=development` or `NODE_ENV=test`; any other value,
+and an unset `NODE_ENV`, counts as production and the server refuses to start with them (the superuser-role refusal and the
+MFA-off warning follow the same rule). `npm run dev` (and `dev:server`) start `server/dev.ts`, which sets `development`
+unless the shell or `.env` already set `NODE_ENV`; `npm start` and the container start `server/index.ts` and take `NODE_ENV`
+as given, logging a `[Startup]` warning when it is unset. Never use `npm run dev` on an installation.
 
 ## The cloud deployment was retired
 

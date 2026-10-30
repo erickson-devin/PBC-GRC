@@ -18,9 +18,13 @@ the proxy's job; the security headers, the cookie session and the request limits
 - [ ] **Disk.** Size the volumes for the database, the evidence directory and the scanner payloads (every scanner push is
       kept as the assessor-grade record, up to 64 MB each by default; there is no automatic deletion of them yet). Put
       `DB_DATA_DIR` and `EVIDENCE_DIR` outside any git checkout, on encrypted, access-controlled storage.
-- [ ] **Image.** Decide the release: a `sha-<commit>` tag from `ghcr.io/erickson-devin/pbc-grc`, written down, never
-      `latest` (a rollback needs a name). Air-gapped host: `docker pull` and `docker save` on a connected machine,
-      `docker load` on the host. Note the expected `buildCommit` (the full commit SHA) for the health check below.
+- [ ] **Image.** Decide the release: a version tag `vX.Y.Z` from `ghcr.io/erickson-devin/pbc-grc`, set as `IMAGE_TAG` in
+      `.env` (never `latest`, `vX.Y` or `vX`: a rollback needs an exact name; `vX.Y.Z@sha256:<digest>` pins the exact
+      image). Verify the digest against the release workflow's run summary:
+      `docker buildx imagetools inspect ghcr.io/erickson-devin/pbc-grc:vX.Y.Z`. Write down the expected `version` (`X.Y.Z`)
+      and `buildCommit` (`git rev-list -n1 vX.Y.Z`) for the health check below. Air-gapped host: verify, `docker pull` and
+      `docker save` on a connected machine, `docker load` on the host and keep using the tag (a loaded image may carry no
+      repository digest). See "Releases" in `docs/ON_PREM_DATABASE.md`.
 - [ ] **Ollama (optional).** Pull the model offline (`llama3.2:3b` is what the CMMC import is tuned for) and keep
       `OLLAMA_BASE_URL` pointing at the compose service (`http://ollama:11434`) or at loopback. Never at another LAN host:
       SSP text would travel to it over plain HTTP. `OLLAMA_ALLOW_REMOTE` stays unset.
@@ -97,8 +101,8 @@ Replace `grc.example.mil` with the host name on the certificate.
       `frame-ancestors 'none'` and `script-src 'self'`), `x-frame-options: DENY`, `x-content-type-options: nosniff`,
       `referrer-policy: no-referrer`, `permissions-policy`; it shows **no** `x-powered-by` and a `server:` header without a
       version. `curl -sI https://grc.example.mil/api/v1/health` shows `cache-control: no-store`.
-- [ ] **Health.** `curl -s https://grc.example.mil/api/v1/health` reports `"status":"ok"`, `"database":"connected"` and
-      the `buildCommit` you wrote down. (It answers 503 `starting` until the schema check has finished.)
+- [ ] **Health.** `curl -s https://grc.example.mil/api/v1/health` reports `"status":"healthy"`, `"database":"connected"`
+      and the `version` and `buildCommit` you wrote down. (It answers 503 `starting` until the schema check has finished.)
 - [ ] **Cookie.** `curl -si -X POST https://grc.example.mil/api/v1/auth/logout | grep -i set-cookie` shows `HttpOnly`,
       `SameSite=Strict`, `Path=/api` and `Secure`. No `Secure` means `TRUST_PROXY` or `X-Forwarded-Proto` is wrong.
 - [ ] **Setup closed.** `curl -s -X POST https://grc.example.mil/api/v1/setup -H 'Content-Type: application/json' -d '{}'`
@@ -141,16 +145,17 @@ Replace `grc.example.mil` with the host name on the certificate.
 
 ## 9. Upgrades
 
-- [ ] Backup (section 7), then keep `.env` unchanged, set the new `sha-` tag, `docker compose pull && docker compose up -d`.
-- [ ] Health shows the new `buildCommit` and `connected`; sign in; read the log for `[PostgreSQL]` notes (first start after
-      some releases builds indexes or backfills, which can take a moment).
-- [ ] Rollback = restore the pre-upgrade dump and evidence copy, then start the previous tag. The previous tag alone may not
-      boot against the newer data.
+- [ ] Backup (section 7), then change only `IMAGE_TAG` in `.env` to the new release, `docker compose pull && docker compose up -d`.
+- [ ] Health shows the new `version`, `buildCommit` and `connected`; sign in; read the log for `[PostgreSQL]` notes (first
+      start after some releases builds indexes or backfills, which can take a moment).
+- [ ] Rollback = restore the pre-upgrade dump and evidence copy, then set `IMAGE_TAG` back to the previous release. The
+      previous release alone may not boot against the newer data.
 
 ## 10. Known gaps, tracked
 
 - The container runs as root inside the image (#146); vault files are owner-only through the umask meanwhile.
-- The published image is not smoke-tested or signed before publish; version tags and digest pinning are not published yet.
+- Releases are version tags from `v1.0.0`, and the base images and CI actions are pinned by digest or commit (Dependabot
+  proposes refreshes); the image is not smoke-tested (#156) or signed (#158) before publish.
 - Scanner payloads and snapshots have no retention setting (#61).
-- Password history / reuse checks (IA.L2-3.5.8) and an idle session lock (AC.L2-3.1.10) are not implemented.
+- An idle session lock (AC.L2-3.1.10) is not implemented (#163).
 - Forward-proxy support for the exporter (#67).
