@@ -9,8 +9,10 @@ import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { createForwardedForWarning, parseTrustProxy } from './trustProxy';
 import { startVmScheduler, stopVmScheduler } from './vm/scheduler';
+import { abortVmRuns, activeVmRuns, isVmRunActive } from './vm/worker';
+import { markRunInterrupted } from './vm/store';
 import { describeRetention, startAssessmentEventRetention, stopAssessmentEventRetention } from './assessmentEventRetention';
-import { SHUTDOWN_CANCEL_MESSAGE, createShutdown, installSignalHandlers, trackedSspJobs } from './shutdown';
+import { SHUTDOWN_CANCEL_MESSAGE, VM_SHUTDOWN_MESSAGE, createShutdown, installSignalHandlers, trackedSspJobs } from './shutdown';
 import { cancelJob, isJobActive } from './ssp/runner';
 import { updateJob } from './ssp/store';
 
@@ -149,6 +151,10 @@ installSignalHandlers(createShutdown({
   cancelSspJob: (scope, id) => cancelJob(scope, id),
   isSspJobActive: isJobActive,
   markSspJobCancelled: (scope, id) => updateJob(scope, id, { status: 'CANCELLED', error: SHUTDOWN_CANCEL_MESSAGE, finishedAt: new Date().toISOString() }),
+  activeVmRuns,
+  abortVmRuns,
+  isVmRunActive,
+  markVmRunInterrupted: (tenantId, id) => markRunInterrupted(tenantId, id, VM_SHUTDOWN_MESSAGE),
   closePool: () => (getDbMode() === 'memory' ? Promise.resolve() : pool.end()),
   log: (line) => console.log(line),
   exit: (code) => process.exit(code),

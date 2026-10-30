@@ -10,8 +10,9 @@ import { vmIngestRateLimiter, vmTokenRateLimiter } from '../server/routes/vmInge
 import { serviceTokenMiddleware } from '../server/middleware/serviceTokenMiddleware';
 import { __expireVmTokenForTests, clampTokenDays, generateVmToken, sha256Hex, shouldTouchLastUsed, VM_TOKEN_PATTERN } from '../server/vm/tokens';
 import { vmIngestMaxBytes } from '../server/vm/ingestSchema';
-import { __drainVmWorkerForTests, __setVmWorkerFaultForTests, enqueueVmRun } from '../server/vm/worker';
-import { recordReceivedRun } from '../server/vm/store';
+import { __drainVmWorkerForTests, __resumeVmWorkerForTests, __setVmWorkerFaultForTests, abortVmRuns, activeVmRuns, enqueueVmRun } from '../server/vm/worker';
+import { markRunInterrupted, recordReceivedRun, updateRun } from '../server/vm/store';
+import { VM_SHUTDOWN_MESSAGE } from '../server/shutdown';
 import { countOpenPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
 import { ensureDefaultProgram } from '../server/programs';
 
@@ -574,6 +575,59 @@ async function run() {
   delete process.env.VM_ALLOW_INSECURE_TOKENS;
   assert(insecureOk.status === 202, 'VM_ALLOW_INSECURE_TOKENS=true allows ingest without the header (202)', insecureOk.body);
   await __drainVmWorkerForTests();
+
+  console.log('\n--- Shutdown: draining the worker (#147) ---');
+  const storedRun = async (label: string, agent: string): Promise<string> => {
+    const id = crypto.randomUUID();
+    const file = path.join(runsDir, `${id}.json`);
+    const bytes = bytesOf({ label, agents: [agent] });
+    fs.writeFileSync(file, bytes);
+    await recordReceivedRun(A, { ...receivedInput(label, file, crypto.createHash('sha256').update(bytes).digest('hex'), bytes.length), id });
+    return id;
+  };
+  const drainA = await storedRun('drain-src', 'd1');
+  enqueueVmRun(A, drainA);
+  assert(activeVmRuns().some((r) => r.id === drainA && r.tenantId === A), 'an enqueued run is listed as active with its tenant (V147-1)', activeVmRuns());
+  await __drainVmWorkerForTests();
+  assert(!activeVmRuns().some((r) => r.id === drainA) && (await runById(drainA)).status === 'NORMALIZED', 'after the drain it is no longer active and is NORMALIZED');
+
+  const drainB = await storedRun('drain-src', 'd2');
+  enqueueVmRun(A, drainB);
+  abortVmRuns();
+  await __drainVmWorkerForTests();
+  const queuedRun = await runById(drainB);
+  assert(queuedRun.status === 'RECEIVED' && queuedRun.error === null && queuedRun.finishedAt === null, 'a run still queued at shutdown stays RECEIVED, with no error and no finish time (V147-2)', queuedRun);
+  const refused = await storedRun('drain-src', 'd3');
+  enqueueVmRun(A, refused);
+  assert(!activeVmRuns().some((r) => r.id === refused), 'after the abort no new run is accepted');
+  __resumeVmWorkerForTests();
+  enqueueVmRun(A, drainB);
+  await __drainVmWorkerForTests();
+  assert((await runById(drainB)).status === 'NORMALIZED', 'after the worker resumes, the queued run is NORMALIZED');
+
+  __setVmWorkerFaultForTests('interrupt_after_save');
+  const interrupted = await storedRun('drain-src', 'd4');
+  enqueueVmRun(A, interrupted);
+  await __drainVmWorkerForTests();
+  __setVmWorkerFaultForTests(null);
+  const interruptedRun = await runById(interrupted);
+  assert(interruptedRun.status === 'FAILED' && interruptedRun.error === VM_SHUTDOWN_MESSAGE && interruptedRun.finishedAt !== null, 'a run aborted part-way -> FAILED with the shutdown message (V147-3)', interruptedRun);
+  __resumeVmWorkerForTests();
+  const reInterrupted = await call('POST', `/tenants/${A}/vm/runs/${interrupted}/reprocess`, ownerA, A);
+  await __drainVmWorkerForTests();
+  const interruptedAgain = await runById(interrupted);
+  assert(reInterrupted.status === 202 && interruptedAgain.status === 'NORMALIZED' && interruptedAgain.error === null, 'reprocessing the interrupted run -> NORMALIZED', [reInterrupted.status, interruptedAgain]);
+
+  assert(!(await markRunInterrupted(A, happyId, VM_SHUTDOWN_MESSAGE)) && (await runById(happyId)).status === 'NORMALIZED', 'markRunInterrupted leaves a NORMALIZED run alone (V147-4)');
+  const waiting = await storedRun('drain-src', 'd5');
+  assert(!(await markRunInterrupted(A, waiting, VM_SHUTDOWN_MESSAGE)) && (await runById(waiting)).status === 'RECEIVED', 'and a RECEIVED run');
+  await updateRun(A, waiting, { status: 'NORMALIZING' });
+  const marked = await markRunInterrupted(A, waiting, VM_SHUTDOWN_MESSAGE);
+  const markedRun = await runById(waiting);
+  assert(marked && markedRun.status === 'FAILED' && markedRun.error === VM_SHUTDOWN_MESSAGE && markedRun.finishedAt !== null, 'but a NORMALIZING run becomes FAILED with the message', markedRun);
+  const workerSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'vm', 'worker.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const interruptLogs = workerSrc.split('\n').filter((l) => l.includes('interrupted by the shutdown'));
+  assert(interruptLogs.length >= 1 && interruptLogs.every((l) => !l.includes('tenantId')), 'the interrupted log line carries no tenant id (V147-5)', interruptLogs);
 
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();

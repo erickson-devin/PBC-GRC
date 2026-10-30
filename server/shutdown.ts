@@ -12,6 +12,8 @@ export const SHUTDOWN_DEADLINE_MS = 8_000;
 /** How long a cancelled SSP import gets to notice its abort before it is marked CANCELLED here. */
 export const SSP_JOB_GRACE_MS = 3_000;
 export const SHUTDOWN_CANCEL_MESSAGE = 'The server was shut down while this import was running. Upload the document again.';
+/** Written to a VM run the shutdown interrupted (the run becomes FAILED; there is no separate status). */
+export const VM_SHUTDOWN_MESSAGE = 'The server was shut down while this run was being processed. The scanner\'s next push sends the data again; an owner can also reprocess this run.';
 
 // The runner keeps its active set private, so the routes register every job they start (or recover) here.
 const sspJobs = new Map<string, ProgramScope>();
@@ -42,6 +44,10 @@ export interface ShutdownDeps {
   cancelSspJob(scope: ProgramScope, id: string): Promise<unknown>;
   isSspJobActive(id: string): boolean;
   markSspJobCancelled(scope: ProgramScope, id: string): Promise<unknown>;
+  activeVmRuns(): Array<{ id: string; tenantId: string }>;
+  abortVmRuns(): void;
+  isVmRunActive(id: string): boolean;
+  markVmRunInterrupted(tenantId: string, id: string): Promise<unknown>;
   closePool(): Promise<void>;
   log(line: string): void;
   exit(code: number): void;
@@ -84,7 +90,9 @@ export function createShutdown(
 
     let jobs: Array<{ id: string; scope: ProgramScope }> = [];
     await step('list SSP imports', () => { jobs = deps.activeSspJobs(); });
-    deps.log(`[Shutdown] ${signal} received: closing (${jobs.length} SSP import(s) to cancel)`);
+    let vmRuns: Array<{ id: string; tenantId: string }> = [];
+    await step('list VM runs', () => { vmRuns = deps.activeVmRuns(); });
+    deps.log(`[Shutdown] ${signal} received: closing (${jobs.length} SSP import(s) to cancel, ${vmRuns.length} VM run(s) to stop)`);
 
     await step('stop scheduler', () => deps.stopScheduler());
     let closed: Promise<void> = Promise.resolve();
@@ -93,12 +101,18 @@ export function createShutdown(
     closed.catch(() => undefined);
 
     for (const j of jobs) await step('cancel SSP import', () => deps.cancelSspJob(j.scope, j.id));
+    if (vmRuns.length) await step('stop VM runs', () => deps.abortVmRuns());
 
     // The worker only checks its abort signal between stages, so give it a moment, then mark the stragglers here.
     const graceEnds = Date.now() + jobGraceMs;
-    while (jobs.some((j) => deps.isSspJobActive(j.id)) && Date.now() < graceEnds) await sleep(pollMs);
+    const anyActive = (): boolean => jobs.some((j) => deps.isSspJobActive(j.id)) || vmRuns.some((r) => deps.isVmRunActive(r.id));
+    while (anyActive() && Date.now() < graceEnds) await sleep(pollMs);
     for (const j of jobs) {
       if (deps.isSspJobActive(j.id)) await step('mark SSP import cancelled', () => deps.markSspJobCancelled(j.scope, j.id));
+    }
+    // Only a run that was being processed changes (store.markRunInterrupted); one still queued stays RECEIVED.
+    for (const r of vmRuns) {
+      if (deps.isVmRunActive(r.id)) await step('mark VM run interrupted', () => deps.markVmRunInterrupted(r.tenantId, r.id));
     }
 
     await step('close server', () => Promise.race([closed, sleep(deadlineMs)]));
