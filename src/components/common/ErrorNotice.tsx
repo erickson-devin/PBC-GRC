@@ -17,7 +17,7 @@ export const ErrorNotice: React.FC<ErrorNoticeProps> = ({ message, className = '
       role="alert"
       className={`flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300 ${className}`}
     >
-      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" aria-hidden="true" />
       <span>{message}</span>
     </div>
   );

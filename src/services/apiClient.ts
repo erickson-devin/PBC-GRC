@@ -30,7 +30,7 @@ import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCre
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
-import { bearerFromHeaders, reportResponseStatus } from './sessionSignal';
+import { bearerFromHeaders, isSessionRejection, reportResponseStatus } from './sessionSignal';
 
 function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
@@ -124,7 +124,13 @@ async function apiFetch(input: string, init: RequestInit): Promise<Response> {
     throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
   }
   // A 401 on the stored session's own bearer means the server ended the session: tell the app (see sessionSignal.ts)
-  void reportResponseStatus(res.status, bearerFromHeaders(init.headers), ApiClient.getToken());
+  const sent = bearerFromHeaders(init.headers);
+  const current = ApiClient.getToken();
+  let reason: string | null = null;
+  if (isSessionRejection(res.status, sent, current) && typeof res.clone === 'function') {
+    reason = bodyReason(await res.clone().json().catch(() => null)) ?? null;
+  }
+  void reportResponseStatus(res.status, sent, current, reason);
   return res;
 }
 

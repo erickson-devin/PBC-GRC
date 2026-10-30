@@ -10,7 +10,7 @@ import {
   EnclaveStackProfile,
 } from '../types/tenant';
 import { errorMessage } from '../utils/errors';
-import { outcomeFromSyncError, type SyncOutcome } from '../data/sessionVerification';
+import { mayLoadServerData, outcomeFromSyncError, type SyncOutcome } from '../data/sessionVerification';
 import { canRoleWrite, isTenantRole } from '../utils/roles';
 import {
   applyRoleSync,
@@ -344,6 +344,8 @@ interface TenantContextType {
   syncAuthUser: (user: User, preferredTenantId?: string, options?: { skipServerSync?: boolean }) => void;
   /** Sign-out: forgets the cached tenants, roles, team and programs so the next sign-in starts empty. */
   resetForSignOut: () => void;
+  /** Pauses (or resumes) the programs and team loads while the forced password change is pending. */
+  setServerLoadsPaused: (paused: boolean) => void;
   resolveTenantForEmail: (email: string) => { tenant: Tenant; role: TenantRole };
   // Live Sync Engine (PostgreSQL)
   liveControls: Record<string, ControlState> | null;
@@ -586,6 +588,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // The server keeps just a hash, so a link cannot be recovered later: use Resend to issue a fresh one.
   const inviteTokensRef = useRef<Record<string, string>>({});
   const [teamError, setTeamError] = useState<string | null>(null);
+  // True while the forced password change is pending: the programs and team requests would all answer 403 (see mayLoadServerData)
+  const [serverLoadsPaused, setServerLoadsPausedState] = useState(false);
+  const serverLoadsPausedRef = useRef(false);
+  const setServerLoadsPaused = useCallback((paused: boolean) => {
+    serverLoadsPausedRef.current = paused;
+    setServerLoadsPausedState(paused);
+  }, []);
 
   const syncTenantsFromServer = useCallback(async (tokenOverride?: string, options?: { force?: boolean }): Promise<Tenant[] | null> => {
     const token = tokenOverride ?? ApiClient.getToken();
@@ -685,10 +694,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    * Loads a server-backed tenant's members and (for owners / MSP admins) pending invitations from the server and shows
    * them in the team list. Anyone may see who is on the team; invitations are administrative, so only admins fetch them.
    */
+  const teamEpoch = useRef(0);
+  const teamSeqByTenant = useRef<Record<string, number>>({});
   const refreshTeam = useCallback(async (tenantIdArg?: string, options: { asAdmin?: boolean } = {}): Promise<void> => {
     const tenantId = tenantIdArg ?? currentTenantIdRef.current;
     const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!tenant?.serverBacked) return;
+    // Per tenant: a newer refresh of the same tenant, or a sign-out meanwhile, makes this answer stale
+    const epoch = teamEpoch.current;
+    const seq = (teamSeqByTenant.current[tenantId] ?? 0) + 1;
+    teamSeqByTenant.current[tenantId] = seq;
 
     try {
       const isAdmin = options.asAdmin || canRoleWrite(currentUserRef.current.roles?.[tenantId]);
@@ -696,6 +711,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ApiClient.listMembers(tenantId),
         isAdmin ? ApiClient.listInvites(tenantId) : Promise.resolve<ServerInvitation[]>([]),
       ]);
+      if (!isCurrentResponse(epoch, teamEpoch.current) || !isCurrentResponse(seq, teamSeqByTenant.current[tenantId] ?? 0)) return;
       setTeamMembers(prev => ({ ...prev, [tenantId]: buildTeam(tenantId, members, invites, inviteTokensRef.current) }));
       if (isAdmin) {
         const mapped = invites.map(i => toTenantInvitation(i, tenant, inviteTokensRef.current[i.id]));
@@ -703,6 +719,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       setTeamError(null);
     } catch (err: unknown) {
+      if (!isCurrentResponse(epoch, teamEpoch.current) || !isCurrentResponse(seq, teamSeqByTenant.current[tenantId] ?? 0)) return;
+      // The forced password change is pending: the team is not loaded until it is done, and that is not a failure
+      if (err instanceof ApiError && err.reason === 'password_change_required') return;
       console.warn('[Team] Could not load the team from the server:', errorMessage(err));
       setTeamError(errorMessage(err) || 'Could not load the team');
     }
@@ -940,9 +959,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       commitPrograms({ tenantId, programs: list, status: 'ready', activeId });
     } catch (err: unknown) {
       if (!isCurrentResponse(seq, programsSeq.current) || tenantId !== currentTenantIdRef.current) return;
-      console.warn('[Programs] Could not load the programs from the server:', errorMessage(err));
       const prev = programsRef.current;
       const same = prev.tenantId === tenantId;
+      // The forced password change is pending: not a failure, the programs load once it is done
+      if (err instanceof ApiError && err.reason === 'password_change_required') {
+        commitPrograms({ tenantId, programs: same ? prev.programs : NO_PROGRAMS, status: 'idle', activeId: same ? prev.activeId : null });
+        return;
+      }
+      console.warn('[Programs] Could not load the programs from the server:', errorMessage(err));
       commitPrograms({ tenantId, programs: same ? prev.programs : NO_PROGRAMS, status: 'error', activeId: same ? prev.activeId : null });
     }
   }, [commitPrograms, dropLiveData]);
@@ -954,8 +978,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       commitPrograms({ tenantId: currentTenant.id, programs: NO_PROGRAMS, status: 'unsupported', activeId: null });
       return;
     }
-    if (ApiClient.getToken()) void refreshPrograms(currentTenant.id);
-  }, [currentTenant.id, currentTenant.serverBacked, refreshPrograms, commitPrograms]);
+    if (mayLoadServerData(Boolean(ApiClient.getToken()), serverLoadsPausedRef.current)) void refreshPrograms(currentTenant.id);
+  }, [currentTenant.id, currentTenant.serverBacked, refreshPrograms, commitPrograms, serverLoadsPaused]);
 
   /**
    * Switch sequence: validate the program (it must exist, not be archived), remember the choice, bump the request sequence and
@@ -1316,8 +1340,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // A server-backed tenant's team and invitations live on the server: load them when it becomes active (or the role changes)
   useEffect(() => {
-    if (currentTenant.serverBacked) void refreshTeam(currentTenant.id);
-  }, [currentTenant.id, currentTenant.serverBacked, currentRole, refreshTeam]);
+    if (currentTenant.serverBacked && mayLoadServerData(Boolean(ApiClient.getToken()), serverLoadsPausedRef.current)) void refreshTeam(currentTenant.id);
+  }, [currentTenant.id, currentTenant.serverBacked, currentRole, refreshTeam, serverLoadsPaused]);
 
   const switchTenant = useCallback((tenantId: string) => {
     if (liveTenants.some(t => t.id === tenantId)) {
@@ -1684,6 +1708,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const resetForSignOut = useCallback(() => {
     syncInFlight.current = null;
     programsSeq.current++;
+    teamEpoch.current++;
+    teamSeqByTenant.current = {};
+    setTeamError(null);
     dropLiveData();
     commitPrograms({ tenantId: '', programs: NO_PROGRAMS, status: 'idle', activeId: null });
     setLiveTenants([DEFAULT_BLANK_TENANT]);
@@ -2046,6 +2073,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchUser,
     syncAuthUser,
     resetForSignOut,
+    setServerLoadsPaused,
     resolveTenantForEmail,
     liveControls,
     liveScopeKey,
@@ -2131,6 +2159,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     switchUser,
     syncAuthUser,
     resetForSignOut,
+    setServerLoadsPaused,
     resolveTenantForEmail,
     liveControls,
     liveScopeKey,

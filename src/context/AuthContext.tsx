@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { User, AuthProviderType } from '../types/tenant';
 import { useTenant, ANONYMOUS_USER } from './TenantContext';
 import { ApiClient, ApiError, LocalLoginResponse, MfaEnrolmentStart, MfaStage, SetupInput, SetupResult } from '../services/apiClient';
-import { onSessionRejected, holdSessionSignal, releaseSessionSignal, reportResponseStatus } from '../services/sessionSignal';
+import { onSessionRejected, holdSessionSignal, releaseSessionSignal, reportResponseStatus, sessionEndedMessage } from '../services/sessionSignal';
 import { errorMessage } from '../utils/errors';
 import { buildUserProfile } from '../utils/userProfile';
 import { SESSION_VERIFY_TIMEOUT_MS, initialSessionCheck, nextSessionCheck, type SessionCheck } from '../data/sessionVerification';
@@ -74,8 +74,6 @@ const AUTH_USER_KEY = 'pbc_session_auth_user_v2';
 const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
 // Two booleans about the signed-in account (must change the password / has a second factor). No secret, code or token is ever stored here.
 const AUTH_FLAGS_KEY = 'pbc_session_flags_v2';
-// Shown on the sign-in screen after the server ended the session. Memory only.
-const SESSION_ENDED_MESSAGE = 'Your session has ended. Please sign in again.';
 
 const readStoredFlags = (): { mustChangePassword: boolean; enrolled: boolean } => {
   try {
@@ -95,7 +93,7 @@ const toChallenge = (p: { stage: MfaStage; mfaToken: string; expiresAt: string; 
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { resolveTenantForEmail, syncAuthUser, resetForSignOut, currentUser: tenantUser, currentTenant, tenantSync } = useTenant();
+  const { resolveTenantForEmail, syncAuthUser, resetForSignOut, setServerLoadsPaused, currentUser: tenantUser, currentTenant, tenantSync } = useTenant();
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
     try {
@@ -161,6 +159,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem(AUTH_FLAGS_KEY);
     }
   }, [isAuthenticated, currentUser, idToken, mustChangePassword, mfaEnrolled]);
+
+  // While the forced password change is pending, the tenant provider loads no programs or team (every answer would be 403).
+  // A layout effect: the flag is set before the provider's own mount effects read it.
+  useLayoutEffect(() => setServerLoadsPaused(isAuthenticated && mustChangePassword), [isAuthenticated, mustChangePassword, setServerLoadsPaused]);
 
   /**
    * Helper to build and sync an app user profile from email/credentials
@@ -376,12 +378,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [resetForSignOut]);
 
   // The server stopped accepting this session (deleted / disabled account, rotated secret, expiry): sign out and say why
-  useEffect(() => onSessionRejected((token) => {
+  useEffect(() => onSessionRejected((token, reason) => {
     if (!token || token !== idTokenRef.current) return;
     // Before anything is torn down: keep the unsaved text of the open editors in memory so it can be copied after sign-in
     rescueUnsavedText(currentUserRef.current.id);
     void logout();
-    setAuthError(SESSION_ENDED_MESSAGE);
+    setAuthError(sessionEndedMessage(reason));
   }), [logout]);
 
   // The first tenant sync of a reload answered: the stored session is confirmed, dead, or could not be checked
@@ -393,7 +395,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Normally the session signal has signed out already; this keeps the path complete if it did not
       rescueUnsavedText(currentUserRef.current.id);
       void logout();
-      setAuthError(SESSION_ENDED_MESSAGE);
+      setAuthError(sessionEndedMessage());
       return;
     }
     setSessionCheck((c) => nextSessionCheck(c, { type: 'sync', outcome }));

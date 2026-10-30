@@ -58,3 +58,8 @@ export function nextSessionCheck(current: SessionCheck, event: SessionCheckEvent
 export function shouldHoldForVerification(check: SessionCheck): boolean {
   return check === 'verifying';
 }
+
+/** The programs and team requests only go out with a session and while no forced password change is pending (they would answer 403). */
+export function mayLoadServerData(hasToken: boolean, serverLoadsPaused: boolean): boolean {
+  return hasToken && !serverLoadsPaused;
+}

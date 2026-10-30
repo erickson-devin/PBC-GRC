@@ -31,6 +31,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const alertId = React.useId();
+  const emailId = React.useId();
+  const passwordId = React.useId();
+  const emailRef = React.useRef<HTMLInputElement>(null);
+  const dismissError = () => { clearAuthError(); emailRef.current?.focus(); };
 
   // Extract redirectUrl from URL query params
   const redirectUrl = React.useMemo(() => {
@@ -97,9 +102,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
             {/* Error Banner */}
             {authError && (
-              <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-center justify-between gap-3">
+              <div role="alert" id={alertId} className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-center justify-between gap-3">
                 <span>{authError}</span>
-                <button type="button" onClick={clearAuthError} aria-label="Dismiss this message" className="shrink-0 text-rose-400 hover:text-white">✕</button>
+                <button type="button" onClick={dismissError} aria-label="Dismiss this message" className="shrink-0 rounded text-rose-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"><span aria-hidden="true">✕</span></button>
               </div>
             )}
 
@@ -118,22 +123,35 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             {/* Local credentials */}
             {!mfaChallenge && (
             <form onSubmit={handlePasswordSubmit} className="space-y-3">
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="contractor@defense.com"
-                className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
-              />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••••••"
-                className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
-              />
+              <div>
+                <label htmlFor={emailId} className="sr-only">Work email</label>
+                <input
+                  id={emailId}
+                  ref={emailRef}
+                  type="email"
+                  required
+                  autoFocus
+                  autoComplete="username"
+                  aria-describedby={authError ? alertId : undefined}
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="contractor@defense.com"
+                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+              <div>
+                <label htmlFor={passwordId} className="sr-only">Password</label>
+                <input
+                  id={passwordId}
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-750 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500"
+                />
+              </div>
               <button
                 type="submit"
                 disabled={loading}
