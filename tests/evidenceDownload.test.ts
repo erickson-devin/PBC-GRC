@@ -1,8 +1,11 @@
 import './testEnv';
-import './evidenceEnv';
+import { EVIDENCE_TEST_VAULT } from './evidenceEnv';
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { server } from '../server/index';
+import { resolveTenantLocalPath } from '../server/evidence/storage';
 import { queryWithProgram } from '../server/db';
 
 /**
@@ -63,6 +66,39 @@ async function run() {
   assert(up.status === 201 && Boolean(E), 'D1 POST upload-url -> 201', up.body);
   const put = await call('PUT', `/evidence/upload-local/${E}`, owner, T, undefined, 'hello');
   assert(put.status === 200 && put.body?.hashVerified === true, 'D1 PUT the bytes -> 200, hashVerified true', put.body);
+
+  console.log('\n--- D55: one storage root (server/evidence/storage.ts) ---');
+  const info = await call('GET', '/evidence/config/storage-info', owner, T);
+  assert(info.status === 200 && info.body?.localStoragePath === path.resolve(EVIDENCE_TEST_VAULT), 'D55-1 storage-info reports the vault root', [info.status, info.body?.localStoragePath]);
+  const controlDir = path.join(EVIDENCE_TEST_VAULT, 'tenants', T, 'controls', AC1);
+  const stored = fs.existsSync(controlDir) ? fs.readdirSync(controlDir) : [];
+  const helloFiles = stored.filter((n) => n.endsWith('_hello.txt'));
+  const helloPath = helloFiles.length === 1 ? path.join(controlDir, helloFiles[0]) : '';
+  assert(helloFiles.length === 1 && fs.readFileSync(helloPath, 'utf8') === 'hello' && resolveTenantLocalPath(T, helloPath) !== null, 'D55-2 the upload landed under <root>/tenants/<T>/controls/<control>/ and the shared guard accepts that path', stored);
+  const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pbc-evidence-other-'));
+  const originalRoot = process.env.LOCAL_STORAGE_PATH;
+  try {
+    process.env.LOCAL_STORAGE_PATH = otherRoot;
+    const moved = await call('GET', '/evidence/config/storage-info', owner, T);
+    assert(moved.status === 200 && moved.body?.localStoragePath === path.resolve(otherRoot), 'D55-3 storage-info follows LOCAL_STORAGE_PATH per call', [moved.status, moved.body?.localStoragePath]);
+  } finally {
+    process.env.LOCAL_STORAGE_PATH = originalRoot;
+    fs.rmSync(otherRoot, { recursive: true, force: true });
+  }
+  const restored = await call('GET', '/evidence/config/storage-info', owner, T);
+  assert(restored.body?.localStoragePath === path.resolve(EVIDENCE_TEST_VAULT), 'D55-3 after the restore the root is the vault again', restored.body?.localStoragePath);
+  const readSrc = (p: string) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+  const routeSrc = readSrc('server/routes/evidence.ts');
+  assert(
+    !routeSrc.includes('process.env.LOCAL_STORAGE_PATH') && !routeSrc.includes('function resolveWithin(') && !routeSrc.includes('function resolveTenantLocalPath(') && routeSrc.includes("from '../evidence/storage'"),
+    'D55-4 source: evidence.ts has no private root or path guards and imports server/evidence/storage'
+  );
+  const vaultSrc = readSrc('server/ssp/policyVault.ts');
+  assert(!vaultSrc.includes('process.env.LOCAL_STORAGE_PATH') && !/console\.[a-z]+\([^\n]*err\.message/.test(vaultSrc) && !vaultSrc.includes('err instanceof Error ? err.message'), 'D55-4 source: policyVault.ts uses the shared root and logs no error message');
+  const serverTs = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? serverTs(path.join(dir, d.name)) : d.name.endsWith('.ts') ? [path.join(dir, d.name)] : []));
+  const readers = serverTs('server').filter((f) => readSrc(f).includes('process.env.LOCAL_STORAGE_PATH')).map((f) => path.relative('.', f).split(path.sep).join('/'));
+  assert(JSON.stringify(readers) === JSON.stringify(['server/evidence/storage.ts']), 'D55-4 source: only server/evidence/storage.ts reads process.env.LOCAL_STORAGE_PATH', readers);
 
   console.log('\n--- D2-D4: GET /file ---');
   const file = await call('GET', `/evidence/${E}/file`, owner, T);

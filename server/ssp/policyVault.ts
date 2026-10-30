@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { localStorageRoot, resolveWithin } from '../evidence/storage';
 
 /**
  * Where an uploaded SSP (or other policy document) is kept: the evidence vault, under its own directory
@@ -8,10 +9,9 @@ import path from 'path';
  *
  * so documents a person uploaded are never mixed up with the documents this application generates. The file is kept after
  * it has been read (it is the source the suggestions came from) and is removed only when the import is deleted.
- * Local disk only, rooted at LOCAL_STORAGE_PATH like the evidence routes.
+ * Local disk only, rooted at the shared storage root (server/evidence/storage.ts) like the evidence routes.
  */
 const provider = 'local' as const;
-const localRoot = (): string => path.resolve(process.env.LOCAL_STORAGE_PATH || './data/evidence');
 
 export const UPLOADED_POLICIES_DIR = 'policies/uploaded';
 
@@ -22,9 +22,8 @@ export const policyObjectKey = (tenantId: string, jobId: string, fileName: strin
   `tenants/${safeSegment(tenantId)}/${UPLOADED_POLICIES_DIR}/${safeSegment(jobId)}_${safeSegment(fileName)}`;
 
 function resolveLocal(key: string): string {
-  const root = localRoot();
-  const resolved = path.resolve(root, key);
-  if (!resolved.startsWith(root + path.sep)) throw new Error('Invalid vault path');
+  const resolved = resolveWithin(localStorageRoot(), key);
+  if (!resolved) throw new Error('Invalid vault path');
   return resolved;
 }
 
@@ -58,6 +57,8 @@ export async function deleteUploadedPolicy(stored: { provider: 'local'; path: st
   try {
     await fs.promises.rm(resolveLocal(stored.path), { force: true });
   } catch (err) {
-    console.warn('[SSP Import] Could not delete the stored document:', err instanceof Error ? err.message : err);
+    // The code only: an fs error message carries the stored path, which includes the uploaded file name.
+    const code = (err as { code?: unknown } | null)?.code;
+    console.warn(`[SSP Import] Could not delete the stored document (code ${typeof code === 'string' ? code : 'unknown'})`);
   }
 }
