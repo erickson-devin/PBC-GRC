@@ -98,9 +98,9 @@ export function subscribeStorageConfig(listener: () => void): () => void {
  * The server is the single source of truth, so the browser can never disagree with it
  * because of a stale build-time `VITE_*` value. Returns null if the server is unreachable.
  */
-export async function fetchStorageConfig(tenantId: string, token?: string | null): Promise<StorageConfig | null> {
+export async function fetchStorageConfig(tenantId: string, sessionRef?: string | null): Promise<StorageConfig | null> {
   try {
-    const info = await ApiClient.getStorageInfo(tenantId, token);
+    const info = await ApiClient.getStorageInfo(tenantId, sessionRef);
     return info ? setServerStorageConfig(info) : null;
   } catch {
     return null;

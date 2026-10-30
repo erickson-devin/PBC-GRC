@@ -21,7 +21,7 @@ export type LoginOutcome = 'ok' | 'mfa' | 'enrol' | 'failed';
 
 interface AuthContextType {
   currentUser: User;
-  idToken: string | null;
+  sessionRef: string | null;
   isAuthenticated: boolean;
   loading: boolean;
   /**
@@ -109,15 +109,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return tenantUser || ANONYMOUS_USER;
   });
 
-  const [idToken, setIdToken] = useState<string | null>(() => {
+  const [sessionRef, setSessionRef] = useState<string | null>(() => {
     // This tab pins the session it started with, so a sign-out or a different account in another tab is noticed (#32)
     const stored = readStoredSession(localStorage);
     pinTabSession(stored.ref && localStorage.getItem(AUTH_USER_KEY) ? stored.ref : null, stored.userId);
     return stored.ref;
   });
-  // The session-ended listener compares against the latest token without re-subscribing on every change
-  const idTokenRef = useRef(idToken);
-  idTokenRef.current = idToken;
+  // The session-ended listener compares against the latest session reference without re-subscribing on every change
+  const latestSessionRef = useRef(sessionRef);
+  latestSessionRef.current = sessionRef;
   // The unsaved-text rescue needs to know whose text it is, from inside the synchronous session-ended listener
   const currentUserRef = useRef(currentUser);
   currentUserRef.current = currentUser;
@@ -148,14 +148,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [redirectPath, setRedirectPath] = useState<string | null>(null);
 
-  // Sync user and token to storage
+  // Sync user and session reference to storage
   useEffect(() => {
     // this tab writes or clears the shared keys only while the stored session is its own (#32)
     if (tabSessionState() !== 'own') return;
     if (isAuthenticated && currentUser) {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
-      if (idToken) {
-        localStorage.setItem(AUTH_SESSION_REF_KEY, idToken);
+      if (sessionRef) {
+        localStorage.setItem(AUTH_SESSION_REF_KEY, sessionRef);
       }
       const flags = JSON.stringify({ mustChangePassword, enrolled: mfaEnrolled });
       localStorage.setItem(AUTH_FLAGS_KEY, flags);
@@ -164,7 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem(AUTH_SESSION_REF_KEY);
       localStorage.removeItem(AUTH_FLAGS_KEY);
     }
-  }, [isAuthenticated, currentUser, idToken, mustChangePassword, mfaEnrolled]);
+  }, [isAuthenticated, currentUser, sessionRef, mustChangePassword, mfaEnrolled]);
 
   // While the forced password change is pending, the tenant provider loads no programs or team (every answer would be 403).
   // A layout effect: the flag is set before the provider's own mount effects read it.
@@ -177,7 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string,
     displayName: string | null,
     provider: AuthProviderType,
-    token: string,
+    sessionRef: string,
     userId?: string,
     skipServerSync = false
   ) => {
@@ -188,18 +188,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         { id: userId, email, name: displayName },
         { tenantId: tenant.id, role, organization: tenant.name, provider }
       ),
-      idToken: token,
+      idToken: sessionRef,
     };
 
     // Other tabs read who owns the session from the user record: write it before the reference, then pin this tab (#32)
     try {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userProfile));
-      localStorage.setItem(AUTH_SESSION_REF_KEY, token);
+      localStorage.setItem(AUTH_SESSION_REF_KEY, sessionRef);
     } catch {}
-    pinTabSession(token, userProfile.id);
+    pinTabSession(sessionRef, userProfile.id);
 
     setCurrentUser(userProfile);
-    setIdToken(token);
+    setSessionRef(sessionRef);
     setIsAuthenticated(true);
     setAuthError(null);
     syncAuthUser(userProfile, tenant.id, { skipServerSync });
@@ -303,11 +303,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string, code?: string): Promise<void> => {
     // The old token stops being valid the moment the password changes: its in-flight requests must not sign the person out
-    const previous = idToken ?? ApiClient.getToken();
+    const previous = sessionRef ?? ApiClient.getSessionRef();
     holdSessionSignal(previous);
     try {
-      const session = await ApiClient.changePassword(currentPassword, newPassword, code, idToken ?? undefined);
-      setIdToken(session.sessionRef);
+      const session = await ApiClient.changePassword(currentPassword, newPassword, code, sessionRef ?? undefined);
+      setSessionRef(session.sessionRef);
       setCurrentUser(prev => ({ ...prev, idToken: session.sessionRef }));
       setMustChangePassword(false);
       setMfaEnrolled(session.mfaEnrolled);
@@ -321,13 +321,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // A 401 here is a genuinely dead session (a wrong current password is a 403): report it now that the hold is lifted
       if (err instanceof ApiError && err.status === 401) {
         releaseSessionSignal(previous);
-        reportResponseStatus(401, previous, ApiClient.getToken());
+        reportResponseStatus(401, previous, ApiClient.getSessionRef());
       }
       throw err;
     } finally {
       releaseSessionSignal(previous);
     }
-  }, [idToken, syncAuthUser, tenantUser, currentTenant.id]);
+  }, [sessionRef, syncAuthUser, tenantUser, currentTenant.id]);
 
   /**
    * Onboarding by invitation: the server creates the account for the invited email, consumes the invitation
@@ -378,7 +378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resetForSignOut();
     setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
     setIsAuthenticated(false);
-    setIdToken(null);
+    setSessionRef(null);
     setMustChangePassword(false);
     setMfaEnrolled(false);
     heldSession.current = null;
@@ -406,7 +406,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resetForSignOut();
     setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
     setIsAuthenticated(false);
-    setIdToken(null);
+    setSessionRef(null);
     setMustChangePassword(false);
     setMfaEnrolled(false);
     heldSession.current = null;
@@ -423,8 +423,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [resetForSignOut, endSessionInThisTab]);
 
   // The server stopped accepting this session (deleted / disabled account, rotated secret, expiry): sign out and say why
-  useEffect(() => onSessionRejected((token, reason) => {
-    if (!token || token !== idTokenRef.current) return;
+  useEffect(() => onSessionRejected((ref, reason) => {
+    if (!ref || ref !== latestSessionRef.current) return;
     // Before anything is torn down: keep the unsaved text of the open editors in memory so it can be copied after sign-in
     rescueUnsavedText(currentUserRef.current.id);
     if (isCrossTabReason(reason)) {
@@ -444,7 +444,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (s === 'adopt') {
         const { ref } = readStoredSession(localStorage);
         pinTabSession(ref, tabSessionPin()?.userId ?? null);
-        setIdToken(ref);
+        setSessionRef(ref);
         setCurrentUser(prev => ({ ...prev, idToken: ref ?? undefined }));
         return;
       }
@@ -510,7 +510,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const value = useMemo(() => ({
     currentUser,
-    idToken,
+    sessionRef,
     isAuthenticated,
     loading,
     sessionCheck,
@@ -537,7 +537,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clearAuthError,
   }), [
     currentUser,
-    idToken,
+    sessionRef,
     isAuthenticated,
     loading,
     sessionCheck,

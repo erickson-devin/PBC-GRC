@@ -42,7 +42,7 @@ export function useLocalEvidenceCopies(): LocalEvidenceCopiesState {
   const refresh = useCallback(() => setNonce(n => n + 1), []);
 
   useEffect(() => {
-    if (!currentTenant.serverBacked || !ApiClient.getToken() || !liveEvidence || liveScopeKey !== scope) {
+    if (!currentTenant.serverBacked || !ApiClient.getSessionRef() || !liveEvidence || liveScopeKey !== scope) {
       setStatus('idle');
       setCopies([]);
       setError(null);

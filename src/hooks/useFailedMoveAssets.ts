@@ -34,13 +34,13 @@ export function useFailedMoveAssets(): FailedMoveAssets {
   activeTenant.current = currentTenant.id;
 
   /** Re-counts what is still only in this browser for one old tenant id; clears the local list when the server holds it all. */
-  const reconcileOne = useCallback(async (tenantId: string, fromTenantId: string, token: string): Promise<{ stillLocal: number; unmatched: EnclaveAsset[] }> => {
+  const reconcileOne = useCallback(async (tenantId: string, fromTenantId: string, sessionRef: string): Promise<{ stillLocal: number; unmatched: EnclaveAsset[] }> => {
     const local = getEnclaveAssets(fromTenantId).filter(a => !isDemoSeedAsset(a, fromTenantId));
     if (local.length === 0) {
       setFailedMoveAssets(localStorage, fromTenantId, 0);
       return { stillLocal: 0, unmatched: [] };
     }
-    const server = await ApiClient.listAssets(tenantId, token);
+    const server = await ApiClient.listAssets(tenantId, sessionRef);
     const unmatched = unmatchedLocalAssets(local, server.assets, fromTenantId);
     if (unmatched.length === 0) clearLocalEnclaveAssets(fromTenantId);
     setFailedMoveAssets(localStorage, fromTenantId, unmatched.length);
@@ -52,8 +52,8 @@ export function useFailedMoveAssets(): FailedMoveAssets {
     setError(null);
     setLastResult(null);
     if (!currentTenant.serverBacked) return;
-    const token = ApiClient.getToken();
-    if (!token) return;
+    const sessionRef = ApiClient.getSessionRef();
+    if (!sessionRef) return;
     const tenantId = currentTenant.id;
     const known = counts.current.get(tenantId);
     if (known !== undefined) {
@@ -67,7 +67,7 @@ export function useFailedMoveAssets(): FailedMoveAssets {
       try {
         let total = 0;
         for (const rec of failedMovesFor(localStorage, tenantId)) {
-          total += (await reconcileOne(tenantId, rec.fromTenantId, token)).stillLocal;
+          total += (await reconcileOne(tenantId, rec.fromTenantId, sessionRef)).stillLocal;
         }
         counts.current.set(tenantId, total);
         if (activeTenant.current === tenantId) setPending(total);
@@ -82,8 +82,8 @@ export function useFailedMoveAssets(): FailedMoveAssets {
 
   const retry = useCallback(async () => {
     if (busy.current || !currentTenant.serverBacked) return;
-    const token = ApiClient.getToken();
-    if (!token) return;
+    const sessionRef = ApiClient.getSessionRef();
+    if (!sessionRef) return;
     const tenantId = currentTenant.id;
     busy.current = true;
     setStatus('retrying');
@@ -94,18 +94,18 @@ export function useFailedMoveAssets(): FailedMoveAssets {
       let failed = 0;
       let stillLocal = 0;
       for (const rec of failedMovesFor(localStorage, tenantId)) {
-        const before = await reconcileOne(tenantId, rec.fromTenantId, token);
+        const before = await reconcileOne(tenantId, rec.fromTenantId, sessionRef);
         if (before.unmatched.length > 0) {
           sent += before.unmatched.length;
           const res = await pushAssetsToServer(
-            { bulk: (t, i) => ApiClient.createAssetsBulk(t, i, token), single: (t, i) => ApiClient.createAsset(t, i, token) },
+            { bulk: (t, i) => ApiClient.createAssetsBulk(t, i, sessionRef), single: (t, i) => ApiClient.createAsset(t, i, sessionRef) },
             tenantId,
             before.unmatched
           );
           moved += res.moved;
           failed += res.failed;
         }
-        stillLocal += (await reconcileOne(tenantId, rec.fromTenantId, token)).stillLocal;
+        stillLocal += (await reconcileOne(tenantId, rec.fromTenantId, sessionRef)).stillLocal;
       }
       notifyAssetsChanged(tenantId);
       console.info(`[asset-move-retry] sent ${sent}, moved ${moved}, failed ${failed}, still local ${stillLocal}`);

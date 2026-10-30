@@ -116,10 +116,10 @@ async function run() {
   assert(viaClient.role === 'TENANT_OWNER' && /^tenant-client-created-org-[0-9a-f]{8}$/.test(viaClient.tenant.id), 'createTenant returns the server-generated tenant and the owner role', viaClient.tenant.id);
   assert((await myTenant(owner, viaClient.tenant.id))?.primaryFramework === 'CMMC_L2', 'and it really exists on the server');
 
-  const noToken = await rejection(ApiClient.createTenant({ name: 'No Token Org' }));
-  assert(noToken?.name === 'ApiError' && noToken.status === 401 && /signed in/i.test(noToken.message), 'no session => ApiError 401 before any request', noToken);
-  const badToken = await rejection(ApiClient.createTenant({ name: 'Bad Token Org' }, 'not-a-token'));
-  assert(badToken?.status === 401 && /sign in again/i.test(badToken.message), 'an invalid or expired token => 401 with a "sign in again" message', badToken);
+  const noSession = await rejection(ApiClient.createTenant({ name: 'No Token Org' }));
+  assert(noSession?.name === 'ApiError' && noSession.status === 401 && /signed in/i.test(noSession.message), 'no session => ApiError 401 before any request', noSession);
+  const badRef = await rejection(ApiClient.createTenant({ name: 'Bad Token Org' }, 'not-a-token'));
+  assert(badRef?.status === 401 && /sign in again/i.test(badRef.message), 'an invalid or expired token => 401 with a "sign in again" message', badRef);
   const invalid = await rejection(ApiClient.createTenant({ name: 'x' }, owner));
   assert(invalid?.status === 400 && /name/i.test(invalid.message), 'invalid input => 400 carrying the server\'s explanation', invalid);
   process.env.ALLOW_TENANT_CREATION = 'false';

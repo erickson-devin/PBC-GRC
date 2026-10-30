@@ -49,14 +49,14 @@ export function useFailedMoveControls(): FailedMoveControls {
     setError(null);
     setLastResult(null);
     if (!currentTenant.serverBacked) return;
-    if (!ApiClient.getToken()) return;
+    if (!ApiClient.getSessionRef()) return;
     pruneOrphanControlNotes(localStorage);
     setPending(countPending(currentTenant.id));
   }, [currentTenant.id, currentTenant.serverBacked]);
 
   const retry = useCallback(async () => {
     if (busy.current || !currentTenant.serverBacked) return;
-    if (!ApiClient.getToken()) return;
+    if (!ApiClient.getSessionRef()) return;
     const tenantId = currentTenant.id;
     busy.current = true;
     setStatus('retrying');

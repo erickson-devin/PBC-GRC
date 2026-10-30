@@ -57,7 +57,7 @@ const noPath = setServerStorageConfig({ provider: 'local', isAirGapped: true });
 assert(noPath.localStoragePath === '' && getStorageConfig().localStoragePath === '', 'a server answer without a path keeps it empty (no invented default)');
 
 (async () => {
-  console.log('\n--- getStorageInfo / fetchStorageConfig send the token they are given ---');
+  console.log('\n--- getStorageInfo / fetchStorageConfig send the session reference they are given ---');
   const realFetch = globalThis.fetch;
   try {
     let seenUrl = '';
@@ -67,20 +67,20 @@ assert(noPath.localStoragePath === '' && getStorageConfig().localStoragePath ===
       seenHeaders = init?.headers ?? {};
       return { ok: true, status: 200, json: async () => ({ provider: 'local', localStoragePath: '/app/data/evidence', isAirGapped: true }) };
     }) as unknown as typeof fetch;
-    const info = await ApiClient.getStorageInfo('tenant-x', 'tok-1');
+    const info = await ApiClient.getStorageInfo('tenant-x', 'ref-1');
     assert(seenUrl.endsWith('/api/v1/evidence/config/storage-info'), 'calls the storage-info endpoint');
-    assert(seenHeaders['X-PBC-Session'] === 'tok-1' && seenHeaders['x-tenant-id'] === 'tenant-x', 'sends the given token and the tenant id');
+    assert(seenHeaders['X-PBC-Session'] === 'ref-1' && seenHeaders['x-tenant-id'] === 'tenant-x', 'sends the given session reference and the tenant id');
     assert(info?.localStoragePath === '/app/data/evidence', 'returns the server path');
 
     globalThis.fetch = (async () => ({ ok: false, status: 401, json: async () => ({}) })) as unknown as typeof fetch;
-    assert((await ApiClient.getStorageInfo('tenant-x', 'tok-1')) === null, 'a 401 resolves null');
+    assert((await ApiClient.getStorageInfo('tenant-x', 'ref-1')) === null, 'a 401 resolves null');
 
     globalThis.fetch = (async () => ({
       ok: true,
       status: 200,
       json: async () => ({ provider: 'local', localStoragePath: '/srv/vault', isAirGapped: true }),
     })) as unknown as typeof fetch;
-    const cfg = await fetchStorageConfig('tenant-x', 'tok-1');
+    const cfg = await fetchStorageConfig('tenant-x', 'ref-1');
     assert(cfg?.localStoragePath === '/srv/vault' && getStorageConfig().localStoragePath === '/srv/vault', 'fetchStorageConfig applies the server config');
   } finally {
     globalThis.fetch = realFetch;
