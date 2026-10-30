@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import {
   Search,
   Filter,
@@ -14,17 +14,17 @@ import {
   ChevronRight,
   Paperclip,
   FileEdit,
-  Radio,
   SlidersHorizontal,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
 import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTenant } from '../../context/TenantContext';
-import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { FRAMEWORK_REGISTRY, getFrameworkControls } from '../../data/frameworks';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
-import { ConfirmOverlayChangeDialog } from '../programs/ConfirmOverlayChangeDialog';
-import { overlayLockReason, summarizeOverlayChange } from '../../data/overlayScoping';
+import { menuLockReason, overlayBannerText, overlayRemovals } from '../../data/overlayScoping';
+import { programFrameworkControls } from '../../data/programScope';
+import type { OverlayFilters } from '../../types/framework';
 import { ControlCard } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 
@@ -52,15 +52,24 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     activeBaselineTier,
     activeProgram,
     activeOverlayFilters,
-    toggleNonNetworkedOverlay,
+    ciaTriad,
     canEdit,
     canManagePrograms,
     programsStatus,
   } = useTenant();
 
-  const [confirmReset, setConfirmReset] = useState(false);
-  const progressRef = useRef<HTMLDivElement>(null);
-  const resetLock = overlayLockReason('nonNetworkedOnly', { serverBacked: Boolean(currentTenant.serverBacked), programsStatus, canManagePrograms, framework: activeFramework, program: activeProgram });
+  const overlayHeadingId = useId();
+  const overlayLock = menuLockReason({ serverBacked: Boolean(currentTenant.serverBacked), programsStatus, canManagePrograms, framework: activeFramework, program: activeProgram });
+  // What the active overlays take out of the control list (NIST SP 800-53 only), counted the way the control list itself is
+  const removals = useMemo(() => {
+    const isNist80053 = activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5';
+    if (!isNist80053) return { overlays: [], before: 0, after: 0, totalRemoved: 0 };
+    const controlsFor = (o: OverlayFilters) => activeProgram
+      ? programFrameworkControls({ framework: activeFramework, baseline: activeProgram.baseline ?? null, privacyBaseline: activeProgram.privacyBaseline }, o)
+      : getFrameworkControls(activeFramework, ciaTriad, o);
+    return overlayRemovals(controlsFor, activeOverlayFilters);
+  }, [activeFramework, activeProgram, ciaTriad, activeOverlayFilters]);
+  const banner = overlayBannerText(removals, overlayLock);
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
@@ -250,50 +259,36 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         </div>
       </div>
 
-      {/* Tactical Non-Networked Overlay Indicator Banner */}
-      {activeOverlayFilters.nonNetworkedOnly && (
-        <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-between gap-4 text-xs text-amber-300 animate-fadeIn">
-          <div className="flex items-center gap-2.5">
+      {/* Operational overlays of the program (NIST SP 800-53): what they remove; changed from the header's Overlays menu */}
+      {removals.overlays.length > 0 && (
+        <section aria-labelledby={overlayHeadingId} className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-xs text-amber-300 space-y-2.5 animate-fadeIn">
+          <div className="flex items-start gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
-              <Radio className="w-4 h-4 text-amber-400 animate-pulse motion-reduce:animate-none" />
+              <SlidersHorizontal className="w-4 h-4 text-amber-400" aria-hidden="true" />
             </div>
-            <div>
-              <p className="font-bold text-white flex items-center gap-2">
-                <span>Tactical Non-Networked / Air-Gapped Overlay Active</span>
+            <div className="min-w-0 space-y-0.5">
+              <h3 id={overlayHeadingId} className="font-bold text-white flex flex-wrap items-center gap-2">
+                <span>{banner.heading}</span>
                 <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">Filtered</span>
-              </p>
-              <p className="text-xs text-amber-200/80 mt-0.5">
-                Boundary- and network-dependent controls (e.g. SC-7, SC-8, AC-17, AC-18) are excluded from active audit scope for standalone tactical enclaves.
-              </p>
+              </h3>
+              <p className="text-amber-200/80">{banner.summary}</p>
             </div>
           </div>
-          {resetLock === null ? (
-            <button
-              type="button"
-              aria-haspopup="dialog"
-              onClick={() => setConfirmReset(true)}
-              className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 font-semibold text-xs transition-colors shrink-0"
-            >
-              Reset Overlay
-            </button>
-          ) : (
-            <span className="text-xs text-amber-200/80 shrink-0">{currentTenant.serverBacked ? 'Set on the program' : 'Set in this browser'}</span>
-          )}
-        </div>
-      )}
-
-      {confirmReset && (
-        <ConfirmOverlayChangeDialog
-          summary={summarizeOverlayChange({ framework: activeFramework, baseline: activeProgram?.baseline ?? null, privacyBaseline: activeProgram?.privacyBaseline }, activeOverlayFilters, 'nonNetworkedOnly')}
-          serverBacked={Boolean(currentTenant.serverBacked)}
-          onConfirm={toggleNonNetworkedOverlay}
-          onClose={() => setConfirmReset(false)}
-          onSaved={() => progressRef.current?.focus()}
-        />
+          <ul className="flex flex-wrap gap-1.5" aria-label="Active overlays">
+            {removals.overlays.map((o) => (
+              <li key={o.key} className="inline-flex items-center gap-1.5 max-w-full px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200">
+                <span className="font-semibold break-words">{o.title}</span>
+                <span className="font-mono text-amber-300/90 whitespace-nowrap">{o.removed} removed</span>
+              </li>
+            ))}
+          </ul>
+          {banner.overlap && <p className="text-amber-200/80">{banner.overlap}</p>}
+          <p className="text-amber-200/80">{banner.pointer}</p>
+        </section>
       )}
 
       {/* Progress & Baseline Mini-Bar */}
-      <div ref={progressRef} tabIndex={-1} className="stitch-card p-4 space-y-2 outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50">
+      <div className="stitch-card p-4 space-y-2">
         <div className="flex items-center justify-between text-xs font-medium">
           <span className="text-slate-400">
             Enclave Progress: <strong className="text-white">{currentTenant.name}</strong> • <span className="text-brand-300">{currentFrameworkDef.shortName}</span>

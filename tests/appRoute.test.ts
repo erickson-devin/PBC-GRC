@@ -90,7 +90,7 @@ const accountModal = read('src/components/auth/AccountSettingsModal.tsx');
 assert(!/>\s*Verified\s*</.test(accountModal) && accountModal.includes('ROLE_LABELS[currentRole]'), 'AccountSettingsModal: no hard-coded "Verified" badge; the role shows its label');
 assert(!read('src/components/layout/TenantSwitcher.tsx').includes('/17 Met'), 'TenantSwitcher: the met count is not hard-coded to 17');
 const frameworkSwitcher = read('src/components/layout/FrameworkSwitcher.tsx');
-assert(!frameworkSwitcher.includes('toggleNonNetworkedOverlay') && frameworkSwitcher.split("toggleOverlayFilter('nonNetworkedOnly')").length - 1 === 1, 'FrameworkSwitcher: one control for the Stand-Alone / Air-Gapped overlay (the scope-menu row), no header duplicate');
+assert(!frameworkSwitcher.includes('toggleNonNetworkedOverlay') && frameworkSwitcher.split("toggleOverlayFilter('nonNetworkedOnly', seen)").length - 1 === 1, 'FrameworkSwitcher: one control for the Stand-Alone / Air-Gapped overlay (the scope-menu row), no header duplicate');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

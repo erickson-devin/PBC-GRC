@@ -67,3 +67,13 @@ export function buildEnclaveEditUpdates(
   if (form.newOwnerEmail !== null) updates.systemOwner = formatSystemOwner(form.newOwnerEmail);
   return { updates, frameworksChanged: changed };
 }
+
+/** Fixed text for a refused enclave save, by HTTP status only (never the server's text). */
+export function enclaveSaveErrorMessage(err: unknown): string {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status === 403) return "Your role cannot change this organization's settings, or a chosen framework is not licensed for it. Nothing was saved.";
+  if (status === 401) return 'Your session has ended. Sign in again; nothing was saved.';
+  if (status === 0) return 'The server could not be reached. Nothing was saved. Try again, or cancel.';
+  if (status === 400 || status === 409) return 'The server did not accept these changes. Nothing was saved. Check the name and frameworks, then try again.';
+  return 'The changes could not be saved. Nothing was saved. Try again, or cancel.';
+}

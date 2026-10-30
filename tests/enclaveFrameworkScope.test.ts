@@ -13,6 +13,7 @@ import {
   currentFrameworkSelection,
   frameworksChanged,
   normalizeFrameworkSelection,
+  enclaveSaveErrorMessage,
 } from '../src/utils/enclaveEdit';
 import { toServerPatch } from '../src/data/tenantSync';
 import { readFileSync } from 'fs';
@@ -329,6 +330,44 @@ async function runTests() {
     }
     const finance = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'FinanceProvisioningLog.tsx'), 'utf8');
     assert(!finance.includes('>Program:<'), 'FinanceProvisioningLog has no bare "Program:" filter label');
+  }
+
+  // A refused enclave save shows fixed text and is never reported as saved
+  {
+    console.log('\n--- Enclave save refusal ---');
+    const msg = (status: number) => enclaveSaveErrorMessage({ status });
+    assert(msg(403).includes('role') && msg(403).includes('licensed'), 'EF-M1 403 names the role and the license');
+    assert(msg(401).includes('session'), 'EF-M1 401 says the session ended');
+    assert(msg(0).includes('could not be reached'), 'EF-M1 status 0 says the server could not be reached');
+    assert(msg(400).includes('did not accept') && msg(409).includes('did not accept'), 'EF-M1 400 and 409 say the server did not accept the changes');
+    assert(msg(500).includes('could not be saved'), 'EF-M1 any other status gets the generic text');
+    assert(!enclaveSaveErrorMessage(new Error('secret-name')).includes('secret-name'), 'EF-M1 the server or error text is never shown');
+
+    const ctx = readFileSync(join(process.cwd(), 'src', 'context', 'TenantContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    assert(/updateTenant: \(tenantId: string, updates: Partial<Tenant>\) => Promise<void>/.test(ctx), 'EF-P1 updateTenant returns a Promise<void>');
+    const slice = (from: string, to: string) => {
+      const a = ctx.indexOf(from);
+      const b = ctx.indexOf(to, a + 1);
+      return a >= 0 && b > a ? ctx.slice(a, b) : '';
+    };
+    const upd = slice('const updateTenant = useCallback', 'const updateTenantFrameworkScope');
+    assert(upd.includes('await ApiClient.updateTenant(') && upd.includes('throw err'), 'EF-P2 updateTenant awaits the PATCH and rethrows a refusal');
+    const stack = slice('const updateStackProfile', 'const suspendTenant');
+    const owner = slice('const updateTenantOwner', 'const deleteTenant');
+    // One statement (no ';' between the call and its .catch), so a later ApiClient.updateTenant(...).catch in the body cannot satisfy it
+    assert(/void updateTenant\([^;]*\)\.catch\(\(\) => undefined\)/.test(stack), 'EF-P4 updateStackProfile handles the rejection');
+    assert(/void updateTenant\([^;]*\)\.catch\(\(\) => undefined\)/.test(owner), 'EF-P4 updateTenantOwner handles the rejection');
+
+    const modal = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'EditEnclaveModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    const awaited = modal.indexOf('await updateTenant(tenant.id, updates)');
+    assert(awaited >= 0 && modal.indexOf('setShowSuccessToast(true)') > awaited, 'EF-P3 EditEnclaveModal shows success only after the awaited update');
+    assert(modal.includes('<ErrorNotice message={saveError} />') && modal.includes('enclaveSaveErrorMessage(err)'), 'EF-P3 EditEnclaveModal shows a fixed refusal message');
+    assert(modal.includes('onClose={isSubmitting ? undefined : onClose}'), 'EF-P3 Escape does not close the dialog while saving');
+    assert(!modal.includes('console.'), 'EF-P3 EditEnclaveModal does not log');
+
+    const team = readFileSync(join(process.cwd(), 'src', 'components', 'settings', 'TeamSettingsModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    assert(!team.includes('alert(') && !team.includes('Failed to update tenant framework scope'), 'EF-T1 TeamSettingsModal has no alert and no log for a refused scope save');
+    assert(team.includes('<ErrorNotice message={scopeError} />'), 'EF-T1 TeamSettingsModal shows the scope error inline');
   }
 
   // Summary

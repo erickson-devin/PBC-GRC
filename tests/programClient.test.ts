@@ -16,7 +16,7 @@ import {
 } from '../src/data/programSync';
 import { boundaryAssets, membershipDelta, membershipLabels, parseAssetMemberships, parseProgramAssets } from '../src/data/programAssets';
 import { nistControlsWithPrivacy,programBaselineToCia, programFrameworkControls } from '../src/data/programScope';
-import { describeOverlayChange, menuLockReason, overlayLockReason, overlayLockText, overlayScopeNote, overlaySaveErrorMessage, programOverlayLabels, summarizeOverlayChange } from '../src/data/overlayScoping';
+import { describeOverlayChange, isOverlayConflict, menuLockReason, overlayBannerText, overlayLockReason, overlayLockText, overlayRemovals, overlayScopeNote, overlaySaveErrorMessage, programOverlayLabels, summarizeOverlayChange } from '../src/data/overlayScoping';
 import type { OverlayLock, OverlayLockContext } from '../src/data/overlayScoping';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 import { StorageService } from '../src/services/storageService';
@@ -393,6 +393,18 @@ async function headers() {
     await ApiClient.updateProgram('t1', 'p1', { scoping: { noWireless: true } });
     const scopeBody = JSON.parse(String(calls[0].init.body)) as { scoping?: Record<string, boolean>; name?: string };
     assert(calls[0].init.method === 'PUT' && scopeBody.scoping?.noWireless === true && !('name' in scopeBody), 'P5s updateProgram sends the scoping object', scopeBody);
+    stub(200, { program: { id: 'p1', framework: 'NIST_800_53_REV5', baseline: 'MODERATE', name: 'N', scoping: { noMobileDevices: true } } });
+    await ApiClient.updateProgram('t1', 'p1', { scoping: { noMobileDevices: true }, expectedScoping: { noWireless: true } });
+    const expBody = JSON.parse(String(calls[0].init.body)) as { scoping?: Record<string, boolean>; expectedScoping?: Record<string, boolean> };
+    assert(JSON.stringify(expBody.expectedScoping) === '{"noWireless":true}' && JSON.stringify(expBody.scoping) === '{"noMobileDevices":true}', 'P5s2 updateProgram sends expectedScoping exactly as given', expBody);
+    stub(409, { error: 'The overlays of this program changed meanwhile', code: 'scoping_conflict' });
+    let conflictErr: { status?: number; reason?: string } | null = null;
+    try {
+      await ApiClient.updateProgram('t1', 'p1', { scoping: { noMobileDevices: true }, expectedScoping: { noWireless: true } });
+    } catch (e) {
+      conflictErr = e as { status?: number; reason?: string };
+    }
+    assert(conflictErr?.status === 409 && conflictErr.reason === 'scoping_conflict' && isOverlayConflict(conflictErr), 'P5s3 a 409 scoping_conflict rejects with that reason, and isOverlayConflict recognises it', conflictErr);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -454,6 +466,35 @@ assert(
   'O12 the save error texts, and the server text is never echoed'
 );
 assert(JSON.stringify(programOverlayLabels({ noWireless: true, nonNetworkedOnly: true })) === '["Air-gapped","No wireless"]' && programOverlayLabels({}).length === 0 && programOverlayLabels(undefined).length === 0, 'O13 programOverlayLabels lists the active ones in menu order');
+
+console.log('\n--- Stale overlay save (#115) ---');
+const conflictText = overlaySaveErrorMessage({ status: 409, reason: 'scoping_conflict' });
+assert(conflictText.includes('Someone else changed') && conflictText.includes('Nothing was saved') && !conflictText.includes('archived'), 'P5g2 a scoping_conflict says someone else changed the overlays, not that the program was archived', conflictText);
+assert(overlaySaveErrorMessage({ status: 409 }).includes('archived') && overlaySaveErrorMessage({ status: 409, reason: 'program_archived' }).includes('archived'), 'P5g3 a plain 409 and program_archived still say archived');
+assert(isOverlayConflict({ reason: 'scoping_conflict' }) && isOverlayConflict({ code: 'scoping_conflict' }) && !isOverlayConflict({ status: 409 }) && !isOverlayConflict(null) && !isOverlayConflict({ reason: 'program_archived' }), 'P5g4 isOverlayConflict truth table');
+const seenCur = { nonNetworkedOnly: false, noWireless: true, noMobileDevices: false, noPiiProcessing: false };
+assert(JSON.stringify(summarizeOverlayChange(ovProg, seenCur, 'noMobileDevices').seen) === JSON.stringify(seenCur), 'P5h2 summarizeOverlayChange returns the overlays it was computed from as seen');
+
+console.log('\n--- Matrix banner (#117) ---');
+const bannerCur = { nonNetworkedOnly: true, noWireless: true, noMobileDevices: false, noPiiProcessing: false };
+const bannerNone = { nonNetworkedOnly: false, noWireless: false, noMobileDevices: false, noPiiProcessing: false };
+const bannerF = (o: typeof bannerCur) => programFrameworkControls(ovProg, o);
+const rem = overlayRemovals(bannerF, bannerCur);
+const remBefore = bannerF(bannerNone).length;
+const wirelessAlone = remBefore - bannerF({ ...bannerNone, noWireless: true }).length;
+assert(rem.overlays.map((o) => o.key).join() === 'nonNetworkedOnly,noWireless', 'OR1 the removals list the active overlays in menu order', rem.overlays.map((o) => o.key));
+assert(bannerF(bannerNone).some((c) => c.id === 'AC-18') && rem.overlays[1].removed === wirelessAlone && wirelessAlone > 0, 'OR2 No Wireless alone removes the difference it makes (AC-18 is in scope without overlays)', [rem.overlays[1].removed, wirelessAlone]);
+assert(rem.before === remBefore && rem.after === bannerF(bannerCur).length && rem.totalRemoved === rem.before - rem.after && rem.totalRemoved > 0, 'OR3 before, after and totalRemoved add up', rem);
+const remNone = overlayRemovals(bannerF, bannerNone);
+assert(remNone.overlays.length === 0 && remNone.totalRemoved === 0 && remNone.before === remNone.after, 'OR4 no active overlay: nothing listed, nothing removed');
+const bt1 = overlayBannerText({ overlays: [{ removed: 3 }], before: 300, after: 297, totalRemoved: 3 }, null);
+assert(bt1.heading === '1 operational overlay is active' && bt1.summary.includes('3 of 300 controls are out of scope') && bt1.summary.includes('assesses 297 controls') && bt1.overlap === null, 'OR5 one overlay: heading, summary, no overlap note', bt1);
+assert(overlayBannerText({ overlays: [{ removed: 4 }, { removed: 3 }], before: 300, after: 295, totalRemoved: 5 }, null).overlap !== null, 'OR6 overlapping removals (4 + 3 > 5) add the overlap note');
+const bt7 = overlayBannerText({ overlays: [{ removed: 4 }, { removed: 3 }], before: 300, after: 293, totalRemoved: 7 }, null);
+assert(bt7.overlap === null && bt7.heading === '2 operational overlays are active', 'OR7 disjoint removals (4 + 3 = 7) add no overlap note', bt7);
+assert(overlayBannerText({ overlays: [{ removed: 0 }, { removed: 0 }], before: 280, after: 280, totalRemoved: 0 }, null).summary.startsWith('No control of this program depends on them'), 'OR8 no removal at all says no control depends on them');
+const lockOf = (lock: Parameters<typeof overlayBannerText>[1]) => overlayBannerText({ overlays: [{ removed: 1 }], before: 10, after: 9, totalRemoved: 1 }, lock).pointer;
+assert(lockOf(null) === 'Change them from the Overlays menu in the header.' && lockOf('cannot_manage').includes('Only a Tenant Owner or MSP Admin') && lockOf('archived').includes('archived and read-only') && lockOf('loading') === 'They are listed in the Overlays menu in the header.', 'OR9 the pointer follows the lock reason');
 
 console.log('\n--- Boundary asset membership helpers (programAssets.ts) ---');
 const pam = parseAssetMemberships({ memberships: [{ programId: 'p1', assetIds: ['a1'] }, { programId: '', assetIds: [] }, null] });
@@ -548,10 +589,11 @@ async function main() {
   assert(/scopingToOverlays\(activeProgram\?\.scoping/.test(tenantCtx), 'P5a a server-backed tenant\'s overlays are derived from the active program');
   const toggleBody = tenantCtx.slice(tenantCtx.indexOf('const toggleOverlayFilter = useCallback'), tenantCtx.indexOf('const toggleNonNetworkedOverlay = useCallback'));
   assert(toggleBody.includes('updateProgram(program.id, { scoping:') && toggleBody.includes('overlayLockReason(') && toggleBody.includes("code: 'overlay_locked'"), 'P5b toggleOverlayFilter saves through updateProgram and rejects when the overlays are locked');
-  const serverPart = toggleBody.slice(toggleBody.indexOf('const current = scopingToOverlays'));
+  const serverPart = toggleBody.slice(toggleBody.indexOf('const base = seen ?? scopingToOverlays'));
+  assert(serverPart.length > 100 && serverPart.includes('expectedScoping: base') && serverPart.includes('isOverlayConflict(err)') && serverPart.includes('refreshPrograms('), 'P5i the server path sends the overlays it started from as expectedScoping and reloads the programs on a conflict', serverPart.length);
   assert(!/localStorage/.test(serverPart) && !/setActiveOverlayFilters/.test(tenantCtx), 'P5c nothing is written to browser storage for a server-backed tenant, and setActiveOverlayFilters is gone');
   assert(/overlayFiltersStorageKey = \(tenantId: string\) => `pbc_overlay_filters_\$\{tenantId\}`/.test(tenantCtx) && /removeItem\(overlayFiltersStorageKey\(tenantId\)\)/.test(tenantCtx), 'P5d a browser-only tenant keeps its overlays under pbc_overlay_filters_<tenantId>, removed by deleteTenant');
-  assert(/toggleOverlayFilter: \(key: keyof OverlayFilters\) => Promise<void>/.test(tenantCtx) && /toggleNonNetworkedOverlay: \(\) => Promise<void>/.test(tenantCtx), 'P5e the toggles return Promises');
+  assert(/toggleOverlayFilter: \(key: keyof OverlayFilters, seen\?: OverlayFilters\) => Promise<void>/.test(tenantCtx) && /toggleNonNetworkedOverlay: \(seen\?: OverlayFilters\) => Promise<void>/.test(tenantCtx), 'P5e the toggles return Promises');
   assert(/body\.scoping = updates\.scoping/.test(api), 'P5f updateProgram sends scoping');
   assert(/programsStatus: ProgramsStatus = !currentTenant\.serverBacked \? 'unsupported'/.test(tenantCtx), 'T6m a browser-only tenant has programs status unsupported');
   assert(/ciaTriad = useMemo<CiaTriadSelection>\(\(\) => programBaselineToCia\(activeProgram\?\.baseline\)/.test(tenantCtx) && /activeProgram\?\.framework \?\? currentTenant\.primaryFramework/.test(tenantCtx), 'T6n the framework and CIA triad are derived from the active program');

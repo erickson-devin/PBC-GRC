@@ -530,6 +530,7 @@ export const ApiClient = {
     if (updates.description !== undefined) body.description = updates.description;
     if (updates.boundarySummary !== undefined) body.systemBoundarySummary = updates.boundarySummary;
     if (updates.scoping !== undefined) body.scoping = updates.scoping;
+    if (updates.expectedScoping !== undefined) body.expectedScoping = updates.expectedScoping;
     const program = parseProgramResponse(await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId, body }));
     if (!program) throw new ApiError(502, 'The server sent back a program this version of the app does not understand.');
     return program;

@@ -62,4 +62,6 @@ export interface ProgramUpdate {
   description?: string;
   boundarySummary?: string;
   scoping?: Partial<OverlayFilters>;
+  /** The overlays the caller last saw: the server answers 409 scoping_conflict when they have changed since. */
+  expectedScoping?: Partial<OverlayFilters>;
 }

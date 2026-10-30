@@ -6,6 +6,7 @@ import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { ConfirmOverlayChangeDialog } from '../programs/ConfirmOverlayChangeDialog';
 import { OVERLAY_DETAILS, OVERLAY_TITLES, menuLockReason, overlayLockReason, overlayLockText, overlayScopeNote, summarizeOverlayChange } from '../../data/overlayScoping';
 import type { OverlayKey } from '../../data/overlayScoping';
+import type { OverlayFilters } from '../../types/framework';
 
 /**
  * The "Overlays" menu of the header: the four operational overlays that tailor which controls apply, for NIST SP 800-53
@@ -63,7 +64,7 @@ export const FrameworkSwitcher: React.FC = () => {
     icon: LucideIcon;
     iconOn: string;
     buttonOn: string;
-    toggle: () => Promise<void>;
+    toggle: (seen?: OverlayFilters) => Promise<void>;
     disabledReason?: string;
   }[] = [
     {
@@ -73,7 +74,7 @@ export const FrameworkSwitcher: React.FC = () => {
       icon: WifiOff,
       iconOn: 'text-amber-400',
       buttonOn: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',
-      toggle: () => toggleOverlayFilter('nonNetworkedOnly'),
+      toggle: (seen) => toggleOverlayFilter('nonNetworkedOnly', seen),
       disabledReason: rowReason('nonNetworkedOnly'),
     },
     {
@@ -83,7 +84,7 @@ export const FrameworkSwitcher: React.FC = () => {
       icon: Radio,
       iconOn: 'text-cyan-400',
       buttonOn: 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40',
-      toggle: () => toggleOverlayFilter('noWireless'),
+      toggle: (seen) => toggleOverlayFilter('noWireless', seen),
       disabledReason: rowReason('noWireless'),
     },
     {
@@ -93,7 +94,7 @@ export const FrameworkSwitcher: React.FC = () => {
       icon: Smartphone,
       iconOn: 'text-indigo-400',
       buttonOn: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40',
-      toggle: () => toggleOverlayFilter('noMobileDevices'),
+      toggle: (seen) => toggleOverlayFilter('noMobileDevices', seen),
       disabledReason: rowReason('noMobileDevices'),
     },
     {
@@ -103,7 +104,7 @@ export const FrameworkSwitcher: React.FC = () => {
       icon: EyeOff,
       iconOn: 'text-emerald-400',
       buttonOn: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
-      toggle: () => toggleOverlayFilter('noPiiProcessing'),
+      toggle: (seen) => toggleOverlayFilter('noPiiProcessing', seen),
       disabledReason: rowReason('noPiiProcessing'),
     },
   ];

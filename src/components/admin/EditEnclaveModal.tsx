@@ -14,7 +14,8 @@ import { ComplianceFramework } from '../../types/framework';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { initialOwnerEmail, ownerEmailChanged } from '../../utils/systemOwner';
-import { buildEnclaveEditUpdates } from '../../utils/enclaveEdit';
+import { buildEnclaveEditUpdates, enclaveSaveErrorMessage } from '../../utils/enclaveEdit';
+import { ErrorNotice } from '../common/ErrorNotice';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface EditEnclaveModalProps {
@@ -48,6 +49,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
   const [enabledFrameworks, setEnabledFrameworks] = useState<ComplianceFramework[]>(['CMMC_L1']);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync state with incoming tenant
   useEffect(() => {
@@ -68,6 +70,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
           : [prim]
       );
       setShowSuccessToast(false);
+      setSaveError(null);
     }
   }, [tenant, isOpen]);
 
@@ -94,6 +97,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
     if (!name.trim()) return;
 
     setIsSubmitting(true);
+    setSaveError(null);
     try {
       // The SSP system-owner contact changes only if the user changed it
       const ownerChanged = ownerEmailChanged(initialOwner, ownerEmail);
@@ -106,7 +110,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
       });
 
       // One update, so one PATCH for a server-backed tenant: all of it is applied or none of it (frameworks only when changed)
-      updateTenant(tenant.id, updates);
+      await updateTenant(tenant.id, updates);
       // A browser-only tenant makes no request: this only hands the local team roles over
       if (ownerChanged && !tenant.serverBacked) updateTenantOwner(tenant.id, ownerEmail.trim());
 
@@ -120,13 +124,13 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
         onClose();
       }, 700);
     } catch (err) {
-      console.error('Failed to update enclave:', err);
       setIsSubmitting(false);
+      setSaveError(enclaveSaveErrorMessage(err));
     }
   };
 
   return (
-    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <DialogOverlay onClose={isSubmitting ? undefined : onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
       <div className="relative w-full max-w-2xl my-auto p-1.5 rounded-[2rem] bg-gradient-to-b from-slate-800/60 via-slate-900/40 to-slate-950 ring-1 ring-slate-700/60 shadow-2xl shadow-cyan-950/20 animate-scaleUp">
         <div className="p-6 sm:p-8 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-left space-y-6">
           
@@ -297,6 +301,8 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
               </div>
             </div>
 
+            <ErrorNotice message={saveError} />
+
             {/* Actions */}
             <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
               <button
@@ -311,6 +317,7 @@ export const EditEnclaveModal: React.FC<EditEnclaveModalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
+                aria-busy={isSubmitting || undefined}
                 className="btn-primary text-xs px-5 py-2.5 flex items-center gap-2 font-bold shadow-lg shadow-cyan-500/20"
               >
                 {showSuccessToast ? (
