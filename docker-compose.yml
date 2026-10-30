@@ -26,10 +26,10 @@
 #                          the AI analysis of imported System Security Plans (docs/SSP_IMPORT.md). Put it in .env, or run
 #                          `docker compose --profile ai up -d`. Without it the platform starts without Ollama (it is not a
 #                          dependency, so a host with no GPU still comes up) and imports use rule-based matching.
-#                          Load the model once:  docker compose exec ollama ollama pull llama3.1:8b
+#                          Load the model once:  docker compose exec ollama ollama pull llama3.2:3b
 #                          (needs internet once; for an air-gapped host copy the model volume or `ollama create` from a GGUF).
-#   OLLAMA_MODEL / OLLAMA_NUM_CTX / OLLAMA_IMAGE_TAG   model (default llama3.1:8b), context window (8192), Ollama image tag
-#                          (default latest: pin a version tag for reproducible installs).
+#   OLLAMA_MODEL / OLLAMA_NUM_CTX / OLLAMA_IMAGE_TAG   model (default llama3.2:3b, the model the CMMC import is tuned for), context window (8192), Ollama image
+#                          (default: the release pinned below by digest; set `X.Y.Z` or `X.Y.Z@sha256:<digest>` to change it, never latest).
 #   SSP_AI_ENABLED=false   switch the AI analysis off even if Ollama is running.
 #
 # Security model: the app connects as APP_DB_USER, an ordinary role (NOSUPERUSER, NOBYPASSRLS). PostgreSQL
@@ -123,7 +123,7 @@ services:
       # Local AI analysis of imported SSPs. If Ollama is not running the import screen says so and rule-based matching is used.
       SSP_AI_ENABLED: ${SSP_AI_ENABLED:-true}
       OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
       OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-8192}
       # Tuning for small models (docs/SSP_IMPORT.md); empty means the built-in default
       SSP_AI_MAX_CANDIDATES: ${SSP_AI_MAX_CANDIDATES:-}
@@ -165,7 +165,8 @@ services:
   # ── 3. Local Ollama Server (AI analysis with GPU): optional, enabled by the "ai" profile ──
   ollama:
     profiles: ["ai"]
-    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    # pinned by digest, resolved 2026-10-30; refresh in a reviewed PR
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-0.40.13@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429}
     container_name: singularity-ollama
     restart: unless-stopped
     logging:
