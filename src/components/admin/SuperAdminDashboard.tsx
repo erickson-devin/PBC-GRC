@@ -46,7 +46,9 @@ import { FinanceProvisioningLog } from './FinanceProvisioningLog';
 import {
   generateEnclaveHandoverPackage,
   executeCryptographicDestruction,
+  EVIDENCE_CLEAR_FAILED_MESSAGE,
 } from '../../data/storage/offboardingEngine';
+import { readBrowserOverlayFilters } from '../../data/browserOverlays';
 import { CertificateOfDestruction } from '../../types/audit';
 import { buildProgramHandover, type HandoverSelection } from '../../data/storage/offboardingPrograms';
 import { OffboardingProgramDialog, NOT_MEMBER_MESSAGE } from './OffboardingProgramDialog';
@@ -192,6 +194,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   // The live tenant whose program choice (for the offboarding handover) is open
   const [offboardingProgramTenant, setOffboardingProgramTenant] = useState<Tenant | null>(null);
   const [notificationToast, setNotificationToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+  const [destructionError, setDestructionError] = useState<string | null>(null);
 
   // Invitations and teams of server-backed tenants live on the server: load them for every tenant the admin manages
   useEffect(() => {
@@ -231,7 +234,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
   // Auto-dismiss notification toast
   useEffect(() => {
-    if (notificationToast) {
+    if (notificationToast && notificationToast.type !== 'error') {
       const timer = setTimeout(() => setNotificationToast(null), 4000);
       return () => clearTimeout(timer);
     }
@@ -239,7 +242,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
   const hasAccess = isSuperAdmin;
 
-  const handleCopy = async (text: string, id: string, type: 'token' | 'enclave') => {
+  const handleCopy = async (text: string, id: string, type: 'token' | 'enclave'): Promise<boolean> => {
     try {
       await copyToClipboard(text);
       if (type === 'token') {
@@ -249,8 +252,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         setCopiedEnclaveId(id);
         setTimeout(() => setCopiedEnclaveId(null), 2000);
       }
+      return true;
     } catch (err) {
-      console.warn('Clipboard write failed:', err);
+      console.warn('Clipboard write failed:', err instanceof Error ? err.name : 'unknown error');
+      setNotificationToast({
+        type: 'error',
+        message: type === 'token'
+          ? 'The invitation link could not be copied to the clipboard. Try Copy Link again.'
+          : 'The enclave ID could not be copied to the clipboard. Select the ID and copy it by hand.',
+      });
+      return false;
     }
   };
 
@@ -321,7 +332,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           return;
         }
       } else {
-        await generateEnclaveHandoverPackage(tenant.id, tenant, assets);
+        await generateEnclaveHandoverPackage(tenant.id, tenant, assets, undefined, undefined, { overlays: readBrowserOverlayFilters(tenant.id) });
       }
       setNotificationToast({
         type: 'success',
@@ -330,10 +341,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           : `Offboarding package for "${tenant.name}" exported and downloaded successfully.`,
       });
     } catch (err: unknown) {
-      console.error('Failed to export offboarding package:', err);
+      console.error('Failed to export offboarding package:', err instanceof Error ? err.name : 'unknown error');
       setNotificationToast({
         type: 'error',
-        message: `Failed to export offboarding package: ${errorMessage(err) || 'Unknown error'}`,
+        message: 'The offboarding package could not be created, so nothing was downloaded. Try again.',
       });
     } finally {
       setExportingTenantId(null);
@@ -371,6 +382,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     setSelectedTenantForDestruction(tenant);
     setDestructionConfirmInput('');
     setDestructionCertificate(null);
+    setDestructionError(null);
     setIsDestructionModalOpen(true);
     setFloatingMenu(null);
   };
@@ -379,6 +391,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const handleExecuteDestruction = async () => {
     if (!selectedTenantForDestruction) return;
 
+    setDestructionError(null);
     setIsDestroying(true);
     try {
       const cert = await executeCryptographicDestruction({
@@ -397,11 +410,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         message: `Enclave "${selectedTenantForDestruction.name}" cryptographically destroyed. Certificate ${cert.certificateId} downloaded.`,
       });
     } catch (err: unknown) {
-      console.error('Cryptographic destruction failed:', err);
-      setNotificationToast({
-        type: 'error',
-        message: `Destruction protocol failed: ${errorMessage(err) || 'Unknown error'}`,
-      });
+      console.error('Cryptographic destruction failed:', err instanceof Error ? err.name : 'unknown error');
+      setDestructionError(
+        err instanceof Error && err.message === EVIDENCE_CLEAR_FAILED_MESSAGE
+          ? EVIDENCE_CLEAR_FAILED_MESSAGE
+          : 'The destruction did not complete and no Certificate of Destruction was issued. Check the enclave before trying again.',
+      );
     } finally {
       setIsDestroying(false);
     }
@@ -509,8 +523,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       
       {/* Toast Notification Banner */}
       {notificationToast && (
-        <div className="fixed top-16 right-6 z-50 animate-fadeIn">
-          <div className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-3 text-xs font-semibold backdrop-blur-md ${
+        <div className="fixed top-16 right-6 z-[70] animate-fadeIn">
+          <div role={notificationToast.type === 'error' ? 'alert' : 'status'} className={`px-4 py-3 rounded-2xl shadow-2xl border flex items-center gap-3 text-xs font-semibold backdrop-blur-md ${
             notificationToast.type === 'success'
               ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
               : notificationToast.type === 'error'
@@ -518,18 +532,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               : 'bg-cyan-950/90 border-cyan-500/40 text-cyan-200'
           }`}>
             {notificationToast.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <CheckCircle2 aria-hidden="true" className="w-4 h-4 text-emerald-400" />
             ) : notificationToast.type === 'error' ? (
-              <AlertTriangle className="w-4 h-4 text-rose-400" />
+              <AlertTriangle aria-hidden="true" className="w-4 h-4 text-rose-400" />
             ) : (
-              <Sparkles className="w-4 h-4 text-cyan-400" />
+              <Sparkles aria-hidden="true" className="w-4 h-4 text-cyan-400" />
             )}
             <span>{notificationToast.message}</span>
-            <button aria-label="Close"
+            <button type="button" aria-label="Dismiss notification"
               onClick={() => setNotificationToast(null)}
-              className="ml-2 text-slate-400 hover:text-white"
+              className="ml-2 text-slate-400 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded"
             >
-              <X className="w-3.5 h-3.5" />
+              <X aria-hidden="true" className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -1214,11 +1228,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                                 onClick={async () => {
                                   try {
                                     const res = await resendInvitation(inv.id);
-                                    await handleCopy(res.inviteUrl, inv.id, 'token');
-                                    setNotificationToast({
-                                      type: 'success',
-                                      message: `New invitation link created and copied. The previous link no longer works.`,
-                                    });
+                                    const copied = await handleCopy(res.inviteUrl, inv.id, 'token');
+                                    setNotificationToast(copied
+                                      ? { type: 'success', message: `New invitation link created and copied. The previous link no longer works.` }
+                                      : { type: 'error', message: 'A new invitation link was created but could not be copied. Use Copy Link to copy it. The previous link no longer works.' });
                                   } catch (err: unknown) {
                                     setNotificationToast({ type: 'error', message: errorMessage(err) || 'Could not resend the invitation.' });
                                   }
@@ -1502,6 +1515,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 </div>
               ) : (
                 <div className="space-y-5">
+                  <ErrorNotice message={destructionError} />
                   <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-xs space-y-2 text-rose-200">
                     <div className="font-bold flex items-center gap-2 text-rose-300">
                       <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />

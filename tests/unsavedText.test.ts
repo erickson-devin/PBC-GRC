@@ -20,6 +20,13 @@ import {
   unsavedSspImportDrafts,
   type UnsavedTextEntry,
 } from '../src/services/unsavedText';
+import {
+  INVITE_PREVIEW_FAILED,
+  INVITE_PREVIEW_RATE_LIMITED,
+  INVITE_PREVIEW_SERVER_ERROR,
+  INVITE_PREVIEW_UNREACHABLE,
+  invitePreviewErrorMessage,
+} from '../src/utils/invitePreview';
 
 /**
  * Unsaved text kept in memory when a session ends: the registry, the rescue store and who may see it, the diff helpers, and
@@ -281,10 +288,28 @@ assert(
 
 const inviteSrc = read('src/pages/AcceptInvitePage.tsx');
 assert(
-  inviteSrc.includes('<ErrorNotice message={claimError || authError} />') && inviteSrc.includes('<ErrorNotice message={previewError}') && !inviteSrc.includes('{previewError && <span'),
+  inviteSrc.includes('<ErrorNotice message={claimError || authError} />') && !inviteSrc.includes('{previewError && <span'),
   'U2-16 the invitation page shows its errors through ErrorNotice'
 );
 assert(read('src/components/common/ErrorNotice.tsx').includes('role="alert"'), 'U2-17 ErrorNotice is an alert');
+
+assert(invitePreviewErrorMessage({ status: 0 }) === INVITE_PREVIEW_UNREACHABLE, 'U2-18 status 0 is "server not reached"');
+assert(invitePreviewErrorMessage({ status: 429 }) === INVITE_PREVIEW_RATE_LIMITED, 'U2-19 status 429 is "too many checks"');
+assert(invitePreviewErrorMessage({ status: 500 }) === INVITE_PREVIEW_SERVER_ERROR && invitePreviewErrorMessage({ status: 503 }) === INVITE_PREVIEW_SERVER_ERROR, 'U2-20 5xx is "server error"');
+assert(
+  [{ status: 400 }, { status: 403 }, new Error('x'), null, undefined, 's', { status: '500' }].every((e) => invitePreviewErrorMessage(e) === INVITE_PREVIEW_FAILED),
+  'U2-21 any other failure gets the generic text'
+);
+assert(!invitePreviewErrorMessage({ status: 500, message: 'tok-secret' }).includes('tok-secret'), 'U2-22 the server message is never echoed');
+assert(
+  ["'UNCHECKED'", 'invitePreviewErrorMessage(err)', 'Could not check the invitation', 'INVITATION NOT CHECKED', 'previewAttempt]', 'accountCreated', 'Your account is ready', 'aria-describedby={accountCreatedId}'].every((s) => inviteSrc.includes(s))
+    && !inviteSrc.includes('onClick={onNavigateToLogin}')
+    && !inviteSrc.includes('<ErrorNotice message={previewError}')
+    && !inviteSrc.includes("setClaimError('Your account was created."),
+  'U2-23 the invitation page has the unchecked state and the account-created notice, and no stray sign-in handler'
+);
+const inviteConsole = inviteSrc.replace("err instanceof Error ? err.name : 'unknown error'", '').split('\n').filter((l) => l.includes('console.'));
+assert(inviteConsole.length > 0 && inviteConsole.every((l) => !/\berr\b|errorMessage\(|err\.message/.test(l)), 'U2-24 no console line on the invitation page passes the raw error');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

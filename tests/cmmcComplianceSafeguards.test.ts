@@ -34,6 +34,7 @@ import * as retentionModule from '../src/data/storage/retentionPolicy';
 import { CMMC_LEVEL_2_CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls';
 import { ControlState } from '../src/types/cmmc';
 import { ReportMetadata } from '../src/types/report';
+import { compileNistSSP } from '../src/data/reports/documentCompilers';
 
 let passCount = 0;
 let failCount = 0;
@@ -340,6 +341,31 @@ async function runTestSuite() {
   assert(modalConsoleLines.every((l) => !/\berr\b|errorMessage\(|err\.message/.test(l)), 'EX-L1: no console line in the modal passes an error');
   assert(modalSrc.includes('<ErrorNotice message={jsonExportError}') && !modalSrc.includes('Failed to export JSON package'), 'EX-L2: modal shows a fixed-text ErrorNotice for a failed JSON export');
   assert(modalConsoleLines.length === 0, `EX-L3: the modal has no console lines (found: ${modalConsoleLines.length})`);
+
+  // SP5: the SSP executive-summary readiness cell says "SPRS Ready" only where SPRS applies (CMMC L2)
+  const allMet = (ctrls: { id: string }[]) => {
+    const states: Record<string, ControlState> = {};
+    for (const c of ctrls) {
+      states[c.id] = { id: c.id, tenantId: testTenant, status: 'MET', implementationNotes: 'Enforced.', responsibleRole: 'CISO', lastUpdated: '2026-09-14', tags: [] };
+    }
+    return states;
+  };
+  const readinessCell = (doc: ReturnType<typeof compileNistSSP>) =>
+    String(doc.sections.find((s) => s.id === 'sec-2-executive-summary')!.table!.rows[1][3]);
+  assert(readinessCell(compileNistSSP(sampleMeta, CMMC_LEVEL_2_CONTROLS, allMet(CMMC_LEVEL_2_CONTROLS))) === '100% SPRS Ready', 'SP5a: CMMC L2 SSP, all controls met: "100% SPRS Ready"');
+  const sp5L1Controls = getFrameworkControls('CMMC_L1');
+  assert(readinessCell(compileNistSSP({ ...sampleMeta, framework: 'CMMC_L1' }, sp5L1Controls, allMet(sp5L1Controls))) === 'All controls met', 'SP5b: CMMC L1 SSP, all controls met: "All controls met"');
+  const sp5NistControls = getFrameworkControls('NIST_800_53_REV5', 'LOW_LOW_LOW');
+  assert(readinessCell(compileNistSSP({ ...sampleMeta, framework: 'NIST_800_53_REV5' }, sp5NistControls, allMet(sp5NistControls))) === 'All controls met', 'SP5c: NIST 800-53 SSP, all controls met: "All controls met"');
+  const sp5L1Partial = allMet(sp5L1Controls);
+  sp5L1Partial[sp5L1Controls[0].id] = { ...sp5L1Partial[sp5L1Controls[0].id], status: 'NOT_MET' };
+  assert(readinessCell(compileNistSSP({ ...sampleMeta, framework: 'CMMC_L1' }, sp5L1Controls, sp5L1Partial)) === 'Action Required', 'SP5d: CMMC L1 SSP with an unmet control: "Action Required"');
+
+  // SP6: the header and onboarding labels no longer call a non-L2 readiness "SPRS"
+  const headerSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'layout', 'Header.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert(headerSrc.includes('`${frameworkTitle} Readiness:`') && !headerSrc.includes("'SPRS Readiness:'"), 'SP6: header readiness label is the framework title for every framework');
+  const onboardingSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'onboarding', 'OnboardingModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert(!onboardingSrc.includes('SPRS Status'), 'SP6b: onboarding modal has no "SPRS Status" label');
 
   // 2.6 Official SPRS Assessment Summary
   const sprsSummary = generateSprsAssessmentSummary(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, sampleMeta);

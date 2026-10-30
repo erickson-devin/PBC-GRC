@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import {
   ShieldCheck,
@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
@@ -17,7 +18,7 @@ import { AuthProviderType, TenantInvitation } from '../types/tenant';
 import { frameworkPolicySummary } from '../data/tenantFrameworkPolicy';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { ErrorNotice } from '../components/common/ErrorNotice';
-import { errorMessage } from '../utils/errors';
+import { invitePreviewErrorMessage } from '../utils/invitePreview';
 import { MfaChallengeForm } from '../components/auth/MfaChallengeForm';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
 
@@ -82,6 +83,18 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   // What is left to do once a second step (a code, or enrolling an authenticator) finishes: nothing more after registering, or
   // accepting the invitation when an existing account was signed in
   const [afterSecondStep, setAfterSecondStep] = useState<'registered' | 'claim' | null>(null);
+  // The account was created but the person backed out of setting up two-step verification: the invitation is used up, so the
+  // form gives way to a notice with a sign-in button
+  const [accountCreated, setAccountCreated] = useState(false);
+  const signInRef = useRef<HTMLButtonElement>(null);
+  const accountCreatedId = 'invite-account-created';
+  const goToSignIn = () => {
+    if (onNavigateToLogin) onNavigateToLogin();
+    else if (typeof window !== 'undefined') window.location.hash = 'login';
+  };
+  useEffect(() => {
+    if (accountCreated) signInRef.current?.focus();
+  }, [accountCreated]);
 
   // Sync token from URL popstate / hashchange
   useEffect(() => {
@@ -102,6 +115,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   const [liveInvitation, setLiveInvitation] = useState<InviteView | undefined>(undefined);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
 
   useEffect(() => {
     if (!token) {
@@ -120,7 +134,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       .catch((err: unknown) => {
         if (cancelled) return;
         setLiveInvitation(undefined);
-        setPreviewError(errorMessage(err) || 'Could not check the invitation.');
+        setPreviewError(invitePreviewErrorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setPreviewLoading(false);
@@ -128,7 +142,21 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [token, previewInvitation]);
+  }, [token, previewInvitation, previewAttempt]);
+
+  // Retry of a failed check; the heading takes focus once the check ends so a screen reader hears the new result
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusHeadingAfterCheck = useRef(false);
+  useEffect(() => {
+    if (!previewLoading && focusHeadingAfterCheck.current) {
+      focusHeadingAfterCheck.current = false;
+      headingRef.current?.focus();
+    }
+  }, [previewLoading]);
+  const retryPreview = () => {
+    focusHeadingAfterCheck.current = true;
+    setPreviewAttempt((n) => n + 1);
+  };
 
   const invitation = liveInvitation;
 
@@ -229,8 +257,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       }
       handleClaimSuccess();
     } catch (err: unknown) {
-      console.error('Password claim error:', err);
-      setClaimError(errorMessage(err) || 'Could not accept the invitation.');
+      console.error('Password claim error:', err instanceof Error ? err.name : 'unknown error');
+      setClaimError('The invitation could not be accepted. Try again; if it keeps failing, ask your administrator for a new link.');
       setIsSubmitting(false);
     }
   };
@@ -254,7 +282,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     cancelMfa();
     if (afterSecondStep === 'registered') {
       // The account exists and the invitation is used up; only the sign-in is left, which asks for the authenticator again
-      setClaimError('Your account was created. Sign in to finish setting up two-step verification.');
+      setClaimError(null);
+      setAccountCreated(true);
     }
     setAfterSecondStep(null);
   };
@@ -270,10 +299,12 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     );
   }
 
-  let tokenError: 'MISSING' | 'NOT_FOUND' | 'EXPIRED' | 'CLAIMED' | 'REVOKED' | null = null;
+  let tokenError: 'MISSING' | 'UNCHECKED' | 'NOT_FOUND' | 'EXPIRED' | 'CLAIMED' | 'REVOKED' | null = null;
 
   if (!token) {
     tokenError = 'MISSING';
+  } else if (previewError) {
+    tokenError = 'UNCHECKED';
   } else if (!invitation) {
     tokenError = 'NOT_FOUND';
   } else if (invitation.status === 'ACCEPTED') {
@@ -283,6 +314,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   } else if (invitation.status === 'EXPIRED' || new Date(invitation.expiresAt).getTime() < Date.now()) {
     tokenError = 'EXPIRED';
   }
+  const unchecked = tokenError === 'UNCHECKED';
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between font-sans selection:bg-brand-500 selection:text-white">
@@ -332,19 +364,20 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
           </div>
         ) : tokenError ? (
           /* ERROR STATES */
-          <div className="w-full max-w-md p-1.5 rounded-[2.5rem] bg-gradient-to-b from-rose-500/30 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl animate-scaleUp">
+          <div className={`w-full max-w-md p-1.5 rounded-[2.5rem] bg-gradient-to-b ${unchecked ? 'from-amber-500/30' : 'from-rose-500/30'} via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl animate-scaleUp`}>
             <div className="p-6 sm:p-8 rounded-[calc(2.5rem-0.375rem)] bg-slate-950/95 border border-slate-800/90 text-center space-y-5">
-              
-              <div className="w-14 h-14 mx-auto rounded-3xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-xl shadow-rose-500/10">
-                <AlertTriangle className="w-7 h-7" />
+
+              <div className={`w-14 h-14 mx-auto rounded-3xl border flex items-center justify-center shadow-xl ${unchecked ? 'bg-amber-500/15 border-amber-500/30 text-amber-400 shadow-amber-500/10' : 'bg-rose-500/15 border-rose-500/30 text-rose-400 shadow-rose-500/10'}`}>
+                <AlertTriangle className="w-7 h-7" aria-hidden="true" />
               </div>
 
               <div>
-                <span className="text-[10px] uppercase font-mono tracking-widest font-extrabold px-3 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                  INVALID ONBOARDING LINK
+                <span className={`text-[10px] uppercase font-mono tracking-widest font-extrabold px-3 py-1 rounded-full border ${unchecked ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'}`}>
+                  {unchecked ? 'INVITATION NOT CHECKED' : 'INVALID ONBOARDING LINK'}
                 </span>
-                
-                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-2.5">
+
+                <h1 ref={headingRef} tabIndex={-1} className="text-xl sm:text-2xl font-black text-white tracking-tight mt-2.5 outline-none">
+                  {tokenError === 'UNCHECKED' && 'Could not check the invitation'}
                   {tokenError === 'MISSING' && 'Missing Invitation Token'}
                   {tokenError === 'NOT_FOUND' && 'Invalid Invitation Token'}
                   {tokenError === 'EXPIRED' && 'Invitation Token Expired'}
@@ -352,30 +385,40 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   {tokenError === 'REVOKED' && 'Invitation Revoked'}
                 </h1>
 
-                <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                <p role={unchecked ? 'alert' : undefined} className="text-xs text-slate-400 mt-2 leading-relaxed">
+                  {tokenError === 'UNCHECKED' && previewError}
                   {tokenError === 'MISSING' && 'No invitation token was provided in the link. Please verify the URL received from your enclave operator.'}
                   {tokenError === 'NOT_FOUND' && 'The provided invitation token does not match any active defense enclave records. It may have been typed incorrectly or purged.'}
                   {tokenError === 'EXPIRED' && 'Defense onboarding tokens expire after 14 days to preserve zero-trust security posture. Please request a refreshed link from your administrator.'}
                   {tokenError === 'CLAIMED' && 'This invitation link has already been accepted and bound to a user account. You may sign in directly with your registered credentials.'}
                   {tokenError === 'REVOKED' && 'This invitation was revoked by the security administrator or enclave owner.'}
                 </p>
-                <ErrorNotice message={previewError} className="mt-3 text-left" />
               </div>
 
               {/* Action Buttons */}
               <div className="pt-2 space-y-2">
+                {unchecked && (
+                  <button
+                    type="button"
+                    onClick={retryPreview}
+                    className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 transition-all"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                    Try again
+                  </button>
+                )}
                 {tokenError === 'CLAIMED' ? (
                   <button
-                    onClick={() => {
-                      if (typeof window !== 'undefined') window.location.hash = 'login';
-                    }}
+                    type="button"
+                    onClick={goToSignIn}
                     className="w-full py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 transition-all"
                   >
                     Proceed to Enclave Login
                   </button>
                 ) : (
                   <button
-                    onClick={onNavigateToLogin}
+                    type="button"
+                    onClick={goToSignIn}
                     className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition-colors"
                   >
                     Go to sign in
@@ -397,7 +440,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   <Sparkles className="w-3 h-3 text-amber-300" />
                   DEFENSE ENCLAVE INVITATION
                 </span>
-                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                <h1 ref={headingRef} tabIndex={-1} className="text-2xl sm:text-3xl font-black text-white tracking-tight outline-none">
                   Claim Your CMMC Enclave
                 </h1>
                 <p className="text-xs text-slate-400">
@@ -442,6 +485,30 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                 </div>
               </div>
 
+              {accountCreated ? (
+                <div role="status" className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4 space-y-3 text-xs">
+                  <div className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-400" aria-hidden="true" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold text-white">Your account is ready</p>
+                      <p id={accountCreatedId} className="text-slate-300 leading-relaxed">
+                        The account for <span className="font-mono text-white">{invitation?.email}</span> was created and the invitation is used.
+                        Two-step verification is not set up yet: sign in with your email and password, and you will be asked to set it up before you continue.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    ref={signInRef}
+                    type="button"
+                    onClick={goToSignIn}
+                    aria-describedby={accountCreatedId}
+                    className="w-full py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs shadow-lg shadow-brand-500/25 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                  >
+                    Go to sign in
+                  </button>
+                </div>
+              ) : (
+              <>
               {/* Error Alert */}
               <ErrorNotice message={claimError || authError} />
 
@@ -575,6 +642,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                 </button>
                 .
               </div>
+              </>
+              )}
 
             </div>
           </div>

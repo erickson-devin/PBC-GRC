@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { overlayLockReason } from '../src/data/overlayScoping';
 import { matchesBoundaryFilter, planBoundaryChange, rowChangeNeedsConfirm, describeBoundaryChange, boundaryEditBlock, boundaryErrorMessage, summaryCaption, emptyTableMessage, exportBoundaryLine } from '../src/data/boundaryView';
+import { declaredAssetsView } from '../src/data/programAssets';
 import { emptyScopeSummary } from '../src/data/telemetry/assetScope';
 
 /**
@@ -184,6 +185,24 @@ assert(boundaryDialog.includes('role="alertdialog"') && boundaryDialog.includes(
 assert(invMgr.includes('<ConfirmBoundaryChangeDialog') && invMgr.includes('planBoundaryChange(') && invMgr.includes('Add shown to boundary') && invMgr.includes('Remove shown from boundary') && invMgr.includes('rowChangeNeedsConfirm('), 'UV7 the inventory offers bulk and row changes with confirmation');
 assert(invMgr.includes("const showBoundary = programsStatus !== 'unsupported';") && invMgr.includes('{canEdit && <FailedMoveAssetsNotice />}'), 'UV8 browser-only tenants have no boundary column and the failed-move notice is untouched');
 assert(sspModal.includes('exportBoundaryLine(') && sspModal.includes('data-testid="ssp-boundary-scope"') && sspModal.includes('useProgramAssets({ enabled: isOpen })'), 'UV9 the SSP preview states which assets the document covers');
+
+console.log('--- declared assets on archived program cards ---');
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const av1 = declaredAssetsView(undefined, []);
+assert(same(av1, { declared: false, count: 0, names: [], unlisted: [] }), 'PV-A1 no ids is undeclared', av1);
+const av2 = declaredAssetsView(['a', 'b'], [{ id: 'b', hostName: 'web-10' }, { id: 'a', hostName: 'web-9' }]);
+assert(same(av2.names, ['web-9', 'web-10']) && av2.unlisted.length === 0, 'PV-A2 names sort numerically', av2);
+const av3 = declaredAssetsView(['a', 'x'], [{ id: 'a', hostName: 'db' }]);
+assert(av3.count === 2 && same(av3.names, ['db']) && same(av3.unlisted, ['x']), 'PV-A3 ids missing from the inventory are unlisted', av3);
+const av4 = declaredAssetsView(['a', 'a'], [{ id: 'a', hostName: 'db' }]);
+assert(av4.count === 1 && same(av4.names, ['db']), 'PV-A4 duplicate ids count once', av4);
+const av5 = declaredAssetsView(['a'], [{ id: 'a', hostName: '  ' }]);
+assert(same(av5.names, ['Unnamed asset']), 'PV-A5 a blank host name shows as Unnamed asset', av5);
+const av6 = declaredAssetsView(['x'], []);
+assert(av6.declared === true && av6.names.length === 0 && same(av6.unlisted, ['x']), 'PV-A6 an empty inventory leaves every id unlisted', av6);
+const programsPage = read('src/components/programs/ProgramsPage.tsx');
+assert(programsPage.includes('ArchivedProgramList') && programsPage.includes('Declared assets') && programsPage.includes('Declared no assets: its boundary was the whole inventory.') && programsPage.includes('max-h-40 overflow-y-auto') && programsPage.includes('openList.map((p) => renderCard(p))'), 'PV-A7 the archived list shows the declared assets and the open list does not pass the index');
+assert(!/console\./.test(programsPage) && !/localStorage|sessionStorage/.test(programsPage) && !programsPage.includes('updateProgramAssets'), 'PV-A7 the page logs nothing, stores nothing and never writes membership');
 
 console.log('--- no stale scope identifiers ---');
 for (const rel of FILES) assert(!read(rel).includes('liveControlsTenantId'), `${path.basename(rel)} does not reference liveControlsTenantId`);
