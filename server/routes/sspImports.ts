@@ -11,6 +11,7 @@ import { MAX_UPLOAD_BYTES, detectDocumentKind } from '../ssp/extract';
 import { deleteUploadedPolicy, readUploadedPolicy, saveUploadedPolicy } from '../ssp/policyVault';
 import { OllamaClient } from '../ssp/ollama';
 import { ANALYZER_ID, aiAnalyzerId, cancelJob, enqueueImport, hashLiveControl, isJobActive, readLiveControls, recoverStaleJobs } from '../ssp/runner';
+import { trackSspJob } from '../shutdown';
 import { createJob, deleteJob, getJob, getStaged, listJobs, listStaged, newId, updateStaged } from '../ssp/store';
 import {
   SSP_DEFAULT_BASELINE,
@@ -87,6 +88,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const scope = await scopeOf(req);
     const jobs = await listJobs(scope);
     recoverStaleJobs(jobs, scope);
+    for (const j of jobs) if (!SSP_JOB_TERMINAL.includes(j.status)) trackSspJob(j.id, { tenantId: j.tenantId, programId: j.programId ?? scope.programId });
     res.json({ jobs });
   } catch (err: unknown) {
     console.error('[SSP Import] list failed:', errorMessage(err));
@@ -186,7 +188,8 @@ router.post('/', (req: Request, res: Response): void => {
         analyzer: analysis === 'ai' ? aiAnalyzerId(ollama.config.model) : ANALYZER_ID,
       });
       enqueueImport(tenantId, scope.programId, job.id);
-      console.log(`[SSP Import] ${reviewerName(req)} uploaded "${fileName}" (${file.size} bytes) for ${framework} in ${tenantId}: job ${job.id}`);
+      trackSspJob(job.id, scope);
+      console.log(`[SSP Import] upload accepted (${file.size} bytes) for ${framework}: job ${job.id}`);
       res.status(202).json({ job });
     } catch (err: unknown) {
       console.error('[SSP Import] upload failed:', errorMessage(err));
@@ -209,7 +212,7 @@ router.post('/:jobId/cancel', async (req: Request, res: Response): Promise<void>
     res.status(409).json({ error: 'This import has already finished.' });
     return;
   }
-  console.log(`[SSP Import] ${reviewerName(req)} cancelled ${job.id}`);
+  console.log(`[SSP Import] cancelled ${job.id}`);
   res.status(202).json({ job: await getJob(scope, job.id) });
 });
 

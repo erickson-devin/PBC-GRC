@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { builtinModules } from 'module';
 
 /**
  * On-prem only guard (Phase 5.8). PBC-GRC is deployed on the customer's own hardware: local accounts, local disk,
@@ -289,10 +290,59 @@ function globalTsxPins(text: string): (string | null)[] {
 assert(JSON.stringify(globalTsxPins('RUN npm install -g tsx\n')) === '[null]', 'globalTsxPins reports an unpinned install as null');
 assert(JSON.stringify(globalTsxPins('RUN npm install -g tsx@4.23.13\r\n')) === '["4.23.13"]', 'globalTsxPins reads a pinned version from a CRLF line');
 assert(globalTsxPins('# RUN npm install -g tsx\n').length === 0, 'globalTsxPins ignores a commented-out install');
-const tsxPins = globalTsxPins(dockerfile);
-assert(tsxPins.length === 1 && /^\d+\.\d+\.\d+$/.test(tsxPins[0] ?? ''), 'the Dockerfile installs tsx globally exactly once, at an exact version (not ^, ~ or latest)', tsxPins);
-assert(tsxPins[0] === lock.packages?.['node_modules/tsx']?.version, 'the Dockerfile tsx version equals the package-lock.json node_modules/tsx version', { dockerfile: tsxPins[0], lock: lock.packages?.['node_modules/tsx']?.version });
-assert(/^CMD \["tsx", "server\/index\.ts"\]\s*$/m.test(dockerfile), 'the Dockerfile still starts the server with CMD ["tsx", "server/index.ts"]');
+// The Dockerfile has no global npm install: tsx (and its esbuild) is a production dependency installed from package-lock.json.
+const dockerCode = dockerfile.split(/\r?\n/).filter((l) => !/^\s*#/.test(l));
+const runnerStart = dockerCode.findIndex((l) => /^FROM\s+\S+\s+AS\s+runner\s*$/i.test(l));
+const runner = runnerStart < 0 ? [] : dockerCode.slice(runnerStart + 1);
+function globalNpmInstalls(text: string): number {
+  const code = text.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n');
+  return (code.match(/npm\s+(?:install|i)\s+(?:-g|--global)\b/g) ?? []).length;
+}
+assert(globalTsxPins(dockerfile).length === 0, 'the Dockerfile does not install tsx globally', globalTsxPins(dockerfile));
+assert(globalNpmInstalls('RUN npm i --global esbuild\n') === 1 && globalNpmInstalls('# RUN npm install -g x\n') === 0 && globalNpmInstalls(dockerfile) === 0, 'the Dockerfile has no global npm install of anything');
+assert(/^CMD \["node_modules\/\.bin\/tsx", "server\/index\.ts"\]\s*$/m.test(dockerfile) && !/^CMD \["tsx",/m.test(dockerfile), 'the Dockerfile starts the server with the tsx from node_modules');
+assert(dockerCode.filter((l) => /^CMD\s/.test(l)).length === 1 && !dockerCode.some((l) => /^ENTRYPOINT\s/.test(l)), 'the Dockerfile has exactly one CMD and no ENTRYPOINT');
+assert(runner.length > 0 && runner.filter((l) => /^RUN npm ci --omit=dev\s*$/.test(l)).length === 1 && runner.some((l) => /^COPY package\*\.json \.\/\s*$/.test(l)) && !runner.some((l) => /\bnpx\b/.test(l)), 'the runner stage installs from the lockfile once (npm ci --omit=dev) and never calls npx');
+assert(typeof pkg.dependencies?.tsx === 'string' && pkg.devDependencies?.tsx === undefined, 'tsx is a production dependency, not a devDependency', { dep: pkg.dependencies?.tsx, dev: pkg.devDependencies?.tsx });
+const lockRoot = lock.packages?.[''] ?? {};
+assert(lockRoot.dependencies?.tsx === pkg.dependencies?.tsx && lockRoot.devDependencies?.tsx === undefined, 'package-lock.json lists tsx under the root dependencies with the same range', { lock: lockRoot.dependencies?.tsx, pkg: pkg.dependencies?.tsx });
+const tsxLock = lock.packages?.['node_modules/tsx'];
+assert(!!tsxLock && tsxLock.dev !== true && /^\d+\.\d+\.\d+$/.test(tsxLock.version ?? '') && String(tsxLock.integrity ?? '').startsWith('sha512-'), 'the tsx lock entry is not dev-only and has an exact version and an integrity hash', tsxLock && { dev: tsxLock.dev, version: tsxLock.version });
+const esbuildLock = lock.packages?.['node_modules/tsx/node_modules/esbuild'] ?? lock.packages?.['node_modules/esbuild'];
+const esbuildRange = /^~(\d+)\.(\d+)\./.exec(tsxLock?.dependencies?.esbuild ?? '');
+assert(!!esbuildLock && esbuildLock.dev !== true && !!esbuildRange && String(esbuildLock.version).startsWith(`${esbuildRange[1]}.${esbuildRange[2]}.`), 'the esbuild tsx resolves to is installed with --omit=dev and satisfies its range', { range: tsxLock?.dependencies?.esbuild, esbuild: esbuildLock && { dev: esbuildLock.dev, version: esbuildLock.version } });
+const nestedTsx = lockKeys.filter((k) => k.startsWith('node_modules/tsx/node_modules/'));
+assert(nestedTsx.length > 0 && nestedTsx.every((k) => lock.packages[k].dev !== true), 'every package nested under tsx is installed with --omit=dev', nestedTsx.filter((k) => lock.packages[k].dev === true));
+for (const p of ['linux-x64', 'linux-arm64']) {
+  const x = lock.packages?.[`node_modules/tsx/node_modules/@esbuild/${p}`] ?? lock.packages?.[`node_modules/@esbuild/${p}`];
+  assert(!!x && x.dev !== true && x.version === esbuildLock?.version, `the esbuild binary for ${p} is installed with --omit=dev and matches esbuild`, x && { dev: x.dev, version: x.version });
+}
+// Every package the server imports at runtime must be a production dependency (the image has no devDependencies).
+const serverPackages = new Set<string>();
+for (const file of walk(path.join(root, 'server'), (f) => /\.ts$/.test(f))) {
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    if (/^\s*(import|export)\s+type\b/.test(line)) continue;
+    const specs = [
+      /^\s*(?:import|export|\})[^'"]*\bfrom\s+['"]([^'"\s]+)['"]/.exec(line)?.[1],
+      /\bimport\(\s*['"]([^'"\s]+)['"]\s*\)/.exec(line)?.[1],
+      /^\s*import\s+['"]([^'"\s]+)['"]/.exec(line)?.[1],
+    ];
+    for (const spec of specs) {
+      if (!spec || spec.startsWith('.')) continue;
+      const bare = spec.replace(/^node:/, '');
+      if (builtinModules.includes(bare)) continue;
+      const parts = bare.split('/');
+      serverPackages.add(bare.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]);
+    }
+  }
+}
+const missingDeps = [...serverPackages].filter((n) => !(n in (pkg.dependencies ?? {})));
+console.log(`  server runtime packages: ${[...serverPackages].sort().join(', ')}`);
+assert(serverPackages.size > 0 && missingDeps.length === 0, 'every package server/ imports at runtime is a production dependency', missingDeps);
+const extractSrc = fs.readFileSync(path.join(root, 'server/ssp/extract.ts'), 'utf8').replace(/\r\n/g, '\n');
+assert(extractSrc.includes('fork(CHILD_PATH') && /\.\.\.process\.execArgv/.test(extractSrc) && !/(spawn|exec|execFile|fork)\(\s*['"]tsx['"]/.test(extractSrc), 'the SSP extraction child is forked with the parent execArgv (the local tsx loader), never a global tsx');
+const onPremDoc = fs.readFileSync(path.join(root, 'docs/ON_PREM_DATABASE.md'), 'utf8').replace(/\r\n/g, '\n');
+assert(!/singularity-app\s+tsx\s/.test(onPremDoc), 'docs/ON_PREM_DATABASE.md does not tell the operator to run a global tsx in the container');
 const envExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
 assert(/^LOCAL_AUTH_SECRET=/m.test(envExample), '.env.example contains LOCAL_AUTH_SECRET=');
 assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has no VITE_FIREBASE / VITE_GCP / VITE_GCS');

@@ -35,7 +35,7 @@ ENV BUILD_COMMIT=$BUILD_COMMIT
 # Create local evidence storage directory
 RUN mkdir -p /app/data/evidence
 
-# Copy production package manifests and install production-only dependencies
+# Copy production package manifests and install production-only dependencies. tsx (and the esbuild it uses) is a production dependency, installed here from package-lock.json by integrity hash; there is no global npm install (tests/onPremOnly.test.ts checks this).
 COPY package*.json ./
 RUN npm ci --omit=dev
 
@@ -50,9 +50,6 @@ COPY --from=builder /app/tsconfig*.json ./
 # Operational scripts (e.g. `npm run auth:create-user` for the air-gapped local accounts)
 COPY --from=builder /app/scripts ./scripts
 
-# tsx runs the server (TypeScript, no build step). Pinned to the exact version in package-lock.json (tests/onPremOnly.test.ts checks this); bump both together.
-RUN npm install -g tsx@4.23.13
-
 # Expose default application port
 EXPOSE 3000
 
@@ -60,5 +57,6 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/v1/health || exit 1
 
-# Start Event Horizon: Singularity Express Server & Static Host
-CMD ["tsx", "server/index.ts"]
+# Start Event Horizon: Singularity Express Server & Static Host. tsx comes from node_modules (package-lock.json), not a global install;
+# its loader is passed to the server (and to the forked SSP extraction child) through execArgv.
+CMD ["node_modules/.bin/tsx", "server/index.ts"]
