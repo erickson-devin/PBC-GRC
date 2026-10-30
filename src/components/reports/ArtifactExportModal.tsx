@@ -113,16 +113,16 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   // Metadata form local state (allows editing before generation and live preview)
   const meta = state.sspMetadata;
   const [formData, setFormData] = useState<ReportMetadata>({
-    systemName: meta.systemName || currentTenant.systemName || 'Defense Contracting Information Network',
+    systemName: meta.systemName || currentTenant.systemName || '',
     organizationName: meta.organizationName || currentTenant.name || 'Organization Enclave',
-    cageCode: meta.cageCode || currentTenant.cageCode || '9X7B4',
+    cageCode: meta.cageCode || currentTenant.cageCode || '',
     samStatus: meta.samStatus || currentTenant.samStatus || 'ACTIVE',
-    systemOwner: meta.systemOwner || currentTenant.systemOwner || 'Alex Mercer, CMMC CCA',
+    systemOwner: meta.systemOwner || currentTenant.systemOwner || '',
     primaryAssessor: meta.authorName || 'Lead Compliance Assessor',
     boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || 'The system boundary encompasses corporate identity tenants, managed physical and virtual endpoints, boundary gateway firewalls, and cloud services processing Federal Contract Information (FCI) or Controlled Unclassified Information (CUI).',
-    systemEnvironment: meta.systemEnvironment || 'Hybrid Cloud: Cloud Identity & SaaS Services + On-Premises Enclave VLAN.',
+    systemEnvironment: meta.systemEnvironment || '',
     operationalStatus: 'Operational' as SystemOperationalStatus,
-    cloudServiceProviders: meta.cloudServiceProviders || 'Google Cloud Platform, Microsoft 365, Cloudflare Zero Trust.',
+    cloudServiceProviders: meta.cloudServiceProviders || '',
     classificationLevel: (activeFramework === 'SOC_2_TYPE_II'
       ? 'CONFIDENTIAL'
       : activeFramework === 'HIPAA_SECURITY'
@@ -164,6 +164,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
         systemOwner: meta.systemOwner || currentTenant.systemOwner || prev.systemOwner,
         primaryAssessor: meta.authorName || prev.primaryAssessor,
         boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || prev.boundaryDescription,
+        systemEnvironment: meta.systemEnvironment || prev.systemEnvironment,
+        cloudServiceProviders: meta.cloudServiceProviders || prev.cloudServiceProviders,
         framework: activeFramework,
       }));
     }
@@ -747,7 +749,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   value={formData.cloudServiceProviders}
                   onChange={(e) => setFormData({ ...formData, cloudServiceProviders: e.target.value })}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
-                  placeholder="e.g. Google Cloud Platform, Microsoft 365 GCC High, AWS GovCloud, Cloudflare Zero Trust"
+                  placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
                 />
               </div>
             </div>

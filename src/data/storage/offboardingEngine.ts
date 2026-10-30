@@ -150,6 +150,8 @@ export async function generateEnclaveHandoverPackage(
   const program = options.program;
   // A program's package is built from the server's answers only: the browser cache is neither read nor (as loadAssessment would) written
   const state: AssessmentState | null = program ? null : StorageService.loadAssessment(tenant);
+  // The customer's own environment and cloud providers as recorded in the SSP metadata (#122). A program's package reads no browser cache and states none.
+  const sspMeta = state?.sspMetadata;
   const evidenceForPackage: ReadonlyArray<EvidenceItem> = evidenceIndex ?? state?.evidenceIndex ?? [];
   const ledger: AuditLogEntry[] = loadLedger(tenantId);
 
@@ -167,9 +169,9 @@ export async function generateEnclaveHandoverPackage(
       systemOwner: tenant.systemOwner,
       primaryAssessor: 'Pitch Black Cyber GRC Engine',
       boundaryDescription: program?.boundarySummary ||tenant.systemBoundaryScope || `${tenant.name} operations and compliance boundary.`,
-      systemEnvironment: 'Hybrid Defense Cloud & Managed Boundary',
+      systemEnvironment: sspMeta?.systemEnvironment || '',
       operationalStatus: 'Operational',
-      cloudServiceProviders: 'Google Cloud Platform (Cloud SQL / GCS), Identity Provider',
+      cloudServiceProviders: sspMeta?.cloudServiceProviders || '',
       classificationLevel: 'UNCLASSIFIED // CUI',
       assessmentDate: new Date().toISOString().split('T')[0],
       version: '1.0.0-OFFBOARDING',
