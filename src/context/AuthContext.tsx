@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useLayoutEffect,
 import { User, AuthProviderType } from '../types/tenant';
 import { useTenant, ANONYMOUS_USER } from './TenantContext';
 import { ApiClient, ApiError, LocalLoginResponse, MfaEnrolmentStart, MfaStage, SetupInput, SetupResult } from '../services/apiClient';
-import { onSessionRejected, holdSessionSignal, releaseSessionSignal, reportResponseStatus, sessionEndedMessage } from '../services/sessionSignal';
+import { onSessionRejected, holdSessionSignal, releaseSessionSignal, reportResponseStatus, sessionEndedMessage, isCrossTabReason, reportCrossTabEnd, type CrossTabReason } from '../services/sessionSignal';
+import { pinTabSession, readStoredSession, tabSessionPin, tabSessionState } from '../services/tabSession';
 import { errorMessage } from '../utils/errors';
 import { buildUserProfile } from '../utils/userProfile';
 import { SESSION_VERIFY_TIMEOUT_MS, initialSessionCheck, nextSessionCheck, type SessionCheck } from '../data/sessionVerification';
@@ -109,7 +110,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [idToken, setIdToken] = useState<string | null>(() => {
-    return localStorage.getItem(AUTH_SESSION_REF_KEY) || null;
+    // This tab pins the session it started with, so a sign-out or a different account in another tab is noticed (#32)
+    const stored = readStoredSession(localStorage);
+    pinTabSession(stored.ref && localStorage.getItem(AUTH_USER_KEY) ? stored.ref : null, stored.userId);
+    return stored.ref;
   });
   // The session-ended listener compares against the latest token without re-subscribing on every change
   const idTokenRef = useRef(idToken);
@@ -146,6 +150,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Sync user and token to storage
   useEffect(() => {
+    // this tab writes or clears the shared keys only while the stored session is its own (#32)
+    if (tabSessionState() !== 'own') return;
     if (isAuthenticated && currentUser) {
       localStorage.setItem(AUTH_USER_KEY, JSON.stringify(currentUser));
       if (idToken) {
@@ -184,6 +190,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ),
       idToken: token,
     };
+
+    // Other tabs read who owns the session from the user record: write it before the reference, then pin this tab (#32)
+    try {
+      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userProfile));
+      localStorage.setItem(AUTH_SESSION_REF_KEY, token);
+    } catch {}
+    pinTabSession(token, userProfile.id);
 
     setCurrentUser(userProfile);
     setIdToken(token);
@@ -300,6 +313,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMfaEnrolled(session.mfaEnrolled);
       // The tenant / programs / data loads read the stored token: store the new one first rather than wait for the effect
       try { localStorage.setItem(AUTH_SESSION_REF_KEY, session.sessionRef); } catch {}
+      pinTabSession(session.sessionRef, currentUserRef.current.id);
       releaseSessionSignal(previous);
       // The roles cached so far are provisional: load the real ones now that the server accepts requests again
       syncAuthUser({ ...tenantUser, idToken: session.sessionRef }, currentTenant.id);
@@ -355,9 +369,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   /**
+   * Ends this tab's session only, because another tab owns the server session and the shared storage now (it signed out or
+   * signed in as someone else). Calls nothing on the server and touches no stored key. The caller rescues the unsaved text first.
+   * The pin keeps its reference but loses its user, so a later sign-in of the same user elsewhere is not adopted by a signed-out tab.
+   */
+  const endSessionInThisTab = useCallback((reason: CrossTabReason) => {
+    pinTabSession(tabSessionPin()?.ref ?? null, null);
+    resetForSignOut();
+    setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
+    setIsAuthenticated(false);
+    setIdToken(null);
+    setMustChangePassword(false);
+    setMfaEnrolled(false);
+    heldSession.current = null;
+    setMfaChallenge(null);
+    setRecoveryCodesRemaining(null);
+    setLoading(false);
+    setAuthError(sessionEndedMessage(reason));
+    if (typeof window !== 'undefined') {
+      window.location.hash = '';
+    }
+  }, [resetForSignOut]);
+
+  /**
    * Sign Out
    */
   const logout = useCallback(async () => {
+    // Another tab owns the session now: this tab ends only itself and never clears the server session or the shared storage (#32)
+    const state = tabSessionState();
+    if (isCrossTabReason(state)) {
+      endSessionInThisTab(state);
+      return;
+    }
+    pinTabSession(null);
     void ApiClient.signOut();
     resetForSignOut();
     setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
@@ -376,16 +420,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (typeof window !== 'undefined') {
       window.location.hash = '';
     }
-  }, [resetForSignOut]);
+  }, [resetForSignOut, endSessionInThisTab]);
 
   // The server stopped accepting this session (deleted / disabled account, rotated secret, expiry): sign out and say why
   useEffect(() => onSessionRejected((token, reason) => {
     if (!token || token !== idTokenRef.current) return;
     // Before anything is torn down: keep the unsaved text of the open editors in memory so it can be copied after sign-in
     rescueUnsavedText(currentUserRef.current.id);
+    if (isCrossTabReason(reason)) {
+      endSessionInThisTab(reason);
+      return;
+    }
     void logout();
     setAuthError(sessionEndedMessage(reason));
-  }), [logout]);
+  }), [logout, endSessionInThisTab]);
+
+  // Another tab of this browser signed out or signed in as someone else, or rotated this user's reference (#32).
+  // storage events fire in the other tabs only; a tab that was asleep checks when it is shown; every request checks too.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const check = () => {
+      const s = tabSessionState();
+      if (s === 'adopt') {
+        const { ref } = readStoredSession(localStorage);
+        pinTabSession(ref, tabSessionPin()?.userId ?? null);
+        setIdToken(ref);
+        setCurrentUser(prev => ({ ...prev, idToken: ref ?? undefined }));
+        return;
+      }
+      if (isCrossTabReason(s)) reportCrossTabEnd(tabSessionPin()?.ref, s);
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === AUTH_SESSION_REF_KEY || e.key === AUTH_USER_KEY) check();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // The first tenant sync of a reload answered: the stored session is confirmed, dead, or could not be checked
   useEffect(() => {

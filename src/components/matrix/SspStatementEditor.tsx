@@ -11,6 +11,8 @@ interface Props {
   canEdit: boolean;
   tenantId: string;
   onNotesChange: (notes: string) => void;
+  /** Called when a text field loses focus: the notes are sent to the server then rather than a moment later. */
+  onNotesBlur?: () => void;
 }
 
 /** True when the control's text is a list of lettered items that an SSP answers one by one (SP 800-53 controls). */
@@ -57,7 +59,7 @@ function ItemText({ item }: { item: StatementItem }) {
  * (see data/frameworks/narrativeItems.ts), so the quick editor, exports and the assessor still see the same text; the
  * parameter rows and the "Suggest Parameter Wording" helper are the ones of the quick editor.
  */
-export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange }) => {
+export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange, onNotesBlur }) => {
   const itemized = useMemo(() => statementItems(control.statement), [control.statement]);
   const params = useMemo(() => resolveParameters(control), [control]);
   const parsed = useMemo(() => parseItemNotes(notes), [notes]);
@@ -82,6 +84,7 @@ export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, t
           value={parsed.general}
           disabled={!canEdit}
           onChange={(e) => onNotesChange(setOverviewNote(notes, e.target.value, order))}
+          onBlur={onNotesBlur}
           placeholder="Anything that applies to the control as a whole."
           className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 disabled:opacity-60"
         />
@@ -140,6 +143,7 @@ export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, t
                     value={text}
                     disabled={!canEdit}
                     onChange={(e) => onNotesChange(setItemNote(notes, item.label, e.target.value, order))}
+                    onBlur={onNotesBlur}
                     placeholder="Who does what, with which tools, how often, and how it is verified."
                     className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 disabled:opacity-60"
                   />

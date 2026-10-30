@@ -49,6 +49,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     notesEditable,
     updateControlStatus,
     updateControlNotes,
+    flushControlNotes,
     applyStarterTemplate,
     uploadEvidence,
     setSelectedControlId,
@@ -443,6 +444,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               disabled={!canEdit || !notesEditable}
               value={notes}
               onChange={(e) => updateControlNotes(control.id, e.target.value)}
+              onBlur={() => flushControlNotes(control.id)}
               placeholder={`Describe how ${currentTenant.name} enforces this practice (e.g. policies, technical configurations, endpoint controls)...`}
               className="w-full p-3.5 rounded-xl bg-slate-900 border border-slate-700/80 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs sm:text-sm text-slate-100 placeholder-slate-400 leading-relaxed font-sans transition-all duration-200 disabled:opacity-60 resize-y"
             />

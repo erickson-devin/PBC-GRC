@@ -52,6 +52,7 @@ import {
   toTenantInvitation,
 } from '../data/teamSync';
 import { findControlDefinition, getFrameworkControls } from '../data/frameworks';
+import { tabOwnsStoredSession } from '../services/tabSession';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
 import { OBJECTIVE_CASCADE_EVENT, applyImportResult, chunkItems, objectivesToUpload, stackCascadeFill } from '../data/objectiveSync';
 import {
@@ -380,9 +381,9 @@ interface TenantContextType {
     /** The program to load (default: the active one; null: the tenant's default program). */
     programToFetch?: string | null
   ) => Promise<void>;
-  updateLiveControl: (controlId: string, updates: Partial<ControlState>) => Promise<ControlState>;
+  updateLiveControl: (controlId: string, updates: Partial<ControlState> & { expectedUpdatedAt?: string | null }, programId?: string | null) => Promise<ControlState>;
   /** Saves one objective (status, narrative, evidence links) to the program that is on screen when the call starts. Rejects when the server refuses or is unreachable. */
-  updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'>) => Promise<ObjectiveRecord>;
+  updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null }) => Promise<ObjectiveRecord>;
   /** Saves many objectives (500 per request, each request all-or-nothing). Rejects when a request fails. */
   updateLiveObjectivesBulk: (items: ObjectiveInput[]) => Promise<void>;
   /** Moves browser-cached objectives to the server (5000 per request, insert-only); resolves with every id's result, rejects when a request fails. */
@@ -517,18 +518,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Sync storage
   useEffect(() => {
+    if (!tabOwnsStoredSession()) return; // another tab owns the browser's session now (#32)
     localStorage.setItem(LIVE_TENANTS_STORAGE_KEY, JSON.stringify(stripTenantRegistryForCache(deduplicateTenants(liveTenants))));
   }, [liveTenants]);
 
   useEffect(() => {
+    if (!tabOwnsStoredSession()) return; // another tab owns the browser's session now (#32)
     localStorage.setItem(LIVE_ACTIVE_TENANT_ID_KEY, liveActiveTenantId);
   }, [liveActiveTenantId]);
 
   useEffect(() => {
+    if (!tabOwnsStoredSession()) return; // another tab owns the browser's session now (#32)
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
   }, [currentUser]);
 
   useEffect(() => {
+    if (!tabOwnsStoredSession()) return; // another tab owns the browser's session now (#32)
     // Teams of server-backed tenants come from the server on every load; only browser-only tenants keep a local copy
     const serverBackedIds = new Set(liveTenantsRef.current.filter(t => t.serverBacked).map(t => t.id));
     localStorage.setItem(
@@ -1165,12 +1170,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const updateLiveControl = useCallback(async (
     controlId: string,
-    updates: Partial<ControlState>
+    updates: Partial<ControlState> & { expectedUpdatedAt?: string | null },
+    programId?: string | null
   ): Promise<ControlState> => {
-    // The program (and so the scope) is fixed when the edit starts: an answer arriving after a switch is not applied to the new program
-    const scope = scopeNow(currentTenant.id);
+    // The program (and so the scope) is fixed when the edit starts: an answer arriving after a switch is not applied to the new program.
+    // A debounced notes save runs later, so its caller passes the program the text was typed in.
+    const program = programId !== undefined ? programId : programIdFor(currentTenant.id);
+    const scope = programId !== undefined ? programScopeKey(currentTenant.id, programId) : scopeNow(currentTenant.id);
     // Rejects when the server refuses or cannot be reached: the caller (AssessmentContext.saveControl) tells the user the edit was not saved
-    const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates, programIdFor(currentTenant.id));
+    const updated = await ApiClient.updateControl(currentTenant.id, controlId, updates, program);
     if (scopeNow(currentTenant.id) === scope) {
       setLiveControls(prev => ({
         ...prev,
@@ -1193,7 +1201,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateLiveObjective = useCallback(async (
     objectiveId: string,
     controlId: string,
-    patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'>
+    patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null }
   ): Promise<ObjectiveRecord> => {
     // The program (and so the scope) is fixed when the edit starts
     const scope = scopeNow(currentTenant.id);
@@ -1708,15 +1716,18 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setInvitations([]);
     setIsOnboardingModalOpen(false);
     setTenantSync({ status: 'idle', lastSyncedAt: null, error: null, outcome: null });
-    try {
-      [LIVE_TENANTS_STORAGE_KEY, LIVE_ACTIVE_TENANT_ID_KEY, CURRENT_USER_KEY, TEAM_MEMBERS_STORAGE_KEY].forEach(k => localStorage.removeItem(k));
-      const programPrefix = activeProgramStorageKey('');
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith(programPrefix)) localStorage.removeItem(k);
+    // The shared browser cache belongs to whoever owns the stored session: a tab that lost it clears only its own memory (#32)
+    if (tabOwnsStoredSession()) {
+      try {
+        [LIVE_TENANTS_STORAGE_KEY, LIVE_ACTIVE_TENANT_ID_KEY, CURRENT_USER_KEY, TEAM_MEMBERS_STORAGE_KEY].forEach(k => localStorage.removeItem(k));
+        const programPrefix = activeProgramStorageKey('');
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(programPrefix)) localStorage.removeItem(k);
+        }
+      } catch {
+        // storage unavailable: nothing was cached
       }
-    } catch {
-      // storage unavailable: nothing was cached
     }
   }, [commitPrograms, dropLiveData]);
 

@@ -30,7 +30,8 @@ import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCre
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
-import { SESSION_MARKER_HEADER, sessionRefFromHeaders, isSessionRejection, reportResponseStatus } from './sessionSignal';
+import { SESSION_MARKER_HEADER, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
+import { tabSessionState, tabSessionPin } from './tabSession';
 
 function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
@@ -121,13 +122,21 @@ function baseApiError(status: number, body: unknown): ApiError {
 async function apiFetch(input: string, init: RequestInit): Promise<Response> {
   let res: Response;
   init = { credentials: 'same-origin', ...init };
+  const sent = sessionRefFromHeaders(init.headers);
+  // A request with the session marker from a tab whose session another tab ended or replaced is never sent (#32)
+  const tabState = tabSessionState();
+  if (sent && isCrossTabReason(tabState)) {
+    reportCrossTabEnd(tabSessionPin()?.ref, tabState);
+    const err = new ApiError(401, sessionEndedMessage(tabState));
+    err.reason = tabState;
+    throw err;
+  }
   try {
     res = await fetch(input, init);
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
   }
   // A 401 on a request carrying the stored session's own reference means the server ended the session: tell the app (see sessionSignal.ts)
-  const sent = sessionRefFromHeaders(init.headers);
   const current = ApiClient.getToken();
   let reason: string | null = null;
   if (isSessionRejection(res.status, sent, current) && typeof res.clone === 'function') {
@@ -971,7 +980,14 @@ export const ApiClient = {
    */
   getToken(): string | null {
     try {
-      return localStorage.getItem(SESSION_REF_KEY);
+      const ref = localStorage.getItem(SESSION_REF_KEY);
+      // Another tab ended or replaced this tab's session: there is no reference to send (#32)
+      const state = tabSessionState();
+      if (isCrossTabReason(state)) {
+        reportCrossTabEnd(tabSessionPin()?.ref, state);
+        return null;
+      }
+      return ref;
     } catch {
       return null;
     }
@@ -1086,7 +1102,7 @@ export const ApiClient = {
   async updateControl(
     tenantId: string,
     controlId: string,
-    updates: Partial<ControlState>,
+    updates: Partial<ControlState> & { expectedUpdatedAt?: string | null },
     programId?: string | null
   ): Promise<ControlState> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/controls/${encodeURIComponent(controlId)}`, {
@@ -1097,6 +1113,7 @@ export const ApiClient = {
         implementationNotes: updates.implementationNotes,
         responsibleRole: updates.responsibleRole,
         updatedBy: updates.updatedBy,
+        expectedUpdatedAt: updates.expectedUpdatedAt,
       }),
     });
 
@@ -1125,7 +1142,7 @@ export const ApiClient = {
    * PUT /api/v1/objectives/:objectiveId
    * Saves one objective (owner / MSP only); a field left out keeps its stored value, an empty narrative clears it
    */
-  async putObjective(tenantId: string, input: ObjectiveInput, programId?: string | null): Promise<{ objective: ObjectiveRecord; changed: boolean }> {
+  async putObjective(tenantId: string, input: ObjectiveInput & { expectedUpdatedAt?: string | null }, programId?: string | null): Promise<{ objective: ObjectiveRecord; changed: boolean }> {
     const { objectiveId, ...body } = input;
     const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/${encodeURIComponent(objectiveId)}`, {
       method: 'PUT',
