@@ -35,6 +35,7 @@ import { CMMC_LEVEL_2_CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls
 import { ControlState } from '../src/types/cmmc';
 import { ReportMetadata } from '../src/types/report';
 import { compileNistSSP } from '../src/data/reports/documentCompilers';
+import { generatePrintableHtml } from '../src/data/reports/reportExporters';
 
 let passCount = 0;
 let failCount = 0;
@@ -408,6 +409,51 @@ async function runTestSuite() {
   // Verify full chain remains cryptographically valid after wipe entry
   const postWipeVerification = await verifyAuditChain(postWipeLogs);
   assert(postWipeVerification.isValid === true, 'Audit chain remains 100% cryptographically valid with wipe block appended');
+
+  // ==========================================================================
+  // SECTION 4: EXPORTER STRINGS RENDER AS TEXT (#65)
+  // ==========================================================================
+  console.log('\n--- Test Group 4: Exporter strings render as text (#65) ---');
+
+  const srcFiles: { rel: string; text: string }[] = [];
+  const walkSrc = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkSrc(full);
+      else if (/\.tsx?$/.test(entry.name)) {
+        srcFiles.push({
+          rel: path.relative(process.cwd(), full).split(path.sep).join('/'),
+          text: fs.readFileSync(full, 'utf8').replace(/\r\n/g, '\n'),
+        });
+      }
+    }
+  };
+  walkSrc(path.join(process.cwd(), 'src'));
+  const srcMatching = (re: RegExp) => srcFiles.filter((f) => re.test(f.text)).map((f) => f.rel);
+
+  const dsihOffenders = srcMatching(/dangerouslySetInnerHTML/);
+  assert(dsihOffenders.length === 0, 'S65-1: no src file uses dangerouslySetInnerHTML (guards the Phase 6 VM screens)', `offenders: ${dsihOffenders.join(', ')}`);
+
+  const htmlSinkOffenders = srcMatching(/\.innerHTML\b|\.outerHTML\b|insertAdjacentHTML|createContextualFragment/);
+  assert(htmlSinkOffenders.length === 0, 'S65-2: no src file uses innerHTML / outerHTML / insertAdjacentHTML / createContextualFragment', `offenders: ${htmlSinkOffenders.join(', ')}`);
+
+  const docWriteFiles = srcMatching(/document\.write\(|docFrame\.write\(/);
+  const docWriteAllowed = ['src/components/common/LegalModal.tsx', 'src/data/reports/reportExporters.ts'];
+  assert(docWriteFiles.length > 0, 'S65-3a: the document.write scan matches today (regex is live)');
+  assert(docWriteFiles.every((f) => docWriteAllowed.includes(f)), 'S65-3b: document.write is only used by the legal modal and the report exporter', `files: ${docWriteFiles.join(', ')}`);
+
+  const jsUrlOffenders = srcMatching(/javascript:/i);
+  assert(jsUrlOffenders.length === 0, 'S65-4: no src file contains a javascript: URL', `offenders: ${jsUrlOffenders.join(', ')}`);
+
+  const hostileDoc = compileNistSSP(
+    { ...sampleMeta, systemName: '<img src=x onerror=alert(1)>', organizationName: '<script>alert(1)</script>' },
+    CMMC_LEVEL_2_CONTROLS,
+    allMet(CMMC_LEVEL_2_CONTROLS)
+  );
+  const hostileHtml = generatePrintableHtml(hostileDoc);
+  assert(hostileHtml.includes('&lt;img src=x onerror=alert(1)&gt;'), 'S65-5a: a hostile system name is escaped in the printable HTML');
+  assert(hostileHtml.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'S65-5b: a hostile organization name is escaped in the printable HTML');
+  assert(!hostileHtml.includes('<img src=x') && !hostileHtml.includes('<script>alert(1)'), 'S65-5c: no raw hostile markup reaches the printable HTML');
 
   // ==========================================================================
   // SUMMARY
