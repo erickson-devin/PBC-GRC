@@ -5,7 +5,9 @@
 Row-level security (RLS) is what keeps one tenant's data away from another. PostgreSQL **superusers and roles with
 `BYPASSRLS` skip RLS entirely**, even with `FORCE ROW LEVEL SECURITY`. The app therefore connects as an ordinary role
 (`grc_app` by default). `docker compose up` creates it automatically on a fresh volume
-(`docker/postgres/10-app-role.sh`).
+(`docker/postgres/10-app-role.sh`). The server checks its own role at startup: a SUPERUSER or BYPASSRLS role is refused
+with `NODE_ENV=production` (and warned about elsewhere), so a `.env` that names `postgres` as `DB_USER` cannot run in
+production by accident.
 
 Required settings (in a `.env` file next to `docker-compose.yml`, or exported):
 
@@ -243,30 +245,43 @@ warning (`ssp_documents still holds rows and was not dropped`).
 
 What makes an upgrade safe is the release routine around it:
 
-1. **Back up first.** Create the backup folder once, then before every deploy (`app_db` and `postgres` are this install's
-   `POSTGRES_DB` and `POSTGRES_USER`; use yours):
+1. **Back up first.** Create the backup folder once, then before every deploy, and on a schedule in between (nightly is the
+   recommendation; see docs/GO_LIVE_CHECKLIST.md). A backup is **two things taken together**: the database dump and the
+   evidence directory (`EVIDENCE_DIR`: uploaded evidence, SSP documents and scanner payloads live there, not in the
+   database). `cmmc_compliance_db` and `postgres` below are the default `POSTGRES_DB` and `POSTGRES_USER`; use yours, and
+   your own backup path:
 
    ```bash
-   docker exec singularity-db pg_dump -U postgres -Fc app_db > /mnt/user/appdata/singularity/backups/app_db-$(date +%F-%H%M).dump
+   docker exec singularity-db pg_dump -U postgres -Fc cmmc_compliance_db > /backups/db-$(date +%F-%H%M).dump
+   tar -C "$EVIDENCE_DIR" -czf /backups/evidence-$(date +%F-%H%M).tar.gz .
    ```
 
-   The dump holds control narratives and other CUI: keep the backup folder on the enclave host, with the same access
-   controls as the database directory.
+   Both hold CUI: keep the backup folder on the enclave host (or on media with the same access controls as the database
+   directory), never on a shared drive. `pg_dump` does not include roles: a restore to a new host creates the application
+   role first (the init script does it on a fresh volume; "Existing data volume" below does it by hand).
 2. **Keep `.env` the same between deploys.** In particular `POSTGRES_DB`, `APP_DB_USER`, `LOCAL_AUTH_SECRET`,
    `MFA_ENCRYPTION_KEY` and every path in the table above. Each one changed by accident looks like data loss: a different
    database name or `DB_DATA_DIR` starts an empty database beside the real one (the real one is untouched), and a different
    `LOCAL_AUTH_SECRET` signs everyone out (and, without `MFA_ENCRYPTION_KEY`, ends every enrolled factor; see "Secrets and
    rotation" above). Changing `POSTGRES_PASSWORD` or `APP_DB_PASSWORD` in `.env` does not change the role's password once
-   the database exists: run `docker exec -it singularity-db psql -U postgres -d app_db -c "\password app_user"` (or
+   the database exists: run `docker exec -it singularity-db psql -U postgres -d cmmc_compliance_db -c "\password grc_app"` (or
    `postgres`) and then update `.env`.
-3. **Deploy**, then check: `GET /api/v1/health` reports the new `buildCommit` and `"database":"connected"`, and you can sign in.
+3. **Deploy**: set the image to the release you mean to run (a `sha-<commit>` tag, never `latest`, so that a rollback has a
+   name), then `docker compose pull && docker compose up -d`. Then check: `GET /api/v1/health` reports the new
+   `buildCommit` and `"database":"connected"`, and you can sign in. Read `docker compose logs singularity-app` for
+   `[Startup]` warnings and `[PostgreSQL]` notes (backfill, `ssp_documents`).
 4. **If something is wrong, restore** the dump taken in step 1 (stop the app container first so nothing writes meanwhile):
 
    ```bash
    docker stop singularity-app
-   docker exec -i singularity-db pg_restore -U postgres -d app_db --clean --if-exists < /mnt/user/appdata/singularity/backups/app_db-<date>.dump
+   docker exec -i singularity-db pg_restore -U postgres -d cmmc_compliance_db --clean --if-exists < /backups/db-<date>.dump
+   tar -C "$EVIDENCE_DIR" -xzf /backups/evidence-<date>.tar.gz
    docker start singularity-app
    ```
+
+   **A rollback is this restore plus the previous image tag**, not the previous tag alone: an older release re-creates
+   narrower check constraints at startup, and rows written by the newer release can make that fail, so the old image may
+   not boot against the newer data. Restore the dump taken in step 1, then start the old tag.
 
 **Stopping the app.** `docker stop singularity-app` (or `docker compose down`) sends SIGTERM, which the server handles: it
 stops accepting connections, cancels any SSP import that is running or queued (the import shows "The server was shut down
@@ -301,6 +316,8 @@ Then point `DB_USER` / `DB_PASS` at the new role and verify:
 
 ```bash
 DB_HOST=... DB_USER=grc_app DB_PASS=... DB_NAME=cmmc_compliance_db npm run db:verify-rls
+# or, under compose, with the container's own settings:
+docker exec singularity-app npm run db:verify-rls
 ```
 
 The script also proves the vulnerability-management tables' isolation, that the composite foreign keys refuse a finding attached to another tenant's asset, and that the two SELECT-only discovery policies (`app.vm_token_hash` for the service-token lookup, `app.vm_scheduler` for scheduler enumeration) see nothing without their setting. **PostgreSQL 15 or later is required**: the vulnerability-management schema uses `ON DELETE SET NULL (column)`, which older versions reject (the bundled compose file ships 16). Startup now enforces this: `initDb` refuses to continue on PostgreSQL older than 15 and reports `PBC-GRC requires PostgreSQL 15 or later; found <version>`.
