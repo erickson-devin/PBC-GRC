@@ -10,6 +10,17 @@ const FIELD_LABELS: Array<[keyof ControlState, string]> = [
   ['responsibleRole', 'responsible role'],
 ];
 
+/** True for the server's 409 `stale_write`: the row changed since this browser last read it. (`program_archived` is another 409.) */
+export function isStaleWriteError(err: unknown): boolean {
+  const e = err as { name?: unknown; status?: unknown; reason?: unknown } | null;
+  return Boolean(e) && e!.name === 'ApiError' && e!.status === 409 && e!.reason === 'stale_write';
+}
+
+/** The notice for a refused stale write. Never repeats the text: it may contain CUI. */
+export function staleWriteMessage(kind: 'control' | 'objective', id: string): string {
+  return `Someone else saved ${kind} ${id} while you were editing. Your text is still in the field and was not saved: copy it, then reload the page to see theirs.`;
+}
+
 /**
  * The text for the "not saved" banner, or null when none is needed (a 401: the session signal already signs the user out).
  * Names the fields from the keys of `sent` only: never a value, because the notes may contain CUI.
@@ -17,6 +28,7 @@ const FIELD_LABELS: Array<[keyof ControlState, string]> = [
 export function controlSaveFailureMessage(controlId: string, sent: Partial<ControlState>, err: unknown): string | null {
   const e = err as { name?: unknown; status?: unknown } | null;
   if (e && e.name === 'ApiError' && e.status === 401) return null;
+  if (isStaleWriteError(err)) return staleWriteMessage('control', controlId);
   const fields = FIELD_LABELS.filter(([key]) => key in sent).map(([, label]) => label);
   const what = fields.length > 0 ? fields.join(' and ') : 'control';
   return `The change to the ${what} of ${controlId} was not saved: ${errorMessage(err) || 'unknown error'}`;

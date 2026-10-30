@@ -332,7 +332,7 @@ export const SSPBuilder: React.FC = () => {
                 value={meta.cloudServiceProviders}
                 onChange={(e) => updateSSPMetadata({ cloudServiceProviders: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Microsoft 365, Google Cloud Platform, Cloudflare"
+                placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
               />
             </div>
           </div>

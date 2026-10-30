@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type { ProgramScope } from '../db';
 import { importObjectives, listObjectiveEvents, readObjectives, writeObjective, writeObjectivesBulk, type ObjectiveActor } from '../controlObjectives';
+import { parseExpectedUpdatedAt, StaleWriteError } from '../controlAssessments';
 import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, controlIdOfObjective, validateObjectiveInput, type ObjectiveInput } from '../../src/types/controlObjectives';
@@ -138,7 +139,8 @@ router.get('/:objectiveId/history', async (req: Request, res: Response): Promise
 
 /**
  * PUT /api/v1/objectives/:objectiveId
- * Body { controlId, status?, narrative?, linkedEvidenceIds? }. A field left out (or null) keeps its stored value; an empty narrative clears it.
+ * Body { controlId, status?, narrative?, linkedEvidenceIds?, expectedUpdatedAt? }. A field left out (or null) keeps its stored value; an empty narrative clears it.
+ * expectedUpdatedAt (the objective's updatedAt as the client loaded it; null = no row yet) makes the write fail with 409 stale_write when the row changed since.
  * Nothing is written, and no history event recorded, when nothing differs. The change is recorded under the signed-in user.
  */
 router.put('/:objectiveId', async (req: Request, res: Response): Promise<void> => {
@@ -148,12 +150,21 @@ router.put('/:objectiveId', async (req: Request, res: Response): Promise<void> =
     res.status(400).json({ error: problem });
     return;
   }
+  const expected = parseExpectedUpdatedAt((req.body ?? {}).expectedUpdatedAt);
+  if (!expected.ok) {
+    res.status(400).json({ error: 'expectedUpdatedAt must be a timestamp or null' });
+    return;
+  }
   const item = input as unknown as ObjectiveInput;
   if (!(await ensureControlInFrameworkPolicy(req, res, item.controlId))) return;
   try {
-    const { record, changed } = await writeObjective(scopeOf(req), item, actorOf(req));
+    const { record, changed } = await writeObjective(scopeOf(req), item, actorOf(req), { expectedUpdatedAt: expected.value });
     res.json({ objective: record, changed });
   } catch (err: unknown) {
+    if (err instanceof StaleWriteError) {
+      res.status(409).json({ error: 'This objective was saved by someone else after you loaded it.', code: 'stale_write', current: err.current });
+      return;
+    }
     fail(res, req, `updating objective ${item.objectiveId}`, err);
   }
 });

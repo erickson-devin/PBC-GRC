@@ -131,6 +131,7 @@ services:
       VM_SCHEDULER_TICK_MINUTES: ${VM_SCHEDULER_TICK_MINUTES:-}
       VM_SNAPSHOT_INTERVAL_HOURS: ${VM_SNAPSHOT_INTERVAL_HOURS:-}
       VM_COVERAGE_THRESHOLD: ${VM_COVERAGE_THRESHOLD:-}
+      ASSESSMENT_EVENT_RETENTION_DAYS: ${ASSESSMENT_EVENT_RETENTION_DAYS:-}
     ports:
       # All interfaces by decision (Unraid WebUI on the LAN); the host port is APP_PORT, the container always listens on 3000
       - "${APP_PORT:-3000}:3000"

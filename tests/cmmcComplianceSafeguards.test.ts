@@ -24,6 +24,7 @@ import {
   emassCsvNotes,
 } from '../src/data/reports/sprsCompiler';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
+import { onboardingSummary } from '../src/data/onboardingSummary';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -367,6 +368,27 @@ async function runTestSuite() {
   assert(headerSrc.includes('`${frameworkTitle} Readiness:`') && !headerSrc.includes("'SPRS Readiness:'"), 'SP6: header readiness label is the framework title for every framework');
   const onboardingSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'onboarding', 'OnboardingModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
   assert(!onboardingSrc.includes('SPRS Status'), 'SP6b: onboarding modal has no "SPRS Status" label');
+
+  // S139: the onboarding wizard states the tenant's own framework, counts and authority (#139)
+  assert(!/\b17\b/.test(onboardingSrc), 'S139-1: onboarding modal hard-codes no "17" count');
+  assert(!onboardingSrc.includes('Level 1') && !onboardingSrc.includes('CMMC Enclave'), 'S139-2: onboarding modal hard-codes no "Level 1" / "CMMC Enclave"');
+  assert(onboardingSrc.includes('onboardingSummary({') && onboardingSrc.includes('framework: activeFramework') && onboardingSrc.includes('total: metrics.totalControls'), 'S139-3: onboarding modal takes the framework and the control count from the live context');
+  assert(onboardingSrc.includes('<dl') && onboardingSrc.includes('{summary.countSrText}') && onboardingSrc.includes('className="sr-only"'), 'S139-4: the readiness summary is a description list with a screen-reader count');
+  assert(onboardingSrc.includes('className="flex items-center gap-2 self-end sm:self-center" aria-hidden="true"'), 'S139-5: the colour-only stepper dots are hidden from assistive technology');
+  assert(onboardingSrc.includes('<ErrorNotice message={error}') && onboardingSrc.includes('summary.sprsApplies'), 'S139-6: errors use ErrorNotice and the SPRS wording follows the framework');
+  const s139L1 = onboardingSummary({ framework: 'CMMC_L1', total: 17, met: 0, evidenceCount: 0, loading: false });
+  assert(s139L1.countText === '0 / 17' && s139L1.unit === 'practices' && s139L1.countSrText === '0 of 17 practices met' && s139L1.frameworkTitle === 'CMMC 2.0 Level 1' && s139L1.assessedUnder === 'FAR 52.204-21 / CMMC Level 1' && s139L1.sprsApplies === false, 'S139-7: CMMC L1 summary', s139L1);
+  const s139L2 = onboardingSummary({ framework: 'CMMC_L2', total: 110, met: 0, evidenceCount: 0, loading: false });
+  assert(s139L2.countText === '0 / 110' && s139L2.calloutText === 'All 110 CMMC 2.0 Level 2 practices are set to NOT_STARTED with zero pre-populated evidence.' && s139L2.sprsApplies === true, 'S139-8: CMMC L2 summary', s139L2);
+  const s139N = getFrameworkControls('NIST_800_53_REV5', 'LOW_LOW_LOW').length;
+  const s139Nist = onboardingSummary({ framework: 'NIST_800_53_REV5', total: s139N, met: 0, evidenceCount: 0, loading: false });
+  assert(s139Nist.countText === `0 / ${s139N}` && s139Nist.unitLabel === 'Controls Met' && s139Nist.unit === 'controls' && s139Nist.assessedUnder === 'NIST SP 800-53 Rev 5' && s139Nist.sprsApplies === false, 'S139-9: NIST 800-53 summary', s139Nist);
+  const s139Loading = onboardingSummary({ framework: 'NIST_800_53_REV5', total: 0, met: 0, evidenceCount: 0, loading: true });
+  assert(s139Loading.countText === '…' && s139Loading.readinessText === '…' && s139Loading.countSrText === 'Loading the control count', 'S139-10: loading summary shows no count', s139Loading);
+  const s139Met = onboardingSummary({ framework: 'CMMC_L2', total: 110, met: 5, evidenceCount: 0, loading: false });
+  assert(s139Met.readinessText === '5% Met' && s139Met.calloutTitle === 'Baseline Loaded:', 'S139-11a: a partly met baseline reads "Baseline Loaded"', s139Met);
+  assert(onboardingSummary({ framework: 'CMMC_L2', total: 0, met: 0, evidenceCount: 0, loading: false }).readinessText === '0% Met', 'S139-11b: no controls reads 0% Met');
+  assert(onboardingSummary({ framework: 'CMMC_L1', total: 17, met: 0, evidenceCount: 1, loading: false }).evidenceText === '1 File' && onboardingSummary({ framework: 'CMMC_L1', total: 17, met: 0, evidenceCount: 0, loading: false }).evidenceText === '0 Files', 'S139-12: evidence count is singular / plural');
 
   // 2.6 Official SPRS Assessment Summary
   const sprsSummary = generateSprsAssessmentSummary(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, sampleMeta);

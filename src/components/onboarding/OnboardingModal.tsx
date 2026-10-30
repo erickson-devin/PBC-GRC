@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import {
   Shield,
   Building2,
@@ -9,7 +9,6 @@ import {
   Sparkles,
   Lock,
   FileText,
-  AlertCircle,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useTenant } from '../../context/TenantContext';
@@ -22,8 +21,10 @@ import {
   refreshBoundaryNarrative,
   refreshSystemName,
 } from '../../data/onboardingDefaults';
+import { onboardingSummary } from '../../data/onboardingSummary';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { ErrorNotice } from '../common/ErrorNotice';
 interface OnboardingModalProps {
   isOpen: boolean;
   onClose?: () => void;
@@ -33,8 +34,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { currentTenant, currentUser, completeTenantOnboarding, programs, updateProgram } = useTenant();
-  const { updateSSPMetadata } = useAssessment();
+  const { currentTenant, currentUser, completeTenantOnboarding, programs, updateProgram, activeFramework, programsStatus } = useTenant();
+  const { updateSSPMetadata, metrics, state } = useAssessment();
 
   const [step, setStep] = useState<1 | 2>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,7 +53,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     currentTenant.systemOwner || `${currentUser.name} (System Owner)`
   );
   const [boundaryScope, setBoundaryScope] = useState(
-    currentTenant.systemBoundaryScope || defaultBoundaryNarrative(currentTenant.name || '')
+    currentTenant.systemBoundaryScope || defaultBoundaryNarrative(currentTenant.name || '', activeFramework)
   );
   const [cloudProviders, setCloudProviders] = useState(DEFAULT_CLOUD_PROVIDERS);
   // The organization name the proposed system name / narrative were derived from (they follow a change of it on step 1)
@@ -69,14 +70,24 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         currentTenant.systemName || `${currentTenant.name || 'Corporate'} Information Network (CIN)`
       );
       setSystemOwner(currentTenant.systemOwner || `${currentUser.name} (System Owner)`);
-      setBoundaryScope(currentTenant.systemBoundaryScope || defaultBoundaryNarrative(currentTenant.name || ''));
+      setBoundaryScope(currentTenant.systemBoundaryScope || defaultBoundaryNarrative(currentTenant.name || '', activeFramework));
       setDerivedOrg(currentTenant.name || '');
       setStep(1);
       setError(null);
     }
   }, [isOpen, currentTenant, currentUser]);
 
+  const summaryHeadingId = useId();
   if (!isOpen) return null;
+
+  const programsSettled = programsStatus === 'ready' || programsStatus === 'error' || programsStatus === 'unsupported';
+  const summary = onboardingSummary({
+    framework: activeFramework,
+    total: metrics.totalControls,
+    met: metrics.metCount,
+    evidenceCount: state.evidenceIndex.length,
+    loading: !programsSettled,
+  });
 
   const handleNextStep = (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,7 +97,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
     setError(null);
     setSystemName((s) => refreshSystemName(s, derivedOrg, orgName));
-    setBoundaryScope((b) => refreshBoundaryNarrative(b, derivedOrg, orgName));
+    setBoundaryScope((b) => refreshBoundaryNarrative(b, derivedOrg, orgName, activeFramework));
     setDerivedOrg(orgName.trim());
     setStep(2);
   };
@@ -180,20 +191,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <DialogTitle as="h3" className="text-lg font-bold text-white tracking-tight">
-                  Welcome to Your Live CMMC Enclave
+                  Welcome to Your Live Compliance Enclave
                 </DialogTitle>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
                   Step {step} of 2
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Initialize your isolated defense contractor boundary & System Security Plan
+                Initialize your isolated {summary.frameworkTitle} boundary &amp; System Security Plan
               </p>
             </div>
           </div>
 
           {/* Stepper Dots */}
-          <div className="flex items-center gap-2 self-end sm:self-center">
+          <div className="flex items-center gap-2 self-end sm:self-center" aria-hidden="true">
             <div
               className={`w-2.5 h-2.5 rounded-full transition-all ${
                 step === 1 ? 'bg-brand-500 ring-4 ring-brand-500/20' : 'bg-emerald-500'
@@ -209,31 +220,24 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         </div>
 
         {/* Informational Callout */}
-        <div className="px-6 py-3 bg-brand-500/5 border-b border-slate-800/80 flex items-center gap-3 text-xs text-slate-300">
-          <Sparkles className="w-4 h-4 text-brand-400 shrink-0" />
+        <div className="px-6 py-3 bg-brand-500/5 border-b border-slate-800/80 flex items-center gap-3 text-xs text-slate-300" aria-live="polite">
+          <Sparkles className="w-4 h-4 text-brand-400 shrink-0" aria-hidden="true" />
           <span>
-            <strong>Blank Baseline Initialized:</strong> All 17 CMMC Level 1 controls are set to{' '}
-            <code className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-xs">NOT_STARTED</code>{' '}
-            with zero pre-populated evidence.
+            <strong>{summary.calloutTitle}</strong> {summary.calloutText}
           </span>
         </div>
 
-        {error && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-300">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+        <ErrorNotice message={error} className="mx-6 mt-4" />
 
         {/* Modal Form Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {step === 1 ? (
             /* Step 1: Organization Profile */
             <form id="onboarding-step1" onSubmit={handleNextStep} className="space-y-4">
-              <div className="flex items-center gap-2 pb-2 border-b border-slate-800 text-sm font-semibold text-white">
-                <Building2 className="w-4 h-4 text-brand-400" />
+              <h4 className="flex items-center gap-2 pb-2 border-b border-slate-800 text-sm font-semibold text-white">
+                <Building2 className="w-4 h-4 text-brand-400" aria-hidden="true" />
                 <span>1. Organization & Contractor Profile</span>
-              </div>
+              </h4>
 
               {/* Organization Name */}
               <div>
@@ -249,7 +253,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
                 <p className="mt-1 text-xs text-slate-400">
-                  This will appear on the cover page of all generated System Security Plans (SSPs) and SPRS score reports.
+                  {summary.sprsApplies
+                    ? 'This will appear on the cover page of all generated System Security Plans (SSPs) and SPRS score reports.'
+                    : 'This will appear on the cover page of all generated System Security Plans (SSPs) and exported reports.'}
                 </p>
               </div>
 
@@ -311,10 +317,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           ) : (
             /* Step 2: System Boundary Definition */
             <form id="onboarding-step2" onSubmit={handleComplete} className="space-y-4">
-              <div className="flex items-center gap-2 pb-2 border-b border-slate-800 text-sm font-semibold text-white">
-                <Server className="w-4 h-4 text-brand-400" />
+              <h4 className="flex items-center gap-2 pb-2 border-b border-slate-800 text-sm font-semibold text-white">
+                <Server className="w-4 h-4 text-brand-400" aria-hidden="true" />
                 <span>2. System Security Plan (SSP) Boundary Definition</span>
-              </div>
+              </h4>
 
               {/* System Boundary Name */}
               <div>
@@ -330,7 +336,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
                 <p className="mt-1 text-xs text-slate-400">
-                  The primary system or information boundary being assessed under FAR 52.204-21 / CMMC Level 1.
+                  The primary system or information boundary being assessed under {summary.assessedUnder}.
                 </p>
               </div>
 
@@ -380,23 +386,26 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </div>
 
               {/* Ready Checklist Summary */}
-              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-2 text-xs">
-                <span className="font-semibold text-slate-300 block">Baseline Readiness Summary:</span>
-                <div className="grid grid-cols-3 gap-2 text-xs">
+              <section aria-labelledby={summaryHeadingId} className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-2 text-xs">
+                <h4 id={summaryHeadingId} className="font-semibold text-slate-300 block">Baseline Readiness Summary: {summary.frameworkTitle}</h4>
+                <dl className="grid grid-cols-3 gap-2 text-xs" aria-busy={!programsSettled}>
                   <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                    <span className="text-slate-400 block">Controls Met</span>
-                    <strong className="text-white font-mono text-sm">0 / 17</strong>
+                    <dt className="text-slate-400 block">{summary.unitLabel}</dt>
+                    <dd className="text-white font-mono text-sm font-bold">
+                      <span aria-hidden="true">{summary.countText}</span>
+                      <span className="sr-only">{summary.countSrText}</span>
+                    </dd>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                    <span className="text-slate-400 block">Readiness</span>
-                    <strong className="text-amber-400 font-mono text-sm">0% Met</strong>
+                    <dt className="text-slate-400 block">Readiness</dt>
+                    <dd className="text-amber-400 font-mono text-sm font-bold">{summary.readinessText}</dd>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                    <span className="text-slate-400 block">Evidence Vault</span>
-                    <strong className="text-slate-300 font-mono text-sm">0 Files</strong>
+                    <dt className="text-slate-400 block">Evidence Vault</dt>
+                    <dd className="text-slate-300 font-mono text-sm font-bold">{summary.evidenceText}</dd>
                   </div>
-                </div>
-              </div>
+                </dl>
+              </section>
             </form>
           )}
         </div>

@@ -18,6 +18,7 @@ import type { Program } from '../src/types/program';
 import { computeSha256, canonicalJson } from '../src/data/audit/auditLogger';
 import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetScope';
 import { createInitialState } from '../src/services/storageService';
+import { NO_CSP_RECORDED } from '../src/data/reports/documentCompilers';
 
 // Polyfill minimal localStorage for Node environment if absent
 if (typeof (global as any).localStorage === 'undefined') {
@@ -211,6 +212,12 @@ async function runTests() {
 
     const plain = await generateEnclaveHandoverPackage(testTenant.id, testTenant, undefined, undefined, undefined, { download: false });
     assert(plain.program === undefined && plain.complianceSummary.totalControls === getFrameworkControls('CMMC_L1').length, 'OB-P4: without a program the package is the tenant\'s primary framework, as before');
+
+    // #122: the handover states no cloud provider or environment of its own
+    const plainMeta = plain.reports.systemSecurityPlan.metadata;
+    assert(plainMeta.cloudServiceProviders === '' && plainMeta.systemEnvironment === '', 'OB-122a: the handover SSP names no cloud provider or environment the customer did not record', { csp: plainMeta.cloudServiceProviders, env: plainMeta.systemEnvironment });
+    const plain13 = (plain.reports.systemSecurityPlan.sections[0].subsections || []).find((s: { title: string }) => s.title.startsWith('1.3'));
+    assert(plain13?.content === NO_CSP_RECORDED, 'OB-122b: the handover SSP section 1.3 states that no cloud service provider is recorded');
 
     // #131: a browser-only tenant's handover uses the overlays its matrix uses
     const noOverlays = JSON.stringify({ nonNetworkedOnly: false });

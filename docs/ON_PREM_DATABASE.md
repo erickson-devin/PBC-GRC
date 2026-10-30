@@ -130,7 +130,10 @@ The API sends no CORS headers (same-origin only). Browsers signed in before this
 **Session-ended reasons.** A 401 from the session check carries `reason`: `session_missing` (no session cookie and no bearer), `session_invalid`
 (a token the server cannot trust), `session_expired` (an authentic token past its expiry) or `session_revoked` (an authentic
 token whose account is gone or disabled, or whose sessions were ended by a password change, an MFA reset or an administrator
-action; the three are not told apart). The app's sign-in message follows the reason.
+action; the three are not told apart). The app's sign-in message follows the reason. Two more reasons never come from the
+server: the app uses `signed_out_elsewhere` (another tab of the same browser signed out) and `switched_elsewhere` (another
+tab signed in as a different account, replacing the browser's one session cookie). The tab then shows the sign-in screen
+without sending a logout request, so the other tab's session is untouched.
 
 **Platform administrator account actions** (Administration console, `/api/v1/platform/users`, platform administrators only):
 *reset password* (sets a temporary password, removes the person's second factor and recovery codes, ends their sessions,
@@ -191,6 +194,26 @@ installation sets these in the `.env` next to `docker-compose.yml`:
 Changing `DB_DATA_DIR` on an existing installation points PostgreSQL at a different (empty) directory: the init script runs
 again there and the old data stays where it was. The Unraid installation also runs `OLLAMA_MODEL=llama3.2:3b` with
 `OLLAMA_NUM_CTX=4096` (the model the CMMC import is tuned for), set the same way.
+
+## Assessment history retention
+
+Every control and objective write leaves a history row (who, when, the SHA-256 of the notes, never their text). A daily
+sweep inside the app deletes rows older than `ASSESSMENT_EVENT_RETENTION_DAYS`:
+
+* unset: 1095 days (three years: a Level 2 certificate runs three years and the next assessment may look back across the cycle);
+* `0`: keep everything;
+* 1 to 364: accepted, with a startup warning that an assessment may look back further;
+* anything else: nothing is deleted and the startup log says so.
+
+The first sweep runs ten minutes after start, then daily; its log lines carry counts only. To see what a sweep would
+delete, or to run one by hand:
+
+```bash
+docker exec singularity-app npm run db:prune-assessment-events -- --dry-run
+```
+
+(`--days N` overrides the setting for that run; `--tenant <id>` limits it.) The first start after the upgrade that adds this
+builds two indexes on the history tables; on a large history that takes a moment and holds up writes while it runs.
 
 ## Upgrading to a new release (no wipe)
 

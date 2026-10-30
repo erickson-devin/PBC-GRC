@@ -11,8 +11,8 @@ import {
   type ObjectiveRecord,
   type ObjectiveStatus,
 } from '../src/types/controlObjectives';
-import { getDbMode, pool, queryWithProgram, type ProgramScope } from './db';
-import { notesDigest } from './controlAssessments';
+import { getDbMode, nextStamp, pool, queryWithProgram, type ProgramScope } from './db';
+import { matchesExpected, notesDigest, StaleWriteError } from './controlAssessments';
 
 /**
  * Read and write access to a program's control_objectives rows (800-171A / 800-53A objectives: status, narrative, evidence links), and
@@ -36,7 +36,8 @@ type NewObjectiveEvent = Omit<ObjectiveEvent, 'id' | 'createdAt'>;
 /** One transaction's view of the program's rows: find (locking the row in PostgreSQL), save, record an event. */
 interface Tx {
   find(objectiveId: string): Promise<ObjectiveRecord | null>;
-  save(record: ObjectiveRecord): Promise<void>;
+  /** Upserts the row and returns it as stored (with its new updatedAt). */
+  save(record: ObjectiveRecord): Promise<ObjectiveRecord>;
   /** Inserts only when no row has the id; false when one exists. */
   insertOnly(record: ObjectiveRecord): Promise<boolean>;
   addEvent(event: NewObjectiveEvent): Promise<void>;
@@ -89,13 +90,23 @@ function unchanged(before: ObjectiveRecord, after: ObjectiveRecord): boolean {
   );
 }
 
-async function applyWrite(tx: Tx, scope: ProgramScope, input: ObjectiveInput, who: ObjectiveActor): Promise<{ record: ObjectiveRecord; changed: boolean }> {
+/** `expected` is the updatedAt the client loaded (null: no row yet); undefined skips the check. A write that changes nothing passes without one. */
+async function applyWrite(
+  tx: Tx,
+  scope: ProgramScope,
+  input: ObjectiveInput,
+  who: ObjectiveActor,
+  expected?: string | null
+): Promise<{ record: ObjectiveRecord; changed: boolean }> {
   const before = await tx.find(input.objectiveId);
   const after = merge(input, before, who);
   if (before && unchanged(before, after)) return { record: before, changed: false };
-  await tx.save(after);
+  if (expected !== undefined && !matchesExpected(before ? before.updatedAt : null, expected)) {
+    throw new StaleWriteError({ updatedAt: before?.updatedAt ?? null, updatedBy: before?.updatedBy || null });
+  }
+  const stored = await tx.save(after);
   await tx.addEvent(buildEvent(scope, input, before, after, who));
-  return { record: after, changed: true };
+  return { record: stored, changed: true };
 }
 
 async function applyImport(tx: Tx, scope: ProgramScope, input: ObjectiveInput, who: ObjectiveActor): Promise<ObjectiveImportResult> {
@@ -176,11 +187,13 @@ function memoryTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): 
         return r ? copyRecord(r) : null;
       },
       save: async (record) => {
-        rows.set(record.objectiveId, { ...copyRecord(record), updatedAt: new Date().toISOString() });
+        const stored = { ...copyRecord(record), updatedAt: nextStamp(rows.get(record.objectiveId)?.updatedAt) };
+        rows.set(record.objectiveId, stored);
+        return copyRecord(stored);
       },
       insertOnly: async (record) => {
         if (rows.has(record.objectiveId)) return false;
-        rows.set(record.objectiveId, { ...copyRecord(record), updatedAt: new Date().toISOString() });
+        rows.set(record.objectiveId, { ...copyRecord(record), updatedAt: nextStamp() });
         return true;
       },
       addEvent: async (event) => {
@@ -211,7 +224,7 @@ const UPSERT = `
     narrative = EXCLUDED.narrative,
     linked_evidence_ids = EXCLUDED.linked_evidence_ids,
     updated_by = EXCLUDED.updated_by,
-    updated_at = NOW()
+    updated_at = GREATEST(NOW(), control_objectives.updated_at + interval '1 millisecond')
   RETURNING *;
 `;
 
@@ -243,6 +256,7 @@ async function pgTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>)
     save: async (record) => {
       const res = await c.query(UPSERT, values(record));
       if (!res.rows.length) throw new Error(`Objective ${record.objectiveId} could not be written`);
+      return toRecord(res.rows[0]);
     },
     insertOnly: async (record) => (await c.query(INSERT_ONLY, values(record))).rows.length > 0,
     addEvent: async (e) => {
@@ -286,8 +300,13 @@ export async function readObjectives(scope: ProgramScope, controlId?: string): P
 }
 
 /** Writes one objective and records the change, atomically. A field left out keeps the stored value; an empty narrative clears it. `changed` is false (and nothing is written) when nothing differs. */
-export async function writeObjective(scope: ProgramScope, item: ObjectiveInput, who: ObjectiveActor): Promise<{ record: ObjectiveRecord; changed: boolean }> {
-  return transaction(scope, (tx) => applyWrite(tx, scope, item, who));
+export async function writeObjective(
+  scope: ProgramScope,
+  item: ObjectiveInput,
+  who: ObjectiveActor,
+  opts: { expectedUpdatedAt?: string | null } = {}
+): Promise<{ record: ObjectiveRecord; changed: boolean }> {
+  return transaction(scope, (tx) => applyWrite(tx, scope, item, who, opts.expectedUpdatedAt));
 }
 
 /** Writes up to MAX_OBJECTIVE_BULK objectives in one transaction: all of them, or none when any fails. Returns how many changed. */
@@ -330,6 +349,49 @@ export async function listObjectiveEvents(scope: ProgramScope, objectiveId: stri
     [scope.tenantId, scope.programId, objectiveId, limit]
   );
   return res.rows.filter((r) => r.tenant_id === scope.tenantId && r.program_id === scope.programId).map(toEvent);
+}
+
+/**
+ * Retention sweep, memory mode: drops the objective events created before `cutoff` (all scopes, or only the tenants in `onlyTenantIds`).
+ * Returns how many events went (or would go, with `dryRun`) and how many scopes held some.
+ */
+export function pruneMemoryObjectiveEvents(cutoff: Date, opts: { dryRun?: boolean; onlyTenantIds?: readonly string[] } = {}): { deleted: number; scopes: number } {
+  let deleted = 0;
+  let scopes = 0;
+  const limit = cutoff.getTime();
+  for (const [key, list] of [...memoryEvents]) {
+    if (opts.onlyTenantIds && !opts.onlyTenantIds.includes(list[0]?.tenantId ?? key.split('__')[0])) continue;
+    const keep = list.filter((e) => !(Date.parse(e.createdAt) < limit));
+    const gone = list.length - keep.length;
+    if (!gone) continue;
+    deleted += gone;
+    scopes++;
+    if (!opts.dryRun) memoryEvents.set(key, keep);
+  }
+  return { deleted, scopes };
+}
+
+/** Retention sweep, PostgreSQL: deletes (or with `dryRun` counts) a scope's objective events created before `cutoff`, `batchSize` rows per transaction. */
+export async function pruneObjectiveEventsInScope(scope: ProgramScope, cutoff: Date, batchSize: number, dryRun: boolean): Promise<number> {
+  if (dryRun) {
+    const res = await queryWithProgram(
+      scope,
+      'SELECT count(*)::int AS n FROM control_objective_events WHERE tenant_id = $1 AND program_id = $2 AND created_at < $3',
+      [scope.tenantId, scope.programId, cutoff.toISOString()]
+    );
+    return Number(res.rows[0]?.n ?? 0);
+  }
+  let total = 0;
+  for (;;) {
+    const res = await queryWithProgram(
+      scope,
+      'DELETE FROM control_objective_events WHERE ctid IN (SELECT ctid FROM control_objective_events WHERE tenant_id = $1 AND program_id = $2 AND created_at < $3 LIMIT $4)',
+      [scope.tenantId, scope.programId, cutoff.toISOString(), batchSize]
+    );
+    const n = res.rowCount ?? 0;
+    total += n;
+    if (n < batchSize) return total;
+  }
 }
 
 /**

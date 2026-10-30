@@ -111,6 +111,13 @@ const memoryControls = new Map<string, InMemoryControl>(); // key: `${tenant_id}
 const controlKey = (tenantId: string, programId: string | null | undefined, controlId: string): string => `${tenantId}__${programId ?? ''}__${controlId}`;
 const memoryEvidence = new Map<string, InMemoryEvidence>(); // key: id
 
+/**
+ * The updated_at of a write: now, but always later than the row's previous stamp (like GREATEST(NOW(), updated_at + 1 ms) in PostgreSQL), so two
+ * writes in the same millisecond never share a version (the optimistic check compares these stamps).
+ */
+export const nextStamp = (prev?: string | null, now: number = Date.now()): string =>
+  new Date(Math.max(now, prev ? Date.parse(prev) + 1 : now)).toISOString();
+
 /** Bind parameter values accepted by the query helpers. */
 export type SqlParam = string | number | boolean | Date | string[] | null | undefined;
 
@@ -380,7 +387,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
       program_id: rowProgram,
       tags: existing?.tags || [],
       updated_by: updatedBy,
-      updated_at: new Date().toISOString(),
+      updated_at: nextStamp(existing?.updated_at),
     };
 
     memoryControls.set(key, record);

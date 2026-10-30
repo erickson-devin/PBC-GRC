@@ -7,9 +7,10 @@ import { builtinModules } from 'module';
  * PostgreSQL. This pure suite (no server, no port) fails if a cloud-provider code path, dependency, deploy script or
  * identifier creeps back into the repository, and it pins the network shape of docker-compose.yml.
  *
- * Part 1 scans code and config for removed-cloud tokens. It deliberately does NOT scan prose: the customer-CSP default text
- * (documentCompilers, offboardingEngine, ArtifactExportModal, SSPBuilder) describes the customer's own cloud
- * provider and stays. Catalog content (below) is exempt because it must never be edited.
+ * Part 1 scans code and config for removed-cloud tokens. It does not scan prose for vendor names in general: option catalogs
+ * (the stack survey, Enclave Settings), guidance text and placeholder="e.g. …" examples may name a vendor. It does pin (#122)
+ * that no SSP, export or handover DEFAULT names a cloud vendor: the customer states its own providers (empty value, an
+ * example in the placeholder). Catalog content (below) is exempt because it must never be edited.
  * Part 2 reads docker-compose.yml textually (no YAML library).
  */
 const root = process.cwd();
@@ -183,6 +184,57 @@ console.log('\n  Whole-file exemptions (catalog content, never edited): src/data
 assert(files.length > 100, 'the scan actually covered the repository', files.length);
 assert(text.has('server/index.ts') && text.has('package.json') && text.has('docker-compose.yml') && text.has('Dockerfile') && text.has('.env.example'), 'the scan includes server, package.json, compose, Dockerfile and .env.example');
 assert(![...text.keys()].some((k) => isCatalog(k)), 'no exempt catalog file was scanned');
+
+// ----------------------------------------------------------------------------- Vendor defaults (#122)
+
+console.log('\n--- Vendor defaults (#122) ---');
+const VENDOR = /Microsoft|Google|Cloudflare|\bAWS\b|Amazon Web Services|Azure|Okta|\bGCS\b|\bGCP\b|Cloud SQL|Firebase|GCC High|Entra|CrowdStrike|Intune|Splunk/;
+// A string literal that follows `||` or `??` (a fallback), or that is the value of an SSP / boundary / content field.
+const FALLBACK_LITERAL = /(?:\|\||\?\?)\s*[`'"]([^`'"]*)/g;
+const FIELD_LITERAL = /\b(?:cloudServiceProviders|systemEnvironment|boundaryDescription|systemBoundaryScope|boundarySummary|content)\s*:\s*[`'"]([^`'"]*)/g;
+function vendorDefaults(body: string): string[] {
+  const src = body.replace(/\r\n/g, '\n');
+  const found: string[] = [];
+  for (const re of [FALLBACK_LITERAL, FIELD_LITERAL]) {
+    for (const m of src.matchAll(re)) found.push(m[1]);
+  }
+  return found.filter((s) => VENDOR.test(s)).map((s) => s.trim().slice(0, 80));
+}
+assert(vendorDefaults("x || 'Google Cloud Platform, Microsoft 365.'").length === 1, 'helper: a vendor fallback literal is found');
+assert(vendorDefaults('{text ||\n  `The boundary includes Microsoft 365 services`}').length === 1, 'helper: a vendor fallback template on the next line is found');
+assert(vendorDefaults("cloudServiceProviders: 'AWS GovCloud'").length === 1, 'helper: a vendor field literal is found');
+assert(vendorDefaults('placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"').length === 0, 'helper: a placeholder example is not a default');
+assert(vendorDefaults("name: 'Microsoft Entra ID (Commercial)'").length === 0, 'helper: an option catalog entry is not a default');
+assert(vendorDefaults("cloudServiceProviders: meta.cloudServiceProviders || ''").length === 0, 'helper: an empty default is clean');
+
+const DEFAULT_SCOPE = (k: string) =>
+  k.startsWith('src/components/') || k.startsWith('src/data/reports/') || k.startsWith('src/data/storage/') || k === 'src/data/onboardingDefaults.ts';
+{
+  const offenders: string[] = [];
+  for (const [k, body] of text) {
+    if (!DEFAULT_SCOPE(k)) continue;
+    for (const lit of vendorDefaults(body)) offenders.push(`${k}: ${lit}`);
+  }
+  assert(offenders.length === 0, 'S122-1: no SSP, export or handover default names a cloud vendor', offenders);
+}
+{
+  const offenders: string[] = [];
+  for (const [k, body] of text) {
+    if (!k.startsWith('src/data/reports/') && !k.startsWith('src/data/storage/')) continue;
+    body.replace(/\r\n/g, '\n').split('\n').forEach((line, i) => { if (VENDOR.test(line)) offenders.push(`${k}:${i + 1}`); });
+  }
+  assert(offenders.length === 0, 'S122-2: no line of the report compilers or storage engines names a vendor', offenders);
+}
+const T122 = ['src/components/reports/ArtifactExportModal.tsx', 'src/data/reports/documentCompilers.ts', 'src/data/storage/offboardingEngine.ts', 'src/components/settings/EnclaveSettings.tsx'];
+assert(T122.every((k) => text.has(k)), 'S122-3: the scan includes the four #122 target files');
+{
+  const modal122 = text.get('src/components/reports/ArtifactExportModal.tsx') ?? '';
+  const off122 = text.get('src/data/storage/offboardingEngine.ts') ?? '';
+  const dc122 = text.get('src/data/reports/documentCompilers.ts') ?? '';
+  assert(modal122.includes("cloudServiceProviders: meta.cloudServiceProviders || '',") && modal122.includes("systemEnvironment: meta.systemEnvironment || '',"), 'S122-4: the export form starts with an empty provider list and environment');
+  assert(off122.includes("cloudServiceProviders: sspMeta?.cloudServiceProviders || '',"), 'S122-4: the handover package reads the SSP provider list and states none of its own');
+  assert(dc122.includes('|| NO_CSP_RECORDED'), 'S122-4: the SSP section 1.3 falls back to NO_CSP_RECORDED');
+}
 
 // ----------------------------------------------------------------------------- Part 2: container and config shape
 

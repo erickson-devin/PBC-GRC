@@ -49,9 +49,12 @@ import {
 import {
   coalesceSaveFailure,
   controlSaveFailureMessage,
+  isStaleWriteError,
   revertFailedControlFields,
+  staleWriteMessage,
   type ControlSaveFailure,
 } from '../data/controlSave';
+import { createNotesAutosave, createSaveChain, newerStamp, notesKey, type NotesDraft } from '../data/notesAutosave';
 import { errorMessage } from '../utils/errors';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
@@ -119,6 +122,8 @@ interface AssessmentContextType {
   // Actions with RBAC enforcement
   updateControlStatus: (controlId: string, status: ControlStatus, failingAssets?: FailingAssetInfo[]) => void;
   updateControlNotes: (controlId: string, notes: string) => void;
+  /** Sends a control's typed notes to the server now (the notes are otherwise saved a moment after the last keystroke). */
+  flushControlNotes: (controlId: string) => void;
   updateControlRole: (controlId: string, role: string) => void;
   applyStarterTemplate: (controlId: string, narrative: string) => void;
   bulkApplyStigNarratives: (narratives: Record<string, string>) => number;
@@ -226,6 +231,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Latest state for actions that must read it without a state dependency (import diff)
   const stateRef = useRef(state);
   stateRef.current = state;
+  // Notes are saved a moment after the last keystroke (one draft per control), and a control's saves go out one at a time. The stamps are
+  // the server's updated_at of the last save per control; a control whose save was refused as stale keeps the text on screen.
+  const sendNotesRef = useRef<(key: string, draft: NotesDraft) => void>(() => {});
+  const notesAutosaveRef = useRef(createNotesAutosave((k, d) => sendNotesRef.current(k, d)));
+  const saveChainRef = useRef(createSaveChain());
+  const serverStampRef = useRef(new Map<string, string>());
+  const staleNotesRef = useRef(new Set<string>());
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
   const [selectedDomainFilter, setSelectedDomainFilter] = useState<string>('ALL');
@@ -286,13 +298,20 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (liveControls && liveScopeKey === programScope) {
       setState(prev => {
         if (programScopeKey(prev.tenantId, prev.programId) !== programScope) return prev;
+        const controls = { ...prev.controls, ...liveControls };
+        // A control whose notes are being typed, are on their way to the server, or were refused keeps the text on screen: a server
+        // copy (an earlier save's answer) must not put older text back over it
+        for (const id of Object.keys(liveControls)) {
+          const key = notesKey(programScope, id);
+          const local = prev.controls[id];
+          if (local && (notesAutosaveRef.current.has(key) || saveChainRef.current.busy(key) || staleNotesRef.current.has(key))) {
+            controls[id] = { ...controls[id], implementationNotes: local.implementationNotes };
+          }
+        }
         return {
           ...prev,
           tenantId: currentTenant.id,
-          controls: {
-            ...prev.controls,
-            ...liveControls,
-          },
+          controls,
           evidenceIndex: liveEvidence ? liveEvidence : prev.evidenceIndex,
         };
       });
@@ -389,29 +408,54 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // A notice belongs to the program it was raised in
   useEffect(() => {
     setControlSaveError(null);
+    serverStampRef.current.clear();
+    staleNotesRef.current.clear();
   }, [currentTenant.id, programScope]);
 
-  /** Saves a control edit to the server. Never rejects: a failure is shown in the notice. Resolves with how it went. */
-  const saveControl = useCallback(async (controlId: string, update: Partial<ControlState>): Promise<'saved' | 'failed' | 'unreachable'> => {
+  /**
+   * Saves a control edit to the server. Never rejects: a failure is shown in the notice. Resolves with how it went. A control's saves
+   * go out one at a time, in the order they were made. `opts.programId` is the program a debounced notes save was typed in.
+   */
+  const saveControl = useCallback(async (
+    controlId: string,
+    update: Partial<ControlState>,
+    opts?: { programId?: string; fromAutosave?: boolean }
+  ): Promise<'saved' | 'failed' | 'unreachable'> => {
     // A browser-only tenant keeps its controls in this browser: nothing to send
     if (!currentTenant.serverBacked) return 'saved';
-    const scope = programScope;
-    try {
-      await updateLiveControl(controlId, update);
-      return 'saved';
-    } catch (err: unknown) {
-      setState(prev => {
-        if (programScopeKey(prev.tenantId, prev.programId) !== scope) return prev;
-        const local = prev.controls[controlId];
-        if (!local) return prev;
-        const next = revertFailedControlFields(local, liveControlsRef.current?.[controlId], update);
-        return next === local ? prev : { ...prev, controls: { ...prev.controls, [controlId]: next } };
-      });
-      const message = controlSaveFailureMessage(controlId, update, err);
-      if (message !== null) setControlSaveError(p => coalesceSaveFailure(p, message));
-      return (err as { status?: unknown } | null)?.status === 0 ? 'unreachable' : 'failed';
-    }
-  }, [currentTenant.serverBacked, programScope, updateLiveControl]);
+    const hasNotes = 'implementationNotes' in update;
+    // The scope the text was typed in (a flush after a program switch still belongs to the old program)
+    const scope = opts?.fromAutosave ? programScopeKey(currentTenant.id, opts.programId) : programScope;
+    const key = notesKey(scope, controlId);
+    // An edit made now supersedes a draft that has not gone out yet
+    if (!opts?.fromAutosave && hasNotes) notesAutosaveRef.current.cancel(key);
+    return saveChainRef.current.run(key, async (): Promise<'saved' | 'failed' | 'unreachable'> => {
+      // After a stale refusal nothing goes out until the page is reloaded: the server's text was not seen
+      if (hasNotes && staleNotesRef.current.has(key)) return 'failed';
+      try {
+        let sendUpdate: Partial<ControlState> & { expectedUpdatedAt?: string | null } = update;
+        if (hasNotes) {
+          const base = newerStamp(serverStampRef.current.get(key), liveControlsRef.current?.[controlId]?.updatedAt);
+          if (base !== undefined) sendUpdate = { ...update, expectedUpdatedAt: base };
+        }
+        const saved = await updateLiveControl(controlId, sendUpdate, opts?.programId);
+        if (saved?.updatedAt) serverStampRef.current.set(key, saved.updatedAt);
+        return 'saved';
+      } catch (err: unknown) {
+        if (isStaleWriteError(err) && hasNotes) staleNotesRef.current.add(key);
+        setState(prev => {
+          if (programScopeKey(prev.tenantId, prev.programId) !== scope) return prev;
+          const local = prev.controls[controlId];
+          if (!local) return prev;
+          const next = revertFailedControlFields(local, liveControlsRef.current?.[controlId], update);
+          return next === local ? prev : { ...prev, controls: { ...prev.controls, [controlId]: next } };
+        });
+        const message = controlSaveFailureMessage(controlId, update, err);
+        if (message !== null) setControlSaveError(p => coalesceSaveFailure(p, message));
+        return (err as { status?: unknown } | null)?.status === 0 ? 'unreachable' : 'failed';
+      }
+    });
+  }, [currentTenant.id, currentTenant.serverBacked, programScope, updateLiveControl]);
 
   // Action: Update Control Status with RBAC Check
   const updateControlStatus = useCallback((
@@ -483,6 +527,57 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls, saveControl]);
 
+  // Notes go to the server a moment after the last keystroke (or on blur / tab hide / unmount), one PUT per burst and one ledger entry
+  // per PUT. Assigned in an effect, not in render: the flush on a tenant or program switch runs in the previous render's cleanup, and
+  // must still send with the previous tenant's closure.
+  useEffect(() => {
+    sendNotesRef.current = (_key, d) => {
+      // Notes may contain CUI and the ledger sits in localStorage: record a digest and length only, never text
+      if (d.previous !== d.text) {
+        // The program the text was typed in, which may no longer be the one on screen
+        const auditMetadata = { programId: d.programId ?? null };
+        Promise.all([describeNotesForLedger(d.previous), describeNotesForLedger(d.text)])
+          .then(([previousState, newState]) => recordAuditEvent({
+            tenantId: currentTenant.id,
+            metadata: auditMetadata,
+            actorId: currentUser.id,
+            actorEmail: currentUser.email,
+            actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+            actionType: 'CONTROL_NOTES_UPDATED',
+            targetEntity: d.controlId,
+            previousState,
+            newState,
+          }))
+          .catch(() => {});
+      }
+      void saveControl(d.controlId, { implementationNotes: d.text, updatedBy: d.updatedBy }, { programId: d.programId, fromAutosave: true });
+    };
+  });
+
+  const flushControlNotes = useCallback((controlId: string) => {
+    notesAutosaveRef.current.flush(notesKey(programScope, controlId));
+  }, [programScope]);
+
+  // Leaving the program or the page sends what is typed; a tab that is hidden sends it too (it may never come back)
+  useEffect(() => () => { notesAutosaveRef.current.flushAll(); }, [currentTenant.id, programScope]);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') notesAutosaveRef.current.flushAll();
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (notesAutosaveRef.current.size() > 0 || saveChainRef.current.active() > 0 || staleNotesRef.current.size > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, []);
+
   // Action: Update Control Notes with RBAC Check
   const updateControlNotes = useCallback((controlId: string, notes: string) => {
     if (!canEdit) {
@@ -494,8 +589,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
-    // Sync to the server
-    void saveControl(controlId, { implementationNotes: notes, updatedBy: currentUser.name });
+    // Sync to the server a moment after the last keystroke (a burst of typing is one save)
+    notesAutosaveRef.current.push(notesKey(programScope, controlId), {
+      controlId,
+      programId,
+      updatedBy: currentUser.name,
+      previous: stateRef.current.controls[controlId]?.implementationNotes ?? '',
+      text: notes,
+    });
 
     setState(prev => {
       const current = prev.controls[controlId] || {
@@ -507,23 +608,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         lastUpdated: new Date().toISOString(),
         tags: [],
       };
-
-      // Record audit event for narrative change
-      // Notes may contain CUI and the ledger sits in localStorage: record a digest and length only, never text
-      const previousNotes = current.implementationNotes || '';
-      Promise.all([describeNotesForLedger(previousNotes), describeNotesForLedger(notes)])
-        .then(([previousState, newState]) => recordAuditEvent({
-          tenantId: currentTenant.id,
-          metadata: auditMetadata,
-          actorId: currentUser.id,
-          actorEmail: currentUser.email,
-          actorRole: currentUser.roles[currentTenant.id] || 'Operator',
-          actionType: 'CONTROL_NOTES_UPDATED',
-          targetEntity: controlId,
-          previousState,
-          newState,
-        }))
-        .catch(() => {});
 
       return {
         ...prev,
@@ -538,7 +622,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         },
       };
     });
-  }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, saveControl]);
+  }, [canEdit, notesEditable, currentTenant.id, programScope, programId, currentUser.name]);
 
   // Action: Update Control Role with RBAC Check
   const updateControlRole = useCallback((controlId: string, role: string) => {
@@ -890,16 +974,21 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [seedObjective]);
 
   /** Saves objectives to the server (server-backed tenants), and optionally the rolled-up control change with them. Both calls start now, so both belong to the program on screen at the click. */
-  const saveObjectives = useCallback((inputs: ObjectiveInput[], control?: { id: string; update: Partial<ControlState> }) => {
+  const saveObjectives = useCallback((inputs: Array<ObjectiveInput & { expectedUpdatedAt?: string | null }>, control?: { id: string; update: Partial<ControlState> }) => {
     if (!currentTenant.serverBacked || inputs.length === 0) return;
     const scope = programScope;
     const objectiveSave = inputs.length === 1
-      ? updateLiveObjective(inputs[0].objectiveId, inputs[0].controlId, { status: inputs[0].status, narrative: inputs[0].narrative, linkedEvidenceIds: inputs[0].linkedEvidenceIds })
+      ? updateLiveObjective(inputs[0].objectiveId, inputs[0].controlId, { status: inputs[0].status, narrative: inputs[0].narrative, linkedEvidenceIds: inputs[0].linkedEvidenceIds, expectedUpdatedAt: inputs[0].expectedUpdatedAt })
       : updateLiveObjectivesBulk(inputs);
     // The control part reports its own failure (saveControl never rejects), apart from the objective part
     if (control) void saveControl(control.id, control.update);
     void objectiveSave.catch((err: unknown) => {
       // A 401 means the session has ended: the sign-in screen says so, and an alert here would come after the sign-out
+      // A stale write (someone else saved this objective first) is a notice, not an alert; the text stays on screen (nothing to revert to)
+      if (isStaleWriteError(err)) {
+        setControlSaveError(p => coalesceSaveFailure(p, staleWriteMessage('objective', inputs[0].objectiveId)));
+        return;
+      }
       if (!(err instanceof ApiError && err.status === 401)) {
         alert(`The objective change could not be saved to the server: ${errorMessage(err) || 'unknown error'}`);
       }
@@ -1056,7 +1145,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       },
     }));
     recordObjectiveNarrativeChange(objectiveId, previous, narrative);
-    saveObjectives([{ objectiveId, controlId, narrative }]);
+    // The server refuses the save when someone else changed this objective since this browser read it (null: no record existed yet)
+    saveObjectives([{ objectiveId, controlId, narrative, expectedUpdatedAt: liveObjectivesRef.current?.[objectiveId]?.updatedAt ?? null }]);
   }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, recordObjectiveNarrativeChange, saveObjectives]);
 
   const applyObjectivePrefilledNarrative = useCallback((objectiveId: string) => {
@@ -1591,6 +1681,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     updateControlStatus,
     updateControlNotes,
+    flushControlNotes,
     updateControlRole,
     applyStarterTemplate,
     bulkApplyStigNarratives,
@@ -1638,6 +1729,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     refreshBoundaryTelemetry,
     updateControlStatus,
     updateControlNotes,
+    flushControlNotes,
     updateControlRole,
     applyStarterTemplate,
     bulkApplyStigNarratives,

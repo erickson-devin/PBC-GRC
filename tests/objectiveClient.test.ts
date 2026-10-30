@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 
 import { ApiClient, ApiError } from '../src/services/apiClient';
-import { coalesceSaveFailure, controlSaveFailureMessage, revertFailedControlFields } from '../src/data/controlSave';
+import { coalesceSaveFailure, controlSaveFailureMessage, isStaleWriteError, revertFailedControlFields, staleWriteMessage } from '../src/data/controlSave';
 import {
   applyImportResult,
   cascadeFill,
@@ -321,6 +321,28 @@ async function api() {
     stub(200, { control: { id: 'AC.L2-3.1.1', status: 'MET' } });
     const saved = await ApiClient.updateControl('t1', 'AC.L2-3.1.1', { status: 'MET' }, 'p1');
     assert(calls[0].init.method === 'PUT' && calls[0].url.endsWith('/api/v1/controls/AC.L2-3.1.1') && headerOf(calls[0], 'x-program-id') === 'p1' && saved.status === 'MET', 'A11 a saved control resolves with the server\'s control (PUT, x-program-id)', calls[0].url);
+
+    // Optimistic version check (#70): the stamp the browser last saw travels with the write
+    const STAMP = '2026-10-30T00:00:00.000Z';
+    const bodyOf = () => JSON.parse(String(calls[calls.length - 1].init.body)) as Record<string, unknown>;
+    stub(200, { control: { id: 'AC.L2-3.1.1', status: 'MET' } });
+    await ApiClient.updateControl('t1', 'AC.L2-3.1.1', { implementationNotes: 'n', expectedUpdatedAt: STAMP }, 'p1');
+    assert(bodyOf().expectedUpdatedAt === STAMP && bodyOf().implementationNotes === 'n', 'S70-C01 updateControl sends expectedUpdatedAt in the body', bodyOf());
+    await ApiClient.updateControl('t1', 'AC.L2-3.1.1', { implementationNotes: 'n' }, 'p1');
+    assert(!('expectedUpdatedAt' in bodyOf()), 'S70-C01 without it the body has no expectedUpdatedAt key', bodyOf());
+    await ApiClient.updateControl('t1', 'AC.L2-3.1.1', { implementationNotes: 'n', expectedUpdatedAt: null }, 'p1');
+    assert(String(calls[calls.length - 1].init.body).includes('"expectedUpdatedAt":null'), 'S70-C01 a null stamp is sent as null (no stored row expected)', calls[calls.length - 1].init.body);
+
+    stub(409, { error: 'x', code: 'stale_write', current: { updatedAt: null, updatedBy: null } });
+    const stale = await failure();
+    assert(stale instanceof ApiError && stale.status === 409 && stale.reason === 'stale_write' && isStaleWriteError(stale), 'S70-C02 a 409 stale_write is an ApiError with reason stale_write', stale);
+    stub(409, { error: ARCHIVED, code: 'program_archived' });
+    const archivedAgain = await failure();
+    assert(!isStaleWriteError(archivedAgain) && !isStaleWriteError(new Error('x')) && !isStaleWriteError(null), 'S70-C02 other 409s and plain errors are not stale writes', archivedAgain);
+
+    stub(200, { objective: record('AC.L2-3.1.1[a]'), changed: true });
+    await ApiClient.putObjective('t1', { objectiveId: 'AC.L2-3.1.1[a]', controlId: 'AC.L2-3.1.1', narrative: 'n', expectedUpdatedAt: STAMP }, 'p1');
+    assert(bodyOf().expectedUpdatedAt === STAMP && !('objectiveId' in bodyOf()) && bodyOf().narrative === 'n', 'S70-C04 putObjective sends expectedUpdatedAt and still keeps objectiveId out of the body', bodyOf());
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -355,6 +377,10 @@ function controlSaveFailures() {
   const both = controlSaveFailureMessage('AC.L2-3.1.1', { implementationNotes: SECRET, status: 'MET', updatedBy: 'Ann' }, new ApiError(500, 'Server error')) ?? '';
   assert(both.includes('status and implementation notes') && !both.includes(SECRET) && !both.includes('MET') && !both.includes('Ann'), 'F4 the notice names the fields, never a value (the notes may contain CUI)', both);
   assert((controlSaveFailureMessage('AC.L2-3.1.1', { responsibleRole: 'CISO' }, new Error('x')) ?? '').includes('responsible role'), 'F5 a role change is called the responsible role');
+
+  const staleErr = Object.assign(new ApiError(409, 'raw server text'), { reason: 'stale_write' });
+  const staleMsg = controlSaveFailureMessage('AC.L2-3.1.1', { implementationNotes: SECRET }, staleErr) ?? '';
+  assert(staleMsg === staleWriteMessage('control', 'AC.L2-3.1.1') && !staleMsg.includes(SECRET), 'S70-C03 a stale write reads the fixed notice for the control and never the text');
 
   const local = ctl({ status: 'MET', responsibleRole: 'CISO', implementationNotes: SECRET });
   const server = ctl({ status: 'IN_PROGRESS', responsibleRole: 'IT / Security Lead', implementationNotes: 'server notes' });

@@ -196,6 +196,31 @@ async function run() {
   const otherFw = await newProgram(T, 'Obj Clone NIST', { frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', seed: { cloneFrom: CL_SRC } });
   assert(otherFw.status === 201 && ((await list(otherFw.id)).body?.objectives ?? []).length === 0, '14 a clone into another framework copies no objectives', otherFw.body);
 
+  console.log('\n--- 15: version check (expectedUpdatedAt) ---');
+  const P15 = (await newProgram(T, 'Obj Version')).id;
+  const o1r = await put(P15, OBJ, { controlId: CTRL, narrative: 'N1' });
+  const o1 = o1r.body?.objective?.updatedAt as string;
+  assert(o1r.status === 200 && typeof o1 === 'string' && !Number.isNaN(Date.parse(o1)), 'S70-O1 the PUT response carries the stored updatedAt (a string, no longer null)', o1r.body);
+  const o2r = await put(P15, OBJ, { controlId: CTRL, narrative: 'N2', expectedUpdatedAt: o1 });
+  const o2 = o2r.body?.objective?.updatedAt as string;
+  assert(o2r.status === 200 && Date.parse(o2) > Date.parse(o1), 'S70-O2 a PUT with the loaded updatedAt succeeds and the new updatedAt is later', [o1, o2r.body]);
+  const o3r = await put(P15, OBJ, { controlId: CTRL, narrative: 'N3', expectedUpdatedAt: o1 });
+  assert(
+    o3r.status === 409 && o3r.body?.code === 'stale_write' && o3r.body?.current?.updatedAt === o2 && find(await list(P15), OBJ)?.narrative === 'N2' && (await history(P15, OBJ)).length === 2 && !JSON.stringify(o3r.body).includes('N2') && !JSON.stringify(o3r.body).includes('N3'),
+    'S70-O3 a stale updatedAt -> 409 stale_write naming the stored stamp; the narrative and the history are unchanged and the body carries no text',
+    o3r.body,
+  );
+  const o4r = await put(P15, OBJ, { controlId: CTRL, narrative: 'N2', expectedUpdatedAt: o1 });
+  assert(o4r.status === 200 && o4r.body?.changed === false, 'S70-O4 a stale updatedAt on a write that changes nothing is still 200 changed:false', o4r.body);
+  const NEWOBJ = 'AC.L2-3.1.4[a]';
+  const o5a = await put(P15, NEWOBJ, { controlId: 'AC.L2-3.1.4', narrative: 'First', expectedUpdatedAt: null });
+  const o5b = await put(P15, NEWOBJ, { controlId: 'AC.L2-3.1.4', narrative: 'Second', expectedUpdatedAt: null });
+  assert(o5a.status === 200 && o5b.status === 409 && o5b.body?.code === 'stale_write', 'S70-O5 expectedUpdatedAt null on an objective never written -> 200 the first time, 409 the second', [o5a.status, o5b.status]);
+  const o6r = await put(P15, OBJ, { controlId: CTRL, narrative: 'N6', expectedUpdatedAt: 'x' });
+  assert(o6r.status === 400 && o6r.body?.error === 'expectedUpdatedAt must be a timestamp or null' && find(await list(P15), OBJ)?.narrative === 'N2', 'S70-O6 a value that is not a timestamp or null -> 400; nothing is written', o6r.body);
+  const o7r = await call('PUT', '/objectives', owner, T, { objectives: [{ objectiveId: OBJ, controlId: CTRL, narrative: 'N7', expectedUpdatedAt: '2000-01-01T00:00:00.000Z' }] }, P15);
+  assert(o7r.status === 200 && o7r.body?.changed === 1 && find(await list(P15), OBJ)?.narrative === 'N7', 'S70-O7 the bulk PUT ignores expectedUpdatedAt (no version check)', o7r.body);
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');

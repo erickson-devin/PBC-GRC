@@ -682,8 +682,7 @@ export const EnclaveSettings: React.FC = () => {
             </div>
           ) : (
           <p className="text-xs text-slate-300 leading-relaxed font-mono bg-slate-900 p-3 rounded-xl border border-slate-800">
-            {boundaryText ||
-              `The boundary for ${currentTenant.name} includes all corporate Microsoft 365 / Google Cloud tenant services, identity infrastructure, corporate managed endpoints, internal facility network, and Next-Generation Boundary Firewalls used for processing, storing, or transmitting Federal Contract Information (FCI) or CUI.`}
+            {boundaryText || (<span className="italic text-slate-400">No boundary description is recorded yet.{canEditBoundary ? ' Select Edit to describe it.' : ''}</span>)}
           </p>
           )}
         </div>

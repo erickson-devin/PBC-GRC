@@ -15,6 +15,9 @@ import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../tele
 import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
 import { sprsAppliesTo } from './sprsCompiler';
 
+/** What a compiled document states when the SSP records no cloud service provider: the customer names its own, a document never invents one (#122). */
+export const NO_CSP_RECORDED = 'No cloud service provider is recorded for this system boundary.';
+
 /**
  * Resolves the standard recommended document type for a given compliance framework.
  */
@@ -244,7 +247,7 @@ export function compileNistSSP(
         : []),
       {
         title: '1.3 Cloud Service Providers (CSPs) & Hosting Infrastructure',
-        content: metadata.cloudServiceProviders || 'Google Cloud Platform (GCS Enclave Storage & Cloud SQL FedRAMP High equivalent), Microsoft 365 GCC High / Commercial identity enclave, Cloudflare Zero Trust.',
+        content: metadata.cloudServiceProviders || NO_CSP_RECORDED,
       },
     ],
   });
@@ -506,7 +509,7 @@ export function compileSoc2SystemDescription(
       },
       {
         title: '1.3 System Boundaries and Subservice Organizations',
-        content: `${metadata.boundaryDescription || 'The system boundary includes all production Kubernetes clusters, Cloud SQL instances, Cloud Storage buckets, and identity infrastructure.'} Subservice organizations utilized include Google Cloud Platform (infrastructure hosting, physical security, environmental controls) and Cloudflare (DNS resolution, DDoS protection, edge TLS termination).`,
+        content: `${metadata.boundaryDescription || 'No system boundary description is recorded.'} ${metadata.cloudServiceProviders ? `Subservice organizations recorded for this system: ${metadata.cloudServiceProviders.trim().replace(/\.$/, '')}.` : 'No subservice organization is recorded for this system.'}`,
       },
     ],
   });
@@ -586,7 +589,7 @@ export function compileSoc2SystemDescription(
       },
       {
         title: '4.2 Subservice Organization Controls (CSOCs)',
-        content: 'Management relies upon SOC 2 Type II reports issued for Google Cloud Platform covering physical data center security, environmental redundancy, and hardware destruction.',
+        content: metadata.cloudServiceProviders ? 'Management relies upon the SOC 2 Type II reports issued for the subservice organizations listed in section 1.3, covering physical data center security, environmental redundancy, and hardware destruction.' : 'No subservice organization is recorded for this system, so no subservice SOC 2 report is relied upon.',
       },
     ],
   });

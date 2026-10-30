@@ -70,6 +70,7 @@ export interface ControlState {
   updatedBy?: string;
   failingAssets?: FailingAssetInfo[];
   telemetrySyncedAt?: string;
+  updatedAt?: string | null; // the server's stored timestamp (null: no row yet)
 }
 
 export interface SSPMetadata {

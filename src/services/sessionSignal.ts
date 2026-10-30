@@ -1,22 +1,36 @@
 /**
  * "The server ended this session" signal. The API client reports every response here; a 401 on a request whose session
  * reference (the X-PBC-Session marker) is still the stored one means the session is no longer accepted, and the app should sign out once.
+ * It also carries a cross-tab end (#32): another tab of this browser signed out or signed in as someone else.
  * Pure: no React and no import from the API client (the client passes the stored reference in).
  */
 
 type SessionListener = (token: string, reason?: string) => void;
 
-export type SessionEndReason = 'session_missing' | 'session_invalid' | 'session_expired' | 'session_revoked';
+/** Why a tab's session ended without the server rejecting it: another tab of this browser signed out or signed in as someone else (#32). */
+export type CrossTabReason = 'signed_out_elsewhere' | 'switched_elsewhere';
+
+export type SessionEndReason = 'session_missing' | 'session_invalid' | 'session_expired' | 'session_revoked' | CrossTabReason;
 
 export const SESSION_ENDED_MESSAGE = 'Your session has ended. Please sign in again.';
 export const SESSION_EXPIRED_MESSAGE = 'Your session expired. Please sign in again.';
 export const SESSION_REVOKED_MESSAGE = 'Your session ended because your account was updated, for example a password change or an administrator action. Please sign in again. If you cannot sign in, contact your administrator.';
 
+export const SIGNED_OUT_ELSEWHERE_MESSAGE = 'You signed out in another tab. Sign in again to continue.';
+export const SWITCHED_ELSEWHERE_MESSAGE = 'Another account signed in from another tab of this browser, so this tab was signed out. Signing in here signs that tab out.';
+
 /** The sign-in screen's message after the server ended a session. Unknown or missing reasons get the generic text. */
 export function sessionEndedMessage(reason?: string | null): string {
   if (reason === 'session_expired') return SESSION_EXPIRED_MESSAGE;
   if (reason === 'session_revoked') return SESSION_REVOKED_MESSAGE;
+  if (reason === 'signed_out_elsewhere') return SIGNED_OUT_ELSEWHERE_MESSAGE;
+  if (reason === 'switched_elsewhere') return SWITCHED_ELSEWHERE_MESSAGE;
   return SESSION_ENDED_MESSAGE;
+}
+
+/** True for the two reasons that come from another tab of this browser rather than from the server. */
+export function isCrossTabReason(reason?: string | null): reason is CrossTabReason {
+  return reason === 'signed_out_elsewhere' || reason === 'switched_elsewhere';
 }
 
 const listeners = new Set<SessionListener>();
@@ -57,12 +71,7 @@ export function onSessionRejected(listener: SessionListener): () => void {
   };
 }
 
-/** Reports one response. Signals once per rejected token, never for a held token (e.g. a password change in flight). */
-export function reportResponseStatus(status: number, sentBearer: string | null | undefined, currentToken: string | null | undefined, reason?: string | null): void {
-  if (!isSessionRejection(status, sentBearer, currentToken)) return;
-  const token = sentBearer as string;
-  if (held.has(token) || token === lastSignalled) return;
-  lastSignalled = token;
+function emit(token: string, reason?: string | null): void {
   for (const listener of [...listeners]) {
     try {
       listener(token, reason ?? undefined);
@@ -70,6 +79,28 @@ export function reportResponseStatus(status: number, sentBearer: string | null |
       // one failing listener must not stop the others
     }
   }
+}
+
+/** Reports one response. Signals once per rejected token, never for a held token (e.g. a password change in flight). */
+export function reportResponseStatus(status: number, sentBearer: string | null | undefined, currentToken: string | null | undefined, reason?: string | null): void {
+  if (!isSessionRejection(status, sentBearer, currentToken)) return;
+  const token = sentBearer as string;
+  if (held.has(token) || token === lastSignalled) return;
+  lastSignalled = token;
+  emit(token, reason);
+}
+
+/**
+ * Reports that another tab ended or replaced this tab's session (#32). Once per reference, and asynchronous because it can be
+ * called while a component renders. It ignores holds: nothing in this tab can be in flight for a session that is gone.
+ */
+export function reportCrossTabEnd(ref: string | null | undefined, reason: CrossTabReason): void {
+  if (!ref) return;
+  queueMicrotask(() => {
+    if (ref === lastSignalled) return;
+    lastSignalled = ref;
+    emit(ref, reason);
+  });
 }
 
 /** Suppresses signals for this token until released. */

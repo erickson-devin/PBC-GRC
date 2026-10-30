@@ -12,6 +12,7 @@ import {
   getDefaultDocumentTypeForFramework,
   generatePOAMEntries,
   calculateSummaryMetrics,
+  NO_CSP_RECORDED,
 } from '../src/data/reports/documentCompilers';
 import {
   generatePrintableHtml,
@@ -217,6 +218,25 @@ async function runArtifactGeneratorTests() {
     const critSubs = soc2Doc.sections[2].subsections || [];
     assert(critSubs.some(s => s.title.includes('CC1')), 'Contains CC1 Control Environment criteria');
     assert(critSubs.some(s => s.title.includes('CC6')), 'Contains CC6 Logical Access criteria');
+
+    // #122: no document invents a cloud vendor; an empty provider list says so
+    const subOf = (doc: typeof soc2Doc, sectionId: string, prefix: string) =>
+      (doc.sections.find(s => s.id === sectionId)?.subsections || []).find(s => s.title.startsWith(prefix));
+    const VENDOR_NAMES = /Google|Cloudflare|Cloud SQL|Microsoft/;
+    const noCspSsp = compileNistSSP({ ...mockMetadata, cloudServiceProviders: '' }, cmmcL1Controls, mockControlStates);
+    const csp13 = (noCspSsp.sections[0].subsections || []).find(s => s.title.startsWith('1.3'));
+    assert(csp13?.content === NO_CSP_RECORDED, 'SSP 1.3 states that no cloud service provider is recorded when none is');
+    const withCspSsp = compileNistSSP(mockMetadata, cmmcL1Controls, mockControlStates);
+    const csp13Set = (withCspSsp.sections[0].subsections || []).find(s => s.title.startsWith('1.3'));
+    assert(csp13Set?.content === mockMetadata.cloudServiceProviders, 'SSP 1.3 states the recorded cloud service providers');
+
+    const noCspSoc2 = compileSoc2SystemDescription({ ...soc2Meta, cloudServiceProviders: '', boundaryDescription: '' }, soc2Controls, mockSoc2States, mockEvidence);
+    const soc213 = subOf(noCspSoc2, 'soc2-sec-1-scope', '1.3');
+    const soc242 = subOf(noCspSoc2, 'soc2-sec-4-cuecs', '4.2');
+    assert(!!soc213 && !VENDOR_NAMES.test(soc213.content || '') && (soc213.content || '').includes('No subservice organization is recorded'), 'SOC 2 1.3 names no vendor and no subservice organization when none is recorded');
+    assert(!!soc242 && !VENDOR_NAMES.test(soc242.content || ''), 'SOC 2 4.2 names no vendor when none is recorded');
+    const acmeSoc2 = compileSoc2SystemDescription({ ...soc2Meta, cloudServiceProviders: 'Acme Hosting.' }, soc2Controls, mockSoc2States, mockEvidence);
+    assert((subOf(acmeSoc2, 'soc2-sec-1-scope', '1.3')?.content || '').includes('Subservice organizations recorded for this system: Acme Hosting.'), 'SOC 2 1.3 lists the recorded subservice organization with one period');
 
     // -------------------------------------------------------------
     // Test 5: HIPAA Security Assessment & Safeguard Report Compiler

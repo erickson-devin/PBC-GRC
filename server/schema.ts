@@ -179,6 +179,7 @@ export const TABLES_SQL = `
   ALTER TABLE control_assessment_events DROP CONSTRAINT IF EXISTS control_assessment_events_source_check;
   ALTER TABLE control_assessment_events ADD CONSTRAINT control_assessment_events_source_check CHECK (source IN (${controlChangeSourceList}));
   CREATE INDEX IF NOT EXISTS idx_control_assessment_events_control ON control_assessment_events (tenant_id, control_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_control_assessment_events_created ON control_assessment_events (tenant_id, created_at);
 
   CREATE TABLE IF NOT EXISTS evidence_metadata (
       id VARCHAR(64) PRIMARY KEY,
@@ -751,6 +752,7 @@ export const TABLES_SQL = `
   ALTER TABLE control_objective_events DROP CONSTRAINT IF EXISTS control_objective_events_source_check;
   ALTER TABLE control_objective_events ADD CONSTRAINT control_objective_events_source_check CHECK (source IN (${objectiveChangeSourceList}));
   CREATE INDEX IF NOT EXISTS idx_control_objective_events_objective ON control_objective_events (tenant_id, program_id, objective_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_control_objective_events_created ON control_objective_events (tenant_id, created_at);
 
   -- Program events (issues #21, #22): scoping and VM-target changes. Booleans and ids only, never a name or a note.
   -- No foreign key to programs: the history outlives the program. program_id is NOT NULL from creation (nothing to backfill).
@@ -788,6 +790,7 @@ const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true
 const inviteTokenPredicate = "NULLIF(current_setting('app.invite_token_hash', true), '')";
 const vmTokenPredicate = "NULLIF(current_setting('app.vm_token_hash', true), '')";
 const vmSchedulerPredicate = "NULLIF(current_setting('app.vm_scheduler', true), '')";
+const eventRetentionPredicate = "NULLIF(current_setting('app.event_retention', true), '')";
 
 /**
  * Tenant DISCOVERY: lets a signed-in user see which tenants they belong to ("list my tenants") without any
@@ -843,6 +846,13 @@ export const DISCOVERY_POLICIES: readonly DiscoveryPolicy[] = [
     table: 'vm_sources',
     name: 'rls_vm_sources_scheduler',
     using: `${vmSchedulerPredicate} = 'on'`,
+  },
+  // Retention sweep enumeration: the daily assessment-history sweep (and only it) sets app.event_retention = 'on' for one
+  // transaction to list (tenant_id, id) of every program. The deletes then run under each program's own tenant and program settings.
+  {
+    table: 'programs',
+    name: 'rls_programs_retention_sweep',
+    using: `${eventRetentionPredicate} = 'on'`,
   },
 ];
 
