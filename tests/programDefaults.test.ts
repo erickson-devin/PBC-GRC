@@ -47,6 +47,15 @@ assert(refreshBoundaryNarrative(defaultBoundaryNarrative('Acme LLC'), 'Acme LLC'
 assert(refreshBoundaryNarrative('My own text', 'Acme LLC', 'Acme Defense') === 'My own text', 'a typed narrative is kept');
 const narrative = defaultBoundaryNarrative('Acme');
 assert(narrative.includes('Acme') && !/Microsoft|Google|Entra|Cloudflare|cloud/i.test(narrative), 'the narrative names the organization and no vendor');
+assert(defaultBoundaryNarrative('Acme') === defaultBoundaryNarrative('Acme', 'CMMC_L1') && defaultBoundaryNarrative('Acme').includes('FCI'), 'the narrative defaults to CMMC Level 1 (FCI)');
+const l2Narrative = defaultBoundaryNarrative('Acme', 'CMMC_L2');
+assert(l2Narrative.includes('CUI') && !l2Narrative.includes('FCI'), 'CMMC Level 2 narrative names CUI, not FCI');
+const nistNarrative = defaultBoundaryNarrative('Acme', 'NIST_800_53_REV5');
+assert(nistNarrative.includes('federal information') && !nistNarrative.includes('FCI') && !nistNarrative.includes('CUI'), 'NIST narrative names federal information only');
+assert(refreshBoundaryNarrative(defaultBoundaryNarrative('Acme LLC'), 'Acme LLC', 'Acme LLC', 'CMMC_L2') === defaultBoundaryNarrative('Acme LLC', 'CMMC_L2'), 'a proposed narrative of another framework follows the active framework');
+assert(refreshBoundaryNarrative(defaultBoundaryNarrative('Acme LLC', 'NIST_800_53_REV5'), 'Acme LLC', 'Acme Defense', 'CMMC_L1') === defaultBoundaryNarrative('Acme Defense'), 'a proposed narrative of any framework is recognised and follows the organization name');
+assert(refreshBoundaryNarrative('My own text', 'Acme', 'Acme', 'CMMC_L2') === 'My own text', 'a typed narrative is kept for every framework');
+assert((['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'] as const).every((f) => !/Microsoft|Google|Entra|Cloudflare|cloud/i.test(defaultBoundaryNarrative('Acme', f))), 'no framework narrative names a vendor');
 assert(DEFAULT_CLOUD_PROVIDERS === '', 'the cloud-services field starts empty');
 
 console.log('--- sources ---');
