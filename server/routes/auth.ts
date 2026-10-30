@@ -5,7 +5,6 @@ import {
   getDummyHash,
   getMfaRequirement,
   hashPassword,
-  signLocalToken,
   signMfaPendingToken,
   validateNewPassword,
   verifyMfaPendingToken,
@@ -48,6 +47,7 @@ import {
 } from '../auth/localUsers';
 import { previewInvitation, redeemInvitation } from '../invitations';
 import { accountLogRef, createLoginThrottle, loginAccountKey } from '../auth/loginThrottle';
+import { clearSessionCookie, issueSession, rejectCrossSite } from '../auth/session';
 import { SESSION_REVOKED, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -115,22 +115,6 @@ const noStore = (res: Response): void => {
   res.setHeader('Cache-Control', 'no-store');
 };
 
-type SessionSubject = Pick<LocalUser, 'id' | 'email' | 'name' | 'tokenVersion' | 'mustChangePassword'>;
-
-/** The body every session-issuing response shares. */
-function sessionBody(user: SessionSubject, amr: string[], mfaEnrolled: boolean): Record<string, unknown> {
-  const { token, claims } = signLocalToken({ id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion }, { amr });
-  return {
-    token,
-    tokenType: 'Bearer',
-    expiresAt: new Date(claims.exp * 1000).toISOString(),
-    expiresIn: claims.exp - claims.iat,
-    user: { id: user.id, email: user.email, name: user.name },
-    mustChangePassword: user.mustChangePassword,
-    mfaEnrolled,
-  };
-}
-
 /** The "step two follows" body: proof that step one succeeded, not a session. */
 function pendingBody(user: Pick<LocalUser, 'id' | 'tokenVersion'>, stage: MfaStage): Record<string, unknown> {
   const { token, claims } = signMfaPendingToken({ id: user.id, tokenVersion: user.tokenVersion }, stage);
@@ -197,14 +181,15 @@ function requireSession(req: Request, res: Response): Promise<boolean> {
 
 /**
  * POST /api/v1/auth/login   (public)
- * Body: { email, password }. Returns a short-lived HS256 JWT carrying `sub`, `email` and `name`, which
- * authMiddleware verifies with the local secret. The failure response is identical for an unknown
+ * Body: { email, password }. Sets a short-lived HS256 JWT (carrying `sub`, `email` and `name`) as the HttpOnly pbc_session cookie,
+ * which authMiddleware verifies with the local secret; the body carries no token. The failure response is identical for an unknown
  * email, a wrong password and a disabled account, and a hash is compared in every case, so neither the
  * message nor the timing reveals which emails exist. Accounts lock for 15 minutes after 5 consecutive failures.
  * With a confirmed second factor (or when MFA_REQUIRED demands one) the response is { mfa: 'verify' | 'enrol', mfaToken, ... }
  * instead of a session; the session comes from POST /auth/mfa/verify or /auth/mfa/enrol/confirm.
  */
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
+  if (rejectCrossSite(req, res)) return;
   const ipHit = loginThrottle.hitIp(req.ip || 'unknown');
   if (ipHit.limited) {
     res.setHeader('Retry-After', String(ipHit.retryAfterSeconds));
@@ -259,7 +244,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
     await registerSuccessfulLogin(user);
     console.log(`[Auth] Local login: ${user.email}`);
-    res.json(sessionBody(user, ['pwd'], false));
+    res.json(issueSession(req, res, user, ['pwd'], false));
   } catch (err: unknown) {
     respondWithError(res, err, 'Login');
   }
@@ -273,6 +258,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
  * told to sign in instead (409 account_exists), and nothing is consumed.
  */
 router.post('/register-with-invite', async (req: Request, res: Response): Promise<void> => {
+  if (rejectCrossSite(req, res)) return;
   const ipHit = loginThrottle.hitIp(req.ip || 'unknown');
   if (ipHit.limited) {
     res.setHeader('Retry-After', String(ipHit.retryAfterSeconds));
@@ -336,10 +322,21 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
       res.status(201).json({ ...pendingBody(user, 'enrol'), tenantId: result.tenantId, role: result.role });
       return;
     }
-    res.status(201).json({ ...sessionBody(user, ['pwd'], false), tenantId: result.tenantId, role: result.role });
+    res.status(201).json({ ...issueSession(req, res, user, ['pwd'], false), tenantId: result.tenantId, role: result.role });
   } catch (err: unknown) {
     respondWithError(res, err, 'Registration');
   }
+});
+
+/**
+ * POST /api/v1/auth/logout   (public)
+ * Clears the session cookie (the script cannot: it is HttpOnly). No session is needed, so an expired one can still sign out; the token
+ * itself stays valid until it expires or the account's token version moves. Only a cross-site request is refused.
+ */
+router.post('/logout', (req: Request, res: Response): void => {
+  if (rejectCrossSite(req, res)) return;
+  clearSessionCookie(req, res);
+  res.status(204).end();
 });
 
 /**
@@ -367,6 +364,7 @@ function tooManyAttempts(req: Request, res: Response): boolean {
  * wrong password. Success returns the session (amr pwd + otp); the pending token then cannot be used again.
  */
 router.post('/mfa/verify', async (req: Request, res: Response): Promise<void> => {
+  if (rejectCrossSite(req, res)) return;
   if (tooManyAttempts(req, res)) return;
   noStore(res);
 
@@ -413,7 +411,7 @@ router.post('/mfa/verify', async (req: Request, res: Response): Promise<void> =>
     }
 
     await registerSuccessfulLogin(user);
-    const body = sessionBody(user, ['pwd', 'otp'], true);
+    const body = issueSession(req, res, user, ['pwd', 'otp'], true);
     if (usedRecovery) body.recoveryCodesRemaining = (await findLocalUserById(user.id))?.recoveryCodeHashes.length ?? 0;
     console.log(`[Auth] Local login (second factor): ${user.email}`);
     res.json(body);
@@ -484,6 +482,7 @@ router.post('/mfa/enrol/start', async (req: Request, res: Response): Promise<voi
  * counted toward the lockout (the caller already holds the secret); the per-IP throttle still applies.
  */
 router.post('/mfa/enrol/confirm', async (req: Request, res: Response): Promise<void> => {
+  if (rejectCrossSite(req, res)) return;
   if (tooManyAttempts(req, res)) return;
   noStore(res);
   try {
@@ -524,7 +523,7 @@ router.post('/mfa/enrol/confirm', async (req: Request, res: Response): Promise<v
     markJtiUsed(pending.jti, pending.exp);
     await registerSuccessfulLogin(user);
     console.log(`[Auth] Second factor enrolled, local login: ${user.email}`);
-    res.json({ recoveryCodes, enrolledAt, ...sessionBody(user, ['pwd', 'otp'], true) });
+    res.json({ recoveryCodes, enrolledAt, ...issueSession(req, res, user, ['pwd', 'otp'], true) });
   } catch (err: unknown) {
     respondWithError(res, err, 'Enrolment');
   }
@@ -599,12 +598,55 @@ router.post('/mfa/recovery-codes', authOnlyMiddleware, async (req: Request, res:
 });
 
 /**
+ * Step-up for account management (platform administrators): the signed-in administrator must hold a confirmed second factor and
+ * send a fresh authenticator code in the body field `code` (TOTP only; a recovery code is never read). A replayed or wrong code
+ * counts toward the administrator's lockout. Answers the refusal itself and returns false; true means the action may proceed.
+ */
+export async function requireAdminStepUp(req: Request, res: Response): Promise<boolean> {
+  if (tooManyAttempts(req, res)) return false;
+  noStore(res);
+  try {
+    const admin = await findLocalUserById(req.user!.uid);
+    if (!admin || admin.disabled) {
+      res.status(401).json(SESSION_REVOKED);
+      return false;
+    }
+    if (!isEnrolled(admin)) {
+      res.status(409).json({ error: 'Set up two-step verification on your own account before managing accounts', reason: 'mfa_not_enrolled' });
+      return false;
+    }
+    if (respondIfLocked(res, admin)) return false;
+    const code = req.body?.code;
+    if (code === undefined || code === '') {
+      res.status(400).json({ error: 'A code from your authenticator app is required', reason: 'code_required' });
+      return false;
+    }
+    if (typeof code !== 'string' || code.length > 16) {
+      res.status(400).json({ error: 'A code from your authenticator app is required', reason: 'invalid_request' });
+      return false;
+    }
+    const checked = checkTotpCode(admin, code);
+    if (!checked.ok || !(await consumeTotpStep(admin.id, checked.step))) {
+      await registerFailedLogin(admin);
+      console.warn(`[PlatformUsers] Step-up refused (account ${accountLogRef(admin.email)}) from ${req.ip}`);
+      res.status(403).json({ error: 'That code is not valid', reason: 'invalid_code' });
+      return false;
+    }
+    return true;
+  } catch (err: unknown) {
+    respondWithError(res, err, 'Step-up verification');
+    return false;
+  }
+}
+
+/**
  * POST /api/v1/auth/password   (session)
  * Body: { currentPassword, newPassword, code? }. Needs the current password and, for an enrolled account, a fresh code. A wrong
  * current password or code counts toward the lockout. Success ends every other session (token_version), clears a forced-change
  * flag and returns a new session. This is the only request a session flagged must_change_password may make.
  */
 router.post('/password', authOnlyMiddleware, async (req: Request, res: Response): Promise<void> => {
+  if (rejectCrossSite(req, res)) return;
   if (tooManyAttempts(req, res)) return;
   noStore(res);
 
@@ -670,7 +712,7 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
       return;
     }
     console.log(`[Auth] Sign-in credential changed: ${user.email}`);
-    res.json(sessionBody(updated, step !== null ? ['pwd', 'otp'] : ['pwd'], isEnrolled(updated)));
+    res.json(issueSession(req, res, updated, step !== null ? ['pwd', 'otp'] : ['pwd'], isEnrolled(updated)));
   } catch (err: unknown) {
     respondWithError(res, err, 'Credential change');
   }

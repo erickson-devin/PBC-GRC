@@ -10,12 +10,16 @@ import {
   type LocalUser,
 } from '../auth/localUsers';
 import { isPlatformAdminUser } from '../auth/platformAdmin';
+import { requireAdminStepUp } from './auth';
 import { errorMessage } from '../../src/utils/errors';
 
 /**
  * Local-account administration, mounted at /api/v1/platform/users behind authOnlyMiddleware. Platform administrators only.
  * An administrator can never act on their own account here (409 self): their own credential change goes through
  * POST /auth/password, which asks for the current credential and the second-factor code. Only actor and target emails are logged.
+ * Every mutation is a step-up (#38): the administrator needs a confirmed second factor and sends a fresh authenticator code in the
+ * body field `code` (requireAdminStepUp). It is checked after the target and the new value are validated, so a rejected request
+ * does not spend the code.
  */
 const router = Router();
 
@@ -99,6 +103,7 @@ router.post('/:userId/reset-password', async (req: Request, res: Response): Prom
       res.status(400).json({ error: problem, reason: 'weak_password' });
       return;
     }
+    if (!(await requireAdminStepUp(req, res))) return;
     await setLocalUserPassword(target.id, await hashPassword(newPassword), { mustChangePassword: true });
     await resetLocalUserMfa(target.email); // clears the factor and the recovery codes, bumps the token version, clears the lockout
     console.log(`[PlatformUsers] ${req.user!.email} reset the sign-in credential of ${target.email} (change required at next sign-in)`);
@@ -118,6 +123,7 @@ router.post('/:userId/reset-mfa', async (req: Request, res: Response): Promise<v
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
+    if (!(await requireAdminStepUp(req, res))) return;
     await clearLocalUserMfa(target.id);
     console.log(`[PlatformUsers] ${req.user!.email} removed the second factor of ${target.email}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });
@@ -131,6 +137,7 @@ router.post('/:userId/disable', async (req: Request, res: Response): Promise<voi
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
+    if (!(await requireAdminStepUp(req, res))) return;
     await setLocalUserDisabled(target.id, true);
     console.log(`[PlatformUsers] ${req.user!.email} disabled ${target.email}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });
@@ -144,6 +151,7 @@ router.post('/:userId/enable', async (req: Request, res: Response): Promise<void
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
+    if (!(await requireAdminStepUp(req, res))) return;
     await setLocalUserDisabled(target.id, false);
     console.log(`[PlatformUsers] ${req.user!.email} enabled ${target.email}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });

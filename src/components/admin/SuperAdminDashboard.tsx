@@ -82,7 +82,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     refreshAllTeams,
   } = useTenant();
 
-  const { logout, openAuthModal } = useAuth();
+  const { logout, openAuthModal, mfaEnrolled } = useAuth();
 
   // Modals & UI state
   const [isNewTenantModalOpen, setIsNewTenantModalOpen] = useState(false);
@@ -115,6 +115,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [usersVersion, setUsersVersion] = useState(0);
   const [accountAction, setAccountAction] = useState<{ kind: AccountActionKind; user: LocalAccount } | null>(null);
   const [tempPassword, setTempPassword] = useState('');
+  const [stepUpCode, setStepUpCode] = useState('');
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountActionError, setAccountActionError] = useState<string | null>(null);
   const [accountNotice, setAccountNotice] = useState<string | null>(null);
@@ -139,6 +140,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const closeAccountAction = () => {
     setAccountAction(null);
     setTempPassword('');
+    setStepUpCode('');
     setAccountActionError(null);
   };
 
@@ -149,29 +151,41 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       setAccountActionError('The temporary password must be at least 12 characters.');
       return;
     }
+    if (!/^\d{6}$/.test(stepUpCode)) {
+      setAccountActionError('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
     setAccountBusy(true);
     setAccountActionError(null);
     try {
       if (kind === 'reset-password') {
-        await ApiClient.adminResetPassword(user.id, tempPassword);
+        await ApiClient.adminResetPassword(user.id, tempPassword, stepUpCode);
         setAccountNotice(`${user.email}: the temporary password is set. They must change it at their next sign-in, and set up two-step verification again. Give it to them through a separate secure channel.`);
       } else if (kind === 'reset-mfa') {
-        await ApiClient.adminResetMfa(user.id);
+        await ApiClient.adminResetMfa(user.id, stepUpCode);
         setAccountNotice(`${user.email}: two-step verification was removed and their sessions were signed out.`);
       } else if (kind === 'disable') {
-        await ApiClient.disableUser(user.id);
+        await ApiClient.disableUser(user.id, stepUpCode);
         setAccountNotice(`${user.email} is disabled and cannot sign in. Their sessions were signed out and their two-step verification was removed.`);
       } else {
-        await ApiClient.enableUser(user.id);
+        await ApiClient.enableUser(user.id, stepUpCode);
         setAccountNotice(`${user.email} can sign in again. They will need to set up two-step verification again if it is required.`);
       }
       closeAccountAction();
       setUsersVersion((v) => v + 1);
     } catch (err: unknown) {
-      setAccountActionError(errorMessage(err) || 'The action failed.');
+      const reason = err instanceof ApiError ? err.reason : undefined;
+      if (reason === 'invalid_code') {
+        setAccountActionError('That code is not correct or was already used. Wait for the next code in your authenticator app and try again.');
+      } else if (reason === 'mfa_not_enrolled') {
+        setAccountActionError('Set up two-step verification on your own account before you manage accounts.');
+      } else {
+        setAccountActionError(errorMessage(err) || 'The action failed.');
+      }
     } finally {
       setAccountBusy(false);
       setTempPassword('');
+      setStepUpCode('');
     }
   };
 
@@ -1056,13 +1070,32 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     />
                   </div>
                 )}
+                {mfaEnrolled ? (
+                  <div>
+                    <label htmlFor="admin-step-up-code" className="block text-xs font-semibold text-slate-300 mb-1">Code from your authenticator app</label>
+                    <input
+                      id="admin-step-up-code"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={stepUpCode}
+                      onChange={(e) => setStepUpCode(e.target.value.replace(/\D/g, ''))}
+                      aria-describedby="admin-step-up-help"
+                      className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono tracking-widest focus:outline-none focus:border-brand-500"
+                    />
+                    <p id="admin-step-up-help" className="mt-1 text-slate-400">Each account action needs a fresh code. A code works once.</p>
+                  </div>
+                ) : (
+                  <p className="text-amber-300 leading-relaxed">Set up two-step verification on your own account before you manage accounts.</p>
+                )}
                 <ErrorNotice message={accountActionError} />
                 <div className="flex justify-end gap-2">
                   <button type="button" onClick={closeAccountAction} disabled={accountBusy} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold">Cancel</button>
                   <button
                     type="button"
                     onClick={() => void runAccountAction()}
-                    disabled={accountBusy || (accountAction.kind === 'reset-password' && !tempPassword)}
+                    disabled={accountBusy || (accountAction.kind === 'reset-password' && !tempPassword) || !mfaEnrolled || !/^\d{6}$/.test(stepUpCode)}
                     className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-bold"
                   >
                     {accountBusy ? 'Working…' : 'Confirm'}

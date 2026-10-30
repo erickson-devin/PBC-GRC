@@ -1,14 +1,16 @@
 import express from 'express';
-import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
-import { initDb, assertDbModeAllowed, getDbMode } from './db';
+import { initDb, assertDbModeAllowed, getDbMode, pool } from './db';
 import { assertAuthConfig, authStartupWarnings } from './auth/localAuth';
 import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { createForwardedForWarning, parseTrustProxy } from './trustProxy';
-import { startVmScheduler } from './vm/scheduler';
+import { startVmScheduler, stopVmScheduler } from './vm/scheduler';
+import { SHUTDOWN_CANCEL_MESSAGE, createShutdown, installSignalHandlers, trackedSspJobs } from './shutdown';
+import { cancelJob, isJobActive } from './ssp/runner';
+import { updateJob } from './ssp/store';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,10 +32,7 @@ try {
 app.use(createForwardedForWarning());
 
 // Security & Middlewares
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+// No CORS: the SPA is same-origin (served by this process, or behind the Vite proxy in dev), and cookie sessions must not be readable cross-origin.
 // API responses carry tenant data: never cached by a browser or proxy (set before the body parsers so their 400/413 replies have it too).
 app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -108,5 +107,19 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
     process.exit(1);
   }
 });
+
+// Graceful stop on SIGTERM (docker stop) and SIGINT: see server/shutdown.ts. Installed unconditionally.
+installSignalHandlers(createShutdown({
+  closeServer: () => new Promise<void>((resolve) => { server.close(() => resolve()); server.closeIdleConnections(); }),
+  forceCloseConnections: () => server.closeAllConnections(),
+  stopScheduler: stopVmScheduler,
+  activeSspJobs: () => trackedSspJobs(isJobActive),
+  cancelSspJob: (scope, id) => cancelJob(scope, id),
+  isSspJobActive: isJobActive,
+  markSspJobCancelled: (scope, id) => updateJob(scope, id, { status: 'CANCELLED', error: SHUTDOWN_CANCEL_MESSAGE, finishedAt: new Date().toISOString() }),
+  closePool: () => (getDbMode() === 'memory' ? Promise.resolve() : pool.end()),
+  log: (line) => console.log(line),
+  exit: (code) => process.exit(code),
+}));
 
 export default app;

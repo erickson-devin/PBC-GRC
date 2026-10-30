@@ -4,6 +4,8 @@ process.env.PLATFORM_ADMIN_EMAILS = 'u_onb_owner@test.mil';
 // The browser ApiClient resolves its base URL from VITE_API_URL at import time; point it at the test server first.
 process.env.VITE_API_URL = 'http://127.0.0.1:8080';
 
+import { installSessionCookieBridge } from './sessionCookieBridge';
+installSessionCookieBridge();
 import { server } from '../server/index';
 
 /**

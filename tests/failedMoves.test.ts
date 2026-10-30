@@ -101,6 +101,10 @@ async function main() {
   const t1 = toAssetInput({ id: 'x', tenantId: 't', isManuallyAdded: true, hostName: 'h', owner: undefined } as any) as unknown as Record<string, unknown>;
   assert(!('id' in t1) && !('tenantId' in t1) && !('isManuallyAdded' in t1) && t1.owner === '' && t1.hostName === 'h', 'T1 toAssetInput drops ids and defaults the owner', t1);
 
+  const originOf = (o: string) => toAssetInput({ id: 'x', tenantId: 't', isManuallyAdded: true, hostName: 'h', sourceOrigin: o } as any).sourceOrigin;
+  assert(originOf('PHOTON_AGENT') === 'MANUAL_ENTRY' && originOf('AGENT_REPORT') === 'MANUAL_ENTRY', 'S60-16 machine origins held in the browser are sent as MANUAL_ENTRY');
+  assert(originOf('CSV_IMPORT') === 'CSV_IMPORT' && originOf('ACCRETION_DISCOVERY') === 'ACCRETION_DISCOVERY' && originOf('MANUAL_ENTRY') === 'MANUAL_ENTRY', 'S60-17 human origins pass through unchanged');
+
   const three = [mkAsset('1', 'a'), mkAsset('2', 'b'), mkAsset('3', 'c')];
   const p1 = await pushAssetsToServer({ bulk: async () => ({ created: [{}, {}], skipped: [{}] }), single: async () => ({}) }, 't', three);
   assert(p1.moved === 2 && p1.failed === 1, 'P1 bulk counts created and skipped', p1);

@@ -2,7 +2,7 @@ import { ControlState, EvidenceItem } from '../types/cmmc';
 import type { ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
-const AUTH_TOKEN_KEY = 'pbc_session_id_token_v2';
+const SESSION_REF_KEY = 'pbc_session_ref_v3';
 const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || (typeof process !== 'undefined' && process.env?.VITE_API_URL) || '';
 
 export interface UploadUrlResponse {
@@ -30,7 +30,7 @@ import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCre
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
-import { bearerFromHeaders, isSessionRejection, reportResponseStatus } from './sessionSignal';
+import { SESSION_MARKER_HEADER, sessionRefFromHeaders, isSessionRejection, reportResponseStatus } from './sessionSignal';
 
 function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
@@ -83,6 +83,8 @@ export function mfaErrorMessage(status: number, body: unknown): string {
       return 'A second factor is already set up for this account.';
     case 'mfa_not_started':
       return 'Start the setup again to get a new secret.';
+    case 'mfa_not_enrolled':
+      return 'Set up two-step verification on your own account first (account settings), then try again.';
     case 'self':
       return 'You cannot do that to your own account here.';
     default:
@@ -118,13 +120,14 @@ function baseApiError(status: number, body: unknown): ApiError {
 /** fetch() wrapper: network failures become ApiError(0) so the UI can say "cannot reach the server". */
 async function apiFetch(input: string, init: RequestInit): Promise<Response> {
   let res: Response;
+  init = { credentials: 'same-origin', ...init };
   try {
     res = await fetch(input, init);
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
   }
-  // A 401 on the stored session's own bearer means the server ended the session: tell the app (see sessionSignal.ts)
-  const sent = bearerFromHeaders(init.headers);
+  // A 401 on a request carrying the stored session's own reference means the server ended the session: tell the app (see sessionSignal.ts)
+  const sent = sessionRefFromHeaders(init.headers);
   const current = ApiClient.getToken();
   let reason: string | null = null;
   if (isSessionRejection(res.status, sent, current) && typeof res.clone === 'function') {
@@ -174,7 +177,7 @@ async function authedJson<T>(
 ): Promise<T> {
   const bearer = options.token ?? ApiClient.getToken();
   if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
-  const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
+  const headers: Record<string, string> = { [SESSION_MARKER_HEADER]: bearer };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
   if (options.programId) headers['x-program-id'] = options.programId;
@@ -190,8 +193,8 @@ async function authedJson<T>(
 
 /** A signed-in session as the server returns it. */
 export interface LocalLoginResponse {
-  token: string;
-  tokenType: 'Bearer';
+  /** The session reference: a marker, not a credential. The session itself is an HttpOnly cookie. */
+  sessionRef: string;
   expiresAt: string;
   expiresIn: number;
   user: { id: string; email: string; name: string };
@@ -229,11 +232,10 @@ export function parseLocalLoginResult(body: unknown): LocalLoginResult {
     return { kind: 'mfa', stage: body.mfa, mfaToken: body.mfaToken, expiresAt: body.expiresAt, ...(methods ? { methods } : {}) };
   }
   const user = body.user;
-  if (typeof body.token !== 'string' || !body.token || !isRecord(user) || typeof user.email !== 'string' || !user.email) throw bad();
+  if (typeof body.sessionRef !== 'string' || !body.sessionRef || !isRecord(user) || typeof user.email !== 'string' || !user.email) throw bad();
   return {
     kind: 'session',
-    token: body.token,
-    tokenType: 'Bearer',
+    sessionRef: body.sessionRef,
     expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : '',
     expiresIn: typeof body.expiresIn === 'number' ? body.expiresIn : 0,
     user: { id: typeof user.id === 'string' ? user.id : '', email: user.email, name: typeof user.name === 'string' ? user.name : '' },
@@ -292,7 +294,7 @@ async function accountJson<T>(method: string, path: string, options: { body?: un
   if (!options.anonymous) {
     const bearer = options.token ?? ApiClient.getToken();
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
-    headers.Authorization = `Bearer ${bearer}`;
+    headers[SESSION_MARKER_HEADER] = bearer;
   }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await apiFetch(`${API_BASE_URL}/api/v1${path}`, {
@@ -447,7 +449,7 @@ export const ApiClient = {
   async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules', baseline?: SspBaseline, programId?: string | null): Promise<SspImportJob> {
     const bearer = ApiClient.getToken();
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
-    const uploadHeaders: Record<string, string> = { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId }; // no Content-Type: the browser sets the multipart boundary
+    const uploadHeaders: Record<string, string> = { [SESSION_MARKER_HEADER]: bearer, 'x-tenant-id': tenantId }; // no Content-Type: the browser sets the multipart boundary
     if (programId) uploadHeaders['x-program-id'] = programId;
     const form = new FormData();
     form.append('framework', framework);
@@ -506,7 +508,7 @@ export const ApiClient = {
     if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/file`, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId, ...(programId ? { 'x-program-id': programId } : {}) },
+      headers: { [SESSION_MARKER_HEADER]: bearer, 'x-tenant-id': tenantId, ...(programId ? { 'x-program-id': programId } : {}) },
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
     return URL.createObjectURL(await res.blob());
@@ -761,7 +763,7 @@ export const ApiClient = {
     const bearer = token ?? this.getToken();
     if (!bearer) return { kind: 'rejected' };
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
-      headers: { Authorization: `Bearer ${bearer}` },
+      headers: { [SESSION_MARKER_HEADER]: bearer },
     });
     if (res.status === 401) return { kind: 'rejected' };
     const body = res.ok ? null : await res.json().catch(() => null);
@@ -779,7 +781,7 @@ export const ApiClient = {
     const bearer = token ?? this.getToken();
     if (!bearer) return null;
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/me`, { headers: { Authorization: `Bearer ${bearer}` } });
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/me`, { headers: { [SESSION_MARKER_HEADER]: bearer } });
       if (!res.ok) return null;
       const data = (await res.json()) as { isPlatformAdmin?: unknown };
       return { isPlatformAdmin: data.isPlatformAdmin === true };
@@ -793,7 +795,7 @@ export const ApiClient = {
     const bearer = token ?? this.getToken();
     if (!bearer) return null;
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { Authorization: `Bearer ${bearer}` } });
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { [SESSION_MARKER_HEADER]: bearer } });
       if (!res.ok) return null;
       const data = (await res.json()) as { admins?: Array<{ email?: unknown }> };
       return (data.admins ?? []).map((a) => String(a.email ?? '')).filter(Boolean);
@@ -814,7 +816,7 @@ export const ApiClient = {
     if (!bearer) throw new ApiError(401, 'You need to be signed in to create a tenant.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` },
+      headers: { 'Content-Type': 'application/json', [SESSION_MARKER_HEADER]: bearer },
       body: JSON.stringify(input),
     });
     const data = await res.json().catch(() => null);
@@ -831,7 +833,7 @@ export const ApiClient = {
     if (!bearer) throw new ApiError(401, 'You need to be signed in to change tenant settings.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}`, 'x-tenant-id': tenantId },
+      headers: { 'Content-Type': 'application/json', [SESSION_MARKER_HEADER]: bearer, 'x-tenant-id': tenantId },
       body: JSON.stringify(patch),
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
@@ -932,35 +934,44 @@ export const ApiClient = {
   },
 
   /** POST /api/v1/platform/users/:id/reset-password: sets a temporary password the person must change at their next sign-in. */
-  async adminResetPassword(userId: string, newPassword: string): Promise<{ user: LocalAccount; message: string }> {
-    const data = await accountJson<{ user?: unknown; message?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/reset-password`, { body: { newPassword } });
+  async adminResetPassword(userId: string, newPassword: string, code: string): Promise<{ user: LocalAccount; message: string }> {
+    const data = await accountJson<{ user?: unknown; message?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/reset-password`, { body: { newPassword, code } });
     return { user: parseAccount(data?.user), message: typeof data?.message === 'string' ? data.message : '' };
   },
 
   /** POST /api/v1/platform/users/:id/reset-mfa */
-  async adminResetMfa(userId: string): Promise<LocalAccount> {
-    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/reset-mfa`, { body: {} });
+  async adminResetMfa(userId: string, code: string): Promise<LocalAccount> {
+    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/reset-mfa`, { body: { code } });
     return parseAccount(data?.user);
   },
 
   /** POST /api/v1/platform/users/:id/disable */
-  async disableUser(userId: string): Promise<LocalAccount> {
-    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/disable`, { body: {} });
+  async disableUser(userId: string, code: string): Promise<LocalAccount> {
+    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/disable`, { body: { code } });
     return parseAccount(data?.user);
   },
 
   /** POST /api/v1/platform/users/:id/enable */
-  async enableUser(userId: string): Promise<LocalAccount> {
-    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/enable`, { body: {} });
+  async enableUser(userId: string, code: string): Promise<LocalAccount> {
+    const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/enable`, { body: { code } });
     return parseAccount(data?.user);
   },
 
+  /** POST /api/v1/auth/logout: asks the server to end the session and clear the cookie. Never throws; sends no marker, so it never signals. */
+  async signOut(): Promise<void> {
+    try {
+      await apiFetch(`${API_BASE_URL}/api/v1/auth/logout`, { method: 'POST', cache: 'no-store' });
+    } catch {
+      // best effort: the browser state is cleared by the caller either way
+    }
+  },
+
   /**
-   * Retrieve the active session token from localStorage
+   * Retrieve the session reference from localStorage: a marker, not a credential; the session itself is an HttpOnly cookie
    */
   getToken(): string | null {
     try {
-      return localStorage.getItem(AUTH_TOKEN_KEY);
+      return localStorage.getItem(SESSION_REF_KEY);
     } catch {
       return null;
     }
@@ -978,7 +989,7 @@ export const ApiClient = {
     if (programId) headers['x-program-id'] = programId;
 
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      headers[SESSION_MARKER_HEADER] = token;
     }
 
     return {
@@ -1261,7 +1272,7 @@ export const ApiClient = {
     // The caller can pass the session token itself: right after sign-in it is not in browser storage yet.
     const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
       method: 'GET',
-      headers: this.getHeaders(tenantId, token ? { Authorization: `Bearer ${token}` } : undefined),
+      headers: this.getHeaders(tenantId, token ? { [SESSION_MARKER_HEADER]: token } : undefined),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -1317,7 +1328,7 @@ export const ApiClient = {
     }
     const token = this.getToken();
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      headers[SESSION_MARKER_HEADER] = token;
     }
 
     const res = await apiFetch(targetUrl, {

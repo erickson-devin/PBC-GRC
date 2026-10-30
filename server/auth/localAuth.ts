@@ -150,6 +150,8 @@ export interface LocalTokenClaims {
   /** Authentication methods used: ['pwd'] or ['pwd', 'otp']. */
   amr?: string[];
   purpose?: 'session';
+  /** Random session reference: the only identifier of a session the client may see (the token itself lives in an HttpOnly cookie). */
+  sid?: string;
 }
 
 /**
@@ -175,6 +177,7 @@ export function signLocalToken(
     exp: now + (Number.isFinite(ttl) && ttl > 0 ? Math.floor(ttl) : DEFAULT_TOKEN_TTL_SECONDS),
     amr: options.amr ?? ['pwd'],
     purpose: 'session',
+    sid: crypto.randomBytes(16).toString('base64url'),
   };
   if (typeof user.tokenVersion === 'number') claims.ver = user.tokenVersion;
 

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ApiClient, ApiError } from '../src/services/apiClient';
 import {
-  bearerFromHeaders,
+  sessionRefFromHeaders,
   holdSessionSignal,
   isSessionRejection,
   onSessionRejected,
@@ -40,13 +40,14 @@ assert([500, 503, 0, 200, 404].every((s) => isSessionRejection(s, 'tokA', 'tokA'
 assert(isSessionRejection(401, 'tokOld', 'tokNew') === false, 'a 401 on a bearer that is no longer the stored token is not (stale request)');
 assert(isSessionRejection(401, 'tokA', null) === false, 'a 401 when nothing is stored is not');
 
-console.log('\n--- bearerFromHeaders ---');
-assert(bearerFromHeaders({ Authorization: 'Bearer abc' }) === 'abc', 'a record with Authorization');
-assert(bearerFromHeaders({ authorization: 'Bearer abc' }) === 'abc', 'a record with lowercase authorization');
-assert(bearerFromHeaders(new Headers({ Authorization: 'Bearer abc' })) === 'abc', 'a Headers instance');
-assert(bearerFromHeaders([['Content-Type', 'x'], ['Authorization', 'Bearer abc']]) === 'abc', 'an array of pairs');
-assert(bearerFromHeaders({ Authorization: 'Basic x' }) === null, 'a non-Bearer scheme is null');
-assert(bearerFromHeaders(undefined) === null && bearerFromHeaders({ 'Content-Type': 'x' }) === null, 'no headers or no Authorization is null');
+console.log('\n--- sessionRefFromHeaders ---');
+assert(sessionRefFromHeaders({ 'X-PBC-Session': 'abc' }) === 'abc', 'a record with X-PBC-Session');
+assert(sessionRefFromHeaders({ 'x-pbc-session': 'abc' }) === 'abc', 'a record with lowercase x-pbc-session');
+assert(sessionRefFromHeaders(new Headers({ 'X-PBC-Session': 'abc' })) === 'abc', 'a Headers instance');
+assert(sessionRefFromHeaders([['Content-Type', 'x'], ['X-PBC-Session', 'abc']]) === 'abc', 'an array of pairs');
+assert(sessionRefFromHeaders({ Authorization: 'Bearer abc' }) === null, 'an Authorization bearer is not a session reference');
+assert(sessionRefFromHeaders({ 'X-PBC-Session': '  ' }) === null, 'a blank reference is null');
+assert(sessionRefFromHeaders(undefined) === null && sessionRefFromHeaders({ 'Content-Type': 'x' }) === null, 'no headers or no marker is null');
 
 console.log('\n--- reportResponseStatus and the listeners ---');
 resetSessionSignal();

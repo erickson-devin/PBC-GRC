@@ -11,6 +11,8 @@ const store = new Map<string, string>();
 };
 (globalThis as any).window = { localStorage: (globalThis as any).localStorage };
 
+import { installSessionCookieBridge } from './sessionCookieBridge';
+installSessionCookieBridge();
 import { server } from '../server/index';
 import { TABLES_SQL } from '../server/schema';
 import {
@@ -273,7 +275,7 @@ async function apiTests() {
 
   console.log('\n--- Client services ---');
   const { getAssetBackend } = await import('../src/services/assetService');
-  localStorage.setItem('pbc_session_id_token_v2', owner);
+  localStorage.setItem('pbc_session_ref_v3', owner);
   const be = getAssetBackend(tenant, 'server');
   const viaClient = await be.create({ hostName: 'CLIENT-FW', cmmcAssetCategory: 'SECURITY_PROTECTION', fipsValidationStatus: 'VALIDATED', fipsCertificateNumber: '1234', fipsModuleName: 'Client Module', fipsStandard: '140-3' });
   assert(viaClient.fipsCertificateNumber === '1234' && viaClient.fipsStandard === '140-3' && viaClient.fipsModuleName === 'Client Module', 'the client backend round-trips the FIPS fields through the server');

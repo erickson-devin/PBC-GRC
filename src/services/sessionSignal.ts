@@ -1,7 +1,7 @@
 /**
- * "The server ended this session" signal. The API client reports every response here; a 401 on the bearer that is still the
- * stored session token means the account, token or secret is no longer accepted, and the app should sign out once.
- * Pure: no React and no import from the API client (the client passes the stored token in).
+ * "The server ended this session" signal. The API client reports every response here; a 401 on a request whose session
+ * reference (the X-PBC-Session marker) is still the stored one means the session is no longer accepted, and the app should sign out once.
+ * Pure: no React and no import from the API client (the client passes the stored reference in).
  */
 
 type SessionListener = (token: string, reason?: string) => void;
@@ -23,21 +23,25 @@ const listeners = new Set<SessionListener>();
 const held = new Set<string>();
 let lastSignalled: string | null = null;
 
-/** The token in an `Authorization: Bearer <token>` header of any HeadersInit shape, else null. */
-export function bearerFromHeaders(h: HeadersInit | undefined): string | null {
+/** The header that carries the session reference on every cookie request (a CSRF marker; the server ignores its value). */
+export const SESSION_MARKER_HEADER = 'X-PBC-Session';
+
+/** The session reference in an `X-PBC-Session` header of any HeadersInit shape, else null. */
+export function sessionRefFromHeaders(h: HeadersInit | undefined): string | null {
   if (!h) return null;
   let value: string | null | undefined;
   if (typeof Headers !== 'undefined' && h instanceof Headers) {
-    value = h.get('Authorization');
+    value = h.get(SESSION_MARKER_HEADER);
   } else if (Array.isArray(h)) {
-    value = h.find(([name]) => String(name).toLowerCase() === 'authorization')?.[1];
+    value = h.find(([name]) => String(name).toLowerCase() === SESSION_MARKER_HEADER.toLowerCase())?.[1];
   } else {
     const record = h as Record<string, string>;
-    value = record['Authorization'] ?? record['authorization'];
+    const key = Object.keys(record).find((name) => name.toLowerCase() === SESSION_MARKER_HEADER.toLowerCase());
+    value = key === undefined ? undefined : record[key];
   }
-  if (typeof value !== 'string' || !value.startsWith('Bearer ')) return null;
-  const token = value.slice('Bearer '.length).trim();
-  return token || null;
+  if (typeof value !== 'string') return null;
+  const ref = value.trim();
+  return ref || null;
 }
 
 /** True only for a 401 on a request that carried a session bearer which is still the stored token. */

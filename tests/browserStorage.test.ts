@@ -310,6 +310,7 @@ async function main() {
     'src/data/telemetry/assetTelemetryEngine.ts',
     'src/services/browserStorageScrub.ts',
     'src/services/failedMoves.ts',
+    'src/services/legacySessionScrub.ts', // writes the stored user records back with the legacy session JWT removed (#43)
     'src/services/storageService.ts',
   ].sort();
   assert(JSON.stringify(writers) === JSON.stringify(allowed), 'S13 the set of src files that write browser storage equals the reviewed allow-list', writers);

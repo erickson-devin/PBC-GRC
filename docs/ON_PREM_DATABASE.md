@@ -40,7 +40,7 @@ Recovery (a forgotten password, or an account that must exist before the wizard 
 
 ```bash
 docker compose exec -e LOCAL_USER_PASSWORD='a long passphrase, 12+ chars' singularity-app \
-  npx tsx scripts/createLocalUser.ts you@example.mil "Your Name"
+  npm run auth:create-user -- you@example.mil "Your Name"
 ```
 
 ## Network exposure
@@ -57,6 +57,8 @@ To restrict access:
   source install, set `APP_BIND_ADDRESS=127.0.0.1`.
 * Use the host firewall to limit which networks can reach `APP_PORT`.
 * Reach the app only over a VPN.
+* With a TLS proxy, set `TRUST_PROXY` to the proxy's address and have the proxy send `X-Forwarded-Proto: https`, so the
+  session cookie is marked `Secure` (and service-token creation is allowed).
 
 The database and the other internal services are never exposed to the network: PostgreSQL is published on `127.0.0.1`
 only (`${DB_PORT:-5432}`), and Ollama (the optional `ai` profile) publishes no port and is reachable only on the internal
@@ -117,7 +119,15 @@ their session can only call the password-change endpoint (every other request an
 successful change clears the flag and issues a new session. The change asks for the current password and, when a factor is
 enrolled, a current code.
 
-**Session-ended reasons.** A 401 from the session check carries `reason`: `session_missing` (no bearer), `session_invalid`
+**Browser sessions (cookie).** The session is an HttpOnly cookie `pbc_session` (SameSite=Strict, Path=/api, lifetime = the
+session's, 8 h by default) that page script cannot read and that is never kept in browser storage; the page keeps only a
+random session reference. `Secure` is set when the request is HTTPS: TLS at the proxy with `TRUST_PROXY` naming the proxy and
+the proxy sending `X-Forwarded-Proto: https`; a plain-HTTP LAN install gets a non-Secure cookie. Cookie requests must carry the
+`X-PBC-Session` header, and a cross-site request (`Sec-Fetch-Site`) is refused with 403 `csrf_rejected`. Sign-out
+(`POST /api/v1/auth/logout`) clears the cookie. `Authorization: Bearer` still works for scripts; scanners use VM service tokens.
+The API sends no CORS headers (same-origin only). Browsers signed in before this release are signed out once at the upgrade.
+
+**Session-ended reasons.** A 401 from the session check carries `reason`: `session_missing` (no session cookie and no bearer), `session_invalid`
 (a token the server cannot trust), `session_expired` (an authentic token past its expiry) or `session_revoked` (an authentic
 token whose account is gone or disabled, or whose sessions were ended by a password change, an MFA reset or an administrator
 action; the three are not told apart). The app's sign-in message follows the reason.
@@ -128,7 +138,11 @@ clears a lockout, and forces a change at their next sign-in), *reset MFA* (remov
 sessions; they enrol again at their next sign-in if required), *disable* (blocks sign-in, ends their sessions, removes the
 factor) and *enable* (allows sign-in again and clears a lockout; the factor is not restored). **An administrator cannot do
 any of these to their own account** (409); their own password change goes through the account settings. Each action logs the
-actor's and the target's email address.
+actor's and the target's email address. Each action also needs a fresh code from the administrator's own authenticator
+(`code` in the body; recovery codes are not accepted), and a code works once: a wrong or replayed code is 403 `invalid_code`
+and counts toward the administrator's lockout, a missing one is 400 `code_required`. An administrator with no factor is
+refused (409 `mfa_not_enrolled`) whatever `MFA_REQUIRED` says and must enrol first; `npm run auth:reset-mfa` remains the
+break-glass path. A refused code is logged with the keyed account reference only.
 
 **Lost authenticator and lost recovery codes.** Another platform administrator resets the person's MFA (or their password,
 which also removes the factor) in the console. For the **last remaining platform administrator** nobody else can do that, so
@@ -193,8 +207,8 @@ the job for tenants that nobody uses, take a backup (step 1 below), pick a quiet
 tables) and run the operator script, `--dry-run` first:
 
 ```bash
-docker exec singularity-app tsx scripts/backfillProgramIds.ts --all --dry-run
-docker exec singularity-app tsx scripts/backfillProgramIds.ts --all
+docker exec singularity-app npm run db:backfill-program-ids -- --all --dry-run
+docker exec singularity-app npm run db:backfill-program-ids -- --all
 ```
 
 It prints table names, tenant ids and row counts only, and exits 0 once `program_id` is NOT NULL on all six tables. You can
@@ -231,12 +245,21 @@ What makes an upgrade safe is the release routine around it:
    docker start singularity-app
    ```
 
+**Stopping the app.** `docker stop singularity-app` (or `docker compose down`) sends SIGTERM, which the server handles: it
+stops accepting connections, cancels any SSP import that is running or queued (the import shows "The server was shut down
+while this import was running. Upload the document again."), stops the document-reader child processes, closes its database
+connections and exits, all within 8 seconds, inside Docker's default 10-second stop timeout. The compose file runs the app with
+`init: true`, so the signal reaches the server and leftover processes are reaped. Its log shows `[Shutdown] SIGTERM received`
+and `[Shutdown] complete` (signal and counts only, never a document, file or person). A container killed outright
+(`docker kill`, power loss) leaves an unfinished import, which is picked up again about two minutes after the next start, when
+its tenant's imports are listed.
+
 **Is the app looking at the right database?** If everyone is signed out and nobody can sign in after a deploy, check before
 changing anything: `docker inspect singularity-db --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'`
 shows the data directory in use, `docker exec singularity-db psql -U postgres -l` lists the databases, and
 `docker exec singularity-db psql -U postgres -d app_db -c "SELECT count(*) FROM local_users"` shows whether accounts exist.
 `PLATFORM_ADMIN_EMAILS` closes the first-time setup wizard: on an empty database with it set, create the administrator with
-`docker exec -e LOCAL_USER_PASSWORD singularity-app tsx scripts/createLocalUser.ts <email> "<name>"` (set
+`docker exec -e LOCAL_USER_PASSWORD singularity-app npm run auth:create-user -- <email> "<name>"` (set
 `LOCAL_USER_PASSWORD` in the shell first, for example with `read -rs LOCAL_USER_PASSWORD && export LOCAL_USER_PASSWORD`).
 
 ## Existing data volume (already initialised before this change)

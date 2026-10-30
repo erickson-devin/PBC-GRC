@@ -3,10 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { server } from '../server/index';
 import { TABLES_SQL, RLS_TENANT_TABLES, buildRlsSql } from '../server/schema';
-import { MAX_BULK_ASSETS, validateAssetInput, validateDiscoveryItems } from '../server/assets';
+import { MAX_BULK_ASSETS, createAgentReportedAsset, humanOriginError, validateAssetInput, validateDiscoveryItems } from '../server/assets';
 import {
   CATEGORY_INFO,
   CMMC_ASSET_CATEGORIES,
+  MACHINE_ASSET_ORIGINS,
   boundaryNarrative,
   emptyScopeSummary,
   parseAssetCategory,
@@ -104,6 +105,13 @@ function validationTests() {
   assert(partial.ok && Object.keys(partial.value).join() === 'owner', 'a partial update returns only the fields sent');
   assert(!ok({ hostName: '' }, true).ok, 'a partial update cannot blank the name');
   assert(!validateDiscoveryItems({ items: [] }).ok && !validateDiscoveryItems({}).ok, 'discovery needs a non-empty list');
+  assert(JSON.stringify(MACHINE_ASSET_ORIGINS) === JSON.stringify(['PHOTON_AGENT', 'AGENT_REPORT']), 'S60-1 the machine origins are PHOTON_AGENT and AGENT_REPORT');
+  assert([undefined, 'MANUAL_ENTRY', 'CSV_IMPORT', 'ACCRETION_DISCOVERY'].every((o) => humanOriginError(o as any) === null), 'S60-2 a person may create with no origin or a human origin');
+  const agentErr = humanOriginError('AGENT_REPORT');
+  const photonErr = humanOriginError('PHOTON_AGENT');
+  assert(typeof agentErr === 'string' && agentErr.includes('AGENT_REPORT') && typeof photonErr === 'string' && photonErr.includes('PHOTON_AGENT'), 'S60-3 a machine origin is refused on create and named in the message', { agentErr, photonErr });
+  assert(humanOriginError('AGENT_REPORT', 'AGENT_REPORT') === null && humanOriginError('MANUAL_ENTRY', 'MANUAL_ENTRY') === null, 'S60-4 sending the stored origin on update is a no-op');
+  assert(humanOriginError('MANUAL_ENTRY', 'AGENT_REPORT') !== null && humanOriginError('AGENT_REPORT', 'MANUAL_ENTRY') !== null && humanOriginError('CSV_IMPORT', 'MANUAL_ENTRY') !== null, 'S60-5 changing the origin on update is refused');
   assert(!validateDiscoveryItems({ items: [{ macAddress: '', ipAddress: '', agentId: 'a' }] }).ok, 'a discovered device needs a MAC or an IP');
   assert(!validateDiscoveryItems({ items: [{ macAddress: '00:11:22:33:44:55' }] }).ok, 'a discovered device needs an agent id');
 }
@@ -256,11 +264,62 @@ async function apiTests() {
   assert((await call('POST', disc, bulkOwner, bulkTenant, { items: [{ macAddress: 'zz;zz', ipAddress: '1', agentId: 'a' }] })).status === 400, 'a malformed device -> 400');
 }
 
+/** #60: people cannot set machine origins through the asset API, and the origin is fixed after creation. */
+async function originTests() {
+  console.log('\n--- Source origin (#60) ---');
+  const owner = person('u_as_origin');
+  const tenant = (await call('POST', '/tenants', owner, undefined, { name: 'Origin Org' })).body?.tenant?.id as string;
+  const path = `/tenants/${tenant}/assets`;
+  const list = async () => ((await call('GET', path, owner, tenant)).body?.assets ?? []) as Json[];
+  const find = async (name: string) => (await list()).find((a) => a.hostName === name) as Json;
+  const n0 = (await list()).length;
+
+  const r6 = await call('POST', path, owner, tenant, { hostName: 'O-AGENT', cmmcAssetCategory: 'CUI_ASSET', sourceOrigin: 'AGENT_REPORT' });
+  assert(r6.status === 400 && r6.body?.code === 'origin_reserved', 'S60-6 POST with sourceOrigin AGENT_REPORT -> 400 origin_reserved', r6);
+  const r7 = await call('POST', path, owner, tenant, { hostName: 'O-AGENT', cmmcAssetCategory: 'CUI_ASSET', sourceOrigin: 'PHOTON_AGENT' });
+  assert(r7.status === 400 && (await list()).length === n0, 'S60-7 POST with sourceOrigin PHOTON_AGENT -> 400 and nothing is created', r7);
+
+  const r8 = await call('POST', `${path}/bulk`, owner, tenant, { assets: [
+    { hostName: 'O-1', cmmcAssetCategory: 'CUI_ASSET' },
+    { hostName: 'O-2', cmmcAssetCategory: 'CUI_ASSET', sourceOrigin: 'AGENT_REPORT' },
+  ] });
+  assert(r8.status === 400 && r8.body?.index === 1 && r8.body?.code === 'origin_reserved' && (await list()).length === n0, 'S60-8 bulk with a machine origin on row 1 -> 400 with the index, nothing lands', r8);
+
+  const r9 = await call('POST', path, owner, tenant, { hostName: 'O-CSV', cmmcAssetCategory: 'CUI_ASSET', sourceOrigin: 'CSV_IMPORT' });
+  assert(r9.status === 201 && r9.body?.asset?.sourceOrigin === 'CSV_IMPORT', 'S60-9 a human origin (CSV_IMPORT) is accepted on create', r9);
+  const csvId = r9.body?.asset?.id as string;
+
+  const r10 = await call('PUT', `${path}/${csvId}`, owner, tenant, { sourceOrigin: 'AGENT_REPORT' });
+  assert(r10.status === 400 && r10.body?.code === 'origin_reserved' && (await find('O-CSV')).sourceOrigin === 'CSV_IMPORT', 'S60-10 PUT cannot change the origin to AGENT_REPORT', r10);
+
+  const r11 = await call('PUT', `${path}/${csvId}`, owner, tenant, { sourceOrigin: 'CSV_IMPORT', owner: 'Ops' });
+  assert(r11.status === 200 && r11.body?.asset?.owner === 'Ops' && r11.body?.asset?.sourceOrigin === 'CSV_IMPORT', 'S60-11 PUT with the stored origin is a no-op and the other fields update', r11);
+
+  const r12 = await call('PUT', `${path}/does-not-exist`, owner, tenant, { sourceOrigin: 'MANUAL_ENTRY' });
+  assert(r12.status === 404, 'S60-12 PUT of an unknown asset with a sourceOrigin -> 404', r12);
+
+  const made = await createAgentReportedAsset(tenant, {
+    agentId: '001', hostName: 'O-AGENT-HOST', ipAddress: '10.0.9.1', macAddress: '', osProfile: 'custom', notes: '',
+    agentIds: { wazuh: '001' }, sourceOrigin: 'AGENT_REPORT', discoveryStatus: 'UNCONFIRMED_DISCOVERY', cmmcAssetCategory: 'CONTRACTOR_RISK',
+  }, new Date().toISOString(), 'service-token:test');
+  const agentId = (made as any)?.id as string;
+  const r13 = await call('PUT', `${path}/${agentId}`, owner, tenant, { cmmcAssetCategory: 'CUI_ASSET', discoveryStatus: 'ACTIVE', owner: 'Ops' });
+  assert(!!agentId && r13.status === 200 && r13.body?.asset?.cmmcAssetCategory === 'CUI_ASSET' && r13.body?.asset?.sourceOrigin === 'AGENT_REPORT', 'S60-13 a person can still classify an agent-reported asset and its origin stays AGENT_REPORT', r13);
+
+  const r14 = await call('PUT', `${path}/${agentId}`, owner, tenant, { sourceOrigin: 'MANUAL_ENTRY' });
+  const after = await find('O-AGENT-HOST');
+  assert(r14.status === 400 && r14.body?.code === 'origin_reserved' && after.sourceOrigin === 'AGENT_REPORT' && after.isManuallyAdded === false, 'S60-14 PUT cannot launder an agent-reported asset to MANUAL_ENTRY', r14);
+
+  const r15 = await call('PUT', `${path}/${agentId}`, owner, tenant, { sourceOrigin: 'AGENT_REPORT', notes: 'checked' });
+  assert(r15.status === 200 && r15.body?.asset?.notes === 'checked', 'S60-15 PUT with the stored machine origin is a no-op and the other fields update', r15);
+}
+
 async function run() {
   schemaTests();
   validationTests();
   scopeTests();
   await apiTests();
+  await originTests();
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

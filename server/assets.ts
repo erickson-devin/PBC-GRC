@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode, pool } from './db';
-import { CMMC_ASSET_CATEGORIES, isCmmcAssetCategory } from '../src/data/telemetry/assetScope';
+import { CMMC_ASSET_CATEGORIES, isCmmcAssetCategory, isMachineAssetOrigin } from '../src/data/telemetry/assetScope';
 import { FipsFields, NO_FIPS, isFipsStandard, isFipsStatus, normalizeFips, resolveFips, FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import type { AgentAssetCandidate, AgentAssetDraft } from './vm/storeTypes';
 import type {
@@ -185,6 +185,21 @@ export function validateAssetInput(body: unknown, partial: boolean): Validation<
   }
 
   return { ok: true, value: out };
+}
+
+/**
+ * Origin rule of the human asset API. On create a machine origin is refused; on update the origin is fixed (the stored
+ * value is a no-op, any other value is refused). Machine writers (the VM worker) do not go through here.
+ * Returns an error message (enum values only, no asset data) or null when the request is acceptable.
+ */
+export function humanOriginError(requested: AssetSourceOrigin | undefined, stored?: AssetSourceOrigin): string | null {
+  if (requested === undefined) return null;
+  if (stored === undefined) {
+    return isMachineAssetOrigin(requested)
+      ? `Source origin ${requested} is set by the server for agent-reported assets and cannot be set through the asset API`
+      : null;
+  }
+  return requested === stored ? null : 'The source origin of an asset cannot be changed';
 }
 
 /** Reads the raw FIPS fields of a request body. Combination rules (status vs. certificate, category) are in normalizeFips. */

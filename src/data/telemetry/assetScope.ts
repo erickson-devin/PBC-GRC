@@ -1,4 +1,4 @@
-import type { AssetDiscoveryStatus, CmmcAssetCategory, EnclaveAsset } from '../../types/telemetry';
+import type { AssetDiscoveryStatus, AssetSourceOrigin, CmmcAssetCategory, EnclaveAsset } from '../../types/telemetry';
 import { isFipsStandard, isFipsStatus } from './fipsValidation';
 
 /**
@@ -59,6 +59,10 @@ export const CATEGORY_INFO: Record<CmmcAssetCategory, CategoryInfo> = {
 
 export const isCmmcAssetCategory = (value: unknown): value is CmmcAssetCategory =>
   typeof value === 'string' && (CMMC_ASSET_CATEGORIES as readonly string[]).includes(value);
+
+/** Origins that only machine writers (the VM worker behind a service token) may set; the human asset API refuses them. */
+export const MACHINE_ASSET_ORIGINS: readonly AssetSourceOrigin[] = ['PHOTON_AGENT', 'AGENT_REPORT'];
+export const isMachineAssetOrigin = (o: unknown): boolean => (MACHINE_ASSET_ORIGINS as readonly unknown[]).includes(o);
 
 /** Lenient parser for CSV cells and free text ("spa", "Contractor Risk", "out of scope", ...). Null when unrecognised. */
 export function parseAssetCategory(raw: string | null | undefined): CmmcAssetCategory | null {

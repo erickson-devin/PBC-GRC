@@ -71,6 +71,8 @@ services:
     image: ghcr.io/erickson-devin/pbc-grc:latest
     container_name: singularity-app
     restart: unless-stopped
+    # A tiny init as PID 1: it forwards SIGTERM to the server (server/shutdown.ts) and reaps the SSP extraction children.
+    init: true
     healthcheck:
       disable: true
     # Ollama is deliberately NOT listed here: the platform must start (and fall back to rule-based matching) without it.

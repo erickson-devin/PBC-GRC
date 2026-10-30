@@ -1,19 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   X,
   Key,
-  Copy,
-  Check,
   ShieldCheck,
   Clock,
   Terminal,
   Server,
 } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
 interface ApiTokensModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -23,24 +19,14 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { idToken } = useAuth();
   const { currentTenant } = useTenant();
-  const [isCopied, setIsCopied] = useState(false);
 
   if (!isOpen) return null;
 
-  const displayToken = idToken || '';
-
-  const curlExample = `curl -X GET "${window.location.origin}/api/v1/assessments" \\
-  -H "Authorization: Bearer ${displayToken ? `${displayToken.slice(0, 24)}...` : '<ID_TOKEN>'}" \\
-  -H "X-Tenant-ID: ${currentTenant.id}"`;
-
-  const handleCopy = () => {
-    if (!displayToken) return;
-    copyToClipboard(displayToken);
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
-  };
+  const curlExample = `curl -X POST "${window.location.origin}/api/v1/vm/ingest" \\
+  -H "Authorization: Bearer <SERVICE_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  -d @findings.json`;
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
@@ -55,7 +41,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               </div>
               <div>
                 <DialogTitle as="h3" className="text-sm font-bold text-white">API Keys & Session Tokens</DialogTitle>
-                <p className="text-xs text-slate-400">Bearer token authentication for the platform API</p>
+                <p className="text-xs text-slate-400">Service tokens for scripts and scanners</p>
               </div>
             </div>
             <button aria-label="Close"
@@ -66,12 +52,12 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </button>
           </div>
 
-          {/* Active JWT Section */}
+          {/* Browser session */}
           <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-slate-300 font-semibold flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                Active Session JWT (Bearer Token)
+                Your browser session
               </span>
               <div className="flex items-center gap-1 text-xs text-slate-400">
                 <Clock className="w-3 h-3 text-brand-400" />
@@ -79,35 +65,16 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               </div>
             </div>
 
-            <div className="relative p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono text-xs text-slate-300 break-all select-all">
-              {displayToken || 'No active session token. Sign in to obtain one.'}
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={handleCopy}
-                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
-              >
-                {isCopied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Copied to Clipboard</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Copy Token</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <p className="text-slate-400 leading-relaxed">
+              Your browser session is kept in an HttpOnly cookie, so it cannot be copied or read by scripts. For scripts and scanners, create a VM service token and send it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).
+            </p>
           </div>
 
           {/* cURL Usage snippet */}
           <div className="space-y-2 text-xs">
             <span className="text-slate-300 font-semibold flex items-center gap-1.5">
               <Terminal className="w-3.5 h-3.5 text-brand-400" />
-              Microservice Authorization Header
+              Service token authorization header
             </span>
             <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-brand-300 overflow-x-auto whitespace-pre">
               {curlExample}
@@ -118,7 +85,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
           <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs text-slate-400 flex items-start gap-2">
             <Server className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
             <span>
-              Calls with this token automatically resolve PostgreSQL Row-Level Security (RLS) for tenant enclave: <strong className="text-slate-300">{currentTenant.name}</strong>.
+              Calls with a service token automatically resolve PostgreSQL Row-Level Security (RLS) for tenant enclave: <strong className="text-slate-300">{currentTenant.name}</strong>.
             </span>
           </div>
 
