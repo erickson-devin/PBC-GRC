@@ -8,6 +8,7 @@ import {
   LOCAL_TOKEN_ISSUER,
   LocalTokenError,
   assertAuthConfig,
+  authStartupWarnings,
   hashPassword,
   signLocalToken,
   validateNewPassword,
@@ -120,6 +121,12 @@ async function run() {
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local', LOCAL_AUTH_SECRET: 'short' } as NodeJS.ProcessEnv)) !== null, 'a short secret fails startup');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local', LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv)) === null, 'a 32+ character secret is accepted');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'ldap' } as NodeJS.ProcessEnv)) !== null, 'unknown AUTH_MODE fails startup');
+  const ttlWarn = (ttl: string, extra: Record<string, string> = {}) =>
+    authStartupWarnings({ LOCAL_AUTH_SECRET: SECRET, LOCAL_AUTH_TOKEN_TTL_SECONDS: ttl, ...extra } as NodeJS.ProcessEnv);
+  assert(ttlWarn('86400').some((w) => w.includes('LOCAL_AUTH_TOKEN_TTL_SECONDS')), 'H12a: a 24 hour session lifetime warns at startup');
+  assert(ttlWarn('28800').length === 0, 'H12a: an 8 hour lifetime gives no warning');
+  assert(ttlWarn('43200').length === 0, 'H12a: exactly 12 hours gives no warning');
+  assert(ttlWarn('86400', { MFA_REQUIRED: 'off', NODE_ENV: 'production' }).length === 2, 'H12a: MFA off in production plus a long lifetime gives two warnings');
 
   console.log('\n--- Passwords (bcrypt) ---');
   const hash = await hashPassword(PASSWORD);

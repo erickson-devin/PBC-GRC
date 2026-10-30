@@ -109,9 +109,9 @@ async function waitForSessionToken(timeoutMs = 3000): Promise<string | null> {
 export function buildInviteUrl(token: string): string {
   if (typeof window !== 'undefined') {
     const origin = window.location.origin;
-    return `${origin}/accept-invite?token=${encodeURIComponent(token)}`;
+    return `${origin}/#accept-invite?token=${encodeURIComponent(token)}`;
   }
-  return `/accept-invite?token=${encodeURIComponent(token)}`;
+  return `/#accept-invite?token=${encodeURIComponent(token)}`;
 }
 
 /**
