@@ -967,8 +967,11 @@ async function run() {
     (await call('GET', '/auth/mfa', { token: eh.confirm.body?.token })).status,
   ];
   assert(gateH.every((s) => s === 403), 'and only /auth/password is open to it', gateH);
-  const doneH = await call('POST', '/auth/password', { token: eh.confirm.body?.token, body: { currentPassword: TEMPPW, newPassword: NEWPW, code: fresh(h25) } });
-  assert(doneH.status === 200 && doneH.body?.mustChangePassword === false, 'changing it (with the current credential and a code) clears the flag', doneH.body);
+  const cH = fresh(h25);
+  const reusedH = await call('POST', '/auth/password', { token: eh.confirm.body?.token, body: { currentPassword: TEMPPW, newPassword: PW, code: cH } });
+  assert(reusedH.status === 400 && reusedH.body?.reason === 'password_reused', 'the password the admin reset replaced is in the history: choosing it again is refused 400 password_reused (#162)', reusedH.body);
+  const doneH = await call('POST', '/auth/password', { token: eh.confirm.body?.token, body: { currentPassword: TEMPPW, newPassword: NEWPW, code: cH } });
+  assert(doneH.status === 200 && doneH.body?.mustChangePassword === false, 'changing it (with the current credential and a code, the same code a refused reuse did not spend) clears the flag', doneH.body);
   assert((await call('GET', '/tenants', { token: doneH.body?.token })).status === 200, 'and the new session is a normal one');
   setMode('off');
 

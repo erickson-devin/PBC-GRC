@@ -4,7 +4,8 @@
 # ==============================================================================
 
 # ── Stage 1: Build Frontend Vite Application ──────────────────────────────────
-FROM node:22-alpine AS builder
+# Base image pinned by digest (the multi-arch index of node:22-alpine, resolved 2026-10-30). Refreshed deliberately in a pull request: docs/ON_PREM_DATABASE.md "Releases".
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 WORKDIR /app
 
 # Copy dependency manifests and install full development dependencies
@@ -19,7 +20,7 @@ ENV BUILD_COMMIT=$BUILD_COMMIT
 RUN npm run build
 
 # ── Stage 2: Production Air-Gapped / On-Premises Runtime ──────────────────────
-FROM node:22-alpine AS runner
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
 WORKDIR /app
 
 # Set default production environment variables

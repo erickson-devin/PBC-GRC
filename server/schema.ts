@@ -784,6 +784,18 @@ export const TABLES_SQL = `
       CONSTRAINT fk_program_assets_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_program_assets_asset ON program_assets (tenant_id, asset_id);
+
+  -- Password history (IA.L2-3.5.8, issue #162): bcrypt hashes of a local account's previous passwords. Global identity data
+  -- like local_users (no tenant_id, no row security), removed with the account. Never a password, only a hash.
+  CREATE TABLE IF NOT EXISTS local_user_password_history (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      password_hash VARCHAR(100) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT fk_local_user_password_history_user FOREIGN KEY (user_id) REFERENCES local_users (id) ON DELETE CASCADE,
+      CONSTRAINT local_user_password_history_hash_check CHECK (password_hash ~ '^[$]2[aby][$][0-9]{2}[$]')
+  );
+  CREATE INDEX IF NOT EXISTS idx_local_user_password_history_user ON local_user_password_history (user_id, id DESC);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

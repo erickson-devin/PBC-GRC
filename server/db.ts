@@ -1,5 +1,6 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { isNonProductionEnv, describeNodeEnv } from './runtimeEnv';
 
 dotenv.config();
 
@@ -127,7 +128,7 @@ export type DbMode = 'postgres' | 'memory';
  * Which store the API uses. There is NO automatic fallback:
  *   - unset / DB_MODE=postgres : PostgreSQL. If it is unreachable, startup fails and queries throw.
  *   - DB_MODE=memory           : explicit opt-in to the in-memory, RLS-emulating store (local development and
- *                                tests only; data is lost on restart, and refused when NODE_ENV=production).
+ *                                tests only; data is lost on restart, and refused unless NODE_ENV is development or test).
  */
 export function getDbMode(env: NodeJS.ProcessEnv = process.env): DbMode {
   const raw = (env.DB_MODE || 'postgres').trim().toLowerCase();
@@ -139,8 +140,8 @@ const isMemoryMode = (): boolean => getDbMode() === 'memory';
 
 /** Throws on a configuration that must never run, e.g. the volatile in-memory store in production. */
 export function assertDbModeAllowed(env: NodeJS.ProcessEnv = process.env): void {
-  if (getDbMode(env) === 'memory' && env.NODE_ENV === 'production') {
-    throw new Error('DB_MODE=memory is not allowed when NODE_ENV=production: data would be lost on restart and tenant isolation would not be enforced by PostgreSQL.');
+  if (getDbMode(env) === 'memory' && !isNonProductionEnv(env)) {
+    throw new Error(`DB_MODE=memory is not allowed when ${describeNodeEnv(env)}: it runs only with NODE_ENV=development or NODE_ENV=test (data would be lost on restart and tenant isolation would not be enforced by PostgreSQL).`);
   }
 }
 
@@ -154,7 +155,7 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     const client = await pool.connect();
     client.release();
   } catch (err: unknown) {
-    throw new Error(`PostgreSQL connection failed (${dbTarget}): ${errorMessage(err)}. Fix DATABASE_URL / DB_* settings, or set DB_MODE=memory for local development.`);
+    throw new Error(`PostgreSQL connection failed (${dbTarget}): ${errorMessage(err)}. Fix DATABASE_URL / DB_* settings, or set DB_MODE=memory for local development (with NODE_ENV=development).`);
   }
   // Health probes call this every few seconds: say it once
   if (!connectionLogged) {
@@ -652,11 +653,11 @@ export async function initDb(): Promise<void> {
     const roleRes = await client.query('SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user');
     const roleCheck = assessDatabaseRole(roleRes.rows[0]);
     if (!roleCheck.ok && roleCheck.message) {
-      if (process.env.NODE_ENV === 'production') {
+      if (!isNonProductionEnv()) {
         console.error('[FATAL] ' + roleCheck.message);
         throw new Error(roleCheck.message);
       }
-      console.warn('[Startup] ' + roleCheck.message + ' (refused in production)');
+      console.warn('[Startup] ' + roleCheck.message + ' (refused unless NODE_ENV is development or test)');
     }
 
     // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts). The schema's own warnings

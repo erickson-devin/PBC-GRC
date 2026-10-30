@@ -61,6 +61,7 @@ assert(/change/i.test(mfaErrorMessage(403, { reason: 'password_change_required' 
 assert(/administrator/i.test(mfaErrorMessage(503, { reason: 'mfa_unavailable' })), 'mfa_unavailable says to contact the administrator');
 assert(/not correct/i.test(mfaErrorMessage(403, { reason: 'invalid_current_password' })), 'invalid_current_password is plain');
 assert(mfaErrorMessage(400, { reason: 'weak_password', error: 'Password must be at least 12 characters.' }) === 'Password must be at least 12 characters.', 'weak_password shows the server\'s own explanation');
+assert(mfaErrorMessage(400, { reason: 'password_reused' }) === 'That password was used recently. Choose one you have not used before.', 'password_reused has its own plain text');
 assert(/own account/i.test(mfaErrorMessage(409, { reason: 'self' })), 'self explains the restriction');
 assert(mfaErrorMessage(400, null).length > 0 && mfaErrorMessage(500, undefined).length > 0, 'unknown shapes still give a message');
 for (const m of [mfaErrorMessage(401, { reason: 'invalid_code' }), mfaErrorMessage(401, { reason: 'mfa_token_invalid' }), mfaErrorMessage(429, {}), mfaErrorMessage(403, { reason: 'password_change_required' })]) {

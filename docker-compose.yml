@@ -14,6 +14,8 @@
 # See docs/ON_PREM_DATABASE.md "Multi-factor authentication".
 #
 # Optional:
+#   IMAGE_TAG              the release to run, e.g. v1.0.0 (default: the release this file ships with). Never latest. For an
+#                          immutable pin use v1.0.0@sha256:<digest> (docs/ON_PREM_DATABASE.md "Releases").
 #   PLATFORM_ADMIN_EMAILS  comma-separated e-mail addresses of the platform administrators of this installation. Only they can
 #                          provision tenants for a specific assessment program (which frameworks a tenant may use) and see the
 #                          administration console. Setting it also closes the first-time setup wizard (see below).
@@ -38,7 +40,8 @@
 services:
   # ── 1. PostgreSQL 16 Relational Storage with RLS Support ───────────────────
   singularity-db:
-    image: postgres:16-alpine
+    # pinned by digest, resolved 2026-10-30; refresh in a reviewed PR
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     container_name: singularity-db
     restart: unless-stopped
     logging:
@@ -73,7 +76,7 @@ services:
 
   # ── 2. Event Horizon: Singularity Application & Local Storage API ──────────
   singularity-app:
-    image: ghcr.io/erickson-devin/pbc-grc:latest
+    image: ghcr.io/erickson-devin/pbc-grc:${IMAGE_TAG:-v1.0.0}
     container_name: singularity-app
     restart: unless-stopped
     # A tiny init as PID 1: it forwards SIGTERM to the server (server/shutdown.ts) and reaps the SSP extraction children.
@@ -143,6 +146,7 @@ services:
       # Sign-in, tenant creation, AI timeout and database TLS; empty means the built-in default
       ALLOW_TENANT_CREATION: ${ALLOW_TENANT_CREATION:-}
       LOCAL_AUTH_TOKEN_TTL_SECONDS: ${LOCAL_AUTH_TOKEN_TTL_SECONDS:-}
+      PASSWORD_HISTORY_DEPTH: ${PASSWORD_HISTORY_DEPTH:-}
       OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-}
       SSP_AI_MAX_SECTIONS: ${SSP_AI_MAX_SECTIONS:-}
       SSP_AI_GAP_ANALYSIS: ${SSP_AI_GAP_ANALYSIS:-}

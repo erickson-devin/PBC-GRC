@@ -80,6 +80,8 @@ export function mfaErrorMessage(status: number, body: unknown): string {
       return 'The current password is not correct.';
     case 'weak_password':
       return serverMessage || 'The new password does not meet the requirements.';
+    case 'password_reused':
+      return 'That password was used recently. Choose one you have not used before.';
     case 'mfa_already_enrolled':
       return 'A second factor is already set up for this account.';
     case 'mfa_not_started':

@@ -9,6 +9,7 @@ import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tena
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
 import { getDatabaseStatus, isDbReady } from '../db';
+import { APP_VERSION } from '../version';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
 import { listStoredPlatformAdminEmails } from '../platformSetup';
 import setupRouter from './setup';
@@ -29,7 +30,7 @@ router.get('/health', async (_req, res) => {
     status: healthy ? 'healthy' : 'unhealthy',
     timestamp: new Date().toISOString(),
     service: 'pbc-grc-api',
-    version: '1.0.0',
+    version: APP_VERSION, // package.json "version"; the image tag is v<version> (docs/ON_PREM_DATABASE.md "Releases")
     buildCommit: process.env.BUILD_COMMIT || 'dev', // set by the Docker build (--build-arg BUILD_COMMIT=<git sha>)
     database, // 'connected' | 'memory' (explicit DB_MODE=memory) | 'unavailable'
   });

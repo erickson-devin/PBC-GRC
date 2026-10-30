@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import type { CookieOptions, Request, Response } from 'express';
 import { signLocalToken } from './localAuth';
 import type { LocalUser } from './localUsers';
@@ -5,7 +6,7 @@ import type { LocalUser } from './localUsers';
 /** The session lives in an HttpOnly cookie scoped to the API; script in the page never sees the token. */
 export const SESSION_COOKIE_NAME = 'pbc_session';
 export const SESSION_COOKIE_PATH = '/api';
-/** Request marker header the SPA sends on every API call: a cross-site form or image request cannot add it. Its value is ignored. */
+/** Request marker header the SPA sends on every API call: a cross-site form or image request cannot add it. Its value must be the cookie session's `sid` (the sessionRef). */
 export const SESSION_MARKER_HEADER = 'x-pbc-session';
 
 /** 403 body for a cookie-authenticated request that did not come from this application (CSRF defence). */
@@ -34,11 +35,30 @@ export function readSessionCookie(req: Request): string | null {
   return null;
 }
 
-/** True when the request carries the application marker header (1 to 256 characters once trimmed). */
-export function hasSessionMarker(req: Request): boolean {
+/** The application marker header (1 to 256 characters once trimmed), or null when it is missing, blank or too long. */
+export function readSessionMarker(req: Request): string | null {
   const raw = req.headers[SESSION_MARKER_HEADER];
   const value = (Array.isArray(raw) ? raw[0] : raw)?.trim();
-  return !!value && value.length <= 256;
+  return value && value.length <= 256 ? value : null;
+}
+
+/** True when the request carries the application marker header (1 to 256 characters once trimmed). */
+export function hasSessionMarker(req: Request): boolean {
+  return readSessionMarker(req) !== null;
+}
+
+/** 401 body when the marker is not the session reference of the cookie it travels with (another tab replaced the session). */
+export const SESSION_MISMATCH = {
+  error: 'Unauthorized: this tab is not signed in to the session this browser holds',
+  reason: 'session_mismatch',
+} as const;
+
+/** Constant-time check that the marker equals the cookie session's `sid`. False when either value is missing. */
+export function markerMatchesSession(marker: string | null, sid: string | undefined): boolean {
+  if (!marker || !sid) return false;
+  const a = Buffer.from(marker, 'utf8');
+  const b = Buffer.from(sid, 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /** True when the browser says the request was initiated by another site (Sec-Fetch-Site other than same-origin / none). */

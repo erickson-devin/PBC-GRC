@@ -1,5 +1,5 @@
 import { pool, getDbMode } from '../db';
-import { hashPassword, validateNewPassword } from './localAuth';
+import { hashPassword, validateNewPassword, verifyPassword, getPasswordHistoryDepth } from './localAuth';
 
 /** Storage for local (air-gapped) identities: PostgreSQL `local_users`, or process memory when DB_MODE=memory. */
 
@@ -38,6 +38,7 @@ export class LocalUserExistsError extends Error {
 
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 const memoryUsers = new Map<string, LocalUser>(); // key: lowercased email
+const memoryPasswordHistory = new Map<string, string[]>(); // key: user id; previous password hashes, newest first
 
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 
@@ -295,6 +296,8 @@ export async function consumeRecoveryCode(userId: string, hash: string): Promise
 /**
  * Replaces the password hash and bumps the token version (every other session dies). The forced-change flag is cleared
  * unless `mustChangePassword` is true, which is how an admin reset hands out a temporary password. Returns false for an unknown id.
+ * The replaced hash goes into the password history (NIST SP 800-171 3.5.8, PASSWORD_HISTORY_DEPTH previous passwords), except
+ * when it was itself a temporary password (the account still had the forced-change flag).
  */
 export async function setLocalUserPassword(
   userId: string,
@@ -302,19 +305,78 @@ export async function setLocalUserPassword(
   opts: { mustChangePassword?: boolean } = {}
 ): Promise<boolean> {
   const must = opts.mustChangePassword === true;
+  const depth = getPasswordHistoryDepth();
   if (getDbMode() === 'memory') {
     const u = memoryUserById(userId);
     if (!u) return false;
+    if (depth > 0) {
+      const list = memoryPasswordHistory.get(userId) ?? [];
+      if (!u.mustChangePassword) list.unshift(u.passwordHash);
+      list.length = Math.min(list.length, depth);
+      memoryPasswordHistory.set(userId, list);
+    } else {
+      memoryPasswordHistory.delete(userId);
+    }
     u.passwordHash = passwordHash;
     u.tokenVersion += 1;
     u.mustChangePassword = must;
     return true;
   }
-  const res = await pool.query(
-    'UPDATE local_users SET password_hash = $2, token_version = token_version + 1, must_change_password = $3 WHERE id = $1 RETURNING 1',
-    [userId, passwordHash, must]
-  );
-  return (res.rowCount ?? 0) > 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const prev = await client.query('SELECT password_hash, must_change_password FROM local_users WHERE id = $1 FOR UPDATE', [userId]);
+    const row = prev.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    await client.query(
+      'UPDATE local_users SET password_hash = $2, token_version = token_version + 1, must_change_password = $3 WHERE id = $1',
+      [userId, passwordHash, must]
+    );
+    if (depth > 0 && !row.must_change_password) {
+      await client.query('INSERT INTO local_user_password_history (user_id, password_hash) VALUES ($1, $2)', [userId, row.password_hash]);
+    }
+    await client.query(
+      `DELETE FROM local_user_password_history
+        WHERE user_id = $1 AND id NOT IN (SELECT id FROM local_user_password_history WHERE user_id = $1 ORDER BY id DESC LIMIT $2)`,
+      [userId, depth]
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (err: unknown) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** True when `candidate` matches one of the user's newest `depth` previous passwords (the current one is checked by the caller). */
+export async function isInPasswordHistory(userId: string, candidate: string, depth: number = getPasswordHistoryDepth()): Promise<boolean> {
+  if (depth <= 0) return false;
+  let hashes: string[];
+  if (getDbMode() === 'memory') {
+    hashes = (memoryPasswordHistory.get(userId) ?? []).slice(0, depth);
+  } else {
+    const res = await pool.query(
+      'SELECT password_hash FROM local_user_password_history WHERE user_id = $1 ORDER BY id DESC LIMIT $2',
+      [userId, depth]
+    );
+    hashes = res.rows.map((r) => r.password_hash as string);
+  }
+  for (const hash of hashes) {
+    if (await verifyPassword(candidate, hash)) return true;
+  }
+  return false;
+}
+
+/** Number of stored previous-password hashes for an account (tests and diagnostics; never the hashes themselves). */
+export async function countPasswordHistory(userId: string): Promise<number> {
+  if (getDbMode() === 'memory') return (memoryPasswordHistory.get(userId) ?? []).length;
+  const res = await pool.query('SELECT COUNT(*) AS n FROM local_user_password_history WHERE user_id = $1', [userId]);
+  return Number(res.rows[0]?.n ?? 0);
 }
 
 export async function setMustChangePassword(userId: string, value: boolean): Promise<boolean> {
@@ -395,12 +457,15 @@ export async function resetLocalUserMfa(email: string): Promise<{ found: boolean
 export async function deleteLocalUser(id: string): Promise<void> {
   if (getDbMode() === 'memory') {
     for (const [email, u] of memoryUsers) if (u.id === id) memoryUsers.delete(email);
+    memoryPasswordHistory.delete(id);
     return;
   }
+  // The password history rows go with the account (ON DELETE CASCADE).
   await pool.query('DELETE FROM local_users WHERE id = $1', [id]);
 }
 
 /** Test hook. */
 export function __resetMemoryLocalUsersForTests(): void {
   memoryUsers.clear();
+  memoryPasswordHistory.clear();
 }

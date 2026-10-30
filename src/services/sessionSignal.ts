@@ -7,8 +7,11 @@
 
 type SessionListener = (token: string, reason?: string) => void;
 
-/** Why a tab's session ended without the server rejecting it: another tab of this browser signed out or signed in as someone else (#32). */
-export type CrossTabReason = 'signed_out_elsewhere' | 'switched_elsewhere';
+/**
+ * Why a tab's session ended without the server rejecting it: another tab of this browser signed out or signed in as someone else (#32).
+ * `session_mismatch` is the one such reason the server also sends: the browser's cookie belongs to another session (#149).
+ */
+export type CrossTabReason = 'signed_out_elsewhere' | 'switched_elsewhere' | 'session_mismatch';
 
 export type SessionEndReason = 'session_missing' | 'session_invalid' | 'session_expired' | 'session_revoked' | CrossTabReason;
 
@@ -18,6 +21,7 @@ export const SESSION_REVOKED_MESSAGE = 'Your session ended because your account 
 
 export const SIGNED_OUT_ELSEWHERE_MESSAGE = 'You signed out in another tab. Sign in again to continue.';
 export const SWITCHED_ELSEWHERE_MESSAGE = 'Another account signed in from another tab of this browser, so this tab was signed out. Signing in here signs that tab out.';
+export const SESSION_MISMATCH_MESSAGE = "This tab's session no longer matches the one this browser is signed in with, usually because another tab signed in. Sign in again to continue.";
 
 /** The sign-in screen's message after the server ended a session. Unknown or missing reasons get the generic text. */
 export function sessionEndedMessage(reason?: string | null): string {
@@ -25,19 +29,20 @@ export function sessionEndedMessage(reason?: string | null): string {
   if (reason === 'session_revoked') return SESSION_REVOKED_MESSAGE;
   if (reason === 'signed_out_elsewhere') return SIGNED_OUT_ELSEWHERE_MESSAGE;
   if (reason === 'switched_elsewhere') return SWITCHED_ELSEWHERE_MESSAGE;
+  if (reason === 'session_mismatch') return SESSION_MISMATCH_MESSAGE;
   return SESSION_ENDED_MESSAGE;
 }
 
-/** True for the two reasons that come from another tab of this browser rather than from the server. */
+/** True for the reasons that come from another tab of this browser (or the browser's cookie) rather than from a rejected session. */
 export function isCrossTabReason(reason?: string | null): reason is CrossTabReason {
-  return reason === 'signed_out_elsewhere' || reason === 'switched_elsewhere';
+  return reason === 'signed_out_elsewhere' || reason === 'switched_elsewhere' || reason === 'session_mismatch';
 }
 
 const listeners = new Set<SessionListener>();
 const held = new Set<string>();
 let lastSignalled: string | null = null;
 
-/** The header that carries the session reference on every cookie request (a CSRF marker; the server ignores its value). */
+/** The header that carries the session reference on every cookie request (a CSRF marker; the server also compares it with the session cookie's own reference and answers `session_mismatch` when they differ). */
 export const SESSION_MARKER_HEADER = 'X-PBC-Session';
 
 /** The session reference in an `X-PBC-Session` header of any HeadersInit shape, else null. */

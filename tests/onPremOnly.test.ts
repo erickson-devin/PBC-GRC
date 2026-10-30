@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { builtinModules } from 'module';
+import { readAppVersion } from '../server/version';
 
 /**
  * On-prem only guard (Phase 5.8). PBC-GRC is deployed on the customer's own hardware: local accounts, local disk,
@@ -414,6 +415,35 @@ assert(dockerignoreLines.includes('data/') && dockerignoreLines.includes('.env.*
 assert(!('cors' in (pkg.dependencies ?? {})) && !('@types/cors' in (pkg.devDependencies ?? {})), 'package.json has no cors / @types/cors (the SPA is same-origin)');
 const testAll: string = pkg.scripts?.['test:all'] ?? '';
 assert(['totp', 'mfa', 'mfaClient'].every((n) => testAll.includes(`tests/${n}.test.ts`)), 'package.json test:all runs tests/totp.test.ts, tests/mfa.test.ts and tests/mfaClient.test.ts');
+
+console.log('\n--- Releases and pins (#157) ---');
+assert(/^\d+\.\d+\.\d+$/.test(pkg.version) && readAppVersion() === pkg.version, 'readAppVersion() returns the package.json version (what /api/v1/health reports)', [readAppVersion(), pkg.version]);
+assert(readAppVersion(path.join(root, 'no-such-file.json')) === 'unknown', 'readAppVersion of a missing file is "unknown"');
+assert(readAppVersion(path.join(root, 'tsconfig.json')) === 'unknown', 'readAppVersion of a JSON file with no version is "unknown"');
+const fromLines = dockerCode.filter((l) => /^FROM\s/i.test(l));
+assert(fromLines.length === 2 && fromLines.every((l) => /^FROM node:22-alpine@sha256:[0-9a-f]{64} AS (builder|runner)\s*$/.test(l)), 'both Dockerfile stages start FROM node:22-alpine pinned by a sha256 digest', fromLines);
+assert(new Set(fromLines.map((l) => l.split(/\s+/)[1])).size === 1, 'both Dockerfile stages use the same base image digest', fromLines);
+if (app) {
+  assert(app.lines.some((l) => l.trim() === 'image: ghcr.io/erickson-devin/pbc-grc:${IMAGE_TAG:-v' + pkg.version + '}'), 'the app image is ghcr.io/erickson-devin/pbc-grc:${IMAGE_TAG:-v<package.json version>}', app.lines.filter((l) => /^\s+image:/.test(l)));
+  assert(!app.lines.some((l) => /^\s+image:.*latest/.test(l)), 'the app image never references latest');
+  assert(!('IMAGE_TAG' in mapOf(app, 'environment')), 'IMAGE_TAG is a compose variable only, not passed into the app environment');
+}
+assert(!!db && db.lines.some((l) => /^image: postgres:16-alpine@sha256:[0-9a-f]{64}$/.test(l.trim())), 'the db service image is postgres:16-alpine pinned by a sha256 digest', db && db.lines.filter((l) => /^\s+image:/.test(l)));
+assert(/^# IMAGE_TAG=v\d+\.\d+\.\d+\s*$/m.test(envExample), '.env.example documents IMAGE_TAG=v<x.y.z>');
+const dependabotPath = path.join(root, '.github', 'dependabot.yml');
+const dependabot = fs.existsSync(dependabotPath) ? fs.readFileSync(dependabotPath, 'utf8') : '';
+assert(/package-ecosystem:\s*"docker"/.test(dependabot) && /package-ecosystem:\s*"github-actions"/.test(dependabot) && !/package-ecosystem:\s*"npm"/.test(dependabot), '.github/dependabot.yml watches the docker and github-actions ecosystems, not npm');
+for (const wf of ['ci.yml', 'docker-publish.yml']) {
+  const lines = fs.readFileSync(path.join(root, '.github', 'workflows', wf), 'utf8').split(/\r?\n/).filter((l) => !/^\s*#/.test(l));
+  const uses = lines.map((l) => /^\s*(?:-\s+)?uses:\s*(\S+)(.*)$/.exec(l)).filter((m): m is RegExpExecArray => !!m);
+  const external = uses.filter((m) => !m[1].startsWith('./'));
+  assert(uses.length > 0 && external.length > 0, `${wf} has uses: references to check`, uses.length);
+  assert(external.every((m) => /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/.test(m[1]) && /#\s*v\d+(\.\d+){0,2}\s*$/.test(m[2])), `${wf}: every external action is pinned to a 40-hex commit with a version comment`, external.filter((m) => !/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/.test(m[1])).map((m) => m[1]));
+}
+const publishWf = fs.readFileSync(path.join(root, '.github', 'workflows', 'docker-publish.yml'), 'utf8').replace(/\r\n/g, '\n');
+const publishNeeds = ['tags: [ "v[0-9]+.[0-9]+.[0-9]+" ]', 'latest=false', 'type=raw,value=latest,enable={{is_default_branch}}', 'type=sha,enable={{is_default_branch}}', 'type=semver,pattern=v{{version}}', 'type=semver,pattern=v{{major}}.{{minor}}', 'type=semver,pattern=v{{major}}', 'git merge-base --is-ancestor HEAD origin/main', 'jq -r .version package.json', 'steps.build.outputs.digest'];
+assert(publishNeeds.every((s) => publishWf.includes(s)), 'docker-publish.yml publishes SemVer tags, checks the release tag against main and package.json, and records the digest', publishNeeds.filter((s) => !publishWf.includes(s)));
+assert(!publishWf.includes('type=raw,value=latest\n'), 'docker-publish.yml never tags latest unconditionally');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

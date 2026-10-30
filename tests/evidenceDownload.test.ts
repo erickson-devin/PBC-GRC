@@ -115,6 +115,7 @@ async function run() {
   const noStore = (r: { headers: Headers }) => r.headers.get('cache-control') === 'no-store';
   const h1 = await call('GET', '/health', null);
   assert(h1.status === 200 && noStore(h1) && h1.headers.get('x-content-type-options') === 'nosniff', 'H1 GET /health without a token -> 200, no-store, nosniff', [h1.status, h1.headers.get('cache-control')]);
+  assert(h1.body?.version === JSON.parse(fs.readFileSync('package.json', 'utf8')).version && typeof h1.body?.buildCommit === 'string' && h1.body.buildCommit.length > 0, 'H1b GET /health reports the package.json version and a buildCommit', [h1.body?.version, typeof h1.body?.buildCommit]);
   const h2 = await call('GET', '/tenants', null);
   assert(h2.status === 401 && noStore(h2), 'H2 GET /tenants without a token -> 401, no-store', [h2.status, h2.headers.get('cache-control')]);
   const h3 = await call('GET', `/evidence/${E}/file`, null);

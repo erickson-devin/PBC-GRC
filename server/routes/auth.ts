@@ -3,6 +3,7 @@ import {
   LocalAuthConfigError,
   LocalTokenError,
   getDummyHash,
+  PASSWORD_REUSED,
   getMfaRequirement,
   hashPassword,
   signMfaPendingToken,
@@ -38,6 +39,7 @@ import {
   deleteLocalUser,
   findLocalUserByEmail,
   findLocalUserById,
+  isInPasswordHistory,
   registerFailedLogin,
   registerSuccessfulLogin,
   replaceRecoveryCodeHashes,
@@ -704,6 +706,12 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
     const problem = validateNewPassword(newPassword, user.email);
     if (problem) {
       res.status(400).json({ error: problem, reason: 'weak_password' });
+      return;
+    }
+
+    // The current password was verified above, so an exact match needs no bcrypt call. A reuse is not a failed attempt.
+    if (newPassword === currentPassword || (await isInPasswordHistory(user.id, newPassword))) {
+      res.status(400).json(PASSWORD_REUSED);
       return;
     }
 

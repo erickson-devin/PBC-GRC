@@ -12,6 +12,7 @@ import {
   sessionEndedMessage,
   SESSION_ENDED_MESSAGE,
   SESSION_EXPIRED_MESSAGE,
+  SESSION_MISMATCH_MESSAGE,
   SESSION_REVOKED_MESSAGE,
 } from '../src/services/sessionSignal';
 
@@ -102,7 +103,8 @@ resetSessionSignal();
 
 assert(sessionEndedMessage('session_expired') === SESSION_EXPIRED_MESSAGE && sessionEndedMessage('session_revoked') === SESSION_REVOKED_MESSAGE, 'C33-4 expired and revoked have their own texts');
 assert(['session_missing', 'session_invalid', undefined, null, 'garbage'].every((r) => sessionEndedMessage(r) === SESSION_ENDED_MESSAGE), 'missing, invalid, unknown and absent reasons get the generic text');
-assert([SESSION_ENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SESSION_REVOKED_MESSAGE].every((m) => !/token/i.test(m)), 'no session message mentions a token');
+assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE, 'S149-1 session_mismatch has its own text');
+assert([SESSION_ENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SESSION_REVOKED_MESSAGE, SESSION_MISMATCH_MESSAGE].every((m) => !/token/i.test(m)), 'no session message mentions a token');
 
 console.log('\n--- Through ApiClient, against a stubbed fetch ---');
 let stored: string | null = 'sess';
