@@ -58,6 +58,7 @@ import { createNotesAutosave, createSaveChain, newerStamp, notesKey, type NotesD
 import { errorMessage } from '../utils/errors';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
+import { planStigNarratives } from '../utils/stigNarrativePlan';
 import {
   AssetTelemetryRecord,
   BoundaryAggregationResult,
@@ -199,7 +200,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     liveControlsTenantId: liveScopeKey,
     tenantId: programScope,
     syncError,
-    hasToken: Boolean(ApiClient.getToken()),
+    hasToken: Boolean(ApiClient.getSessionRef()),
   });
   const notesEditable = notesStatus === 'browser' || notesStatus === 'loaded';
   const NOTES_NOT_EDITABLE_MESSAGE =
@@ -743,60 +744,16 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return 0;
     }
 
-    const controlIds = Object.keys(narratives);
-    if (controlIds.length === 0) return 0;
-
-    let appliedCount = 0;
-
+    // Computed once from the state on screen, outside the updater: StrictMode runs updaters twice and React may defer them (#79)
+    const changes = planStigNarratives(stateRef.current.controls, narratives, { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() });
+    if (changes.length === 0) return 0;
+    for (const c of changes) void saveControl(c.id, c.serverUpdate);
     setState(prev => {
-      const nextControls = { ...prev.controls };
-      const timestamp = new Date().toISOString();
-
-      controlIds.forEach(id => {
-        const text = narratives[id];
-        if (!text) return;
-
-        const current = nextControls[id] || {
-          id,
-          tenantId: currentTenant.id,
-          status: 'NOT_STARTED',
-          implementationNotes: '',
-          responsibleRole: 'IT / Security Lead',
-          lastUpdated: timestamp,
-          tags: [],
-        };
-
-        let newNotes = text;
-        if (current.implementationNotes && current.implementationNotes.trim()) {
-          if (!current.implementationNotes.includes(text)) {
-            newNotes = `${current.implementationNotes}\n\n[STIG Baseline Implementation]:\n${text}`;
-          } else {
-            newNotes = current.implementationNotes;
-          }
-        }
-
-        nextControls[id] = {
-          ...current,
-          implementationNotes: newNotes,
-          status: current.status === 'NOT_STARTED' ? 'IN_PROGRESS' : current.status,
-          lastUpdated: timestamp,
-          updatedBy: currentUser.name,
-        };
-
-        const serverUpdate: Partial<ControlState> = { implementationNotes: newNotes, updatedBy: currentUser.name };
-        if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
-        void saveControl(id, serverUpdate);
-
-        appliedCount++;
-      });
-
-      return {
-        ...prev,
-        controls: nextControls,
-      };
+      const controls = { ...prev.controls };
+      for (const c of changes) controls[c.id] = c.next;
+      return { ...prev, controls };
     });
-
-    return appliedCount;
+    return changes.length;
   }, [canEdit, notesEditable, currentTenant.id, currentUser.name, saveControl]);
 
   // -------------------------------------------------------------------------

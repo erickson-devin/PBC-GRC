@@ -15,8 +15,8 @@ export function useLocalAssetScrub(): void {
 
   useEffect(() => {
     if (!currentTenant.serverBacked) return;
-    const token = ApiClient.getToken();
-    if (!token) return;
+    const sessionRef = ApiClient.getSessionRef();
+    if (!sessionRef) return;
     const tenantId = currentTenant.id;
     if (done.current.has(tenantId)) return;
     done.current.add(tenantId);
@@ -24,7 +24,7 @@ export function useLocalAssetScrub(): void {
       try {
         const local = getEnclaveAssets(tenantId);
         if (local.length === 0) return;
-        const server = await ApiClient.listAssets(tenantId, token);
+        const server = await ApiClient.listAssets(tenantId, sessionRef);
         const plan = planLocalAssetCleanup(local, server.assets, tenantId);
         if (plan.removable) clearLocalEnclaveAssets(tenantId);
         console.info(`[asset-cache-scrub] local asset list ${plan.removable ? 'removed' : 'kept'}, local ${local.length}, unmatched ${plan.unmatched}`);

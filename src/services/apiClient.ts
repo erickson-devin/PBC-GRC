@@ -139,7 +139,7 @@ async function apiFetch(input: string, init: RequestInit): Promise<Response> {
     throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
   }
   // A 401 on a request carrying the stored session's own reference means the server ended the session: tell the app (see sessionSignal.ts)
-  const current = ApiClient.getToken();
+  const current = ApiClient.getSessionRef();
   let reason: string | null = null;
   if (isSessionRejection(res.status, sent, current) && typeof res.clone === 'function') {
     reason = bodyReason(await res.clone().json().catch(() => null)) ?? null;
@@ -184,11 +184,11 @@ export interface InvitePreview {
 async function authedJson<T>(
   method: string,
   path: string,
-  options: { token?: string | null; tenantId?: string; programId?: string | null; body?: unknown } = {}
+  options: { sessionRef?: string | null; tenantId?: string; programId?: string | null; body?: unknown } = {}
 ): Promise<T> {
-  const bearer = options.token ?? ApiClient.getToken();
-  if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
-  const headers: Record<string, string> = { [SESSION_MARKER_HEADER]: bearer };
+  const ref = options.sessionRef ?? ApiClient.getSessionRef();
+  if (!ref) throw new ApiError(401, 'You need to be signed in to do that.');
+  const headers: Record<string, string> = { [SESSION_MARKER_HEADER]: ref };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
   if (options.programId) headers['x-program-id'] = options.programId;
@@ -297,15 +297,15 @@ export interface LocalAccount {
 
 /**
  * JSON request for the sign-in, second-factor, password and local-account calls. Failures become an ApiError whose message
- * comes from mfaErrorMessage and whose `reason` is the server's code. Without `token` it uses the stored session, unless
+ * comes from mfaErrorMessage and whose `reason` is the server's code. Without `sessionRef` it uses the stored session, unless
  * `anonymous` is set (the pending-token calls carry their proof in the body).
  */
-async function accountJson<T>(method: string, path: string, options: { body?: unknown; token?: string | null; anonymous?: boolean } = {}): Promise<T> {
+async function accountJson<T>(method: string, path: string, options: { body?: unknown; sessionRef?: string | null; anonymous?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   if (!options.anonymous) {
-    const bearer = options.token ?? ApiClient.getToken();
-    if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
-    headers[SESSION_MARKER_HEADER] = bearer;
+    const ref = options.sessionRef ?? ApiClient.getSessionRef();
+    if (!ref) throw new ApiError(401, 'You need to be signed in to do that.');
+    headers[SESSION_MARKER_HEADER] = ref;
   }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await apiFetch(`${API_BASE_URL}/api/v1${path}`, {
@@ -458,9 +458,9 @@ export const ApiClient = {
 
   /** POST /api/v1/tenants/:id/ssp-imports (multipart). Owner / MSP admin only. */
   async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules', baseline?: SspBaseline, programId?: string | null): Promise<SspImportJob> {
-    const bearer = ApiClient.getToken();
-    if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
-    const uploadHeaders: Record<string, string> = { [SESSION_MARKER_HEADER]: bearer, 'x-tenant-id': tenantId }; // no Content-Type: the browser sets the multipart boundary
+    const ref = ApiClient.getSessionRef();
+    if (!ref) throw new ApiError(401, 'You need to be signed in to do that.');
+    const uploadHeaders: Record<string, string> = { [SESSION_MARKER_HEADER]: ref, 'x-tenant-id': tenantId }; // no Content-Type: the browser sets the multipart boundary
     if (programId) uploadHeaders['x-program-id'] = programId;
     const form = new FormData();
     form.append('framework', framework);
@@ -515,11 +515,11 @@ export const ApiClient = {
 
   /** The uploaded document, as a blob URL the caller must revoke. */
   async sspDownloadUrl(tenantId: string, jobId: string, programId?: string | null): Promise<string> {
-    const bearer = ApiClient.getToken();
-    if (!bearer) throw new ApiError(401, 'You need to be signed in to do that.');
+    const ref = ApiClient.getSessionRef();
+    if (!ref) throw new ApiError(401, 'You need to be signed in to do that.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}/ssp-imports/${encodeURIComponent(jobId)}/file`, {
       method: 'GET',
-      headers: { [SESSION_MARKER_HEADER]: bearer, 'x-tenant-id': tenantId, ...(programId ? { 'x-program-id': programId } : {}) },
+      headers: { [SESSION_MARKER_HEADER]: ref, 'x-tenant-id': tenantId, ...(programId ? { 'x-program-id': programId } : {}) },
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
     return URL.createObjectURL(await res.blob());
@@ -596,53 +596,53 @@ export const ApiClient = {
   // ---------------------------------------------------------------- team: members and invitations
 
   /** GET /api/v1/tenants/:id/members */
-  async listMembers(tenantId: string, token?: string): Promise<ServerMember[]> {
-    return parseServerMembers(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/members`, { token, tenantId }));
+  async listMembers(tenantId: string, sessionRef?: string): Promise<ServerMember[]> {
+    return parseServerMembers(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/members`, { sessionRef, tenantId }));
   },
 
   /** POST /api/v1/tenants/:id/members: sets (or changes) an existing person's role. Owner / MSP admin only. */
-  async setMemberRole(tenantId: string, member: { userId: string; email: string; name?: string; role: TenantRole }, token?: string): Promise<void> {
-    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/members`, { token, tenantId, body: member });
+  async setMemberRole(tenantId: string, member: { userId: string; email: string; name?: string; role: TenantRole }, sessionRef?: string): Promise<void> {
+    await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/members`, { sessionRef, tenantId, body: member });
   },
 
   /** DELETE /api/v1/tenants/:id/members/:userId */
-  async removeMember(tenantId: string, userId: string, token?: string): Promise<void> {
-    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { token, tenantId });
+  async removeMember(tenantId: string, userId: string, sessionRef?: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { sessionRef, tenantId });
   },
 
   // ----------------------------------------------------------------------------------------- CMMC asset scoping
 
   /** GET /api/v1/tenants/:id/assets: the enclave's assets and the scope summary (any member). */
-  async listAssets(tenantId: string, token?: string): Promise<{ assets: EnclaveAsset[]; summary: AssetScopeSummary }> {
-    const data = await authedJson<{ assets?: unknown; summary?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/assets`, { token, tenantId });
+  async listAssets(tenantId: string, sessionRef?: string): Promise<{ assets: EnclaveAsset[]; summary: AssetScopeSummary }> {
+    const data = await authedJson<{ assets?: unknown; summary?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/assets`, { sessionRef, tenantId });
     const assets = parseServerAssets(data?.assets);
     return { assets, summary: summarizeScope(assets) };
   },
 
   /** POST /api/v1/tenants/:id/assets (owner / MSP admin). */
-  async createAsset(tenantId: string, asset: AssetInput, token?: string): Promise<EnclaveAsset> {
-    const data = await authedJson<{ asset?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets`, { token, tenantId, body: asset });
+  async createAsset(tenantId: string, asset: AssetInput, sessionRef?: string): Promise<EnclaveAsset> {
+    const data = await authedJson<{ asset?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets`, { sessionRef, tenantId, body: asset });
     return requireAsset(data?.asset);
   },
 
   /** PUT /api/v1/tenants/:id/assets/:assetId. Only the fields given change. */
-  async updateAsset(tenantId: string, assetId: string, patch: AssetInput, token?: string): Promise<EnclaveAsset> {
-    const data = await authedJson<{ asset?: unknown }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { token, tenantId, body: patch });
+  async updateAsset(tenantId: string, assetId: string, patch: AssetInput, sessionRef?: string): Promise<EnclaveAsset> {
+    const data = await authedJson<{ asset?: unknown }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { sessionRef, tenantId, body: patch });
     return requireAsset(data?.asset);
   },
 
   /** DELETE /api/v1/tenants/:id/assets/:assetId. */
-  async deleteAsset(tenantId: string, assetId: string, token?: string): Promise<void> {
-    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { token, tenantId });
+  async deleteAsset(tenantId: string, assetId: string, sessionRef?: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { sessionRef, tenantId });
   },
 
   /** POST /api/v1/tenants/:id/assets/bulk: up to 500 at a time; rows whose name already exists come back in `skipped`. */
   async createAssetsBulk(
     tenantId: string,
     assets: AssetInput[],
-    token?: string
+    sessionRef?: string
   ): Promise<{ created: EnclaveAsset[]; skipped: Array<{ index: number; hostName: string; reason: string }> }> {
-    const data = await authedJson<{ created?: unknown; skipped?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets/bulk`, { token, tenantId, body: { assets } });
+    const data = await authedJson<{ created?: unknown; skipped?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets/bulk`, { sessionRef, tenantId, body: { assets } });
     return {
       created: parseServerAssets(data?.created),
       skipped: Array.isArray(data?.skipped) ? (data.skipped as Array<{ index: number; hostName: string; reason: string }>) : [],
@@ -653,12 +653,12 @@ export const ApiClient = {
   async ingestDiscovery(
     tenantId: string,
     items: AccretionDiscoveryItem[],
-    token?: string
+    sessionRef?: string
   ): Promise<{ totalProcessed: number; newDiscoveredCount: number; updatedExistingCount: number; created: EnclaveAsset[] }> {
     const data = await authedJson<{ totalProcessed?: number; newDiscoveredCount?: number; updatedExistingCount?: number; created?: unknown }>(
       'POST',
       `/tenants/${encodeURIComponent(tenantId)}/assets/discovery`,
-      { token, tenantId, body: { items } }
+      { sessionRef, tenantId, body: { items } }
     );
     return {
       totalProcessed: Number(data?.totalProcessed ?? items.length),
@@ -669,37 +669,37 @@ export const ApiClient = {
   },
 
   /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */
-  async listInvites(tenantId: string, token?: string): Promise<ServerInvitation[]> {
-    return parseServerInvitations(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/invites`, { token, tenantId }));
+  async listInvites(tenantId: string, sessionRef?: string): Promise<ServerInvitation[]> {
+    return parseServerInvitations(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/invites`, { sessionRef, tenantId }));
   },
 
   /** POST /api/v1/tenants/:id/invites. The returned `token` is shown ONCE: the server keeps only its hash. */
   async createInvite(
     tenantId: string,
     input: { email: string; role: TenantRole; expiresInDays?: number },
-    token?: string
+    sessionRef?: string
   ): Promise<{ invitation: ServerInvitation; token: string }> {
-    return this.invitationWithToken(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites`, { token, tenantId, body: input }));
+    return this.invitationWithToken(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites`, { sessionRef, tenantId, body: input }));
   },
 
   /** POST .../invites/:id/resend: a NEW token (the old link stops working) and a fresh expiry. */
-  async resendInvite(tenantId: string, invitationId: string, expiresInDays?: number, token?: string): Promise<{ invitation: ServerInvitation; token: string }> {
-    return this.invitationWithToken(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}/resend`, { token, tenantId, body: expiresInDays ? { expiresInDays } : {} }));
+  async resendInvite(tenantId: string, invitationId: string, expiresInDays?: number, sessionRef?: string): Promise<{ invitation: ServerInvitation; token: string }> {
+    return this.invitationWithToken(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}/resend`, { sessionRef, tenantId, body: expiresInDays ? { expiresInDays } : {} }));
   },
 
   /** POST .../invites/:id/extend: pushes the expiry out; the link stays the same. */
-  async extendInvite(tenantId: string, invitationId: string, days: number, token?: string): Promise<ServerInvitation> {
-    return this.singleInvitation(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}/extend`, { token, tenantId, body: { days } }));
+  async extendInvite(tenantId: string, invitationId: string, days: number, sessionRef?: string): Promise<ServerInvitation> {
+    return this.singleInvitation(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}/extend`, { sessionRef, tenantId, body: { days } }));
   },
 
   /** PATCH .../invites/:id: edits the email or role of an unused invitation. */
-  async updateInvite(tenantId: string, invitationId: string, patch: { email?: string; role?: TenantRole }, token?: string): Promise<ServerInvitation> {
-    return this.singleInvitation(await authedJson('PATCH', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}`, { token, tenantId, body: patch }));
+  async updateInvite(tenantId: string, invitationId: string, patch: { email?: string; role?: TenantRole }, sessionRef?: string): Promise<ServerInvitation> {
+    return this.singleInvitation(await authedJson('PATCH', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}`, { sessionRef, tenantId, body: patch }));
   },
 
   /** DELETE .../invites/:id: revokes. */
-  async revokeInvite(tenantId: string, invitationId: string, token?: string): Promise<ServerInvitation> {
-    return this.singleInvitation(await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}`, { token, tenantId }));
+  async revokeInvite(tenantId: string, invitationId: string, sessionRef?: string): Promise<ServerInvitation> {
+    return this.singleInvitation(await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/invites/${encodeURIComponent(invitationId)}`, { sessionRef, tenantId }));
   },
 
   singleInvitation(data: unknown): ServerInvitation {
@@ -731,8 +731,8 @@ export const ApiClient = {
   },
 
   /** POST /api/v1/invites/accept: consumes the token for the signed-in user. Throws ApiError with the reason. */
-  async acceptInvite(inviteToken: string, token?: string): Promise<{ tenantId: string; role: TenantRole; previousRole: TenantRole | null }> {
-    return authedJson('POST', '/invites/accept', { token, body: { token: inviteToken } });
+  async acceptInvite(inviteToken: string, sessionRef?: string): Promise<{ tenantId: string; role: TenantRole; previousRole: TenantRole | null }> {
+    return authedJson('POST', '/invites/accept', { sessionRef, body: { token: inviteToken } });
   },
 
   /**
@@ -760,8 +760,8 @@ export const ApiClient = {
    * The tenants the signed-in user belongs to, each with the user's role. Resolves null when the session is not
    * accepted (401), so callers can treat "not signed in" differently from a real failure (which throws).
    */
-  async listMyTenants(token?: string): Promise<ServerTenant[] | null> {
-    const result = await this.listMyTenantsResult(token);
+  async listMyTenants(sessionRef?: string): Promise<ServerTenant[] | null> {
+    const result = await this.listMyTenantsResult(sessionRef);
     return result.kind === 'ok' ? result.tenants : null;
   },
 
@@ -770,11 +770,11 @@ export const ApiClient = {
    * 'password_change_required' (the session is alive). Any other failure throws an ApiError that keeps its status
    * (0 = cannot reach the server), so the caller can tell an outage from a dead session.
    */
-  async listMyTenantsResult(token?: string): Promise<ListMyTenantsResult> {
-    const bearer = token ?? this.getToken();
-    if (!bearer) return { kind: 'rejected' };
+  async listMyTenantsResult(sessionRef?: string): Promise<ListMyTenantsResult> {
+    const ref = sessionRef ?? this.getSessionRef();
+    if (!ref) return { kind: 'rejected' };
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
-      headers: { [SESSION_MARKER_HEADER]: bearer },
+      headers: { [SESSION_MARKER_HEADER]: ref },
     });
     if (res.status === 401) return { kind: 'rejected' };
     const body = res.ok ? null : await res.json().catch(() => null);
@@ -788,11 +788,11 @@ export const ApiClient = {
    * GET /api/v1/me: whether the signed-in user is a platform administrator of THIS installation (decided by the server's
    * PLATFORM_ADMIN_EMAILS list). Resolves null when it cannot be determined, so the UI never assumes administrator rights.
    */
-  async getPlatformStatus(token?: string): Promise<{ isPlatformAdmin: boolean } | null> {
-    const bearer = token ?? this.getToken();
-    if (!bearer) return null;
+  async getPlatformStatus(sessionRef?: string): Promise<{ isPlatformAdmin: boolean } | null> {
+    const ref = sessionRef ?? this.getSessionRef();
+    if (!ref) return null;
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/me`, { headers: { [SESSION_MARKER_HEADER]: bearer } });
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/me`, { headers: { [SESSION_MARKER_HEADER]: ref } });
       if (!res.ok) return null;
       const data = (await res.json()) as { isPlatformAdmin?: unknown };
       return { isPlatformAdmin: data.isPlatformAdmin === true };
@@ -802,11 +802,11 @@ export const ApiClient = {
   },
 
   /** GET /api/v1/platform/admins (platform administrators only): the addresses configured on the server. Null if refused. */
-  async listPlatformAdmins(token?: string): Promise<string[] | null> {
-    const bearer = token ?? this.getToken();
-    if (!bearer) return null;
+  async listPlatformAdmins(sessionRef?: string): Promise<string[] | null> {
+    const ref = sessionRef ?? this.getSessionRef();
+    if (!ref) return null;
     try {
-      const res = await apiFetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { [SESSION_MARKER_HEADER]: bearer } });
+      const res = await apiFetch(`${API_BASE_URL}/api/v1/platform/admins`, { headers: { [SESSION_MARKER_HEADER]: ref } });
       if (!res.ok) return null;
       const data = (await res.json()) as { admins?: Array<{ email?: unknown }> };
       return (data.admins ?? []).map((a) => String(a.email ?? '')).filter(Boolean);
@@ -821,13 +821,13 @@ export const ApiClient = {
    */
   async createTenant(
     input: TenantSettingsInput & { name: string },
-    token?: string
+    sessionRef?: string
   ): Promise<{ tenant: { id: string; name: string } & Record<string, unknown>; role: string }> {
-    const bearer = token ?? this.getToken();
-    if (!bearer) throw new ApiError(401, 'You need to be signed in to create a tenant.');
+    const ref = sessionRef ?? this.getSessionRef();
+    if (!ref) throw new ApiError(401, 'You need to be signed in to create a tenant.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', [SESSION_MARKER_HEADER]: bearer },
+      headers: { 'Content-Type': 'application/json', [SESSION_MARKER_HEADER]: ref },
       body: JSON.stringify(input),
     });
     const data = await res.json().catch(() => null);
@@ -839,12 +839,12 @@ export const ApiClient = {
    * PATCH /api/v1/tenants/:tenantId
    * Updates tenant settings. Owner / MSP admin only. Throws ApiError.
    */
-  async updateTenant(tenantId: string, patch: TenantSettingsInput, token?: string): Promise<void> {
-    const bearer = token ?? this.getToken();
-    if (!bearer) throw new ApiError(401, 'You need to be signed in to change tenant settings.');
+  async updateTenant(tenantId: string, patch: TenantSettingsInput, sessionRef?: string): Promise<void> {
+    const ref = sessionRef ?? this.getSessionRef();
+    if (!ref) throw new ApiError(401, 'You need to be signed in to change tenant settings.');
     const res = await apiFetch(`${API_BASE_URL}/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', [SESSION_MARKER_HEADER]: bearer, 'x-tenant-id': tenantId },
+      headers: { 'Content-Type': 'application/json', [SESSION_MARKER_HEADER]: ref, 'x-tenant-id': tenantId },
       body: JSON.stringify(patch),
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => null));
@@ -927,10 +927,10 @@ export const ApiClient = {
    * POST /api/v1/auth/password: needs the current password and, for an enrolled account, a fresh code. Every other session of the
    * account ends; the response is the new session, which the caller must store.
    */
-  async changePassword(currentPassword: string, newPassword: string, code?: string, token?: string): Promise<LocalLoginResponse> {
+  async changePassword(currentPassword: string, newPassword: string, code?: string, sessionRef?: string): Promise<LocalLoginResponse> {
     const body: Record<string, string> = { currentPassword, newPassword };
     if (code) body.code = code;
-    const result = parseLocalLoginResult(await accountJson<unknown>('POST', '/auth/password', { body, token }));
+    const result = parseLocalLoginResult(await accountJson<unknown>('POST', '/auth/password', { body, sessionRef }));
     if (result.kind !== 'session') throw new ApiError(502, 'The server sent back a sign-in response this version of the app does not understand.');
     const { kind: _kind, ...session } = result;
     return session;
@@ -980,7 +980,7 @@ export const ApiClient = {
   /**
    * Retrieve the session reference from localStorage: a marker, not a credential; the session itself is an HttpOnly cookie
    */
-  getToken(): string | null {
+  getSessionRef(): string | null {
     try {
       const ref = localStorage.getItem(SESSION_REF_KEY);
       // Another tab ended or replaced this tab's session: there is no reference to send (#32)
@@ -999,15 +999,15 @@ export const ApiClient = {
    * Constructs authorization and tenant context headers
    */
   getHeaders(tenantId: string, extraHeaders?: HeadersInit, programId?: string | null): HeadersInit {
-    const token = this.getToken();
+    const sessionRef = this.getSessionRef();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-tenant-id': tenantId,
     };
     if (programId) headers['x-program-id'] = programId;
 
-    if (token) {
-      headers[SESSION_MARKER_HEADER] = token;
+    if (sessionRef) {
+      headers[SESSION_MARKER_HEADER] = sessionRef;
     }
 
     return {
@@ -1042,8 +1042,8 @@ export const ApiClient = {
     },
     programId?: string | null
   ): Promise<ControlState[]> {
-    const token = this.getToken();
-    if (!token) {
+    const sessionRef = this.getSessionRef();
+    if (!sessionRef) {
       throw new Error('Not authenticated: ID token not found');
     }
 
@@ -1203,8 +1203,8 @@ export const ApiClient = {
    * Retrieves all evidence artifacts for the active tenant
    */
   async getEvidence(tenantId: string, programId?: string | null): Promise<EvidenceItem[]> {
-    const token = this.getToken();
-    if (!token) {
+    const sessionRef = this.getSessionRef();
+    if (!sessionRef) {
       throw new Error('Not authenticated: ID token not found');
     }
 
@@ -1286,12 +1286,12 @@ export const ApiClient = {
    */
   async getStorageInfo(
     tenantId: string,
-    token?: string | null
+    sessionRef?: string | null
   ): Promise<{ provider: string; localStoragePath: string; isAirGapped: boolean } | null> {
-    // The caller can pass the session token itself: right after sign-in it is not in browser storage yet.
+    // The caller can pass the session reference itself: right after sign-in it is not in browser storage yet.
     const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
       method: 'GET',
-      headers: this.getHeaders(tenantId, token ? { [SESSION_MARKER_HEADER]: token } : undefined),
+      headers: this.getHeaders(tenantId, sessionRef ? { [SESSION_MARKER_HEADER]: sessionRef } : undefined),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -1345,9 +1345,9 @@ export const ApiClient = {
     if (programId) {
       headers['x-program-id'] = programId;
     }
-    const token = this.getToken();
-    if (token) {
-      headers[SESSION_MARKER_HEADER] = token;
+    const sessionRef = this.getSessionRef();
+    if (sessionRef) {
+      headers[SESSION_MARKER_HEADER] = sessionRef;
     }
 
     const res = await apiFetch(targetUrl, {

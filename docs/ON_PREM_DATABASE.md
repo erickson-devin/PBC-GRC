@@ -230,6 +230,18 @@ docker exec singularity-app npm run db:prune-assessment-events -- --dry-run
 (`--days N` overrides the setting for that run; `--tenant <id>` limits it.) The first start after the upgrade that adds this
 builds two indexes on the history tables; on a large history that takes a moment and holds up writes while it runs.
 
+The daily sweep lists the programs that exist, so it never removes the history of a program that has since been deleted
+(the history deliberately outlives its program). To remove that too, run this in a quiet window after a backup, first as a
+dry run and then without `--dry-run`:
+
+```bash
+docker exec singularity-app npm run db:prune-assessment-events -- --include-deleted-programs --dry-run
+```
+
+The flag runs the normal sweep and then this extra pass, with the same `--days`, `--tenant` and `--dry-run`. Finding those
+events briefly locks the two history tables (it gives up after 5 seconds and reports the error code), and the output is
+counts only.
+
 ## Releases
 
 A release is an annotated SemVer tag `vX.Y.Z` on a commit that is already on `main` and whose `package.json` `version` is
@@ -249,9 +261,11 @@ Operators set `IMAGE_TAG=vX.Y.Z` in `.env` (or `vX.Y.Z@sha256:<digest>` for an i
 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows it; once running,
 `GET /api/v1/health` reports `version` (from `package.json`) and `buildCommit`.
 
-The Dockerfile base image (`node:22-alpine`), the compose database image (`postgres:16-alpine`) and the CI actions are
+The Dockerfile base image (`node:22-alpine`), the compose database image (`postgres:16-alpine`), the optional Ollama image
+(`ollama/ollama`, the `ai` profile; `OLLAMA_IMAGE_TAG` overrides it) and the CI actions are
 pinned by digest or commit. Dependabot (`.github/dependabot.yml`) opens a pull request when a newer one exists; a pin
-changes only in a reviewed pull request.
+changes only in a reviewed pull request. The CMMC import is tuned for the `llama3.2:3b` model, not for a server version:
+change the Ollama pin only in a reviewed pull request and run an SSP import before relying on it.
 
 ## Upgrading to a new release (no wipe)
 
@@ -321,7 +335,9 @@ What makes an upgrade safe is the release routine around it:
 
 **Stopping the app.** `docker stop singularity-app` (or `docker compose down`) sends SIGTERM, which the server handles: it
 stops accepting connections, cancels any SSP import that is running or queued (the import shows "The server was shut down
-while this import was running. Upload the document again."), stops the document-reader child processes, closes its database
+while this import was running. Upload the document again."), stops a vulnerability-management run in progress at its next
+step (it shows "The server was shut down while this run was being processed. ..."; the scanner's next push sends the data
+again, or an owner can reprocess the run; runs still waiting stay received and are processed after the next start), stops the document-reader child processes, closes its database
 connections and exits, all within 8 seconds, inside Docker's default 10-second stop timeout. The compose file runs the app with
 `init: true`, so the signal reaches the server and leftover processes are reaped. Its log shows `[Shutdown] SIGTERM received`
 and `[Shutdown] complete` (signal and counts only, never a document, file or person). A container killed outright
@@ -356,7 +372,7 @@ DB_HOST=... DB_USER=grc_app DB_PASS=... DB_NAME=cmmc_compliance_db npm run db:ve
 docker exec singularity-app npm run db:verify-rls
 ```
 
-The script also proves the vulnerability-management tables' isolation, that the composite foreign keys refuse a finding attached to another tenant's asset, and that the two SELECT-only discovery policies (`app.vm_token_hash` for the service-token lookup, `app.vm_scheduler` for scheduler enumeration) see nothing without their setting. **PostgreSQL 15 or later is required**: the vulnerability-management schema uses `ON DELETE SET NULL (column)`, which older versions reject (the bundled compose file ships 16). Startup now enforces this: `initDb` refuses to continue on PostgreSQL older than 15 and reports `PBC-GRC requires PostgreSQL 15 or later; found <version>`.
+The script also proves the vulnerability-management tables' isolation, that the composite foreign keys refuse a finding attached to another tenant's asset, and that the two SELECT-only discovery policies (`app.vm_token_hash` for the service-token lookup, `app.vm_scheduler` for scheduler enumeration) see nothing without their setting. Section 7 also proves `local_user_password_history`: a global table without row security, a CHECK that admits only bcrypt hashes, that a password change records the previous hash and keeps only `PASSWORD_HISTORY_DEPTH` of them (none for a temporary password), and that deleting the account deletes its history. Section 3e proves the operator pass for the history of deleted programs (the daily sweep leaves it, the pass deletes it through the per-program deletes, and FORCE row security is back afterwards). **PostgreSQL 15 or later is required**: the vulnerability-management schema uses `ON DELETE SET NULL (column)`, which older versions reject (the bundled compose file ships 16). Startup now enforces this: `initDb` refuses to continue on PostgreSQL older than 15 and reports `PBC-GRC requires PostgreSQL 15 or later; found <version>`.
 
 ## Local development without PostgreSQL
 

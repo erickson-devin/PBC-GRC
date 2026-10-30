@@ -20,6 +20,7 @@ import {
   saveFindings,
   withVmTenantTx,
 } from './findingsStore';
+import { VM_SHUTDOWN_MESSAGE } from '../shutdown';
 import { validateIngestPayload } from './ingestSchema';
 import { getRun, listUnfinishedRuns, updateRun } from './store';
 import { applyRun, getVmSlaConfig, isPoamAutocreateEnabled, planPoamItems, staleRunsToRecover, VM_WORKER_ACTOR, type ReportedHost } from './transitions';
@@ -31,14 +32,16 @@ import { applyRun, getVmSlaConfig, isPoamAutocreateEnabled, planPoamItems, stale
  */
 
 const active = new Set<string>();
-const controllers = new Map<string, AbortController>();
+const controllers = new Map<string, { controller: AbortController; tenantId: string }>();
+/** Set by the shutdown: nothing new starts, so a run still queued stays RECEIVED and is recovered after the restart. */
+let stopping = false;
 let chain: Promise<void> = Promise.resolve();
 const STALE_AFTER_MS = 2 * 60 * 1000;
 
 /** Test hook: makes the worker throw after the findings and sightings were written, to prove nothing of the run survives. */
-let faultForTests: 'after_save' | null = null;
+let faultForTests: 'after_save' | 'interrupt_after_save' | null = null;
 
-export function __setVmWorkerFaultForTests(fault: 'after_save' | null): void {
+export function __setVmWorkerFaultForTests(fault: 'after_save' | 'interrupt_after_save' | null): void {
   faultForTests = fault;
 }
 
@@ -49,10 +52,26 @@ export async function __drainVmWorkerForTests(): Promise<void> {
 
 export const isVmRunActive = (runId: string): boolean => active.has(runId);
 
+/** The runs queued or running, for the shutdown. */
+export function activeVmRuns(): Array<{ id: string; tenantId: string }> {
+  return [...controllers].map(([id, c]) => ({ id, tenantId: c.tenantId }));
+}
+
+/** Shutdown: stops the runs at their next checkpoint and refuses new ones. */
+export function abortVmRuns(): void {
+  stopping = true;
+  for (const c of controllers.values()) c.controller.abort();
+}
+
+/** Test hook: lets the worker accept runs again after abortVmRuns. */
+export function __resumeVmWorkerForTests(): void {
+  stopping = false;
+}
+
 export function enqueueVmRun(tenantId: string, runId: string): void {
-  if (active.has(runId)) return;
+  if (stopping || active.has(runId)) return;
   active.add(runId);
-  controllers.set(runId, new AbortController());
+  controllers.set(runId, { controller: new AbortController(), tenantId });
   chain = chain
     .then(() => processRun(tenantId, runId))
     .catch((err: unknown) => console.error('[VM Worker]', errorMessage(err)))
@@ -80,6 +99,8 @@ export async function recoverStaleRuns(tenantId: string): Promise<void> {
 
 /** A failure the operator can read in the run: the message is fixed text or a validation error, never a payload value. */
 class RunFailure extends Error {}
+/** The shutdown aborted the run at a checkpoint; inside the transaction the throw rolls everything back. */
+class RunInterrupted extends Error {}
 
 const UNREADABLE = 'The stored payload could not be read.';
 const GENERIC = 'Normalization failed unexpectedly. Check the server log.';
@@ -104,6 +125,11 @@ interface RunSummary {
 }
 
 async function processRun(tenantId: string, runId: string): Promise<void> {
+  const signal = controllers.get(runId)?.controller.signal;
+  if (signal?.aborted) return; // still queued at shutdown: the run stays RECEIVED
+  const checkpoint = (): void => {
+    if (signal?.aborted) throw new RunInterrupted();
+  };
   const run = await getRun(tenantId, runId);
   if (!run || run.status === 'NORMALIZED' || run.status === 'FAILED') return;
 
@@ -131,6 +157,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     const validation = validateIngestPayload(parsed);
     if (!validation.ok) throw new RunFailure(validation.error);
     const payload = validation.value;
+    checkpoint();
 
     const kind = payload.source.kind;
     let hosts: NormalizedHost[];
@@ -140,11 +167,13 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     const now = new Date().toISOString();
     // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the default program when none is set, decision 6).
     const programId = (await resolveVmTargetProgram(tenantId)).program.id;
+    checkpoint();
     const summary = await withVmTenantTx(tenantId, async (client): Promise<RunSummary> => {
       const pgClient = client ?? undefined;
       let candidates = await listAgentAssetCandidates(tenantId, pgClient);
       const remainingCapacity = MAX_ASSETS_PER_TENANT - (await countAssets(tenantId, pgClient));
       const plan = planAssetMatches(hosts, candidates, kind, remainingCapacity);
+      checkpoint();
 
       const assetOf = new Map<string, string>(); // agent id -> asset id
       for (const m of plan.matched) assetOf.set(m.agentId, m.assetId);
@@ -195,6 +224,8 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       await saveFindings(tenantId, result, client);
       await insertSightings(tenantId, result.sightings, client);
       if (faultForTests === 'after_save') throw new Error('fault injected for tests');
+      if (faultForTests === 'interrupt_after_save') controllers.get(runId)?.controller.abort();
+      checkpoint();
 
       let poam = 0;
       if (isPoamAutocreateEnabled()) {
@@ -214,6 +245,11 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     );
   } catch (err: unknown) {
     // The transaction (if any) rolled back; the run's status is written on its own.
+    if (err instanceof RunInterrupted) {
+      console.log('[VM Worker] a run was interrupted by the shutdown');
+      await fail(tenantId, runId, VM_SHUTDOWN_MESSAGE);
+      return;
+    }
     if (err instanceof RunFailure) {
       console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (${err.message})`);
       await fail(tenantId, runId, err.message);

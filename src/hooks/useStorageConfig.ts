@@ -14,13 +14,13 @@ import { useAuth } from '../context/AuthContext';
  */
 export function useStorageConfig(tenantId: string | undefined): StorageConfig & { loaded: boolean } {
   const config = useSyncExternalStore(subscribeStorageConfig, getStorageConfig);
-  const { idToken } = useAuth();
+  const { sessionRef } = useAuth();
 
-  // Wait for the sign-in token and pass it along: it is not in browser storage yet when the first request would go out.
+  // Wait for the session reference and pass it along: it is not in browser storage yet when the first request would go out.
   useEffect(() => {
-    if (!tenantId || !idToken || getServerStorageConfig()) return;
-    void fetchStorageConfig(tenantId, idToken);
-  }, [tenantId, idToken]);
+    if (!tenantId || !sessionRef || getServerStorageConfig()) return;
+    void fetchStorageConfig(tenantId, sessionRef);
+  }, [tenantId, sessionRef]);
 
   const loaded = getServerStorageConfig() !== null;
   return useMemo(() => ({ ...config, loaded }), [config, loaded]);

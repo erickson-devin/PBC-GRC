@@ -145,6 +145,88 @@ export async function pruneAssessmentEvents(
   }
 }
 
+/** queryWithProgram strips every other character from an id, so only ids that survive that are swept. */
+const SCOPE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Operator only. The (tenant, program) pairs that still hold events older than the cutoff although the program is gone (the history has no
+ * foreign key to programs, and the daily sweep lists programs, so it never reaches them). FORCE row security is lifted on the two event tables
+ * only to find them, and the transaction always rolls back (restoring it): nothing is ever committed with FORCE off. programs is read through
+ * app.event_retention. The deletes then run through the row-confined per-program functions.
+ */
+async function listDeletedProgramScopes(cutoff: Date): Promise<{ tenantId: string; programId: string }[]> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SELECT set_config('app.event_retention', 'on', true)");
+    await client.query('ALTER TABLE control_assessment_events NO FORCE ROW LEVEL SECURITY');
+    await client.query('ALTER TABLE control_objective_events NO FORCE ROW LEVEL SECURITY');
+    const res = await client.query(
+      `SELECT DISTINCT e.tenant_id, e.program_id FROM (
+         SELECT tenant_id, program_id FROM control_assessment_events WHERE program_id IS NOT NULL AND created_at < $1
+         UNION SELECT tenant_id, program_id FROM control_objective_events WHERE created_at < $1) e
+       WHERE NOT EXISTS (SELECT 1 FROM programs p WHERE p.tenant_id = e.tenant_id AND p.id = e.program_id)
+       ORDER BY 1, 2`,
+      [cutoff.toISOString()]
+    );
+    return res.rows.map((r) => ({ tenantId: String(r.tenant_id), programId: String(r.program_id) }));
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined); // restores FORCE
+    client.release();
+  }
+}
+
+/**
+ * Operator pass (scripts/pruneAssessmentEvents.ts --include-deleted-programs, issue #150): deletes the events older than the cutoff of programs that
+ * no longer exist. Not part of the daily sweep. Same guard, cutoff, batch and dry-run handling as pruneAssessmentEvents; never throws; logs only
+ * counts and SQLSTATE codes (no tenant id). Memory mode returns `skipped`: its sweep already covers deleted programs.
+ */
+export async function pruneDeletedProgramEvents(
+  opts: { now?: Date; days?: number; batchSize?: number; dryRun?: boolean; onlyTenantIds?: readonly string[] } = {}
+): Promise<PruneResult> {
+  if (running) return emptyResult(true);
+  running = true;
+  const result = emptyResult(false);
+  try {
+    const days = opts.days ?? getAssessmentEventRetention().days;
+    const cutoff = retentionCutoff(opts.now ?? new Date(), days);
+    if (!cutoff) return emptyResult(true);
+    if (getDbMode() === 'memory') return emptyResult(true);
+    const batchSize = Math.max(1, Math.floor(opts.batchSize ?? RETENTION_BATCH));
+    const dryRun = opts.dryRun === true;
+    const only = opts.onlyTenantIds ? new Set(opts.onlyTenantIds) : null;
+
+    let scopes: { tenantId: string; programId: string }[] = [];
+    try {
+      scopes = (await listDeletedProgramScopes(cutoff)).filter((s) => (!only || only.has(s.tenantId)) && SCOPE_ID.test(s.tenantId) && SCOPE_ID.test(s.programId));
+    } catch (err: unknown) {
+      console.error(`[Retention] deleted programs: could not list (code ${sqlState(err)})`);
+      result.errors += 1;
+      return result;
+    }
+    for (const scope of scopes) {
+      result.scopes += 1;
+      try {
+        result.deleted += await pruneControlAssessmentEventsInScope(scope, cutoff, batchSize, dryRun);
+        result.deletedObjectives += await pruneObjectiveEventsInScope(scope, cutoff, batchSize, dryRun);
+      } catch (err: unknown) {
+        console.error(`[Retention] a deleted program's events: failed (code ${sqlState(err)})`);
+        result.errors += 1;
+      }
+    }
+    const verb = dryRun ? 'would delete' : 'deleted';
+    console.log(`[Retention] deleted programs: ${verb} ${result.deleted} control_assessment_events and ${result.deletedObjectives} control_objective_events row(s) older than ${days} days in ${result.scopes} program(s)`);
+    return result;
+  } catch (err: unknown) {
+    console.error(`[Retention] deleted programs: sweep failed (code ${sqlState(err)})`);
+    result.errors += 1;
+    return result;
+  } finally {
+    running = false;
+  }
+}
+
 let started = false;
 let firstRun: NodeJS.Timeout | null = null;
 let interval: NodeJS.Timeout | null = null;

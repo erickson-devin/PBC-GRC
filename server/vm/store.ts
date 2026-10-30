@@ -319,6 +319,30 @@ export async function listUnfinishedRuns(tenantId: string): Promise<VmRun[]> {
   });
 }
 
+/**
+ * The shutdown's mark for a run that was being processed: FAILED with `message`, but only while the run is still NORMALIZING, so a
+ * run that committed NORMALIZED a moment earlier is not overwritten and a queued (RECEIVED) run keeps its automatic recovery.
+ * Returns whether a row changed.
+ */
+export async function markRunInterrupted(tenantId: string, id: string, message: string): Promise<boolean> {
+  const finishedAt = new Date().toISOString();
+  if (isMemory()) {
+    const run = memoryRuns.get(id);
+    if (!run || run.tenantId !== tenantId || run.status !== 'NORMALIZING') return false;
+    run.status = 'FAILED';
+    run.error = message;
+    run.finishedAt = finishedAt;
+    return true;
+  }
+  return inTenantTx(tenantId, async (client) => {
+    const { rowCount } = await client.query(
+      "UPDATE vm_runs SET status = 'FAILED', error = $3, finished_at = $4 WHERE tenant_id = $1 AND id = $2 AND status = 'NORMALIZING'",
+      [tenantId, id, message, finishedAt],
+    );
+    return (rowCount ?? 0) > 0;
+  });
+}
+
 /** Puts a run back to RECEIVED with its error, warning and timestamps cleared, so the worker normalizes it again. */
 export async function resetRunForReprocess(tenantId: string, id: string): Promise<VmRun> {
   return updateRun(tenantId, id, { status: 'RECEIVED', error: null, warning: null, startedAt: null, finishedAt: null });

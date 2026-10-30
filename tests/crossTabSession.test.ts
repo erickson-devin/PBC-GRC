@@ -140,7 +140,7 @@ assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && S
     store.set(REF_KEY, 'R1');
     store.set(USER_KEY, U1);
     stub(200, []);
-    assert(ApiClient.getToken() === 'R1', 'S32-13a the own session is returned');
+    assert(ApiClient.getSessionRef() === 'R1', 'S32-13a the own session is returned');
     await attempt(() => ApiClient.listMyTenants());
     await flush();
     assert(inits.length === 1 && markerOf(inits[0]) === 'R1' && heard.length === 0, 'S32-13b the request is sent with the own reference and nothing signals', { n: inits.length, heard });
@@ -150,7 +150,7 @@ assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && S
     store.set(REF_KEY, 'R2');
     store.set(USER_KEY, U2);
     stub(200, []);
-    assert(ApiClient.getToken() === null, 'S32-14a another account in the stored session: no reference');
+    assert(ApiClient.getSessionRef() === null, 'S32-14a another account in the stored session: no reference');
     const r14 = await attempt(() => ApiClient.listMyTenants());
     await flush();
     assert(r14.value === null && inits.length === 0, 'S32-14b nothing is sent', { r14, n: inits.length });
@@ -178,14 +178,14 @@ assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && S
     store.set(REF_KEY, 'R2');
     store.set(USER_KEY, U1);
     stub(200, []);
-    assert(ApiClient.getToken() === 'R2', 'S32-17a the same user rotated elsewhere is adopted');
+    assert(ApiClient.getSessionRef() === 'R2', 'S32-17a the same user rotated elsewhere is adopted');
     await attempt(() => ApiClient.listMyTenants());
     await flush();
     assert(inits.length === 1 && markerOf(inits[0]) === 'R2' && heard.length === 0, 'S32-17b the request carries the new reference, no signal', { n: inits.length, heard });
 
     fresh();
     store.set(REF_KEY, 'R2');
-    assert(ApiClient.getToken() === 'R2', 'S32-18a nothing pinned: the stored reference is returned');
+    assert(ApiClient.getSessionRef() === 'R2', 'S32-18a nothing pinned: the stored reference is returned');
     await flush();
     assert(heard.length === 0, 'S32-18b nothing pinned: no signal');
 
@@ -237,7 +237,7 @@ assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && S
   assert(auth.includes("addEventListener('storage'") && auth.includes("removeEventListener('storage'") && auth.includes('visibilitychange')
     && onStorageSlice.includes('AUTH_SESSION_REF_KEY') && onStorageSlice.includes('AUTH_USER_KEY'), 'S32-21 AuthContext listens to storage, focus and visibility and removes them');
 
-  const listener = slice(auth, 'onSessionRejected((token, reason)', 'The first tenant sync');
+  const listener = slice(auth, 'onSessionRejected((ref, reason)', 'The first tenant sync');
   const iRescue = listener.indexOf('rescueUnsavedText(');
   const iCross = listener.indexOf('isCrossTabReason(');
   const iLogout = listener.indexOf('void logout()');
@@ -256,7 +256,7 @@ assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && S
   const iPin = hus.indexOf('pinTabSession(');
   assert(iUser >= 0 && iUser < iRef && iRef < iPin && iPin >= 0 && auth.indexOf('syncAuthUser(userProfile') > auth.indexOf('const handleUserSession') + iPin, 'S32-24 sign-in writes the user record, then the reference, then pins, then syncs');
 
-  const syncSlice = slice(auth, '// Sync user and token to storage', 'useLayoutEffect(');
+  const syncSlice = slice(auth, '// Sync user and session reference to storage', 'useLayoutEffect(');
   assert(syncSlice.indexOf("tabSessionState() !== 'own'") >= 0 && syncSlice.indexOf("tabSessionState() !== 'own'") < syncSlice.indexOf('localStorage.'), 'S32-25 the storage-sync effect checks ownership before any storage access');
 
   const cp = slice(auth, 'const changePassword', 'const registerWithInvite');

@@ -41,8 +41,9 @@ desktop.ini
 
 scanner-agent/
 
-# Local evidence vault and other runtime data
+# Local evidence vault and other runtime data (the shipped catalogs under src/data are source, not runtime data)
 data/
+!src/data/
 
 # Python (exporters/pbc-vm-exporter)
 __pycache__/

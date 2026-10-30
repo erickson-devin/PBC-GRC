@@ -90,14 +90,14 @@ const LEGACY_STORAGE_KEYS = [
 ];
 
 /**
- * Right after a sign-in the session token is saved to localStorage by an effect, a moment after the sign-in promise
+ * Right after a sign-in the session reference is saved to localStorage by an effect, a moment after the sign-in promise
  * resolves. Wait briefly for it instead of failing a claim that is made straight away.
  */
-async function waitForSessionToken(timeoutMs = 3000): Promise<string | null> {
+async function waitForSessionRef(timeoutMs = 3000): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const token = ApiClient.getToken();
-    if (token) return token;
+    const ref = ApiClient.getSessionRef();
+    if (ref) return ref;
     if (Date.now() > deadline) return null;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -285,7 +285,7 @@ interface TenantContextType {
   ) => Promise<void>;
   claimInviteToken: (
     token: string,
-    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; idToken?: string }
+    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; sessionRef?: string }
   ) => Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }>;
   inviteStaffMember: (
     tenantId: string,
@@ -372,7 +372,7 @@ interface TenantContextType {
    * or null if there is nothing to sync (not signed in, or the session was rejected). `force` waits for a
    * sync already in flight and then runs a fresh one.
    */
-  syncTenantsFromServer: (token?: string, options?: { force?: boolean }) => Promise<Tenant[] | null>;
+  syncTenantsFromServer: (sessionRef?: string, options?: { force?: boolean }) => Promise<Tenant[] | null>;
   refreshLiveData: (
     tenantToFetch?: string,
     frameworkToFetch?: ComplianceFramework,
@@ -589,9 +589,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setServerLoadsPausedState(paused);
   }, []);
 
-  const syncTenantsFromServer = useCallback(async (tokenOverride?: string, options?: { force?: boolean }): Promise<Tenant[] | null> => {
-    const token = tokenOverride ?? ApiClient.getToken();
-    if (!token) return null;
+  const syncTenantsFromServer = useCallback(async (sessionRefOverride?: string, options?: { force?: boolean }): Promise<Tenant[] | null> => {
+    const ref = sessionRefOverride ?? ApiClient.getSessionRef();
+    if (!ref) return null;
     if (syncInFlight.current) {
       // Coalesce overlapping triggers (login + mount), unless the caller needs a sync that starts AFTER now
       // (e.g. right after creating a tenant, when an older in-flight listing would not include it).
@@ -602,7 +602,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const run = (async (): Promise<Tenant[] | null> => {
       setTenantSync((prev) => ({ ...prev, status: 'syncing', error: null }));
       try {
-        const [listed, platform] = await Promise.all([ApiClient.listMyTenantsResult(token), ApiClient.getPlatformStatus(token)]);
+        const [listed, platform] = await Promise.all([ApiClient.listMyTenantsResult(ref), ApiClient.getPlatformStatus(ref)]);
         // The server decides who administers this platform; an unknown answer never grants rights
         if (platform) setCurrentUser((prev) => (prev.isSuperAdmin === platform.isPlatformAdmin ? prev : { ...prev, isSuperAdmin: platform.isPlatformAdmin }));
         if (listed.kind !== 'ok') {
@@ -639,7 +639,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Reload with an existing session: refresh the cache from the server straight away.
   useEffect(() => {
-    if (ApiClient.getToken()) {
+    if (ApiClient.getSessionRef()) {
       void syncTenantsFromServer();
     }
   }, [syncTenantsFromServer]);
@@ -655,12 +655,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     input: ServerTenantPatch & { name: string },
     browserOnly: Partial<Pick<Tenant, 'domain' | 'isConfigured'>> & { activate?: boolean } = {}
   ): Promise<Tenant> => {
-    const token = ApiClient.getToken() ?? undefined;
-    const created = await ApiClient.createTenant(input, token);
+    const ref = ApiClient.getSessionRef() ?? undefined;
+    const created = await ApiClient.createTenant(input, ref);
     const createdId = created.tenant.id;
 
     // Pull the authoritative record (and our role) from the server.
-    const synced = await syncTenantsFromServer(token, { force: true });
+    const synced = await syncTenantsFromServer(ref, { force: true });
     let tenant = synced?.find((t) => t.id === createdId);
 
     if (!tenant) {
@@ -971,7 +971,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       commitPrograms({ tenantId: currentTenant.id, programs: NO_PROGRAMS, status: 'unsupported', activeId: null });
       return;
     }
-    if (mayLoadServerData(Boolean(ApiClient.getToken()), serverLoadsPausedRef.current)) void refreshPrograms(currentTenant.id);
+    if (mayLoadServerData(Boolean(ApiClient.getSessionRef()), serverLoadsPausedRef.current)) void refreshPrograms(currentTenant.id);
   }, [currentTenant.id, currentTenant.serverBacked, refreshPrograms, commitPrograms, serverLoadsPaused]);
 
   /**
@@ -1098,8 +1098,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    const token = ApiClient.getToken();
-    if (!token) {
+    const ref = ApiClient.getSessionRef();
+    if (!ref) {
       // Unauthenticated fallback
       setLiveScopeKey(null);
       return;
@@ -1156,7 +1156,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Automatically pull live controls & evidence when tenant, program, framework, or overlay changes
   useEffect(() => {
-    if (ApiClient.getToken() && programsReady) {
+    if (ApiClient.getSessionRef() && programsReady) {
       refreshLiveData(currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE', activeProgramId);
     } else {
       liveSeq.current++;
@@ -1336,7 +1336,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // A server-backed tenant's team and invitations live on the server: load them when it becomes active (or the role changes)
   useEffect(() => {
-    if (currentTenant.serverBacked && mayLoadServerData(Boolean(ApiClient.getToken()), serverLoadsPausedRef.current)) void refreshTeam(currentTenant.id);
+    if (currentTenant.serverBacked && mayLoadServerData(Boolean(ApiClient.getSessionRef()), serverLoadsPausedRef.current)) void refreshTeam(currentTenant.id);
   }, [currentTenant.id, currentTenant.serverBacked, currentRole, refreshTeam, serverLoadsPaused]);
 
   const switchTenant = useCallback((tenantId: string) => {
@@ -1771,7 +1771,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     // Reconcile tenants and roles with the server, then load live data for the active tenant
-    if (!options.skipServerSync && (user.idToken || ApiClient.getToken())) {
+    if (!options.skipServerSync && (user.idToken || ApiClient.getSessionRef())) {
       void syncTenantsFromServer(user.idToken || undefined)
         .then(() => refreshPrograms(preferredTenantId))
         .then(() => refreshLiveData(preferredTenantId));
@@ -1838,14 +1838,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    */
   const claimInviteToken = useCallback(async (
     token: string,
-    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; idToken?: string }
+    userCredentials: { id?: string; name: string; email: string; authProvider: AuthProviderType; sessionRef?: string }
   ): Promise<{ success: boolean; tenant?: Tenant; role?: TenantRole; error?: string }> => {
     // The server consumes the token and adds the signed-in user to the tenant.
-    const bearer = userCredentials.idToken ?? (await waitForSessionToken());
-    if (!bearer) return { success: false, error: 'Please sign in first, then open the invitation link again.' };
+    const ref = userCredentials.sessionRef ?? (await waitForSessionRef());
+    if (!ref) return { success: false, error: 'Please sign in first, then open the invitation link again.' };
     try {
-      const accepted = await ApiClient.acceptInvite(token, bearer);
-      const synced = await syncTenantsFromServer(bearer, { force: true });
+      const accepted = await ApiClient.acceptInvite(token, ref);
+      const synced = await syncTenantsFromServer(ref, { force: true });
       const tenant = synced?.find(t => t.id === accepted.tenantId);
       setLiveActiveTenantId(accepted.tenantId);
       return { success: true, tenant, role: accepted.role };

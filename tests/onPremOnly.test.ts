@@ -429,6 +429,9 @@ if (app) {
   assert(!('IMAGE_TAG' in mapOf(app, 'environment')), 'IMAGE_TAG is a compose variable only, not passed into the app environment');
 }
 assert(!!db && db.lines.some((l) => /^image: postgres:16-alpine@sha256:[0-9a-f]{64}$/.test(l.trim())), 'the db service image is postgres:16-alpine pinned by a sha256 digest', db && db.lines.filter((l) => /^\s+image:/.test(l)));
+const composeImages = services.flatMap((s) => s.lines).filter((l) => /^\s+image:/.test(l));
+assert(composeImages.length >= 3 && composeImages.every((l) => !/latest/i.test(l)), 'no compose image: line references latest (#169)', composeImages);
+assert(!!ollama && ollama.lines.some((l) => /^image: ollama\/ollama:\$\{OLLAMA_IMAGE_TAG:-\d+\.\d+\.\d+@sha256:[0-9a-f]{64}\}$/.test(l.trim())), 'the ollama image is ollama/ollama pinned by version and sha256 digest in the OLLAMA_IMAGE_TAG default (#169)', ollama && ollama.lines.filter((l) => /^\s+image:/.test(l)));
 assert(/^# IMAGE_TAG=v\d+\.\d+\.\d+\s*$/m.test(envExample), '.env.example documents IMAGE_TAG=v<x.y.z>');
 const dependabotPath = path.join(root, '.github', 'dependabot.yml');
 const dependabot = fs.existsSync(dependabotPath) ? fs.readFileSync(dependabotPath, 'utf8') : '';

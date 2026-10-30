@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import {
   SHUTDOWN_CANCEL_MESSAGE,
   SHUTDOWN_DEADLINE_MS,
+  VM_SHUTDOWN_MESSAGE,
   __resetShutdownForTests,
   createShutdown,
   installSignalHandlers,
@@ -40,13 +41,15 @@ interface Rig {
   exits: number[];
   counts: { force: number; closeServer: number; closePool: number; mark: number };
   marked: Array<{ id: string; scope: unknown }>;
+  vmMarked: Array<{ tenantId: string; id: string }>;
   deps: ShutdownDeps;
 }
 
 /** Fakes for one run. `stuck`: the job never finishes by itself. `closeServerNever` / `poolError` shape the failure cases. */
-function rig(o: { jobs?: boolean; stuck?: boolean; closeServerNever?: boolean; poolError?: Error; poolDelayMs?: number } = {}): Rig {
-  const r: Rig = { calls: [], logs: [], exits: [], counts: { force: 0, closeServer: 0, closePool: 0, mark: 0 }, marked: [], deps: undefined as unknown as ShutdownDeps };
+function rig(o: { jobs?: boolean; stuck?: boolean; closeServerNever?: boolean; poolError?: Error; poolDelayMs?: number; vmRuns?: Array<{ id: string; tenantId: string }>; vmStuck?: boolean; abortError?: Error } = {}): Rig {
+  const r: Rig = { calls: [], logs: [], exits: [], counts: { force: 0, closeServer: 0, closePool: 0, mark: 0 }, marked: [], vmMarked: [], deps: undefined as unknown as ShutdownDeps };
   let cancelled = false;
+  let vmAborted = false;
   r.deps = {
     closeServer: () => { r.calls.push('closeServer'); r.counts.closeServer++; return o.closeServerNever ? new Promise<void>(() => undefined) : Promise.resolve(); },
     forceCloseConnections: () => { r.counts.force++; },
@@ -55,6 +58,10 @@ function rig(o: { jobs?: boolean; stuck?: boolean; closeServerNever?: boolean; p
     cancelSspJob: async (_scope, id) => { r.calls.push(`cancel:${id}`); cancelled = true; return true; },
     isSspJobActive: () => (o.stuck ? true : !cancelled),
     markSspJobCancelled: async (scope, id) => { r.counts.mark++; r.marked.push({ id, scope }); },
+    activeVmRuns: () => o.vmRuns ?? [],
+    abortVmRuns: () => { r.calls.push('abortVm'); vmAborted = true; if (o.abortError) throw o.abortError; },
+    isVmRunActive: () => (o.vmStuck ? true : !vmAborted),
+    markVmRunInterrupted: async (tenantId, id) => { r.calls.push('markVm'); r.vmMarked.push({ tenantId, id }); },
     closePool: async () => {
       r.calls.push('closePool');
       r.counts.closePool++;
@@ -119,6 +126,32 @@ async function main() {
   assert(all.every((l) => !l.includes('tenant-secret-xyz') && !l.includes('prog-secret-xyz')), 'no log line contains a tenant or program id', all);
   assert(a.logs[0].includes('SIGTERM') && a.logs[0].includes('1 SSP import'), 'the first line names the signal and the job count', a.logs[0]);
 
+  console.log('\n--- S147-1..5: VM runs ---');
+  const VMR = [{ id: 'r1', tenantId: 'tenant-secret-xyz' }];
+  __resetShutdownForTests();
+  const v1 = rig({ jobs: false, vmRuns: VMR });
+  await createShutdown(v1.deps, OPTS)('SIGTERM');
+  assert(JSON.stringify(v1.calls) === JSON.stringify(['stopScheduler', 'closeServer', 'abortVm', 'closePool', 'exit:0']), 'a VM run that stops on abort: aborted after the server closes, not marked, pool closes, exit 0', v1.calls);
+  assert(v1.vmMarked.length === 0, 'a VM run that stopped by itself is not marked');
+  __resetShutdownForTests();
+  const v2 = rig({ jobs: false, vmRuns: VMR, vmStuck: true });
+  await createShutdown(v2.deps, OPTS)('SIGTERM');
+  assert(v2.vmMarked.length === 1 && v2.vmMarked[0].tenantId === 'tenant-secret-xyz' && v2.vmMarked[0].id === 'r1', 'a VM run still active after the grace period is marked once, with its tenant and id', v2.vmMarked);
+  assert(v2.calls.indexOf('markVm') >= 0 && v2.calls.indexOf('markVm') < v2.calls.indexOf('closePool'), 'the mark happens before the pool closes', v2.calls);
+  assert(v2.exits.length === 1 && v2.exits[0] === 0, 'a clean run still exits 0', v2.exits);
+  __resetShutdownForTests();
+  const v3 = rig({ stuck: true, vmRuns: VMR, vmStuck: true });
+  await createShutdown(v3.deps, OPTS)('SIGTERM');
+  assert(v3.counts.mark === 1 && v3.vmMarked.length === 1, 'a stuck SSP job and a stuck VM run are each marked once', { ssp: v3.counts.mark, vm: v3.vmMarked });
+  assert(v1.logs[0].includes('1 VM run') && v2.logs[0].includes('1 VM run'), 'the first line counts the VM runs', [v1.logs[0], v2.logs[0]]);
+  assert([...v1.logs, ...v2.logs, ...v3.logs].every((l) => !l.includes('tenant-secret-xyz')), 'no VM log line contains a tenant id');
+  __resetShutdownForTests();
+  const v5 = rig({ jobs: false, vmRuns: VMR, abortError: new Error('host=secret-host') });
+  await createShutdown(v5.deps, OPTS)('SIGTERM');
+  assert(v5.exits.length === 1 && v5.exits[0] === 1, 'a failing abort exits 1', v5.exits);
+  assert(v5.logs.some((l) => l.includes('stop VM runs failed') && l.includes('Error')), 'the failure is logged by step and error name', v5.logs);
+  assert(v5.logs.every((l) => !l.includes('secret-host')), 'no log line carries the error message', v5.logs);
+
   console.log('\n--- S44-7: the job registry ---');
   __resetShutdownForTests();
   const s = { tenantId: 't', programId: 'p' };
@@ -141,10 +174,12 @@ async function main() {
   const routes = read('server/routes/sspImports.ts');
   assert((routes.match(/trackSspJob\(/g) ?? []).length >= 2, 'the SSP routes register the jobs they start or recover');
   assert(!read('server/shutdown.ts').includes('console.'), 'server/shutdown.ts does not log by itself');
+  assert(index.includes('abortVmRuns') && index.includes('markRunInterrupted'), 'server/index.ts wires the VM worker abort and the interrupted mark');
 
   console.log('\n--- S44-10: constants ---');
   assert(SHUTDOWN_DEADLINE_MS < 10_000, 'the deadline is under the Docker stop timeout', SHUTDOWN_DEADLINE_MS);
   assert(/^The server was shut down/.test(SHUTDOWN_CANCEL_MESSAGE), 'the cancel message says why');
+  assert(/^The server was shut down/.test(VM_SHUTDOWN_MESSAGE), 'the VM interrupted message says why');
 
   console.log('\n--- S44-11: compose ---');
   const compose = read('docker-compose.yml');

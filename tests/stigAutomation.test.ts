@@ -17,6 +17,9 @@ import {
 } from '../src/data/stigs/scriptGenerators';
 import { StigProfileId, StigSeverity } from '../src/types/stig';
 import { ControlState, SSPMetadata } from '../src/types/cmmc';
+import fs from 'fs';
+import path from 'path';
+import { planStigNarratives } from '../src/utils/stigNarrativePlan';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -209,6 +212,74 @@ async function runStigAutomationTests() {
 
     const uefiRule = tacticalProfile.rules.find(r => r.id === 'TAC-STIG-05_rule');
     assert(Boolean(uefiRule), 'Tactical profile includes UEFI administrator password & Secure Boot rule');
+
+    // ---------------------------------------------------------------
+    // Test 8: bulk STIG narrative plan (#79)
+    // ---------------------------------------------------------------
+    console.log('\n--- Test 8: bulk STIG narrative plan (#79) ---');
+    const TS = '2026-10-30T00:00:00.000Z';
+    const planCtx = { tenantId: 't1', updatedBy: 'Ann', timestamp: TS };
+    const mk = (over: Partial<ControlState>): ControlState => ({ id: 'X', tenantId: 't1', status: 'MET', implementationNotes: 'Old', responsibleRole: 'R', lastUpdated: 'old', tags: ['k'], ...over } as ControlState);
+
+    const p1 = planStigNarratives({}, { 'AC.L1-3.1.1': 'N1' }, planCtx);
+    assert(
+      p1.length === 1
+        && JSON.stringify(p1[0].next) === JSON.stringify({ id: 'AC.L1-3.1.1', tenantId: 't1', status: 'IN_PROGRESS', implementationNotes: 'N1', responsibleRole: 'IT / Security Lead', lastUpdated: TS, tags: [], updatedBy: 'Ann' })
+        && JSON.stringify(p1[0].serverUpdate) === '{"implementationNotes":"N1","updatedBy":"Ann","status":"IN_PROGRESS"}',
+      'S79-1: a control with no state starts IN_PROGRESS with the narrative'
+    );
+
+    const p2 = planStigNarratives({ X: mk({}) }, { X: 'New' }, planCtx);
+    assert(
+      p2[0].next.implementationNotes === 'Old\n\n[STIG Baseline Implementation]:\nNew'
+        && p2[0].next.status === 'MET'
+        && p2[0].next.responsibleRole === 'R'
+        && JSON.stringify(p2[0].next.tags) === '["k"]'
+        && !('status' in p2[0].serverUpdate),
+      'S79-2: existing notes get the narrative appended under the header; status and role are kept'
+    );
+
+    const p3 = planStigNarratives({ X: mk({ status: 'IN_PROGRESS', implementationNotes: 'Intro N1 outro' }) }, { X: 'N1' }, planCtx);
+    assert(
+      p3.length === 1
+        && p3[0].next.implementationNotes === 'Intro N1 outro'
+        && JSON.stringify(p3[0].serverUpdate) === '{"implementationNotes":"Intro N1 outro","updatedBy":"Ann"}',
+      'S79-3: text already present is kept and still counted (same count as before #79)'
+    );
+
+    const p4 = planStigNarratives({ X: mk({ implementationNotes: '   ' }) }, { X: 'N1' }, planCtx);
+    assert(p4[0].next.implementationNotes === 'N1', 'S79-4: whitespace-only notes are replaced by the narrative');
+
+    const p5 = planStigNarratives({}, { A: '', B: 'b' }, planCtx);
+    assert(JSON.stringify(p5.map(c => c.id)) === '["B"]', 'S79-5: an empty narrative is skipped');
+
+    const inCtl = { X: mk({}) };
+    const before = JSON.stringify(inCtl);
+    const r1 = planStigNarratives(inCtl, { X: 'New' }, planCtx);
+    const r2 = planStigNarratives(inCtl, { X: 'New' }, planCtx);
+    assert(
+      JSON.stringify(inCtl) === before && JSON.stringify(r1) === JSON.stringify(r2) && r1[0].next !== inCtl.X,
+      'S79-6: the plan is pure (input untouched, same output twice)'
+    );
+
+    const ctxSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'context', 'AssessmentContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    const bulkStart = ctxSrc.indexOf('const bulkApplyStigNarratives = useCallback');
+    const bulkBody = ctxSrc.slice(bulkStart, ctxSrc.indexOf('// NIST SP 800-171A Objective-Level', bulkStart));
+    const planAt = bulkBody.indexOf('planStigNarratives(stateRef.current.controls');
+    const setAt = bulkBody.indexOf('setState(');
+    assert(
+      bulkStart > 0 && planAt > 0 && setAt > planAt
+        && !bulkBody.slice(setAt).includes('saveControl(')
+        && !bulkBody.includes('appliedCount')
+        && /return changes\.length;/.test(bulkBody),
+      'S79-7: bulkApplyStigNarratives plans and saves before setState and returns the planned count'
+    );
+
+    const planSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'utils', 'stigNarrativePlan.ts'), 'utf8');
+    assert(
+      (bulkBody.match(/saveControl\(/g) ?? []).length === 1 && !planSrc.includes('console.'),
+      'S79-8: one save call site in the bulk apply, and the plan helper never logs'
+    );
 
   } catch (err: any) {
     console.error('Test run failed with error:', err);

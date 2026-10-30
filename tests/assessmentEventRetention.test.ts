@@ -6,6 +6,7 @@ import {
   describeRetention,
   getAssessmentEventRetention,
   pruneAssessmentEvents,
+  pruneDeletedProgramEvents,
   retentionCutoff,
   startAssessmentEventRetention,
   stopAssessmentEventRetention,
@@ -139,6 +140,22 @@ async function run() {
   const pkg = read('package.json');
   assert(index.includes('startAssessmentEventRetention(') && index.includes('stopAssessmentEventRetention()'), 'S53-15 server/index.ts starts the sweep and stops it on shutdown');
   assert(pkg.includes('"db:prune-assessment-events"') && pkg.includes('"test:event-retention"'), 'S53-15 package.json has db:prune-assessment-events and test:event-retention');
+
+  console.log('\n--- R150: the operator pass for events of deleted programs ---');
+  const retention = read('server/assessmentEventRetention.ts').replace(/\r\n/g, '\n');
+  const deleted = await pruneDeletedProgramEvents({ days: 30 });
+  assert(deleted.skipped === true && deleted.deleted === 0 && deleted.deletedObjectives === 0, 'R150-1 in memory mode the operator pass is skipped and deletes nothing (the memory sweep already covers deleted programs)', deleted);
+  const daily = retention.slice(retention.indexOf('export function startAssessmentEventRetention'), retention.indexOf('export function stopAssessmentEventRetention'));
+  assert(daily.length > 0 && !daily.includes('pruneDeletedProgramEvents') && !index.includes('pruneDeletedProgramEvents'), 'R150-2 the operator pass is not part of the daily sweep or of server/index.ts');
+  const discoveryStart = retention.indexOf('async function listDeletedProgramScopes');
+  const discovery = retention.slice(discoveryStart, retention.indexOf('export async function', discoveryStart));
+  assert(discoveryStart > 0 && discovery.includes('NO FORCE ROW LEVEL SECURITY') && discovery.includes('ROLLBACK') && !discovery.includes('COMMIT'), 'R150-3 the discovery lifts FORCE only inside a transaction that always rolls back (never COMMIT)');
+  const passStart = retention.indexOf('export async function pruneDeletedProgramEvents');
+  const pass = retention.slice(passStart, retention.indexOf('let started = false;', passStart));
+  const passLogs = pass.split('\n').filter((l) => l.includes('console.'));
+  assert(passStart > 0 && passLogs.length > 0 && passLogs.every((l) => !l.includes('tenantId')), 'R150-4 the operator pass logs counts and codes only, never a tenant id', passLogs);
+  const script = read('scripts/pruneAssessmentEvents.ts');
+  assert(script.includes('--include-deleted-programs') && script.includes('pruneDeletedProgramEvents'), 'R150-5 the operator script has --include-deleted-programs and calls pruneDeletedProgramEvents');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

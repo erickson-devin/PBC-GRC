@@ -240,7 +240,7 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   assert(/session\.mustChangePassword\s*\)/.test(applyBody) && /skipServerSync/.test(fnBody('const handleUserSession = useCallback', 'const applySession')), 'applySession hands the forced-change flag to the sign-in sync, which skips the server calls');
 
   const logoutRegion = fnBody('const logout = useCallback', 'const openAuthModal');
-  assert(/onSessionRejected\(/.test(logoutRegion) && /idTokenRef\.current/.test(logoutRegion), 'a session the server rejected signs the person out (and only for the token still in use)');
+  assert(/onSessionRejected\(/.test(logoutRegion) && /latestSessionRef\.current/.test(logoutRegion), 'a session the server rejected signs the person out (and only for the token still in use)');
   const signalSrc = fs.readFileSync(path.join(root, 'src/services/sessionSignal.ts'), 'utf8');
   assert(signalSrc.includes("'Your session has ended. Please sign in again.'") && authLf.includes('sessionEndedMessage('), 'the sign-out message after a rejected session is plain, and chosen by the reason');
   const changeRegion = fnBody('const changePassword = useCallback', 'const registerWithInvite');
@@ -252,6 +252,13 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   assert(!clientSrc.includes('Bearer ') && !authCtx.includes('Bearer '), 'apiClient.ts and AuthContext.tsx contain no "Bearer " text');
   assert(!clientSrc.includes('pbc_session_id_token_v2') && !authCtx.includes('pbc_session_id_token_v2'), 'neither file mentions the old token storage key');
   assert(!authCtx.includes('sessionStorage'), 'AuthContext.tsx does not touch sessionStorage');
+
+  // C144: the session reference has session-reference names in code (the stored idToken field keeps its historical name)
+  const renamedFiles = ['src/services/apiClient.ts', 'src/context/AuthContext.tsx', 'src/context/TenantContext.tsx', 'src/context/AssessmentContext.tsx', 'src/hooks/useStorageConfig.ts', 'src/hooks/useLocalEvidenceCopies.ts', 'src/hooks/useFailedMoveAssets.ts', 'src/hooks/useLocalAssetScrub.ts', 'src/hooks/useFailedMoveControls.ts', 'src/data/audit/storageDriver.ts'];
+  assert(renamedFiles.every(rel => !/\bgetToken\(/.test(fs.readFileSync(path.join(root, rel), 'utf8'))), 'C144-1 no client file calls getToken(): it is getSessionRef()');
+  assert(!/\b(setIdToken|idTokenRef)\b/.test(authCtx) && authCtx.includes('const [sessionRef, setSessionRef] = useState'), 'C144-2 AuthContext holds the session reference as sessionRef');
+  assert(/\bgetSessionRef\(\): string \| null/.test(clientSrc), 'C144-3 ApiClient exposes getSessionRef()');
+  assert(/idToken\?: string;/.test(fs.readFileSync(path.join(root, 'src/types/tenant.ts'), 'utf8')) && fs.readFileSync(path.join(root, 'src/services/legacySessionScrub.ts'), 'utf8').includes('record.idToken') && authCtx.includes("const AUTH_SESSION_REF_KEY = 'pbc_session_ref_v3'"), 'C144-4 the stored idToken field and the storage key keep their names');
 
   console.log('\n--- scrubLegacySessionToken ---');
   const jwtLike = 'h.p.s';

@@ -8,6 +8,7 @@ import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { VM_SNAPSHOT_ACTOR } from '../vm/snapshot';
+import { localStorageRoot, resolveWithin, resolveTenantLocalPath } from '../evidence/storage';
 
 const router = Router();
 
@@ -23,12 +24,12 @@ router.use((_req: Request, res: Response, next: NextFunction): void => {
 // Storage: local disk only (server/index.ts refuses any other STORAGE_PROVIDER at startup).
 // The `storageProvider` / `provider` response fields stay (always 'local') so existing clients keep working.
 const storageProvider = 'local' as const;
-const localStoragePath = path.resolve(process.env.LOCAL_STORAGE_PATH || './data/evidence');
+// The root and the path guards come from server/evidence/storage.ts (read per call), the one storage root for the whole server.
 
 // Ensure the local evidence directory exists
 try {
-  fs.mkdirSync(localStoragePath, { recursive: true });
-  console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStoragePath}`);
+  fs.mkdirSync(localStorageRoot(), { recursive: true });
+  console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStorageRoot()}`);
 } catch (err: unknown) {
   console.warn(`[Evidence Storage] Local storage directory setup notice (code ${errorCode(err)})`);
 }
@@ -44,22 +45,6 @@ const scopeOf = (req: Request): ProgramScope => ({ tenantId: req.tenantId!, prog
 
 const CONTROL_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-
-/**
- * Resolves `candidate` and returns it only if it stays inside `root` (path-traversal guard).
- * Returns null for anything that escapes the root or is the root itself.
- */
-function resolveWithin(root: string, candidate: string): string | null {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(resolvedRoot, candidate);
-  return resolved.startsWith(resolvedRoot + path.sep) ? resolved : null;
-}
-
-/** Local evidence for a tenant may only live under <localStoragePath>/tenants/<tenantId>/. */
-function resolveTenantLocalPath(tenantId: string, candidate: unknown): string | null {
-  if (typeof candidate !== 'string' || !candidate || candidate.startsWith('gs://')) return null;
-  return resolveWithin(path.join(localStoragePath, 'tenants', tenantId), candidate);
-}
 
 function mapRowToEvidence(row: pg.QueryResultRow) {
   return {
@@ -85,7 +70,7 @@ function mapRowToEvidence(row: pg.QueryResultRow) {
 router.get('/config/storage-info', async (_req: Request, res: Response): Promise<void> => {
   res.json({
     provider: storageProvider,
-    localStoragePath,
+    localStoragePath: localStorageRoot(),
     isAirGapped: true,
     status: 'ACTIVE',
   });
@@ -138,7 +123,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
   const effectiveUser = req.user?.name || req.user?.email || 'Compliance Assessor';
 
   // On-premises enclave: upload to the local Express handler
-  const safeLocalPath = resolveWithin(localStoragePath, objectPath);
+  const safeLocalPath = resolveWithin(localStorageRoot(), objectPath);
   if (!safeLocalPath) {
     res.status(400).json({ error: 'Invalid evidence path: resolved location is outside the evidence store' });
     return;
@@ -274,7 +259,7 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
         return;
       }
       targetFilePath = resolveWithin(
-        localStoragePath,
+        localStorageRoot(),
         `tenants/${tenantId}/controls/${record.control_id}/${evidenceId}_${cleanFileName}`
       );
     }

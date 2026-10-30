@@ -46,6 +46,8 @@ export interface User {
   roles: Record<string, TenantRole>; // Map tenantId -> TenantRole
   authProvider?: AuthProviderType;
   domain?: string;
+  // The session reference (a marker, not a credential). It keeps its historical name because it is part of the stored user records
+  // ('pbc_session_auth_user_v2', 'pbc_active_user_v4') and legacySessionScrub.ts reads it.
   idToken?: string;
   isSuperAdmin?: boolean;
 }

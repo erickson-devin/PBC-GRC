@@ -3,9 +3,9 @@ import path from 'path';
 import crypto from 'crypto';
 
 /**
- * Tenant-scoped local file storage shared by the vulnerability-management ingest (docs/VULNERABILITY_MANAGEMENT.md, 7.1).
- * Mirrors the path logic in server/routes/evidence.ts (which is deliberately not refactored here). Env is read per call
- * so tests can point the root at a temporary directory.
+ * The single storage root of the server: tenant-scoped local file storage used by the evidence routes
+ * (server/routes/evidence.ts), the SSP upload vault (server/ssp/policyVault.ts) and the vulnerability-management ingest
+ * (docs/VULNERABILITY_MANAGEMENT.md, 7.1). Env is read per call so tests can point the root at a temporary directory.
  */
 
 /** Evidence lives on local disk only: STORAGE_PROVIDER may be unset, blank or "local". Read per call (tests change it). */
