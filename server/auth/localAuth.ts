@@ -84,10 +84,15 @@ export function getMfaRequirement(env: NodeJS.ProcessEnv = process.env): MfaRequ
 
 /** Warnings the server logs once at startup (the caller logs them; nothing here prints). */
 export function authStartupWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
+  const warnings: string[] = [];
   if (getMfaRequirement(env) === 'off' && env.NODE_ENV === 'production') {
-    return ['MFA_REQUIRED=off in production: multi-factor authentication is disabled; NIST SP 800-171 3.5.3 is not met by the application'];
+    warnings.push('MFA_REQUIRED=off in production: multi-factor authentication is disabled; NIST SP 800-171 3.5.3 is not met by the application');
   }
-  return [];
+  const ttl = Number((env.LOCAL_AUTH_TOKEN_TTL_SECONDS ?? '').trim());
+  if (Number.isFinite(ttl) && ttl > 43200) {
+    warnings.push('LOCAL_AUTH_TOKEN_TTL_SECONDS is above 12 hours: NIST SP 800-63B AAL2 expects reauthentication at least every 12 hours');
+  }
+  return warnings;
 }
 
 // ----------------------------------------------------------------------------- JWT (HS256)

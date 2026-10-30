@@ -313,8 +313,11 @@ const ollama = services.find((s) => s.name === 'ollama');
 assert(!!ollama && listOf(ollama, 'ports').length === 0, 'ollama publishes no port');
 if (app) {
   const ports = listOf(app, 'ports');
-  assert(ports.length === 1 && ports[0] === '${APP_PORT:-3000}:3000', 'the app publishes exactly "${APP_PORT:-3000}:3000"', ports);
+  assert(ports.length === 1 && ports[0] === '${APP_PUBLISH_ADDRESS:-0.0.0.0}:${APP_PORT:-3000}:3000', 'the app publishes exactly "${APP_PUBLISH_ADDRESS:-0.0.0.0}:${APP_PORT:-3000}:3000" (APP_PUBLISH_ADDRESS=127.0.0.1 behind a TLS proxy)', ports);
   const env = mapOf(app, 'environment');
+  assert('ALLOW_TENANT_CREATION' in env && 'LOCAL_AUTH_TOKEN_TTL_SECONDS' in env, 'app environment passes ALLOW_TENANT_CREATION and LOCAL_AUTH_TOKEN_TTL_SECONDS through', Object.keys(env));
+  assert(!app.lines.some((l) => /^\s+disable:\s*true\b/.test(l)), 'the app service does not disable the image healthcheck');
+  assert(app.lines.some((l) => /^ {4}logging:\s*$/.test(l)) && /max-size/.test(app.lines.join('\n')), 'the app service rotates its container logs (logging with max-size)');
   assert(env.APP_BIND_ADDRESS === '${APP_BIND_ADDRESS:-0.0.0.0}', 'app environment: APP_BIND_ADDRESS: ${APP_BIND_ADDRESS:-0.0.0.0}', env.APP_BIND_ADDRESS);
   assert(env.AUTH_MODE === 'local', 'app environment: AUTH_MODE: local', env.AUTH_MODE);
   assert(!('APP_PORT' in env), 'app environment has no APP_PORT key (the container always listens on 3000)');
@@ -322,6 +325,8 @@ if (app) {
   assert(env.MFA_ENCRYPTION_KEY === '${MFA_ENCRYPTION_KEY:-}', 'app environment: MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-} (optional)', env.MFA_ENCRYPTION_KEY);
   assert(!('GOOGLE_APPLICATION_CREDENTIALS' in env) && Object.keys(env).every((k) => !/^(GOOGLE_|GCP_|GCS_|FIREBASE_)/i.test(k)), 'app environment has no cloud-provider variables', Object.keys(env));
 }
+assert(services.every((s) => s.lines.some((l) => /^ {4}logging:\s*$/.test(l)) && /max-size/.test(s.lines.join('\n'))), 'every service rotates its container logs (logging with max-size)', services.filter((s) => !s.lines.some((l) => /^ {4}logging:\s*$/.test(l))).map((s) => s.name));
+assert(compose.some((l) => /^\s+-?\s*subnet:\s*172\.30\.0\.0\/24\s*$/.test(l)), 'the bridge network pins subnet 172.30.0.0/24 (a stable TRUST_PROXY address for a host proxy)');
 assert(!compose.some((l) => /network_mode\s*:\s*["']?host/.test(l)), 'no service uses network_mode: host');
 assert(!!db && listOf(db, 'volumes').some((v) => v.startsWith('${INITDB_DIR:-./docker/postgres}:')), 'the db init mount uses ${INITDB_DIR:-./docker/postgres}', db && listOf(db, 'volumes'));
 assert(!!db && listOf(db, 'volumes').some((v) => v.startsWith('${DB_DATA_DIR:-postgres_data}:/var/lib/postgresql/data')), 'the db data volume is ${DB_DATA_DIR:-postgres_data} (host path on Unraid, named volume elsewhere)', db && listOf(db, 'volumes'));
@@ -334,6 +339,7 @@ const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
 assert(!/GOOGLE_/.test(dockerfile), 'Dockerfile has no GOOGLE_ variable');
 const healthcheck = dockerfile.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n').match(/HEALTHCHECK[\s\S]*?(?:\n(?=[A-Z]+\s)|$)/);
 assert(!!healthcheck && /\/api\/v1\/health\b/.test(healthcheck[0]), 'the Dockerfile HEALTHCHECK targets /api/v1/health', healthcheck && healthcheck[0]);
+assert(!!healthcheck && /127\.0\.0\.1:3000/.test(healthcheck[0]) && !/localhost/.test(healthcheck[0]), 'the Dockerfile HEALTHCHECK uses 127.0.0.1:3000 (localhost may resolve to IPv6 against an IPv4 bind)', healthcheck && healthcheck[0]);
 // Global tsx installs in a Dockerfile: the pinned version, or null for an unpinned install. Comments are ignored.
 function globalTsxPins(text: string): (string | null)[] {
   const code = text.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n');
@@ -400,6 +406,12 @@ assert(/^LOCAL_AUTH_SECRET=/m.test(envExample), '.env.example contains LOCAL_AUT
 assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has no VITE_FIREBASE / VITE_GCP / VITE_GCS');
 assert(/^# MFA_REQUIRED=/m.test(envExample), '.env.example documents MFA_REQUIRED');
 assert(/^# MFA_ENCRYPTION_KEY=/m.test(envExample), '.env.example documents MFA_ENCRYPTION_KEY');
+assert(/^DB_USER=grc_app\s*$/m.test(envExample) && !/^DB_USER=postgres/m.test(envExample), '.env.example connects as DB_USER=grc_app, never the superuser');
+const gitignoreLines = fs.readFileSync(path.join(root, '.gitignore'), 'utf8').split(/\r?\n/);
+const dockerignoreLines = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8').split(/\r?\n/);
+assert(gitignoreLines.includes('data/'), '.gitignore ignores data/ (the local evidence vault)');
+assert(dockerignoreLines.includes('data/') && dockerignoreLines.includes('.env.*') && dockerignoreLines.includes('!.env.example'), '.dockerignore excludes data/ and .env.* (but keeps .env.example)');
+assert(!('cors' in (pkg.dependencies ?? {})) && !('@types/cors' in (pkg.devDependencies ?? {})), 'package.json has no cors / @types/cors (the SPA is same-origin)');
 const testAll: string = pkg.scripts?.['test:all'] ?? '';
 assert(['totp', 'mfa', 'mfaClient'].every((n) => testAll.includes(`tests/${n}.test.ts`)), 'package.json test:all runs tests/totp.test.ts, tests/mfa.test.ts and tests/mfaClient.test.ts');
 

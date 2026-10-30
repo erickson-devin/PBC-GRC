@@ -41,6 +41,11 @@ services:
     image: postgres:16-alpine
     container_name: singularity-db
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     environment:
       # Admin account: bootstraps the database and the application role. Not used by the application.
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -73,8 +78,11 @@ services:
     restart: unless-stopped
     # A tiny init as PID 1: it forwards SIGTERM to the server (server/shutdown.ts) and reaps the SSP extraction children.
     init: true
-    healthcheck:
-      disable: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     # Ollama is deliberately NOT listed here: the platform must start (and fall back to rule-based matching) without it.
     depends_on:
       singularity-db:
@@ -132,9 +140,18 @@ services:
       VM_SNAPSHOT_INTERVAL_HOURS: ${VM_SNAPSHOT_INTERVAL_HOURS:-}
       VM_COVERAGE_THRESHOLD: ${VM_COVERAGE_THRESHOLD:-}
       ASSESSMENT_EVENT_RETENTION_DAYS: ${ASSESSMENT_EVENT_RETENTION_DAYS:-}
+      # Sign-in, tenant creation, AI timeout and database TLS; empty means the built-in default
+      ALLOW_TENANT_CREATION: ${ALLOW_TENANT_CREATION:-}
+      LOCAL_AUTH_TOKEN_TTL_SECONDS: ${LOCAL_AUTH_TOKEN_TTL_SECONDS:-}
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-}
+      SSP_AI_MAX_SECTIONS: ${SSP_AI_MAX_SECTIONS:-}
+      SSP_AI_GAP_ANALYSIS: ${SSP_AI_GAP_ANALYSIS:-}
+      DB_SSL: ${DB_SSL:-}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-}
     ports:
-      # All interfaces by decision (Unraid WebUI on the LAN); the host port is APP_PORT, the container always listens on 3000
-      - "${APP_PORT:-3000}:3000"
+      # All interfaces by default (Unraid WebUI on the LAN). Behind a TLS reverse proxy on this host set APP_PUBLISH_ADDRESS=127.0.0.1
+      # (the container keeps APP_BIND_ADDRESS=0.0.0.0). The host port is APP_PORT, the container always listens on 3000
+      - "${APP_PUBLISH_ADDRESS:-0.0.0.0}:${APP_PORT:-3000}:3000"
     volumes:
       # Persistent local evidence vault: the repository folder by default; Unraid sets EVIDENCE_DIR=/mnt/cache/appdata/singularity/evidence
       - ${EVIDENCE_DIR:-./data/evidence}:/app/data/evidence
@@ -147,6 +164,11 @@ services:
     image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
     container_name: singularity-ollama
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     volumes:
       # Model store: a named volume by default; Unraid sets OLLAMA_MODELS_DIR=/mnt/user/appdata/singularity/ollama-models
       - ${OLLAMA_MODELS_DIR:-ollama-models}:/root/.ollama
@@ -171,3 +193,9 @@ volumes:
 networks:
   singularity-network:
     driver: bridge
+    # A fixed subnet makes the bridge gateway address stable: a TLS proxy on this host reaches the app from 172.30.0.1,
+    # so TRUST_PROXY=172.30.0.1 stays correct. Change both together if this range collides with your network.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1

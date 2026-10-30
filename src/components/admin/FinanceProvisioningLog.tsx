@@ -61,7 +61,7 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
       const ownerEmail = onboardingInvite?.email || tenant.systemOwner || '—';
       const inviteToken = onboardingInvite?.token;
       const inviteUrl = inviteToken
-        ? `${window.location.origin}/accept-invite?token=${encodeURIComponent(inviteToken)}`
+        ? `${window.location.origin}/#accept-invite?token=${encodeURIComponent(inviteToken)}`
         : null;
 
       return {

@@ -62,7 +62,7 @@ const resetLimiters = () => {
 
 async function ingest(token: string, bytes: Buffer) {
   resetLimiters();
-  const res = await fetch(`${BASE}/vm/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: bytes });
+  const res = await fetch(`${BASE}/vm/ingest`, { method: 'POST', headers: { ...HTTPS, 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: bytes });
   const text = await res.text();
   let parsed: Json | null = null;
   try { parsed = JSON.parse(text) as Json; } catch { parsed = null; }

@@ -5,6 +5,7 @@ import util from 'util';
 import { spawnSync } from 'child_process';
 import { server } from '../server/index';
 import { signLocalToken, signMfaPendingToken, verifyLocalToken } from '../server/auth/localAuth';
+import { accountLogRef } from '../server/auth/loginThrottle';
 import { base32Decode, buildOtpauthUri, generateTotp } from '../server/auth/totp';
 import {
   __resetMemoryLocalUsersForTests,
@@ -368,6 +369,7 @@ async function run() {
   const log = captured.join('\n');
   const uri = buildOtpauthUri({ issuer: 'PBC-GRC', accountName: a10.email, secretBase32: a10.secretB32 });
   assert(captured.length > 0, 'the server did log during the flow');
+  assert(!log.toLowerCase().includes(a10.email) && captured.some((l) => l.includes('Local login') && l.includes(accountLogRef(a10.email))), 'H12b: successful sign-ins log the pseudonymous account reference, never the email');
   assert(!log.includes(a10.secretB32) && !log.includes(uri) && !log.includes('otpauth://'), 'the base32 secret and the otpauth URI are not in the log');
   assert(sent.every((c) => !log.includes(c)), 'no code that was sent is in the log');
   assert(a10.recovery.every((c) => !log.includes(c) && !log.includes(c.replace('-', ''))), 'no recovery code is in the log');
@@ -856,6 +858,49 @@ async function run() {
   const reg3 = await register(await invite('new21c@mfa.mil', 'TENANT_OWNER'), 'New C');
   assert(reg3.status === 201 && reg3.body?.mfa === 'enrol' && reg3.body?.role === 'TENANT_OWNER', 'privileged + a TENANT_OWNER invitation: enrol first', reg3.body);
   setMode('off');
+
+  // ------------------------------------------------------------------------------------------------------------ M30
+  console.log('\n--- M30: platform-admin addresses and invitations (go-live H1) ---');
+  await reset();
+  const owner30 = await mk('owner30@mfa.mil');
+  await createTenantWithOwner(
+    { id: 'tenant-mfa-30', name: 'Org 30', systemName: 'Enclave 30', systemOwner: 'Owner', enabledFrameworks: ['CMMC_L1'], primaryFramework: 'CMMC_L1' },
+    { userId: owner30.id, email: owner30.email, name: 'Owner' }
+  );
+  const tok30: string = (await login(owner30.email)).body?.token;
+  const inviteVia = (email: string) => call('POST', '/tenants/tenant-mfa-30/invites', { token: tok30, tenant: 'tenant-mfa-30', body: { email, role: 'VIEWER' } });
+  const savedAdmins = process.env.PLATFORM_ADMIN_EMAILS;
+  try {
+    process.env.PLATFORM_ADMIN_EMAILS = 'pa-target@mfa.mil';
+    const h1 = await inviteVia('pa-target@mfa.mil');
+    assert(h1.status === 403 && h1.body?.reason === 'platform_admin_email' && h1.body?.token === undefined, 'H1-1: a tenant owner cannot invite a listed platform-administrator address', h1.body);
+    const h2 = await inviteVia('PA-Target@MFA.mil');
+    assert(h2.status === 403 && h2.body?.reason === 'platform_admin_email', 'H1-2: the match ignores case', h2.body);
+
+    delete process.env.PLATFORM_ADMIN_EMAILS;
+    const later = await inviteVia('pa-later@mfa.mil');
+    assert(later.status === 201 && typeof later.body?.token === 'string', 'H1-3: (setup) the invitation is created while the address is not listed', later.body);
+    process.env.PLATFORM_ADMIN_EMAILS = 'pa-later@mfa.mil';
+    const regLater = await call('POST', '/auth/register-with-invite', { body: { token: later.body?.token, password: PW, name: 'Later' } });
+    assert(regLater.status === 403 && regLater.body?.reason === 'platform_admin_account' && regLater.body?.token === undefined, 'H1-3: registering with that token once the address is listed -> 403 platform_admin_account', regLater.body);
+    assert((await login('pa-later@mfa.mil')).status === 401, 'H1-3: and no account was created (login 401)');
+    assert((await call('POST', '/invites/preview', { body: { token: later.body?.token } })).body?.invitation?.status === 'PENDING', 'H1-3: the invitation was not consumed');
+
+    process.env.PLATFORM_ADMIN_EMAILS = 'pa-target@mfa.mil';
+    const ctl = await inviteVia('other@mfa.mil');
+    const regCtl = await call('POST', '/auth/register-with-invite', { body: { token: ctl.body?.token, password: PW, name: 'Other' } });
+    assert(ctl.status === 201 && regCtl.status === 201, 'H1-4: control: an unlisted address is invited (201) and registers (201)', [ctl.status, regCtl.status]);
+
+    delete process.env.PLATFORM_ADMIN_EMAILS;
+    const plain = await inviteVia('patch30@mfa.mil');
+    process.env.PLATFORM_ADMIN_EMAILS = 'pa-target@mfa.mil';
+    const patched = await call('PATCH', `/tenants/tenant-mfa-30/invites/${plain.body?.invitation?.id}`, { token: tok30, tenant: 'tenant-mfa-30', body: { email: 'pa-target@mfa.mil' } });
+    assert(plain.status === 201 && patched.status === 403 && patched.body?.reason === 'platform_admin_email', 'H1-5: editing an invitation to a listed address -> 403 platform_admin_email', [plain.status, patched.status, patched.body]);
+  } finally {
+    if (savedAdmins === undefined) delete process.env.PLATFORM_ADMIN_EMAILS;
+    else process.env.PLATFORM_ADMIN_EMAILS = savedAdmins;
+    setMode('off');
+  }
 
   // ------------------------------------------------------------------------------------------------------------ M22, M23
   console.log('\n--- M22/M23: tokens for unknown accounts and tokens from before the upgrade ---');

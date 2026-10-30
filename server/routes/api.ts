@@ -8,7 +8,7 @@ import objectivesRouter from './objectives';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
-import { getDatabaseStatus } from '../db';
+import { getDatabaseStatus, isDbReady } from '../db';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
 import { listStoredPlatformAdminEmails } from '../platformSetup';
 import setupRouter from './setup';
@@ -18,6 +18,11 @@ const router = Router();
 
 // Health Check endpoint (liveness/readiness probe). 503 when PostgreSQL is configured but unreachable.
 router.get('/health', async (_req, res) => {
+  // The server listens before initDb has finished: not ready to serve yet
+  if (!isDbReady()) {
+    res.status(503).json({ status: 'starting' });
+    return;
+  }
   const database = await getDatabaseStatus();
   const healthy = database !== 'unavailable';
   res.status(healthy ? 200 : 503).json({

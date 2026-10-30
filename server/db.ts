@@ -156,9 +156,16 @@ export async function checkDatabaseConnection(): Promise<boolean> {
   } catch (err: unknown) {
     throw new Error(`PostgreSQL connection failed (${dbTarget}): ${errorMessage(err)}. Fix DATABASE_URL / DB_* settings, or set DB_MODE=memory for local development.`);
   }
-  console.log(`[PostgreSQL] Successfully connected to PostgreSQL at ${dbTarget}`);
+  // Health probes call this every few seconds: say it once
+  if (!connectionLogged) {
+    connectionLogged = true;
+    console.log(`[PostgreSQL] Successfully connected to PostgreSQL at ${dbTarget}`);
+  }
   return true;
 }
+
+let connectionLogged = false;
+let dbReady = false;
 
 /** Non-throwing status for health probes. */
 export async function getDatabaseStatus(): Promise<'connected' | 'memory' | 'unavailable'> {
@@ -604,12 +611,34 @@ export function assertSupportedPostgresVersion(num: unknown, text: unknown): voi
   }
 }
 
+/** Whether the connected role bypasses row-level security. A missing row means we cannot tell: ok. */
+export function assessDatabaseRole(
+  row: { rolsuper: boolean; rolbypassrls: boolean } | undefined,
+  _env: NodeJS.ProcessEnv = process.env,
+): { ok: boolean; message: string | null } {
+  if (!row) return { ok: true, message: null };
+  const flags: string[] = [];
+  if (row.rolsuper) flags.push('SUPERUSER');
+  if (row.rolbypassrls) flags.push('BYPASSRLS');
+  if (flags.length === 0) return { ok: true, message: null };
+  return {
+    ok: false,
+    message: `The database role is SUPERUSER/BYPASSRLS (${flags.join(' and ')}): row-level security would be bypassed and tenants would not be isolated. Connect as the application role (see docs/ON_PREM_DATABASE.md).`,
+  };
+}
+
+/** True once initDb has completed (health answers 503 'starting' until then: the server listens before init). */
+export function isDbReady(): boolean {
+  return dbReady;
+}
+
 /**
  * Initializes database schema with RLS policies if connected to a live PostgreSQL database
  */
 export async function initDb(): Promise<void> {
   if (isMemoryMode()) {
     console.warn('[Database] DB_MODE=memory: using the in-memory store. Data is NOT persisted and PostgreSQL RLS is NOT in effect.');
+    dbReady = true;
     return;
   }
   await checkDatabaseConnection(); // rejects if PostgreSQL is unreachable
@@ -618,6 +647,17 @@ export async function initDb(): Promise<void> {
   try {
     const ver = await client.query("SELECT current_setting('server_version_num') AS num, current_setting('server_version') AS version");
     assertSupportedPostgresVersion(ver.rows[0]?.num, ver.rows[0]?.version);
+
+    // A SUPERUSER / BYPASSRLS role skips every row-level security policy: refused in production, a warning elsewhere.
+    const roleRes = await client.query('SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user');
+    const roleCheck = assessDatabaseRole(roleRes.rows[0]);
+    if (!roleCheck.ok && roleCheck.message) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[FATAL] ' + roleCheck.message);
+        throw new Error(roleCheck.message);
+      }
+      console.warn('[Startup] ' + roleCheck.message + ' (refused in production)');
+    }
 
     // Tables, ENABLE + FORCE ROW LEVEL SECURITY, and tenant-isolation policies (see server/schema.ts). The schema's own warnings
     // (a table still waiting for the program_id backfill, ssp_documents kept because it holds rows) name tables only: show them here,
@@ -644,6 +684,7 @@ export async function initDb(): Promise<void> {
     }
 
     console.log('[PostgreSQL] Database schema, control mappings, and RLS policies verified.');
+    dbReady = true;
   } catch (err: unknown) {
     throw new Error(`Failed to initialise the database schema: ${errorMessage(err)}`);
   } finally {

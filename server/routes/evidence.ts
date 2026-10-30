@@ -7,7 +7,6 @@ import { queryWithProgram, type ProgramScope } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappings';
 import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
-import { errorMessage } from '../../src/utils/errors';
 import { VM_SNAPSHOT_ACTOR } from '../vm/snapshot';
 
 const router = Router();
@@ -31,7 +30,13 @@ try {
   fs.mkdirSync(localStoragePath, { recursive: true });
   console.log(`[Evidence Storage] Local Enclave Storage active at: ${localStoragePath}`);
 } catch (err: unknown) {
-  console.warn(`[Evidence Storage] Local storage directory setup notice: ${errorMessage(err)}`);
+  console.warn(`[Evidence Storage] Local storage directory setup notice (code ${errorCode(err)})`);
+}
+
+/** The pg SQLSTATE / fs error code of a thrown value, for logging (never its message: that can carry paths or row values). */
+function errorCode(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : 'unknown';
 }
 
 /** The tenant and program of the request (set by authMiddleware and the programContext middleware that is mounted before this router). */
@@ -202,7 +207,7 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
         ]);
       }
     } catch (inhErr: unknown) {
-      console.warn(`[Evidence API] Cross-framework inheritance notice:`, errorMessage(inhErr));
+      console.warn(`[Evidence API] Cross-framework inheritance notice (code ${errorCode(inhErr)})`);
     }
 
     res.status(201).json({
@@ -215,10 +220,10 @@ router.post('/upload-url', async (req: Request, res: Response): Promise<void> =>
       inheritedTo: getEquivalentControlIds(controlId),
     });
   } catch (dbErr: unknown) {
-    console.error(`[Evidence API] Failed to store evidence metadata for tenant ${tenantId}:`, dbErr);
+    // Fixed message plus the SQLSTATE only: a raw error can carry row values (CUI)
+    console.error(`[Evidence API] Failed to store evidence metadata (code ${errorCode(dbErr)})`);
     res.status(500).json({
       error: 'Failed to record evidence in database',
-      details: errorMessage(dbErr),
     });
   }
 });
@@ -304,10 +309,10 @@ const handleLocalBinaryUpload = async (req: Request, res: Response): Promise<voi
       storagePath: targetFilePath,
     });
   } catch (err: unknown) {
-    console.error(`[Local Evidence Upload Error]:`, err);
+    // The fs error message carries the target path (with the file name): log the code only
+    console.error(`[Local Evidence Upload Error] code ${errorCode(err)}`);
     res.status(500).json({
       error: 'Failed to write evidence to local disk',
-      details: errorMessage(err),
     });
   }
 };
@@ -341,7 +346,9 @@ router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<voi
     if (filePath && fs.existsSync(filePath)) {
       const safeDownloadName = String(record.file_name || 'evidence').replace(/[^a-zA-Z0-9._-]/g, '_');
       res.setHeader('Content-Type', record.mime_type || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${safeDownloadName}"`);
+      // attachment + a sandboxing CSP: a stored HTML/SVG file must never run in the app's origin (the SPA rebuilds the blob with a safe type)
+      res.setHeader('Content-Disposition', `attachment; filename="${safeDownloadName}"`);
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.sendFile(filePath);
       return;
@@ -349,7 +356,7 @@ router.get('/:evidenceId/file', async (req: Request, res: Response): Promise<voi
 
     res.status(404).json({ error: 'File not found on local storage path' });
   } catch (err: unknown) {
-    res.status(500).json({ error: errorMessage(err) });
+    res.status(500).json({ error: 'Failed to read evidence file' });
   }
 });
 
@@ -395,7 +402,7 @@ router.get('/:evidenceId/verify-integrity', async (req: Request, res: Response):
       verifiedAt: new Date().toISOString(),
     });
   } catch (err: unknown) {
-    res.status(500).json({ error: errorMessage(err) });
+    res.status(500).json({ error: 'Failed to verify evidence integrity' });
   }
 });
 
@@ -429,10 +436,9 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       storageProvider,
     });
   } catch (err: unknown) {
-    console.error(`[Evidence API] Error fetching evidence for tenant ${tenantId}:`, err);
+    console.error(`[Evidence API] Error fetching evidence (code ${errorCode(err)})`);
     res.status(500).json({
       error: 'Failed to fetch evidence records',
-      details: errorMessage(err),
     });
   }
 });
@@ -461,10 +467,9 @@ router.get('/:evidenceId', async (req: Request, res: Response): Promise<void> =>
 
     res.json(mapRowToEvidence(result.rows[0]));
   } catch (err: unknown) {
-    console.error(`[Evidence API] Error fetching evidence ${evidenceId}:`, err);
+    console.error(`[Evidence API] Error fetching an evidence record (code ${errorCode(err)})`);
     res.status(500).json({
       error: 'Failed to fetch evidence record',
-      details: errorMessage(err),
     });
   }
 });
@@ -544,7 +549,7 @@ router.delete('/:evidenceId', async (req: Request, res: Response): Promise<void>
     console.info(`[Evidence API] ${req.user?.uid} deleted evidence ${evidenceId} (${removedIds.length} rows, file removed: ${fileRemoved ? 'yes' : 'no'}) in ${tenantId}`);
     res.status(200).json({ deleted: true, evidenceId, removedIds, fileRemoved });
   } catch (err: unknown) {
-    console.error(`[Evidence API] Error deleting evidence ${evidenceId}: ${errorMessage(err)}`);
+    console.error(`[Evidence API] Error deleting an evidence record (code ${errorCode(err)})`);
     res.status(500).json({ error: 'Failed to delete the evidence record' });
   }
 });

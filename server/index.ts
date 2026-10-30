@@ -16,7 +16,28 @@ import { updateJob } from './ssp/store';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Evidence, SSP uploads and VM payloads are CUI: new files are owner-only on the host bind mount.
+// (Existing vaults need a one-time chmod, see docs; a non-root container user (#146) will need a chown.)
+process.umask(0o077);
+
+// Content-Security-Policy, enforced. One directive per line so each choice is reviewable.
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'", // everything not listed below: this origin only
+  "script-src 'self'", // bundled scripts only: no inline script, no eval
+  "style-src 'self' 'unsafe-inline'", // inline styles are used by the print popup / iframe fallback and LegalModal
+  "img-src 'self' data: blob:", // data: and blob: for generated images and previews
+  "font-src 'self'", // bundled fonts only
+  "connect-src 'self'", // fetch / XHR to this API only
+  "frame-src 'self' blob:", // blob: for the PDF preview
+  "worker-src 'self' blob:", // blob: for canvas-confetti
+  "object-src 'none'", // no plugins
+  "base-uri 'self'", // no <base> hijacking
+  "form-action 'self'", // forms post to this origin only
+  "frame-ancestors 'none'", // never framed (matches X-Frame-Options: DENY)
+].join('; ');
+
 const app = express();
+app.disable('x-powered-by');
 // APP_PORT wins; PORT is the older name and stays as the fallback.
 const PORT = parseInt(process.env.APP_PORT || process.env.PORT || '', 10) || 3000;
 // All interfaces by default so the WebUI is reachable on the LAN (Unraid); set APP_BIND_ADDRESS to restrict it.
@@ -39,18 +60,21 @@ app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
 });
+// Security Response Headers (before the body parsers so their 400/413 replies carry them too). HSTS is the reverse proxy's job.
+app.use((_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '0');
+  // no-referrer, not same-origin: an invitation URL must not leak in the Referer of same-origin asset loads
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+  next();
+});
 // The ingest route hashes the exact request bytes, so it reads its own raw body
 const jsonParser = express.json({ limit: '15mb' });
 app.use((req, res, next) => (req.path.replace(/\/+$/, '').toLowerCase() === '/api/v1/vm/ingest' ? next() : jsonParser(req, res, next)));
 app.use(express.urlencoded({ extended: true }));
-
-// Security Response Headers
-app.use((_req, res, next) => {
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  next();
-});
 
 // Mount API v1 Routes
 app.use('/api/v1', apiRouter);

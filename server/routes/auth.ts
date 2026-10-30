@@ -45,6 +45,7 @@ import {
   setPendingTotpSecret,
   type LocalUser,
 } from '../auth/localUsers';
+import { isPlatformAdmin } from '../auth/platformAdmin';
 import { previewInvitation, redeemInvitation } from '../invitations';
 import { accountLogRef, createLoginThrottle, loginAccountKey } from '../auth/loginThrottle';
 import { clearSessionCookie, issueSession, rejectCrossSite } from '../auth/session';
@@ -231,19 +232,19 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
     // the password could reset it between guesses at the code. The final step resets it.
     if (isEnrolled(user)) {
       noStore(res);
-      console.log(`[Auth] Local login (second factor pending): ${user.email}`);
+      console.log(`[Auth] Local login (second factor pending): account ${accountLogRef(user.email)}`);
       res.json({ ...pendingBody(user, 'verify'), methods: MFA_METHODS });
       return;
     }
     if (await resolveMfaRequired(user)) {
       noStore(res);
-      console.log(`[Auth] Local login (second factor enrolment required): ${user.email}`);
+      console.log(`[Auth] Local login (second factor enrolment required): account ${accountLogRef(user.email)}`);
       res.json(pendingBody(user, 'enrol'));
       return;
     }
 
     await registerSuccessfulLogin(user);
-    console.log(`[Auth] Local login: ${user.email}`);
+    console.log(`[Auth] Local login: account ${accountLogRef(user.email)}`);
     res.json(issueSession(req, res, user, ['pwd'], false));
   } catch (err: unknown) {
     respondWithError(res, err, 'Login');
@@ -255,7 +256,8 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
  * Body: { token, name?, password }. How a brand-new person gets an account on an air-gapped install: holding the
  * invitation token proves they received it at the invited address, so the account is created for THAT email, the
  * invitation is consumed, and they are signed in, in one step. If an account for the email already exists they are
- * told to sign in instead (409 account_exists), and nothing is consumed.
+ * told to sign in instead (409 account_exists), and nothing is consumed. An address listed in PLATFORM_ADMIN_EMAILS is refused
+ * (403 platform_admin_account, nothing consumed): that account comes from the setup wizard or the operator, never an invitation.
  */
 router.post('/register-with-invite', async (req: Request, res: Response): Promise<void> => {
   if (rejectCrossSite(req, res)) return;
@@ -294,6 +296,15 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
       res.status(409).json({ error: 'An account for this email already exists. Sign in instead.', reason: 'account_exists' });
       return;
     }
+    // A listed platform administrator is never created through an invitation (it would grant the platform role to whoever holds
+    // the token). Nothing is consumed.
+    if (isPlatformAdmin({ email: invite.email })) {
+      res.status(403).json({
+        error: 'This address is a platform administrator. Its account is created by the setup wizard or by the operator (npm run auth:create-user), never through an invitation.',
+        reason: 'platform_admin_account',
+      });
+      return;
+    }
 
     let user;
     try {
@@ -315,7 +326,7 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
       return;
     }
 
-    console.log('[Auth] Registered ' + user.email + ' via invitation into ' + result.tenantId + ' as ' + result.role);
+    console.log('[Auth] Registered account ' + accountLogRef(user.email) + ' via invitation into ' + result.tenantId + ' as ' + result.role);
     // The invited role may make this account subject to MFA_REQUIRED (privileged): then they enrol before they get a session.
     if (await resolveMfaRequired(user)) {
       noStore(res);
@@ -413,7 +424,7 @@ router.post('/mfa/verify', async (req: Request, res: Response): Promise<void> =>
     await registerSuccessfulLogin(user);
     const body = issueSession(req, res, user, ['pwd', 'otp'], true);
     if (usedRecovery) body.recoveryCodesRemaining = (await findLocalUserById(user.id))?.recoveryCodeHashes.length ?? 0;
-    console.log(`[Auth] Local login (second factor): ${user.email}`);
+    console.log(`[Auth] Local login (second factor): account ${accountLogRef(user.email)}`);
     res.json(body);
   } catch (err: unknown) {
     respondWithError(res, err, 'Verification');
@@ -516,13 +527,13 @@ router.post('/mfa/enrol/confirm', async (req: Request, res: Response): Promise<v
     }
     const enrolledAt = new Date().toISOString();
     if (!pending) {
-      console.log(`[Auth] Second factor enrolled: ${user.email}`);
+      console.log(`[Auth] Second factor enrolled: account ${accountLogRef(user.email)}`);
       res.json({ recoveryCodes, enrolledAt });
       return;
     }
     markJtiUsed(pending.jti, pending.exp);
     await registerSuccessfulLogin(user);
-    console.log(`[Auth] Second factor enrolled, local login: ${user.email}`);
+    console.log(`[Auth] Second factor enrolled, local login: account ${accountLogRef(user.email)}`);
     res.json({ recoveryCodes, enrolledAt, ...issueSession(req, res, user, ['pwd', 'otp'], true) });
   } catch (err: unknown) {
     respondWithError(res, err, 'Enrolment');
@@ -590,7 +601,7 @@ router.post('/mfa/recovery-codes', authOnlyMiddleware, async (req: Request, res:
       res.status(409).json({ error: 'No second factor is set up for this account', reason: 'mfa_not_enrolled' });
       return;
     }
-    console.log(`[Auth] Recovery codes regenerated: ${user.email}`);
+    console.log(`[Auth] Recovery codes regenerated: account ${accountLogRef(user.email)}`);
     res.json({ recoveryCodes, recoveryCodesRemaining: RECOVERY_CODE_COUNT });
   } catch (err: unknown) {
     respondWithError(res, err, 'Recovery code regeneration');
@@ -711,7 +722,7 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
       res.status(401).json(SESSION_REVOKED);
       return;
     }
-    console.log(`[Auth] Sign-in credential changed: ${user.email}`);
+    console.log(`[Auth] Sign-in credential changed: account ${accountLogRef(user.email)}`);
     res.json(issueSession(req, res, updated, step !== null ? ['pwd', 'otp'] : ['pwd'], isEnrolled(updated)));
   } catch (err: unknown) {
     respondWithError(res, err, 'Credential change');

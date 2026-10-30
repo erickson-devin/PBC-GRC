@@ -101,7 +101,6 @@
     "bcryptjs": "^3.0.3",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
-    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "file-type": "^22.1.1",
@@ -121,7 +120,6 @@
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
-    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.3.0",
     "@types/node": "^22.13.4",

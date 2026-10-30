@@ -10,6 +10,7 @@ import {
   rotateInvitation,
   updateInvitation,
 } from '../invitations';
+import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
 import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
@@ -18,7 +19,8 @@ import type { TenantRole } from '../../src/types/tenant';
 /**
  * Tenant-scoped invitation management, mounted at /api/v1/tenants/:tenantId/invites by the tenants router, AFTER
  * requireWriteRole: every write is already limited to TENANT_OWNER / MSP_ADMIN, and reading the list is checked here.
- * The plaintext token is only ever returned by create and resend, once.
+ * The plaintext token is only ever returned by create and resend, once. An address listed in PLATFORM_ADMIN_EMAILS can only be
+ * invited (created or edited to) by a platform administrator; everyone else gets 403 platform_admin_email.
  */
 const router = Router({ mergeParams: true });
 
@@ -30,6 +32,17 @@ function mayHandle(req: Request, res: Response, role: TenantRole): boolean {
     res.status(403).json({ error: 'Forbidden: only an MSP Admin can invite or change an MSP Admin' });
     return false;
   }
+  return true;
+}
+
+/**
+ * A platform administrator's address is never invited into a tenant by anyone but a platform administrator (register-with-invite
+ * refuses it in any case): this stops an owner from minting a token for a listed address. Sends the 403 itself.
+ */
+async function refusePlatformAdminEmail(req: Request, res: Response, email: string): Promise<boolean> {
+  if (!platformAdminEmails().has(email.trim().toLowerCase())) return false;
+  if (await isPlatformAdminUser(req.user)) return false;
+  res.status(403).json({ error: 'Platform administrators cannot be invited to a tenant. Ask the operator.', reason: 'platform_admin_email' });
   return true;
 }
 
@@ -78,6 +91,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
   if (!mayHandle(req, res, role)) return;
+  if (await refusePlatformAdminEmail(req, res, email)) return;
 
   const user = req.user!;
   try {
@@ -146,6 +160,7 @@ router.patch('/:inviteId', async (req: Request, res: Response): Promise<void> =>
     res.status(400).json({ error: 'Invalid role' });
     return;
   }
+  if (email !== undefined && (await refusePlatformAdminEmail(req, res, email))) return;
   try {
     const existing = (await listInvitations(req.tenantId!)).find((i) => i.id === req.params.inviteId);
     if (existing && !mayHandle(req, res, existing.role)) return;

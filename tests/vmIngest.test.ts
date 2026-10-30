@@ -56,10 +56,10 @@ const resetLimiters = () => {
   vmTokenRateLimiter.reset();
 };
 
-/** Posts raw bytes to the ingest endpoint. Limiters are reset first unless `keepLimits`. */
-async function ingestRaw(token: string | null, body: Buffer | undefined, headers: Record<string, string> = { 'Content-Type': 'application/json' }, keepLimits = false) {
+/** Posts raw bytes to the ingest endpoint over "HTTPS" (X-Forwarded-Proto) unless `plainHttp`. Limiters are reset first unless `keepLimits`. */
+async function ingestRaw(token: string | null, body: Buffer | undefined, headers: Record<string, string> = { 'Content-Type': 'application/json' }, keepLimits = false, plainHttp = false) {
   if (!keepLimits) resetLimiters();
-  const h: Record<string, string> = { ...headers };
+  const h: Record<string, string> = { ...(plainHttp ? {} : HTTPS), ...headers };
   if (token) h.Authorization = `Bearer ${token}`;
   const res = await fetch(`${BASE}/vm/ingest`, { method: 'POST', headers: h, body });
   const text = await res.text();
@@ -559,6 +559,21 @@ async function run() {
   assert(poamIngest.status === 202 && poamItems.length >= 1, 'an overdue finding creates an automatic POA&M item', [poamIngest.status, poamItems.length]);
   assert(poamItems.every((p) => p.programId === defaultA.id), "every automatic POA&M item carries the tenant's default program id", poamItems.map((p) => p.programId));
   assert((await countOpenPoamItems({ tenantId: A, programId: defaultA.id })) === poamItems.filter((p) => p.status === 'OPEN' || p.status === 'IN_PROGRESS').length, 'the default program counts those items as its open POA&M');
+
+  console.log('\n--- Ingest requires TLS ---');
+  const tlsBytes = bytesOf({ label: 'tls-src', agents: ['t1'] });
+  const jsonType = { 'Content-Type': 'application/json' };
+  const plain403 = await ingestRaw(tokenA, tlsBytes, jsonType, false, true);
+  assert(plain403.status === 403 && plain403.body?.code === 'vm_insecure_transport', 'a valid token without X-Forwarded-Proto -> 403 vm_insecure_transport', plain403.body);
+  const plain401 = await ingestRaw(null, tlsBytes, jsonType, false, true);
+  assert(plain401.status === 401, 'without a token the answer is still 401, whatever the transport', plain401.body);
+  const tls202 = await ingestRaw(tokenA, tlsBytes, jsonType);
+  assert(tls202.status === 202, 'the same request with X-Forwarded-Proto: https -> 202', tls202.body);
+  process.env.VM_ALLOW_INSECURE_TOKENS = 'true';
+  const insecureOk = await ingestRaw(tokenA, bytesOf({ label: 'tls-src', agents: ['t2'] }), jsonType, false, true);
+  delete process.env.VM_ALLOW_INSECURE_TOKENS;
+  assert(insecureOk.status === 202, 'VM_ALLOW_INSECURE_TOKENS=true allows ingest without the header (202)', insecureOk.body);
+  await __drainVmWorkerForTests();
 
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();

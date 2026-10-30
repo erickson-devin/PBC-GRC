@@ -41,6 +41,9 @@ desktop.ini
 
 scanner-agent/
 
+# Local evidence vault and other runtime data
+data/
+
 # Python (exporters/pbc-vm-exporter)
 __pycache__/
 *.py[cod]

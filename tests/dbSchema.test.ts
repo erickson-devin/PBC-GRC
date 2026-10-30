@@ -1,4 +1,5 @@
-import { assertSupportedPostgresVersion, buildPoolConfig } from '../server/db';
+import fs from 'fs';
+import { assertSupportedPostgresVersion, assessDatabaseRole, buildPoolConfig } from '../server/db';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { DISCOVERY_POLICIES, PROGRAM_BACKFILL_TABLES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildLegacyProgramRowCountSql, buildProgramIdNotNullSql, buildProgramRlsSql, buildRlsSql, buildSchemaSql, rlsPolicyName, rlsProgramPolicyName } from '../server/schema';
 
@@ -425,6 +426,22 @@ assert(versionError('90624', '9.6.24') !== null, 'PostgreSQL 9.6.24 is refused')
 const unknownVersion = versionError(undefined, undefined);
 assert(unknownVersion !== null && unknownVersion.endsWith('found unknown'), 'an unreadable version is refused as unknown', unknownVersion);
 assert(versionError('abc', 'x') !== null, 'a non-numeric version number is refused');
+
+console.log('\n--- Database role check, health probe ---');
+const superRole = assessDatabaseRole({ rolsuper: true, rolbypassrls: false });
+const bypassRole = assessDatabaseRole({ rolsuper: false, rolbypassrls: true });
+assert(!superRole.ok && Boolean(superRole.message?.includes('SUPERUSER')), 'a SUPERUSER role is not ok and the message names SUPERUSER', superRole);
+assert(!bypassRole.ok && Boolean(bypassRole.message?.includes('BYPASSRLS')), 'a BYPASSRLS role is not ok and the message names BYPASSRLS', bypassRole);
+assert(assessDatabaseRole({ rolsuper: false, rolbypassrls: false }).ok, 'an ordinary role is ok');
+assert(assessDatabaseRole(undefined).ok && assessDatabaseRole(undefined).message === null, 'a missing row is ok (cannot tell), no message');
+const dbSrc = fs.readFileSync('server/db.ts', 'utf8').replace(/\r\n/g, '\n');
+const initAt = dbSrc.indexOf('export async function initDb(');
+const verAt = dbSrc.indexOf('assertSupportedPostgresVersion(ver.rows', initAt);
+const roleAt = dbSrc.indexOf('assessDatabaseRole(', initAt);
+assert(initAt > 0 && verAt > initAt && roleAt > verAt && dbSrc.indexOf('[FATAL]', initAt) > roleAt, 'initDb checks the role after the version check and refuses with [FATAL]', [initAt, verAt, roleAt]);
+assert(dbSrc.includes('connectionLogged') && /export function isDbReady\(/.test(dbSrc), 'db.ts logs the successful connection once (connectionLogged) and exports isDbReady()');
+const apiSrc = fs.readFileSync('server/routes/api.ts', 'utf8');
+assert(/router\.get\('\/health'[\s\S]*?isDbReady\(/.test(apiSrc), 'the health handler answers "starting" until isDbReady()');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
