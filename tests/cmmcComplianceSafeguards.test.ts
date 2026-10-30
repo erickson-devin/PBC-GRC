@@ -20,7 +20,12 @@ import {
   getSprsPointDeduction,
   generateEmassControlMatrixCsv,
   generateSprsAssessmentSummary,
+  sprsAppliesTo,
+  emassCsvNotes,
 } from '../src/data/reports/sprsCompiler';
+import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
+import fs from 'fs';
+import path from 'path';
 import {
   purgeTenantData,
   MIN_RETENTION_DAYS,
@@ -291,6 +296,50 @@ async function runTestSuite() {
   assert(emassCsv.includes('"9X7B4"'), 'eMASS CSV contains tenant CAGE code');
   assert(emassCsv.includes('"Implemented"'), 'eMASS CSV tracks implemented controls');
   assert(emassCsv.includes('"Planned / In Progress"'), 'eMASS CSV tracks in-progress controls');
+
+  // SP1: SPRS applies to CMMC Level 2 only; the eMASS CSV notes follow
+  assert(sprsAppliesTo('CMMC_L2') === true, 'SP1: sprsAppliesTo(CMMC_L2) is true');
+  assert(
+    [ 'CMMC_L1', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', undefined, null ].every((f) => sprsAppliesTo(f) === false),
+    'SP1: sprsAppliesTo is false for every other framework and for undefined / null'
+  );
+  assert(emassCsvNotes('CMMC_L2').length === 1, 'SP1: CMMC L2 eMASS notes: 1 note');
+  const l1Notes = emassCsvNotes('CMMC_L1');
+  assert(l1Notes.length === 2 && l1Notes[1].includes('SPRS Weight'), 'SP1: CMMC L1 eMASS notes: 2 notes, the second about SPRS Weight');
+  const nistNotes = emassCsvNotes('NIST_800_53_REV5');
+  assert(nistNotes.length === 3 && nistNotes[2].includes('800-171 Ref'), 'SP1: NIST 800-53 eMASS notes: 3 notes, the third about 800-171 Ref');
+
+  // SP2: the CMMC L2 CSV still carries the point weights
+  assert(emassCsv.includes(',"-5",'), 'SP2: CMMC L2 eMASS CSV still has a "-5" weight cell for an unmet 5-point control');
+  assert(!emassCsv.includes('"N/A","Not Implemented"'), 'SP2: CMMC L2 eMASS CSV has no N/A weight cell');
+
+  // SP3: eMASS CSV for another framework: one row per control, SPRS Weight and 800-171 Ref read N/A
+  const nistControls = getFrameworkControls('NIST_800_53_REV5', 'MOD_MOD_MOD');
+  const nistCsv = generateEmassControlMatrixCsv(nistControls, {}, { ...sampleMeta, framework: 'NIST_800_53_REV5' });
+  const nistLines = nistCsv.split('\r\n');
+  assert(nistLines.length - 2 === nistControls.length, `SP3: NIST 800-53 eMASS CSV has one data row per control (${nistLines.length - 2} / ${nistControls.length})`);
+  assert(!nistCsv.includes('"-1"') && !nistCsv.includes('"-3"') && !nistCsv.includes('"-5"'), 'SP3: NIST 800-53 eMASS CSV has no negative SPRS weight cell');
+  assert(nistLines.slice(1, -1).every((l) => l.includes('"Not Implemented","N/A",')), 'SP3: NIST 800-53 eMASS CSV SPRS Weight cells all read N/A');
+  assert(nistLines.slice(1, -1).every((l) => l.includes(',"N/A","') && /^"[^"]*(?:""[^"]*)*","[^"]*(?:""[^"]*)*","[^"]*(?:""[^"]*)*","N\/A",/.test(l)), 'SP3: NIST 800-53 eMASS CSV 800-171 Ref cells all read N/A');
+
+  // SP3b: CMMC L1 maps to 800-171 but has no SPRS weights
+  const l1Controls = getFrameworkControls('CMMC_L1');
+  const l1Csv = generateEmassControlMatrixCsv(l1Controls, {}, { ...sampleMeta, framework: 'CMMC_L1' });
+  const l1Rows = l1Csv.split('\r\n').slice(1, -1);
+  assert(l1Rows.length === l1Controls.length, 'SP3b: CMMC L1 eMASS CSV has one data row per control');
+  assert(l1Rows.every((l) => l.includes('"Not Implemented","N/A",')), 'SP3b: CMMC L1 eMASS CSV SPRS Weight cells all read N/A');
+  assert(!l1Rows.every((l) => /^"[^"]*(?:""[^"]*)*","[^"]*(?:""[^"]*)*","[^"]*(?:""[^"]*)*","N\/A",/.test(l)), 'SP3b: CMMC L1 eMASS CSV 800-171 Ref is not N/A');
+
+  // SP4 / EX: the export modal gates SPRS on the framework and reports a failed JSON export without leaking the error
+  const modalSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'reports', 'ArtifactExportModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert(modalSrc.includes('sprsAppliesTo(activeFramework)'), 'SP4: modal derives sprsApplies from the active framework');
+  assert(modalSrc.includes("{sprsApplies ? 'SPRS / eMASS' : 'eMASS'}"), 'SP4: modal tab label depends on sprsApplies');
+  assert(modalSrc.includes("activeTab === 'sprs' && !sprsApplies"), 'SP4: modal has an eMASS-only panel for non-L2 frameworks');
+  assert(modalSrc.includes('downloadEmassCsv(frameworkControls, state.controls, formData)'), 'SP4: modal still offers the eMASS CSV download');
+  const modalConsoleLines = modalSrc.split('\n').filter((l) => /console\.\w+\(/.test(l));
+  assert(modalConsoleLines.every((l) => !/\berr\b|errorMessage\(|err\.message/.test(l)), 'EX-L1: no console line in the modal passes an error');
+  assert(modalSrc.includes('<ErrorNotice message={jsonExportError}') && !modalSrc.includes('Failed to export JSON package'), 'EX-L2: modal shows a fixed-text ErrorNotice for a failed JSON export');
+  assert(modalConsoleLines.length === 0, `EX-L3: the modal has no console lines (found: ${modalConsoleLines.length})`);
 
   // 2.6 Official SPRS Assessment Summary
   const sprsSummary = generateSprsAssessmentSummary(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, sampleMeta);

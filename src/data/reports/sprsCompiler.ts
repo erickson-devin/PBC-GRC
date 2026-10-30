@@ -192,6 +192,17 @@ export function calculateSprsScore(
   };
 }
 
+/** SPRS point values exist only for CMMC Level 2 (NIST SP 800-171). */
+export const sprsAppliesTo = (framework: string | null | undefined): boolean => framework === 'CMMC_L2';
+
+/** Plain-language notes on what the eMASS CSV contains for a framework. */
+export function emassCsvNotes(framework: string): string[] {
+  const notes = ['One row per control of this program: its ID, title, domain, implementation status, narrative, responsible role, evaluation date and verified artifacts.'];
+  if (!sprsAppliesTo(framework)) notes.push('The SPRS Weight column reads N/A: SPRS point values exist only for CMMC Level 2.');
+  if (framework !== 'CMMC_L1' && framework !== 'CMMC_L2') notes.push('The NIST SP 800-171 Ref column reads N/A: this framework does not map to NIST SP 800-171 requirements.');
+  return notes;
+}
+
 /**
  * Generates RFC 4180 compliant eMASS Control Implementation Matrix CSV.
  * Formatted for direct upload to DoD Enterprise Mission Assurance Support Service.
@@ -224,6 +235,8 @@ export function generateEmassControlMatrixCsv(
   };
 
   let csv = headers.map(h => `"${h}"`).join(',') + '\r\n';
+  const sprsApplies = sprsAppliesTo(metadata.framework);
+  const mapsTo171 = metadata.framework === 'CMMC_L1' || metadata.framework === 'CMMC_L2';
 
   for (const ctrl of controls) {
     const state = controlStates[ctrl.id];
@@ -243,11 +256,11 @@ export function generateEmassControlMatrixCsv(
       escapeCsv(metadata.systemName || 'Enclave System'),
       escapeCsv(metadata.cageCode || 'N/A'),
       escapeCsv(ctrl.id),
-      escapeCsv(nistId),
+      escapeCsv(mapsTo171 ? nistId : 'N/A'),
       escapeCsv(ctrl.title),
       escapeCsv(ctrl.domain),
       escapeCsv(emassStatus),
-      escapeCsv(status === 'MET' || weight === 0 ? 0 : -weight),
+      escapeCsv(!sprsApplies ? 'N/A' : status === 'MET' || weight === 0 ? 0 : -weight),
       escapeCsv(narrative),
       escapeCsv(role),
       escapeCsv(evalDate),
