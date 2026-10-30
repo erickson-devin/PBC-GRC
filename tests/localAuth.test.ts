@@ -9,13 +9,14 @@ import {
   LocalTokenError,
   assertAuthConfig,
   authStartupWarnings,
+  getPasswordHistoryDepth,
   hashPassword,
   signLocalToken,
   validateNewPassword,
   verifyLocalToken,
   verifyPassword,
 } from '../server/auth/localAuth';
-import { MAX_FAILED_ATTEMPTS, createLocalUser } from '../server/auth/localUsers';
+import { MAX_FAILED_ATTEMPTS, countPasswordHistory, createLocalUser, findLocalUserByEmail } from '../server/auth/localUsers';
 import { accountLogRef, loginAccountKey } from '../server/auth/loginThrottle';
 import { __resetLoginThrottleForTests } from '../server/routes/auth';
 import { rawSetCookie, sessionCookieFrom } from './sessionCookieJar';
@@ -116,7 +117,12 @@ async function run() {
   assert(/LOCAL_AUTH_SECRET/.test(throws(() => assertAuthConfig({} as NodeJS.ProcessEnv)) ?? ''), 'with no AUTH_MODE the signing secret is still required');
   const mockProd = throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, NODE_ENV: 'production', ALLOW_DEV_MOCK_TOKENS: 'true' } as NodeJS.ProcessEnv));
   assert(mockProd !== null && /ALLOW_DEV_MOCK_TOKENS/.test(mockProd), 'ALLOW_DEV_MOCK_TOKENS=true with NODE_ENV=production fails startup', mockProd);
-  assert(throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, NODE_ENV: 'development', ALLOW_DEV_MOCK_TOKENS: 'true' } as NodeJS.ProcessEnv)) === null, 'the flag is allowed outside production');
+  assert(throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, NODE_ENV: 'development', ALLOW_DEV_MOCK_TOKENS: 'true' } as NodeJS.ProcessEnv)) === null, 'the flag is allowed with NODE_ENV=development');
+  for (const [label, env] of [['unset', {}], ['staging', { NODE_ENV: 'staging' }]] as const) {
+    const m = throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, ALLOW_DEV_MOCK_TOKENS: 'true', ...env } as NodeJS.ProcessEnv));
+    assert(m !== null && /ALLOW_DEV_MOCK_TOKENS/.test(m), `ALLOW_DEV_MOCK_TOKENS=true fails startup when NODE_ENV is ${label} (fail closed, #160)`, m);
+  }
+  assert(throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, NODE_ENV: 'test', ALLOW_DEV_MOCK_TOKENS: 'true' } as NodeJS.ProcessEnv)) === null, 'the flag is allowed with NODE_ENV=test');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local' } as NodeJS.ProcessEnv)) !== null, 'AUTH_MODE=local without LOCAL_AUTH_SECRET fails startup (no default secret)');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local', LOCAL_AUTH_SECRET: 'short' } as NodeJS.ProcessEnv)) !== null, 'a short secret fails startup');
   assert(throws(() => assertAuthConfig({ AUTH_MODE: 'local', LOCAL_AUTH_SECRET: SECRET } as NodeJS.ProcessEnv)) === null, 'a 32+ character secret is accepted');
@@ -323,7 +329,7 @@ async function run() {
   assert(!('token' in json43) && !('tokenType' in json43) && /^[A-Za-z0-9_-]{22}$/.test(json43.sessionRef ?? '') && !text43.includes(cookie43), 'S43-1: the body has no token or tokenType, carries a 22 character sessionRef, and never contains the cookie value');
   const claims43 = verifyLocalToken(cookie43);
   assert(claims43.sub === json43.user?.id && claims43.sid === json43.sessionRef, 'S43-2: the cookie is a valid session token whose subject and sid match the body');
-  const marker = { 'X-PBC-Session': 'r' };
+  const marker = { 'X-PBC-Session': String(json43.sessionRef) };
   assert((await call('GET', '/auth/me', { cookie: cookie43, headers: marker })).status === 200, 'S43-3: the cookie plus the marker header authenticates GET /auth/me');
   const noMarkerMe = await call('GET', '/auth/me', { cookie: cookie43 });
   const noMarkerPost = await call('POST', '/tenants', { cookie: cookie43, body: { name: 'x' } });
@@ -341,6 +347,21 @@ async function run() {
   assert((await call('GET', '/auth/me', { token: cookie43 })).status === 200, 'S43-7: the same value as an Authorization Bearer token works with no marker (the integration path)');
   const basic43 = await call('GET', '/auth/me', { cookie: cookie43, headers: { ...marker, Authorization: 'Basic x' } });
   assert(basic43.status === 401 && basic43.body?.reason === 'session_missing', 'S43-8: an Authorization header wins over the cookie (Basic + a valid cookie -> 401 session_missing)', basic43.body);
+  const wrongMarker = await call('GET', '/auth/me', { cookie: cookie43, headers: { 'X-PBC-Session': 'r' } });
+  assert(wrongMarker.status === 401 && wrongMarker.body?.reason === 'session_mismatch', 'S149-1: a marker that is not the cookie session\'s sid -> 401 session_mismatch', wrongMarker.body);
+  const otherRef = ((await (await rawLogin()).json()) as Record<string, any>).sessionRef as string;
+  const otherSession = await call('GET', '/auth/me', { cookie: cookie43, headers: { 'X-PBC-Session': otherRef } });
+  assert(otherRef !== json43.sessionRef && otherSession.status === 401 && otherSession.body?.reason === 'session_mismatch', 'S149-2: the sid of another session of the same account -> 401 session_mismatch', otherSession.body);
+  const jwtMarker = await call('GET', '/auth/me', { cookie: cookie43, headers: { 'X-PBC-Session': cookie43 } });
+  assert(cookie43.length > 256 && jwtMarker.status === 403 && jwtMarker.body?.reason === 'csrf_rejected', 'S149-3: the session token itself is over the 256 character marker cap -> 403 csrf_rejected', [cookie43.length, jwtMarker.status]);
+  assert((await call('GET', '/auth/me', { token: cookie43, headers: { 'X-PBC-Session': 'r' } })).status === 200, 'S149-4: on the Authorization path the marker is ignored');
+  const mock149 = `h.${Buffer.from(JSON.stringify({ sub: 'u_mock149' })).toString('base64')}.mock_pbc_signature`;
+  assert((await call('GET', '/auth/me', { cookie: mock149, headers: { 'X-PBC-Session': 'x' } })).status === 200, 'S149-5: a dev mock token carries no sid and is exempt from the marker match');
+  const mwSrc = fs.readFileSync(new URL('../server/middleware/authMiddleware.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const iAuth = mwSrc.indexOf('authenticateToken(token)');
+  const iMismatch = mwSrc.indexOf('res.status(401).json(SESSION_MISMATCH)');
+  const iMust = mwSrc.indexOf('authenticated.mustChangePassword');
+  assert(iAuth > 0 && iAuth < iMismatch && iMismatch < iMust, 'S149-7: the marker match runs after authentication and before the must-change-password gate');
   const out43 = await call('POST', '/auth/logout', { cookie: cookie43 });
   const outLine = rawSetCookie(out43.headers) ?? '';
   assert(out43.status === 204 && /^pbc_session=;/.test(outLine) && /Expires=Thu, 01 Jan 1970/.test(outLine) && /Path=\/api/.test(outLine), 'S43-9: POST /auth/logout -> 204 and expires the cookie on its path', outLine);
@@ -360,15 +381,19 @@ async function run() {
   }
   const NEW43 = 'a different long passphrase 43';
   const pwOld = sessionCookieFrom((await rawLogin()).headers) ?? '';
+  const pwOldMarker = { 'X-PBC-Session': verifyLocalToken(pwOld).sid ?? '' };
   const pw43 = await fetch(`${BASE}/auth/password`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: `pbc_session=${pwOld}`, ...marker },
+    headers: { 'Content-Type': 'application/json', Cookie: `pbc_session=${pwOld}`, ...pwOldMarker },
     body: JSON.stringify({ currentPassword: PASSWORD, newPassword: NEW43 }),
   });
   const pwNew = sessionCookieFrom(pw43.headers) ?? '';
-  const oldAfter = await call('GET', '/auth/me', { cookie: pwOld, headers: marker });
+  const pwNewMarker = { 'X-PBC-Session': verifyLocalToken(pwNew).sid ?? '' };
+  const oldAfter = await call('GET', '/auth/me', { cookie: pwOld, headers: pwOldMarker });
   assert(pw43.status === 200 && pwNew !== '' && pwNew !== pwOld, 'S43-12: changing the password sets a new session cookie');
-  assert(oldAfter.status === 401 && oldAfter.body?.reason === 'session_revoked' && (await call('GET', '/auth/me', { cookie: pwNew, headers: marker })).status === 200, 'S43-12: the old cookie is revoked and the new one works', oldAfter.body);
+  assert(oldAfter.status === 401 && oldAfter.body?.reason === 'session_revoked' && (await call('GET', '/auth/me', { cookie: pwNew, headers: pwNewMarker })).status === 200, 'S43-12: the old cookie is revoked and the new one works', oldAfter.body);
+  const oldWrongMarker = await call('GET', '/auth/me', { cookie: pwOld, headers: marker });
+  assert(oldWrongMarker.status === 401 && oldWrongMarker.body?.reason === 'session_revoked', 'S149-6: a revoked cookie keeps its own reason (authentication runs before the marker check)', oldWrongMarker.body);
   assert((await call('POST', '/vm/ingest', { cookie: pwNew, headers: marker, body: {} })).status === 401, 'S43-13: the VM ingest route does not accept a session cookie');
   assert(!fs.readFileSync(new URL('../server/index.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n').includes('cors('), 'S43-14: server/index.ts mounts no CORS middleware');
 
@@ -383,6 +408,14 @@ async function run() {
   const unsigned = forge({ alg: 'RS256' }, { sub: 'x', email: 'x@y.z', exp: now + 600 }, null);
   assert((await call('GET', '/controls', { token: unsigned, tenant: tenantId })).status === 401, 'an unsigned self-asserted token is 401 (there is no unsigned fallback)');
   process.env.NODE_ENV = originalEnv;
+  try {
+    process.env.NODE_ENV = 'staging';
+    assert((await call('GET', '/auth/me', { token: mock, tenant: tenantId })).status === 401, 'a mock token gets 401 with an unrecognised NODE_ENV (fail closed, #160)');
+    delete process.env.NODE_ENV;
+    assert((await call('GET', '/auth/me', { token: mock, tenant: tenantId })).status === 401, 'and 401 with NODE_ENV unset');
+  } finally {
+    process.env.NODE_ENV = 'test';
+  }
 
   console.log('\n--- Mock tokens need ALLOW_DEV_MOCK_TOKENS (NODE_ENV not production) ---');
   const savedMockFlag = process.env.ALLOW_DEV_MOCK_TOKENS;
@@ -404,6 +437,67 @@ async function run() {
   assert((await login('ann@enclave.mil', PASSWORD)).status === 503, 'no secret at request time -> 503, never a token signed with a default');
   assert((await call('GET', '/auth/me', { token: annToken })).status === 503, 'and tokens cannot be verified -> 503');
   process.env.LOCAL_AUTH_SECRET = savedSecret;
+
+  console.log('\n--- Password history (#162) ---');
+  __resetLoginThrottleForTests();
+  const savedDepth = process.env.PASSWORD_HISTORY_DEPTH;
+  process.env.PASSWORD_HISTORY_DEPTH = '3';
+  try {
+    const P0 = PASSWORD;
+    const [P1, P2, P3, P4] = ['history passphrase one', 'history passphrase two', 'history passphrase three', 'history passphrase four'];
+    const REUSED_TEXT = 'That password was used recently. Choose one you have not used before.';
+    const chg = (tok: string, cur: string, next: string) => call('POST', '/auth/password', { token: tok, body: { currentPassword: cur, newPassword: next } });
+    const histEmail = 'hist162@enclave.mil';
+    const u162 = await createLocalUser({ email: histEmail, name: 'Hist', password: P0 });
+    const s0 = (await login(histEmail, P0)).body?.token as string;
+    const same = await chg(s0, P0, P0);
+    assert(same.status === 400 && same.body?.reason === 'password_reused' && same.body?.error === REUSED_TEXT, 'H162-1: the new password equal to the current one is refused 400 password_reused', same.body);
+    const c1 = await chg(s0, P0, P1);
+    const s1 = c1.body?.token as string;
+    assert(c1.status === 200 && typeof s1 === 'string' && (await countPasswordHistory(u162.id)) === 1, 'H162-2: a different password is accepted and the old hash is kept (history = 1)', c1.status);
+    const back1 = await chg(s1, P1, P0);
+    assert(back1.status === 400 && back1.body?.reason === 'password_reused', 'H162-3: going back to the previous password is refused', back1.body);
+    const afterReuse = await findLocalUserByEmail(histEmail);
+    assert(afterReuse?.failedAttempts === 0 && afterReuse.lockedUntil === null, 'H162-4: a reuse refusal does not count toward the lockout');
+    let tok = s1;
+    let chain = true;
+    for (const [cur, next] of [[P1, P2], [P2, P3], [P3, P4]]) {
+      const r = await chg(tok, cur, next);
+      chain = chain && r.status === 200;
+      tok = r.body?.token as string;
+    }
+    assert(chain && (await countPasswordHistory(u162.id)) === 3, 'H162-5: three more changes keep exactly the last 3 previous hashes', await countPasswordHistory(u162.id));
+    const backP1 = await chg(tok, P4, P1);
+    assert(backP1.status === 400 && backP1.body?.reason === 'password_reused', 'H162-6: a password still inside the 3-deep history is refused', backP1.body);
+    const backP0 = await chg(tok, P4, P0);
+    assert(backP0.status === 200, 'H162-6: the original password has fallen out of the history and is accepted again', backP0.body);
+    tok = backP0.body?.token as string;
+    process.env.PASSWORD_HISTORY_DEPTH = '0';
+    const noHist = await chg(tok, P0, P4);
+    assert(noHist.status === 200 && (await countPasswordHistory(u162.id)) === 0, 'H162-7: depth 0 ignores and clears the history (P4 is accepted)', noHist.body);
+    const curOnly = await chg(noHist.body?.token as string, P4, P4);
+    assert(curOnly.status === 400 && curOnly.body?.reason === 'password_reused', 'H162-7: the current password is refused even at depth 0', curOnly.body);
+    process.env.PASSWORD_HISTORY_DEPTH = '3';
+    const temp = await createLocalUser({ email: 'hist162b@enclave.mil', name: 'Hist B', password: P0 }, { mustChangePassword: true });
+    const t0 = (await login('hist162b@enclave.mil', P0)).body?.token as string;
+    const t1 = await chg(t0, P0, P1);
+    assert(t1.status === 200 && (await countPasswordHistory(temp.id)) === 0, 'H162-8: a temporary password is not recorded (history stays 0)', t1.body);
+    assert((await chg(t1.body?.token as string, P1, P0)).status === 200, 'H162-8: so the person may later choose it again');
+    const depthOf = (v?: string) => getPasswordHistoryDepth(v === undefined ? ({} as NodeJS.ProcessEnv) : ({ PASSWORD_HISTORY_DEPTH: v } as NodeJS.ProcessEnv));
+    assert(depthOf() === 5 && depthOf('') === 5 && depthOf('0') === 0 && depthOf('24') === 24 && depthOf(' 7 ') === 7, 'H162-9: PASSWORD_HISTORY_DEPTH defaults to 5, accepts 0..24 and is trimmed');
+    assert(['25', '-1', 'abc', '2.5'].every((v) => throws(() => depthOf(v)) !== null), 'H162-9: 25, -1, abc and 2.5 are refused');
+    const badDepth = throws(() => assertAuthConfig({ LOCAL_AUTH_SECRET: SECRET, PASSWORD_HISTORY_DEPTH: '25' } as NodeJS.ProcessEnv));
+    assert(badDepth !== null && /PASSWORD_HISTORY_DEPTH/.test(badDepth), 'H162-9: an invalid depth fails startup', badDepth);
+    const authRoute = fs.readFileSync(new URL('../server/routes/auth.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    const pwRoute = authRoute.slice(authRoute.indexOf("router.post('/password'"));
+    assert(
+      pwRoute.indexOf('validateNewPassword(newPassword') > 0 && pwRoute.indexOf('validateNewPassword(newPassword') < pwRoute.indexOf('PASSWORD_REUSED') && pwRoute.indexOf('PASSWORD_REUSED') < pwRoute.indexOf('consumeTotpStep('),
+      'H162-10: in /password the reuse check comes after the strength check and before the one-time code is spent'
+    );
+  } finally {
+    if (savedDepth === undefined) delete process.env.PASSWORD_HISTORY_DEPTH;
+    else process.env.PASSWORD_HISTORY_DEPTH = savedDepth;
+  }
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

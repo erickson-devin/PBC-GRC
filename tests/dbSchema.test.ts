@@ -387,6 +387,27 @@ assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_assets_asset 
 const afterMembership = membershipAt < 0 ? '' : TABLES_SQL.slice(membershipAt);
 assert(afterMembership !== '' && !afterMembership.includes('NOT VALID') && !afterMembership.includes('SET NOT NULL'), 'PA6: no NOT VALID check and no SET NOT NULL after the membership heading');
 
+console.log('\n--- Password history (#162) ---');
+const phAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_user_password_history (');
+const phBlock = phAt < 0 ? '' : TABLES_SQL.slice(phAt, TABLES_SQL.indexOf('\n  );', phAt));
+assert(phAt > paAt && paAt > 0, 'PH1: local_user_password_history is created after program_assets, outside the local_users block');
+assert(
+  phBlock.includes('user_id VARCHAR(64) NOT NULL') &&
+    phBlock.includes('password_hash VARCHAR(100) NOT NULL') &&
+    phBlock.includes('created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()') &&
+    phBlock.includes('CONSTRAINT fk_local_user_password_history_user FOREIGN KEY (user_id) REFERENCES local_users (id) ON DELETE CASCADE') &&
+    phBlock.includes("CONSTRAINT local_user_password_history_hash_check CHECK (password_hash ~ '^[$]2[aby][$][0-9]{2}[$]')"),
+  'PH2: the history table has a bcrypt-shaped hash check, a cascading FK to local_users and a created_at default'
+);
+assert(phBlock !== '' && !/\btenant_id\b/.test(phBlock) && !/\bpassword\s+(VARCHAR|TEXT)/i.test(phBlock), 'PH3: global identity data (no tenant_id) and no plaintext password column');
+assert(
+  !RLS_TENANT_TABLES.some((r) => r.table === 'local_user_password_history') &&
+    !(RLS_PROGRAM_TABLES as readonly string[]).includes('local_user_password_history') &&
+    !buildRlsSql().includes('local_user_password_history'),
+  'PH4: the history table is in no row-security list and has no policy (like local_users)'
+);
+assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_local_user_password_history_user ON local_user_password_history (user_id, id DESC);'), 'PH5: the history table is indexed by user, newest first');
+
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);
 assert(url.config.connectionString === 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require', 'DATABASE_URL is passed through as the connection string');

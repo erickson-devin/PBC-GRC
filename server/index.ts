@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
 import { initDb, assertDbModeAllowed, getDbMode, pool } from './db';
 import { assertAuthConfig, authStartupWarnings } from './auth/localAuth';
+import { runtimeEnvWarnings } from './runtimeEnv';
 import { assertStorageConfig, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { createForwardedForWarning, parseTrustProxy } from './trustProxy';
@@ -108,6 +109,7 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
 
   // Fail loudly: a server that cannot reach its database (or is misconfigured) must not pretend to be healthy.
   try {
+    for (const w of runtimeEnvWarnings()) console.warn('[Startup] ' + w);
     assertDbModeAllowed();
     assertAuthConfig();
     for (const w of authStartupWarnings()) console.warn('[Startup] ' + w);
@@ -132,7 +134,7 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
     }
   } catch (err: unknown) {
     console.error('\n[FATAL] Server cannot start:', errorMessage(err));
-    console.error('        Set DATABASE_URL / DB_* for PostgreSQL, or DB_MODE=memory for local development only.\n');
+    console.error('        Set DATABASE_URL / DB_* for PostgreSQL, or DB_MODE=memory with NODE_ENV=development for local development only.\n');
     server.close();
     process.exit(1);
   }

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { deriveKey, MIN_MFA_KEY_LENGTH } from './mfaCrypto';
 import type { MfaRequirement } from './mfaPolicy';
+import { isNonProductionEnv, describeNodeEnv } from '../runtimeEnv';
 
 /**
  * Local (air-gapped) authentication primitives: HS256 JWTs and bcrypt password hashing.
@@ -48,7 +49,8 @@ export function getLocalAuthSecret(env: NodeJS.ProcessEnv = process.env): string
 
 /**
  * Startup validation: local accounts are the only identity mode. AUTH_MODE may be omitted or "local"; anything
- * else is refused. The signing secret is always required, and dev mock tokens can never be enabled in production.
+ * else is refused. The signing secret is always required, and dev mock tokens are refused unless NODE_ENV is development
+ * or test (an unset or unknown NODE_ENV counts as production).
  */
 export function assertAuthConfig(env: NodeJS.ProcessEnv = process.env): void {
   const raw = env.AUTH_MODE ?? '';
@@ -59,10 +61,11 @@ export function assertAuthConfig(env: NodeJS.ProcessEnv = process.env): void {
     );
   }
   getLocalAuthSecret(env);
-  if (env.ALLOW_DEV_MOCK_TOKENS === 'true' && env.NODE_ENV === 'production') {
-    throw new LocalAuthConfigError('ALLOW_DEV_MOCK_TOKENS must not be set when NODE_ENV=production');
+  if (env.ALLOW_DEV_MOCK_TOKENS === 'true' && !isNonProductionEnv(env)) {
+    throw new LocalAuthConfigError(`ALLOW_DEV_MOCK_TOKENS is only allowed when NODE_ENV is development or test (${describeNodeEnv(env)})`);
   }
   getMfaRequirement(env);
+  getPasswordHistoryDepth(env);
   const mfaKey = (env.MFA_ENCRYPTION_KEY ?? '').trim();
   if (mfaKey !== '' && mfaKey.length < MIN_MFA_KEY_LENGTH) {
     throw new LocalAuthConfigError(
@@ -82,10 +85,33 @@ export function getMfaRequirement(env: NodeJS.ProcessEnv = process.env): MfaRequ
   throw new LocalAuthConfigError('MFA_REQUIRED must be one of: all, privileged, off (or left empty for the default).');
 }
 
+/** Default number of previous passwords a new one must differ from (NIST SP 800-171 3.5.8); the current one is always refused. */
+export const DEFAULT_PASSWORD_HISTORY_DEPTH = 5;
+export const MAX_PASSWORD_HISTORY_DEPTH = 24;
+
+/** Parses PASSWORD_HISTORY_DEPTH (whole number 0..24, blank = default). Anything else is a configuration error. */
+export function getPasswordHistoryDepth(env: NodeJS.ProcessEnv = process.env): number {
+  const value = (env.PASSWORD_HISTORY_DEPTH ?? '').trim();
+  if (value === '') return DEFAULT_PASSWORD_HISTORY_DEPTH;
+  const depth = /^\d{1,2}$/.test(value) ? Number(value) : NaN;
+  if (!Number.isInteger(depth) || depth > MAX_PASSWORD_HISTORY_DEPTH) {
+    throw new LocalAuthConfigError(
+      `PASSWORD_HISTORY_DEPTH must be a whole number from 0 to ${MAX_PASSWORD_HISTORY_DEPTH} (or left empty for the default, ${DEFAULT_PASSWORD_HISTORY_DEPTH}).`
+    );
+  }
+  return depth;
+}
+
+/** 400 body when a new password matches the current one or one of the previous N (never counts as a failed login). */
+export const PASSWORD_REUSED = {
+  error: 'That password was used recently. Choose one you have not used before.',
+  reason: 'password_reused',
+} as const;
+
 /** Warnings the server logs once at startup (the caller logs them; nothing here prints). */
 export function authStartupWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
   const warnings: string[] = [];
-  if (getMfaRequirement(env) === 'off' && env.NODE_ENV === 'production') {
+  if (getMfaRequirement(env) === 'off' && !isNonProductionEnv(env)) {
     warnings.push('MFA_REQUIRED=off in production: multi-factor authentication is disabled; NIST SP 800-171 3.5.3 is not met by the application');
   }
   const ttl = Number((env.LOCAL_AUTH_TOKEN_TTL_SECONDS ?? '').trim());

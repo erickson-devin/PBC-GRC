@@ -6,7 +6,8 @@ import type { TenantRole } from '../../src/types/tenant';
 import type { Program } from '../programs';
 import { LocalAuthConfigError, LocalTokenError, verifyLocalToken } from '../auth/localAuth';
 import { getLocalUserAuthState } from '../auth/localUsers';
-import { CSRF_REJECTED, hasSessionMarker, isCrossSiteRequest, readSessionCookie } from '../auth/session';
+import { CSRF_REJECTED, SESSION_MISMATCH, hasSessionMarker, isCrossSiteRequest, markerMatchesSession, readSessionCookie, readSessionMarker } from '../auth/session';
+import { isNonProductionEnv } from '../runtimeEnv';
 
 // Extend Express Request interface with authenticated user & tenant context
 declare global {
@@ -37,10 +38,11 @@ const PASSWORD_CHANGE_PATH = '/api/v1/auth/password';
 
 /**
  * Mock-token support exists only for local development and automated tests: it needs ALLOW_DEV_MOCK_TOKENS=true
- * and is never honoured when NODE_ENV === 'production' (startup also refuses that combination). Read per request.
+ * and is honoured only when NODE_ENV is development or test (an unset or unknown NODE_ENV counts as production; startup also
+ * refuses that combination). Read per request.
  */
 function isMockAuthAllowed(): boolean {
-  return process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_MOCK_TOKENS === 'true';
+  return isNonProductionEnv() && process.env.ALLOW_DEV_MOCK_TOKENS === 'true';
 }
 
 function isMockToken(token: string): boolean {
@@ -178,6 +180,8 @@ interface Authenticated {
   devMock: boolean;
   /** The account is flagged to change its password before doing anything else (never true for mock tokens). */
   mustChangePassword: boolean;
+  /** The token's session id (the sessionRef the SPA sends as its marker); absent for mock tokens. */
+  sid?: string;
 }
 
 /**
@@ -208,11 +212,13 @@ async function authenticateToken(token: string): Promise<Authenticated> {
     }),
     devMock: false,
     mustChangePassword: state.mustChangePassword,
+    sid: claims.sid,
   };
 }
 
 async function handle(req: Request, res: Response, next: NextFunction, requireTenant: boolean): Promise<void> {
   const authHeader = req.headers.authorization;
+  const viaCookie = authHeader === undefined;
   let token: string | null | undefined;
 
   if (authHeader !== undefined) {
@@ -265,6 +271,13 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
     return;
   }
 
+  // The marker must name the session the cookie holds: a tab whose session was replaced by another sign-in in this browser is refused.
+  // This runs after authentication, so a revoked or expired cookie keeps its own reason. Dev mock tokens carry no sid and are exempt.
+  if (viaCookie && !authenticated.devMock && !markerMatchesSession(readSessionMarker(req), authenticated.sid)) {
+    res.status(401).json(SESSION_MISMATCH);
+    return;
+  }
+
   // A forced password change (temporary password after an admin reset or a CLI-created account) leaves exactly one
   // request open: POST /api/v1/auth/password.
   if (authenticated.mustChangePassword && !(req.method === 'POST' && req.baseUrl + req.path === PASSWORD_CHANGE_PATH)) {
@@ -300,7 +313,7 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
 
 /**
  * Validates the session (a locally signed JWT) from the Authorization Bearer header, or, when there is no Authorization header,
- * from the HttpOnly session cookie (which also needs the X-PBC-Session marker and a same-origin Sec-Fetch-Site), and
+ * from the HttpOnly session cookie (which also needs the X-PBC-Session marker, equal to the cookie session's sid, and a same-origin Sec-Fetch-Site), and
  * attaches the verified req.user, plus req.tenantId / req.tenantRole after checking tenant membership.
  */
 export function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
