@@ -21,9 +21,29 @@ jobs:
     # Belt and braces: even if the triggers above are edited later, only main or a release tag may publish
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    # A throwaway database for the smoke test: the built image is started against it before anything is pushed (#156)
+    services:
+      postgres:
+        # the same image and digest as docker-compose.yml (tests/onPremOnly.test.ts checks they match)
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-throwaway-admin
+          POSTGRES_DB: cmmc_compliance_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cmmc_compliance_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_DB_USER: grc_app
+      APP_DB_PASSWORD: ci-throwaway-app
 
     steps:
       - name: Checkout repository
@@ -76,9 +96,58 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
 
+      # Build once into the local Docker engine (nothing is pushed) so the image can be started before it is published (#156)
+      - name: Build the image for the smoke test
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          provenance: false
+          tags: pbc-grc-smoke:${{ steps.commit.outputs.sha }}
+          build-args: BUILD_COMMIT=${{ steps.commit.outputs.sha }}
+          cache-from: type=gha
+
+      - name: Create the application role
+        run: |
+          docker cp docker/postgres/10-app-role.sh "${{ job.services.postgres.id }}:/tmp/10-app-role.sh"
+          docker exec -e APP_DB_USER -e APP_DB_PASSWORD "${{ job.services.postgres.id }}" sh /tmp/10-app-role.sh
+
+      # Start the built image against the throwaway database; the push below runs only if this passes
+      - name: Smoke test the image
+        id: smoke
+        shell: bash
+        env:
+          SMOKE_IMAGE: pbc-grc-smoke:${{ steps.commit.outputs.sha }}
+          EXPECTED_COMMIT: ${{ steps.commit.outputs.sha }}
+          DB_USER: grc_app
+          DB_PASS: ci-throwaway-app
+        run: |
+          LOCAL_AUTH_SECRET="$(openssl rand -hex 32)"; echo "::add-mask::$LOCAL_AUTH_SECRET"; export LOCAL_AUTH_SECRET
+          docker run -d --name pbc-smoke --network host \
+            -e NODE_ENV=production -e AUTH_MODE=local -e APP_BIND_ADDRESS=127.0.0.1 -e LOCAL_AUTH_SECRET \
+            -e DB_HOST=127.0.0.1 -e DB_PORT=5432 -e DB_NAME=cmmc_compliance_db -e DB_USER -e DB_PASS \
+            -e SSP_AI_ENABLED=false \
+            --tmpfs /app/data/evidence:rw,mode=0700,uid=1000,gid=1000 \
+            "$SMOKE_IMAGE"
+          version="$(jq -r .version package.json)"
+          deadline=$((SECONDS + 90))
+          until body="$(curl -fsS http://127.0.0.1:3000/api/v1/health 2>/dev/null)" && \
+                echo "$body" | jq -e --arg c "$EXPECTED_COMMIT" --arg v "$version" \
+                  '.status == "healthy" and .database == "connected" and .buildCommit == $c and .version == $v' >/dev/null; do
+            if [ "$(docker inspect -f '{{.State.Running}}' pbc-smoke)" != "true" ]; then echo "::error::the container exited"; docker logs pbc-smoke; exit 1; fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::health not 200 connected within 90 s"; docker logs pbc-smoke; exit 1; fi
+            sleep 2
+          done
+          if docker logs pbc-smoke 2>&1 | grep -F '[FATAL]'; then echo "::error::[FATAL] in the container log"; exit 1; fi
+          docker logs pbc-smoke 2>&1 | grep -qF '[PostgreSQL] Database schema, control mappings, and RLS policies verified.'
+          docker exec pbc-smoke npm run db:verify-rls
+          docker rm -f pbc-smoke
+
       # Build and push Docker image with GitHub Actions layer caching
       - name: Build and push Docker image
         id: build
+        if: steps.smoke.outcome == 'success'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .

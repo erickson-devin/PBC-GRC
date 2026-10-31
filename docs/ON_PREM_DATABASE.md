@@ -266,6 +266,12 @@ The publish workflow reruns CI, refuses a tag that does not match `package.json`
 `vX.Y.Z`, `vX.Y` and `vX` to `ghcr.io/erickson-devin/pbc-grc`. The run summary lists the image digest. `sha-<commit>` and
 `latest` keep following `main` and are for testing only: nothing shipped references them.
 
+Before it pushes, the publish workflow builds the image once locally and starts it against a throwaway PostgreSQL 16 (as
+the application role), waits for `GET /api/v1/health` to report `"database":"connected"` with the expected `version` and
+`buildCommit`, runs `db:verify-rls` inside the image, and only then pushes (#156). CI also runs the live PostgreSQL scripts
+in a separate job (#159). The `postgres` digest used by those workflows is pinned equal to the compose digest: refresh
+both together in the same pull request.
+
 Operators set `IMAGE_TAG=vX.Y.Z` in `.env` (or `vX.Y.Z@sha256:<digest>` for an immutable pin). To verify an image:
 `docker buildx imagetools inspect ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows its digest before a pull, and after a pull
 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows it; once running,

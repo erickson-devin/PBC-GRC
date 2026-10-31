@@ -488,6 +488,44 @@ const publishNeeds = ['tags: [ "v[0-9]+.[0-9]+.[0-9]+" ]', 'latest=false', 'type
 assert(publishNeeds.every((s) => publishWf.includes(s)), 'docker-publish.yml publishes SemVer tags, checks the release tag against main and package.json, and records the digest', publishNeeds.filter((s) => !publishWf.includes(s)));
 assert(!publishWf.includes('type=raw,value=latest\n'), 'docker-publish.yml never tags latest unconditionally');
 
+console.log('\n--- Live PostgreSQL CI and image smoke (#159, #156) ---');
+function jobsOf(wf: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const start = /^jobs:\s*$/m.exec(wf);
+  if (!start) return out;
+  const parts = wf.slice(start.index + start[0].length).split(/^ {2}([A-Za-z0-9_-]+):\s*$/m);
+  for (let i = 1; i < parts.length; i += 2) out.set(parts[i], parts[i + 1] ?? '');
+  return out;
+}
+const stepsOf = (block: string): string[] => block.split('\n      - name:');
+const imagesOf = (text: string): string[] => [...text.matchAll(/^\s+image:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+const jobsSelf = jobsOf('jobs:\n  a:\n    x: 1\n  b:\n    y: 2\n');
+assert(JSON.stringify([...jobsSelf.keys()]) === '["a","b"]' && (jobsSelf.get('a') ?? '').includes('x: 1') && !(jobsSelf.get('a') ?? '').includes('y: 2'), 'jobsOf splits a workflow into its jobs (self-test)', [...jobsSelf.keys()]);
+const composeDbImage = (db ? db.lines.map((l) => /^\s*image:\s*(\S+)\s*$/.exec(l)).find((m) => !!m)?.[1] : undefined) ?? '';
+assert(/^postgres:16-alpine@sha256:[0-9a-f]{64}$/.test(composeDbImage), 'the compose db image is readable for the CI digest comparison', composeDbImage);
+const ciWf = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
+const ciJobs = jobsOf(ciWf);
+assert(JSON.stringify(imagesOf(ciWf)) === JSON.stringify([composeDbImage]), 'ci.yml has one service image, postgres:16-alpine pinned by the same digest as docker-compose.yml (#159)', imagesOf(ciWf));
+const ciTest = ciJobs.get('test') ?? '';
+assert(ciTest.includes('npm run test:all') && !/^\s+services:/m.test(ciTest), 'the fast gates stay without a database (#159)');
+const ciLive = ciJobs.get('live-postgres') ?? '';
+const liveNeeds = ['services:', 'docker/postgres/10-app-role.sh', 'npm run db:verify-rls', 'npm run db:verify-vm', 'npm run db:prove-control-serialization'];
+assert(liveNeeds.every((s) => ciLive.includes(s)), 'ci.yml live-postgres job starts a PostgreSQL service, creates the app role with the shipped script and runs the three live scripts (#159)', liveNeeds.filter((s) => !ciLive.includes(s)));
+assert(/DATABASE_URL:\s*postgres:\/\/grc_app:/.test(ciWf) && !/postgres:\/\/postgres[:@]/.test(ciWf), 'the live scripts connect as the app role, never the superuser (#159)');
+const publishJobs = jobsOf(publishWf);
+assert((publishJobs.get('test') ?? '').includes('uses: ./.github/workflows/ci.yml') && (publishJobs.get('build-and-push-image') ?? '').includes('needs: test'), 'the live checks gate publishing: docker-publish.yml calls ci.yml and the build job needs it (#159)');
+const buildJob = publishJobs.get('build-and-push-image') ?? '';
+assert(JSON.stringify(imagesOf(buildJob)) === JSON.stringify([composeDbImage]), 'the publish job smoke database is the same pinned postgres image as docker-compose.yml (#156)', imagesOf(buildJob));
+const buildSteps = stepsOf(buildJob);
+const loadStep = buildSteps.find((s) => s.includes('load: true')) ?? '';
+assert(loadStep.includes('push: false') && !loadStep.includes('cache-to'), 'the smoke build loads into the local engine, pushes nothing and writes no cache (#156)');
+const smokeStep = buildSteps.find((s) => s.includes('id: smoke')) ?? '';
+const smokeNeeds = ['/api/v1/health', '.database == "connected"', '[FATAL]', '90', 'npm run db:verify-rls'];
+assert(smokeNeeds.every((s) => smokeStep.includes(s)), 'the smoke step waits for healthy + database connected within 90 s, rejects [FATAL] and runs db:verify-rls in the image (#156)', smokeNeeds.filter((s) => !smokeStep.includes(s)));
+assert(buildJob.indexOf('load: true') > -1 && buildJob.indexOf('load: true') < buildJob.indexOf('id: smoke') && buildJob.indexOf('id: smoke') < buildJob.indexOf('id: build'), 'order in the publish job: build for smoke, smoke test, then the push (#156)');
+const pushStep = buildSteps.find((s) => s.includes('id: build')) ?? '';
+assert(pushStep.includes('push: true') && pushStep.includes("if: steps.smoke.outcome == 'success'"), 'push runs only after the smoke test passed (#156)');
+
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
 console.log('================================================================\n');

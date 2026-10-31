@@ -165,7 +165,8 @@ Replace `grc.example.mil` with the host name on the certificate.
 ## 10. Known gaps, tracked
 
 - Releases are version tags from `v1.0.0`, and the base images and CI actions are pinned by digest or commit (Dependabot
-  proposes refreshes); the image is not smoke-tested (#156) or signed (#158) before publish.
+  proposes refreshes); the image is smoke-tested against PostgreSQL before publish (#156) but not signed (#158).
+- After two green runs, make "Live PostgreSQL checks" (#159) a required status check on `main`.
 - Scanner payloads and snapshots have no retention setting (#61).
 - An idle session lock (AC.L2-3.1.10) is not implemented (#163).
 - Forward-proxy support for the exporter (#67).
