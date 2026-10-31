@@ -239,6 +239,69 @@ assert(T122.every((k) => text.has(k)), 'S122-3: the scan includes the four #122 
   assert(dc122.includes('|| NO_CSP_RECORDED'), 'S122-4: the SSP section 1.3 falls back to NO_CSP_RECORDED');
 }
 
+// ----------------------------------------------------------------------------- Invented values (#151)
+
+console.log('\n--- Invented values (#151) ---');
+const INVENTED_151 = ['Pitch Black Cyber Enclave', 'Pitch Black Cyber Cloud Services', 'Pitch Black Cyber GRC Engine', 'Pitch Black Cyber Super Admin', 'Health Technologies Group', 'Defense Contracting Information Network', 'Enterprise SaaS Multi-Tenant Platform', 'Electronic Health Data Enclave', 'Defense Industrial Base Contractor', 'Corporate Operations Enclave', '99.95%', 'uptime availability', 'encrypted at rest using AES-256', 'reviewed bi-weekly', 'reviewed monthly', 'Third-Party Compliance Assessor', 'Third-Party Healthcare Compliance Assessor', 'AICPA Certified CPA Firm', 'Lead Information System Owner', 'operations and compliance boundary', 'Organization Enclave', 'Lead Compliance Assessor', 'Compliance & Audit Assessment Team', 'The system boundary encompasses', 'The ePHI boundary encompasses', 'automated continuous checks verified'];
+function fallback151(body: string): string[] {
+  const src = body.replace(/\r\n/g, '\n');
+  const found: string[] = [];
+  for (const re of [FALLBACK_LITERAL, FIELD_LITERAL]) {
+    for (const m of src.matchAll(re)) found.push(m[1]);
+  }
+  return found.filter((s) => INVENTED_151.some((lit) => s.includes(lit))).map((s) => s.trim().slice(0, 80));
+}
+assert(fallback151("x || 'Health Technologies Group'").length === 1, 'S151-19 helper: an invented fallback literal is found');
+assert(fallback151('placeholder="e.g. Corporate Operations Enclave (COE)"').length === 0, 'S151-19 helper: a placeholder example is not a default');
+{
+  const offenders: string[] = [];
+  for (const [k, body] of text) {
+    if (!k.startsWith('src/data/reports/') && !k.startsWith('src/data/storage/')) continue;
+    body.replace(/\r\n/g, '\n').split('\n').forEach((line, i) => { if (INVENTED_151.some((lit) => line.includes(lit))) offenders.push(`${k}:${i + 1}`); });
+  }
+  assert(offenders.length === 0, 'S151-20: no line of the report compilers or storage engines carries an invented literal', offenders);
+}
+{
+  const offenders: string[] = [];
+  for (const [k, body] of text) {
+    if (!DEFAULT_SCOPE(k) && k !== 'src/services/storageService.ts') continue;
+    for (const lit of fallback151(body)) offenders.push(`${k}: ${lit}`);
+  }
+  assert(offenders.length === 0, 'S151-21: no fallback or field default in a component, report, storage engine or storageService is an invented value', offenders);
+}
+{
+  const ss151 = (text.get('src/services/storageService.ts') ?? '').replace(/\r\n/g, '\n');
+  const defaults151 = ss151.slice(ss151.indexOf('export function createDefaultSspMetadata('), ss151.indexOf('export function createInitialState('));
+  assert(defaults151.includes("authorName: '',") && !defaults151.includes('Compliance & Audit Assessment Team'), 'S151-22 a new tenant\'s SSP metadata has no author');
+}
+{
+  const norm151 = (k: string) => (text.get(k) ?? '').replace(/\r\n/g, '\n');
+  const dc151 = norm151('src/data/reports/documentCompilers.ts');
+  const modal151 = norm151('src/components/reports/ArtifactExportModal.tsx');
+  const off151 = norm151('src/data/storage/offboardingEngine.ts');
+  const ret151 = norm151('src/data/storage/retentionPolicy.ts');
+  assert(['|| NO_BOUNDARY_RECORDED', '|| NO_ORGANIZATION_RECORDED', '|| NO_SYSTEM_NAME_RECORDED', 'NO_SERVICE_COMMITMENTS_RECORDED'].every((s) => dc151.includes(s)), 'S151-23 the compilers fall back to the not-recorded constants');
+  assert(modal151.includes("organizationName: meta.organizationName || currentTenant.name || '',") && modal151.includes("primaryAssessor: meta.authorName || '',"), 'S151-23 the export form starts with no invented organization or assessor');
+  assert(off151.includes("primaryAssessor: sspMeta?.authorName || '',"), 'S151-23 the handover package states no assessor of its own');
+  assert(ret151.includes('params.systemName || NOT_RECORDED'), 'S151-23 the certificate says not recorded for a missing system name');
+}
+{
+  const need151 = ['src/data/reports/documentDefaults.ts', 'src/data/reports/documentCompilers.ts', 'src/data/reports/reportExporters.ts', 'src/data/storage/offboardingEngine.ts', 'src/data/storage/retentionPolicy.ts', 'src/components/reports/ArtifactExportModal.tsx', 'src/components/ssp/SSPBuilder.tsx'];
+  assert(need151.every((k) => text.has(k)), 'S151-24 the scan includes the #151 target files');
+}
+{
+  const m = (text.get('src/components/reports/ArtifactExportModal.tsx') ?? '').replace(/\r\n/g, '\n');
+  assert(m.includes("import { getExportGaps } from '../../data/reports/exportReadiness';") && m.includes('getExportGaps(selectedDocType, formData)'), 'S151-25 the export modal lists the gaps of the selected document');
+  const region = m.slice(m.indexOf('data-testid="export-readiness"'), m.indexOf('{/* Modal Bottom Action Footer */}'));
+  assert(region.length > 0 && m.includes('<div role="status" data-testid="export-readiness"'), 'S151-26 the readiness checklist is a status region above the footer');
+  assert(!region.includes('formData.') && !region.includes('disabled='), 'S151-27 the checklist never echoes a value and never disables an export');
+  assert(region.includes('(optional for this document)') && region.includes('(required)') && region.includes('All recorded values are present.'), 'S151-28 advisory and required gaps differ in text, not only colour');
+  assert(m.includes("setActiveTab('metadata');") && m.includes('document.getElementById(metaId(pendingFocusField))'), 'S151-29 a gap opens Boundary Metadata and focuses its input');
+  const fields151 = ['systemName', 'organizationName', 'systemOwner', 'primaryAssessor', 'boundaryDescription', 'cageCode', 'samStatus'];
+  const missing151 = fields151.filter((f) => !m.includes(`htmlFor={metaId('${f}')}`) || !m.includes(`id={metaId('${f}')}`));
+  assert(missing151.length === 0, 'S151-30 every field getExportGaps can report has a labelled input with an id', missing151);
+}
+
 // ----------------------------------------------------------------------------- Part 2: container and config shape
 
 console.log('\n--- docker-compose.yml ---');

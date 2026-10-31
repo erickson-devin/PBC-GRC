@@ -62,7 +62,7 @@ import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data
 import { errorMessage } from '../src/utils/errors';
 import { isTenantRole } from '../src/utils/roles';
 import { buildSchemaSql } from './schema';
-import type { TenantRole } from '../src/types/tenant';
+import type { EnclaveStackProfile, TenantRole } from '../src/types/tenant';
 
 // In-memory tenant isolation state for fallback when local PostgreSQL is not running
 interface InMemoryControl {
@@ -799,6 +799,8 @@ export interface TenantRecord {
   industry: string;
   enabledFrameworks: string[];
   primaryFramework: string;
+  /** The enclave stack profile (issue #84); null until a tenant owner saves one. */
+  stackProfile: EnclaveStackProfile | null;
   createdAt: string;
 }
 
@@ -822,6 +824,7 @@ function toTenantRecord(t: NewTenantInput, createdAt: string): TenantRecord {
     industry: t.industry ?? 'Defense Industrial Base (DIB)',
     enabledFrameworks: t.enabledFrameworks,
     primaryFramework: t.primaryFramework,
+    stackProfile: null,
     createdAt,
   };
 }
@@ -932,6 +935,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
           industry: t?.industry ?? '',
           enabledFrameworks: t?.enabledFrameworks ?? [],
           primaryFramework: t?.primaryFramework ?? 'CMMC_L1',
+          stackProfile: t?.stackProfile ?? null,
           createdAt: t?.createdAt ?? null,
           role: m.role as TenantRole,
           joinedAt: m.created_at,
@@ -944,7 +948,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
     userId,
     `SELECT tu.tenant_id, tu.role, tu.created_at AS joined_at,
             t.name, t.cage_code, t.sam_status, t.system_name, t.system_owner, t.industry,
-            t.enabled_frameworks, t.primary_framework, t.created_at AS tenant_created_at
+            t.enabled_frameworks, t.primary_framework, t.stack_profile, t.created_at AS tenant_created_at
        FROM tenant_users tu
        LEFT JOIN tenants t ON t.id = tu.tenant_id
       WHERE tu.user_id = $1
@@ -964,6 +968,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
       industry: r.industry ?? '',
       enabledFrameworks: r.enabled_frameworks ?? [],
       primaryFramework: r.primary_framework ?? 'CMMC_L1',
+      stackProfile: (r.stack_profile ?? null) as EnclaveStackProfile | null,
       createdAt: r.tenant_created_at ? new Date(r.tenant_created_at).toISOString() : null,
       role: r.role as TenantRole,
       joinedAt: new Date(r.joined_at).toISOString(),
@@ -979,6 +984,7 @@ export interface TenantSettingsPatch {
   industry?: string;
   primaryFramework?: string;
   enabledFrameworks?: string[];
+  stackProfile?: EnclaveStackProfile;
 }
 
 /** Keeps the framework settings consistent: the primary framework is always one of the enabled ones. */
@@ -1008,6 +1014,7 @@ function rowToTenantRecord(row: pg.QueryResultRow): TenantRecord {
     industry: row.industry ?? '',
     enabledFrameworks: row.enabled_frameworks ?? [],
     primaryFramework: row.primary_framework ?? 'CMMC_L1',
+    stackProfile: (row.stack_profile ?? null) as EnclaveStackProfile | null,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
@@ -1030,6 +1037,7 @@ export async function updateTenantSettings(tenantId: string, patch: TenantSettin
       systemName: patch.systemName ?? current.systemName,
       systemOwner: patch.systemOwner ?? current.systemOwner,
       industry: patch.industry ?? current.industry,
+      stackProfile: patch.stackProfile ?? current.stackProfile,
       ...frameworks,
     };
     memoryTenants.set(tenantId, next);
@@ -1056,12 +1064,14 @@ export async function updateTenantSettings(tenantId: string, patch: TenantSettin
       `UPDATE tenants SET
           name = COALESCE($2, name), cage_code = COALESCE($3, cage_code), sam_status = COALESCE($4, sam_status),
           system_name = COALESCE($5, system_name), system_owner = COALESCE($6, system_owner),
-          industry = COALESCE($7, industry), primary_framework = $8, enabled_frameworks = $9, updated_at = NOW()
+          industry = COALESCE($7, industry), primary_framework = $8, enabled_frameworks = $9,
+          stack_profile = COALESCE($10::jsonb, stack_profile), updated_at = NOW()
         WHERE id = $1
         RETURNING *`,
       [
         tenantId, patch.name ?? null, patch.cageCode ?? null, patch.samStatus ?? null, patch.systemName ?? null,
         patch.systemOwner ?? null, patch.industry ?? null, frameworks.primaryFramework, frameworks.enabledFrameworks,
+        patch.stackProfile ? JSON.stringify(patch.stackProfile) : null,
       ]
     );
     await client.query('COMMIT');

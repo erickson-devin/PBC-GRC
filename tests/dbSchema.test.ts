@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { assertSupportedPostgresVersion, assessDatabaseRole, buildPoolConfig } from '../server/db';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
+import { SSP_METADATA_FIELDS } from '../src/types/sspMetadata';
 import { DISCOVERY_POLICIES, PROGRAM_BACKFILL_TABLES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildLegacyProgramRowCountSql, buildProgramIdNotNullSql, buildProgramRlsSql, buildRlsSql, buildSchemaSql, rlsPolicyName, rlsProgramPolicyName } from '../server/schema';
 
 /**
@@ -232,9 +233,9 @@ assert(peAt > objectivesAt && programEvents !== '', 'P1: program_events is creat
 assert(!/FOREIGN KEY|REFERENCES/.test(programEvents) && /program_id VARCHAR\(64\) NOT NULL/.test(programEvents), 'P1: program_events has no foreign key (the history outlives the program) and a NOT NULL program_id');
 assert(!/^\s+(name|description|notes|narrative)\s/m.test(programEvents) && /old_value JSONB,/.test(programEvents) && /new_value JSONB NOT NULL/.test(programEvents), 'P1: program_events holds JSON values only, no name, description, notes or narrative column');
 assert(
-  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed'))") &&
+  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed'))") &&
     TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS program_events_kind_check') < TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check'),
-  'P1: the event kind CHECK lists the five kinds, dropped before it is added'
+  'P1: the event kind CHECK lists the six kinds (SSP metadata included), dropped before it is added'
 );
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);'), 'P1: program_events is indexed by program and time');
 assert(RLS_TENANT_TABLES.some((r) => r.table === 'program_events' && r.tenantColumn === 'tenant_id') && !PROGRAM_BACKFILL_TABLES.includes('program_events' as never), 'P1: program_events is a tenant and program RLS table but is not backfilled');
@@ -276,7 +277,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events and program_assets', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets and program_ssp_metadata', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -379,9 +380,9 @@ assert(
 assert(paBlock !== '' && !/asset_name|host_name|ip_address|mac_address|description|notes/.test(paBlock), 'PA3: program_assets holds ids only (no name, address, description or notes column)');
 assert(
   RLS_TENANT_TABLES.some((r) => r.table === 'program_assets' && r.tenantColumn === 'tenant_id') &&
-    RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 1] === 'program_assets' &&
+    (RLS_PROGRAM_TABLES as readonly string[]).includes('program_assets') &&
     !PROGRAM_BACKFILL_TABLES.includes('program_assets' as never),
-  'PA4: program_assets is a tenant table, the last program table, and is not backfilled'
+  'PA4: program_assets is a tenant table, a program table, and is not backfilled'
 );
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_assets_asset ON program_assets (tenant_id, asset_id);'), 'PA5: program_assets is indexed by asset');
 const afterMembership = membershipAt < 0 ? '' : TABLES_SQL.slice(membershipAt);
@@ -486,6 +487,48 @@ assert(!bypassRole.ok && Boolean(bypassRole.message?.includes('BYPASSRLS')), 'a 
 assert(assessDatabaseRole({ rolsuper: false, rolbypassrls: false }).ok, 'an ordinary role is ok');
 assert(assessDatabaseRole(undefined).ok && assessDatabaseRole(undefined).message === null, 'a missing row is ok (cannot tell), no message');
 const dbSrc = fs.readFileSync('server/db.ts', 'utf8').replace(/\r\n/g, '\n');
+console.log('\n--- SSP metadata (program_ssp_metadata, issue #84) ---');
+const smHeadingAt = TABLES_SQL.indexOf('-- SSP metadata (issue #84)');
+const smAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_ssp_metadata (');
+const smBlock = smAt < 0 ? '' : TABLES_SQL.slice(smAt, TABLES_SQL.indexOf('\n  );', smAt));
+assert(smHeadingAt > aeAt && aeAt > 0 && smAt > smHeadingAt, 'SM-D1: program_ssp_metadata is created after local_account_events, under its own heading');
+assert(
+  smBlock.includes('CONSTRAINT pk_program_ssp_metadata PRIMARY KEY (tenant_id, program_id)') &&
+    smBlock.includes('CONSTRAINT fk_program_ssp_metadata_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
+    smBlock.includes('program_id VARCHAR(64) NOT NULL') &&
+    smBlock.includes('tenant_id VARCHAR(64) NOT NULL'),
+  'SM-D2: one row per program (primary key), cascading with the program, NOT NULL tenant and program'
+);
+assert(
+  RLS_TENANT_TABLES.some((r) => r.table === 'program_ssp_metadata' && r.tenantColumn === 'tenant_id') &&
+    (RLS_PROGRAM_TABLES as readonly string[]).includes('program_ssp_metadata') &&
+    !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes('program_ssp_metadata'),
+  'SM-D3: a tenant table and a program table, not backfilled'
+);
+const smShapeAt = TABLES_SQL.indexOf('ADD CONSTRAINT program_ssp_metadata_shape_check');
+const smShape = smShapeAt < 0 ? '' : TABLES_SQL.slice(smShapeAt, TABLES_SQL.indexOf('\n', smShapeAt));
+assert(
+  smShape !== '' &&
+    SSP_METADATA_FIELDS.every((k) => smShape.includes("'" + k + "'")) &&
+    smShape.includes('262144') &&
+    smShape.includes('@.type() != "string"') &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS program_ssp_metadata_shape_check') < smShapeAt &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS program_ssp_metadata_shape_check') > smAt,
+  'SM-D4: the shape CHECK lists every field, string values only, 262144 bytes, dropped before it is added'
+);
+const spAt = TABLES_SQL.indexOf('ADD CONSTRAINT tenants_stack_profile_check');
+const spLine = spAt < 0 ? '' : TABLES_SQL.slice(spAt, TABLES_SQL.indexOf('\n', spAt));
+assert(
+  TABLES_SQL.includes('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS stack_profile JSONB;') &&
+    spLine.includes("'identityProvider', 'edrSolution', 'infrastructure', 'mdmSolution', 'siemSolution', 'odpParams'") &&
+    spLine.includes('<= 16384') &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS tenants_stack_profile_check') > 0 &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS tenants_stack_profile_check') < spAt,
+  'SM-D5: tenants.stack_profile is a JSONB column with a key and size CHECK, dropped before it is added'
+);
+const afterSm = smHeadingAt < 0 ? '' : TABLES_SQL.slice(smHeadingAt);
+assert(afterSm !== '' && !afterSm.includes('NOT VALID') && !afterSm.includes('SET NOT NULL'), 'SM-D6: no NOT VALID check and no SET NOT NULL after the SSP metadata heading');
+
 const initAt = dbSrc.indexOf('export async function initDb(');
 const verAt = dbSrc.indexOf('assertSupportedPostgresVersion(ver.rows', initAt);
 const roleAt = dbSrc.indexOf('assessDatabaseRole(', initAt);

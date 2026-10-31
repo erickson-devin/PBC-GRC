@@ -15,8 +15,23 @@ import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../tele
 import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
 import { sprsAppliesTo } from './sprsCompiler';
 
-/** What a compiled document states when the SSP records no cloud service provider: the customer names its own, a document never invents one (#122). */
-export const NO_CSP_RECORDED = 'No cloud service provider is recorded for this system boundary.';
+import {
+  NO_CSP_RECORDED,
+  NOT_RECORDED,
+  NO_ORGANIZATION_RECORDED,
+  NO_SYSTEM_NAME_RECORDED,
+  NO_SYSTEM_OWNER_RECORDED,
+  NO_SECURITY_OFFICIAL_RECORDED,
+  NO_ASSESSOR_RECORDED,
+  NO_CAGE_CODE_RECORDED,
+  NO_SAM_STATUS_RECORDED,
+  NO_BOUNDARY_RECORDED,
+  NO_SERVICE_COMMITMENTS_RECORDED,
+  UNNAMED_SYSTEM,
+} from './documentDefaults';
+
+/** Tests and callers import it from here (#122); the text lives in documentDefaults.ts (#151). */
+export { NO_CSP_RECORDED } from './documentDefaults';
 
 /**
  * Resolves the standard recommended document type for a given compliance framework.
@@ -197,12 +212,12 @@ export function compileNistSSP(
       {
         title: '1.1 System Identification & Ownership',
         items: [
-          { label: 'System Name', value: metadata.systemName || 'Defense Contracting Information Network' },
-          { label: 'Organization Name', value: metadata.organizationName || 'Pitch Black Cyber Enclave' },
-          { label: 'CAGE Code', value: metadata.cageCode || 'N/A' },
-          { label: 'SAM.gov Status', value: metadata.samStatus || 'ACTIVE' },
-          { label: 'System Owner', value: metadata.systemOwner || 'Lead Information System Owner' },
-          { label: 'Primary Assessor / Author', value: metadata.primaryAssessor || 'Third-Party Compliance Assessor' },
+          { label: 'System Name', value: metadata.systemName || NO_SYSTEM_NAME_RECORDED },
+          { label: 'Organization Name', value: metadata.organizationName || NO_ORGANIZATION_RECORDED },
+          { label: 'CAGE Code', value: metadata.cageCode || NO_CAGE_CODE_RECORDED },
+          { label: 'SAM.gov Status', value: metadata.samStatus || NO_SAM_STATUS_RECORDED },
+          { label: 'System Owner', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Primary Assessor / Author', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Operational Status', value: metadata.operationalStatus || 'Operational' },
           { label: 'Document Version', value: metadata.version || '1.0.0' },
           { label: 'Assessment Baseline Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
@@ -211,7 +226,7 @@ export function compileNistSSP(
       },
       {
         title: '1.2 Operational Environment & Authorization Boundary',
-        content: metadata.boundaryDescription || 'The system boundary encompasses all corporate cloud identity tenants, managed physical and virtual endpoints, boundary gateway firewalls, and cloud services processing, storing, or transmitting Federal Contract Information (FCI) or Controlled Unclassified Information (CUI).',
+        content: metadata.boundaryDescription || NO_BOUNDARY_RECORDED,
       },
       ...(metadata.assetScope
         ? [
@@ -238,7 +253,7 @@ export function compileNistSSP(
                 ? {
                     table: {
                       headers: ['CMVP Certificate', 'Cryptographic Module', 'Standard', 'Asset'],
-                      rows: metadata.cryptoModules.map((m) => [`#${m.certificateNumber}`, m.moduleName || 'Not recorded', m.standard ? `FIPS ${m.standard}` : 'FIPS 140', m.assetName]),
+                      rows: metadata.cryptoModules.map((m) => [`#${m.certificateNumber}`, m.moduleName || NOT_RECORDED, m.standard ? `FIPS ${m.standard}` : 'FIPS 140', m.assetName]),
                     },
                   }
                 : {}),
@@ -319,13 +334,13 @@ export function compileNistSSP(
   sections.push({
     id: 'sec-4-attestation',
     title: '4. System Security Plan Attestation & Approvals',
-    content: `I hereby attest that the information contained in this System Security Plan represents an accurate, rigorous, and truthful representation of the security controls implemented within ${metadata.systemName || 'the system'}. All administrative, technical, and physical safeguards have been verified against ${fwDef.name}.`,
+    content: `I hereby attest that the information contained in this System Security Plan represents an accurate, rigorous, and truthful representation of the security controls implemented within ${metadata.systemName || UNNAMED_SYSTEM}. All administrative, technical, and physical safeguards have been verified against ${fwDef.name}.`,
     subsections: [
       {
         title: 'Formal Signatures & Assessment Record',
         items: [
-          { label: 'Information System Owner', value: `${metadata.systemOwner || 'Authorized Officer'} (Signature on Record)` },
-          { label: 'Primary Assessor / Lead Auditor', value: `${metadata.primaryAssessor || 'Certified Assessor'} (Attested)` },
+          { label: 'Information System Owner', value: metadata.systemOwner ? `${metadata.systemOwner} (Signature on Record)` : NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Primary Assessor / Lead Auditor', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Attested)` : NO_ASSESSOR_RECORDED },
           { label: 'Attestation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
           { label: 'Enclave Cryptographic State', value: 'Immutable On-Premises Vault Evidence Hash Ingestion Active' },
         ],
@@ -336,7 +351,7 @@ export function compileNistSSP(
   return {
     documentType: 'NIST_SP_800_18_SSP',
     title: `${metadata.organizationName || 'Organization'} — System Security Plan (SSP)`,
-    subtitle: `NIST SP 800-18 / NIST SP 800-171 System Security Plan for ${metadata.systemName || 'Defense Enclave'}`,
+    subtitle: `NIST SP 800-18 / NIST SP 800-171 System Security Plan for ${metadata.systemName || UNNAMED_SYSTEM}`,
     framework: metadata.framework,
     generatedAt: new Date().toISOString(),
     metadata,
@@ -365,7 +380,7 @@ export function compilePOAM(
   sections.push({
     id: 'poam-sec-1-summary',
     title: '1. Executive Summary & Remediation Velocity',
-    summary: `Plan of Action and Milestones tracking unresolved findings, milestones, and required remediation for ${metadata.systemName}.`,
+    summary: `Plan of Action and Milestones tracking unresolved findings, milestones, and required remediation for ${metadata.systemName || UNNAMED_SYSTEM}.`,
     table: {
       headers: ['Tracking Category', 'Count / Metric', 'Compliance Implication'],
       rows: [
@@ -437,13 +452,13 @@ export function compilePOAM(
   sections.push({
     id: 'poam-sec-4-governance',
     title: '4. Corrective Action Plan Sign-Off',
-    content: `Management agrees to provide the allocated technical and budgetary resources required to execute the corrective action milestones detailed herein. Progress is reviewed bi-weekly by the Primary Assessor and System Owner until all POA&Ms are closed.`,
+    content: `Management agrees to provide the allocated technical and budgetary resources required to execute the corrective action milestones detailed herein.`,
     subsections: [
       {
         title: 'Authorized Approvals',
         items: [
-          { label: 'System Owner Attestation', value: `${metadata.systemOwner || 'System Owner'} (Approved)` },
-          { label: 'Lead Assessor Concurrence', value: `${metadata.primaryAssessor || 'Primary Assessor'} (Concurred)` },
+          { label: 'System Owner Attestation', value: metadata.systemOwner ? `${metadata.systemOwner} (Approved)` : NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Lead Assessor Concurrence', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Concurred)` : NO_ASSESSOR_RECORDED },
           { label: 'POA&M Generation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
         ],
       },
@@ -453,7 +468,7 @@ export function compilePOAM(
   return {
     documentType: 'POAM',
     title: `${metadata.organizationName || 'Organization'} — Plan of Action & Milestones (POA&M)`,
-    subtitle: `Formal Deficiency Tracking & Corrective Action Plan for ${metadata.systemName || 'Defense Enclave'}`,
+    subtitle: `Formal Deficiency Tracking & Corrective Action Plan for ${metadata.systemName || UNNAMED_SYSTEM}`,
     framework: metadata.framework,
     generatedAt: new Date().toISOString(),
     metadata,
@@ -494,10 +509,10 @@ export function compileSoc2SystemDescription(
       {
         title: '1.1 System and Service Identification',
         items: [
-          { label: 'Service Organization', value: metadata.organizationName || 'Pitch Black Cyber Cloud Services' },
-          { label: 'System Evaluated', value: metadata.systemName || 'Enterprise SaaS Multi-Tenant Platform' },
-          { label: 'System Owner', value: metadata.systemOwner || 'Chief Information Security Officer' },
-          { label: 'Independent Service Auditor', value: metadata.primaryAssessor || 'AICPA Certified CPA Firm' },
+          { label: 'Service Organization', value: metadata.organizationName || NO_ORGANIZATION_RECORDED },
+          { label: 'System Evaluated', value: metadata.systemName || NO_SYSTEM_NAME_RECORDED },
+          { label: 'System Owner', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Independent Service Auditor', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Applicable Trust Services Criteria', value: 'Security (Common Criteria), Availability, and Confidentiality' },
           { label: 'Examination Period', value: `Operational review through ${metadata.assessmentDate || new Date().toISOString().split('T')[0]}` },
           { label: 'Operational State', value: metadata.operationalStatus || 'Operational' },
@@ -505,11 +520,11 @@ export function compileSoc2SystemDescription(
       },
       {
         title: '1.2 Principal Service Commitments & System Requirements',
-        content: `Management has established service commitments to its customers and system requirements relating to security, availability, and confidentiality. The system is designed to provide 99.95% uptime availability, enforce multi-factor authentication across all tenant boundaries, and provide cryptographic data isolation for all customer payloads.`,
+        content: NO_SERVICE_COMMITMENTS_RECORDED,
       },
       {
         title: '1.3 System Boundaries and Subservice Organizations',
-        content: `${metadata.boundaryDescription || 'No system boundary description is recorded.'} ${metadata.cloudServiceProviders ? `Subservice organizations recorded for this system: ${metadata.cloudServiceProviders.trim().replace(/\.$/, '')}.` : 'No subservice organization is recorded for this system.'}`,
+        content: `${metadata.boundaryDescription || NO_BOUNDARY_RECORDED} ${metadata.cloudServiceProviders ? `Subservice organizations recorded for this system: ${metadata.cloudServiceProviders.trim().replace(/\.$/, '')}.` : 'No subservice organization is recorded for this system.'}`,
       },
     ],
   });
@@ -539,12 +554,12 @@ export function compileSoc2SystemDescription(
     const rows = critCtrls.map(ctrl => {
       const cState = controlStates[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
-      const narrative = cState?.implementationNotes || 'Control activity documented in policy; automated continuous checks verified.';
+      const narrative = cState?.implementationNotes || 'No implementation narrative documented.';
       const role = cState?.responsibleRole || 'Security Engineering Lead';
       const ctrlEvidence = evidence.filter(e => e.controlId === ctrl.id);
       const evidenceSummary = ctrlEvidence.length > 0
-        ? ctrlEvidence.map(e => `${e.name} (SHA-256: ${(e.fileHash || 'Verified').substring(0, 8)})`).join(', ')
-        : 'Automated telemetry logged';
+        ? ctrlEvidence.map(e => `${e.name} (SHA-256: ${(e.fileHash || 'N/A').substring(0, 8)})`).join(', ')
+        : 'No files attached';
 
       return [
         ctrl.id,
@@ -598,13 +613,13 @@ export function compileSoc2SystemDescription(
   sections.push({
     id: 'soc2-sec-5-assertion',
     title: '5. Management Assertion',
-    content: `We have prepared the accompanying description titled "System Description for ${metadata.systemName || 'the system'}" for customer organizations that have used the system throughout the examination period. We assert that the description fairly presents the system that was designed and implemented in accordance with the description criteria, and the controls stated in the description operated effectively throughout the period to provide reasonable assurance that the service commitments and system requirements were achieved based on the Trust Services Criteria.`,
+    content: `We have prepared the accompanying description titled "System Description for ${metadata.systemName || UNNAMED_SYSTEM}" for customer organizations that have used the system throughout the examination period. We assert that the description fairly presents the system that was designed and implemented in accordance with the description criteria, and the controls stated in the description operated effectively throughout the period to provide reasonable assurance that the service commitments and system requirements were achieved based on the Trust Services Criteria.`,
     subsections: [
       {
         title: 'Attestation Sign-off',
         items: [
-          { label: 'Service Organization Management', value: `${metadata.systemOwner || 'VP of Engineering / CISO'} (Signed)` },
-          { label: 'Primary Assessor / Service Auditor', value: `${metadata.primaryAssessor || 'Independent CPA Auditor'} (Signed)` },
+          { label: 'Service Organization Management', value: metadata.systemOwner ? `${metadata.systemOwner} (Signed)` : NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Primary Assessor / Service Auditor', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Signed)` : NO_ASSESSOR_RECORDED },
           { label: 'Date of Assertion', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
         ],
       },
@@ -614,7 +629,7 @@ export function compileSoc2SystemDescription(
   return {
     documentType: 'SOC_2_SYSTEM_DESCRIPTION',
     title: `${metadata.organizationName || 'Service Organization'} — SOC 2 Type II System Description`,
-    subtitle: `AICPA Trust Services Criteria System Description for ${metadata.systemName || 'Cloud Enclave'}`,
+    subtitle: `AICPA Trust Services Criteria System Description for ${metadata.systemName || UNNAMED_SYSTEM}`,
     framework: metadata.framework,
     generatedAt: new Date().toISOString(),
     metadata,
@@ -653,10 +668,10 @@ export function compileHipaaAssessment(
       {
         title: '1.1 Entity Information & Regulatory Role',
         items: [
-          { label: 'Covered Entity / Business Associate', value: metadata.organizationName || 'Health Technologies Group' },
-          { label: 'Designated ePHI System Name', value: metadata.systemName || 'Electronic Health Data Enclave' },
-          { label: 'HIPAA Security Official', value: metadata.systemOwner || 'Designated Security Officer (45 CFR §164.308(a)(2))' },
-          { label: 'Lead Assessor / Auditor', value: metadata.primaryAssessor || 'Third-Party Healthcare Compliance Assessor' },
+          { label: 'Covered Entity / Business Associate', value: metadata.organizationName || NO_ORGANIZATION_RECORDED },
+          { label: 'Designated ePHI System Name', value: metadata.systemName || NO_SYSTEM_NAME_RECORDED },
+          { label: 'HIPAA Security Official', value: metadata.systemOwner || NO_SECURITY_OFFICIAL_RECORDED },
+          { label: 'Lead Assessor / Auditor', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Evaluation Period / Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
           { label: 'System Operational Status', value: metadata.operationalStatus || 'Operational' },
           { label: 'Target Safeguard Posture', value: '100% Implementation of Required & Addressable Specifications' },
@@ -664,7 +679,7 @@ export function compileHipaaAssessment(
       },
       {
         title: '1.2 ePHI Environmental Boundary & Data Ingestion Flow',
-        content: `${metadata.boundaryDescription || 'The ePHI boundary encompasses all cloud services, databases, encryption key rings, API gateways, and backup pipelines storing or transmitting patient health records.'} All electronic protected health information is encrypted at rest using AES-256 and in transit via TLS 1.3. Strict access boundaries isolate ePHI tenants.`,
+        content: metadata.boundaryDescription || NO_BOUNDARY_RECORDED,
       },
     ],
   });
@@ -674,12 +689,12 @@ export function compileHipaaAssessment(
     return safeguardCtrls.map(ctrl => {
       const cState = controlStates[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
-      const narrative = cState?.implementationNotes || 'Safeguard specification documented in organizational policies and procedure manual.';
+      const narrative = cState?.implementationNotes || 'No implementation narrative documented.';
       const role = cState?.responsibleRole || 'HIPAA Compliance Officer';
       const ctrlEvidence = evidence.filter(e => e.controlId === ctrl.id);
       const evidenceSummary = ctrlEvidence.length > 0
         ? ctrlEvidence.map(e => `${e.name} [SHA-256: ${(e.fileHash || 'N/A').substring(0, 8)}]`).join(', ')
-        : 'Audit logs on record';
+        : 'No files attached';
 
       return [
         ctrl.id,
@@ -743,13 +758,13 @@ export function compileHipaaAssessment(
   sections.push({
     id: 'hipaa-sec-6-attestation',
     title: '6. Risk Remediation Roadmap & HIPAA Officer Attestation',
-    content: `This security assessment evaluates current risk posture against the Department of Health and Human Services (HHS) HIPAA Security Rule. All addressable specifications have been assessed for organizational feasibility and technical equivalence. Ongoing audit logs are reviewed monthly.`,
+    content: `This security assessment evaluates the recorded safeguard status against the Department of Health and Human Services (HHS) HIPAA Security Rule.`,
     subsections: [
       {
         title: 'Official Attestation of Compliance',
         items: [
-          { label: 'Designated HIPAA Security Official', value: `${metadata.systemOwner || 'Security Officer'} (Attested)` },
-          { label: 'Lead Assessor / Risk Analyst', value: `${metadata.primaryAssessor || 'Lead Assessor'} (Verified)` },
+          { label: 'Designated HIPAA Security Official', value: metadata.systemOwner ? `${metadata.systemOwner} (Attested)` : NO_SECURITY_OFFICIAL_RECORDED },
+          { label: 'Lead Assessor / Risk Analyst', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Verified)` : NO_ASSESSOR_RECORDED },
           { label: 'Attestation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
           { label: 'Compliance Score', value: `${metrics.completionPercentage}% of Safeguards Implemented (${metrics.metCount}/${metrics.totalControls})` },
         ],
@@ -760,7 +775,7 @@ export function compileHipaaAssessment(
   return {
     documentType: 'HIPAA_SECURITY_ASSESSMENT',
     title: `${metadata.organizationName || 'Entity'} — HIPAA Security Assessment & Safeguard Report`,
-    subtitle: `45 CFR Part 164 Subpart C Evaluation for ePHI System: ${metadata.systemName || 'Health Enclave'}`,
+    subtitle: `45 CFR Part 164 Subpart C Evaluation for ePHI System: ${metadata.systemName || UNNAMED_SYSTEM}`,
     framework: metadata.framework,
     generatedAt: new Date().toISOString(),
     metadata,

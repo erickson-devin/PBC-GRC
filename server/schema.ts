@@ -3,6 +3,8 @@ import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
 import { FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { OBJECTIVE_CHANGE_SOURCES, OBJECTIVE_STATUSES } from '../src/types/controlObjectives';
+import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES } from '../src/types/sspMetadata';
+import { STACK_PROFILE_ENUM_KEYS, STACK_PROFILE_MAX_BYTES } from '../src/data/stackProfileSchema';
 import { VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
@@ -40,6 +42,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'control_objective_events', tenantColumn: 'tenant_id' },
   { table: 'program_events', tenantColumn: 'tenant_id' },
   { table: 'program_assets', tenantColumn: 'tenant_id' },
+  { table: 'program_ssp_metadata', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -60,6 +63,7 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'control_objective_events',
   'program_events',
   'program_assets',
+  'program_ssp_metadata',
 ];
 
 /**
@@ -99,6 +103,8 @@ const vmVulnSourceList = VM_VULN_SOURCES.map((s) => `'${s}'`).join(', ');
 /** The framework ids a program may carry: the registry ids (src/data/frameworks/frameworkRegistry.ts), canonical spelling only. */
 export const PROGRAM_FRAMEWORK_IDS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'] as const;
 const programFrameworkList = PROGRAM_FRAMEWORK_IDS.map((f) => `'${f}'`).join(', ');
+const sspMetadataFieldList = SSP_METADATA_FIELDS.map((f) => `'${f}'`).join(', ');
+const stackProfileKeyList = [...STACK_PROFILE_ENUM_KEYS, 'odpParams'].map((k) => `'${k}'`).join(', ');
 
 /** Tables and columns (idempotent). */
 export const TABLES_SQL = `
@@ -121,6 +127,10 @@ export const TABLES_SQL = `
 
   ALTER TABLE tenants ADD COLUMN IF NOT EXISTS enabled_frameworks TEXT[] DEFAULT '{"CMMC_L1"}';
   ALTER TABLE tenants ADD COLUMN IF NOT EXISTS primary_framework VARCHAR(64) DEFAULT 'CMMC_L1';
+  -- Enclave stack profile (issue #84): the five tool choices and ODP parameters. Keys and size are pinned by the CHECK below.
+  ALTER TABLE tenants ADD COLUMN IF NOT EXISTS stack_profile JSONB;
+  ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_stack_profile_check;
+  ALTER TABLE tenants ADD CONSTRAINT tenants_stack_profile_check CHECK (stack_profile IS NULL OR (jsonb_typeof(stack_profile) = 'object' AND (stack_profile - ARRAY[${stackProfileKeyList}]) = '{}'::jsonb AND octet_length(stack_profile::text) <= ${STACK_PROFILE_MAX_BYTES}));
 
   -- Membership & RBAC: who belongs to which tenant, and with which role.
   CREATE TABLE IF NOT EXISTS tenant_users (
@@ -768,7 +778,7 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   ALTER TABLE program_events DROP CONSTRAINT IF EXISTS program_events_kind_check;
-  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed'));
+  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed'));
   CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);
 
   -- Boundary asset membership (issue #26): the assets a program declares inside its boundary. Assets stay tenant-wide
@@ -854,6 +864,21 @@ export const TABLES_SQL = `
   DROP TRIGGER IF EXISTS trg_local_account_events_no_truncate ON local_account_events;
   CREATE TRIGGER trg_local_account_events_no_truncate BEFORE TRUNCATE ON local_account_events
       FOR EACH STATEMENT EXECUTE FUNCTION local_account_events_guard();
+
+  -- SSP metadata (issue #84): one row per program holding the SSP text fields (system name, environment, boundary and cloud
+  -- service providers). The text is CUI: it is never logged and never written to program_events (digests only). Keys, value type and size
+  -- are pinned by the CHECK below. Not backfilled: no row means the browser copy has not been uploaded yet.
+  CREATE TABLE IF NOT EXISTS program_ssp_metadata (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_ssp_metadata PRIMARY KEY (tenant_id, program_id),
+      CONSTRAINT fk_program_ssp_metadata_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
+  );
+  ALTER TABLE program_ssp_metadata DROP CONSTRAINT IF EXISTS program_ssp_metadata_shape_check;
+  ALTER TABLE program_ssp_metadata ADD CONSTRAINT program_ssp_metadata_shape_check CHECK (jsonb_typeof(metadata) = 'object' AND (metadata - ARRAY[${sspMetadataFieldList}]) = '{}'::jsonb AND NOT jsonb_path_exists(metadata, '$.* ? (@.type() != "string")') AND octet_length(metadata::text) <= ${SSP_METADATA_MAX_BYTES});
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

@@ -24,7 +24,11 @@ import {
   getFrameworkControls,
   FRAMEWORK_REGISTRY,
 } from '../src/data/frameworks';
-import { ReportMetadata } from '../src/types/report';
+import { ReportMetadata, ReportSection } from '../src/types/report';
+import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED } from '../src/data/reports/documentDefaults';
+import { getExportGaps } from '../src/data/reports/exportReadiness';
+import { createDefaultSspMetadata, scrubInventedMetadata } from '../src/services/storageService';
+import type { Tenant } from '../src/types/tenant';
 import { ControlState, EvidenceItem, AssessmentState } from '../src/types/cmmc';
 
 let totalTests = 0;
@@ -354,6 +358,91 @@ async function runArtifactGeneratorTests() {
     assert(csvOutput.includes('POAM-'), 'CSV contains generated weakness IDs');
     assert(csvOutput.includes('AC.L1-3.1.1'), 'CSV contains control ID');
     assert(csvOutput.includes('"IN_PROGRESS"') || csvOutput.includes('"NOT_MET"'), 'CSV contains status values');
+
+    // -------------------------------------------------------------
+    // Test 10: #151 a document says "not recorded" instead of inventing a value
+    // -------------------------------------------------------------
+    console.log('\n--- Test 10: #151 not-recorded values ---');
+    const blank: ReportMetadata = { ...mockMetadata, systemName: '', organizationName: '', cageCode: '', samStatus: '', systemOwner: '', primaryAssessor: '', boundaryDescription: '', cloudServiceProviders: '' };
+    const INVENTED_151 = [
+      'Pitch Black Cyber', 'Health Technologies Group', 'Defense Contracting Information Network', 'Enterprise SaaS Multi-Tenant Platform',
+      'Electronic Health Data Enclave', 'Defense Industrial Base Contractor', 'Corporate Operations Enclave', '99.95', 'uptime availability',
+      'encrypted at rest using AES-256', 'bi-weekly', 'reviewed monthly', 'Third-Party Compliance Assessor', 'Third-Party Healthcare Compliance Assessor',
+      'AICPA Certified CPA Firm', 'Lead Information System Owner', 'operations and compliance boundary', 'Organization Enclave', 'Lead Compliance Assessor',
+      'Compliance & Audit Assessment Team', 'The system boundary encompasses', 'The ePHI boundary encompasses', 'automated continuous checks verified',
+    ];
+    const itemOf = (doc: { sections: ReportSection[] }, label: string) => {
+      for (const sec of doc.sections) for (const sub of sec.subsections || []) for (const it of sub.items || []) if (it.label === label) return it.value;
+      return undefined;
+    };
+    const subTitled = (doc: { sections: ReportSection[] }, prefix: string) => {
+      for (const sec of doc.sections) for (const sub of sec.subsections || []) if (sub.title.startsWith(prefix)) return sub;
+      return undefined;
+    };
+    const blankSsp = compileNistSSP(blank, cmmcL1Controls, mockControlStates);
+    assert(itemOf(blankSsp, 'System Name') === NO_SYSTEM_NAME_RECORDED, 'S151-1 SSP 1.1 states no system name is recorded');
+    assert(itemOf(blankSsp, 'Organization Name') === NO_ORGANIZATION_RECORDED, 'S151-1 SSP 1.1 states no organization is recorded');
+    assert(itemOf(blankSsp, 'CAGE Code') === NO_CAGE_CODE_RECORDED, 'S151-1 SSP 1.1 states no CAGE code is recorded');
+    assert(itemOf(blankSsp, 'SAM.gov Status') === NO_SAM_STATUS_RECORDED, 'S151-1 SSP 1.1 states no SAM status is recorded');
+    assert(itemOf(blankSsp, 'System Owner') === NO_SYSTEM_OWNER_RECORDED, 'S151-1 SSP 1.1 states no system owner is recorded');
+    assert(itemOf(blankSsp, 'Primary Assessor / Author') === NO_ASSESSOR_RECORDED, 'S151-1 SSP 1.1 states no assessor is recorded');
+    assert(subTitled(blankSsp, '1.2')?.content === NO_BOUNDARY_RECORDED, 'S151-2 SSP 1.2 states no boundary is recorded');
+    assert(blankSsp.subtitle === 'NIST SP 800-18 / NIST SP 800-171 System Security Plan for the system', 'S151-3 SSP subtitle names "the system"');
+    assert(itemOf(blankSsp, 'Information System Owner') === NO_SYSTEM_OWNER_RECORDED, 'S151-3 SSP attestation names no invented owner and no signature suffix');
+    assert(itemOf(blankSsp, 'Primary Assessor / Lead Auditor') === NO_ASSESSOR_RECORDED, 'S151-3 SSP attestation names no invented assessor and no attested suffix');
+    const fullSsp = compileNistSSP(mockMetadata, cmmcL1Controls, mockControlStates);
+    assert(itemOf(fullSsp, 'Organization Name') === 'Vanguard Defense Systems, LLC', 'S151-4 SSP 1.1 states the recorded organization');
+    assert(subTitled(fullSsp, '1.2')?.content === mockMetadata.boundaryDescription, 'S151-4 SSP 1.2 states the recorded boundary');
+    assert(itemOf(fullSsp, 'Information System Owner') === 'Alex Mercer, CMMC CCA (Signature on Record)', 'S151-4 SSP attestation keeps the suffix when the owner is recorded');
+
+    const blankSoc2 = compileSoc2SystemDescription({ ...blank, framework: 'SOC_2_TYPE_II' }, soc2Controls, mockSoc2States, mockEvidence);
+    assert(itemOf(blankSoc2, 'Service Organization') === NO_ORGANIZATION_RECORDED && itemOf(blankSoc2, 'System Evaluated') === NO_SYSTEM_NAME_RECORDED, 'S151-5 SOC 2 1.1 states no organization and no system name are recorded');
+    assert(itemOf(blankSoc2, 'System Owner') === NO_SYSTEM_OWNER_RECORDED && itemOf(blankSoc2, 'Independent Service Auditor') === NO_ASSESSOR_RECORDED, 'S151-5 SOC 2 1.1 states no owner and no auditor are recorded');
+    assert(subTitled(blankSoc2, '1.2')?.content === NO_SERVICE_COMMITMENTS_RECORDED, 'S151-5 SOC 2 1.2 states no service commitments are recorded');
+    assert((subTitled(blankSoc2, '1.3')?.content || '').startsWith(NO_BOUNDARY_RECORDED), 'S151-5 SOC 2 1.3 states no boundary is recorded');
+    assert((blankSoc2.subtitle || '').endsWith('for the system'), 'S151-5 SOC 2 subtitle names "the system"');
+    assert(subTitled(soc2Doc, '1.2')?.content === NO_SERVICE_COMMITMENTS_RECORDED && !JSON.stringify(soc2Doc).includes('99.95'), 'S151-6 SOC 2 invents no uptime commitment even with full metadata');
+    const emptySoc2 = compileSoc2SystemDescription(soc2Meta, soc2Controls, {}, mockEvidence);
+    const soc2Rows = (emptySoc2.sections.find(s => s.id === 'soc2-sec-3-control-activities')?.subsections || [])
+      .flatMap(sub => ((sub.table?.rows || []) as (string | number)[][]).map(r => (Array.isArray(r) ? r : (r as { cells: (string | number)[] }).cells)));
+    assert(soc2Rows.length > 0 && soc2Rows.every(r => r[4] === 'No implementation narrative documented.' && r[6] === 'No files attached'), 'S151-7 SOC 2 control rows without a narrative or evidence say so');
+
+    const blankHipaa = compileHipaaAssessment({ ...blank, framework: 'HIPAA_SECURITY' }, hipaaControls, mockHipaaStates, mockEvidence);
+    assert(itemOf(blankHipaa, 'Covered Entity / Business Associate') === NO_ORGANIZATION_RECORDED && itemOf(blankHipaa, 'Designated ePHI System Name') === NO_SYSTEM_NAME_RECORDED, 'S151-8 HIPAA 1.1 states no entity and no system name are recorded');
+    assert(itemOf(blankHipaa, 'HIPAA Security Official') === NO_SECURITY_OFFICIAL_RECORDED && itemOf(blankHipaa, 'Lead Assessor / Auditor') === NO_ASSESSOR_RECORDED, 'S151-8 HIPAA 1.1 states no security official and no assessor are recorded');
+    assert(subTitled(blankHipaa, '1.2')?.content === NO_BOUNDARY_RECORDED, 'S151-8 HIPAA 1.2 states exactly that no boundary is recorded');
+    assert((blankHipaa.subtitle || '').endsWith('ePHI System: the system'), 'S151-8 HIPAA subtitle names "the system"');
+    assert(subTitled(hipaaDoc, '1.2')?.content === mockMetadata.boundaryDescription, 'S151-9 HIPAA 1.2 is the recorded boundary and nothing appended');
+    const hipaaSec6 = hipaaDoc.sections.find(s => s.id === 'hipaa-sec-6-attestation')?.content || '';
+    assert(!hipaaSec6.includes('reviewed monthly') && !hipaaSec6.includes('All addressable specifications have been assessed'), 'S151-9 HIPAA section 6 asserts no review cadence or addressable assessment');
+
+    const blankPoam = compilePOAM(blank, cmmcL1Controls, mockControlStates);
+    assert(blankPoam.subtitle === 'Formal Deficiency Tracking & Corrective Action Plan for the system', 'S151-10 POA&M subtitle names "the system"');
+    assert((blankPoam.sections[0].summary || '').endsWith('for the system.'), 'S151-10 POA&M summary names "the system"');
+    assert(!(blankPoam.sections.find(s => s.id === 'poam-sec-4-governance')?.content || '').includes('bi-weekly'), 'S151-10 POA&M states no review cadence');
+    assert(itemOf(blankPoam, 'System Owner Attestation') === NO_SYSTEM_OWNER_RECORDED, 'S151-10 POA&M attestation names no invented owner');
+
+    const blankJson = [blankSsp, blankSoc2, blankHipaa, blankPoam].map(d => JSON.stringify(d));
+    assert(INVENTED_151.every(lit => blankJson.every(j => !j.includes(lit))), `S151-11 no compiler emits an invented literal for blank metadata (${INVENTED_151.filter(lit => blankJson.some(j => j.includes(lit))).join(' | ')})`);
+    const blankHtml = generatePrintableHtml(blankSsp, blank);
+    assert(blankHtml.includes('Not recorded • Not recorded') && !blankHtml.includes('• Active<'), 'S151-12 the printable cover page says "Not recorded" for CAGE and SAM');
+    assert(NO_CSP_RECORDED === NO_CSP_DEFAULT, 'S151-13 NO_CSP_RECORDED is the one defined in documentDefaults');
+
+    // B-1: export readiness
+    assert(getExportGaps('NIST_SP_800_18_SSP', mockMetadata).length === 0, 'B-1 a complete SSP has no export gaps');
+    const gapSys = getExportGaps('NIST_SP_800_18_SSP', { ...mockMetadata, systemName: '  ' });
+    assert(gapSys.length === 1 && gapSys[0].field === 'systemName', 'B-1 a whitespace-only system name is one gap');
+    assert(getExportGaps('POAM', { ...mockMetadata, boundaryDescription: '' }).length === 0, 'B-1 a POA&M needs no boundary description');
+    assert(getExportGaps('SOC_2_SYSTEM_DESCRIPTION', blank).length === 4, 'B-1 a blank SOC 2 description has four gaps');
+    assert(getExportGaps('NIST_SP_800_18_SSP', { ...mockMetadata, cageCode: '' }).every(g => g.advisory), 'B-1 a missing CAGE code is advisory only');
+
+    // R1: values written by the old "Save & Sync Metadata" read back as never recorded
+    const legacyMeta = { ...createDefaultSspMetadata({ id: 't1', name: 'Real Org' } as Tenant), organizationName: 'Organization Enclave', authorName: 'Lead Compliance Assessor', systemBoundaryScope: 'The system boundary encompasses corporate identity tenants, managed endpoints.' };
+    const cleanedMeta = scrubInventedMetadata(legacyMeta);
+    assert(cleanedMeta.organizationName === '' && cleanedMeta.authorName === '' && cleanedMeta.systemBoundaryScope === '', 'S151-25 the scrub empties the three seeded legacy values');
+    assert(scrubInventedMetadata({ ...legacyMeta, authorName: 'Compliance & Audit Assessment Team' }).authorName === '', 'S151-25 the scrub empties the second legacy author value');
+    const realMeta = { ...legacyMeta, organizationName: 'Vanguard', authorName: 'Dr. Reed', systemBoundaryScope: 'Our enclave.' };
+    assert(scrubInventedMetadata(realMeta) === realMeta, 'S151-25 the scrub leaves real values alone (same object)');
 
     // -------------------------------------------------------------
     // Summary

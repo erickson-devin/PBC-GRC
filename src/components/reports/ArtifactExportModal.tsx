@@ -44,6 +44,7 @@ import {
   downloadJsonPackage,
   downloadPoamCsv,
 } from '../../data/reports/reportExporters';
+import { getExportGaps } from '../../data/reports/exportReadiness';
 import {
   calculateSprsScore,
   formatSprsScore,
@@ -70,6 +71,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     state,
     frameworkControls,
     updateSSPMetadata,
+    sspMetadataEditable,
     exportModalInitialDocType,
   } = useAssessment();
 
@@ -114,12 +116,12 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const meta = state.sspMetadata;
   const [formData, setFormData] = useState<ReportMetadata>({
     systemName: meta.systemName || currentTenant.systemName || '',
-    organizationName: meta.organizationName || currentTenant.name || 'Organization Enclave',
+    organizationName: meta.organizationName || currentTenant.name || '',
     cageCode: meta.cageCode || currentTenant.cageCode || '',
-    samStatus: meta.samStatus || currentTenant.samStatus || 'ACTIVE',
+    samStatus: meta.samStatus || currentTenant.samStatus || '',
     systemOwner: meta.systemOwner || currentTenant.systemOwner || '',
-    primaryAssessor: meta.authorName || 'Lead Compliance Assessor',
-    boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || 'The system boundary encompasses corporate identity tenants, managed physical and virtual endpoints, boundary gateway firewalls, and cloud services processing Federal Contract Information (FCI) or Controlled Unclassified Information (CUI).',
+    primaryAssessor: meta.authorName || '',
+    boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || '',
     systemEnvironment: meta.systemEnvironment || '',
     operationalStatus: 'Operational' as SystemOperationalStatus,
     cloudServiceProviders: meta.cloudServiceProviders || '',
@@ -173,6 +175,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   // Save metadata to tenant state
   const handleSaveMetadata = useCallback(() => {
+    // A server-backed program's details cannot be saved until the server copy is loaded: say so, and never show "Saved"
+    if (!sspMetadataEditable) {
+      alert('The SSP details are not loaded from the server, so they cannot be saved right now. Reload the page and try again.');
+      return;
+    }
     updateSSPMetadata({
       systemName: formData.systemName,
       organizationName: formData.organizationName,
@@ -188,7 +195,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2500);
-  }, [formData, updateSSPMetadata]);
+  }, [formData, updateSSPMetadata, sspMetadataEditable]);
 
   // Dynamic Live Document Compilation
   const compiledDoc = useMemo(() => {
@@ -204,6 +211,24 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       state.evidenceIndex
     );
   }, [selectedDocType, formData, assetScope, cryptoModules, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex]);
+
+  // Export readiness (#151, B-1): advisory only, exports stay allowed. Labels are fixed text; values are never echoed.
+  const metaIdBase = useId();
+  const metaId = (field: keyof ReportMetadata) => `${metaIdBase}-meta-${field}`;
+  const metaHeadingId = `${metaIdBase}-meta-heading`;
+  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData), [selectedDocType, formData]);
+  const requiredGapCount = exportGaps.filter((g) => !g.advisory).length;
+  const [pendingFocusField, setPendingFocusField] = useState<keyof ReportMetadata | null>(null);
+  const handleGapClick = useCallback((field: keyof ReportMetadata) => {
+    setActiveTab('metadata');
+    setPendingFocusField(field);
+  }, []);
+  useEffect(() => {
+    if (activeTab !== 'metadata' || !pendingFocusField) return;
+    const target = document.getElementById(metaId(pendingFocusField)) ?? document.getElementById(metaHeadingId);
+    target?.focus();
+    setPendingFocusField(null);
+  }, [activeTab, pendingFocusField, metaIdBase]);
 
   // Export handlers
   const handleDownloadHtml = () => {
@@ -586,7 +611,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl">
               <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-slate-800">
                 <div>
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <h3 id={metaHeadingId} tabIndex={-1} className="text-lg font-bold text-white flex items-center gap-2 focus:outline-none">
                     <Building className="w-5 h-5 text-brand-400" />
                     System Boundary & Governance Specification
                   </h3>
@@ -609,10 +634,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {/* System Name */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('systemName')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     System Name / Designation *
                   </label>
                   <input
+                    id={metaId('systemName')}
                     type="text"
                     value={formData.systemName}
                     onChange={(e) => setFormData({ ...formData, systemName: e.target.value })}
@@ -623,10 +649,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                 {/* Organization Name */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('organizationName')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Organization / Legal Entity Name *
                   </label>
                   <input
+                    id={metaId('organizationName')}
                     type="text"
                     value={formData.organizationName}
                     onChange={(e) => setFormData({ ...formData, organizationName: e.target.value })}
@@ -637,10 +664,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                 {/* System Owner */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('systemOwner')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     System Owner (Formal Authority) *
                   </label>
                   <input
+                    id={metaId('systemOwner')}
                     type="text"
                     value={formData.systemOwner}
                     onChange={(e) => setFormData({ ...formData, systemOwner: e.target.value })}
@@ -651,10 +679,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                 {/* Primary Assessor */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('primaryAssessor')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Primary Assessor / Author *
                   </label>
                   <input
+                    id={metaId('primaryAssessor')}
                     type="text"
                     value={formData.primaryAssessor}
                     onChange={(e) => setFormData({ ...formData, primaryAssessor: e.target.value })}
@@ -665,10 +694,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                 {/* CAGE Code */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('cageCode')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     CAGE Code (Commercial & Government Entity)
                   </label>
                   <input
+                    id={metaId('cageCode')}
                     type="text"
                     value={formData.cageCode}
                     onChange={(e) => setFormData({ ...formData, cageCode: e.target.value })}
@@ -677,12 +707,28 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   />
                 </div>
 
+                {/* SAM.gov Registration Status */}
+                <div>
+                  <label htmlFor={metaId('samStatus')} className="block text-xs font-semibold text-slate-300 mb-1.5">
+                    SAM.gov Registration Status
+                  </label>
+                  <input
+                    id={metaId('samStatus')}
+                    type="text"
+                    value={formData.samStatus}
+                    onChange={(e) => setFormData({ ...formData, samStatus: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    placeholder="e.g. Active"
+                  />
+                </div>
+
                 {/* Operational Status */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('operationalStatus')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Operational Status
                   </label>
                   <select
+                    id={metaId('operationalStatus')}
                     value={formData.operationalStatus}
                     onChange={(e) => setFormData({ ...formData, operationalStatus: e.target.value as SystemOperationalStatus })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
@@ -696,10 +742,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                 {/* Classification Level */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('classificationLevel')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Document Classification Marking
                   </label>
                   <select
+                    id={metaId('classificationLevel')}
                     value={formData.classificationLevel}
                     onChange={(e) => setFormData({ ...formData, classificationLevel: e.target.value as DocumentClassificationLevel })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
@@ -713,10 +760,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                 {/* Assessment Date */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label htmlFor={metaId('assessmentDate')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                     Assessment Attestation Date
                   </label>
                   <input
+                    id={metaId('assessmentDate')}
                     type="date"
                     value={formData.assessmentDate}
                     onChange={(e) => setFormData({ ...formData, assessmentDate: e.target.value })}
@@ -727,10 +775,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
               {/* Boundary Description Textarea */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                <label htmlFor={metaId('boundaryDescription')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                   System Boundary & Scope Narrative *
                 </label>
                 <textarea
+                  id={metaId('boundaryDescription')}
                   rows={4}
                   value={formData.boundaryDescription}
                   onChange={(e) => setFormData({ ...formData, boundaryDescription: e.target.value })}
@@ -741,10 +790,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
               {/* CSPs & Cloud Infrastructure */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                <label htmlFor={metaId('cloudServiceProviders')} className="block text-xs font-semibold text-slate-300 mb-1.5">
                   Cloud Service Providers (CSPs) & Infrastructure Components
                 </label>
                 <input
+                  id={metaId('cloudServiceProviders')}
                   type="text"
                   value={formData.cloudServiceProviders}
                   onChange={(e) => setFormData({ ...formData, cloudServiceProviders: e.target.value })}
@@ -1063,6 +1113,38 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
         </div>
 
         <ErrorNotice message={jsonExportError} className="mx-5 mb-3 shrink-0" />
+
+        {/* Export readiness (#151): advisory, never blocks an export, never echoes values */}
+        <div role="status" data-testid="export-readiness"
+          className={`mx-5 mb-3 shrink-0 flex items-start gap-2 rounded-xl border p-3 text-xs ${requiredGapCount > 0 ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-slate-800 bg-slate-900 text-slate-300'}`}>
+          {exportGaps.length === 0 ? (
+            <><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" aria-hidden="true" /><span>All recorded values are present.</span></>
+          ) : (
+            <>
+              {requiredGapCount > 0
+                ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+                : <Info className="mt-0.5 h-4 w-4 shrink-0 text-cyan-400" aria-hidden="true" />}
+              <div className="space-y-2 min-w-0">
+                <p>
+                  {exportGaps.length === 1 ? '1 value is' : `${exportGaps.length} values are`} not recorded, so this document will print "not recorded" there. Exporting is still allowed.
+                  {canEdit ? ' Select a value to fill it in on Boundary Metadata.' : ' You have read-only access: values entered on Boundary Metadata apply to this export only and are not saved.'}
+                </p>
+                <ul className="flex flex-wrap gap-1.5" aria-label="Values not recorded">
+                  {exportGaps.map((gap) => (
+                    <li key={gap.field}>
+                      <button type="button" onClick={() => handleGapClick(gap.field)}
+                        className={`px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${gap.advisory ? 'border-dashed border-slate-600 bg-slate-900 text-slate-300 hover:bg-slate-800' : 'border-amber-500/40 bg-slate-900 text-amber-200 hover:bg-slate-800'}`}>
+                        <Edit3 className="w-3 h-3" aria-hidden="true" />
+                        <span>{gap.label}</span>
+                        <span className="font-normal text-slate-400">{gap.advisory ? '(optional for this document)' : '(required)'}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Modal Bottom Action Footer */}
         <div className="px-5 py-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">

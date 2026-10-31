@@ -20,7 +20,7 @@ import {
   getAssessmentObjectivesForControl,
   calculateControlRollup,
 } from '../data/frameworks';
-import { StorageService, createInitialState } from '../services/storageService';
+import { StorageService, createDefaultSspMetadata, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { useEvidenceBlobScrub } from '../hooks/useEvidenceBlobScrub';
 import { useLocalAssetScrub } from '../hooks/useLocalAssetScrub';
@@ -30,7 +30,15 @@ import { computeDomainStats } from '../data/frameworks/domainStats';
 import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives';
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
 import { ApiClient, ApiError } from '../services/apiClient';
-import { unsavedControlNotes } from '../services/unsavedText';
+import { unsavedControlNotes, unsavedSspMetadataFields } from '../services/unsavedText';
+import { SSP_METADATA_FIELDS, type SspField, type SspMetadataFields } from '../types/sspMetadata';
+import {
+  SSP_METADATA_STALE_MESSAGE,
+  createDebouncedSave,
+  mergeServerSspMetadata,
+  pickSspFields,
+  reconcileSspMetadata,
+} from '../data/sspMetadataSync';
 import { registerBeforeLock } from '../services/idleLock';
 import { useUnsavedTextProvider } from '../hooks/useUnsavedTextProvider';
 import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
@@ -131,6 +139,16 @@ interface AssessmentContextType {
   applyStarterTemplate: (controlId: string, narrative: string) => void;
   bulkApplyStigNarratives: (narratives: Record<string, string>) => number;
   updateSSPMetadata: (metadata: Partial<SSPMetadata>) => void;
+  /** False while a server-backed tenant's SSP details are not safe to edit: the server copy is not loaded or reconciled yet, or an edit was refused as stale. Role is separate (canEdit). */
+  sspMetadataEditable: boolean;
+  /** Where the SSP details are saved: this browser, still loading from the server, ready, being saved, or saved. */
+  sspMetadataStatus: 'browser' | 'loading' | 'ready' | 'saving' | 'saved';
+  /** The one-time upload found fields set differently in this browser and on the server (names only, never the text). Null when there is none. */
+  sspMetadataConflict: { fields: SspField[] } | null;
+  /** Settles that conflict: 'server' keeps the server's details, 'browser' saves this browser's to the server. Rejects when the save fails. */
+  resolveSspMetadataConflict: (choice: 'browser' | 'server') => Promise<void>;
+  /** True while this browser holds SSP details that are not on the server and this user cannot save them (an owner has to open the program). */
+  sspMetadataNeedsOwner: boolean;
   uploadEvidence: (controlId: string, file: File, description?: string) => Promise<EvidenceItem>;
   /** Resolves true when the evidence was removed, false when it was refused (no permission, or the server could not delete it). */
   removeEvidence: (evidenceId: string) => Promise<boolean>;
@@ -177,7 +195,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     syncError,
     updateLiveControl,
     liveObjectives,
+    liveSspMetadata,
     updateLiveObjective,
+    updateLiveSspMetadata,
     updateLiveObjectivesBulk,
     importLiveObjectives,
     createLiveEvidenceUploadUrl,
@@ -1258,22 +1278,219 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     saveObjectives([{ objectiveId, controlId, linkedEvidenceIds: updatedLinked }]);
   }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, saveObjectives]);
 
+  // -------------------------------------------------------------------------
+  // SSP metadata held by the server (#84). A server-backed program's system name, boundary text, environment and the other SSP details
+  // live on the server (owner / MSP write, everybody reads); this browser keeps them only until the one-time upload has run. The edit
+  // shows at once and is saved a moment after the last keystroke, one save at a time, each carrying the stamp of the last answer.
+  // The values can be CUI: no message, notice or log line below ever contains one (field names at most).
+  // -------------------------------------------------------------------------
+  const SSP_NOT_EDITABLE_MESSAGE =
+    'The SSP details are not loaded from the server, so they cannot be edited right now. They are not kept in this browser.';
+  const SSP_SAVE_FAILED_MESSAGE =
+    'The SSP details could not be saved to the server, so your last edit was not saved. Check the connection, then edit the field again.';
+  interface SspSnapshot { scope: string; programId: string | null; fields: SspMetadataFields }
+  const liveSspMetadataRef = useRef(liveSspMetadata);
+  liveSspMetadataRef.current = liveSspMetadata;
+  // The newest server stamp seen per scope: a save that runs after a program switch still expects its own program's stamp
+  const sspSeenStampRef = useRef(new Map<string, string | null>());
+  if (liveSspMetadata && liveScopeKey === programScope) sspSeenStampRef.current.set(programScope, liveSspMetadata.updatedAt);
+  const sspSavesRef = useRef(createStampedSaveChain());
+  const sspSendRef = useRef<(key: string, snapshot: SspSnapshot) => void>(() => {});
+  const sspDraftsRef = useRef(createDebouncedSave<SspSnapshot>((k, s) => sspSendRef.current(k, s)));
+  const sspInFlightRef = useRef(0);
+  const sspKey = notesKey(programScope, 'ssp-metadata');
+  // The scope whose last edit the server refused as stale: nothing more is sent for it until the page is reloaded
+  const [sspStaleScope, setSspStaleScope] = useState<string | null>(null);
+  const [sspSaveState, setSspSaveState] = useState<{ scope: string; value: 'saving' | 'saved' } | null>(null);
+  const [sspNeedOwnerScope, setSspNeedOwnerScope] = useState<string | null>(null);
+  const [sspConflictState, setSspConflictState] = useState<{ scope: string; fields: SspField[] } | null>(null);
+  // The scope an upload is running for: one upload at a time
+  const sspMigratingScope = useRef<string | null>(null);
+  const sspStale = sspStaleScope === programScope;
+  const sspReady = Boolean(liveSspMetadata) && liveScopeKey === programScope && stateScope === programScope;
+  const sspMetadataEditable = !currentTenant.serverBacked
+    || (notesEditable && sspReady && Boolean(state.sspMetadataMigratedAt) && !sspStale);
+  const sspMetadataNeedsOwner = Boolean(currentTenant.serverBacked) && sspNeedOwnerScope === programScope;
+  const sspMetadataConflict = currentTenant.serverBacked && sspConflictState?.scope === programScope ? { fields: sspConflictState.fields } : null;
+  const sspMetadataStatus: AssessmentContextType['sspMetadataStatus'] = !currentTenant.serverBacked
+    ? 'browser'
+    : sspSaveState?.scope === programScope
+      ? sspSaveState.value
+      : sspMetadataEditable ? 'ready' : 'loading';
+
+  // Typed but not yet saved SSP fields are reported to the unsaved-text rescue (server-backed tenants only; read through refs)
+  useUnsavedTextProvider(() => {
+    const s = stateRef.current;
+    const live = liveSspMetadataRef.current;
+    if (!serverBackedRef.current || !live || programScopeKey(s.tenantId, s.programId) !== liveScopeKeyRef.current) return [];
+    return unsavedSspMetadataFields(s.sspMetadata as unknown as Record<string, string | undefined>, live.metadata ?? {}, s.programId ?? 'default');
+  });
+
+  // The send is assigned in an effect (not in render) so the flush on a program switch, which runs in the previous render's cleanup,
+  // still sends with the previous program's closure.
+  useEffect(() => {
+    sspSendRef.current = (key, snapshot) => {
+      if (snapshot.scope === sspStaleScope) return;
+      sspInFlightRef.current++;
+      void sspSavesRef.current.run(
+        key,
+        () => sspSeenStampRef.current.get(snapshot.scope) ?? null,
+        expected => updateLiveSspMetadata(snapshot.fields, expected ?? null, snapshot.programId)
+      )
+        .then(() => {
+          setSspSaveState(prev => (prev?.scope === snapshot.scope && !sspDraftsRef.current.has(key) ? { scope: snapshot.scope, value: 'saved' } : prev));
+        })
+        .catch((err: unknown) => {
+          setSspSaveState(null);
+          if (isStaleWriteError(err)) {
+            setSspStaleScope(snapshot.scope);
+            if (programScopeRef.current === snapshot.scope) setControlSaveError(p => coalesceSaveFailure(p, SSP_METADATA_STALE_MESSAGE));
+            return;
+          }
+          // A 401 means the session has ended: the sign-in screen says so
+          if (err instanceof ApiError && err.status === 401) return;
+          if (programScopeRef.current === snapshot.scope) setControlSaveError(p => coalesceSaveFailure(p, SSP_SAVE_FAILED_MESSAGE));
+        })
+        .finally(() => { sspInFlightRef.current--; });
+    };
+  });
+  // Leaving the program or the page sends what is typed; a tab that is hidden sends it too (it may never come back)
+  useEffect(() => () => { sspDraftsRef.current.flushAll(); }, [currentTenant.id, programScope]);
+  useEffect(() => { sspSavesRef.current.clear(); }, [currentTenant.id, programScope]);
+  // The idle lock (#163) ends the server session: typed SSP details are sent first, and the lock waits for them (it gives up after 5 s)
+  useEffect(() => registerBeforeLock('ssp-metadata', async () => {
+    sspDraftsRef.current.flushAll();
+    const giveUpAt = Date.now() + 5000;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    while (sspInFlightRef.current > 0 && Date.now() < giveUpAt) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    }
+  }), []);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') sspDraftsRef.current.flushAll();
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (sspDraftsRef.current.has(sspKey) || sspInFlightRef.current > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [sspKey]);
+
+  // Merge the server's SSP details into the state, only for the scope on screen and only into a state of that scope. They reach the
+  // state's cache only through the marker: before it is set, the cache is the only copy of anything it holds. Cache text the server
+  // lacks is uploaded first (owner / MSP), or left alone with a notice (everybody else); a field set differently on both sides asks
+  // the user which to keep and changes nothing until they choose.
+  useEffect(() => {
+    if (!currentTenant.serverBacked || !liveSspMetadata || liveScopeKey !== programScope || stateScope !== programScope) return;
+    const options = { canWrite: canEdit, now: new Date().toISOString(), defaults: createDefaultSspMetadata(currentTenant) };
+    const { outcome, upload, expected, conflictFields } = reconcileSspMetadata(stateRef.current, liveSspMetadata, options);
+    if (outcome === 'blocked') {
+      setSspNeedOwnerScope(programScope);
+      setSspConflictState(null);
+      return;
+    }
+    setSspNeedOwnerScope(null);
+    if (outcome === 'conflict') {
+      setSspConflictState({ scope: programScope, fields: conflictFields ?? [] });
+      return;
+    }
+    setSspConflictState(null);
+    if (outcome === 'merged' || outcome === 'marked') {
+      // What is being typed, on its way to the server or refused keeps the text on screen: an older server copy must not put old text back
+      setState(prev => {
+        if (programScopeKey(prev.tenantId, prev.programId) !== programScope) return prev;
+        if (sspDraftsRef.current.has(sspKey) || sspSavesRef.current.busy(sspKey) || sspStaleScope === programScope) return prev;
+        return reconcileSspMetadata(prev, liveSspMetadata, options).state;
+      });
+      return;
+    }
+
+    // Upload what this browser holds. The marker is set only once the server has it: a failure leaves the cache as it is and the next load tries again.
+    if (sspMigratingScope.current === programScope || !upload) return;
+    sspMigratingScope.current = programScope;
+    const scope = programScope;
+    void (async () => {
+      try {
+        const saved = await updateLiveSspMetadata(upload, expected ?? null, programId ?? null);
+        setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== scope
+          ? prev
+          : { ...prev, sspMetadata: mergeServerSspMetadata(options.defaults, saved), sspMetadataMigratedAt: new Date().toISOString() }));
+      } catch {
+        // network or server failure (or a stale stamp): keep everything, retry on the next load
+      } finally {
+        if (sspMigratingScope.current === scope) sspMigratingScope.current = null;
+      }
+    })();
+  }, [currentTenant.serverBacked, liveSspMetadata, liveScopeKey, programScope, stateScope, state.sspMetadataMigratedAt, canEdit, sspStaleScope, sspKey, programId, updateLiveSspMetadata]);
+
+  const resolveSspMetadataConflict = useCallback(async (choice: 'browser' | 'server'): Promise<void> => {
+    if (!canEdit) throw new Error('Read-Only access: only a tenant owner can resolve this.');
+    const s = stateRef.current;
+    const live = liveSspMetadataRef.current;
+    if (programScopeKey(s.tenantId, s.programId) !== programScope || !live) throw new Error('The program on screen changed; open it again.');
+    const scope = programScope;
+    const defaults = createDefaultSspMetadata(currentTenant);
+    if (choice === 'server') {
+      setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== scope
+        ? prev
+        : { ...prev, sspMetadata: mergeServerSspMetadata(defaults, live), sspMetadataMigratedAt: new Date().toISOString() }));
+      setSspConflictState(null);
+      return;
+    }
+    // This browser's text goes up over the server's, with the stamp the server showed; fields this browser holds empty keep the server's text
+    const server = pickSspFields(live.metadata);
+    const cached = pickSspFields(s.sspMetadata);
+    const merged: SspMetadataFields = { ...server };
+    for (const field of SSP_METADATA_FIELDS) {
+      const text = cached[field] ?? '';
+      if (text === '') continue;
+      if (field === 'assessmentDate' && (server[field] ?? '') !== '') continue;
+      merged[field] = text;
+    }
+    const saved = await updateLiveSspMetadata(merged, live.updatedAt, programId ?? null);
+    setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== scope
+      ? prev
+      : { ...prev, sspMetadata: mergeServerSspMetadata(defaults, saved), sspMetadataMigratedAt: new Date().toISOString() }));
+    setSspConflictState(null);
+  }, [canEdit, programScope, programId, currentTenant, updateLiveSspMetadata]);
+
   // Action: Update SSP Metadata with RBAC Check
   const updateSSPMetadata = useCallback((metadata: Partial<SSPMetadata>) => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to update SSP metadata.');
       return;
     }
+    // A server-backed program's details are only edited once the server copy is loaded and reconciled: a blind edit would overwrite it
+    if (currentTenant.serverBacked && !sspMetadataEditable) {
+      alert(SSP_NOT_EDITABLE_MESSAGE);
+      return;
+    }
 
+    const now = new Date().toISOString();
+    const next: SSPMetadata = { ...stateRef.current.sspMetadata, ...metadata, lastUpdated: now };
+    // Consecutive calls before the next render build on this one
+    stateRef.current = { ...stateRef.current, sspMetadata: next };
     setState(prev => ({
       ...prev,
       sspMetadata: {
         ...prev.sspMetadata,
         ...metadata,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: now,
       },
     }));
-  }, [canEdit]);
+    if (currentTenant.serverBacked) {
+      sspDraftsRef.current.push(sspKey, { scope: programScope, programId: programId ?? null, fields: pickSspFields(next) });
+      setSspSaveState({ scope: programScope, value: 'saving' });
+    }
+  }, [canEdit, currentTenant.serverBacked, sspMetadataEditable, sspKey, programScope, programId]);
 
   // Action: Upload Evidence with Vault Path & SHA-256 Hashing
   const uploadEvidence = useCallback(async (
@@ -1462,7 +1679,12 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }).catch(() => {});
 
     const blank = createInitialState(currentTenant, activeProgram?.framework);
-    setState({ ...blank, programId });
+    // The server's SSP details are not touched by a reset: a server-backed program keeps its marker and shows the server copy again
+    const marker = stateRef.current.sspMetadataMigratedAt;
+    const kept = currentTenant.serverBacked && marker
+      ? { sspMetadataMigratedAt: marker, sspMetadata: mergeServerSspMetadata(blank.sspMetadata, liveSspMetadataRef.current) }
+      : {};
+    setState({ ...blank, programId, ...kept });
   }, [canEdit, currentTenant, activeProgram?.framework, programId, auditMetadata, currentUser.id, currentUser.email, currentUser.roles]);
 
   // Action: Import Assessment JSON
@@ -1508,6 +1730,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       imported.objectivesPendingReview = stateRef.current.objectivesPendingReview;
       if (!imported.objectivesMigratedAt) delete imported.objectivesMigratedAt;
       if (!imported.objectivesPendingReview) delete imported.objectivesPendingReview;
+      // Same for the SSP metadata marker; a server-backed program's SSP details go to the server, or stay as they are when it cannot take them now
+      imported.sspMetadataMigratedAt = stateRef.current.sspMetadataMigratedAt;
+      if (!imported.sspMetadataMigratedAt) delete imported.sspMetadataMigratedAt;
+      if (currentTenant.serverBacked && !sspMetadataEditable) imported.sspMetadata = stateRef.current.sspMetadata;
 
       // A server-backed tenant's notes, status and roles live on the server: send each control that differs from the
       // current state through the audited writer (one PUT per control, sequential, only the changed fields)
@@ -1526,6 +1752,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
       setState(imported);
+      if (currentTenant.serverBacked && sspMetadataEditable) {
+        sspDraftsRef.current.push(sspKey, { scope: programScope, programId: programId ?? null, fields: pickSspFields(imported.sspMetadata) });
+        setSspSaveState({ scope: programScope, value: 'saving' });
+      }
       // Objectives of a server-backed tenant go to the server in chunks of 500 (each chunk all-or-nothing)
       if (currentTenant.serverBacked) {
         const objectiveUploads = objectivesToUpload(imported.objectives, isKnownControl).items;
@@ -1563,7 +1793,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       alert('Failed to import JSON file. Please ensure it is a valid PBC-GRC backup.');
       return false;
     }
-  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, programScope, saveControl, updateLiveObjectivesBulk, isKnownControl]);
+  }, [canEdit, notesEditable, currentTenant.id, currentTenant.serverBacked, programId, currentUser.name, frameworkControls, activeFramework, programScope, saveControl, updateLiveObjectivesBulk, isKnownControl, sspMetadataEditable, sspKey]);
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
@@ -1607,6 +1837,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     applyStarterTemplate,
     bulkApplyStigNarratives,
     updateSSPMetadata,
+    sspMetadataEditable,
+    sspMetadataStatus,
+    sspMetadataConflict,
+    resolveSspMetadataConflict,
+    sspMetadataNeedsOwner,
     uploadEvidence,
     removeEvidence,
     resetAssessment,
@@ -1655,6 +1890,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     applyStarterTemplate,
     bulkApplyStigNarratives,
     updateSSPMetadata,
+    sspMetadataEditable,
+    sspMetadataStatus,
+    sspMetadataConflict,
+    resolveSspMetadataConflict,
+    sspMetadataNeedsOwner,
     uploadEvidence,
     removeEvidence,
     resetAssessment,

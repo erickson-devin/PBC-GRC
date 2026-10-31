@@ -9,6 +9,7 @@ import {
   isValidCageCode,
   mergeServerTenants,
   parseServerTenants,
+  planStackProfileUpload,
   isPasswordChangeRequired,
   pickActiveTenantId,
   provisionalRoleForTenant,
@@ -48,6 +49,7 @@ const srv = (over: Partial<ServerTenant> & { id: string }): ServerTenant => ({
   primaryFramework: 'CMMC_L1',
   createdAt: '2025-12-01T00:00:00Z',
   role: 'VIEWER',
+  stackProfile: null,
   source: 'membership',
   ...over,
 });
@@ -180,6 +182,26 @@ function pureTests() {
   const dropped = toServerPatch({ name: '', cageCode: 'PENDING', systemName: '   ', domain: 'x.mil', stackProfile: {} as Tenant['stackProfile'], isConfigured: true, isSuspended: true });
   assert(Object.keys(dropped).length === 0, 'blank values, the PENDING placeholder and browser-only fields (domain, stack profile, flags) are never sent', dropped);
   assert(Object.keys(toServerPatch({ name: 'A' })).length === 0, 'a name the server would reject (too short) is not sent');
+
+  console.log('\n--- stackProfile (#84) ---');
+  const okta = { identityProvider: 'OKTA', edrSolution: 'GENERIC_AV', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'MANUAL_GPO', siemSolution: 'LOCAL_AUDITD' } as const;
+  const parsedSp = parseServerTenants({ tenants: [
+    { id: 'sp1', role: 'VIEWER', stackProfile: okta },
+    { id: 'sp2', role: 'VIEWER', stackProfile: { identityProvider: 'NOPE' } },
+    { id: 'sp3', role: 'VIEWER' },
+  ] });
+  assert(parsedSp[0].stackProfile?.identityProvider === 'OKTA' && parsedSp[1].stackProfile === null && parsedSp[2].stackProfile === null, 'TS-SP1 parseServerTenants keeps a valid stackProfile and nulls an invalid or missing one', parsedSp);
+  const entra = { ...okta, identityProvider: 'ENTRA_ID_GOV' } as Tenant['stackProfile'];
+  const spMerged = serverTenantToTenant(srv({ id: 'sp1', role: 'VIEWER', stackProfile: okta }), local({ id: 'sp1', stackProfile: entra }), NOW.toISOString());
+  assert(spMerged.stackProfile?.identityProvider === 'OKTA', 'TS-SP2 the server stack profile wins over the cached one');
+  const spKept = serverTenantToTenant(srv({ id: 'sp1', role: 'VIEWER', stackProfile: null }), local({ id: 'sp1', stackProfile: entra }), NOW.toISOString());
+  assert(spKept.stackProfile?.identityProvider === 'ENTRA_ID_GOV', 'TS-SP3 a null server profile keeps the cached one');
+  const spPatch = toServerPatch({ stackProfile: okta });
+  assert(spPatch.stackProfile?.identityProvider === 'OKTA' && Object.keys(toServerPatch({ stackProfile: {} as Tenant['stackProfile'] })).length === 0 && Object.keys(toServerPatch({ stackProfile: { ...okta, identityProvider: 'X' } as unknown as Tenant['stackProfile'] })).length === 0, 'TS-SP4 toServerPatch includes a valid stackProfile and drops an empty or invalid one');
+  assert(
+    planStackProfileUpload({ stackProfile: null }, okta)?.identityProvider === 'OKTA' && planStackProfileUpload({ stackProfile: okta }, entra) === null && planStackProfileUpload({ stackProfile: null }, undefined) === null && planStackProfileUpload({ stackProfile: null }, { identityProvider: 'OKTA' }) === null,
+    'TS-SP5 planStackProfileUpload returns the cached profile only when it is valid and the server holds none'
+  );
 
   console.log('\n--- pickActiveTenantId ---');
   const list = [local({ id: 'placeholder' }), local({ id: 'a' }), local({ id: 'b' })];

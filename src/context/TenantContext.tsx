@@ -19,10 +19,12 @@ import {
   parseServerTenants,
   pickActiveTenantId,
   provisionalRoleForTenant,
+  planStackProfileUpload,
   serverTenantToTenant,
   toServerPatch,
   ServerTenantPatch,
 } from '../data/tenantSync';
+import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata';
 import { EvidenceVault } from '../services/evidenceVault';
 import { StorageService, createInitialState } from '../services/storageService';
 import { stripTenantRegistryForCache } from '../services/browserStorageScrub';
@@ -311,7 +313,7 @@ interface TenantContextType {
    * Moves a tenant that only exists in this browser to the server: creates it there, then ports its assessment and
    * evidence files to the new server-generated id. Browser-only team members and invitations are not carried over.
    */
-  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }>;
+  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number }>;
 
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
@@ -347,6 +349,8 @@ interface TenantContextType {
   liveEvidence: EvidenceItem[] | null;
   /** The program's objective records from the server (by objective id), loaded with the controls for the same `liveScopeKey`. */
   liveObjectives: Record<string, ObjectiveRecord> | null;
+  /** The program's SSP metadata record from the server (metadata null: none saved yet), loaded with the controls for the same `liveScopeKey`. */
+  liveSspMetadata: SspMetadataRecord | null;
   // Programs (authorization boundaries) of the active tenant
   /** The tenant's programs, archived ones included (empty for a browser-only tenant). */
   programs: Program[];
@@ -385,6 +389,11 @@ interface TenantContextType {
   updateLiveControl: (controlId: string, updates: Partial<ControlState> & { expectedUpdatedAt?: string | null }, programId?: string | null) => Promise<ControlState>;
   /** Saves one objective (status, narrative, evidence links) to the program that is on screen when the call starts. Rejects when the server refuses or is unreachable. */
   updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null }, programId?: string | null) => Promise<ObjectiveRecord>;
+  /**
+   * Saves the program's SSP metadata (full replace of the whitelisted fields) with the stamp the caller last saw (null: no row yet).
+   * Rejects with the server's 409 `stale_write` when the copy changed meanwhile. Shows the answer only while the scope is still on screen.
+   */
+  updateLiveSspMetadata: (metadata: SspMetadataFields, expectedUpdatedAt: string | null, programId?: string | null) => Promise<SspMetadataRecord & { changed: boolean }>;
   /** Saves many objectives (500 per request, each request all-or-nothing). Rejects when a request fails. */
   updateLiveObjectivesBulk: (items: ObjectiveInput[]) => Promise<void>;
   /** Moves browser-cached objectives to the server (5000 per request, insert-only); resolves with every id's result, rejects when a request fails. */
@@ -573,6 +582,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const liveTenantsRef = useRef(liveTenants);
   liveTenantsRef.current = liveTenants;
   const syncInFlight = useRef<Promise<Tenant[] | null> | null>(null);
+  // #84: tenants whose browser-held stack profile is settled (the server holds one, there was nothing to send, or the one-time upload
+  // succeeded), and the tenants whose boundary text is being sent or was refused this session (one try per load). The tick re-runs the
+  // effect that sets `browserFieldsMigratedAt`.
+  const stackProfileSettled = useRef<Set<string>>(new Set());
+  const boundaryUploadTried = useRef<Set<string>>(new Set());
+  const [browserFieldsTick, setBrowserFieldsTick] = useState(0);
   // Latest values for async callbacks (avoid stale closures after an await)
   const currentUserRef = useRef(currentUser);
   currentUserRef.current = currentUser;
@@ -621,6 +636,26 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // A user who already has tenants on the server does not need the first-run wizard
         if (server.length > 0) setIsOnboardingModalOpen(false);
         setTenantSync({ status: 'synced', lastSyncedAt: new Date().toISOString(), error: null, outcome: 'verified' });
+        // #84: a stack profile only this browser holds is sent to the server once (owners and MSP admins; the server keeps the first one
+        // until somebody edits it). Nothing is awaited: the sync result does not depend on it, and a failure retries on the next load.
+        const cachedTenants = liveTenantsRef.current;
+        for (const s of server) {
+          if (s.source !== 'membership') continue;
+          const profile = planStackProfileUpload(s, cachedTenants.find(t => t.id === s.id)?.stackProfile);
+          if (!profile) {
+            stackProfileSettled.current.add(s.id);
+            continue;
+          }
+          if (!canRoleWrite(s.role)) continue;
+          const patch: ServerTenantPatch = { stackProfile: profile };
+          ApiClient.updateTenant(s.id, patch, ref)
+            .then(() => {
+              stackProfileSettled.current.add(s.id);
+              setBrowserFieldsTick(n => n + 1);
+            })
+            .catch((err: unknown) => console.warn('[Tenants] Could not save the stack profile to the server:', errorMessage(err)));
+        }
+        setBrowserFieldsTick(n => n + 1);
         return result.tenants;
       } catch (err: unknown) {
         // Offline or server error: keep the cache, but say so. The server still enforces every request.
@@ -743,12 +778,43 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     target: Tenant,
     override: ServerTenantPatch = {},
     activate = true
-  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
+  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number }> => {
     const base = toServerPatch(target);
     const created = await createTenantOnServer(
       { ...base, ...override, name: (override.name ?? target.name).trim() },
       { domain: target.domain, isConfigured: target.isConfigured ?? true, activate }
     );
+    // The stack profile and the boundary text lived only in this browser's registry (#84): they move too, or "Move to server" would
+    // lose them. The profile goes to the tenant, the boundary text becomes the new default program's boundary summary. A failure is
+    // not fatal: it is counted (registryFieldsFailed, like the other counts: nothing is logged) and the new tenant is marked only
+    // when both arrived, so the browser keeps trying on later loads.
+    let registryFieldsFailed = 0;
+    const profileToSend = toServerPatch({ stackProfile: target.stackProfile }).stackProfile;
+    if (profileToSend) {
+      try {
+        const profilePatch: ServerTenantPatch = { stackProfile: profileToSend };
+        await ApiClient.updateTenant(created.id, profilePatch);
+      } catch {
+        registryFieldsFailed++;
+      }
+    }
+    const boundaryToSend = (target.systemBoundaryScope ?? '').trim();
+    if (boundaryToSend) {
+      try {
+        const createdPrograms = await ApiClient.listPrograms(created.id);
+        const defaultProgram = createdPrograms.find(p => p.isDefault);
+        if (!defaultProgram) throw new Error('no default program');
+        await ApiClient.updateProgram(created.id, defaultProgram.id, { boundarySummary: boundaryToSend });
+      } catch {
+        registryFieldsFailed++;
+      }
+    }
+    // The new tenant carries what it just received, so the registry cache drops the browser copy straight away
+    if (registryFieldsFailed === 0) {
+      const marker = new Date().toISOString();
+      stackProfileSettled.current.add(created.id);
+      setLiveTenants(prev => prev.map(t => (t.id === created.id ? { ...t, browserFieldsMigratedAt: marker } : t)));
+    }
     // In live mode the server is the source of truth for control answers, so carry over everything the user filled in
     // (otherwise the new tenant's defaults would replace it on the next sync).
     const legacyControls = Object.values(StorageService.loadAssessment(target).controls).filter(
@@ -877,17 +943,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       delete roles[target.id];
       return { ...prev, roles };
     });
-    return { tenant: created, evidenceFilesMoved, evidenceFailed, controlsFailed, objectivesFailed, assetsMoved, assetsFailed };
+    return { tenant: created, evidenceFilesMoved, evidenceFailed, controlsFailed, objectivesFailed, assetsMoved, assetsFailed, registryFieldsFailed };
   }, [createTenantOnServer]);
 
   /** "Move to server": the user-facing action for tenants that only exist in this browser. */
-  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number }> => {
+  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number }> => {
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!target) throw new ApiError(404, 'That tenant was not found.');
-    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, evidenceFailed: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0 };
+    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, evidenceFailed: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0, registryFieldsFailed: 0 };
     if (target.isConfigured === false) throw new ApiError(409, 'Finish this tenant\'s setup wizard first; it creates the tenant on the server.');
     const moved = await migrateTenantToServer(target, {}, target.id === currentTenantIdRef.current);
-    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, evidenceFailed: moved.evidenceFailed, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed };
+    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, evidenceFailed: moved.evidenceFailed, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed, registryFieldsFailed: moved.registryFieldsFailed };
   }, [migrateTenantToServer]);
 
 
@@ -899,6 +965,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [liveControls, setLiveControls] = useState<Record<string, ControlState> | null>(null);
   const [liveEvidence, setLiveEvidence] = useState<EvidenceItem[] | null>(null);
   const [liveObjectives, setLiveObjectives] = useState<Record<string, ObjectiveRecord> | null>(null);
+  const [liveSspMetadata, setLiveSspMetadata] = useState<SspMetadataRecord | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [liveScopeKey, setLiveScopeKey] = useState<string | null>(null);
@@ -920,6 +987,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setLiveControls(null);
     setLiveEvidence(null);
     setLiveObjectives(null);
+    setLiveSspMetadata(null);
     setLiveScopeKey(null);
   }, []);
   /** The program a tenant's requests go to right now (null: none known yet, the server serves its default program). */
@@ -1102,6 +1170,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLiveControls(null);
       setLiveEvidence(null);
       setLiveObjectives(null);
+      setLiveSspMetadata(null);
       setLiveScopeKey(null);
       return;
     }
@@ -1129,10 +1198,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const ov = overlayToFetch || (activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE');
 
     try {
-      const [controlsList, evidenceList, objectivesList] = await Promise.all([
+      const [controlsList, evidenceList, objectivesList, sspMetadataRecord] = await Promise.all([
         ApiClient.getControls(targetTenantId, { framework: fw, baseline: bl, overlay: ov }, programId),
         ApiClient.getEvidence(targetTenantId, programId),
         ApiClient.getObjectives(targetTenantId, undefined, programId),
+        ApiClient.getSspMetadata(targetTenantId, programId),
       ]);
       if (!isCurrentResponse(seq, liveSeq.current)) return;
 
@@ -1148,6 +1218,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLiveControls(controlsMap);
       setLiveEvidence(evidenceList);
       setLiveObjectives(objectivesMap);
+      setLiveSspMetadata(sspMetadataRecord);
       setLiveScopeKey(scope);
     } catch (err: unknown) {
       if (!isCurrentResponse(seq, liveSeq.current)) return;
@@ -1171,6 +1242,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLiveControls(null);
       setLiveEvidence(null);
       setLiveObjectives(null);
+      setLiveSspMetadata(null);
       setLiveScopeKey(null);
       setIsSyncing(false);
     }
@@ -1220,6 +1292,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLiveObjectives(prev => ({ ...(prev ?? {}), [objectiveId]: objective }));
     }
     return objective;
+  }, [currentTenant.id, scopeNow, programIdFor]);
+
+  // The SSP metadata writer rejects like the objective ones: the text is only on the server, so the UI must be able to say it was not saved
+  const updateLiveSspMetadata = useCallback(async (
+    metadata: SspMetadataFields,
+    expectedUpdatedAt: string | null,
+    programId?: string | null
+  ): Promise<SspMetadataRecord & { changed: boolean }> => {
+    // The program (and so the scope) is fixed when the save starts. A debounced save passes the program it was typed in.
+    const program = programId !== undefined ? programId : programIdFor(currentTenant.id);
+    const scope = programId !== undefined ? programScopeKey(currentTenant.id, programId) : scopeNow(currentTenant.id);
+    const saved = await ApiClient.putSspMetadata(currentTenant.id, metadata, expectedUpdatedAt, program);
+    if (scopeNow(currentTenant.id) === scope) {
+      setLiveSspMetadata({ metadata: saved.metadata, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy });
+    }
+    return saved;
   }, [currentTenant.id, scopeNow, programIdFor]);
 
   const updateLiveObjectivesBulk = useCallback(async (items: ObjectiveInput[]): Promise<void> => {
@@ -1302,6 +1390,33 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Creating, editing, archiving and deleting programs: TENANT_OWNER and MSP_ADMIN (the server enforces it)
   const canManagePrograms = canEdit;
+
+  // #84: the boundary text and stack profile this browser holds move to the server once, then leave the browser's registry cache.
+  // The stack profile goes up in syncTenantsFromServer; the boundary text becomes the default program's boundary summary, and only
+  // when the server's is blank (the server's text always wins). `browserFieldsMigratedAt` is set once both are settled; the cache
+  // write of the registry then drops the two fields (stripTenantRegistryForCache). A read-only user with text to send waits for an owner.
+  useEffect(() => {
+    const t = currentTenant;
+    if (!t.serverBacked || t.browserFieldsMigratedAt) return;
+    if (programsState.tenantId !== t.id || programsState.status !== 'ready') return;
+    if (!stackProfileSettled.current.has(t.id)) return;
+    const defaultProgram = programsState.programs.find(p => p.isDefault);
+    if (!defaultProgram) return;
+    const markDone = () => setLiveTenants(prev => prev.map(x => (x.id === t.id && !x.browserFieldsMigratedAt ? { ...x, browserFieldsMigratedAt: new Date().toISOString() } : x)));
+    const cachedBoundary = (t.systemBoundaryScope ?? '').trim();
+    if (!cachedBoundary || (defaultProgram.boundarySummary ?? '').trim()) {
+      markDone();
+      return;
+    }
+    if (!canManagePrograms || boundaryUploadTried.current.has(t.id)) return;
+    boundaryUploadTried.current.add(t.id);
+    ApiClient.updateProgram(t.id, defaultProgram.id, { boundarySummary: cachedBoundary })
+      .then(() => {
+        markDone();
+        void refreshPrograms(t.id);
+      })
+      .catch((err: unknown) => console.warn('[Tenants] Could not save the boundary text to the server:', errorMessage(err)));
+  }, [currentTenant, programsState, canManagePrograms, browserFieldsTick, refreshPrograms]);
 
   /**
    * Turns one overlay on or off. A server-backed tenant saves it with the active program (shared, audited by the server) and the
@@ -2087,6 +2202,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveScopeKey,
     liveEvidence,
     liveObjectives,
+    liveSspMetadata,
     programs,
     activeProgram,
     programsStatus,
@@ -2110,6 +2226,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshLiveData,
     updateLiveControl,
     updateLiveObjective,
+    updateLiveSspMetadata,
     updateLiveObjectivesBulk,
     importLiveObjectives,
     createLiveEvidenceUploadUrl,
@@ -2173,6 +2290,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     liveScopeKey,
     liveEvidence,
     liveObjectives,
+    liveSspMetadata,
     programs,
     activeProgram,
     programsStatus,
@@ -2196,6 +2314,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshLiveData,
     updateLiveControl,
     updateLiveObjective,
+    updateLiveSspMetadata,
     updateLiveObjectivesBulk,
     importLiveObjectives,
     createLiveEvidenceUploadUrl,

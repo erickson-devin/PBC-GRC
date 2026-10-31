@@ -28,6 +28,7 @@ import { ensureDefaultProgram } from '../programs';
 import { isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
+import { validateStackProfile } from '../../src/data/stackProfileSchema';
 
 const router = Router();
 
@@ -80,6 +81,7 @@ export async function listMyTenantsHandler(req: Request, res: Response): Promise
           industry: '',
           enabledFrameworks: [],
           primaryFramework: 'CMMC_L1',
+          stackProfile: null,
           createdAt: null,
           role,
           joinedAt: new Date(0).toISOString(),
@@ -142,6 +144,12 @@ function parseTenantFields(body: unknown, mode: 'create' | 'patch'): FieldResult
       return { error: 'Invalid enabledFrameworks: a non-empty list of supported frameworks' };
     }
     value.enabledFrameworks = [...new Set(list as string[])];
+  }
+
+  if (b.stackProfile !== undefined) {
+    const checked = validateStackProfile(b.stackProfile);
+    if (!checked.ok) return { error: 'Invalid stackProfile' };
+    value.stackProfile = checked.value;
   }
 
   if (mode === 'patch' && Object.keys(value).length === 0) return { error: 'No updatable fields supplied' };

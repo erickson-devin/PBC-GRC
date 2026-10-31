@@ -1,4 +1,5 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
+import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata';
 import type { ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
@@ -1212,6 +1213,33 @@ export const ApiClient = {
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
     const data = await res.json();
     return Array.isArray(data.objectives) ? data.objectives : [];
+  },
+
+  /**
+   * GET /api/v1/ssp-metadata
+   * The program's SSP metadata (metadata null when no row yet); every role may read it
+   */
+  async getSspMetadata(tenantId: string, programId?: string | null): Promise<SspMetadataRecord> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * PUT /api/v1/ssp-metadata
+   * Replaces the program's SSP metadata (owner / MSP only); expectedUpdatedAt is null for the first write, else the stamp last read
+   */
+  async putSspMetadata(tenantId: string, metadata: SspMetadataFields, expectedUpdatedAt: string | null, programId?: string | null): Promise<SspMetadataRecord & { changed: boolean }> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata`, {
+      method: 'PUT',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      body: JSON.stringify({ metadata, expectedUpdatedAt }),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
   },
 
   /**
