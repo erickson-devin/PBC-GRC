@@ -180,7 +180,9 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
     });
 
     const count = bulkApplyStigNarratives(narrativeMap);
-    showNotification(`Applied STIG narrative [${rule.vulnId}] to ${count} mapped control(s)!`);
+    showNotification(count === 0
+      ? 'Already applied; nothing changed.'
+      : `Applied STIG narrative [${rule.vulnId}] to ${count} mapped control(s)!`);
   };
 
   // Bulk Apply All Mapped Narratives
@@ -207,7 +209,9 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
 
     const count = bulkApplyStigNarratives(narrativeMap);
     setIsConfirmingNarrativeFill(false);
-    showNotification(`Successfully auto-populated official policy narratives across ${count} active control(s)!`);
+    showNotification(count === 0
+      ? 'Already applied; nothing changed.'
+      : `Successfully auto-populated official policy narratives across ${count} active control(s)!`);
   };
 
   if (!isOpen) return null;

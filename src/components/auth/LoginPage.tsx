@@ -6,6 +6,7 @@ import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { MfaChallengeForm } from './MfaChallengeForm';
 import { MfaEnrolmentPanel } from './MfaEnrolmentPanel';
+import { SIGNED_IN_DEFAULT, redirectFromLocation } from '../../utils/appRoute';
 
 interface LoginPageProps {
   onSuccessRedirect?: (path?: string) => void;
@@ -37,14 +38,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const emailRef = React.useRef<HTMLInputElement>(null);
   const dismissError = () => { clearAuthError(); emailRef.current?.focus(); };
 
-  // Extract redirectUrl from URL query params
-  const redirectUrl = React.useMemo(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('redirectUrl') || '/app';
-    }
-    return '/app';
-  }, []);
+  // Where to go after sign-in: the redirectUrl in the hash (or query), if it is a safe app address
+  const redirectUrl = React.useMemo(
+    () => (typeof window !== 'undefined'
+      ? redirectFromLocation({ hash: window.location.hash, search: window.location.search })
+      : SIGNED_IN_DEFAULT),
+    []
+  );
 
   // If already authenticated, redirect immediately
   useEffect(() => {

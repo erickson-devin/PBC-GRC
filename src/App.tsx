@@ -37,7 +37,7 @@ import { UnsavedTextBanner } from './components/auth/UnsavedTextBanner';
 import { shouldHoldForVerification } from './data/sessionVerification';
 
 
-import { AppRoute, initialTabFromUrl, resolveRoot, routeAfterSessionEnd, routeFromUrl } from './utils/appRoute';
+import { AppRoute, SIGNED_IN_DEFAULT, initialTabFromUrl, loginHref, resolveRoot, routeAfterSessionEnd, routeFromUrl, safeRedirectTarget } from './utils/appRoute';
 const AppContent: React.FC = () => {
   const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
   const { isAuthenticated, mustChangePassword, loading: authLoading, sessionCheck } = useAuth();
@@ -197,10 +197,20 @@ const AppContent: React.FC = () => {
   }, []);
 
   const navigateToLogin = useCallback((redirectUrl: string = '/app') => {
-    if (typeof window !== 'undefined') window.history.pushState(null, '', `/#login?redirectUrl=${encodeURIComponent(redirectUrl)}`);
+    if (typeof window !== 'undefined') window.history.pushState(null, '', loginHref(redirectUrl));
     setCurrentRoute('login');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
+
+  // After sign-in: go where the sign-in page was asked to return to, but only to a same-origin app or admin address
+  const navigateAfterSignIn = useCallback((target?: string) => {
+    const dest = safeRedirectTarget(target) ?? SIGNED_IN_DEFAULT;
+    window.history.replaceState(null, '', dest);
+    setCurrentRoute(getRouteFromUrl());
+    const tab = initialTabFromUrl({ pathname: window.location.pathname, hash: window.location.hash });
+    if (tab) setActiveTab(tab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [setActiveTab]);
 
   // A temporary password (administrator reset, or an account created from the command line) must be replaced before anything else:
   // the server refuses every other request until then, so the app is not rendered at all.
@@ -238,7 +248,7 @@ const AppContent: React.FC = () => {
       {/* 1. Standalone Login Page Route */}
       {setup.state === 'done' && currentRoute === 'login' && (
         <LoginPage
-          onSuccessRedirect={navigateToApp}
+          onSuccessRedirect={navigateAfterSignIn}
           onOpenLegal={openLegalModal}
         />
       )}
