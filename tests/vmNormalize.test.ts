@@ -23,10 +23,11 @@ import {
   worstSeverity,
   type ApplyRunInput,
   type LinkedPoamItem,
+  type OtherSourceReport,
   type PoamCandidate,
   type VmSlaConfig,
 } from '../server/vm/transitions';
-import { kindKey, normalizeMac, planAssetMatches, type AgentAssetCandidate } from '../server/vm/assetMatch';
+import { agentKey, kindKey, migrateLegacyAgentIds, normalizeMac, planAssetMatches, type AgentAssetCandidate } from '../server/vm/assetMatch';
 import { validateIngestPayload, type IngestPayload } from '../server/vm/ingestSchema';
 import type { VmFinding, VmRun } from '../src/types/vm';
 
@@ -116,6 +117,7 @@ interface Opts {
   hosts?: Array<{ assetId: string; host: NormalizedHost }>;
   existing?: VmFinding[];
   sighted?: string[];
+  others?: OtherSourceReport[];
   kev?: string[];
   sla?: VmSlaConfig;
 }
@@ -126,6 +128,7 @@ const apply = (o: Opts) => {
     hosts: o.hosts ?? [{ assetId: A, host: nhost([nfind()]) }],
     existing: o.existing ?? [],
     sightedBySource: new Set(o.sighted ?? []),
+    otherSourceReports: o.others ?? [],
     kev: new Set(o.kev ?? []),
     sla: o.sla ?? SLA,
     newId,
@@ -133,6 +136,16 @@ const apply = (o: Opts) => {
   return applyRun(input);
 };
 const hostA = (findings: NormalizedFinding[]) => [{ assetId: A, host: nhost(findings) }];
+const other = (o: Partial<OtherSourceReport> = {}): OtherSourceReport => ({
+  sourceId: SRC2,
+  assetId: A,
+  runId: 'run-o',
+  receivedAt: '2026-01-07T00:00:00.000Z',
+  findingIds: new Set(['f-existing']),
+  enabled: true,
+  expectedIntervalMinutes: 1440,
+  ...o,
+});
 
 // ---------- Lifecycle ----------
 {
@@ -232,10 +245,26 @@ const hostA = (findings: NormalizedFinding[]) => [{ assetId: A, host: nhost(find
   assert(r.resolved.length === 0 && r.updated.length === 0, 'T12 finding sighted only by another source is untouched', r);
 }
 {
-  // The finding was sighted by this source and by SRC2; this source's run no longer lists it. The spec closes it (limitation).
+  // The finding was sighted by this source and SRC2's latest report of the asset still lists it: this source's run does not close it.
   const prev = finding();
-  const r = apply({ run: runOf('run-2', R2, SRC), existing: [prev], sighted: [prev.id], hosts: hostA([]) });
-  assert(r.resolved.length === 1, 'T13 sighted by both sources, absent from this source run -> RESOLVED (spec as written)', r);
+  const run = runOf('run-2', R2, SRC);
+  const close = (others: OtherSourceReport[]) => apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([]), others });
+  let r = close([other()]);
+  assert(r.resolved.length === 0 && r.updated.length === 0, 'T13 another source still lists it -> stays OPEN', r);
+  r = close([other({ findingIds: new Set() })]);
+  assert(r.resolved.length === 1 && r.resolved[0].resolvedRunId === 'run-2', 'T13b the other source no longer lists it -> RESOLVED', r);
+  r = close([other({ assetId: B })]);
+  assert(r.resolved.length === 1, 'T13c the other source reported a different asset -> RESOLVED', r);
+  r = close([other({ enabled: false })]);
+  assert(r.resolved.length === 1, 'T13d a disabled source does not block closure', r);
+  r = close([other({ receivedAt: '2026-01-05T23:59:59.000Z' })]);
+  assert(r.resolved.length === 1, 'T13e a report older than 2 expected intervals does not block', r);
+  r = close([other({ receivedAt: '2026-01-06T00:00:00.000Z' })]);
+  assert(r.resolved.length === 0, 'T13f a report exactly 2 intervals old still blocks (inclusive)', r);
+  r = close([other({ sourceId: SRC })]);
+  assert(r.resolved.length === 1, 'T13g a report of the closing source itself never blocks', r);
+  r = close([other({ receivedAt: R3 })]);
+  assert(r.resolved.length === 0, 'T13h a report newer than the closing run blocks', r);
 }
 for (const [t, status] of [['T14', 'RISK_ACCEPTED'], ['T15', 'FALSE_POSITIVE']] as const) {
   const prev = finding({ status, justification: 'because', decidedBy: 'dev', decidedAt: R1 });
@@ -453,71 +482,71 @@ const acand = (o: Partial<AgentAssetCandidate> = {}): AgentAssetCandidate => ({
 });
 const ahost = (o: Partial<NormalizedHost> = {}): NormalizedHost => nhost([], { agentId: '001', hostname: 'web-01', mac: '', ...o });
 {
-  const p = planAssetMatches([ahost()], [], 'WAZUH', 10);
+  const p = planAssetMatches([ahost()], [], 'WAZUH', SRC, 10);
   const d = p.toCreate[0];
   assert(p.toCreate.length === 1 && p.matched.length === 0, 'T50 unknown host -> create', p);
   assert(d.sourceOrigin === 'AGENT_REPORT' && d.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && d.cmmcAssetCategory === 'CONTRACTOR_RISK', 'T50 AGENT_REPORT + UNCONFIRMED_DISCOVERY + CONTRACTOR_RISK', d);
-  assert(eq(d.agentIds, { wazuh: '001' }) && kindKey('WAZUH') === 'wazuh', 'T50 agentIds {wazuh: id}', d.agentIds);
+  assert(eq(d.agentIds, { 'wazuh:src-wazuh': '001' }) && kindKey('WAZUH') === 'wazuh', 'T50 agentIds {wazuh:<source id>: id}', d.agentIds);
   assert(d.hostName === 'web-01' && d.osProfile === 'Ubuntu' && d.notes === 'Reported by WAZUH agent 001 (Ubuntu 22.04). Unconfirmed: classify its CMMC category.', 'T50 draft fields', d);
-  const weird = planAssetMatches([ahost({ osName: 'Linux <x>' })], [], 'WAZUH', 10);
+  const weird = planAssetMatches([ahost({ osName: 'Linux <x>' })], [], 'WAZUH', SRC, 10);
   assert(weird.toCreate[0].osProfile === 'custom', 'T50 os name outside the allowed pattern -> custom', weird.toCreate[0]);
 }
 {
-  const p = planAssetMatches([ahost({ hostname: '', agentId: '077' })], [], 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ hostname: '', agentId: '077' })], [], 'WAZUH', SRC, 10);
   assert(p.toCreate[0].hostName === 'wazuh-077', "T51 no hostname -> 'wazuh-<agent_id>'", p.toCreate[0]);
 }
 {
-  const p = planAssetMatches([ahost({ agentId: '009' })], [acand({ agentIds: { s1: 'x' } })], 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '009' })], [acand({ agentIds: { s1: 'x' } })], 'WAZUH', SRC, 10);
   assert(p.matched.length === 1 && p.matched[0].by === 'hostname', 'T52 (setup) name matches the existing asset');
-  const p2 = planAssetMatches([ahost({ agentId: '009', hostname: 'db-01' }), ahost({ agentId: '010', hostname: 'DB-01 ' })], [acand({ id: 'a1', hostName: 'DB-01' }), acand({ id: 'a2', hostName: 'db-01 ' })], 'WAZUH', 10);
+  const p2 = planAssetMatches([ahost({ agentId: '009', hostname: 'db-01' }), ahost({ agentId: '010', hostname: 'DB-01 ' })], [acand({ id: 'a1', hostName: 'DB-01' }), acand({ id: 'a2', hostName: 'db-01 ' })], 'WAZUH', SRC, 10);
   assert(p2.toCreate.length === 2 && p2.toCreate[0].hostName === 'db-01-2' && p2.toCreate[1].hostName === 'DB-01-3', 'T52 name taken -> -2 suffix (and -3 for the next)', p2.toCreate);
 }
 {
-  const p = planAssetMatches([ahost({ agentId: '001', hostname: 'renamed' })], [acand({ agentIds: { wazuh: '001' } })], 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '001', hostname: 'renamed' })], [acand({ agentIds: { 'wazuh:src-wazuh': '001' } })], 'WAZUH', SRC, 10);
   assert(p.matched.length === 1 && p.matched[0].by === 'agent_id' && p.toCreate.length === 0, 'T53 agent id wins even if hostname changed', p);
 }
 {
-  const p = planAssetMatches([ahost({ agentId: '002', hostname: 'other', mac: 'AA-BB-CC-DD-EE-FF' })], [acand({ hostName: 'x', macAddress: 'aa:bb:cc:dd:ee:ff', agentIds: { s1: 'k' } })], 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '002', hostname: 'other', mac: 'AA-BB-CC-DD-EE-FF' })], [acand({ hostName: 'x', macAddress: 'aa:bb:cc:dd:ee:ff', agentIds: { s1: 'k' } })], 'WAZUH', SRC, 10);
   assert(p.matched[0]?.by === 'mac', 'T54 MAC match when agent id unknown (normalized, case/separator-insensitive)', p);
-  assert(eq(p.matched[0]?.agentIds, { s1: 'k', wazuh: '002' }), 'T54 agentIds merged', p.matched[0]);
+  assert(eq(p.matched[0]?.agentIds, { s1: 'k', 'wazuh:src-wazuh': '002' }), 'T54 agentIds merged', p.matched[0]);
 }
 {
-  const p = planAssetMatches([ahost({ agentId: '003', hostname: '  WEB-01  ' })], [acand()], 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '003', hostname: '  WEB-01  ' })], [acand()], 'WAZUH', SRC, 10);
   assert(p.matched[0]?.by === 'hostname', 'T55 hostname match is case-insensitive and trimmed', p);
 }
 {
   const cs = [
     acand({ id: 'by-host', hostName: 'web-01' }),
     acand({ id: 'by-mac', hostName: 'zz', macAddress: '11:22:33:44:55:66' }),
-    acand({ id: 'by-id', hostName: 'yy', agentIds: { wazuh: '001' } }),
+    acand({ id: 'by-id', hostName: 'yy', agentIds: { 'wazuh:src-wazuh': '001' } }),
   ];
-  const p = planAssetMatches([ahost({ agentId: '001', hostname: 'web-01', mac: '11:22:33:44:55:66' })], cs, 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '001', hostname: 'web-01', mac: '11:22:33:44:55:66' })], cs, 'WAZUH', SRC, 10);
   assert(p.matched[0]?.assetId === 'by-id' && p.matched[0].by === 'agent_id', 'T56 precedence: agent id first', p.matched);
-  const p2 = planAssetMatches([ahost({ agentId: '005', hostname: 'web-01', mac: '11:22:33:44:55:66' })], cs, 'WAZUH', 10);
+  const p2 = planAssetMatches([ahost({ agentId: '005', hostname: 'web-01', mac: '11:22:33:44:55:66' })], cs, 'WAZUH', SRC, 10);
   assert(p2.matched[0]?.assetId === 'by-mac' && p2.matched[0].by === 'mac', 'T56 precedence: MAC before hostname', p2.matched);
 }
 {
   const cs = [acand({ id: 'one', hostName: 'a', macAddress: '11:22:33:44:55:66' }), acand({ id: 'two', hostName: 'web-01', macAddress: '11-22-33-44-55-66' })];
-  const p = planAssetMatches([ahost({ agentId: '006', hostname: 'web-01', mac: '112233445566' })], cs, 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '006', hostname: 'web-01', mac: '112233445566' })], cs, 'WAZUH', SRC, 10);
   assert(p.matched[0]?.assetId === 'two' && p.matched[0].by === 'hostname', 'T57 ambiguous MAC falls through to hostname', p);
   const dup = [acand({ id: 'one', hostName: 'web-01' }), acand({ id: 'two', hostName: 'WEB-01' })];
-  const p2 = planAssetMatches([ahost({ agentId: '007' })], dup, 'WAZUH', 10);
+  const p2 = planAssetMatches([ahost({ agentId: '007' })], dup, 'WAZUH', SRC, 10);
   assert(p2.matched.length === 0 && p2.toCreate.length === 1, 'T57 ambiguous hostname -> no match, create', p2);
-  const ids = [acand({ id: 'one', agentIds: { wazuh: '001' } }), acand({ id: 'two', hostName: 'q', agentIds: { wazuh: '001' } })];
-  const p3 = planAssetMatches([ahost({ agentId: '001' })], ids, 'WAZUH', 10);
+  const ids = [acand({ id: 'one', agentIds: { 'wazuh:src-wazuh': '001' } }), acand({ id: 'two', hostName: 'q', agentIds: { 'wazuh:src-wazuh': '001' } })];
+  const p3 = planAssetMatches([ahost({ agentId: '001' })], ids, 'WAZUH', SRC, 10);
   assert(p3.matched.length === 1 && p3.matched[0].by === 'hostname', 'T57 ambiguous agent id falls through to the next tier', p3);
 }
 {
-  const p = planAssetMatches([ahost({ agentId: '001' }), ahost({ agentId: '002' })], [acand()], 'WAZUH', 10);
+  const p = planAssetMatches([ahost({ agentId: '001' }), ahost({ agentId: '002' })], [acand()], 'WAZUH', SRC, 10);
   assert(p.matched.length === 1 && p.toCreate.length === 1, 'T58 one asset claimed once per run', p);
   assert(p.toCreate[0].hostName === 'web-01-2', "T58 second host creates '-2'", p.toCreate[0]);
 }
 {
-  const p2 = planAssetMatches([ahost({ agentId: 'new', hostname: 'old' })], [acand({ hostName: 'old', agentIds: { wazuh: 'old', s1: 'k' } })], 'WAZUH', 10);
-  assert(eq(p2.matched[0]?.agentIds, { wazuh: 'new', s1: 'k' }), "T59 re-enrolled agent id replaces the kind's id, other kinds kept", p2.matched[0]);
+  const p2 = planAssetMatches([ahost({ agentId: 'new', hostname: 'old' })], [acand({ hostName: 'old', agentIds: { 'wazuh:src-wazuh': 'old', s1: 'k' } })], 'WAZUH', SRC, 10);
+  assert(eq(p2.matched[0]?.agentIds, { 'wazuh:src-wazuh': 'new', s1: 'k' }), "T59 re-enrolled agent id replaces the source's id, other keys kept", p2.matched[0]);
 }
 {
-  const p = planAssetMatches([ahost()], [acand({ discoveryStatus: 'DECOMMISSIONED' })], 'WAZUH', 10);
+  const p = planAssetMatches([ahost()], [acand({ discoveryStatus: 'DECOMMISSIONED' })], 'WAZUH', SRC, 10);
   assert(p.matched.length === 1 && p.toCreate.length === 0, 'T60 DECOMMISSIONED still matched', p);
   assert(!('discoveryStatus' in p.matched[0]), 'T60 the plan carries no status change', p.matched[0]);
 }
@@ -526,6 +555,7 @@ const ahost = (o: Partial<NormalizedHost> = {}): NormalizedHost => nhost([], { a
     [ahost({ agentId: '001', hostname: 'h1', mac: '' }), ahost({ agentId: '002', hostname: 'h2', mac: '00:00:00:00:00:00' })],
     [acand({ hostName: 'x', macAddress: '' }), acand({ id: 'asset-2', hostName: 'y', macAddress: '00:00:00:00:00:00' })],
     'WAZUH',
+    SRC,
     10,
   );
   assert(p.matched.length === 0 && p.toCreate.length === 2, 'T61 empty/all-zero MAC never matches', p);
@@ -535,12 +565,32 @@ const ahost = (o: Partial<NormalizedHost> = {}): NormalizedHost => nhost([], { a
     [ahost({ agentId: '001', hostname: 'web-01' }), ahost({ agentId: '002', hostname: 'n1' }), ahost({ agentId: '003', hostname: 'n2' })],
     [acand()],
     'WAZUH',
+    SRC,
     1,
   );
   assert(p.matched.length === 1 && p.toCreate.length === 1 && p.toCreate[0].agentId === '002', 'T62 asset limit: capacity is used per create', p);
   assert(eq(p.skipped, [{ agentId: '003', reason: 'asset_limit' }]), 'T62 asset limit -> host skipped', p.skipped);
-  const none = planAssetMatches([ahost({ agentId: '009', hostname: 'zz' })], [], 'WAZUH', 0);
+  const none = planAssetMatches([ahost({ agentId: '009', hostname: 'zz' })], [], 'WAZUH', SRC, 0);
   assert(none.toCreate.length === 0 && none.skipped.length === 1, 'T62 zero capacity -> skipped', none);
+}
+
+{
+  assert(agentKey('WAZUH', 'src-1') === 'wazuh:src-1', 'T63a agentKey is <kind>:<source id>');
+  const stranger = planAssetMatches([ahost({ agentId: '001' })], [acand({ id: 'zz-1', hostName: 'zz', agentIds: { 'wazuh:src-other': '001' } })], 'WAZUH', SRC, 10);
+  assert(stranger.matched.length === 0 && stranger.toCreate.length === 1, 'T63b another source\'s agent id never matches', stranger);
+  const two = planAssetMatches(
+    [ahost({ agentId: '001', hostname: 'renamed' })],
+    [acand({ id: 'a-one', hostName: 'h1', agentIds: { 'wazuh:src-1': '001' } }), acand({ id: 'a-two', hostName: 'h2', agentIds: { 'wazuh:src-2': '001' } })],
+    'WAZUH',
+    'src-2',
+    10,
+  );
+  assert(two.matched.length === 1 && two.matched[0].assetId === 'a-two' && two.matched[0].by === 'agent_id', 'T63c the same agent id of two managers matches its own source\'s asset', two);
+  const legacy = planAssetMatches([ahost({ agentId: '001', hostname: 'renamed' })], [acand({ hostName: 'zz', agentIds: { wazuh: '001' } })], 'WAZUH', SRC, 10);
+  assert(legacy.matched.length === 0 && legacy.toCreate.length === 1, 'T63d a legacy bare-kind key is not matched by the matcher', legacy);
+  assert(eq(migrateLegacyAgentIds({ wazuh: '001', s1: 'k' }, 'wazuh', 'wazuh:s'), { s1: 'k', 'wazuh:s': '001' }), 'T63e legacy key moved to the new key');
+  assert(eq(migrateLegacyAgentIds({ wazuh: '001', 'wazuh:s': '002' }, 'wazuh', 'wazuh:s'), { 'wazuh:s': '002' }), 'T63f an existing new key is kept, the legacy one dropped');
+  assert(eq(migrateLegacyAgentIds({ s1: 'k' }, 'wazuh', 'wazuh:s'), { s1: 'k' }), 'T63g no legacy key -> unchanged');
 }
 
 // ---------- Adapter ----------

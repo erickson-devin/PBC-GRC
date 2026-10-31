@@ -7,14 +7,14 @@ import { server } from '../server/index';
 import { vmIngestRateLimiter, vmTokenRateLimiter } from '../server/routes/vmIngest';
 import { __drainVmWorkerForTests } from '../server/vm/worker';
 import { __setVmSourceEnabledForTests, recordReceivedRun, updateRun } from '../server/vm/store';
-import { __resetVmSnapshotLimiterForTests, __setVmSnapshotFaultForTests } from '../server/vm/snapshotWriter';
+import { __resetVmSnapshotLimiterForTests, __setVmSnapshotFaultForTests, latestSnapshotAt } from '../server/vm/snapshotWriter';
 import { __runVmSchedulerTickForTests, startVmScheduler, stopVmScheduler } from '../server/vm/scheduler';
 import { VM_NOTES_BEGIN, VM_NOTES_END } from '../server/vm/snapshot';
-import { readControlAssessments } from '../server/controlAssessments';
+import { listControlAssessmentEvents, readControlAssessments } from '../server/controlAssessments';
 import { createProgram, ensureDefaultProgram } from '../server/programs';
 import { queryWithProgram } from '../server/db';
 import { readTenantFile } from '../server/evidence/storage';
-import { insertPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
+import { insertPoamItems, loadSnapshotFindings, markRunNormalized } from '../server/vm/findingsStore';
 
 /**
  * Vulnerability-management Phase 5 over HTTP: the snapshot endpoints (evidence files and rows, inheritance, control notes,
@@ -149,6 +149,8 @@ async function run() {
   await recordReceivedRun(L2, dummyRun('l2-src'));
   const sSource = await recordReceivedRun(S, dummyRun('src-s'));
   const sId = sSource.source.id;
+  // Staleness follows the last NORMALIZED run (#59): S has one, L2's source was only received.
+  await markRunNormalized(S, sSource.run, new Date().toISOString(), null, null);
 
   const evidenceOf = async (tenant: string, who: string) => ((await call('GET', '/evidence', who, tenant)).body?.evidence ?? []) as Json[];
   const snapshotRowsOf = async (tenant: string, who: string) => (await evidenceOf(tenant, who)).filter((e) => e.uploadedBy === ACTOR);
@@ -286,7 +288,7 @@ async function run() {
   assert(t17c.snapshots.includes(S) && t17c.snapshots.includes(L1) && !t17c.snapshots.includes(N), 'A17 a tick 169 h later snapshots S and L1', t17c);
 
   const sAfter = (await sourcesOf(S, owner4)).find((s) => s.id === sId) as Json;
-  assert(sAfter?.staleSince === new Date(Date.parse(sAfter.lastRunAt) + 1440 * 60_000).toISOString(), 'A18 the stale source has stale_since = last run + its interval', [sAfter?.staleSince, sAfter?.lastRunAt]);
+  assert(sAfter?.staleSince === new Date(Date.parse(sAfter.lastNormalizedAt) + 1440 * 60_000).toISOString(), 'A18 the stale source has stale_since = last normalized run + its interval', [sAfter?.staleSince, sAfter?.lastNormalizedAt]);
   const t18 = await __runVmSchedulerTickForTests({ onlyTenantIds: [L1, S] });
   const sCleared = (await sourcesOf(S, owner4)).find((s) => s.id === sId) as Json;
   assert(sCleared?.staleSince === null && t18.staleCleared >= 1, 'A18 a tick at the real time clears stale_since', [sCleared?.staleSince, t18]);
@@ -294,9 +296,12 @@ async function run() {
   const t19 = await __runVmSchedulerTickForTests({ now: new Date(Date.now() + 48 * HOUR), onlyTenantIds: [S] });
   const sStale = (await sourcesOf(S, owner4)).find((s) => s.id === sId) as Json;
   assert(sStale?.staleSince !== null && t19.staleSet >= 1, 'A19 a tick 48 h later marks the source stale', [sStale?.staleSince, t19]);
-  await recordReceivedRun(S, dummyRun('src-s'));
+  const received19 = await recordReceivedRun(S, dummyRun('src-s'));
   const sReceived = (await sourcesOf(S, owner4)).find((s) => s.id === sId) as Json;
-  assert(sReceived?.staleSince === null, 'A19 a received run clears stale_since', sReceived?.staleSince);
+  assert(sReceived?.staleSince !== null, 'A19 a received run alone does not clear stale_since', sReceived?.staleSince);
+  await markRunNormalized(S, received19.run, new Date().toISOString(), null, null);
+  const sNormalized = (await sourcesOf(S, owner4)).find((s) => s.id === sId) as Json;
+  assert(sNormalized?.staleSince === null && sNormalized?.lastNormalizedAt === received19.run.receivedAt, 'A19 normalizing that run clears stale_since and sets lastNormalizedAt to its received time', [sNormalized?.staleSince, sNormalized?.lastNormalizedAt, received19.run.receivedAt]);
 
   __setVmSourceEnabledForTests(sId, false);
   await __runVmSchedulerTickForTests({ now: new Date(Date.now() + 48 * HOUR), onlyTenantIds: [S] });
@@ -332,7 +337,7 @@ async function run() {
 
   await sleep(5);
   const okRun = await recordReceivedRun(S, dummyRun('src-s'));
-  await updateRun(S, okRun.run.id, { status: 'NORMALIZED', finishedAt: new Date().toISOString() });
+  await markRunNormalized(S, okRun.run, new Date().toISOString(), null, null);
   __resetVmSnapshotLimiterForTests();
   await sleep(5);
   const post25b = await snapshotPost(S, owner4);
@@ -418,6 +423,66 @@ async function run() {
   const evBAfter27i = (await evidenceIn(scopeB)).length;
   const evDefaultAfter27i = (await evidenceIn(scopeDefault)).length;
   assert(setDefault.status === 200 && post27i.status === 201 && evDefaultAfter27i > evDefaultBefore27i && evBAfter27i === evBBefore27i, 'A27i moving the target back to the default program sends the next snapshot there and none to the second program', [setDefault.status, post27i.status, evDefaultBefore27i, evDefaultAfter27i, evBBefore27i, evBAfter27i]);
+
+  console.log('\n--- A28: a failed snapshot leaves nothing behind (#56) ---');
+  const scopeL2 = { tenantId: L2, programId: (await ensureDefaultProgram(L2)).id };
+  const snapDirL2 = path.join(VM_TEST_VAULT, 'tenants', L2, 'vm', 'snapshots');
+  const fileCountL2 = () => (fs.existsSync(snapDirL2) ? fs.readdirSync(snapDirL2).length : 0);
+  const stateL2 = async () => {
+    const live = await readControlAssessments(scopeL2);
+    const perControl: Record<string, { notes: string | null; status: string | null; events: number }> = {};
+    for (const id of snap3.controls as string[]) {
+      perControl[id] = { notes: live.get(id)?.notes ?? null, status: live.get(id)?.status ?? null, events: (await listControlAssessmentEvents(scopeL2, id, 1000)).length };
+    }
+    return {
+      rows: (await snapshotRowsOf(L2, admin)).length,
+      evidence: (await evidenceOf(L2, admin)).length,
+      perControl,
+      files: fileCountL2(),
+      latest: await latestSnapshotAt(L2),
+    };
+  };
+  const before28 = await stateL2();
+  __setVmSnapshotFaultForTests(L2, 'after_first_note');
+  __resetVmSnapshotLimiterForTests();
+  const post28a = await snapshotPost(L2, admin);
+  __setVmSnapshotFaultForTests(null);
+  const after28a = await stateL2();
+  assert(post28a.status === 500 && post28a.body?.error === 'Failed to create the snapshot', 'A28a a failure after the first note answers 500 "Failed to create the snapshot"', [post28a.status, post28a.body]);
+  assert(same(before28, after28a), 'A28a no evidence row, no control note, no history event, no file and no latest-snapshot change is left behind', { before28, after28a });
+  const live28 = await readControlAssessments(scopeL2);
+  assert(live28.get('RA.L2-3.11.2')?.status === 'NOT_MET', 'A28a RA.L2-3.11.2 is still NOT_MET');
+
+  __setVmSnapshotFaultForTests(L2, 'after_evidence');
+  const tick28b = await __runVmSchedulerTickForTests({ now: new Date(Date.now() + 169 * HOUR), onlyTenantIds: [L2] });
+  const after28b = await stateL2();
+  assert(tick28b.errors === 1 && same(tick28b.snapshots, []) && after28b.latest === before28.latest && same(before28, after28b), 'A28b a failed scheduled snapshot is counted, writes nothing, and leaves latestSnapshotAt unchanged', { tick28b, before28, after28b });
+  __setVmSnapshotFaultForTests(null);
+  const retry28b = await __runVmSchedulerTickForTests({ now: new Date(Date.now() + 169 * HOUR), onlyTenantIds: [L2] });
+  assert(same(retry28b.snapshots, [L2]), 'A28b the same tick without the fault retries at once and writes the snapshot', retry28b);
+
+  __resetVmSnapshotLimiterForTests();
+  const rowsBefore28c = (await snapshotRowsOf(L2, admin)).length;
+  const post28c = await snapshotPost(L2, admin);
+  const rowsAfter28c = (await snapshotRowsOf(L2, admin)).length;
+  assert(post28c.status === 201 && rowsAfter28c - rowsBefore28c === 2 * (snap3.controls as string[]).length + 2 * INHERITED_TARGETS.length, 'A28c a failed manual attempt did not consume the limiter: the next POST is 201 and adds 2 x controls + 2 x inheritance targets rows', [post28c.status, rowsAfter28c - rowsBefore28c]);
+
+  const latestBefore28d = await latestSnapshotAt(L2);
+  const listBefore28d = await call('GET', `/tenants/${L2}/vm/snapshots`, admin, L2);
+  await queryWithProgram(
+    scopeL2,
+    `INSERT INTO evidence_metadata (id, tenant_id, control_id, file_name, file_size, mime_type, gcs_path, file_hash, sync_status, description, uploaded_by, uploaded_at, program_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12)`,
+    [`ev_vmsnap_${Date.now()}_fffff`, L2, 'RA.L2-3.11.2', `vmsnap_${Date.now() + HOUR}_fffff.json`, 1, 'application/json', path.join(snapDirL2, 'missing.json'), 'a'.repeat(64), 'local_storage', 'legacy partial', ACTOR, scopeL2.programId],
+  );
+  const listAfter28d = await call('GET', `/tenants/${L2}/vm/snapshots`, admin, L2);
+  assert((await latestSnapshotAt(L2)) === latestBefore28d && listAfter28d.body?.totalCount === listBefore28d.body?.totalCount, 'A28d a lone .json row (a legacy partial snapshot) is ignored by latestSnapshotAt and the listing', [latestBefore28d, listBefore28d.body?.totalCount, listAfter28d.body?.totalCount]);
+
+  console.log('\n--- A29: a received but never normalized source (#59) ---');
+  const latest29 = await call('GET', `/tenants/${L2}/vm/snapshot/latest`, admin, L2);
+  const item29 = latest29.body?.report?.sources?.items?.[0] as Json;
+  assert(item29?.lastRunAt !== null && item29?.lastNormalizedAt === null, 'A29 the report shows the received time and no normalized time', item29);
+  assert(String(latest29.body?.report?.criteria?.sourcesWithinInterval?.reason).includes('l2-src (never reported)'), 'A29 criterion 1 calls the received-only source "never reported"', latest29.body?.report?.criteria?.sourcesWithinInterval);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

@@ -6,6 +6,7 @@ import {
   VM_SNAPSHOT_CONTROLS,
   VM_SNAPSHOT_FIXED_CONTROLS,
   VM_SNAPSHOT_OPTIONAL_CONTROL,
+  completeSnapshotStems,
   composeCommittedNotes,
   computeSnapshot,
   extractDelimitedBlock,
@@ -55,16 +56,21 @@ const SEEN = '2026-10-18T06:00:00.000Z';
 const MIN = 60_000;
 const SNAP_ID = 'vmsnap_1760788800000_abcde';
 
-const source = (id: string, label: string, over: Partial<Source> = {}): Source => ({
-  id,
-  kind: 'WAZUH',
-  label,
-  enabled: true,
-  expectedIntervalMinutes: 1440,
-  lastRunAt: SEEN,
-  staleSince: null,
-  ...over,
-});
+// lastNormalizedAt defaults to the effective lastRunAt, so a fixture that only sets lastRunAt keeps its meaning (S01-S31).
+const source = (id: string, label: string, over: Partial<Source> = {}): Source => {
+  const base: Source = {
+    id,
+    kind: 'WAZUH',
+    label,
+    enabled: true,
+    expectedIntervalMinutes: 1440,
+    lastRunAt: SEEN,
+    lastNormalizedAt: SEEN,
+    staleSince: null,
+    ...over,
+  };
+  return { ...base, lastNormalizedAt: 'lastNormalizedAt' in over ? (over.lastNormalizedAt as string | null) : base.lastRunAt };
+};
 const run = (id: string, sourceId: string, receivedAt: string, status: Run['status'] = 'NORMALIZED', error: string | null = null): Run => ({
   id,
   sourceId,
@@ -583,6 +589,40 @@ function busyInput(): SnapshotInput {
     r.criteria.sourcesWithinInterval,
   );
 }
+{
+  // #59: a run received after the last normalized one does not freshen the source.
+  const r = compute({
+    sources: [source('s1', 'wazuh-a', { lastRunAt: '2026-10-18T11:00:00.000Z', lastNormalizedAt: '2026-10-14T12:00:00.000Z' })],
+  });
+  const item = r.sources.items[0];
+  assert(
+    item.stale === true && item.ageMinutes === 5760 && item.staleForMinutes === 4320 && item.lastNormalizedAt === '2026-10-14T12:00:00.000Z' &&
+      r.criteria.sourcesWithinInterval.reason === '1 of 1 enabled source(s) outside their expected interval: wazuh-a (stale 3d).',
+    'S32 staleness follows the last normalized run, not the last received run',
+    item,
+  );
+}
+{
+  const r = compute({ sources: [source('s1', 'wazuh-a', { lastRunAt: SEEN, lastNormalizedAt: null })] });
+  const item = r.sources.items[0];
+  assert(
+    item.stale === true && item.ageMinutes === null && item.staleForMinutes === null && item.lastRunAt === SEEN &&
+      r.criteria.sourcesWithinInterval.reason.endsWith('wazuh-a (never reported).'),
+    'S33 a received but never normalized source is "never reported"',
+    item,
+  );
+}
+{
+  const r = compute({
+    sources: [source('s1', 'wazuh-a', { lastNormalizedAt: SEEN })],
+    runs: [run('r0', 's1', SEEN), run('rf', 's1', '2026-10-18T09:00:00.000Z', 'FAILED', 'boom')],
+  });
+  assert(
+    r.sources.items[0].stale === false && r.criteria.sourcesWithinInterval.reason.endsWith('wazuh-a (last run failed).'),
+    'S34 a fresh normalized run plus a later FAILED run is flagged "last run failed" only',
+    r.criteria.sourcesWithinInterval,
+  );
+}
 
 console.log('\n=== Markdown report ===');
 {
@@ -637,6 +677,10 @@ console.log('\n=== Markdown report ===');
       md.includes('| Last run | Status | Failure |'),
     'M04 markdown source table shows the failed run id and message',
   );
+}
+{
+  const md = renderSnapshotMarkdown(compute({}));
+  assert(md.includes('| Last run at | Last normalized at | Age |'), 'M05 markdown source table has the last normalized column', md.split('\n').filter((l) => l.startsWith('| Source')));
 }
 
 console.log('\n=== Notes block ===');
@@ -797,26 +841,29 @@ console.log('\n=== Scheduling decisions ===');
   const interval = 1440;
   const plan = (row: Partial<Parameters<typeof planStalenessChanges>[0][number]>) =>
     planStalenessChanges(
-      [{ tenantId: 't1', sourceId: 's1', enabled: true, expectedIntervalMinutes: interval, lastRunAt: LAST, staleSince: null, ...row }],
+      [{ tenantId: 't1', sourceId: 's1', enabled: true, expectedIntervalMinutes: interval, lastNormalizedAt: LAST, staleSince: null, ...row }],
       NOW_MS,
     );
   const staleRun = '2026-10-14T12:00:00.000Z';
   const expectedSince = new Date(Date.parse(staleRun) + interval * MIN).toISOString();
-  const a = plan({ lastRunAt: staleRun, staleSince: null });
-  const b = plan({ lastRunAt: staleRun, staleSince: expectedSince });
-  const c = plan({ lastRunAt: LAST, staleSince: '2026-10-15T12:00:00.000Z' });
-  const d = plan({ lastRunAt: LAST, staleSince: null });
-  const e = plan({ enabled: false, lastRunAt: staleRun, staleSince: null });
-  const f = plan({ lastRunAt: null, staleSince: null });
+  const a = plan({ lastNormalizedAt: staleRun, staleSince: null });
+  const b = plan({ lastNormalizedAt: staleRun, staleSince: expectedSince });
+  const c = plan({ lastNormalizedAt: LAST, staleSince: '2026-10-15T12:00:00.000Z' });
+  const d = plan({ lastNormalizedAt: LAST, staleSince: null });
+  const e = plan({ enabled: false, lastNormalizedAt: staleRun, staleSince: null });
+  const f = plan({ lastNormalizedAt: null, staleSince: null });
   assert(
-    eq(a, [{ tenantId: 't1', sourceId: 's1', staleSince: expectedSince, lastRunAt: staleRun }]) &&
+    eq(a, [{ tenantId: 't1', sourceId: 's1', staleSince: expectedSince, lastNormalizedAt: staleRun }]) &&
       eq(b, []) &&
-      eq(c, [{ tenantId: 't1', sourceId: 's1', staleSince: null, lastRunAt: LAST }]) &&
+      eq(c, [{ tenantId: 't1', sourceId: 's1', staleSince: null, lastNormalizedAt: LAST }]) &&
       eq(d, []) && eq(e, []) &&
-      eq(f, [{ tenantId: 't1', sourceId: 's1', staleSince: NOW, lastRunAt: null }]),
+      eq(f, [{ tenantId: 't1', sourceId: 's1', staleSince: NOW, lastNormalizedAt: null }]),
     'D03 planStalenessChanges',
     { a, b, c, d, e, f },
   );
+  // A recent received run (lastRunAt) does not matter: only the normalized time does.
+  const g = plan({ lastNormalizedAt: staleRun, staleSince: null, ...{ lastRunAt: LAST } });
+  assert(eq(g, [{ tenantId: 't1', sourceId: 's1', staleSince: expectedSince, lastNormalizedAt: staleRun }]), 'D03b a recent received run does not make a source fresh', g);
 }
 {
   const t = 1_760_000_000_000;
@@ -826,6 +873,11 @@ console.log('\n=== Scheduling decisions ===');
     manualSnapshotAllowed(t, t + 60_000),
   ];
   assert(eq(got, [true, false, true]) && VM_MANUAL_SNAPSHOT_MIN_INTERVAL_MS === 60_000, 'D04 manualSnapshotAllowed', got);
+}
+
+{
+  const stems = completeSnapshotStems([{ fileName: 'vmsnap_1_aaaaa.json' }, { fileName: 'vmsnap_1_aaaaa.md' }, { fileName: 'vmsnap_2_bbbbb.json' }]);
+  assert(stems.size === 1 && stems.has('vmsnap_1_aaaaa'), 'D05 completeSnapshotStems keeps only stems with both files', [...stems]);
 }
 
 console.log('\n=== Identifiers and files ===');

@@ -406,6 +406,20 @@ async function main() {
     assert(first.run.sourceId === first.source.id, 'run points at its source');
     assert(first.source.lastRunId === a.id && first.source.lastRunAt === first.run.receivedAt, 'source last_run fields updated');
     assert((await store.listSources('t1')).length === 1, 'one source listed');
+    assert(first.source.lastNormalizedAt === null, 'a received run alone leaves lastNormalizedAt null');
+
+    // lastNormalizedAt only moves forward; stale_since is cleared only when it advances (#59).
+    const srcState = async () => (await store.listSources('t1'))[0];
+    const T1 = '2026-10-18T10:00:00.000Z';
+    await store.noteSourceNormalized('t1', first.source.id, T1, null);
+    const n1 = await srcState();
+    await store.setSourceStaleSince('t1', first.source.id, '2026-10-18T09:30:00.000Z', T1);
+    await store.noteSourceNormalized('t1', first.source.id, '2026-10-18T09:00:00.000Z', null);
+    const n2 = await srcState();
+    await store.noteSourceNormalized('t1', first.source.id, '2026-10-18T11:00:00.000Z', null);
+    const n3 = await srcState();
+    assert(n1.lastNormalizedAt === T1 && n2.lastNormalizedAt === T1 && n3.lastNormalizedAt === '2026-10-18T11:00:00.000Z', 'noteSourceNormalized moves forward only', [n1, n2, n3].map((s) => s.lastNormalizedAt));
+    assert(n2.staleSince !== null && n3.staleSince === null, 'stale_since is cleared only when lastNormalizedAt advances', [n2.staleSince, n3.staleSince]);
 
     const second = await store.recordReceivedRun('t1', input({ label: 'WAZUH-PROD' }));
     assert(second.source.id === first.source.id, 'same label in another case reuses the source');

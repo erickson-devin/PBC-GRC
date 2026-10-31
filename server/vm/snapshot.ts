@@ -64,7 +64,7 @@ export interface SnapshotInput {
   now: string;
   windowHours: number;
   coverageThreshold: number;
-  sources: Pick<VmSource, 'id' | 'kind' | 'label' | 'enabled' | 'expectedIntervalMinutes' | 'lastRunAt' | 'staleSince'>[];
+  sources: Pick<VmSource, 'id' | 'kind' | 'label' | 'enabled' | 'expectedIntervalMinutes' | 'lastRunAt' | 'lastNormalizedAt' | 'staleSince'>[];
   runs: Pick<VmRun, 'id' | 'sourceId' | 'receivedAt' | 'status' | 'error'>[];
   assets: {
     id: string;
@@ -94,6 +94,8 @@ export interface SnapshotSourceItem {
   enabled: boolean;
   expectedIntervalMinutes: number;
   lastRunAt: string | null;
+  /** received_at of the newest NORMALIZED run: age and staleness are measured from here. */
+  lastNormalizedAt: string | null;
   staleSince: string | null;
   ageMinutes: number | null;
   /** Interval staleness only: an enabled source that never ran or exceeded its interval. */
@@ -152,14 +154,14 @@ export function formatDuration(minutes: number): string {
   return `${minutes}m`;
 }
 
-/** An enabled source is stale when it never ran or its last run is older than its interval (strict: "exceeds"). */
+/** An enabled source is stale when no run was ever normalized or the last normalized run is older than its interval (strict: "exceeds"). */
 export function isSourceStale(
-  s: Pick<VmSource, 'enabled' | 'expectedIntervalMinutes' | 'lastRunAt'>,
+  s: Pick<VmSource, 'enabled' | 'expectedIntervalMinutes' | 'lastNormalizedAt'>,
   nowMs: number,
 ): boolean {
   if (!s.enabled) return false;
-  if (s.lastRunAt === null) return true;
-  return nowMs - Date.parse(s.lastRunAt) > s.expectedIntervalMinutes * MINUTE_MS;
+  if (s.lastNormalizedAt === null) return true;
+  return nowMs - Date.parse(s.lastNormalizedAt) > s.expectedIntervalMinutes * MINUTE_MS;
 }
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -207,7 +209,7 @@ export function computeSnapshot(input: SnapshotInput): SnapshotReport {
       }
     }
     const windowRuns = runs.filter((r) => inWindow(r.receivedAt));
-    const lastRunMs = s.lastRunAt === null ? null : Date.parse(s.lastRunAt);
+    const lastRunMs = s.lastNormalizedAt === null ? null : Date.parse(s.lastNormalizedAt);
     const stale = isSourceStale(s, nowMs);
     const intervalMs = s.expectedIntervalMinutes * MINUTE_MS;
     return {
@@ -217,6 +219,7 @@ export function computeSnapshot(input: SnapshotInput): SnapshotReport {
       enabled: s.enabled,
       expectedIntervalMinutes: s.expectedIntervalMinutes,
       lastRunAt: s.lastRunAt,
+      lastNormalizedAt: s.lastNormalizedAt,
       staleSince: s.staleSince,
       ageMinutes: lastRunMs === null ? null : Math.floor((nowMs - lastRunMs) / MINUTE_MS),
       stale,
@@ -443,12 +446,12 @@ export function renderSnapshotMarkdown(report: SnapshotReport): string {
   if (report.sources.items.length === 0) {
     L.push('(none)');
   } else {
-    L.push('| Source | Kind | Enabled | Interval (min) | Last run at | Age | Stale | Runs in window | Failed in window | Last run | Status | Failure |');
-    L.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+    L.push('| Source | Kind | Enabled | Interval (min) | Last run at | Last normalized at | Age | Stale | Runs in window | Failed in window | Last run | Status | Failure |');
+    L.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
     for (const s of report.sources.items) {
       const stale = s.stale ? (s.staleForMinutes === null ? 'never reported' : `yes (${formatDuration(s.staleForMinutes)})`) : 'no';
       L.push(
-        `| ${mdText(s.label)} | ${mdText(s.kind)} | ${yesNo(s.enabled)} | ${s.expectedIntervalMinutes} | ${s.lastRunAt ?? '(never)'} | ${s.ageMinutes === null ? '(never)' : formatDuration(s.ageMinutes)} | ${stale} | ${s.runsInWindow} | ${s.failedRunsInWindow} | ${s.lastRun ? mdText(s.lastRun.id) : '(none)'} | ${s.lastRun ? mdText(s.lastRun.status) : '(none)'} | ${s.lastRun && s.lastRun.error !== null ? mdText(s.lastRun.error) : '(none)'} |`,
+        `| ${mdText(s.label)} | ${mdText(s.kind)} | ${yesNo(s.enabled)} | ${s.expectedIntervalMinutes} | ${s.lastRunAt ?? '(never)'} | ${s.lastNormalizedAt ?? '(never)'} | ${s.ageMinutes === null ? '(never)' : formatDuration(s.ageMinutes)} | ${stale} | ${s.runsInWindow} | ${s.failedRunsInWindow} | ${s.lastRun ? mdText(s.lastRun.id) : '(none)'} | ${s.lastRun ? mdText(s.lastRun.status) : '(none)'} | ${s.lastRun && s.lastRun.error !== null ? mdText(s.lastRun.error) : '(none)'} |`,
       );
     }
   }
@@ -572,7 +575,7 @@ export interface SchedulerSourceInput {
   sourceId: string;
   enabled: boolean;
   expectedIntervalMinutes: number;
-  lastRunAt: string | null;
+  lastNormalizedAt: string | null;
   staleSince: string | null;
 }
 
@@ -580,16 +583,16 @@ export interface SchedulerSourceInput {
 export function planStalenessChanges(
   rows: readonly SchedulerSourceInput[],
   nowMs: number,
-): Array<{ tenantId: string; sourceId: string; staleSince: string | null; lastRunAt: string | null }> {
-  const changes: Array<{ tenantId: string; sourceId: string; staleSince: string | null; lastRunAt: string | null }> = [];
+): Array<{ tenantId: string; sourceId: string; staleSince: string | null; lastNormalizedAt: string | null }> {
+  const changes: Array<{ tenantId: string; sourceId: string; staleSince: string | null; lastNormalizedAt: string | null }> = [];
   for (const r of rows) {
     const stale = isSourceStale(r, nowMs);
     if (stale && r.staleSince === null) {
       const since =
-        r.lastRunAt === null ? nowMs : Date.parse(r.lastRunAt) + r.expectedIntervalMinutes * MINUTE_MS;
-      changes.push({ tenantId: r.tenantId, sourceId: r.sourceId, staleSince: new Date(since).toISOString(), lastRunAt: r.lastRunAt });
+        r.lastNormalizedAt === null ? nowMs : Date.parse(r.lastNormalizedAt) + r.expectedIntervalMinutes * MINUTE_MS;
+      changes.push({ tenantId: r.tenantId, sourceId: r.sourceId, staleSince: new Date(since).toISOString(), lastNormalizedAt: r.lastNormalizedAt });
     } else if (!stale && r.staleSince !== null) {
-      changes.push({ tenantId: r.tenantId, sourceId: r.sourceId, staleSince: null, lastRunAt: r.lastRunAt });
+      changes.push({ tenantId: r.tenantId, sourceId: r.sourceId, staleSince: null, lastNormalizedAt: r.lastNormalizedAt });
     }
   }
   return changes;
@@ -621,6 +624,20 @@ export function newEvidenceId(nowMs: number, rand: () => string = randomSuffix):
 
 export function snapshotFileKeys(id: string): { json: string; md: string } {
   return { json: `vm/snapshots/${id}.json`, md: `vm/snapshots/${id}.md` };
+}
+
+/**
+ * The snapshot stems that have both files (`<stem>.json` and `<stem>.md`) among the evidence rows. A snapshot is written in one
+ * transaction, so only a legacy partial write (before issue #56) leaves a lone file; such a stem does not count as a snapshot.
+ */
+export function completeSnapshotStems(rows: readonly { fileName: string }[]): Set<string> {
+  const json = new Set<string>();
+  const md = new Set<string>();
+  for (const r of rows) {
+    if (r.fileName.endsWith('.json')) json.add(r.fileName.slice(0, -'.json'.length));
+    else if (r.fileName.endsWith('.md')) md.add(r.fileName.slice(0, -'.md'.length));
+  }
+  return new Set([...json].filter((stem) => md.has(stem)));
 }
 
 /**

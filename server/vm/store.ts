@@ -57,6 +57,7 @@ function rowToSource(r: pg.QueryResultRow): VmSource {
     expectedIntervalMinutes: Number(r.expected_interval_minutes),
     lastRunId: r.last_run_id ?? null,
     lastRunAt: iso(r.last_run_at),
+    lastNormalizedAt: iso(r.last_normalized_at),
     staleSince: iso(r.stale_since),
     createdAt: iso(r.created_at) as string,
     updatedAt: iso(r.updated_at) as string,
@@ -143,6 +144,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
         expectedIntervalMinutes: 1440,
         lastRunId: null,
         lastRunAt: null,
+        lastNormalizedAt: null,
         staleSince: null,
         createdAt: now,
         updatedAt: now,
@@ -171,7 +173,6 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
     memoryRuns.set(run.id, run);
     source.lastRunId = run.id;
     source.lastRunAt = now;
-    source.staleSince = null;
     source.updatedAt = now;
     return { run: { ...run }, source: { ...source } };
   }
@@ -216,12 +217,40 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
     }
 
     const updated = await client.query(
-      `UPDATE vm_sources SET last_run_id = $3, last_run_at = $4, stale_since = NULL, updated_at = NOW()
+      `UPDATE vm_sources SET last_run_id = $3, last_run_at = $4, updated_at = NOW()
        WHERE tenant_id = $1 AND id = $2 RETURNING *`,
       [tenantId, existing.id, runRow.id, runRow.received_at],
     );
     return { run: rowToRun(runRow), source: rowToSource(updated.rows[0]) };
   });
+}
+
+/**
+ * Records that a run was normalized: last_normalized_at moves forward to the run's received_at (never back, so reprocessing an
+ * old run cannot make a source look fresh) and stale_since is cleared only when it advances. Staleness follows normalized
+ * data, not receipt. With a `client` it joins the caller's transaction (the worker's); in memory mode the client is null.
+ */
+export async function noteSourceNormalized(tenantId: string, sourceId: string, receivedAt: string, client: pg.PoolClient | null): Promise<void> {
+  if (isMemory()) {
+    const source = memorySources.get(sourceId);
+    if (!source || source.tenantId !== tenantId) return;
+    const advances = source.lastNormalizedAt === null || Date.parse(receivedAt) > Date.parse(source.lastNormalizedAt);
+    if (advances) {
+      source.lastNormalizedAt = new Date(receivedAt).toISOString();
+      source.staleSince = null;
+    }
+    source.updatedAt = new Date().toISOString();
+    return;
+  }
+  if (!client) throw new Error('A PostgreSQL client is required outside memory mode');
+  await client.query(
+    `UPDATE vm_sources
+        SET stale_since = CASE WHEN last_normalized_at IS NULL OR $3::timestamptz > last_normalized_at THEN NULL ELSE stale_since END,
+            last_normalized_at = GREATEST(last_normalized_at, $3::timestamptz),
+            updated_at = NOW()
+      WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, sourceId, receivedAt],
+  );
 }
 
 export async function getRun(tenantId: string, id: string): Promise<VmRun | null> {
@@ -372,6 +401,7 @@ export interface SchedulerSourceRow {
   enabled: boolean;
   expectedIntervalMinutes: number;
   lastRunAt: string | null;
+  lastNormalizedAt: string | null;
   staleSince: string | null;
 }
 
@@ -390,6 +420,7 @@ export async function enumerateSchedulerSources(): Promise<SchedulerSourceRow[]>
         enabled: s.enabled,
         expectedIntervalMinutes: s.expectedIntervalMinutes,
         lastRunAt: s.lastRunAt,
+        lastNormalizedAt: s.lastNormalizedAt,
         staleSince: s.staleSince,
       }))
       .sort((a, b) => {
@@ -403,7 +434,7 @@ export async function enumerateSchedulerSources(): Promise<SchedulerSourceRow[]>
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.vm_scheduler', 'on', true)");
     const { rows } = await client.query(
-      'SELECT tenant_id, id, label, enabled, expected_interval_minutes, last_run_at, stale_since FROM vm_sources ORDER BY tenant_id, lower(label), id',
+      'SELECT tenant_id, id, label, enabled, expected_interval_minutes, last_run_at, last_normalized_at, stale_since FROM vm_sources ORDER BY tenant_id, lower(label), id',
     );
     await client.query('COMMIT');
     return rows.map((r) => ({
@@ -413,6 +444,7 @@ export async function enumerateSchedulerSources(): Promise<SchedulerSourceRow[]>
       enabled: Boolean(r.enabled),
       expectedIntervalMinutes: Number(r.expected_interval_minutes),
       lastRunAt: iso(r.last_run_at),
+      lastNormalizedAt: iso(r.last_normalized_at),
       staleSince: iso(r.stale_since),
     }));
   } catch (err) {
@@ -424,26 +456,26 @@ export async function enumerateSchedulerSources(): Promise<SchedulerSourceRow[]>
 }
 
 /**
- * Sets or clears stale_since, but only while last_run_at is still what the scheduler read: a run that arrived in between
- * must not be marked stale. The comparison is at millisecond precision because the driver hands timestamps over as JS dates.
+ * Sets or clears stale_since, but only while last_normalized_at is still what the scheduler read: a run that was normalized
+ * in between must not be marked stale. The comparison is at millisecond precision because the driver hands timestamps over as JS dates.
  * Returns whether a row changed.
  */
 export async function setSourceStaleSince(
   tenantId: string,
   sourceId: string,
   staleSince: string | null,
-  expectedLastRunAt: string | null,
+  expectedLastNormalizedAt: string | null,
 ): Promise<boolean> {
   if (isMemory()) {
     const source = memorySources.get(sourceId);
-    if (!source || source.tenantId !== tenantId || source.lastRunAt !== expectedLastRunAt) return false;
+    if (!source || source.tenantId !== tenantId || source.lastNormalizedAt !== expectedLastNormalizedAt) return false;
     source.staleSince = staleSince;
     return true;
   }
   return inTenantTx(tenantId, async (client) => {
     const res = await client.query(
-      'UPDATE vm_sources SET stale_since = $3 WHERE tenant_id = $1 AND id = $2 AND date_trunc(\'milliseconds\', last_run_at) IS NOT DISTINCT FROM $4::timestamptz',
-      [tenantId, sourceId, staleSince, expectedLastRunAt],
+      'UPDATE vm_sources SET stale_since = $3 WHERE tenant_id = $1 AND id = $2 AND date_trunc(\'milliseconds\', last_normalized_at) IS NOT DISTINCT FROM $4::timestamptz',
+      [tenantId, sourceId, staleSince, expectedLastNormalizedAt],
     );
     return (res.rowCount ?? 0) > 0;
   });

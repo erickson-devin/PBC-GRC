@@ -36,6 +36,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_runs', tenantColumn: 'tenant_id' },
   { table: 'vm_findings', tenantColumn: 'tenant_id' },
   { table: 'vm_sightings', tenantColumn: 'tenant_id' },
+  { table: 'vm_run_assets', tenantColumn: 'tenant_id' },
   { table: 'vm_poam_items', tenantColumn: 'tenant_id' },
   { table: 'programs', tenantColumn: 'tenant_id' },
   { table: 'control_objectives', tenantColumn: 'tenant_id' },
@@ -465,6 +466,33 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vm_runs_status ON vm_runs (tenant_id, status);
   ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT;
 
+  -- Staleness is measured from the newest NORMALIZED run (issue #59), not from receipt. The column is added once and backfilled from
+  -- vm_runs in the same step; a re-run finds the column and skips. The scheduler setting only lets this block LIST the tenants; each
+  -- tenant's rows are then written under that tenant's own app.current_tenant_id. Both settings are reset at the end because the whole
+  -- schema script is one implicit transaction and a transaction-local setting would otherwise outlive this block.
+  DO $$
+  DECLARE
+    tenant_ids text[];
+    tid text;
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'vm_sources'::regclass AND attname = 'last_normalized_at' AND NOT attisdropped) THEN
+      ALTER TABLE vm_sources ADD COLUMN IF NOT EXISTS last_normalized_at TIMESTAMPTZ;
+      PERFORM set_config('app.vm_scheduler', 'on', true);
+      SELECT array_agg(DISTINCT tenant_id::text) INTO tenant_ids FROM vm_sources;
+      IF tenant_ids IS NOT NULL THEN
+        FOREACH tid IN ARRAY tenant_ids LOOP
+          PERFORM set_config('app.current_tenant_id', tid, true);
+          UPDATE vm_sources s SET last_normalized_at = r.latest
+            FROM (SELECT source_id, max(received_at) AS latest FROM vm_runs WHERE tenant_id = tid AND status = 'NORMALIZED' GROUP BY source_id) r
+            WHERE s.tenant_id = tid AND s.id = r.source_id;
+        END LOOP;
+      END IF;
+      PERFORM set_config('app.vm_scheduler', '', true);
+      PERFORM set_config('app.current_tenant_id', '', true);
+    END IF;
+  END
+  $$;
+
   -- Global reference data (not tenant-bound, no RLS), like control_mappings. Tenant ingest may only INSERT a
   -- missing vuln_id (source INGEST) and never UPDATEs one. title, cvss_v3, severity, published_at, kev and epss are written only
   -- by the feed job or a platform administrator, which overwrite INGEST rows. Exporter-reported details live in
@@ -540,6 +568,17 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_vm_sightings_finding ON vm_sightings (tenant_id, finding_id, reported_at DESC);
   CREATE INDEX IF NOT EXISTS idx_vm_sightings_run ON vm_sightings (run_id);
+
+  -- Which assets each run reported (ids only): a run that drops a finding closes it only if no other source's latest report of the asset still lists it.
+  CREATE TABLE IF NOT EXISTS vm_run_assets (
+      tenant_id VARCHAR(64) NOT NULL,
+      run_id VARCHAR(64) NOT NULL,
+      asset_id VARCHAR(64) NOT NULL,
+      PRIMARY KEY (tenant_id, run_id, asset_id),
+      CONSTRAINT fk_vm_run_assets_run FOREIGN KEY (tenant_id, run_id) REFERENCES vm_runs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_vm_run_assets_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_run_assets_asset ON vm_run_assets (tenant_id, asset_id);
 
   CREATE TABLE IF NOT EXISTS vm_poam_items (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,

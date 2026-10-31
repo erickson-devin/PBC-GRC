@@ -4,6 +4,7 @@ import { getDbMode, pool } from './db';
 import { CMMC_ASSET_CATEGORIES, isCmmcAssetCategory, isMachineAssetOrigin } from '../src/data/telemetry/assetScope';
 import { FipsFields, NO_FIPS, isFipsStandard, isFipsStatus, normalizeFips, resolveFips, FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import type { AgentAssetCandidate, AgentAssetDraft } from './vm/storeTypes';
+import { migrateLegacyAgentIds } from './vm/assetMatch';
 import type {
   AccretionDiscoveryItem,
   AccretionMetadata,
@@ -727,6 +728,27 @@ export async function recordAgentReport(
          updated_at = CASE WHEN agent_ids->>$3 IS DISTINCT FROM $4 THEN NOW() ELSE updated_at END
        WHERE id = $1 AND tenant_id = $2`,
       [assetId, tenantId, key, agentId, seenAt, actor, '{}'],
+    );
+  });
+}
+
+/**
+ * Rewrites the legacy bare-kind agent id key ("wazuh") of every asset of the tenant to the per-source key ("wazuh:<source id>"),
+ * keeping an existing per-source value. Idempotent. Does not record updated_by / updated_at: no person changed the asset.
+ */
+export async function migrateLegacyAgentKeys(tenantId: string, legacyKey: string, newKey: string, client?: pg.PoolClient): Promise<void> {
+  if (isMemory()) {
+    for (const m of memoryAssets.values()) {
+      if (m.tenantId === tenantId && m.agentIds) m.agentIds = migrateLegacyAgentIds(m.agentIds, legacyKey, newKey);
+    }
+    return;
+  }
+  await withTenantClient(tenantId, client, async (c) => {
+    await c.query(
+      `UPDATE enclave_assets
+         SET agent_ids = (agent_ids - $2::text) || CASE WHEN agent_ids ? $3::text THEN jsonb_build_object() ELSE jsonb_build_object($3::text, agent_ids->>$2::text) END
+       WHERE tenant_id = $1 AND agent_ids ? $2::text`,
+      [tenantId, legacyKey, newKey],
     );
   });
 }

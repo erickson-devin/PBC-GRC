@@ -38,6 +38,19 @@ export interface AssetMatchPlan {
 /** Key of a source kind inside enclave_assets.agent_ids. */
 export const kindKey = (kind: VmSourceKind): string => kind.toLowerCase();
 
+/** Key of one source inside enclave_assets.agent_ids: two managers of one kind keep separate agent ids (agent 001 of each). */
+export const agentKey = (kind: VmSourceKind, sourceId: string): string => `${kindKey(kind)}:${sourceId}`;
+
+/**
+ * Moves the agent id stored under the legacy bare-kind key to the per-source key. Pure. The legacy key is always removed;
+ * its value is copied only when the per-source key is absent (a per-source id is newer than a bare one).
+ */
+export function migrateLegacyAgentIds(ids: Record<string, string>, legacyKey: string, newKey: string): Record<string, string> {
+  if (!(legacyKey in ids)) return ids;
+  const { [legacyKey]: legacy, ...rest } = ids;
+  return newKey in rest ? rest : { ...rest, [newKey]: legacy };
+}
+
 /** Separator- and case-insensitive MAC; empty for a missing or all-zero address (which identifies nothing). */
 export function normalizeMac(mac: string): string {
   const m = (mac ?? '').replace(/[:.\-\s]/g, '').toLowerCase();
@@ -50,9 +63,10 @@ export function planAssetMatches(
   hosts: NormalizedHost[],
   candidates: AgentAssetCandidate[],
   kind: VmSourceKind,
+  sourceId: string,
   remainingCapacity: number,
 ): AssetMatchPlan {
-  const key = kindKey(kind);
+  const key = agentKey(kind, sourceId);
   const plan: AssetMatchPlan = { matched: [], toCreate: [], skipped: [] };
   const claimed = new Set<string>();
   const done = new Set<string>();
@@ -87,7 +101,7 @@ export function planAssetMatches(
       continue;
     }
     capacity--;
-    const base = h.hostname.trim() || `${key}-${h.agentId}`;
+    const base = h.hostname.trim() || `${kindKey(kind)}-${h.agentId}`;
     let hostName = base;
     for (let n = 2; taken.has(hostName.toLowerCase()); n++) hostName = `${base}-${n}`;
     taken.add(hostName.toLowerCase());

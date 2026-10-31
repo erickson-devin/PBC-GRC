@@ -53,7 +53,7 @@ function parseEnum(body: string, constraintName: string): string[] {
 }
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_poam_items'];
+const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items'];
 const ALL_TABLES = [...TENANT_TABLES, 'vm_vulns'];
 const NL = String.fromCharCode(10);
 
@@ -140,6 +140,11 @@ console.log('\n--- vm_sightings, vm_poam_items, vm_vulns ---');
 const sightings = block('vm_sightings');
 assert(sightings.includes('FOREIGN KEY (tenant_id, finding_id)') && sightings.includes('FOREIGN KEY (tenant_id, run_id)') && sightings.includes('FOREIGN KEY (tenant_id, source_id)'), 'every sighting key is composite');
 assert(sightings.includes('CONSTRAINT unq_vm_sighting UNIQUE (tenant_id, run_id, finding_id)'), 'a run sights a finding once (tenant-qualified, so a unique violation is never a cross-tenant oracle)');
+const runAssets = block('vm_run_assets');
+assert(runAssets.includes('PRIMARY KEY (tenant_id, run_id, asset_id)'), 'a run reports an asset once (primary key)');
+assert(runAssets.includes('FOREIGN KEY (tenant_id, run_id) REFERENCES vm_runs (tenant_id, id) ON DELETE CASCADE'), 'vm_run_assets rows go with their run (composite key, cascade)');
+assert(runAssets.includes('FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE'), 'vm_run_assets rows go with their asset (composite key, cascade)');
+assert(TABLES_SQL.includes('idx_vm_run_assets_asset ON vm_run_assets (tenant_id, asset_id)'), 'vm_run_assets is indexed by (tenant_id, asset_id)');
 const poam = block('vm_poam_items');
 assert(!/finding_id VARCHAR\(64\) NOT NULL/.test(poam), 'a POA&M item may exist without a finding');
 assert(same(parseEnum(poam, 'vm_poam_items_status_check'), VM_POAM_STATUSES), 'POA&M status list equals VM_POAM_STATUSES');
@@ -161,7 +166,8 @@ assert(assetKey > 0 && assetKey < findingsAt, 'the enclave_assets (tenant_id, id
 const at = (t: string) => TABLES_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${t}`);
 assert(at('vm_vulns') < at('vm_findings') && at('vm_sources') < at('vm_findings') && at('vm_runs') < at('vm_findings'), 'vm_vulns, vm_sources and vm_runs are created before vm_findings');
 assert(at('vm_findings') < at('vm_sightings') && at('vm_findings') < at('vm_poam_items'), 'vm_findings is created before vm_sightings and vm_poam_items');
-const placeStart = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS vm_service_tokens');
+assert(at('vm_runs') < at('vm_run_assets') && at('vm_run_assets') < at('vm_poam_items'), 'vm_run_assets is created after vm_runs and before vm_poam_items');
+const placeStart =TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS vm_service_tokens');
 assert(TABLES_SQL.indexOf('ssp_import_jobs_baseline_check') < placeStart && placeStart < TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_admins'), 'the VM block sits between the SSP import block and platform_admins');
 
 console.log('\n--- Idempotency of the VM block ---');
@@ -170,6 +176,25 @@ assert(!/CREATE TABLE (?!IF NOT EXISTS)/.test(vmBlock), 'every CREATE TABLE is I
 assert(!/CREATE (UNIQUE )?INDEX (?!IF NOT EXISTS)/.test(vmBlock), 'every CREATE INDEX is IF NOT EXISTS');
 assert((vmBlock.match(/ADD COLUMN/g) || []).length === (vmBlock.match(/ADD COLUMN IF NOT EXISTS/g) || []).length, 'every ADD COLUMN is IF NOT EXISTS');
 assert(TABLES_SQL.includes('ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT'), 'vm_runs.warning is added idempotently');
+{
+  // #59: staleness follows the newest NORMALIZED run; the backfill runs per tenant under that tenant's own setting.
+  const colAt = TABLES_SQL.indexOf('ALTER TABLE vm_sources ADD COLUMN IF NOT EXISTS last_normalized_at TIMESTAMPTZ');
+  const runsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS vm_runs');
+  const doStart = TABLES_SQL.lastIndexOf('DO $$', colAt);
+  const doEnd = TABLES_SQL.indexOf('$$;', colAt);
+  const doBlock = colAt > 0 && doStart > 0 && doEnd > colAt ? TABLES_SQL.slice(doStart, doEnd) : '';
+  assert(colAt > runsAt && runsAt > 0, 'vm_sources.last_normalized_at is added idempotently, after vm_runs exists (the backfill reads it)');
+  const updateAt = doBlock.indexOf('UPDATE vm_sources');
+  assert(doBlock.includes("status = 'NORMALIZED'") && doBlock.includes('max(received_at)') && updateAt > 0, 'the backfill takes the newest NORMALIZED received_at per source');
+  assert(
+    doBlock.indexOf("set_config('app.vm_scheduler', '', true)") > updateAt && doBlock.indexOf("set_config('app.current_tenant_id', '', true)") > updateAt,
+    'both transaction-local settings are reset after the backfill UPDATE',
+  );
+  assert(
+    doBlock.indexOf("set_config('app.current_tenant_id', tid, true)") > 0 && doBlock.indexOf("set_config('app.current_tenant_id', tid, true)") < updateAt && !doBlock.includes('NO FORCE'),
+    'every backfill write runs under the tenant own setting, and the block never lifts FORCE (D3)',
+  );
+}
 assert(TABLES_SQL.includes("unq_vm_poam_items_auto ON vm_poam_items (tenant_id, finding_id) WHERE created_by = 'system:vm-worker' AND finding_id IS NOT NULL"), 'the auto-created POA&M item is unique per finding');
 const adds = [...vmBlock.matchAll(/ADD CONSTRAINT (\w+)/g)].map((m) => m[1]);
 assert(adds.every((n) => vmBlock.includes(`DROP CONSTRAINT IF EXISTS ${n}`) && vmBlock.indexOf(`DROP CONSTRAINT IF EXISTS ${n}`) < vmBlock.indexOf(`ADD CONSTRAINT ${n}`)), 'every ADD CONSTRAINT is preceded by DROP CONSTRAINT IF EXISTS of the same name', adds);

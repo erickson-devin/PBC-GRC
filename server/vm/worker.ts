@@ -1,20 +1,22 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { countAssets, createAgentReportedAsset, listAgentAssetCandidates, MAX_ASSETS_PER_TENANT, recordAgentReport } from '../assets';
+import { countAssets, createAgentReportedAsset, listAgentAssetCandidates, MAX_ASSETS_PER_TENANT, migrateLegacyAgentKeys, recordAgentReport } from '../assets';
 import { localStorageRoot, resolveTenantLocalPath } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
 import { resolveVmTargetProgram } from '../programs';
 import type { VmRun } from '../../src/types/vm';
 import { normalizeWazuh, type NormalizedHost } from './adapters/wazuh';
-import { kindKey, planAssetMatches } from './assetMatch';
+import { agentKey, kindKey, planAssetMatches } from './assetMatch';
 import {
   insertMissingVulns,
   insertPoamItems,
+  insertRunAssets,
   insertSightings,
   listPoamCandidates,
   loadFindingsForAssets,
   loadKevVulnIds,
+  loadOtherSourceReports,
   loadSightedBySource,
   markRunNormalized,
   saveFindings,
@@ -22,7 +24,7 @@ import {
 } from './findingsStore';
 import { VM_SHUTDOWN_MESSAGE } from '../shutdown';
 import { validateIngestPayload } from './ingestSchema';
-import { getRun, listUnfinishedRuns, updateRun } from './store';
+import { getRun, listSources, listUnfinishedRuns, updateRun } from './store';
 import { applyRun, getVmSlaConfig, isPoamAutocreateEnabled, planPoamItems, staleRunsToRecover, VM_WORKER_ACTOR, type ReportedHost } from './transitions';
 
 /**
@@ -167,12 +169,16 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     const now = new Date().toISOString();
     // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the default program when none is set, decision 6).
     const programId = (await resolveVmTargetProgram(tenantId)).program.id;
+    // The legacy bare-kind agent id key ("wazuh") can be rewritten to this source's key only when it is the tenant's one source of that kind.
+    const sameKind = (await listSources(tenantId)).filter((s) => s.kind === kind);
+    const soleOfKind = sameKind.length === 1 && sameKind[0].id === run.sourceId;
     checkpoint();
     const summary = await withVmTenantTx(tenantId, async (client): Promise<RunSummary> => {
       const pgClient = client ?? undefined;
+      if (soleOfKind) await migrateLegacyAgentKeys(tenantId, kindKey(kind), agentKey(kind, run.sourceId), pgClient);
       let candidates = await listAgentAssetCandidates(tenantId, pgClient);
       const remainingCapacity = MAX_ASSETS_PER_TENANT - (await countAssets(tenantId, pgClient));
-      const plan = planAssetMatches(hosts, candidates, kind, remainingCapacity);
+      const plan = planAssetMatches(hosts, candidates, kind, run.sourceId, remainingCapacity);
       checkpoint();
 
       const assetOf = new Map<string, string>(); // agent id -> asset id
@@ -191,11 +197,11 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
           const hit = candidates.find((c) => c.hostName.trim().toLowerCase() === r.hostName.trim().toLowerCase());
           if (!hit) throw new Error('An asset name was taken but the asset could not be found');
           assetOf.set(r.agentId, hit.id);
-          await recordAgentReport(tenantId, hit.id, kindKey(kind), r.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient);
+          await recordAgentReport(tenantId, hit.id, agentKey(kind, run.sourceId), r.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient);
         }
       }
       for (const m of plan.matched) {
-        await recordAgentReport(tenantId, m.assetId, kindKey(kind), m.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient);
+        await recordAgentReport(tenantId, m.assetId, agentKey(kind, run.sourceId), m.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient);
       }
 
       const reported: ReportedHost[] = [];
@@ -204,8 +210,16 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         if (assetId) reported.push({ assetId, host });
       }
 
-      const existing = await loadFindingsForAssets(tenantId, [...new Set(reported.map((r) => r.assetId))], client);
+      const reportedAssetIds = [...new Set(reported.map((r) => r.assetId))];
+      const existing = await loadFindingsForAssets(tenantId, reportedAssetIds, client);
       const sightedBySource = await loadSightedBySource(tenantId, run.sourceId, existing.map((f) => f.id), run.id, client);
+      const otherSourceReports = await loadOtherSourceReports(
+        tenantId,
+        run.sourceId,
+        reportedAssetIds,
+        existing.filter((f) => f.status === 'OPEN').map((f) => f.id),
+        client,
+      );
       const vulnIds = [...new Set(reported.flatMap((r) => r.host.findings.map((f) => f.vulnId)))];
       const kev = await loadKevVulnIds(vulnIds, client);
 
@@ -215,6 +229,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         hosts: reported,
         existing,
         sightedBySource,
+        otherSourceReports,
         kev,
         sla: getVmSlaConfig(),
         newId: () => crypto.randomUUID(),
@@ -223,6 +238,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       await insertMissingVulns(result.vulnIds, client); // before the findings: vm_findings.vuln_id references vm_vulns
       await saveFindings(tenantId, result, client);
       await insertSightings(tenantId, result.sightings, client);
+      await insertRunAssets(tenantId, run, reportedAssetIds, client);
       if (faultForTests === 'after_save') throw new Error('fault injected for tests');
       if (faultForTests === 'interrupt_after_save') controllers.get(runId)?.controller.abort();
       checkpoint();
@@ -236,7 +252,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       }
 
       const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;
-      await markRunNormalized(tenantId, run.id, now, warning, client);
+      await markRunNormalized(tenantId, run, now, warning, client);
       return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam };
     }, programId);
 

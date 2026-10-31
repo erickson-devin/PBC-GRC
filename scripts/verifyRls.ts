@@ -400,6 +400,47 @@ async function main() {
     const findingsUpdate = await queryWithTenant(TENANT_Y, "UPDATE vm_findings SET status = 'FALSE_POSITIVE' WHERE tenant_id = $1", [TENANT_X]);
     check((findingsUpdate.rowCount ?? 0) === 0, "vm_findings: tenant Y cannot update tenant X's findings");
 
+    // 11. vm_run_assets: which assets a run reported (ids only)
+    const insertRunAsset = 'INSERT INTO vm_run_assets (tenant_id, run_id, asset_id) VALUES ($1, $2, $3)';
+    let runAssetOk = false;
+    try {
+      await queryWithTenant(TENANT_X, insertRunAsset, [TENANT_X, runIdX, assetIdX]);
+      runAssetOk = true;
+    } catch {
+      runAssetOk = false;
+    }
+    check(runAssetOk, 'vm_run_assets: tenant X can record an asset for its own run and asset');
+    check(
+      await rejectsWith(TENANT_X, insertRunAsset, [TENANT_X, runIdX, assetIdX], { code: '23505', constraint: 'vm_run_assets_pkey' }),
+      'vm_run_assets: the same (tenant, run, asset) twice is refused (primary key)', lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, insertRunAsset, [TENANT_X, runIdX, assetIdY], { code: '23503', constraint: 'fk_vm_run_assets_asset' }),
+      "vm_run_assets: a row naming tenant Y's asset is refused (composite foreign key)", lastRejection
+    );
+    const runY = await queryWithTenant(
+      TENANT_Y,
+      "INSERT INTO vm_runs (tenant_id, source_id, raw_path, raw_sha256) VALUES ($1, $2, 'rls_verify', $3) RETURNING id",
+      [TENANT_Y, srcIdY, '9'.repeat(64)]
+    );
+    const runIdY = runY.rows[0]?.id;
+    check(
+      await rejectsWith(TENANT_X, insertRunAsset, [TENANT_X, runIdY, assetIdX], { code: '23503', constraint: 'fk_vm_run_assets_run' }),
+      "vm_run_assets: a row naming tenant Y's run is refused (composite foreign key)", lastRejection
+    );
+    const runAssetsStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_run_assets WHERE tenant_id = $1', [TENANT_X]);
+    check(runAssetsStolen.rows.length === 0, 'vm_run_assets: tenant Y cannot read tenant X rows even by naming the tenant');
+    const runAssetsNoCtx = await pool.query('SELECT 1 FROM vm_run_assets WHERE run_id = $1', [runIdX]);
+    check(runAssetsNoCtx.rowCount === 0, 'vm_run_assets: no tenant context => zero rows visible', `saw ${runAssetsNoCtx.rowCount}`);
+    check(
+      await rejectsWith(TENANT_X, insertRunAsset, [TENANT_Y, runIdX, assetIdX], { code: '42501' }),
+      'vm_run_assets: tenant X cannot insert a row for tenant Y (WITH CHECK)', lastRejection
+    );
+    await queryWithTenant(TENANT_X, insertRunAsset, [TENANT_X, runIdX2, assetIdX]);
+    await queryWithTenant(TENANT_X, 'DELETE FROM vm_runs WHERE id = $1', [runIdX2]);
+    const runAssetsCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_run_assets WHERE run_id = $1', [runIdX2]);
+    check(runAssetsCascade.rows.length === 0, 'vm_run_assets: rows go with their run (ON DELETE CASCADE)', `saw ${runAssetsCascade.rows.length}`);
+
     console.log('\n--- 3c. Control assessment history ---');
     // control_assessment_events is program-scoped: every insert and read below runs in the program of its tenant (both settings)
     const programX = await mkProgram(TENANT_X, 'rls_verify_events_x', true);
@@ -513,6 +554,7 @@ async function main() {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM vm_sightings WHERE source_id IN (SELECT id FROM vm_sources WHERE label LIKE 'rls_verify_%')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_findings WHERE vuln_id LIKE 'RLS-VERIFY-%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_run_assets WHERE run_id IN (SELECT id FROM vm_runs WHERE raw_path = 'rls_verify')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path = 'rls_verify'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_sources WHERE label LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_service_tokens WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);

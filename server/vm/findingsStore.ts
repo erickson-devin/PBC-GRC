@@ -2,9 +2,10 @@ import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode, pool, queryWithProgram, type ProgramScope } from '../db';
 import { listAssets } from '../assets';
-import { updateRun } from './store';
+import { listSources, noteSourceNormalized, updateRun } from './store';
 import type { ApplyRunResult, LinkedPoamItem, PoamCandidate, PoamDraft, SightingDraft } from './storeTypes';
-import type { VmFinding, VmFindingStatus, VmPoamItem, VmPoamStatus, VmSeverity, VmSighting, VmVuln, VmVulnSource } from '../../src/types/vm';
+import type { OtherSourceReport } from './transitions';
+import type { VmFinding, VmFindingStatus, VmPoamItem, VmPoamStatus, VmRun, VmSeverity, VmSighting, VmVuln, VmVulnSource } from '../../src/types/vm';
 
 /**
  * Persistence of findings, sightings, vulnerability reference rows and POA&M items for the VM worker: PostgreSQL (one tenant
@@ -25,6 +26,7 @@ const chunks = <T>(items: T[]): T[][] => {
 
 const memoryFindings = new Map<string, VmFinding>(); // key: id
 const memorySightings = new Map<string, VmSighting>(); // key: tenantId|runId|findingId
+const memoryRunAssets = new Map<string, { tenantId: string; runId: string; assetId: string; sourceId: string; receivedAt: string }>(); // key: tenantId|runId|assetId
 const memoryPoam = new Map<string, VmPoamItem>(); // key: id (programId is null until a caller passes one; see insertPoamItems)
 const memoryVulns = new Map<string, VmVuln>(); // key: vuln_id
 
@@ -32,6 +34,7 @@ const memoryVulns = new Map<string, VmVuln>(); // key: vuln_id
 export function __resetVmFindingsForTests(): void {
   memoryFindings.clear();
   memorySightings.clear();
+  memoryRunAssets.clear();
   memoryPoam.clear();
   memoryVulns.clear();
 }
@@ -201,6 +204,86 @@ export async function loadSightedBySource(
   return new Set(rows.map((r) => r.finding_id as string));
 }
 
+/**
+ * For each OTHER source that reported one of the given assets: its latest run that listed the asset, whether the source is
+ * enabled, its expected interval, and which of the given open findings that run sighted. Closure reads it so a finding another
+ * manager still reports is not resolved by this one (docs/VULNERABILITY_MANAGEMENT.md, section 6.3). Runs from before
+ * vm_run_assets existed have no rows and so are not seen.
+ */
+export async function loadOtherSourceReports(
+  tenantId: string,
+  sourceId: string,
+  assetIds: string[],
+  openFindingIds: string[],
+  client: pg.PoolClient | null,
+): Promise<OtherSourceReport[]> {
+  if (assetIds.length === 0) return [];
+  if (isMemory()) {
+    const wanted = new Set(assetIds);
+    const open = new Set(openFindingIds);
+    const sources = new Map((await listSources(tenantId)).map((s) => [s.id, s]));
+    const latest = new Map<string, { runId: string; assetId: string; sourceId: string; receivedAt: string }>();
+    for (const ra of memoryRunAssets.values()) {
+      if (ra.tenantId !== tenantId || ra.sourceId === sourceId || !wanted.has(ra.assetId)) continue;
+      const key = `${ra.sourceId}|${ra.assetId}`;
+      const cur = latest.get(key);
+      if (!cur || ra.receivedAt > cur.receivedAt || (ra.receivedAt === cur.receivedAt && ra.runId > cur.runId)) latest.set(key, ra);
+    }
+    const out: OtherSourceReport[] = [];
+    for (const l of latest.values()) {
+      const src = sources.get(l.sourceId);
+      if (!src) continue;
+      const findingIds = new Set<string>();
+      for (const s of memorySightings.values()) {
+        if (s.tenantId === tenantId && s.runId === l.runId && open.has(s.findingId)) findingIds.add(s.findingId);
+      }
+      out.push({
+        sourceId: l.sourceId,
+        assetId: l.assetId,
+        runId: l.runId,
+        receivedAt: l.receivedAt,
+        findingIds,
+        enabled: src.enabled,
+        expectedIntervalMinutes: src.expectedIntervalMinutes,
+      });
+    }
+    return out;
+  }
+  const c = need(client);
+  const { rows } = await c.query(
+    `SELECT DISTINCT ON (r.source_id, ra.asset_id) r.source_id, ra.asset_id, ra.run_id, r.received_at, s.enabled, s.expected_interval_minutes
+       FROM vm_run_assets ra
+       JOIN vm_runs r ON r.tenant_id = ra.tenant_id AND r.id = ra.run_id
+       JOIN vm_sources s ON s.tenant_id = r.tenant_id AND s.id = r.source_id
+      WHERE ra.tenant_id = $1 AND ra.asset_id = ANY($2::text[]) AND r.source_id <> $3
+      ORDER BY r.source_id, ra.asset_id, r.received_at DESC, ra.run_id DESC`,
+    [tenantId, assetIds, sourceId],
+  );
+  if (rows.length === 0) return [];
+  const runIds = [...new Set(rows.map((r) => r.run_id as string))];
+  const sighted = new Map<string, Set<string>>(); // run id -> open findings it sighted
+  if (openFindingIds.length > 0) {
+    const res = await c.query(
+      'SELECT run_id, finding_id FROM vm_sightings WHERE tenant_id = $1 AND run_id = ANY($2::text[]) AND finding_id = ANY($3::text[])',
+      [tenantId, runIds, openFindingIds],
+    );
+    for (const r of res.rows) {
+      const set = sighted.get(r.run_id as string) ?? new Set<string>();
+      set.add(r.finding_id as string);
+      sighted.set(r.run_id as string, set);
+    }
+  }
+  return rows.map((r) => ({
+    sourceId: r.source_id as string,
+    assetId: r.asset_id as string,
+    runId: r.run_id as string,
+    receivedAt: new Date(r.received_at).toISOString(),
+    findingIds: sighted.get(r.run_id as string) ?? new Set<string>(),
+    enabled: r.enabled as boolean,
+    expectedIntervalMinutes: r.expected_interval_minutes as number,
+  }));
+}
+
 /** Which of the given vulnerabilities are on the known-exploited list. vm_vulns is global (no tenant filter). */
 export async function loadKevVulnIds(vulnIds: string[], client: pg.PoolClient | null): Promise<Set<string>> {
   if (vulnIds.length === 0) return new Set();
@@ -310,6 +393,27 @@ export async function insertSightings(tenantId: string, drafts: SightingDraft[],
   }
 }
 
+/** Records which assets a run reported (ids only), so a later run of another source can tell who still lists a finding. Idempotent. */
+export async function insertRunAssets(
+  tenantId: string,
+  run: { id: string; sourceId: string; receivedAt: string },
+  assetIds: string[],
+  client: pg.PoolClient | null,
+): Promise<void> {
+  if (assetIds.length === 0) return;
+  if (isMemory()) {
+    for (const assetId of assetIds) {
+      const key = `${tenantId}|${run.id}|${assetId}`;
+      if (!memoryRunAssets.has(key)) memoryRunAssets.set(key, { tenantId, runId: run.id, assetId, sourceId: run.sourceId, receivedAt: run.receivedAt });
+    }
+    return;
+  }
+  await need(client).query(
+    'INSERT INTO vm_run_assets (tenant_id, run_id, asset_id) SELECT $1, $2, unnest($3::text[]) ON CONFLICT DO NOTHING',
+    [tenantId, run.id, [...new Set(assetIds)]],
+  );
+}
+
 // ------------------------------------------------------------------------------------------------ POA&M
 
 /** OPEN findings past their SLA (strictly before `now`), with the asset name and KEV flag, plus the POA&M items already linked to them. */
@@ -417,12 +521,20 @@ async function countPoam(scope: ProgramScope, openOnly: boolean): Promise<number
 // ------------------------------------------------------------------------------------------------ runs and listing
 
 /** Marks the run NORMALIZED inside the run's own transaction, so the status never gets ahead of the data it describes. */
-export async function markRunNormalized(tenantId: string, runId: string, finishedAt: string, warning: string | null, client: pg.PoolClient | null): Promise<void> {
+export async function markRunNormalized(
+  tenantId: string,
+  run: Pick<VmRun, 'id' | 'sourceId' | 'receivedAt'>,
+  finishedAt: string,
+  warning: string | null,
+  client: pg.PoolClient | null,
+): Promise<void> {
   if (isMemory()) {
-    await updateRun(tenantId, runId, { status: 'NORMALIZED', finishedAt, warning, error: null });
+    await updateRun(tenantId, run.id, { status: 'NORMALIZED', finishedAt, warning, error: null });
+    await noteSourceNormalized(tenantId, run.sourceId, run.receivedAt, null);
     return;
   }
-  await need(client).query("UPDATE vm_runs SET status = 'NORMALIZED', finished_at = $3, warning = $4, error = NULL WHERE id = $1 AND tenant_id = $2", [runId, tenantId, finishedAt, warning]);
+  await need(client).query("UPDATE vm_runs SET status = 'NORMALIZED', finished_at = $3, warning = $4, error = NULL WHERE id = $1 AND tenant_id = $2", [run.id, tenantId, finishedAt, warning]);
+  await noteSourceNormalized(tenantId, run.sourceId, run.receivedAt, client);
 }
 
 /**

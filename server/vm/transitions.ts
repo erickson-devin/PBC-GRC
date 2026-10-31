@@ -86,6 +86,20 @@ export interface ReportedHost {
   host: NormalizedHost;
 }
 
+/** An other source's latest run that listed an asset, with the open findings of that asset it sighted (docs, section 6.3). */
+export interface OtherSourceReport {
+  sourceId: string;
+  assetId: string;
+  runId: string;
+  receivedAt: string;
+  findingIds: ReadonlySet<string>;
+  enabled: boolean;
+  expectedIntervalMinutes: number;
+}
+
+/** Another source's report blocks a closure only while it is no older than this many of its expected intervals before the closing run. */
+export const VM_OTHER_SOURCE_GRACE_INTERVALS = 2;
+
 export interface ApplyRunInput {
   tenantId: string;
   run: RunContext;
@@ -94,6 +108,8 @@ export interface ApplyRunInput {
   existing: VmFinding[];
   /** Ids of findings this source has ever sighted: only those may be closed by this source's run. */
   sightedBySource: ReadonlySet<string>;
+  /** Each other source's latest report of the reported assets: one that still lists a finding blocks its closure. */
+  otherSourceReports: readonly OtherSourceReport[];
   /** Vulnerability ids on the CISA KEV list. */
   kev: ReadonlySet<string>;
   sla: VmSlaConfig;
@@ -244,6 +260,16 @@ export function applyRun(input: ApplyRunInput): ApplyRunResult {
     if (sightedIds.has(f.id)) continue;
     if (!sightedBySource.has(f.id)) continue;
     if (Date.parse(f.lastSeenAt) > Date.parse(received)) continue;
+    // Another manager that is enabled and recently reported this asset still lists the finding: it stays open.
+    const heldByOther = input.otherSourceReports.some(
+      (r) =>
+        r.sourceId !== run.sourceId &&
+        r.assetId === f.assetId &&
+        r.enabled &&
+        r.findingIds.has(f.id) &&
+        Date.parse(r.receivedAt) >= Date.parse(received) - VM_OTHER_SOURCE_GRACE_INTERVALS * r.expectedIntervalMinutes * 60000,
+    );
+    if (heldByOther) continue;
     result.resolved.push({ ...f, status: 'RESOLVED', resolvedAt: received, resolvedRunId: run.id });
   }
 
