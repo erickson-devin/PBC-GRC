@@ -14,7 +14,7 @@
  *   5. vulnerability-management tables: tenant isolation, composite foreign keys that refuse another tenant's asset, the CHECK constraints behind machine-confirmed closure, and the two SELECT-only discovery policies (service-token lookup, scheduler enumeration) that see nothing without their GUC.
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest. 3d: the SELECT-only app.event_retention policy on programs (the retention sweep's enumeration) sees nothing without its GUC and can never write. 3e: the history of a deleted program is untouched by the daily sweep, found by the operator pass (pruneDeletedProgramEvents) and deleted only through the program-confined deletes, and FORCE row security is back afterwards.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps. The same section proves local_user_password_history: a global table without row security, a bcrypt-only CHECK, a password change records the previous hash and keeps PASSWORD_HISTORY_DEPTH of them (none for a temporary password), and deleting the account deletes its history.
- *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS.
+ *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS. 8l: program_ssp_metadata isolation (SSP metadata, issue #84; same pattern as 8j), the composite foreign key to programs, the primary key (one row per program), the shape CHECK (known keys, string values, 262 144 bytes), the first-writer race of writeSspMetadata, the tenants.stack_profile CHECK, and the cascade from a program delete.
  *   7b. account events (issue #40) and sessions (issue #163): local_sessions and local_account_events are global tables without row security; the sessions foreign key cascades, the sid / revoke-reason CHECKs refuse bad rows, a revoke changes exactly one row, and pruning removes only sessions that expired more than a day ago; the event table is append-only for the application role (UPDATE, DELETE and TRUNCATE refused with 42501), refuses an "@" in details and an action outside the list, and only the retention sweep can delete (the test event is backdated about 4000 days so no real event matches).
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
@@ -24,8 +24,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events and program_assets are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets and program_ssp_metadata are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata');
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -1188,6 +1188,75 @@ async function verifyProgramIsolation() {
     const raceEvents = await queryWithProgram({ tenantId: TENANT_X, programId: raceProgram.id }, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'scoping_changed'", [raceProgram.id]);
     check(raceEvents.rows.length === 1, '8k. program_events: exactly one scoping_changed event for the program (the refused save wrote nothing)', 'saw ' + raceEvents.rows.length);
     await queryWithProgram({ tenantId: TENANT_X, programId: raceProgram.id }, "DELETE FROM program_events WHERE program_id = $1", [raceProgram.id]).catch(() => undefined);
+
+    // 8l. SSP metadata (issue #84): program_ssp_metadata isolation, the composite foreign key, the primary key, the shape CHECK, the first-writer race and the stack profile CHECK
+    const insertMeta = 'INSERT INTO program_ssp_metadata (tenant_id, program_id, metadata, updated_by) VALUES ($1, $2, $3::jsonb, $4) RETURNING program_id';
+    const metaJson = JSON.stringify({ systemName: 'rls_verify_sm' });
+    const sm1 = await queryWithProgram(scopeA, insertMeta, [TENANT_X, programA, metaJson, 'rls_verify_actor']);
+    check(sm1.rows.length === 1, '8l. program_ssp_metadata: under program A the row is inserted');
+    const smBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_ssp_metadata WHERE program_id = $1', [programA]);
+    const smBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_ssp_metadata WHERE tenant_id = $1', [TENANT_X]);
+    check(smBSeesA.rows.length === 0 && smBSeesAny.rows.length === 0, "8l. program_ssp_metadata: program B cannot read program A's row (0 rows, by program or by tenant)", 'saw ' + smBSeesA.rows.length + ' / ' + smBSeesAny.rows.length);
+    const smBUpdates = await queryWithProgram(scopeB, "UPDATE program_ssp_metadata SET updated_by = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const smBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_ssp_metadata WHERE program_id = $1', [programA]);
+    check((smBUpdates.rowCount ?? 0) === 0 && (smBDeletes.rowCount ?? 0) === 0, "8l. program_ssp_metadata: program B can neither update nor delete program A's row (0 rows)", 'updated ' + smBUpdates.rowCount + ', deleted ' + smBDeletes.rowCount);
+    const smBInserts = await rejectsIn(scopeB, insertMeta, [TENANT_X, programA, metaJson, 'rls_verify_actor'], { code: '42501' });
+    check(smBInserts.ok, '8l. program_ssp_metadata: program B cannot insert a row into program A (WITH CHECK, 42501)', smBInserts.detail);
+    const smNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_ssp_metadata WHERE tenant_id = $1', [TENANT_X]);
+    check(smNoCtx.rows.length === 0, '8l. program_ssp_metadata: a tenant context with no program context sees zero rows', 'saw ' + smNoCtx.rows.length);
+    let smNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertMeta, [TENANT_X, programA, metaJson, 'rls_verify_actor']);
+    } catch (err) {
+      smNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(smNoCtxInsert === '42501', '8l. program_ssp_metadata: no program context cannot insert a row (42501)', smNoCtxInsert);
+    const smStillThere = await queryWithProgram(scopeA, 'SELECT metadata FROM program_ssp_metadata WHERE program_id = $1', [programA]);
+    check(smStillThere.rows.length === 1 && smStillThere.rows[0].metadata?.systemName === 'rls_verify_sm', "8l. program_ssp_metadata: program A's row is untouched", JSON.stringify(smStillThere.rows));
+    // the session runs in Y's default program so the program policy passes; (X, Y's program) does not exist, so the foreign key refuses it
+    const smForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertMeta, [TENANT_X, defaultY, metaJson, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_ssp_metadata_program' });
+    check(smForeignProgram.ok, "8l. program_ssp_metadata: tenant X cannot attach a row to tenant Y's program (composite foreign key, 23503)", smForeignProgram.detail);
+    const smDuplicate = await rejectsIn(scopeA, insertMeta, [TENANT_X, programA, metaJson, 'rls_verify_actor'], { code: '23505', constraint: 'pk_program_ssp_metadata' });
+    check(smDuplicate.ok, '8l. program_ssp_metadata: a second row for the same program is refused (primary key, 23505)', smDuplicate.detail);
+    // program B has no row yet: the shape CHECK is judged before the key, so a refused row never lands
+    const smShape = { code: '23514', constraint: 'program_ssp_metadata_shape_check' };
+    const smUnknownKey = await rejectsIn(scopeB, insertMeta, [TENANT_X, programB, JSON.stringify({ rls_verify_unknown: 'x' }), 'rls_verify_actor'], smShape);
+    const smNumber = await rejectsIn(scopeB, insertMeta, [TENANT_X, programB, JSON.stringify({ systemName: 5 }), 'rls_verify_actor'], smShape);
+    const smTooBig = await rejectsIn(scopeB, insertMeta, [TENANT_X, programB, JSON.stringify({ systemEnvironment: 'x'.repeat(262144) }), 'rls_verify_actor'], smShape);
+    check(smUnknownKey.ok && smNumber.ok && smTooBig.ok, '8l. program_ssp_metadata: an unknown key, a numeric value and a value over 262 144 bytes are each refused (23514, program_ssp_metadata_shape_check)', [smUnknownKey.detail, smNumber.detail, smTooBig.detail].join(' | '));
+    // the stack profile of a tenant: only the known keys, at most 16 384 bytes. The CHECK runs on the proposed row before
+    // ON CONFLICT is considered, so this insert is refused whether or not the tenant row exists and never writes anything.
+    let stackProfileBad = 'no error';
+    try {
+      await queryWithTenant(
+        TENANT_X,
+        `INSERT INTO tenants (id, name, system_name, system_owner, stack_profile) VALUES ($1, $1, 'sys', 'owner', $2::jsonb) ON CONFLICT (id) DO NOTHING`,
+        [TENANT_X, '{"x":1}']
+      );
+    } catch (err) {
+      stackProfileBad = String((err as { code?: string }).code) + ' ' + String((err as { constraint?: string }).constraint);
+    }
+    check(stackProfileBad === '23514 tenants_stack_profile_check', '8l. tenants: a stack profile with an unknown key is refused (23514, tenants_stack_profile_check)', stackProfileBad);
+    // the first-writer race: two writes that both expect no row; the row lock plus INSERT ... DO NOTHING lets exactly one win
+    const { createProgram: createSmProgram } = await import('../server/programs');
+    const { writeSspMetadata } = await import('../server/sspMetadata');
+    const smRaceProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_ssp_race', frameworkId: 'CMMC_L2' }, null);
+    const smRaceScope = { tenantId: TENANT_X, programId: smRaceProgram.id };
+    const smActor = { actor: 'rls_verify_actor', userId: null };
+    const smRace = await Promise.allSettled([
+      writeSspMetadata(smRaceScope, { systemName: 'rls_verify_race_1' }, smActor, { expectedUpdatedAt: null }),
+      writeSspMetadata(smRaceScope, { systemName: 'rls_verify_race_2' }, smActor, { expectedUpdatedAt: null }),
+    ]);
+    const smRaceWon = smRace.filter((r) => r.status === 'fulfilled').length;
+    const smRaceLost = smRace.filter((r) => r.status === 'rejected' && (r as PromiseRejectedResult).reason?.code === 'stale_write').length;
+    check(smRaceWon === 1 && smRaceLost === 1, '8l. program_ssp_metadata: of two concurrent first writes exactly one succeeds and the other is a stale_write', smRace.map((r) => r.status + (r.status === 'rejected' ? ':' + String((r.reason as { code?: unknown })?.code) : '')).join(' '));
+    const smRaceEvents = await queryWithProgram(smRaceScope, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'ssp_metadata_changed'", [smRaceProgram.id]);
+    check(smRaceEvents.rows.length === 1, '8l. program_events: exactly one ssp_metadata_changed event for the program (the refused write recorded nothing)', 'saw ' + smRaceEvents.rows.length);
+    await queryWithProgram(smRaceScope, 'DELETE FROM program_events WHERE program_id = $1', [smRaceProgram.id]).catch(() => undefined);
+    // the cascade: deleting the program (tenant context only) removes its row; a foreign-key cascade is not filtered by row security
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, smRaceProgram.id]);
+    const smCascade = await queryWithProgram(smRaceScope, 'SELECT 1 FROM program_ssp_metadata WHERE program_id = $1', [smRaceProgram.id]);
+    check(smCascade.rows.length === 0, '8l. program_ssp_metadata: deleting a program removes its row through the cascade', 'saw ' + smCascade.rows.length);
 
     await verifyUpgrade();
   } finally {

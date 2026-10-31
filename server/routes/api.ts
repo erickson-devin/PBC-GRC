@@ -5,6 +5,7 @@ import vmIngestRouter from './vmIngest';
 import controlsRouter from './controls';
 import evidenceRouter from './evidence';
 import objectivesRouter from './objectives';
+import sspMetadataRouter from './sspMetadata';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
@@ -81,6 +82,7 @@ router.post('/tenants', authOnlyMiddleware, createTenantHandler);
 // Controls and evidence belong to a program (authorization boundary): programContext resolves it from x-program-id (default program without it)
 router.use('/controls', authMiddleware, programContext, controlsRouter);
 router.use('/objectives', authMiddleware, programContext, objectivesRouter);
+router.use('/ssp-metadata', authMiddleware, programContext, sspMetadataRouter);
 router.use('/evidence', authMiddleware, programContext, evidenceRouter);
 router.use('/tenants', authMiddleware, tenantsRouter);
 

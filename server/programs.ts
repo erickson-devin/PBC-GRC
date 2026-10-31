@@ -4,6 +4,7 @@ import { getDbMode, getTenantFrameworkPolicy, pool, queryWithProgram, queryWithT
 import { PROGRAM_FRAMEWORK_IDS } from './schema';
 import { readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
 import { __deleteProgramObjectivesForMemory, cloneObjectives } from './controlObjectives';
+import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
 import { getFrameworkControls } from '../src/data/frameworks';
@@ -120,7 +121,7 @@ export interface ProgramActor {
   userId: string | null;
 }
 
-export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared' | 'assets_changed';
+export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared' | 'assets_changed' | 'ssp_metadata_changed';
 
 /** One entry of a program's history. Holds booleans and ids only (never a name or a description), so it carries no CUI. */
 export interface ProgramEvent {
@@ -683,6 +684,7 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     // the answers of the program go with it (in PostgreSQL the foreign key cascades); the history events stay
     await queryWithProgram({ tenantId, programId: id }, 'DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2', [tenantId, id]);
     __deleteProgramObjectivesForMemory({ tenantId, programId: id });
+    __deleteProgramSspMetadataForMemory({ tenantId, programId: id });
     memoryPrograms.delete(id);
     return;
   }
