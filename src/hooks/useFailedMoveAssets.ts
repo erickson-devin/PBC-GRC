@@ -6,6 +6,8 @@ import { failedMovesFor, setFailedMoveAssets } from '../services/failedMoves';
 import { pushAssetsToServer } from '../services/assetMove';
 import { clearLocalEnclaveAssets, getEnclaveAssets, isDemoSeedAsset } from '../data/telemetry/assetRegistry';
 import { notifyAssetsChanged } from '../services/assetService';
+import { findOrphanAssetLists, claimOrphanAssetList, discardOrphanAssetList, type OrphanAssetList, type OrphanLedgerRecorder } from '../services/orphanAssetLists';
+import { recordAuditEvent } from '../data/audit/auditLogger';
 import type { EnclaveAsset } from '../types/telemetry';
 
 export interface FailedMoveAssets {
@@ -14,6 +16,11 @@ export interface FailedMoveAssets {
   error: string | null;
   lastResult: { moved: number; stillLocal: number } | null;
   retry: () => Promise<void>;
+  /** Asset lists left under an unregistered tenant id; [] unless the user owns or manages this server tenant. */
+  orphans: OrphanAssetList[];
+  /** Resolve when done; reject (fixed text, no ids) when the list could not be claimed or discarded. */
+  claim: (oldId: string) => Promise<void>;
+  discard: (oldId: string) => Promise<void>;
 }
 
 /**
@@ -22,8 +29,9 @@ export interface FailedMoveAssets {
  * server already holds is removed), and offers a retry. Logs counts only.
  */
 export function useFailedMoveAssets(): FailedMoveAssets {
-  const { currentTenant } = useTenant();
+  const { currentTenant, currentUser, canManageTenant } = useTenant();
   const [pending, setPending] = useState(0);
+  const [orphans, setOrphans] = useState<OrphanAssetList[]>([]);
   const [status, setStatus] = useState<FailedMoveAssets['status']>('idle');
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<FailedMoveAssets['lastResult']>(null);
@@ -47,6 +55,24 @@ export function useFailedMoveAssets(): FailedMoveAssets {
     return { stillLocal: unmatched.length, unmatched };
   }, []);
 
+  /** Reconciles every old tenant id the record links to this tenant and shows what is still only in this browser. */
+  const check = useCallback(async (tenantId: string, sessionRef: string) => {
+    setStatus('checking');
+    try {
+      let total = 0;
+      for (const rec of failedMovesFor(localStorage, tenantId)) {
+        total += (await reconcileOne(tenantId, rec.fromTenantId, sessionRef)).stillLocal;
+      }
+      counts.current.set(tenantId, total);
+      if (activeTenant.current === tenantId) setPending(total);
+    } catch {
+      // the server could not be reached: the record and the local list stay and the next session tries again
+      counts.current.delete(tenantId);
+    } finally {
+      setStatus('idle');
+    }
+  }, [reconcileOne]);
+
   useEffect(() => {
     setPending(0);
     setError(null);
@@ -62,23 +88,45 @@ export function useFailedMoveAssets(): FailedMoveAssets {
     }
     counts.current.set(tenantId, 0);
     if (failedMovesFor(localStorage, tenantId).length === 0) return;
-    void (async () => {
-      setStatus('checking');
-      try {
-        let total = 0;
-        for (const rec of failedMovesFor(localStorage, tenantId)) {
-          total += (await reconcileOne(tenantId, rec.fromTenantId, sessionRef)).stillLocal;
-        }
-        counts.current.set(tenantId, total);
-        if (activeTenant.current === tenantId) setPending(total);
-      } catch {
-        // the server could not be reached: the record and the local list stay and the next session tries again
-        counts.current.delete(tenantId);
-      } finally {
-        setStatus('idle');
-      }
-    })();
-  }, [currentTenant.id, currentTenant.serverBacked, reconcileOne]);
+    void check(tenantId, sessionRef);
+  }, [currentTenant.id, currentTenant.serverBacked, check]);
+
+  // Asset lists an earlier move left under an unregistered id: only an owner or MSP admin of a server tenant is offered them
+  const orphanScope = currentTenant.serverBacked && canManageTenant;
+  const refreshOrphans = useCallback(() => {
+    setOrphans(orphanScope && ApiClient.getSessionRef() ? findOrphanAssetLists(localStorage, currentTenant.id) : []);
+  }, [orphanScope, currentTenant.id]);
+
+  useEffect(() => {
+    refreshOrphans();
+  }, [refreshOrphans]);
+
+  const recorder = useCallback((actionType: 'LOCAL_ASSETS_CLAIMED' | 'LOCAL_ASSETS_DISCARDED'): OrphanLedgerRecorder => entry => recordAuditEvent({
+    tenantId: currentTenant.id,
+    actorId: currentUser.id,
+    actorEmail: currentUser.email,
+    actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+    actionType,
+    ...entry,
+  }), [currentTenant.id, currentUser]);
+
+  const claim = useCallback(async (oldId: string) => {
+    const sessionRef = ApiClient.getSessionRef();
+    if (!orphanScope || !sessionRef) throw new Error('The asset list could not be claimed.');
+    const tenantId = currentTenant.id;
+    const ok = await claimOrphanAssetList(localStorage, oldId, tenantId, new Date().toISOString(), recorder('LOCAL_ASSETS_CLAIMED'));
+    if (!ok) throw new Error('The asset list could not be claimed.');
+    counts.current.delete(tenantId);
+    await check(tenantId, sessionRef);
+    refreshOrphans();
+  }, [orphanScope, currentTenant.id, recorder, check, refreshOrphans]);
+
+  const discard = useCallback(async (oldId: string) => {
+    if (!orphanScope) throw new Error('The asset list could not be discarded.');
+    const ok = await discardOrphanAssetList(localStorage, oldId, currentTenant.id, recorder('LOCAL_ASSETS_DISCARDED'));
+    if (!ok) throw new Error('The asset list could not be discarded.');
+    refreshOrphans();
+  }, [orphanScope, currentTenant.id, recorder, refreshOrphans]);
 
   const retry = useCallback(async () => {
     if (busy.current || !currentTenant.serverBacked) return;
@@ -120,5 +168,5 @@ export function useFailedMoveAssets(): FailedMoveAssets {
     }
   }, [currentTenant.id, currentTenant.serverBacked, reconcileOne]);
 
-  return { pending, status, error, lastResult, retry };
+  return { pending, status, error, lastResult, retry, orphans, claim, discard };
 }

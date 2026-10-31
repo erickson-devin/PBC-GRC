@@ -12,7 +12,9 @@ import {
 } from '../src/services/failedMoves';
 import { retryPendingControls, type ControlRetryDeps } from '../src/services/controlMove';
 import { toAssetInput, pushAssetsToServer } from '../src/services/assetMove';
-import { unmatchedLocalAssets, planLocalAssetCleanup, type ScrubStorage } from '../src/services/browserStorageScrub';
+import { unmatchedLocalAssets, planLocalAssetCleanup, ENCLAVE_ASSETS_KEY_PREFIX, type ScrubStorage } from '../src/services/browserStorageScrub';
+import { findOrphanAssetLists, claimOrphanAssetList, discardOrphanAssetList } from '../src/services/orphanAssetLists';
+import { isDemoSeedAsset } from '../src/data/telemetry/assetRegistry';
 
 let passed = 0;
 let total = 0;
@@ -213,12 +215,86 @@ async function main() {
   const o8 = await retryPendingControls(r8.deps, {});
   assert(r8.st.gets === 0 && r8.st.pushes === 0 && o8.sent === 0, 'RT8 no answers makes no call', o8);
 
+  console.log('\n--- Orphan asset lists (#112) ---');
+  const AT = '2026-10-30T00:00:00.000Z';
+  const old9List = [mkAsset('a1', 'HOST-SECRET-1'), mkAsset('a2', 'HOST-SECRET-2'), mkAsset('asset-ws-01-old9', 'demo')];
+  const expected9 = old9List.filter(a => !isDemoSeedAsset(a, 'old9')).length;
+  const mkOrphanFixture = () => {
+    const st = new MemoryStorage();
+    st.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'local1' }]));
+    st.setItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old9', JSON.stringify(old9List));
+    st.setItem(ENCLAVE_ASSETS_KEY_PREFIX + 'demoOnly', JSON.stringify([mkAsset('asset-ws-01-demoOnly', 'd'), mkAsset('asset-srv-02-demoOnly', 'd')]));
+    st.setItem(ENCLAVE_ASSETS_KEY_PREFIX + 'local1', JSON.stringify([mkAsset('l1', 'L')]));
+    st.setItem(ENCLAVE_ASSETS_KEY_PREFIX + 'srv1', JSON.stringify([mkAsset('s1', 'S')]));
+    st.setItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old8', JSON.stringify([mkAsset('e1', 'E')]));
+    recordFailedMove(st, { fromTenantId: 'old8', toTenantId: 'srv1', at: AT, assetsFailed: 1 });
+    return st;
+  };
+  type LedgerEntry = { targetEntity: string; newState: { assetCount: number } };
+  const mkSpy = (reject = false) => {
+    const calls: LedgerEntry[] = [];
+    return { calls, record: async (e: LedgerEntry) => { calls.push(e); if (reject) throw new Error('ledger'); return e; } };
+  };
+
+  const of1 = mkOrphanFixture();
+  const found1 = findOrphanAssetLists(of1, 'srv1');
+  assert(JSON.stringify(found1) === JSON.stringify([{ tenantId: 'old9', assetCount: expected9 }]), 'S112-1 only an unregistered, unlinked list with real assets is an orphan', found1);
+  assert(of1.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'demoOnly') !== null && !found1.some(o => o.tenantId === 'demoOnly'), 'S112-2 a demo-only list is not offered and stays');
+  const noReg = new MemoryStorage();
+  noReg.setItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old9', JSON.stringify(old9List));
+  assert(findOrphanAssetLists(noReg, 'srv1').length === 0, 'S112-3 with no registry key nothing is an orphan');
+  assert(
+    !JSON.stringify(found1).includes('HOST-SECRET') && found1.every(o => JSON.stringify(Object.keys(o).sort()) === JSON.stringify(['assetCount', 'tenantId'])),
+    'S112-4 an orphan carries only the id and a count'
+  );
+
+  const sp5 = mkSpy();
+  const old9Before = of1.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old9');
+  const ok5 = await claimOrphanAssetList(of1, 'old9', 'srv1', AT, sp5.record);
+  assert(
+    ok5 === true && sp5.calls.length === 1 && JSON.stringify(sp5.calls[0]) === JSON.stringify({ targetEntity: 'LocalAssetList:old9', newState: { assetCount: expected9 } })
+      && JSON.stringify(failedMovesFor(of1, 'srv1').find(r => r.fromTenantId === 'old9')) === JSON.stringify({ fromTenantId: 'old9', toTenantId: 'srv1', at: AT, assetsFailed: expected9 })
+      && of1.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old9') === old9Before && findOrphanAssetLists(of1, 'srv1').length === 0,
+    'S112-5 a claim writes one id+count ledger entry, links the list to the tenant and leaves the assets in place'
+  );
+  const sp6 = mkSpy();
+  const movesBefore = readFailedMoves(of1).length;
+  const rc6 = [await claimOrphanAssetList(of1, 'local1', 'srv1', AT, sp6.record), await claimOrphanAssetList(of1, 'demoOnly', 'srv1', AT, sp6.record), await claimOrphanAssetList(of1, 'nope', 'srv1', AT, sp6.record)];
+  assert(rc6.every(r => r === false) && readFailedMoves(of1).length === movesBefore && sp6.calls.length === 0, 'S112-6 a registered, demo-only or missing list cannot be claimed');
+
+  const of7 = mkOrphanFixture();
+  const sp7 = mkSpy();
+  const ok7 = await discardOrphanAssetList(of7, 'old9', 'srv1', sp7.record);
+  assert(
+    ok7 === true && sp7.calls.length === 1 && JSON.stringify(sp7.calls[0]) === JSON.stringify({ targetEntity: 'LocalAssetList:old9', newState: { assetCount: expected9 } })
+      && of7.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old9') === null && !JSON.stringify(sp7.calls).includes('HOST-SECRET'),
+    'S112-7 a discard writes one id+count ledger entry (no host) and removes the list'
+  );
+  const of8 = mkOrphanFixture();
+  const ok8 = await discardOrphanAssetList(of8, 'old9', 'srv1', mkSpy(true).record);
+  const ok8b = await claimOrphanAssetList(of8, 'old9', 'srv1', AT, mkSpy(true).record);
+  assert(ok8 === false && ok8b === false && of8.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'old9') !== null && failedMovesFor(of8, 'srv1').every(r => r.fromTenantId !== 'old9'), 'S112-8 a failed ledger write keeps the list and records no claim');
+  const of9 = mkOrphanFixture();
+  const sp9 = mkSpy();
+  const rd9 = [await discardOrphanAssetList(of9, 'demoOnly', 'srv1', sp9.record), await discardOrphanAssetList(of9, 'srv1', 'srv1', sp9.record)];
+  assert(
+    rd9.every(r => r === false) && sp9.calls.length === 0 && of9.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'demoOnly') !== null && of9.getItem(ENCLAVE_ASSETS_KEY_PREFIX + 'srv1') !== null,
+    'S112-9 a demo-only list or the current tenant\'s own list cannot be discarded'
+  );
+  const orphanSvc = readSrc('src/services/orphanAssetLists.ts');
+  const hook = readSrc('src/hooks/useFailedMoveAssets.ts');
+  assert(
+    !orphanSvc.includes('console.') && !orphanSvc.includes('recordAuditEvent') && !orphanSvc.includes('fetch(')
+      && hook.includes('canManageTenant') && hook.includes("'LOCAL_ASSETS_DISCARDED'") && hook.includes("'LOCAL_ASSETS_CLAIMED'")
+      && readSrc('src/types/audit.ts').includes('LOCAL_ASSETS_CLAIMED') && readSrc('src/types/audit.ts').includes('LOCAL_ASSETS_DISCARDED'),
+    'S112-10 the service is pure, and the hook gates on canManageTenant and records both actions'
+  );
+
   console.log('\n--- Source checks ---');
   const manager = readSrc('src/components/telemetry/AssetInventoryManager.tsx');
   assert(manager.includes('{canEdit && <FailedMoveAssetsNotice />}'), 'C1 the inventory mounts the notice for editors only');
   const notice = readSrc('src/components/telemetry/FailedMoveAssetsNotice.tsx');
   assert(notice.includes('Retry moving') && notice.includes('role="region"') && notice.includes('aria-live="polite"'), 'C2 the notice is a labelled region with a live status and a retry button');
-  const hook = readSrc('src/hooks/useFailedMoveAssets.ts');
   assert(
     hook.includes('serverBacked') && hook.includes('unmatchedLocalAssets(') && hook.includes('clearLocalEnclaveAssets(') && hook.includes('pushAssetsToServer(') && hook.includes('notifyAssetsChanged('),
     'C3 the hook is gated on serverBacked, matches, pushes, clears and notifies'
@@ -246,6 +322,25 @@ async function main() {
     'C8 the keep-server dialog is an alertdialog with a busy guard in both handlers, autofocus on Cancel, no console and no raw HTML'
   );
   assert(cNotice.includes('Keep the server&apos;s version') && cNotice.includes('ConfirmKeepServerAnswersDialog') && cHook.includes('conflictIds'), 'C9 the keep-server action is offered only from the conflicts a retry found');
+  const orphanSrc = notice;
+  assert(
+    /const \{[^}]*\borphans\b[^}]*\} = useFailedMoveAssets\(\)/.test(orphanSrc) && orphanSrc.includes('orphans.map(') && orphanSrc.includes('{o.tenantId}') && orphanSrc.includes('{o.assetCount}')
+      && orphanSrc.includes('aria-label="Asset lists left in this browser by an earlier move"'),
+    'S112-U1 the notice renders the orphan lists (old id and count) in their own labelled region'
+  );
+  assert(
+    orphanSrc.includes('Claiming adds') && orphanSrc.includes('If that id belonged to another organisation, its assets will become part of this tenant.')
+      && orphanSrc.includes('Discarding deletes') && orphanSrc.includes('cannot be undone.')
+      && orphanSrc.includes('autoFocus') && orphanSrc.includes("e.key !== 'Escape'") && orphanSrc.split('aria-live="polite"').length === 3,
+    'S112-U2 claim and discard both confirm first (cross-organisation warning, cannot be undone), with focus on Cancel, Escape and a live result'
+  );
+  assert(
+    !/\.(hostName|hostname|name|ipAddress|macAddress)\b/.test(orphanSrc) && !orphanSrc.includes('dangerouslySetInnerHTML'),
+    'S112-U3 the notice reads no host name, name or address field and renders no raw HTML'
+  );
+  const btnOpens = orphanSrc.match(/<button\b/g) ?? [];
+  const btnTyped = orphanSrc.match(/<button\s+type="button"/g) ?? [];
+  assert(btnOpens.length === 5 && btnTyped.length === btnOpens.length, 'S112-U4 every button in the notice is type="button"', { opens: btnOpens.length, typed: btnTyped.length });
 
   console.log('\n--- Migration wiring (move to server) ---');
   const tenantSrc = readSrc('src/context/TenantContext.tsx');

@@ -20,7 +20,9 @@ export type AuditActionType =
   | 'DATA_RETENTION_APPLIED'
   | 'CRYPTOGRAPHIC_WIPE_PERFORMED'
   | 'ASSESSMENT_RESET'
-  | 'TELEMETRY_INGESTED';
+  | 'TELEMETRY_INGESTED'
+  | 'LOCAL_ASSETS_CLAIMED'
+  | 'LOCAL_ASSETS_DISCARDED';
 
 export interface AuditLogEntry {
   id: string;
