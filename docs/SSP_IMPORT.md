@@ -7,7 +7,7 @@ MSP Admin commits suggestions they accepted.**
 Two ways to read a document, chosen per import:
 
 * **Rule-based** (always available): a control is found where the document names it.
-* **AI analysis** (optional): a local language model (Llama 3.1 8B through Ollama) also reads the document, finds controls it
+* **AI analysis** (optional): a local language model (Llama 3.2 3B by default, through Ollama) also reads the document, finds controls it
   describes without naming them, and compares each with the NIST SP 800-171A assessment objectives. Everything stays on this
   server; see [AI analysis](#ai-analysis-local-model).
 
@@ -77,10 +77,12 @@ Tests: `npm run test:ssp-import`.
 
 Needs a local Ollama server. `docker-compose.yml` includes one with GPU support as an optional profile: add
 `COMPOSE_PROFILES=ai` to `.env` (or run `docker compose --profile ai up -d`), then load the model once with
-`docker compose exec ollama ollama pull llama3.1:8b`. Ollama is not a dependency of the app, so a host without a GPU still
+`docker compose exec ollama ollama pull llama3.2:3b`. Ollama is not a dependency of the app, so a host without a GPU still
 starts and imports use rule-based matching. To use an Ollama already running on the host instead, set
 `OLLAMA_BASE_URL=http://host.docker.internal:11434` (on Linux add `extra_hosts: ["host.docker.internal:host-gateway"]` to the
 app service). The variables are in `.env.example`; outside Docker, set `SSP_AI_ENABLED=true`.
+Release note: the default model is now `llama3.2:3b`. A source install without `OLLAMA_MODEL` that only pulled the 8B model
+reports `model_missing` and uses rule-based matching until it pulls the 3B model or sets `OLLAMA_MODEL`.
 
 **Documents never leave your network.** The base URL comes from server configuration only. A host that is not on this machine
 or a private network (loopback, RFC 1918, a bare Docker service name, `*.local` / `*.internal`) is refused, unless an operator

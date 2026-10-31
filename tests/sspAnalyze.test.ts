@@ -54,7 +54,7 @@ async function main() {
 
   const fake = await startFakeOllama();
   fake.onChat = scriptedModel;
-  const cfg: OllamaConfig = { enabled: true, baseUrl: fake.url, model: 'llama3.1:8b', numCtx: 8192, timeoutMs: 5000, allowRemote: false };
+  const cfg: OllamaConfig = { enabled: true, baseUrl: fake.url, model: 'llama3.2:3b', numCtx: 8192, timeoutMs: 5000, allowRemote: false };
   const client = new OllamaClient(cfg);
   const run = (text: string, over: Partial<Parameters<typeof analyzeDocumentWithAi>[0]> = {}) =>
     // the existing checks below exercise the narrative comparison; the extractive default has its own section further down
@@ -70,7 +70,7 @@ async function main() {
   assert(ac.sourceQuotes.length > 0 && ac.sourceQuotes.every((q) => q.verified && DOC.slice(q.start, q.end) === q.quote), 'its quotations are the document\'s own text, at the recorded positions');
   assert(/^The plan says: Access to company systems is limited/.test(ac.suggestedNotes), 'the suggested notes are the model\'s summary of the section');
   assert(mp?.origin === 'AI' && /sanitized/.test(mp.sourceQuotes[0].quote), 'a control the document never names (media sanitisation) is found by meaning and quoted from the document');
-  assert(res.stats.model === 'llama3.1:8b' && res.stats.promptVersion === 'ssp-ai-1' && res.stats.sectionsAnalyzed >= 3 && res.stats.sectionsSkipped >= 1, 'the stats record the model, the prompt version, and which sections were analysed or skipped', res.stats);
+  assert(res.stats.model === 'llama3.2:3b' && res.stats.promptVersion === 'ssp-ai-1' && res.stats.sectionsAnalyzed >= 3 && res.stats.sectionsSkipped >= 1, 'the stats record the model, the prompt version, and which sections were analysed or skipped', res.stats);
   assert(res.stats.findingsProposed === res.stats.findingsGrounded + Object.values(res.stats.rejected).reduce((a, b) => a + b, 0), 'every proposed finding is either grounded or counted as rejected');
   assert(progress.some((p) => /AI reading section 1 of/.test(p)) && progress.some((p) => /Comparing with the objectives/.test(p)), 'progress is reported per section and per control');
   assert(res.mapping.coverage.totalControls === 17 && res.mapping.coverage.foundControls === res.mapping.staged.length && !res.mapping.coverage.missing.includes('AC.L1-3.1.1'), 'coverage reflects the merged result');
