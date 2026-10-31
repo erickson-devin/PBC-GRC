@@ -326,6 +326,8 @@ if (app) {
   assert(!('APP_PORT' in env), 'app environment has no APP_PORT key (the container always listens on 3000)');
   assert(env.MFA_REQUIRED === '${MFA_REQUIRED:-}', 'app environment: MFA_REQUIRED: ${MFA_REQUIRED:-} (empty means the default, all)', env.MFA_REQUIRED);
   assert(env.MFA_ENCRYPTION_KEY === '${MFA_ENCRYPTION_KEY:-}', 'app environment: MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-} (optional)', env.MFA_ENCRYPTION_KEY);
+  assert(env.SESSION_IDLE_MINUTES === '${SESSION_IDLE_MINUTES:-}', 'app environment: SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-} (empty means the default, 15)', env.SESSION_IDLE_MINUTES);
+  assert(env.ACCOUNT_EVENT_RETENTION_DAYS === '${ACCOUNT_EVENT_RETENTION_DAYS:-}', 'app environment: ACCOUNT_EVENT_RETENTION_DAYS: ${ACCOUNT_EVENT_RETENTION_DAYS:-} (empty means the default, 1095)', env.ACCOUNT_EVENT_RETENTION_DAYS);
   assert(env.REQUIRE_TLS === '${REQUIRE_TLS:-}', 'app environment: REQUIRE_TLS: ${REQUIRE_TLS:-} (empty means off)', env.REQUIRE_TLS);
   assert(!('GOOGLE_APPLICATION_CREDENTIALS' in env) && Object.keys(env).every((k) => !/^(GOOGLE_|GCP_|GCS_|FIREBASE_)/i.test(k)), 'app environment has no cloud-provider variables', Object.keys(env));
 }
@@ -417,6 +419,7 @@ const onPremDoc = fs.readFileSync(path.join(root, 'docs/ON_PREM_DATABASE.md'), '
 assert(!/singularity-app\s+tsx\s/.test(onPremDoc), 'docs/ON_PREM_DATABASE.md does not tell the operator to run a global tsx in the container');
 const envExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
 assert(/^LOCAL_AUTH_SECRET=/m.test(envExample), '.env.example contains LOCAL_AUTH_SECRET=');
+assert(/^# SESSION_IDLE_MINUTES=/m.test(envExample), '.env.example documents SESSION_IDLE_MINUTES');
 assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has no VITE_FIREBASE / VITE_GCP / VITE_GCS');
 assert(/^# MFA_REQUIRED=/m.test(envExample), '.env.example documents MFA_REQUIRED');
 assert(/^# MFA_ENCRYPTION_KEY=/m.test(envExample), '.env.example documents MFA_ENCRYPTION_KEY');

@@ -1,5 +1,7 @@
 import { pool, getDbMode } from '../db';
 import { hashPassword, validateNewPassword, verifyPassword, getPasswordHistoryDepth } from './localAuth';
+import { recordAccountEvent, type AccountEventInput } from './accountEvents';
+import { dropMemorySessionsForUser } from './sessionStore';
 
 /** Storage for local (air-gapped) identities: PostgreSQL `local_users`, or process memory when DB_MODE=memory. */
 
@@ -41,6 +43,31 @@ const memoryUsers = new Map<string, LocalUser>(); // key: lowercased email
 const memoryPasswordHistory = new Map<string, string[]>(); // key: user id; previous password hashes, newest first
 
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase();
+
+/**
+ * Runs one single-statement UPDATE. With an `event` the UPDATE and the account event row share one transaction (both or neither);
+ * the event is written only when the UPDATE changed a row. Without one it is a plain pool query.
+ */
+async function updateWithEvent(sql: string, params: unknown[], event?: AccountEventInput): Promise<{ changed: boolean; rows: Record<string, unknown>[] }> {
+  if (!event) {
+    const res = await pool.query(sql, params);
+    return { changed: (res.rowCount ?? 0) > 0, rows: res.rows };
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const res = await client.query(sql, params);
+    const changed = (res.rowCount ?? 0) > 0;
+    if (changed) await recordAccountEvent(event, client);
+    await client.query('COMMIT');
+    return { changed, rows: res.rows };
+  } catch (err: unknown) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 const asDate = (value: unknown): Date | null => (value ? new Date(value as string) : null);
 
@@ -225,21 +252,23 @@ export async function setPendingTotpSecret(userId: string, encrypted: string): P
  * Confirms enrolment: needs a pending secret and no confirmed factor. Records the matched step (so the confirming code
  * cannot be replayed at login) and stores the recovery code digests.
  */
-export async function confirmTotp(userId: string, step: number, recoveryCodeHashes: string[]): Promise<boolean> {
+export async function confirmTotp(userId: string, step: number, recoveryCodeHashes: string[], event?: AccountEventInput): Promise<boolean> {
   if (getDbMode() === 'memory') {
     const u = memoryUserById(userId);
     if (!u || !u.totpSecretEnc || u.totpConfirmedAt) return false;
     u.totpConfirmedAt = new Date();
     u.totpLastUsedStep = step;
     u.recoveryCodeHashes = [...recoveryCodeHashes];
+    if (event) await recordAccountEvent(event);
     return true;
   }
-  const res = await pool.query(
+  const res = await updateWithEvent(
     `UPDATE local_users SET totp_confirmed_at = NOW(), totp_last_used_step = $2, recovery_code_hashes = $3
       WHERE id = $1 AND totp_secret_enc IS NOT NULL AND totp_confirmed_at IS NULL RETURNING 1`,
-    [userId, step, recoveryCodeHashes]
+    [userId, step, recoveryCodeHashes],
+    event
   );
-  return (res.rowCount ?? 0) > 0;
+  return res.changed;
 }
 
 /** Atomically records a used TOTP step. False when the step is not newer than the last used one (a replay) or no factor is confirmed. */
@@ -260,18 +289,20 @@ export async function consumeTotpStep(userId: string, step: number): Promise<boo
 }
 
 /** Replaces every recovery code digest of an ENROLLED user (regeneration). False when no factor is confirmed. */
-export async function replaceRecoveryCodeHashes(userId: string, hashes: string[]): Promise<boolean> {
+export async function replaceRecoveryCodeHashes(userId: string, hashes: string[], event?: AccountEventInput): Promise<boolean> {
   if (getDbMode() === 'memory') {
     const u = memoryUserById(userId);
     if (!u || !u.totpConfirmedAt) return false;
     u.recoveryCodeHashes = [...hashes];
+    if (event) await recordAccountEvent(event);
     return true;
   }
-  const res = await pool.query(
+  const res = await updateWithEvent(
     'UPDATE local_users SET recovery_code_hashes = $2 WHERE id = $1 AND totp_confirmed_at IS NOT NULL RETURNING 1',
-    [userId, hashes]
+    [userId, hashes],
+    event
   );
-  return (res.rowCount ?? 0) > 0;
+  return res.changed;
 }
 
 /** Atomically removes one recovery code digest. False when it is not in the list (unknown, or already used). */
@@ -297,12 +328,12 @@ export async function consumeRecoveryCode(userId: string, hash: string): Promise
  * Replaces the password hash and bumps the token version (every other session dies). The forced-change flag is cleared
  * unless `mustChangePassword` is true, which is how an admin reset hands out a temporary password. Returns false for an unknown id.
  * The replaced hash goes into the password history (NIST SP 800-171 3.5.8, PASSWORD_HISTORY_DEPTH previous passwords), except
- * when it was itself a temporary password (the account still had the forced-change flag).
+ * when it was itself a temporary password (the account still had the forced-change flag). An `event` is recorded in the same transaction.
  */
 export async function setLocalUserPassword(
   userId: string,
   passwordHash: string,
-  opts: { mustChangePassword?: boolean } = {}
+  opts: { mustChangePassword?: boolean; event?: AccountEventInput } = {}
 ): Promise<boolean> {
   const must = opts.mustChangePassword === true;
   const depth = getPasswordHistoryDepth();
@@ -320,6 +351,7 @@ export async function setLocalUserPassword(
     u.passwordHash = passwordHash;
     u.tokenVersion += 1;
     u.mustChangePassword = must;
+    if (opts.event) await recordAccountEvent(opts.event);
     return true;
   }
   const client = await pool.connect();
@@ -343,6 +375,7 @@ export async function setLocalUserPassword(
         WHERE user_id = $1 AND id NOT IN (SELECT id FROM local_user_password_history WHERE user_id = $1 ORDER BY id DESC LIMIT $2)`,
       [userId, depth]
     );
+    if (opts.event) await recordAccountEvent(opts.event, client);
     await client.query('COMMIT');
     return true;
   } catch (err: unknown) {
@@ -394,7 +427,7 @@ export async function setMustChangePassword(userId: string, value: boolean): Pro
  * Disabling bumps the token version and removes the factor; enabling clears the lockout (the factor is not restored).
  * Returns false for an unknown id.
  */
-export async function setLocalUserDisabled(userId: string, disabled: boolean): Promise<boolean> {
+export async function setLocalUserDisabled(userId: string, disabled: boolean, event?: AccountEventInput): Promise<boolean> {
   if (getDbMode() === 'memory') {
     const u = memoryUserById(userId);
     if (!u) return false;
@@ -406,33 +439,41 @@ export async function setLocalUserDisabled(userId: string, disabled: boolean): P
       u.failedAttempts = 0;
       u.lockedUntil = null;
     }
+    if (event) await recordAccountEvent(event);
     return true;
   }
   const sql = disabled
     ? `UPDATE local_users SET disabled = TRUE, token_version = token_version + 1, ${CLEARED_FACTOR_SQL} WHERE id = $1 RETURNING 1`
     : 'UPDATE local_users SET disabled = FALSE, failed_attempts = 0, locked_until = NULL WHERE id = $1 RETURNING 1';
-  const res = await pool.query(sql, [userId]);
-  return (res.rowCount ?? 0) > 0;
+  return (await updateWithEvent(sql, [userId], event)).changed;
 }
 
 /** Removes the factor and recovery codes and bumps the token version. Returns false for an unknown id. */
-export async function clearLocalUserMfa(userId: string): Promise<boolean> {
+export async function clearLocalUserMfa(userId: string, event?: AccountEventInput): Promise<boolean> {
   if (getDbMode() === 'memory') {
     const u = memoryUserById(userId);
     if (!u) return false;
     clearFactor(u);
     u.tokenVersion += 1;
+    if (event) await recordAccountEvent(event);
     return true;
   }
-  const res = await pool.query(
+  const res = await updateWithEvent(
     `UPDATE local_users SET ${CLEARED_FACTOR_SQL}, token_version = token_version + 1 WHERE id = $1 RETURNING 1`,
-    [userId]
+    [userId],
+    event
   );
-  return (res.rowCount ?? 0) > 0;
+  return res.changed;
 }
 
-/** CLI recovery path: clears the factor, bumps the token version and the lockout. `hadFactor` is true when a confirmed factor existed. */
-export async function resetLocalUserMfa(email: string): Promise<{ found: boolean; hadFactor: boolean }> {
+/**
+ * CLI recovery path: clears the factor, bumps the token version and the lockout. `hadFactor` is true when a confirmed factor existed.
+ * `event` (without a target: it is the account found) is recorded in the same transaction.
+ */
+export async function resetLocalUserMfa(
+  email: string,
+  event?: Omit<AccountEventInput, 'targetUserId'>
+): Promise<{ found: boolean; hadFactor: boolean; userId?: string }> {
   const key = normalizeEmail(email);
   if (getDbMode() === 'memory') {
     const u = memoryUsers.get(key);
@@ -442,15 +483,28 @@ export async function resetLocalUserMfa(email: string): Promise<{ found: boolean
     u.tokenVersion += 1;
     u.failedAttempts = 0;
     u.lockedUntil = null;
-    return { found: true, hadFactor };
+    if (event) await recordAccountEvent({ ...event, targetUserId: u.id });
+    return { found: true, hadFactor, userId: u.id };
   }
-  const res = await pool.query(
-    `WITH prev AS (SELECT id, totp_confirmed_at IS NOT NULL AS had FROM local_users WHERE email = $1)
-     UPDATE local_users u SET ${CLEARED_FACTOR_SQL}, token_version = u.token_version + 1, failed_attempts = 0, locked_until = NULL
-       FROM prev WHERE u.id = prev.id RETURNING prev.had AS had`,
-    [key]
-  );
-  return res.rows[0] ? { found: true, hadFactor: Boolean(res.rows[0].had) } : { found: false, hadFactor: false };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const res = await client.query(
+      `WITH prev AS (SELECT id, totp_confirmed_at IS NOT NULL AS had FROM local_users WHERE email = $1)
+       UPDATE local_users u SET ${CLEARED_FACTOR_SQL}, token_version = u.token_version + 1, failed_attempts = 0, locked_until = NULL
+         FROM prev WHERE u.id = prev.id RETURNING prev.had AS had, u.id AS id`,
+      [key]
+    );
+    const row = res.rows[0];
+    if (row && event) await recordAccountEvent({ ...event, targetUserId: String(row.id) }, client);
+    await client.query('COMMIT');
+    return row ? { found: true, hadFactor: Boolean(row.had), userId: String(row.id) } : { found: false, hadFactor: false };
+  } catch (err: unknown) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** Removes a local account. Used to roll back a registration whose invitation could not be consumed. */
@@ -458,9 +512,10 @@ export async function deleteLocalUser(id: string): Promise<void> {
   if (getDbMode() === 'memory') {
     for (const [email, u] of memoryUsers) if (u.id === id) memoryUsers.delete(email);
     memoryPasswordHistory.delete(id);
+    dropMemorySessionsForUser(id);
     return;
   }
-  // The password history rows go with the account (ON DELETE CASCADE).
+  // The password history rows and the sessions go with the account (ON DELETE CASCADE).
   await pool.query('DELETE FROM local_users WHERE id = $1', [id]);
 }
 

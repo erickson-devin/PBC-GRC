@@ -796,6 +796,64 @@ export const TABLES_SQL = `
       CONSTRAINT local_user_password_history_hash_check CHECK (password_hash ~ '^[$]2[aby][$][0-9]{2}[$]')
   );
   CREATE INDEX IF NOT EXISTS idx_local_user_password_history_user ON local_user_password_history (user_id, id DESC);
+
+  -- Server-side sessions (AC.L2-3.1.10 / 3.1.11, issue #163): one row per signed token, keyed by the token's random sid,
+  -- so a sign-out and an idle timeout can end a session before the token expires. Global identity data like local_users
+  -- (no tenant_id, no row security), removed with the account. Never the token itself, only its random sid.
+  CREATE TABLE IF NOT EXISTS local_sessions (
+      sid VARCHAR(64) PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      issued_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revoked_at TIMESTAMPTZ,
+      revoke_reason VARCHAR(32),
+      mfa_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      CONSTRAINT fk_local_sessions_user FOREIGN KEY (user_id) REFERENCES local_users (id) ON DELETE CASCADE,
+      CONSTRAINT local_sessions_sid_check CHECK (sid ~ '^[A-Za-z0-9_-]{16,64}$'),
+      CONSTRAINT local_sessions_reason_check CHECK (revoke_reason IS NULL OR revoke_reason IN ('signed_out', 'idle', 'mfa_required', 'admin')),
+      CONSTRAINT local_sessions_revoked_check CHECK ((revoked_at IS NULL) = (revoke_reason IS NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_local_sessions_user ON local_sessions (user_id);
+  CREATE INDEX IF NOT EXISTS idx_local_sessions_expires ON local_sessions (expires_at);
+
+  -- Account events (issue #40): an append-only trail of security-relevant changes to local accounts (password and MFA
+  -- changes, disable / enable, role changes, sign-out). Global like local_users (no tenant column, no row security):
+  -- scope_tenant_id only names the tenant a role change applied to. No foreign key: the trail outlives the account.
+  -- The details column holds ids and codes only; the check refuses anything containing an '@' (an email address).
+  CREATE TABLE IF NOT EXISTS local_account_events (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      actor_kind VARCHAR(8) NOT NULL,
+      actor_user_id VARCHAR(64),
+      target_user_id VARCHAR(64) NOT NULL,
+      action VARCHAR(40) NOT NULL,
+      scope_tenant_id VARCHAR(64),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      CONSTRAINT local_account_events_actor_check CHECK (actor_kind IN ('user', 'admin', 'cli', 'system')),
+      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed')),
+      CONSTRAINT local_account_events_details_check CHECK (jsonb_typeof(details) = 'object' AND octet_length(details::text) <= 2048 AND position('@' in details::text) = 0)
+  );
+  CREATE INDEX IF NOT EXISTS idx_local_account_events_at ON local_account_events (id DESC);
+  CREATE INDEX IF NOT EXISTS idx_local_account_events_target ON local_account_events (target_user_id, id DESC);
+
+  -- Append-only guard: UPDATE is always refused; DELETE only inside the retention sweep, which sets
+  -- app.account_event_retention for its own transaction. TRUNCATE is refused outright. This guards against application
+  -- bugs; the table owner can still drop the trigger.
+  CREATE OR REPLACE FUNCTION local_account_events_guard() RETURNS trigger AS $$
+  BEGIN
+    IF TG_OP = 'DELETE' AND current_setting('app.account_event_retention', true) = 'on' THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'local_account_events is append-only' USING ERRCODE = '42501';
+  END;
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_local_account_events_guard ON local_account_events;
+  CREATE TRIGGER trg_local_account_events_guard BEFORE UPDATE OR DELETE ON local_account_events
+      FOR EACH ROW EXECUTE FUNCTION local_account_events_guard();
+  DROP TRIGGER IF EXISTS trg_local_account_events_no_truncate ON local_account_events;
+  CREATE TRIGGER trg_local_account_events_no_truncate BEFORE TRUNCATE ON local_account_events
+      FOR EACH STATEMENT EXECUTE FUNCTION local_account_events_guard();
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

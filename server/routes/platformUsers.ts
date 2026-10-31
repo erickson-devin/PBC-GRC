@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { hashPassword, validateNewPassword } from '../auth/localAuth';
+import { accountLogRef } from '../auth/loginThrottle';
+import type { AccountEventInput } from '../auth/accountEvents';
 import {
   clearLocalUserMfa,
   findLocalUserById,
@@ -16,7 +18,8 @@ import { errorMessage } from '../../src/utils/errors';
 /**
  * Local-account administration, mounted at /api/v1/platform/users behind authOnlyMiddleware. Platform administrators only.
  * An administrator can never act on their own account here (409 self): their own credential change goes through
- * POST /auth/password, which asks for the current credential and the second-factor code. Only actor and target emails are logged.
+ * POST /auth/password, which asks for the current credential and the second-factor code. Log lines carry accountLogRef values, never an email.
+ * Each change is also recorded as an account event (#40), in the same transaction as the change.
  * Every mutation is a step-up (#38): the administrator needs a confirmed second factor and sends a fresh authenticator code in the
  * body field `code` (requireAdminStepUp). It is checked after the target and the new value are validated, so a rejected request
  * does not spend the code.
@@ -74,6 +77,15 @@ async function resolveTarget(req: Request, res: Response): Promise<LocalUser | n
   return target;
 }
 
+/** The account event for an administrator's action on a target account (details: ids and codes only). */
+const adminEvent = (req: Request, target: LocalUser, action: AccountEventInput['action'], details?: AccountEventInput['details']): AccountEventInput => ({
+  actorKind: 'admin',
+  actorUserId: req.user!.uid,
+  targetUserId: target.id,
+  action,
+  ...(details ? { details } : {}),
+});
+
 const failed = (res: Response, err: unknown, what: string): void => {
   console.error('[PlatformUsers] ' + what + ' failed:', errorMessage(err));
   res.status(500).json({ error: what + ' failed' });
@@ -103,10 +115,10 @@ router.post('/:userId/reset-password', async (req: Request, res: Response): Prom
       res.status(400).json({ error: problem, reason: 'weak_password' });
       return;
     }
-    if (!(await requireAdminStepUp(req, res))) return;
-    await setLocalUserPassword(target.id, await hashPassword(newPassword), { mustChangePassword: true });
+    if (!(await requireAdminStepUp(req, res, 'reset_password'))) return;
+    await setLocalUserPassword(target.id, await hashPassword(newPassword), { mustChangePassword: true, event: adminEvent(req, target, 'password_reset', { mustChangePassword: true }) });
     await resetLocalUserMfa(target.email); // clears the factor and the recovery codes, bumps the token version, clears the lockout
-    console.log(`[PlatformUsers] ${req.user!.email} reset the sign-in credential of ${target.email} (change required at next sign-in)`);
+    console.log(`[PlatformUsers] ${accountLogRef(req.user!.email ?? '')} reset the sign-in credential of ${accountLogRef(target.email)} (change required at next sign-in)`);
     const updated = (await findLocalUserById(target.id)) ?? target;
     res.json({
       user: summarizeStored(updated),
@@ -123,9 +135,9 @@ router.post('/:userId/reset-mfa', async (req: Request, res: Response): Promise<v
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
-    if (!(await requireAdminStepUp(req, res))) return;
-    await clearLocalUserMfa(target.id);
-    console.log(`[PlatformUsers] ${req.user!.email} removed the second factor of ${target.email}`);
+    if (!(await requireAdminStepUp(req, res, 'reset_mfa'))) return;
+    await clearLocalUserMfa(target.id, adminEvent(req, target, 'mfa_reset'));
+    console.log(`[PlatformUsers] ${accountLogRef(req.user!.email ?? '')} removed the second factor of ${accountLogRef(target.email)}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });
   } catch (err: unknown) {
     failed(res, err, 'Second factor reset');
@@ -137,9 +149,9 @@ router.post('/:userId/disable', async (req: Request, res: Response): Promise<voi
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
-    if (!(await requireAdminStepUp(req, res))) return;
-    await setLocalUserDisabled(target.id, true);
-    console.log(`[PlatformUsers] ${req.user!.email} disabled ${target.email}`);
+    if (!(await requireAdminStepUp(req, res, 'disable'))) return;
+    await setLocalUserDisabled(target.id, true, adminEvent(req, target, 'account_disabled'));
+    console.log(`[PlatformUsers] ${accountLogRef(req.user!.email ?? '')} disabled ${accountLogRef(target.email)}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });
   } catch (err: unknown) {
     failed(res, err, 'Disabling the account');
@@ -151,9 +163,9 @@ router.post('/:userId/enable', async (req: Request, res: Response): Promise<void
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
-    if (!(await requireAdminStepUp(req, res))) return;
-    await setLocalUserDisabled(target.id, false);
-    console.log(`[PlatformUsers] ${req.user!.email} enabled ${target.email}`);
+    if (!(await requireAdminStepUp(req, res, 'enable'))) return;
+    await setLocalUserDisabled(target.id, false, adminEvent(req, target, 'account_enabled'));
+    console.log(`[PlatformUsers] ${accountLogRef(req.user!.email ?? '')} enabled ${accountLogRef(target.email)}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });
   } catch (err: unknown) {
     failed(res, err, 'Enabling the account');

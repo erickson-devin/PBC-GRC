@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { CookieOptions, Request, Response } from 'express';
 import { signLocalToken } from './localAuth';
 import type { LocalUser } from './localUsers';
+import { recordSession } from './sessionStore';
 
 /** The session lives in an HttpOnly cookie scoped to the API; script in the page never sees the token. */
 export const SESSION_COOKIE_NAME = 'pbc_session';
@@ -95,9 +96,13 @@ export function clearSessionCookie(req: Request, res: Response): void {
   res.clearCookie(SESSION_COOKIE_NAME, sessionCookieOptions(req));
 }
 
-/** Signs a session, sets it as the cookie and returns the body every session-issuing response shares (the token is never in the body). */
-export function issueSession(req: Request, res: Response, user: SessionSubject, amr: string[], mfaEnrolled: boolean): Record<string, unknown> {
+/**
+ * Signs a session, records it (local_sessions, so a sign-out and the idle timeout can end it), sets it as the cookie and returns the body
+ * every session-issuing response shares (the token is never in the body). A store error propagates: sign-in fails closed.
+ */
+export async function issueSession(req: Request, res: Response, user: SessionSubject, amr: string[], mfaEnrolled: boolean): Promise<Record<string, unknown>> {
   const { token, claims } = signLocalToken({ id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion }, { amr });
+  await recordSession({ sid: claims.sid as string, userId: user.id, issuedAt: claims.iat, expiresAt: claims.exp, mfaVerified: amr.includes('otp') });
   setSessionCookie(req, res, token, claims.exp - claims.iat);
   return {
     sessionRef: claims.sid,

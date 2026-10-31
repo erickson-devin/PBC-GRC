@@ -30,8 +30,9 @@ import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCre
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
-import { SESSION_MARKER_HEADER, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
+import { SESSION_MARKER_HEADER, SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
 import { tabSessionState, tabSessionPin } from './tabSession';
+import { isTabLocked, parseIdleSeconds } from './idleLock';
 
 function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
@@ -90,6 +91,10 @@ export function mfaErrorMessage(status: number, body: unknown): string {
       return 'Set up two-step verification on your own account first (account settings), then try again.';
     case 'self':
       return 'You cannot do that to your own account here.';
+    case 'session_idle':
+      return SESSION_IDLE_MESSAGE;
+    case 'mfa_required':
+      return MFA_REQUIRED_MESSAGE;
     default:
       break;
   }
@@ -120,6 +125,13 @@ function baseApiError(status: number, body: unknown): ApiError {
   return new ApiError(status, 'The server could not complete the request. Please try again.');
 }
 
+let lastRequestAt = 0;
+
+/** When this tab last sent a request to the server (epoch ms, 0 before the first): the idle lock sends a heartbeat when it has been quiet too long. */
+export function getLastRequestAt(): number {
+  return lastRequestAt;
+}
+
 /** fetch() wrapper: network failures become ApiError(0) so the UI can say "cannot reach the server". */
 async function apiFetch(input: string, init: RequestInit): Promise<Response> {
   let res: Response;
@@ -133,6 +145,14 @@ async function apiFetch(input: string, init: RequestInit): Promise<Response> {
     err.reason = tabState;
     throw err;
   }
+  // While this tab's screen is locked (#163) the server session is already ended: a request with the marker is refused here, without a
+  // round trip and without telling the app the session died (the lock screen is already up)
+  if (sent && isTabLocked()) {
+    const err = new ApiError(401, SESSION_IDLE_MESSAGE);
+    err.reason = 'session_locked';
+    throw err;
+  }
+  lastRequestAt = Date.now();
   try {
     res = await fetch(input, init);
   } catch {
@@ -294,6 +314,32 @@ export interface LocalAccount {
   lastLoginAt: string | null;
   createdAt: string;
 }
+
+/** One entry of the platform account-event trail (#40). `id` is the server's numeric event id as a string; `details` holds ids and codes only. */
+export interface AccountEvent {
+  id: string;
+  at: string;
+  actorKind: string;
+  actorUserId: string | null;
+  targetUserId: string;
+  action: string;
+  tenantId: string | null;
+  details: Record<string, unknown>;
+}
+
+const parseAccountEvent = (raw: unknown): AccountEvent | null => {
+  if (!isRecord(raw) || (typeof raw.id !== 'string' && typeof raw.id !== 'number') || typeof raw.action !== 'string') return null;
+  return {
+    id: String(raw.id),
+    at: typeof raw.at === 'string' ? raw.at : '',
+    actorKind: typeof raw.actorKind === 'string' ? raw.actorKind : '',
+    actorUserId: typeof raw.actorUserId === 'string' ? raw.actorUserId : null,
+    targetUserId: typeof raw.targetUserId === 'string' ? raw.targetUserId : '',
+    action: raw.action,
+    tenantId: typeof raw.tenantId === 'string' ? raw.tenantId : null,
+    details: isRecord(raw.details) ? raw.details : {},
+  };
+};
 
 /**
  * JSON request for the sign-in, second-factor, password and local-account calls. Failures become an ApiError whose message
@@ -893,7 +939,8 @@ export const ApiClient = {
     const recoveryCodes = parseRecoveryCodes(data);
     const enrolledAt = isRecord(data) && typeof data.enrolledAt === 'string' ? data.enrolledAt : '';
     let session: LocalLoginResponse | null = null;
-    if (mfaToken) {
+    // From a session the server also replaces the session (the old one ends), so a session body is read on both paths
+    if (mfaToken || (isRecord(data) && typeof data.sessionRef === 'string')) {
       const result = parseLocalLoginResult(data);
       if (result.kind === 'session') {
         const { kind: _kind, ...rest } = result;
@@ -966,6 +1013,33 @@ export const ApiClient = {
   async enableUser(userId: string, code: string): Promise<LocalAccount> {
     const data = await accountJson<{ user?: unknown }>('POST', `/platform/users/${encodeURIComponent(userId)}/enable`, { body: { code } });
     return parseAccount(data?.user);
+  },
+
+  /** GET /api/v1/platform/account-events (platform administrators): security changes to local accounts, newest first. `before` is the previous page's `nextBefore`. */
+  async listAccountEvents(limit?: number, before?: string): Promise<{ events: AccountEvent[]; nextBefore: string | null }> {
+    const query = new URLSearchParams();
+    if (limit !== undefined) query.set('limit', String(limit));
+    if (before) query.set('before', before);
+    const qs = query.toString();
+    const data = await accountJson<{ events?: unknown; nextBefore?: unknown }>('GET', `/platform/account-events${qs ? `?${qs}` : ''}`);
+    const events = Array.isArray(data?.events) ? data.events.map(parseAccountEvent).filter((e): e is AccountEvent => e !== null) : [];
+    const next = data?.nextBefore;
+    return { events, nextBefore: typeof next === 'string' || typeof next === 'number' ? String(next) : null };
+  },
+
+  /** GET /api/v1/auth/config: how long a session may sit idle, in seconds (0 = no limit), so the browser locks after the same period. Needs no session. */
+  async getAuthConfig(): Promise<{ sessionIdleSeconds: number }> {
+    const data = await accountJson<unknown>('GET', '/auth/config', { anonymous: true });
+    return { sessionIdleSeconds: parseIdleSeconds(isRecord(data) ? data.sessionIdleSeconds : undefined) };
+  },
+
+  /** GET /api/v1/auth/me: a cheap authenticated request that keeps the server session from going idle while the person works. Never throws. */
+  async heartbeat(): Promise<void> {
+    try {
+      await accountJson<unknown>('GET', '/auth/me');
+    } catch {
+      // a dead session is reported by the response signal; an outage is retried at the next beat
+    }
   },
 
   /** POST /api/v1/auth/logout: asks the server to end the session and clear the cookie. Never throws; sends no marker, so it never signals. */

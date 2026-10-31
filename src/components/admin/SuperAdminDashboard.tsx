@@ -40,6 +40,7 @@ import { frameworkLabel, frameworkPolicySummary } from '../../data/tenantFramewo
 import { ApiClient, ApiError, type LocalAccount } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { NewTenantModal } from './NewTenantModal';
+import { AccountEventsPanel } from './AccountEventsPanel';
 import { EditEnclaveModal } from './EditEnclaveModal';
 import { EditInvitationModal } from './EditInvitationModal';
 import { FinanceProvisioningLog } from './FinanceProvisioningLog';
@@ -82,7 +83,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
     refreshAllTeams,
   } = useTenant();
 
-  const { logout, openAuthModal, mfaEnrolled } = useAuth();
+  const { logout, openAuthModal, mfaEnrolled, lockSession } = useAuth();
 
   // Modals & UI state
   const [isNewTenantModalOpen, setIsNewTenantModalOpen] = useState(false);
@@ -596,6 +597,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
 
+            <button type="button" onClick={() => void lockSession('idle')} className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 hover:text-white text-xs font-semibold border border-slate-700 flex items-center gap-1.5 transition-colors"><Lock className="w-3.5 h-3.5" aria-hidden="true" /><span>Lock now</span></button>
+
             <button
               onClick={async () => {
                 await logout();
@@ -1102,6 +1105,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             </div>
           </DialogOverlay>
         )}
+
+        {/* Section 2c: Account events (read-only, platform administrators) */}
+        <AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} />
 
         {/* Section 3: Pending & Recent Onboarding Invitations */}
         <div className="stitch-card p-6 space-y-4">

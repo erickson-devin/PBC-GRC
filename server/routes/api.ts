@@ -14,6 +14,7 @@ import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin'
 import { listStoredPlatformAdminEmails } from '../platformSetup';
 import setupRouter from './setup';
 import platformUsersRouter from './platformUsers';
+import platformAccountEventsRouter from './platformAccountEvents';
 
 const router = Router();
 
@@ -68,6 +69,8 @@ router.get('/platform/admins', authOnlyMiddleware, async (req, res) => {
 
 // Local-account administration (reset, disable, enable): platform administrators only, checked inside the router
 router.use('/platform/users', authOnlyMiddleware, platformUsersRouter);
+// The account event log (password and MFA changes, disable / enable, role changes, sign-out): read-only, platform administrators only
+router.use('/platform/account-events', authOnlyMiddleware, platformAccountEventsRouter);
 
 // Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
 // tenants they belong to, or creates one and becomes its first TENANT_OWNER.

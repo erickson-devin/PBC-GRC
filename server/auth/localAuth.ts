@@ -27,10 +27,10 @@ export class LocalAuthConfigError extends Error {
 }
 
 export class LocalTokenError extends Error {
-  /** Why the token was refused: 'expired' is only ever set after the signature checked out. */
-  readonly code: 'invalid' | 'expired' | 'revoked';
+  /** Why the token was refused: 'expired' is only ever set after the signature checked out; 'idle' and 'mfa_required' are session-store refusals. */
+  readonly code: 'invalid' | 'expired' | 'revoked' | 'idle' | 'mfa_required';
 
-  constructor(message: string, code: 'invalid' | 'expired' | 'revoked' = 'invalid') {
+  constructor(message: string, code: 'invalid' | 'expired' | 'revoked' | 'idle' | 'mfa_required' = 'invalid') {
     super(message);
     this.name = 'LocalTokenError';
     this.code = code;
@@ -66,6 +66,7 @@ export function assertAuthConfig(env: NodeJS.ProcessEnv = process.env): void {
   }
   getMfaRequirement(env);
   getPasswordHistoryDepth(env);
+  getSessionIdleMinutes(env);
   const mfaKey = (env.MFA_ENCRYPTION_KEY ?? '').trim();
   if (mfaKey !== '' && mfaKey.length < MIN_MFA_KEY_LENGTH) {
     throw new LocalAuthConfigError(
@@ -102,6 +103,23 @@ export function getPasswordHistoryDepth(env: NodeJS.ProcessEnv = process.env): n
   return depth;
 }
 
+/** Minutes without a request after which a session ends (NIST SP 800-171 3.1.10 / 3.1.11); 0 disables the idle timeout. */
+export const DEFAULT_SESSION_IDLE_MINUTES = 15;
+export const MAX_SESSION_IDLE_MINUTES = 1440;
+
+/** Parses SESSION_IDLE_MINUTES (whole number 0..1440, blank = default). Anything else is a configuration error. */
+export function getSessionIdleMinutes(env: NodeJS.ProcessEnv = process.env): number {
+  const value = (env.SESSION_IDLE_MINUTES ?? '').trim();
+  if (value === '') return DEFAULT_SESSION_IDLE_MINUTES;
+  const minutes = /^\d{1,4}$/.test(value) ? Number(value) : NaN;
+  if (!Number.isInteger(minutes) || minutes > MAX_SESSION_IDLE_MINUTES) {
+    throw new LocalAuthConfigError(
+      `SESSION_IDLE_MINUTES must be a whole number of minutes from 0 to ${MAX_SESSION_IDLE_MINUTES} (0 disables the idle timeout; empty means the default, ${DEFAULT_SESSION_IDLE_MINUTES}).`
+    );
+  }
+  return minutes;
+}
+
 /** 400 body when a new password matches the current one or one of the previous N (never counts as a failed login). */
 export const PASSWORD_REUSED = {
   error: 'That password was used recently. Choose one you have not used before.',
@@ -113,6 +131,9 @@ export function authStartupWarnings(env: NodeJS.ProcessEnv = process.env): strin
   const warnings: string[] = [];
   if (getMfaRequirement(env) === 'off' && !isNonProductionEnv(env)) {
     warnings.push('MFA_REQUIRED=off in production: multi-factor authentication is disabled; NIST SP 800-171 3.5.3 is not met by the application');
+  }
+  if (getSessionIdleMinutes(env) === 0 && !isNonProductionEnv(env)) {
+    warnings.push('SESSION_IDLE_MINUTES=0 in production: sessions never end for inactivity; NIST SP 800-171 3.1.11 expects a defined inactivity limit');
   }
   const ttl = Number((env.LOCAL_AUTH_TOKEN_TTL_SECONDS ?? '').trim());
   if (Number.isFinite(ttl) && ttl > 43200) {

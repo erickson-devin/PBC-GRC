@@ -12,6 +12,8 @@ import { startVmScheduler, stopVmScheduler } from './vm/scheduler';
 import { abortVmRuns, activeVmRuns, isVmRunActive } from './vm/worker';
 import { markRunInterrupted } from './vm/store';
 import { describeRetention, startAssessmentEventRetention, stopAssessmentEventRetention } from './assessmentEventRetention';
+import { startAccountRetention, stopAccountRetention } from './accountRetention';
+import { describeAccountEventRetention } from './auth/accountEvents';
 import { SHUTDOWN_CANCEL_MESSAGE, VM_SHUTDOWN_MESSAGE, createShutdown, installSignalHandlers, trackedSspJobs } from './shutdown';
 import { cancelJob, isJobActive } from './ssp/runner';
 import { updateJob } from './ssp/store';
@@ -138,6 +140,11 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
       console.log('[Startup] ' + describeRetention(retention));
       if (retention.warning) console.warn('[Startup] ' + retention.warning);
     }
+    const accountRetention = startAccountRetention();
+    if (accountRetention) {
+      console.log('[Startup] ' + describeAccountEventRetention(accountRetention));
+      if (accountRetention.warning) console.warn('[Startup] ' + accountRetention.warning);
+    }
     if (process.env.VM_ALLOW_INSECURE_TOKENS === 'true') {
       console.warn('[Startup] VM_ALLOW_INSECURE_TOKENS=true: service tokens may be created over plain HTTP and will cross the network in clear text');
     }
@@ -153,7 +160,7 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
 installSignalHandlers(createShutdown({
   closeServer: () => new Promise<void>((resolve) => { server.close(() => resolve()); server.closeIdleConnections(); }),
   forceCloseConnections: () => server.closeAllConnections(),
-  stopScheduler: () => { stopVmScheduler(); stopAssessmentEventRetention(); },
+  stopScheduler: () => { stopVmScheduler(); stopAssessmentEventRetention(); stopAccountRetention(); },
   activeSspJobs: () => trackedSspJobs(isJobActive),
   cancelSspJob: (scope, id) => cancelJob(scope, id),
   isSspJobActive: isJobActive,

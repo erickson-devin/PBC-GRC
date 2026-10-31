@@ -408,6 +408,36 @@ assert(
 );
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_local_user_password_history_user ON local_user_password_history (user_id, id DESC);'), 'PH5: the history table is indexed by user, newest first');
 
+console.log('\n--- Sessions and account events (#163, #40) ---');
+const lsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_sessions (');
+const lsBlock = lsAt < 0 ? '' : TABLES_SQL.slice(lsAt, TABLES_SQL.indexOf('\n  );', lsAt));
+const aeAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_account_events (');
+const aeBlock = aeAt < 0 ? '' : TABLES_SQL.slice(aeAt, TABLES_SQL.indexOf('\n  );', aeAt));
+assert(lsAt > phAt && phAt > 0 && aeAt > phAt, 'LS1: local_sessions and local_account_events are created after local_user_password_history');
+assert(
+  lsBlock.includes('CONSTRAINT fk_local_sessions_user FOREIGN KEY (user_id) REFERENCES local_users (id) ON DELETE CASCADE') &&
+    lsBlock.includes("CONSTRAINT local_sessions_sid_check CHECK (sid ~ '^[A-Za-z0-9_-]{16,64}$')") &&
+    lsBlock.includes("CONSTRAINT local_sessions_reason_check CHECK (revoke_reason IS NULL OR revoke_reason IN ('signed_out', 'idle', 'mfa_required', 'admin'))"),
+  'LS2: the sessions table cascades with the account and checks the sid shape and the revoke reason'
+);
+const sessionTables = ['local_sessions', 'local_account_events'];
+assert(
+  lsBlock !== '' && aeBlock !== '' && !/\btenant_id\b/.test(lsBlock) && !/\btenant_id\b/.test(aeBlock) &&
+    sessionTables.every(
+      (t) => !RLS_TENANT_TABLES.some((r) => r.table === t) && !(RLS_PROGRAM_TABLES as readonly string[]).includes(t) && !buildRlsSql().includes(t)
+    ),
+  'LS3: neither table has a tenant_id column, is in a row-security list or has a policy (global identity data)'
+);
+assert(
+  aeBlock.includes("position('@' in details::text) = 0") && aeBlock.includes('CONSTRAINT local_account_events_action_check CHECK (action IN ('),
+  'AE1: account event details cannot hold an "@" and the action is a closed list'
+);
+assert(
+  TABLES_SQL.includes('local_account_events_guard') && TABLES_SQL.includes('BEFORE UPDATE OR DELETE ON local_account_events') && TABLES_SQL.includes('BEFORE TRUNCATE ON local_account_events'),
+  'AE2: the account event table is guarded against UPDATE, DELETE and TRUNCATE'
+);
+assert(!/\b(email|name|password|token)\s+(VARCHAR|TEXT)/i.test(lsBlock) && !/\b(email|name|password|token)\s+(VARCHAR|TEXT)/i.test(aeBlock), 'AE3: neither table has an email, name, password or token column');
+
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);
 assert(url.config.connectionString === 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require', 'DATABASE_URL is passed through as the connection string');

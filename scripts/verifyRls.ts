@@ -15,6 +15,7 @@
  *   6. control assessment history: tenant isolation of control_assessment_events, and the CHECK constraints on its source and notes digest. 3d: the SELECT-only app.event_retention policy on programs (the retention sweep's enumeration) sees nothing without its GUC and can never write. 3e: the history of a deleted program is untouched by the daily sweep, found by the operator pass (pruneDeletedProgramEvents) and deleted only through the program-confined deletes, and FORCE row security is back afterwards.
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps. The same section proves local_user_password_history: a global table without row security, a bcrypt-only CHECK, a password change records the previous hash and keeps PASSWORD_HISTORY_DEPTH of them (none for a temporary password), and deleting the account deletes its history.
  *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS.
+ *   7b. account events (issue #40) and sessions (issue #163): local_sessions and local_account_events are global tables without row security; the sessions foreign key cascades, the sid / revoke-reason CHECKs refuse bad rows, a revoke changes exactly one row, and pruning removes only sessions that expired more than a day ago; the event table is append-only for the application role (UPDATE, DELETE and TRUNCATE refused with 42501), refuses an "@" in details and an action outside the list, and only the retention sweep can delete (the test event is backdated about 4000 days so no real event matches).
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 export {};
@@ -525,6 +526,7 @@ async function main() {
 
   await verifyDiscovery();
   await verifyLocalIdentities();
+  await verifyAccountEvents();
   await verifyProgramIsolation();
 }
 
@@ -742,10 +744,138 @@ async function verifyLocalIdentities() {
 
     await pool.query('DELETE FROM local_users WHERE id = $1', [ID(5)]);
     check((await countPasswordHistory(ID(5))) === 0, 'deleting the account deletes its password history (cascade)');
+
+    // V19 to V24: server-side sessions (local_sessions, issue #163).
+    const { recordSession, revokeSession, pruneExpiredSessions } = await import('../server/auth/sessionStore');
+    const sessFlags = await pool.query("SELECT relrowsecurity FROM pg_class WHERE relname = 'local_sessions' AND relkind = 'r'");
+    check(sessFlags.rows[0]?.relrowsecurity === false, 'local_sessions: row security is NOT enabled (global identity table)', JSON.stringify(sessFlags.rows));
+    check(
+      !RLS_TENANT_TABLES.some((t) => t.table === 'local_sessions') && !(RLS_PROGRAM_TABLES as readonly string[]).includes('local_sessions'),
+      'local_sessions is in neither RLS_TENANT_TABLES nor RLS_PROGRAM_TABLES'
+    );
+    const sessFk = await pool.query("SELECT confdeltype FROM pg_constraint WHERE conname = 'fk_local_sessions_user'");
+    check(sessFk.rows[0]?.confdeltype === 'c', 'local_sessions: the foreign key to local_users cascades on delete', JSON.stringify(sessFk.rows));
+
+    await insertHashedUser(7, H[0]);
+    const nowSec = Math.floor(Date.now() / 1000);
+    check(
+      await rejects(() => pool.query("INSERT INTO local_sessions (sid, user_id, issued_at, expires_at) VALUES ('bad sid!', $1, NOW(), NOW())", [ID(7)]), { code: '23514', constraint: 'local_sessions_sid_check' }),
+      'a session id with characters outside the base64url set is refused (sid_check)', lastRejection
+    );
+    check(
+      await rejects(
+        () => pool.query("INSERT INTO local_sessions (sid, user_id, issued_at, expires_at, revoked_at) VALUES ('rls_verify_sess_0000099', $1, NOW(), NOW(), NOW())", [ID(7)]),
+        { code: '23514', constraint: 'local_sessions_revoked_check' }
+      ),
+      'revoked_at without a revoke_reason is refused (revoked_check)', lastRejection
+    );
+
+    const SID = 'rls_verify_sess_0000001';
+    await recordSession({ sid: SID, userId: ID(7), issuedAt: nowSec, expiresAt: nowSec + 3600, mfaVerified: false });
+    const firstRevoke = await revokeSession(SID, 'signed_out');
+    const secondRevoke = await revokeSession(SID, 'idle');
+    const sessRow = await pool.query('SELECT revoke_reason FROM local_sessions WHERE sid = $1', [SID]);
+    check(firstRevoke === 1 && sessRow.rows.length === 1 && sessRow.rows[0]?.revoke_reason === 'signed_out', 'revoking a session sets revoke_reason signed_out on exactly 1 row', `${firstRevoke}, ${JSON.stringify(sessRow.rows)}`);
+    check(secondRevoke === 0 && (await pool.query('SELECT revoke_reason FROM local_sessions WHERE sid = $1', [SID])).rows[0]?.revoke_reason === 'signed_out', 'a second revoke changes 0 rows and keeps the first reason', String(secondRevoke));
+
+    // Only rows that expired more than a day ago go; the one far in the past is ours, the other is current.
+    await recordSession({ sid: 'rls_verify_sess_0000002', userId: ID(7), issuedAt: nowSec - 3 * 86_400, expiresAt: nowSec - 2 * 86_400, mfaVerified: false });
+    await recordSession({ sid: 'rls_verify_sess_0000003', userId: ID(7), issuedAt: nowSec, expiresAt: nowSec + 3600, mfaVerified: false });
+    await pruneExpiredSessions(Date.now());
+    const kept = await pool.query("SELECT sid FROM local_sessions WHERE sid IN ('rls_verify_sess_0000002', 'rls_verify_sess_0000003') ORDER BY sid");
+    check(kept.rows.length === 1 && kept.rows[0]?.sid === 'rls_verify_sess_0000003', 'pruning deletes the session that expired two days ago and keeps the one expiring in an hour', JSON.stringify(kept.rows));
+
+    await pool.query('DELETE FROM local_users WHERE id = $1', [ID(7)]);
+    const orphans = await pool.query("SELECT COUNT(*)::int AS n FROM local_sessions WHERE user_id = $1", [ID(7)]);
+    check(orphans.rows[0]?.n === 0, 'deleting the account deletes its sessions (cascade)', JSON.stringify(orphans.rows));
   } finally {
     if (savedDepth === undefined) delete process.env.PASSWORD_HISTORY_DEPTH;
     else process.env.PASSWORD_HISTORY_DEPTH = savedDepth;
     await pool.query("DELETE FROM local_users WHERE id LIKE 'rls_verify_lu_%'").catch(() => undefined);
+  }
+}
+
+async function verifyAccountEvents() {
+  console.log('\n--- 7b. Account events (local_account_events, append-only, global table) ---');
+  const { recordAccountEvent, listAccountEvents, pruneAccountEvents } = await import('../server/auth/accountEvents');
+  let lastRejection = '';
+  // True only for the expected SQLSTATE (and constraint when given), so a stray error cannot masquerade as the refusal under test.
+  const rejects = async (run: () => Promise<unknown>, want: { code: string; constraint?: string }): Promise<boolean> => {
+    try {
+      await run();
+      lastRejection = 'no error';
+      return false;
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      lastRejection = `code ${e.code}, constraint ${e.constraint}`;
+      return e.code === want.code && (want.constraint === undefined || e.constraint === want.constraint);
+    }
+  };
+  const TARGET = 'rls_verify_ev_1';
+  const OLD_TARGET = 'rls_verify_ev_old';
+
+  try {
+    // V25: global table, no row security, no policy.
+    const flags = await pool.query("SELECT relrowsecurity FROM pg_class WHERE relname = 'local_account_events' AND relkind = 'r'");
+    check(flags.rows[0]?.relrowsecurity === false, 'local_account_events: row security is NOT enabled (global table)', JSON.stringify(flags.rows));
+    check(
+      !RLS_TENANT_TABLES.some((t) => t.table === 'local_account_events') && !(RLS_PROGRAM_TABLES as readonly string[]).includes('local_account_events'),
+      'local_account_events is in neither RLS_TENANT_TABLES nor RLS_PROGRAM_TABLES'
+    );
+
+    // V26: the application role can append and read.
+    await recordAccountEvent({ actorKind: 'cli', actorUserId: null, targetUserId: TARGET, action: 'mfa_reset', details: { reason: 'rls_verify' } });
+    const listed = (await listAccountEvents({ limit: 200 })).filter((e) => e.targetUserId === TARGET);
+    check(listed.length === 1 && listed[0].action === 'mfa_reset' && listed[0].actorKind === 'cli', 'the application role can append an event and read it back', JSON.stringify(listed));
+
+    // V27 to V29: append-only. The guard trigger must exist before the destructive statements run (TRUNCATE would wipe a real trail).
+    const triggers = await pool.query("SELECT tgname FROM pg_trigger WHERE tgrelid = 'local_account_events'::regclass AND NOT tgisinternal ORDER BY tgname");
+    const haveGuard = triggers.rows.some((r) => r.tgname === 'trg_local_account_events_guard') && triggers.rows.some((r) => r.tgname === 'trg_local_account_events_no_truncate');
+    check(haveGuard, 'the append-only triggers exist on local_account_events', JSON.stringify(triggers.rows));
+    if (haveGuard) {
+      check(
+        await rejects(() => pool.query("UPDATE local_account_events SET action = 'signed_out' WHERE target_user_id = $1", [TARGET]), { code: '42501' }),
+        'an UPDATE of an event is refused (42501, append-only)', lastRejection
+      );
+      check(
+        await rejects(() => pool.query('DELETE FROM local_account_events WHERE target_user_id = $1', [TARGET]), { code: '42501' }),
+        'a DELETE without the retention setting is refused (42501)', lastRejection
+      );
+      check(await rejects(() => pool.query('TRUNCATE local_account_events'), { code: '42501' }), 'a TRUNCATE is refused (42501)', lastRejection);
+    }
+
+    // V30: the CHECK constraints.
+    check(
+      await rejects(() => pool.query(`INSERT INTO local_account_events (actor_kind, target_user_id, action, details) VALUES ('system', $1, 'signed_out', '{"reason":"a@b.mil"}'::jsonb)`, [TARGET]), { code: '23514', constraint: 'local_account_events_details_check' }),
+      'details containing an "@" are refused (details_check)', lastRejection
+    );
+    check(
+      await rejects(() => pool.query(`INSERT INTO local_account_events (actor_kind, target_user_id, action) VALUES ('system', $1, 'made_up')`, [TARGET]), { code: '23514', constraint: 'local_account_events_action_check' }),
+      'an action outside the closed list is refused (action_check)', lastRejection
+    );
+
+    // V31: the retention sweep is the only way to delete. The test row is backdated far enough (about 11 years) that no real event can match the cutoff.
+    await pool.query(
+      "INSERT INTO local_account_events (at, actor_kind, target_user_id, action) VALUES (NOW() - INTERVAL '4000 days', 'system', $1, 'session_revoked')",
+      [OLD_TARGET]
+    );
+    const dry = await pruneAccountEvents({ now: new Date(), days: 3000, dryRun: true });
+    const swept = await pruneAccountEvents({ now: new Date(), days: 3000 });
+    const gone = await pool.query('SELECT COUNT(*)::int AS n FROM local_account_events WHERE target_user_id = $1', [OLD_TARGET]);
+    check(dry.deleted >= 1 && swept.deleted >= 1 && swept.errors === 0 && gone.rows[0]?.n === 0, 'the retention sweep deletes the backdated event (the dry run counted it first)', `${JSON.stringify(dry)} ${JSON.stringify(swept)}`);
+  } finally {
+    // The test rows go through the same door the sweep uses.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.account_event_retention', 'on', true)");
+      await client.query("DELETE FROM local_account_events WHERE target_user_id LIKE 'rls_verify_%'");
+      await client.query('COMMIT');
+    } catch {
+      await client.query('ROLLBACK').catch(() => undefined);
+    } finally {
+      client.release();
+    }
   }
 }
 
