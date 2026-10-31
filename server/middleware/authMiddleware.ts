@@ -4,9 +4,12 @@ import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 import type { TenantRole } from '../../src/types/tenant';
 import type { Program } from '../programs';
-import { LocalAuthConfigError, LocalTokenError, verifyLocalToken } from '../auth/localAuth';
-import { getLocalUserAuthState } from '../auth/localUsers';
-import { CSRF_REJECTED, SESSION_MISMATCH, hasSessionMarker, isCrossSiteRequest, markerMatchesSession, readSessionCookie, readSessionMarker } from '../auth/session';
+import { LocalAuthConfigError, LocalTokenError, getMfaRequirement, getSessionIdleMinutes, verifyLocalToken } from '../auth/localAuth';
+import { adoptSession, getSessionAuthState, getTouchedLastSeen, revokeSession, sessionNowMs, touchSession } from '../auth/sessionStore';
+import { accountLogRef } from '../auth/loginThrottle';
+import { recordAccountEventBestEffort } from '../auth/accountEvents';
+import { mfaRequiredNow } from '../auth/mfaEnforcement';
+import { CSRF_REJECTED, SESSION_MISMATCH, clearSessionCookie, hasSessionMarker, isCrossSiteRequest, markerMatchesSession, readSessionCookie, readSessionMarker } from '../auth/session';
 import { isNonProductionEnv } from '../runtimeEnv';
 
 // Extend Express Request interface with authenticated user & tenant context
@@ -182,7 +185,15 @@ interface Authenticated {
   mustChangePassword: boolean;
   /** The token's session id (the sessionRef the SPA sends as its marker); absent for mock tokens. */
   sid?: string;
+  /** The token's authentication methods (['pwd'] or ['pwd', 'otp']); absent for mock tokens. */
+  amr?: string[];
 }
+
+/** 401 body for a session that ended because it was idle for longer than SESSION_IDLE_MINUTES. */
+export const SESSION_IDLE = { error: 'Unauthorized: the session ended after a period of inactivity', reason: 'session_idle' } as const;
+
+/** 401 body for a session without a second factor whose account now needs one (a role was raised after sign-in). */
+export const MFA_REQUIRED_NOW = { error: 'Unauthorized: your role now requires two-step verification. Sign in again.', reason: 'mfa_required' } as const;
 
 /**
  * Turns a bearer token into an identity. Throws on any invalid token (callers answer 401).
@@ -198,11 +209,34 @@ async function authenticateToken(token: string): Promise<Authenticated> {
 
   // 2. Local identity: verified with the local secret only, never contacting any external service.
   const claims = verifyLocalToken(token);
-  // One primary-key read per request: a password change, a disable and an MFA reset bump token_version, which ends every older session.
-  // Tokens minted before the upgrade carry no `ver` and count as version 0.
-  const state = await getLocalUserAuthState(claims.sub);
+  // One joined read per request (the account and its session row): a password change, a disable and an MFA reset bump token_version, which
+  // ends every older session; a sign-out and the idle timeout end a single session. Tokens minted before the upgrade carry no `ver` and count as version 0.
+  const state = await getSessionAuthState(claims.sub, claims.sid);
   if (!state || state.disabled || (claims.ver ?? 0) !== state.tokenVersion) {
     throw new LocalTokenError('Session is no longer valid', 'revoked');
+  }
+  if (!claims.sid) throw new LocalTokenError('Session is no longer valid', 'revoked');
+  const now = sessionNowMs();
+  const amr = claims.amr ?? [];
+  if (state.session === null) {
+    // A validly signed token with no row (issued before sessions were recorded): adopt it, counted as active now.
+    await adoptSession({ sid: claims.sid, userId: claims.sub, issuedAt: claims.iat, expiresAt: claims.exp, mfaVerified: amr.includes('otp') });
+  } else {
+    if (state.session.revokedReason !== null) {
+      throw new LocalTokenError('Session is no longer valid', state.session.revokedReason === 'idle' ? 'idle' : 'revoked');
+    }
+    const idleMinutes = getSessionIdleMinutes();
+    const lastSeen = Math.max(state.session.lastSeenMs, getTouchedLastSeen(claims.sid) ?? 0);
+    if (idleMinutes > 0 && now - lastSeen > idleMinutes * 60_000) {
+      await revokeSession(claims.sid, 'idle');
+      throw new LocalTokenError('Session is no longer valid', 'idle');
+    }
+  }
+  try {
+    await touchSession(claims.sid, now);
+  } catch {
+    // The in-process time is already current; a failed write only means the database value is older until the next request.
+    console.error('[AuthMiddleware] Session touch failed');
   }
   return {
     identity: identityFromClaims(claims as unknown as Record<string, unknown>, {
@@ -213,6 +247,7 @@ async function authenticateToken(token: string): Promise<Authenticated> {
     devMock: false,
     mustChangePassword: state.mustChangePassword,
     sid: claims.sid,
+    amr: claims.amr,
   };
 }
 
@@ -265,8 +300,16 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
       res.status(503).json({ error: 'Authentication is temporarily unavailable' });
       return;
     }
+    const reason =
+      err.code === 'expired' ? 'session_expired' : err.code === 'revoked' ? 'session_revoked' : err.code === 'idle' ? 'session_idle' : 'session_invalid';
+    if (reason === 'session_idle' || reason === 'session_revoked') {
+      // Never a session id, email or cookie value: the reason code says everything a reader of the log needs.
+      console.error(`[AuthMiddleware] Session refused (${reason})`);
+      if (viaCookie) clearSessionCookie(req, res);
+      res.status(401).json(reason === 'session_idle' ? SESSION_IDLE : SESSION_REVOKED);
+      return;
+    }
     console.error('[AuthMiddleware] Token verification failed:', errorMessage(err));
-    const reason = err.code === 'expired' ? 'session_expired' : err.code === 'revoked' ? 'session_revoked' : 'session_invalid';
     res.status(401).json({ error: 'Unauthorized: Invalid or expired token', reason });
     return;
   }
@@ -276,6 +319,40 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
   if (viaCookie && !authenticated.devMock && !markerMatchesSession(readSessionMarker(req), authenticated.sid)) {
     res.status(401).json(SESSION_MISMATCH);
     return;
+  }
+
+  // Privilege raised mid-session (issue #39): a session that passed with the password only is refused once the account needs a second
+  // factor (a role was raised after sign-in). Applies in any MFA mode except off; the person signs in again and is walked through enrolment.
+  if (!authenticated.devMock && authenticated.sid) {
+    let refuse = false;
+    try {
+      const email = authenticated.identity.user.email ?? '';
+      if (getMfaRequirement() !== 'off' && !(authenticated.amr ?? []).includes('otp')) {
+        refuse = await mfaRequiredNow({ id: authenticated.identity.user.uid, email });
+      }
+    } catch (err: unknown) {
+      if (err instanceof LocalAuthConfigError) {
+        console.error('[AuthMiddleware] Local auth is misconfigured:', err.message);
+        res.status(503).json({ error: 'Authentication is not available: server is misconfigured' });
+        return;
+      }
+      console.error('[AuthMiddleware] Account lookup failed:', errorMessage(err));
+      res.status(503).json({ error: 'Authentication is temporarily unavailable' });
+      return;
+    }
+    if (refuse) {
+      const uid = authenticated.identity.user.uid;
+      try {
+        await revokeSession(authenticated.sid, 'mfa_required');
+      } catch {
+        console.error('[AuthMiddleware] Session revoke failed');
+      }
+      await recordAccountEventBestEffort({ actorKind: 'system', actorUserId: null, targetUserId: uid, action: 'session_revoked', details: { reason: 'mfa_required' } });
+      console.error(`[AuthMiddleware] Session refused (mfa_required): account ${accountLogRef(authenticated.identity.user.email ?? '')}`);
+      if (viaCookie) clearSessionCookie(req, res);
+      res.status(401).json(MFA_REQUIRED_NOW);
+      return;
+    }
   }
 
   // A forced password change (temporary password after an admin reset or a CLI-created account) leaves exactly one

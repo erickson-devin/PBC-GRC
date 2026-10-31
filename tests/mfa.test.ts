@@ -18,7 +18,9 @@ import { __resetMemoryTenantsForTests, createTenantWithOwner, upsertTenantMember
 import { __resetMemoryInvitationsForTests, createInvitation } from '../server/invitations';
 import { __resetPlatformSetupForTests, addPlatformAdmin } from '../server/platformSetup';
 import { __resetLoginThrottleForTests, __resetMfaStateForTests, __setMfaClockForTests } from '../server/routes/auth';
-import { sessionCookieFrom } from './sessionCookieJar';
+import { __resetSessionsForTests } from '../server/auth/sessionStore';
+import { __resetMfaRequirementCacheForTests } from '../server/auth/mfaEnforcement';
+import { rawSetCookie, sessionCookieFrom } from './sessionCookieJar';
 
 /**
  * Second factor (TOTP) for local accounts, end to end through the real server: enrolment, the two-step login, replay and
@@ -115,6 +117,8 @@ async function reset() {
   __resetMemoryInvitationsForTests();
   __resetLoginThrottleForTests();
   __resetMfaStateForTests();
+  __resetSessionsForTests();
+  __resetMfaRequirementCacheForTests();
   setClock(T);
   setMode('off');
 }
@@ -208,10 +212,13 @@ async function run() {
   a1.recovery = ok1.body?.recoveryCodes ?? [];
   assert(ok1.status === 200 && a1.recovery.length === 8 && a1.recovery.every((c) => /^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/.test(c)), 'the right code confirms it and returns 8 recovery codes (XXXXX-XXXXX)', ok1.body);
   assert(ok1.headers.get('cache-control') === 'no-store', 'confirm is no-store too');
-  const st1 = await call('GET', '/auth/mfa', { token: t1 });
+  // Confirming from a password-only session re-issues the session with the second factor (new sid) and ends the old one (#39): the follow-up checks use the new token.
+  const t1b: string = ok1.body?.token;
+  assert(typeof t1b === 'string' && t1b !== t1 && ok1.body?.sessionRef !== undefined && (await call('GET', '/auth/me', { token: t1 })).body?.reason === 'session_revoked', 'M39-12: confirming from a session returns a new session (new sessionRef) and the pre-enrolment token is 401 session_revoked');
+  const st1 = await call('GET', '/auth/mfa', { token: t1b });
   assert(st1.body?.enrolled === true && st1.body?.recoveryCodesRemaining === 8 && st1.body?.required === false && st1.body?.mode === 'off', 'GET /auth/mfa -> enrolled, 8 codes left, not required, mode off', st1.body);
-  assert((await call('POST', '/auth/mfa/enrol/start', { token: t1 })).body?.reason === 'mfa_already_enrolled', 'start again -> 409 mfa_already_enrolled');
-  assert((await call('POST', '/auth/mfa/enrol/confirm', { token: t1, body: { code: codeAt(a1, T) } })).status === 409, 'confirm again -> 409');
+  assert((await call('POST', '/auth/mfa/enrol/start', { token: t1b })).body?.reason === 'mfa_already_enrolled', 'start again -> 409 mfa_already_enrolled');
+  assert((await call('POST', '/auth/mfa/enrol/confirm', { token: t1b, body: { code: codeAt(a1, T) } })).status === 409, 'confirm again -> 409');
 
   const a2 = await mk('pending2@mfa.mil');
   const t2: string = (await login(a2.email)).body?.token;
@@ -639,12 +646,21 @@ async function run() {
   const r7_38: unknown[] = [];
   for (const mode of ['off', 'all', 'privileged']) {
     setMode(mode);
-    const r = await act29('disable', { code: '123456' }, { tok: tok2 });
+    // #39: where a second factor is required (all; privileged for an administrator) a password-only session is refused before the step-up is reached,
+    // and the refusal revokes it, so each mode gets its own password-only token.
+    const tokMode = mode === 'off' ? tok2 : signLocalToken({ id: adm2.id, email: adm2.email, name: 'admin29b', tokenVersion: 0 }).token;
+    const r = await act29('disable', { code: '123456' }, { tok: tokMode });
     s7_38.push(r.status);
     r7_38.push(r.body?.reason);
   }
   setMode('off');
-  assert(s7_38.every((s) => s === 409) && r7_38.every((r) => r === 'mfa_not_enrolled') && (await disabled29()) === false, 'S38-7: an administrator with no second factor of their own -> 409 mfa_not_enrolled in every MFA_REQUIRED mode, target untouched', [s7_38, r7_38]);
+  assert(
+    JSON.stringify(s7_38) === JSON.stringify([409, 401, 401]) &&
+      JSON.stringify(r7_38) === JSON.stringify(['mfa_not_enrolled', 'mfa_required', 'mfa_required']) &&
+      (await disabled29()) === false,
+    'S38-7: an administrator with no second factor of their own -> 409 mfa_not_enrolled with MFA_REQUIRED off; where a second factor is required (all, privileged) the password-only session is refused first (401 mfa_required, #39); target untouched',
+    [s7_38, r7_38]
+  );
 
   const s8a_38 = await act29('disable', { recoveryCode: adm29.recovery[0] });
   const s8b_38 = await act29('disable', { code: adm29.recovery[0] });
@@ -973,6 +989,124 @@ async function run() {
   const doneH = await call('POST', '/auth/password', { token: eh.confirm.body?.token, body: { currentPassword: TEMPPW, newPassword: NEWPW, code: cH } });
   assert(doneH.status === 200 && doneH.body?.mustChangePassword === false, 'changing it (with the current credential and a code, the same code a refused reuse did not spend) clears the flag', doneH.body);
   assert((await call('GET', '/tenants', { token: doneH.body?.token })).status === 200, 'and the new session is a normal one');
+  setMode('off');
+
+  // ------------------------------------------------------------------------------------------------------------ M39
+  console.log('\n--- M39: privilege raised mid-session (#39) ---');
+  await reset();
+  const T39 = 'tenant-mfa-39';
+  const MFA_REQUIRED_TEXT = 'Unauthorized: your role now requires two-step verification. Sign in again.';
+  const owner39 = await mk('owner39@mfa.mil');
+  await createTenantWithOwner(
+    { id: T39, name: 'Org 39', systemName: 'Enclave 39', systemOwner: 'Owner', enabledFrameworks: ['CMMC_L1'], primaryFramework: 'CMMC_L1' },
+    { userId: owner39.id, email: owner39.email, name: 'Owner' }
+  );
+  await enrol(owner39);
+  const member39 = async (a: Acct, role: 'VIEWER' | 'ASSESSOR') =>
+    upsertTenantMember(T39, { userId: a.id, email: a.email, name: a.email.split('@')[0], role });
+  const promote39 = (ownerTok: string, a: Acct) =>
+    call('POST', `/tenants/${T39}/members`, { token: ownerTok, tenant: T39, body: { userId: a.id, email: a.email, role: 'TENANT_OWNER' } });
+  const captured39: string[] = [];
+  const origLog39 = { log: console.log, warn: console.warn, error: console.error };
+  const grab39 = (...args: unknown[]) => void captured39.push(util.format(...args));
+
+  setMode('privileged');
+  const v39 = await mk('viewer39@mfa.mil');
+  await member39(v39, 'VIEWER');
+  const vLogin39 = await login(v39.email);
+  const vTok39 = vLogin39.body?.token as string;
+  const ownerTok39 = (await signIn(owner39)).token as string;
+  assert((await call('GET', '/auth/me', { token: vTok39 })).status === 200, 'M39-0: (setup) a viewer holds a password-only session in privileged mode', vLogin39.body);
+  const promoted39 = await promote39(ownerTok39, v39);
+  const after39 = await call('GET', '/auth/me', { token: vTok39 });
+  assert(promoted39.status === 200 && after39.status === 401 && after39.body?.reason === 'mfa_required' && after39.body?.error === MFA_REQUIRED_TEXT, 'M39-1: privileged mode: promoting a viewer to TENANT_OWNER -> their next request is 401 mfa_required with the fixed text, at once', [promoted39.status, after39.status, after39.body]);
+
+  const c39 = await mk('cookie39@mfa.mil');
+  await member39(c39, 'VIEWER');
+  const cLogin39 = await login(c39.email);
+  const cCookie39 = cLogin39.body?.token as string;
+  const cRef39 = cLogin39.body?.sessionRef as string;
+  assert((await call('GET', '/auth/me', { cookie: cCookie39, headers: { 'X-PBC-Session': cRef39 } })).status === 200, 'M39-0: (setup) the cookie session works before the promotion');
+  await promote39(ownerTok39, c39);
+  const cAfter39 = await call('GET', '/auth/me', { cookie: cCookie39, headers: { 'X-PBC-Session': cRef39 } });
+  const cLine39 = rawSetCookie(cAfter39.headers) ?? '';
+  assert(cAfter39.status === 401 && cAfter39.body?.reason === 'mfa_required' && /^pbc_session=;/.test(cLine39) && /Expires=Thu, 01 Jan 1970/.test(cLine39), 'M39-2: the same on the cookie path, and the cookie is cleared', [cAfter39.status, cAfter39.body, cLine39]);
+
+  assert((await login(v39.email)).body?.mfa === 'enrol', 'M39-3: the promoted viewer next sign-in is walked through enrolment (mfa: enrol)');
+
+  const u39 = await mk('assessor39@mfa.mil');
+  await member39(u39, 'ASSESSOR');
+  const uTok39 = (await login(u39.email)).body?.token as string;
+  const invTok39 = (await createInvitation(T39, { email: u39.email, role: 'TENANT_OWNER', createdBy: owner39.email, createdByUserId: owner39.id, expiresInDays: 14 })).token;
+  const accepted39 = await call('POST', '/invites/accept', { token: uTok39, body: { token: invTok39 } });
+  const uAfter39 = await call('GET', '/tenants', { token: uTok39 });
+  assert(accepted39.status === 200 && accepted39.body?.role === 'TENANT_OWNER' && uAfter39.status === 401 && uAfter39.body?.reason === 'mfa_required', 'M39-4: an ASSESSOR with a password-only session accepts a TENANT_OWNER invitation (200); the next request is 401 mfa_required', [accepted39.status, uAfter39.status, uAfter39.body]);
+
+  const n39 = await mk('creator39@mfa.mil');
+  const nTok39 = (await login(n39.email)).body?.token as string;
+  const created39 = await call('POST', '/tenants', { token: nTok39, body: { name: 'Org 39 creator' } });
+  const nAfter39 = await call('GET', '/tenants', { token: nTok39 });
+  assert(created39.status === 201 && nAfter39.status === 401 && nAfter39.body?.reason === 'mfa_required', 'M39-5: a password-only user with no tenant creates one (201, now its owner); the next request is 401 mfa_required', [created39.status, nAfter39.status, nAfter39.body]);
+
+  const w39 = await mk('otp39@mfa.mil');
+  await member39(w39, 'VIEWER');
+  await enrol(w39);
+  const wTok39 = (await signIn(w39)).token as string;
+  await promote39(ownerTok39, w39);
+  assert((await call('GET', '/auth/me', { token: wTok39 })).status === 200, 'M39-6: a promoted user whose session holds a second factor (amr pwd + otp) keeps working (200)');
+
+  setMode('off');
+  const x39 = await mk('off39@mfa.mil');
+  await member39(x39, 'VIEWER');
+  const xTok39 = (await login(x39.email)).body?.token as string;
+  await promote39(ownerTok39, x39);
+  assert((await call('GET', '/auth/me', { token: xTok39 })).status === 200, 'M39-7: MFA_REQUIRED=off: the same promotion changes nothing (200)');
+
+  setMode('all');
+  const y39 = await mk('all39@mfa.mil');
+  const yTok39 = signLocalToken({ id: y39.id, email: y39.email, name: 'All', tokenVersion: 0 }).token; // amr defaults to ['pwd']
+  const yRes39 = await call('GET', '/auth/me', { token: yTok39 });
+  assert(yRes39.status === 401 && yRes39.body?.reason === 'mfa_required', 'M39-8: mode all: a password-only session is refused (401 mfa_required) even for a viewer', [yRes39.status, yRes39.body]);
+
+  setMode('off');
+  const revived39 = await call('GET', '/auth/me', { token: vTok39 });
+  assert(revived39.status === 401 && revived39.body?.reason === 'session_revoked', 'M39-9: the session that was refused stays revoked after MFA_REQUIRED goes back to off (401 session_revoked)', [revived39.status, revived39.body]);
+
+  setMode('privileged');
+  const mock39 = `h.${Buffer.from(JSON.stringify({ sub: 'u_mock39' })).toString('base64')}.mock_pbc_signature`;
+  assert((await call('GET', '/auth/me', { token: mock39 })).status === 200, 'M39-10: a dev mock token is exempt in privileged mode (200)');
+
+  const l39 = await mk('logcheck39@mfa.mil');
+  await member39(l39, 'VIEWER');
+  const lTok39 = (await login(l39.email)).body?.token as string;
+  await promote39(ownerTok39, l39);
+  console.log = grab39;
+  console.warn = grab39;
+  console.error = grab39;
+  try {
+    await call('GET', '/auth/me', { token: lTok39 });
+  } finally {
+    console.log = origLog39.log;
+    console.warn = origLog39.warn;
+    console.error = origLog39.error;
+  }
+  assert(captured39.some((l) => l.includes('Session refused (mfa_required)')) && captured39.every((l) => !l.includes('logcheck39')), 'M39-11: the refusal is logged by account reference only (no email)', captured39);
+  setMode('off');
+
+  // M39-13: enrolling in advance (through the session) keeps the session valid after a promotion
+  setMode('privileged');
+  const adv39 = await mk('advance39@mfa.mil');
+  await member39(adv39, 'VIEWER');
+  setMode('off');
+  const advOld = (await login(adv39.email)).body?.token as string;
+  const advConfirm = (await enrolWith(adv39, { token: advOld })).confirm;
+  setMode('privileged');
+  const advNew = advConfirm.body?.token as string;
+  const ownerTokAdv = (await signIn(owner39)).token as string;
+  await promote39(ownerTokAdv, adv39);
+  const advAfter = await call('GET', '/auth/me', { token: advNew });
+  const advOldAfter = await call('GET', '/auth/me', { token: advOld });
+  assert(advConfirm.status === 200 && advAfter.status === 200 && advOldAfter.status === 401 && advOldAfter.body?.reason === 'session_revoked', 'M39-13: a password-only user enrols through the session, is promoted to TENANT_OWNER and the next request on the new session is 200; the pre-enrolment token is 401 session_revoked', [advConfirm.status, advAfter.status, advOldAfter.status, advOldAfter.body]);
   setMode('off');
 
   // ------------------------------------------------------------------------------------------------------------ M28

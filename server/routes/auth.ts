@@ -3,11 +3,13 @@ import {
   LocalAuthConfigError,
   LocalTokenError,
   getDummyHash,
+  getSessionIdleMinutes,
   PASSWORD_REUSED,
   getMfaRequirement,
   hashPassword,
   signMfaPendingToken,
   validateNewPassword,
+  verifyLocalToken,
   verifyMfaPendingToken,
   verifyPassword,
   type MfaStage,
@@ -50,7 +52,9 @@ import {
 import { isPlatformAdmin } from '../auth/platformAdmin';
 import { previewInvitation, redeemInvitation } from '../invitations';
 import { accountLogRef, createLoginThrottle, loginAccountKey } from '../auth/loginThrottle';
-import { clearSessionCookie, issueSession, rejectCrossSite } from '../auth/session';
+import { clearSessionCookie, issueSession, readSessionCookie, rejectCrossSite } from '../auth/session';
+import { adoptSession, revokeSession } from '../auth/sessionStore';
+import { recordAccountEventBestEffort, type AccountEventInput } from '../auth/accountEvents';
 import { SESSION_REVOKED, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -58,10 +62,11 @@ const router = Router();
 
 /**
  * GET /api/v1/auth/config   (public)
- * Reports the identity mode. Local accounts are the only mode; the endpoint stays so the client can confirm it.
+ * Reports the identity mode (local accounts are the only mode; the endpoint stays so the client can confirm it) and the idle limit
+ * in seconds (SESSION_IDLE_MINUTES; 0 means none), which the browser uses to lock the screen after the same period.
  */
 router.get('/config', (_req: Request, res: Response): void => {
-  res.json({ mode: 'local' });
+  res.json({ mode: 'local', sessionIdleSeconds: getSessionIdleMinutes() * 60 });
 });
 
 // ---- per-IP throttle (in addition to per-account lockout) -------------------------------------
@@ -247,7 +252,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
     await registerSuccessfulLogin(user);
     console.log(`[Auth] Local login: account ${accountLogRef(user.email)}`);
-    res.json(issueSession(req, res, user, ['pwd'], false));
+    res.json(await issueSession(req, res, user, ['pwd'], false));
   } catch (err: unknown) {
     respondWithError(res, err, 'Login');
   }
@@ -329,13 +334,14 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
     }
 
     console.log('[Auth] Registered account ' + accountLogRef(user.email) + ' via invitation into ' + result.tenantId + ' as ' + result.role);
+    await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'role_changed', scopeTenantId: result.tenantId, details: { newRole: result.role, via: 'invitation_registration' } });
     // The invited role may make this account subject to MFA_REQUIRED (privileged): then they enrol before they get a session.
     if (await resolveMfaRequired(user)) {
       noStore(res);
       res.status(201).json({ ...pendingBody(user, 'enrol'), tenantId: result.tenantId, role: result.role });
       return;
     }
-    res.status(201).json({ ...issueSession(req, res, user, ['pwd'], false), tenantId: result.tenantId, role: result.role });
+    res.status(201).json({ ...await issueSession(req, res, user, ['pwd'], false), tenantId: result.tenantId, role: result.role });
   } catch (err: unknown) {
     respondWithError(res, err, 'Registration');
   }
@@ -343,11 +349,29 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
 
 /**
  * POST /api/v1/auth/logout   (public)
- * Clears the session cookie (the script cannot: it is HttpOnly). No session is needed, so an expired one can still sign out; the token
- * itself stays valid until it expires or the account's token version moves. Only a cross-site request is refused.
+ * Ends the session on the server (the token's session row is revoked, so the token is dead at once even if it was copied) and clears
+ * the session cookie (the script cannot: it is HttpOnly). The token comes from the Authorization header or else the cookie. No valid
+ * session is needed, so an expired one can still sign out; there is nothing to revoke for a token that does not verify. Only a
+ * cross-site request is refused.
  */
-router.post('/logout', (req: Request, res: Response): void => {
+router.post('/logout', async (req: Request, res: Response): Promise<void> => {
   if (rejectCrossSite(req, res)) return;
+  const authHeader = req.headers.authorization;
+  const token = authHeader !== undefined ? (authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : null) : readSessionCookie(req);
+  if (token) {
+    try {
+      const claims = verifyLocalToken(token);
+      if (claims.sid) {
+        // A token from before sessions were recorded has no row yet: record it first, so the revocation sticks and it is never adopted later.
+        await adoptSession({ sid: claims.sid, userId: claims.sub, issuedAt: claims.iat, expiresAt: claims.exp, mfaVerified: (claims.amr ?? []).includes('otp') });
+        if ((await revokeSession(claims.sid, 'signed_out')) > 0) {
+          await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: claims.sub, targetUserId: claims.sub, action: 'signed_out' });
+        }
+      }
+    } catch {
+      // Nothing to revoke: the token did not verify, the account is gone or the store is unavailable. The cookie is cleared regardless.
+    }
+  }
   clearSessionCookie(req, res);
   res.status(204).end();
 });
@@ -424,7 +448,7 @@ router.post('/mfa/verify', async (req: Request, res: Response): Promise<void> =>
     }
 
     await registerSuccessfulLogin(user);
-    const body = issueSession(req, res, user, ['pwd', 'otp'], true);
+    const body = await issueSession(req, res, user, ['pwd', 'otp'], true);
     if (usedRecovery) body.recoveryCodesRemaining = (await findLocalUserById(user.id))?.recoveryCodeHashes.length ?? 0;
     console.log(`[Auth] Local login (second factor): account ${accountLogRef(user.email)}`);
     res.json(body);
@@ -523,20 +547,33 @@ router.post('/mfa/enrol/confirm', async (req: Request, res: Response): Promise<v
     }
     const recoveryCodes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
     const hashes = recoveryCodes.map((c) => hashRecoveryCode(normalizeRecoveryCode(c) as string));
-    if (!(await confirmTotp(user.id, checked.step, hashes))) {
+    const enrolledEvent: AccountEventInput = { actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'mfa_enrolled', details: { via: pending ? 'sign_in' : 'session' } };
+    if (!(await confirmTotp(user.id, checked.step, hashes, enrolledEvent))) {
       res.status(409).json({ error: 'A second factor is already set up for this account', reason: 'mfa_already_enrolled' });
       return;
     }
     const enrolledAt = new Date().toISOString();
     if (!pending) {
       console.log(`[Auth] Second factor enrolled: account ${accountLogRef(user.email)}`);
-      res.json({ recoveryCodes, enrolledAt });
+      // The session that enrolled holds the password only (amr pwd): replace it with one that holds the second factor too (new sid), so that
+      // someone who enrols in advance is not refused later by the mid-session MFA check (#39). The old session is ended.
+      const authHeader = req.headers.authorization;
+      const oldToken = authHeader !== undefined ? authHeader.slice('Bearer '.length).trim() : readSessionCookie(req);
+      const oldSid = oldToken ? verifyLocalToken(oldToken).sid : undefined;
+      const fresh = await findLocalUserById(user.id);
+      if (!fresh) {
+        res.status(401).json(SESSION_REVOKED);
+        return;
+      }
+      const reissued = await issueSession(req, res, fresh, ['pwd', 'otp'], true);
+      if (oldSid) await revokeSession(oldSid, 'signed_out');
+      res.json({ recoveryCodes, enrolledAt, ...reissued });
       return;
     }
     markJtiUsed(pending.jti, pending.exp);
     await registerSuccessfulLogin(user);
     console.log(`[Auth] Second factor enrolled, local login: account ${accountLogRef(user.email)}`);
-    res.json({ recoveryCodes, enrolledAt, ...issueSession(req, res, user, ['pwd', 'otp'], true) });
+    res.json({ recoveryCodes, enrolledAt, ...await issueSession(req, res, user, ['pwd', 'otp'], true) });
   } catch (err: unknown) {
     respondWithError(res, err, 'Enrolment');
   }
@@ -599,7 +636,8 @@ router.post('/mfa/recovery-codes', authOnlyMiddleware, async (req: Request, res:
     }
     const recoveryCodes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
     const hashes = recoveryCodes.map((c) => hashRecoveryCode(normalizeRecoveryCode(c) as string));
-    if (!(await replaceRecoveryCodeHashes(user.id, hashes))) {
+    const regeneratedEvent: AccountEventInput = { actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'recovery_codes_regenerated' };
+    if (!(await replaceRecoveryCodeHashes(user.id, hashes, regeneratedEvent))) {
       res.status(409).json({ error: 'No second factor is set up for this account', reason: 'mfa_not_enrolled' });
       return;
     }
@@ -613,9 +651,10 @@ router.post('/mfa/recovery-codes', authOnlyMiddleware, async (req: Request, res:
 /**
  * Step-up for account management (platform administrators): the signed-in administrator must hold a confirmed second factor and
  * send a fresh authenticator code in the body field `code` (TOTP only; a recovery code is never read). A replayed or wrong code
- * counts toward the administrator's lockout. Answers the refusal itself and returns false; true means the action may proceed.
+ * counts toward the administrator's lockout (and is recorded as a step_up_failed account event naming the action `attempted`).
+ * Answers the refusal itself and returns false; true means the action may proceed.
  */
-export async function requireAdminStepUp(req: Request, res: Response): Promise<boolean> {
+export async function requireAdminStepUp(req: Request, res: Response, attempted: string): Promise<boolean> {
   if (tooManyAttempts(req, res)) return false;
   noStore(res);
   try {
@@ -642,6 +681,7 @@ export async function requireAdminStepUp(req: Request, res: Response): Promise<b
     if (!checked.ok || !(await consumeTotpStep(admin.id, checked.step))) {
       await registerFailedLogin(admin);
       console.warn(`[PlatformUsers] Step-up refused (account ${accountLogRef(admin.email)}) from ${req.ip}`);
+      await recordAccountEventBestEffort({ actorKind: 'admin', actorUserId: admin.id, targetUserId: admin.id, action: 'step_up_failed', details: { attempted } });
       res.status(403).json({ error: 'That code is not valid', reason: 'invalid_code' });
       return false;
     }
@@ -721,7 +761,8 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
       res.status(403).json({ error: 'That code is not valid', reason: 'invalid_code' });
       return;
     }
-    if (!(await setLocalUserPassword(user.id, await hashPassword(newPassword)))) {
+    const changedEvent: AccountEventInput = { actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'password_changed' };
+    if (!(await setLocalUserPassword(user.id, await hashPassword(newPassword), { event: changedEvent }))) {
       res.status(401).json(SESSION_REVOKED);
       return;
     }
@@ -731,7 +772,7 @@ router.post('/password', authOnlyMiddleware, async (req: Request, res: Response)
       return;
     }
     console.log(`[Auth] Sign-in credential changed: account ${accountLogRef(user.email)}`);
-    res.json(issueSession(req, res, updated, step !== null ? ['pwd', 'otp'] : ['pwd'], isEnrolled(updated)));
+    res.json(await issueSession(req, res, updated, step !== null ? ['pwd', 'otp'] : ['pwd'], isEnrolled(updated)));
   } catch (err: unknown) {
     respondWithError(res, err, 'Credential change');
   }

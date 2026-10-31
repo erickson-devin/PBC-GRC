@@ -14,6 +14,8 @@ import {
 } from '../db';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { isPlatformAdminUser } from '../auth/platformAdmin';
+import { recordAccountEventBestEffort } from '../auth/accountEvents';
+import { invalidateMfaRequirement } from '../auth/mfaEnforcement';
 import { ensureActiveTenant } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
@@ -197,6 +199,9 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
         },
         owner
       );
+      // The creator is now a TENANT_OWNER: a privileged role, so the second-factor requirement is looked up afresh on their next request.
+      invalidateMfaRequirement(owner.userId);
+      await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: owner.userId, targetUserId: owner.userId, action: 'role_changed', scopeTenantId: id, details: { newRole: 'TENANT_OWNER', via: 'tenant_created' } });
       // The tenant's default program, from its primary framework (created lazily on first use if this fails)
       await ensureDefaultProgram(id).catch((err: unknown) => console.warn(`[Tenants API] Default program of ${id} not created yet:`, errorMessage(err)));
       console.log(`[Tenants API] ${owner.userId} created tenant ${id} and is its TENANT_OWNER`);
@@ -295,6 +300,16 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
       name: (typeof name === 'string' && name.trim()) || email.split('@')[0],
       role,
     });
+    // A raised role may make the person subject to the second-factor requirement mid-session: look it up afresh on their next request.
+    invalidateMfaRequirement(userId);
+    await recordAccountEventBestEffort({
+      actorKind: 'user',
+      actorUserId: req.user?.uid ?? null,
+      targetUserId: userId,
+      action: 'role_changed',
+      scopeTenantId: tenantId,
+      details: { ...(existingRole ? { previousRole: existingRole } : {}), newRole: role, via: 'member_update' },
+    });
     console.log(
       `[Tenants API] ${req.user?.uid} set ${userId} to ${role} in ${tenantId} (previously ${existingRole ?? 'not a member'})`
     );
@@ -342,6 +357,7 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
       }
     }
     await removeTenantMember(tenantId, userId);
+    await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: req.user?.uid ?? null, targetUserId: userId, action: 'member_removed', scopeTenantId: tenantId, details: { previousRole: targetRole } });
     console.log('[Tenants API] ' + req.user?.uid + ' removed ' + userId + ' (' + targetRole + ') from ' + tenantId);
     res.json({ removed: true, userId, previousRole: targetRole });
   } catch (err: unknown) {

@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { previewInvitation, redeemInvitation } from '../invitations';
 import { authOnlyMiddleware } from '../middleware/authMiddleware';
+import { recordAccountEventBestEffort } from '../auth/accountEvents';
+import { invalidateMfaRequirement } from '../auth/mfaEnforcement';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -64,6 +66,16 @@ router.post('/accept', authOnlyMiddleware, async (req: Request, res: Response): 
       res.status(status).json({ error, reason: result.reason });
       return;
     }
+    // The invited role may be privileged: look the second-factor requirement up afresh on this person's next request.
+    invalidateMfaRequirement(user.uid);
+    await recordAccountEventBestEffort({
+      actorKind: 'user',
+      actorUserId: user.uid,
+      targetUserId: user.uid,
+      action: 'role_changed',
+      scopeTenantId: result.tenantId,
+      details: { ...(result.previousRole ? { previousRole: result.previousRole } : {}), newRole: result.role, via: 'invitation' },
+    });
     console.log('[Invites API] ' + user.uid + ' accepted invitation ' + result.invitationId + ' -> ' + result.tenantId + ' as ' + result.role);
     res.json({ tenantId: result.tenantId, role: result.role, previousRole: result.previousRole });
   } catch (err: unknown) {

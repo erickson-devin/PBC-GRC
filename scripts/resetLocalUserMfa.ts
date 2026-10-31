@@ -25,7 +25,8 @@ try {
     throw new Error('DB_MODE=memory has no persistent accounts to reset. Point DATABASE_URL / DB_* at PostgreSQL.');
   }
   await initDb(); // makes sure the local_users table (and its factor columns) exist
-  const result = await resetLocalUserMfa(email);
+  // The account event (mfa_reset, actor kind cli, no actor id) joins the same transaction as the reset.
+  const result = await resetLocalUserMfa(email, { actorKind: 'cli', actorUserId: null, action: 'mfa_reset' });
   if (!result.found) {
     exitCode = 1;
     console.error(`No local user with the email ${email}.`);

@@ -236,7 +236,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         return;
       }
       res.status(201).json({
-        ...issueSession(req, res, { id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion, mustChangePassword: false }, ['pwd'], false),
+        ...await issueSession(req, res, { id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion, mustChangePassword: false }, ['pwd'], false),
         ...summary,
       });
     } catch (err: unknown) {
