@@ -54,11 +54,12 @@ import {
   staleWriteMessage,
   type ControlSaveFailure,
 } from '../data/controlSave';
-import { createNotesAutosave, createSaveChain, newerStamp, notesKey, type NotesDraft } from '../data/notesAutosave';
+import { createNotesAutosave, createSaveChain, createStampedSaveChain, newerStamp, notesKey, type NotesDraft } from '../data/notesAutosave';
 import { errorMessage } from '../utils/errors';
 import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import { planStigNarratives } from '../utils/stigNarrativePlan';
+import { applyControlNext, planControlRole, planControlStatus, planStarterTemplate } from '../utils/controlEditPlan';
 import {
   AssetTelemetryRecord,
   BoundaryAggregationResult,
@@ -238,6 +239,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const notesAutosaveRef = useRef(createNotesAutosave((k, d) => sendNotesRef.current(k, d)));
   const saveChainRef = useRef(createSaveChain());
   const serverStampRef = useRef(new Map<string, string>());
+  // Objective saves are queued the same way, one objective at a time, each reusing the stamp the last answer returned
+  const objectiveSavesRef = useRef(createStampedSaveChain());
   const staleNotesRef = useRef(new Set<string>());
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
@@ -411,6 +414,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setControlSaveError(null);
     serverStampRef.current.clear();
     staleNotesRef.current.clear();
+    objectiveSavesRef.current.clear();
   }, [currentTenant.id, programScope]);
 
   /**
@@ -473,59 +477,40 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
+    // Worked out once from the current controls: the ledger entry and the save are made here, never inside the state updater
+    const plan = planControlStatus(
+      stateRef.current.controls, controlId, status, failingAssets,
+      { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() }
+    );
+
     // Sync to the server
     void saveControl(controlId, { status, updatedBy: currentUser.name });
 
-    setState(prev => {
-      const current = prev.controls[controlId] || {
-        id: controlId,
-        tenantId: currentTenant.id,
-        status: 'NOT_STARTED',
-        implementationNotes: '',
-        responsibleRole: 'IT / Security Lead',
-        lastUpdated: new Date().toISOString(),
-        tags: [],
-      };
+    // Asynchronously append to immutable audit ledger
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      metadata: auditMetadata,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'CONTROL_STATUS_UPDATED',
+      targetEntity: controlId,
+      previousState: plan.previousStatus,
+      newState: status,
+    }).catch(() => {});
 
-      const updated = {
-        ...prev,
-        controls: {
-          ...prev.controls,
-          [controlId]: {
-            ...current,
-            status,
-            failingAssets: failingAssets !== undefined ? failingAssets : current.failingAssets,
-            lastUpdated: new Date().toISOString(),
-            updatedBy: currentUser.name,
-          },
-        },
-      };
+    // Check if this action achieved 100% SPRS readiness
+    const controlsAfter = { ...stateRef.current.controls, [controlId]: plan.next };
+    const metAfter = Object.entries(controlsAfter).filter(
+      ([id, c]) => id !== controlId ? c.status === 'MET' : status === 'MET'
+    ).length;
 
-      // Asynchronously append to immutable audit ledger
-      recordAuditEvent({
-        tenantId: currentTenant.id,
-        metadata: auditMetadata,
-        actorId: currentUser.id,
-        actorEmail: currentUser.email,
-        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
-        actionType: 'CONTROL_STATUS_UPDATED',
-        targetEntity: controlId,
-        previousState: current.status,
-        newState: status,
-      }).catch(() => {});
+    const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
+    if (metAfter === totalRequired && status === 'MET') {
+      setTimeout(triggerSprsCelebration, 150);
+    }
 
-      // Check if this action achieved 100% SPRS readiness
-      const metAfter = Object.entries(updated.controls).filter(
-        ([id, c]) => id !== controlId ? c.status === 'MET' : status === 'MET'
-      ).length;
-
-      const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
-      if (metAfter === totalRequired && status === 'MET') {
-        setTimeout(triggerSprsCelebration, 150);
-      }
-
-      return updated;
-    });
+    setState(prev => applyControlNext(prev, controlId, plan.next));
   }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls, saveControl]);
 
   // Notes go to the server a moment after the last keystroke (or on blur / tab hide / unmount), one PUT per burst and one ledger entry
@@ -633,45 +618,27 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
+    const plan = planControlRole(
+      stateRef.current.controls, controlId, role,
+      { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() }
+    );
+
     // Sync to the server (the audited writer records the change)
     void saveControl(controlId, { responsibleRole: role, updatedBy: currentUser.name });
 
-    setState(prev => {
-      const current = prev.controls[controlId] || {
-        id: controlId,
-        tenantId: currentTenant.id,
-        status: 'NOT_STARTED',
-        implementationNotes: '',
-        responsibleRole: 'IT / Security Lead',
-        lastUpdated: new Date().toISOString(),
-        tags: [],
-      };
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      metadata: auditMetadata,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'CONTROL_ROLE_UPDATED',
+      targetEntity: controlId,
+      previousState: plan.previousRole,
+      newState: role,
+    }).catch(() => {});
 
-      recordAuditEvent({
-        tenantId: currentTenant.id,
-        metadata: auditMetadata,
-        actorId: currentUser.id,
-        actorEmail: currentUser.email,
-        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
-        actionType: 'CONTROL_ROLE_UPDATED',
-        targetEntity: controlId,
-        previousState: current.responsibleRole,
-        newState: role,
-      }).catch(() => {});
-
-      return {
-        ...prev,
-        controls: {
-          ...prev.controls,
-          [controlId]: {
-            ...current,
-            responsibleRole: role,
-            lastUpdated: new Date().toISOString(),
-            updatedBy: currentUser.name,
-          },
-        },
-      };
-    });
+    setState(prev => applyControlNext(prev, controlId, plan.next));
   }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, saveControl]);
 
   // Action: Apply Starter Template
@@ -685,52 +652,26 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return;
     }
 
-    // StrictMode runs updaters twice: send the change to the server once per call
-    let sent = false;
-    setState(prev => {
-      const current = prev.controls[controlId] || {
-        id: controlId,
-        tenantId: currentTenant.id,
-        status: 'NOT_STARTED',
-        implementationNotes: '',
-        responsibleRole: 'IT / Security Lead',
-        lastUpdated: new Date().toISOString(),
-        tags: [],
-      };
+    const plan = planStarterTemplate(
+      stateRef.current.controls, controlId, narrative,
+      { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() }
+    );
 
-      recordAuditEvent({
-        tenantId: currentTenant.id,
-        metadata: auditMetadata,
-        actorId: currentUser.id,
-        actorEmail: currentUser.email,
-        actorRole: currentUser.roles[currentTenant.id] || 'Operator',
-        actionType: 'TEMPLATE_APPLIED',
-        targetEntity: controlId,
-        newState: { status: 'IN_PROGRESS', templateLength: narrative.length },
-      }).catch(() => {});
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      metadata: auditMetadata,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'TEMPLATE_APPLIED',
+      targetEntity: controlId,
+      newState: plan.auditNewState,
+    }).catch(() => {});
 
-      // Save through the audited server writer; only the fields that change
-      if (!sent) {
-        sent = true;
-        const serverUpdate: Partial<ControlState> = { implementationNotes: narrative, updatedBy: currentUser.name };
-        if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
-        void saveControl(controlId, serverUpdate);
-      }
+    // Save through the audited server writer; only the fields that change
+    void saveControl(controlId, plan.serverUpdate);
 
-      return {
-        ...prev,
-        controls: {
-          ...prev.controls,
-          [controlId]: {
-            ...current,
-            implementationNotes: narrative,
-            status: current.status === 'NOT_STARTED' ? 'IN_PROGRESS' : current.status,
-            lastUpdated: new Date().toISOString(),
-            updatedBy: currentUser.name,
-          },
-        },
-      };
-    });
+    setState(prev => applyControlNext(prev, controlId, plan.next));
   }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, saveControl]);
 
   // Action: Bulk Apply STIG Policy Narratives across mapped controls
@@ -931,11 +872,24 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [seedObjective]);
 
   /** Saves objectives to the server (server-backed tenants), and optionally the rolled-up control change with them. Both calls start now, so both belong to the program on screen at the click. */
-  const saveObjectives = useCallback((inputs: Array<ObjectiveInput & { expectedUpdatedAt?: string | null }>, control?: { id: string; update: Partial<ControlState> }) => {
+  const saveObjectives = useCallback((inputs: Array<ObjectiveInput & { checkStale?: boolean }>, control?: { id: string; update: Partial<ControlState> }) => {
     if (!currentTenant.serverBacked || inputs.length === 0) return;
     const scope = programScope;
+    // A queued save goes to the program it was made in, even if another is opened before it runs
+    const program = programId ?? null;
+    // A single objective's saves go out one at a time, each carrying the stamp the previous answer returned (the server refuses a
+    // narrative save made against an older stamp, so back-to-back edits must not reuse the one read at call time)
     const objectiveSave = inputs.length === 1
-      ? updateLiveObjective(inputs[0].objectiveId, inputs[0].controlId, { status: inputs[0].status, narrative: inputs[0].narrative, linkedEvidenceIds: inputs[0].linkedEvidenceIds, expectedUpdatedAt: inputs[0].expectedUpdatedAt })
+      ? objectiveSavesRef.current.run(
+        notesKey(scope, inputs[0].objectiveId),
+        () => liveObjectivesRef.current?.[inputs[0].objectiveId]?.updatedAt ?? null,
+        expected => updateLiveObjective(
+          inputs[0].objectiveId,
+          inputs[0].controlId,
+          { status: inputs[0].status, narrative: inputs[0].narrative, linkedEvidenceIds: inputs[0].linkedEvidenceIds, ...(inputs[0].checkStale ? { expectedUpdatedAt: expected ?? null } : {}) },
+          program
+        )
+      )
       : updateLiveObjectivesBulk(inputs);
     // The control part reports its own failure (saveControl never rejects), apart from the objective part
     if (control) void saveControl(control.id, control.update);
@@ -951,7 +905,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       revertObjectives(inputs.map(i => i.objectiveId), scope);
     });
-  }, [currentTenant.serverBacked, programScope, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives]);
+  }, [currentTenant.serverBacked, programScope, programId, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives]);
 
   // Review of a conflict the one-time upload found: the id keeps its cached narrative until the user picks a text
   // Ids whose cached narrative is empty or equal to the server's need no decision: they are dropped (this heals caches from older builds)
@@ -1103,7 +1057,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }));
     recordObjectiveNarrativeChange(objectiveId, previous, narrative);
     // The server refuses the save when someone else changed this objective since this browser read it (null: no record existed yet)
-    saveObjectives([{ objectiveId, controlId, narrative, expectedUpdatedAt: liveObjectivesRef.current?.[objectiveId]?.updatedAt ?? null }]);
+    saveObjectives([{ objectiveId, controlId, narrative, checkStale: true }]);
   }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, recordObjectiveNarrativeChange, saveObjectives]);
 
   const applyObjectivePrefilledNarrative = useCallback((objectiveId: string) => {

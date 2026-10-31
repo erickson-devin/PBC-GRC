@@ -1044,7 +1044,7 @@ export const ApiClient = {
   ): Promise<ControlState[]> {
     const sessionRef = this.getSessionRef();
     if (!sessionRef) {
-      throw new Error('Not authenticated: ID token not found');
+      throw new Error('Not authenticated: no active session');
     }
 
     const query = new URLSearchParams();
@@ -1205,7 +1205,7 @@ export const ApiClient = {
   async getEvidence(tenantId: string, programId?: string | null): Promise<EvidenceItem[]> {
     const sessionRef = this.getSessionRef();
     if (!sessionRef) {
-      throw new Error('Not authenticated: ID token not found');
+      throw new Error('Not authenticated: no active session');
     }
 
     const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence`, {
