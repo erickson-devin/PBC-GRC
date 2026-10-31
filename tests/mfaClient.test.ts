@@ -253,6 +253,16 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   assert(!clientSrc.includes('pbc_session_id_token_v2') && !authCtx.includes('pbc_session_id_token_v2'), 'neither file mentions the old token storage key');
   assert(!authCtx.includes('sessionStorage'), 'AuthContext.tsx does not touch sessionStorage');
 
+  // #143: the Accretion modal shows a service-token push, not a session token the browser cannot hand out
+  const modal = fs.readFileSync(path.join(root, 'src/components/telemetry/AccretionIntegrationModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  const tokensModal = fs.readFileSync(path.join(root, 'src/components/auth/ApiTokensModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert(!modal.includes('SESSION_TOKEN'), 'S143-1 AccretionIntegrationModal.tsx shows no SESSION_TOKEN (the session is an HttpOnly cookie)');
+  assert(!/no separate sensor key/i.test(modal), 'S143-2 AccretionIntegrationModal.tsx no longer says there is no separate sensor key');
+  const header = '-H "Authorization: Bearer <SERVICE_TOKEN>"';
+  assert(modal.includes(header) && tokensModal.includes(header), 'S143-3 the Accretion and API Keys modals show the same service-token header');
+  assert(modal.includes('exporters/pbc-vm-exporter'), 'S143-4 AccretionIntegrationModal.tsx names the exporter as the supported scanner path');
+  assert(modal.includes('copyText(') && !modal.includes('copyToClipboard('), 'S143-5 AccretionIntegrationModal.tsx reports a failed copy');
+
   // C144: the session reference has session-reference names in code (the stored idToken field keeps its historical name)
   const renamedFiles = ['src/services/apiClient.ts', 'src/context/AuthContext.tsx', 'src/context/TenantContext.tsx', 'src/context/AssessmentContext.tsx', 'src/hooks/useStorageConfig.ts', 'src/hooks/useLocalEvidenceCopies.ts', 'src/hooks/useFailedMoveAssets.ts', 'src/hooks/useLocalAssetScrub.ts', 'src/hooks/useFailedMoveControls.ts', 'src/data/audit/storageDriver.ts'];
   assert(renamedFiles.every(rel => !/\bgetToken\(/.test(fs.readFileSync(path.join(root, rel), 'utf8'))), 'C144-1 no client file calls getToken(): it is getSessionRef()');

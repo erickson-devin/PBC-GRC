@@ -200,6 +200,10 @@ async function main() {
   assert(['serverBacked', 'liveScopeKey', 'ApiClient.getEvidence(', 'programs'].every(s => hook.includes(s)) && deletedAt !== -1 && !auditBlock.includes('copy.name'), 'S4 the hook is gated on a server-backed tenant and the live scope, asks every program, and the ledger entry has no file name');
   const scrub = read('src/hooks/useEvidenceBlobScrub.ts');
   assert(/import \{ sha256Hex \} from '\.\.\/services\/localEvidenceCopies'/.test(scrub) && !/async function sha256Hex/.test(scrub), 'S5 the scrub hook imports sha256Hex from the service');
+  assert(!view.includes('gcsPath'), 'S167-1 the vault list does not reference the stored path (on a server tenant it is the absolute disk path)');
+  assert(['{item.name}', 'item.controlId', 'item.fileHash'].every(s => view.includes(s)), 'S167-2 each row still shows the file name, the control and the SHA-256');
+  assert(read('src/types/cmmc.ts').includes('gcsPath?: string'), 'S167-3 the path stays in the evidence data for the integrity check and the handover package');
+  assert(!read('src/components/common/EvidencePreviewModal.tsx').includes('gcsPath') && !read('src/components/ssp/SSPBuilder.tsx').includes('gcsPath') && !read('src/services/storageService.ts').includes('gcsPath'), 'S167-4 the preview modal, the printable SSP and the markdown export show no stored path');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

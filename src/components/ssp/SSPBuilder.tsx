@@ -525,7 +525,6 @@ export const SSPBuilder: React.FC = () => {
                               className="px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-800 rounded-lg font-mono text-[10px] flex items-center justify-between flex-wrap gap-2"
                             >
                               <span className="font-bold">{e.name}</span>
-                              <span className="text-slate-500">Path: {e.gcsPath || 'Local Vault'}</span>
                               {e.fileHash && (
                                 <span className="text-emerald-700 font-semibold">SHA-256: {e.fileHash.substring(0, 16)}...</span>
                               )}

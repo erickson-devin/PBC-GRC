@@ -55,7 +55,7 @@ import { OffboardingProgramDialog, NOT_MEMBER_MESSAGE } from './OffboardingProgr
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 interface SuperAdminDashboardProps {
   onNavigateToApp?: () => void;
   onNavigateToLogin?: () => void;
@@ -257,8 +257,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const hasAccess = isSuperAdmin;
 
   const handleCopy = async (text: string, id: string, type: 'token' | 'enclave'): Promise<boolean> => {
-    try {
-      await copyToClipboard(text);
+    if (await copyText(text)) {
       if (type === 'token') {
         setCopiedTokenId(id);
         setTimeout(() => setCopiedTokenId(null), 2000);
@@ -267,16 +266,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         setTimeout(() => setCopiedEnclaveId(null), 2000);
       }
       return true;
-    } catch (err) {
-      console.warn('Clipboard write failed:', err instanceof Error ? err.name : 'unknown error');
-      setNotificationToast({
-        type: 'error',
-        message: type === 'token'
-          ? 'The invitation link could not be copied to the clipboard. Try Copy Link again.'
-          : 'The enclave ID could not be copied to the clipboard. Select the ID and copy it by hand.',
-      });
-      return false;
     }
+    setNotificationToast({
+      type: 'error',
+      message: type === 'token'
+        ? 'The invitation link could not be copied to the clipboard. Try Copy Link again.'
+        : 'The enclave ID could not be copied to the clipboard. Select the ID and copy it by hand.',
+    });
+    return false;
   };
 
   const handleEnterEnclave = (tenantId: string) => {
