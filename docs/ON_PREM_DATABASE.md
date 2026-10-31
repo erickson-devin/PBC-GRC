@@ -128,9 +128,12 @@ enrolled, a current code.
 from the last N passwords (default 5, allowed 0 to 24; any other value stops the server at startup). A reused value answers
 400 `password_reused` and does not count toward the lockout; the two-step code sent with the request is not spent. Only
 bcrypt hashes are kept, in `local_user_password_history`, which is removed with the account. Temporary passwords (an
-administrator's reset, `auth:create-user`) are not recorded, and an administrator's temporary password is not checked
-against the person's history (that would tell the administrator which values the person has used); the person's own
-pre-reset password is recorded. History starts empty after the upgrade that adds this. Lowering N trims at the next change;
+administrator's reset, `auth:create-user`) are deliberately neither checked against nor recorded in the history (decision
+record, issue #171): checking an administrator's temporary password against the person's history would tell the
+administrator which values the person has used; recording it would let repeated resets push the person's real passwords
+out of the N-deep window; and the person must replace a temporary password at the next sign-in (`must_change_password`,
+above), and that new password is checked against the full history. The person's own pre-reset password is recorded.
+History starts empty after the upgrade that adds this. Lowering N trims at the next change;
 raising it does not bring trimmed entries back. A change costs up to N bcrypt comparisons.
 
 **Browser sessions (cookie).** The session is an HttpOnly cookie `pbc_session` (SameSite=Strict, Path=/api, lifetime = the
@@ -327,6 +330,11 @@ A release never needs the database wiped. At startup the server applies its sche
 `ADD COLUMN IF NOT EXISTS`, constraints dropped and re-added), and data that predates a feature is adopted on first use (for
 example, each tenant's existing rows move into its "Default Authorization Boundary" program the first time the tenant is
 used). If a release seems to need a wipe, that is a bug: report it instead.
+
+The release that moves SSP details to the server (issue #84) adds the table `program_ssp_metadata` and the column
+`tenants.stack_profile` the same way, idempotently at boot, with their constraints dropped and re-added; nothing is migrated by
+the server itself. Each browser sends the SSP details, boundary text and stack profile it holds once, the first time an owner or
+MSP administrator opens the organization after the upgrade.
 
 Once a table has no row without a program, startup also finalizes its `program_id` column (the NOT VALID check is validated,
 the column becomes NOT NULL and the check is dropped). This never blocks the boot: if a table still has rows that no tenant has

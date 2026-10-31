@@ -49,6 +49,23 @@ A check that fails for a reason other than an unknown token (server unreachable,
 invitation" with fixed text and offers Try again; only an unknown token is reported as an invalid link. After an account is
 created but two-step verification is not finished, the used-up form gives way to a notice with a sign-in button.
 
+## SSP details per program
+
+A program's SSP details (system name, organization, CAGE code, SAM status, system owner, author, assessment date, system
+boundary and scope, system environment, cloud service providers, version) are stored per program in `program_ssp_metadata`
+(one row per tenant and program, row-level security on tenant and program; a program with no row has none saved yet):
+
+* `GET /api/v1/ssp-metadata` (program from the `x-program-id` header, default program without it) returns
+  `{ metadata, updatedAt, updatedBy }`; `metadata` is `null` while nothing has been saved. Every role can read it.
+* `PUT` on the same path takes `{ metadata, expectedUpdatedAt }` and is for TENANT_OWNER and MSP_ADMIN. `metadata` is the full set
+  of fields to keep (only the eleven known text fields; 255 characters for names, 32 for codes, date and version, 20 000 for the
+  boundary, environment and cloud-provider text), `expectedUpdatedAt` is the `updatedAt` last seen (`null` for the first save) and
+  is required. A stale stamp is `409 stale_write` (it names no text), a bad body `400 invalid_ssp_metadata` (names the field,
+  never the value), an archived program `409 program_archived`. The answer carries `changed: false` when nothing differed.
+* Each change is recorded in the program history as `ssp_metadata_changed` (field names with a SHA-256 and the length, never the text).
+* Deleting a program removes its record. Cloning a program does not copy it, and resetting an assessment in the browser does not touch it.
+* The tenant's stack profile is stored on the tenant (`tenants.stack_profile`, set with `PATCH /api/v1/tenants/:id`).
+
 ## Boundary assets per program
 
 Assets stay in one tenant-wide inventory. A program can declare which of them lie inside its authorization boundary
