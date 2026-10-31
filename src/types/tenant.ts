@@ -34,6 +34,8 @@ export interface Tenant {
   stackProfile?: EnclaveStackProfile;
   /** True once this tenant has been confirmed by the server (GET /api/v1/tenants). Its name, settings and the user's role come from there. */
   serverBacked?: boolean;
+  /** ISO time the client set once this tenant's browser-held boundary text and stack profile are on the server; the registry cache then drops them (#84). */
+  browserFieldsMigratedAt?: string;
 }
 
 export interface User {

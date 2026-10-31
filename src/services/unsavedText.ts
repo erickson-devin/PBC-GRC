@@ -9,6 +9,8 @@
  * network. Labels carry a field name and an id only, never text, a tenant name or a file name.
  */
 
+import { SSP_METADATA_FIELDS } from '../types/sspMetadata';
+
 export interface UnsavedTextEntry {
   key: string;
   label: string;
@@ -158,6 +160,22 @@ export function unsavedProgramFields(
   }
   if (current.boundarySummary && current.boundarySummary !== (saved.boundarySummary ?? '')) {
     out.push({ key: `program:${keyId}:boundary`, label: `Program boundary summary, ${id}`, text: current.boundarySummary });
+  }
+  return out;
+}
+
+/** SSP metadata fields being edited that differ from the server's copy. No live copy loaded (null) means nothing is reported. */
+export function unsavedSspMetadataFields(
+  draft: Partial<Record<string, string | null | undefined>>,
+  saved: Partial<Record<string, string | null | undefined>> | null | undefined,
+  programId: string,
+): UnsavedTextEntry[] {
+  if (!saved) return [];
+  const out: UnsavedTextEntry[] = [];
+  for (const field of SSP_METADATA_FIELDS) {
+    const text = draft[field] ?? '';
+    if (!text) continue;
+    if (text !== (saved[field] ?? '')) out.push({ key: `ssp:${programId}:${field}`, label: `SSP field, ${field}`, text });
   }
   return out;
 }

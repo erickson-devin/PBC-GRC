@@ -103,6 +103,8 @@ export interface AssessmentState {
   objectivesMigratedAt?: string;
   /** Objective ids the server reported as conflicts; their narratives stay in the cache until the user resolves them. */
   objectivesPendingReview?: string[];
+  /** ISO time the client set once this cache key's SSP metadata is on the server; from then on the cache holds none of it (#84). */
+  sspMetadataMigratedAt?: string;
 }
 
 export interface DomainStat {

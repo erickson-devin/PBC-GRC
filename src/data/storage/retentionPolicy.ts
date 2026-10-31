@@ -6,6 +6,7 @@
 import { CertificateOfDestruction } from '../../types/audit';
 import { AssessmentState } from '../../types/cmmc';
 import { recordAuditEvent, computeSha256 } from '../audit/auditLogger';
+import { NOT_RECORDED } from '../reports/documentDefaults';
 
 export const MIN_RETENTION_DAYS = 1095; // 3 Years (DFARS 252.204-7012 & FAR 4.703)
 export const MIN_INCIDENT_RETENTION_DAYS = 90; // Minimum 90 days following forensic report
@@ -53,8 +54,8 @@ export async function purgeTenantData(params: {
     {
       certificateId,
       tenantId: params.tenantId,
-      systemName: params.systemName || 'Defense Contracting Information Network',
-      cageCode: params.cageCode || 'N/A',
+      systemName: params.systemName || NOT_RECORDED,
+      cageCode: params.cageCode || NOT_RECORDED,
       actorEmail: params.actorEmail,
       destructionDate,
       complianceStandard: 'DFARS 252.204-7012 / NIST SP 800-88 Rev 1',
@@ -69,8 +70,8 @@ export async function purgeTenantData(params: {
   const certificate: CertificateOfDestruction = {
     certificateId,
     tenantId: params.tenantId,
-    systemName: params.systemName || 'Defense Contracting Information Network',
-    cageCode: params.cageCode || 'N/A',
+    systemName: params.systemName || NOT_RECORDED,
+    cageCode: params.cageCode || NOT_RECORDED,
     actorName: params.actorName,
     actorEmail: params.actorEmail,
     destructionDate,

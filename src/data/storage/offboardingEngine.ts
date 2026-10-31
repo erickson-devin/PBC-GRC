@@ -8,6 +8,7 @@
  */
 
 import { Tenant } from '../../types/tenant';
+import type { SspMetadataFields } from '../../types/sspMetadata';
 import { AssessmentState, ControlState, EvidenceItem } from '../../types/cmmc';
 import { CompiledDocument, POAMEntry } from '../../types/report';
 import { CertificateOfDestruction, AuditLogEntry } from '../../types/audit';
@@ -86,6 +87,8 @@ export interface HandoverOptions {
   download?: boolean;
   /** A browser-only tenant's overlays, as its matrix uses them; ignored when `program` is set. */
   overlays?: OverlayFilters;
+  /** The program's SSP details from the server (#84): its environment, cloud providers, boundary text and the other SSP fields. Without it a program's package states none of them. */
+  sspMetadata?: SspMetadataFields;
 }
 
 /** Thrown (and shown to the operator as is) when the evidence files cannot be cleared; it holds no tenant data. */
@@ -116,12 +119,13 @@ function resolveTenant(tenantId: string, tenantData?: Tenant): Tenant {
 
   return {
     id: tenantId,
-    name: 'Defense Industrial Base Contractor',
-    cageCode: 'N/A',
-    samStatus: 'ACTIVE',
-    systemName: 'Corporate Operations Enclave',
-    systemOwner: 'Contract Security Officer',
-    industry: 'Defense Industrial Base (DIB)',
+    // #151: an unknown tenant states nothing about itself
+    name: '',
+    cageCode: '',
+    samStatus: 'NOT_REGISTERED',
+    systemName: '',
+    systemOwner: '',
+    industry: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     primaryFramework: 'CMMC_L1',
@@ -151,7 +155,8 @@ export async function generateEnclaveHandoverPackage(
   // A program's package is built from the server's answers only: the browser cache is neither read nor (as loadAssessment would) written
   const state: AssessmentState | null = program ? null : StorageService.loadAssessment(tenant);
   // The customer's own environment and cloud providers as recorded in the SSP metadata (#122). A program's package reads no browser cache and states none.
-  const sspMeta = state?.sspMetadata;
+  // A program's package takes the server's SSP details for that program (#84) when the caller fetched them.
+  const sspMeta = options.sspMetadata ?? state?.sspMetadata;
   const evidenceForPackage: ReadonlyArray<EvidenceItem> = evidenceIndex ?? state?.evidenceIndex ?? [];
   const ledger: AuditLogEntry[] = loadLedger(tenantId);
 
@@ -162,13 +167,13 @@ export async function generateEnclaveHandoverPackage(
   // Compile official NIST SP 800-18 / NIST SP 800-171 System Security Plan
   const sspDocument = compileNistSSP(
     {
-      systemName: tenant.systemName,
-      organizationName: tenant.name,
-      cageCode: tenant.cageCode,
+      systemName: tenant.systemName || sspMeta?.systemName || '',
+      organizationName: tenant.name || sspMeta?.organizationName || '',
+      cageCode: tenant.cageCode || sspMeta?.cageCode || '',
       samStatus: tenant.samStatus,
-      systemOwner: tenant.systemOwner,
-      primaryAssessor: 'Pitch Black Cyber GRC Engine',
-      boundaryDescription: program?.boundarySummary ||tenant.systemBoundaryScope || `${tenant.name} operations and compliance boundary.`,
+      systemOwner: tenant.systemOwner || sspMeta?.systemOwner || '',
+      primaryAssessor: sspMeta?.authorName || '',
+      boundaryDescription: options.sspMetadata?.systemBoundaryScope || program?.boundarySummary || sspMeta?.systemBoundaryScope || tenant.systemBoundaryScope || '',
       systemEnvironment: sspMeta?.systemEnvironment || '',
       operationalStatus: 'Operational',
       cloudServiceProviders: sspMeta?.cloudServiceProviders || '',

@@ -54,6 +54,7 @@ import { CertificateOfDestruction } from '../../types/audit';
 import { buildProgramHandover, type HandoverSelection } from '../../data/storage/offboardingPrograms';
 import { OffboardingProgramDialog, NOT_MEMBER_MESSAGE } from './OffboardingProgramDialog';
 import { errorMessage } from '../../utils/errors';
+import { NOT_RECORDED } from '../../data/reports/documentDefaults';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText } from '../../utils/clipboard';
@@ -331,6 +332,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             getControls: (t, p) => ApiClient.getControls(t, undefined, p),
             getEvidence: (t, p) => ApiClient.getEvidence(t, p),
             getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p),
+            getSspMetadata: (t, p) => ApiClient.getSspMetadata(t, p),
           });
         } catch (err: unknown) {
           // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.
@@ -410,8 +412,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         tenantId: selectedTenantForDestruction.id,
         systemName: selectedTenantForDestruction.systemName,
         cageCode: selectedTenantForDestruction.cageCode,
-        actorName: currentUser.name || 'Pitch Black Cyber Super Admin',
-        actorEmail: currentUser.email || 'devin@pitchblackcyber.com',
+        actorName: currentUser.name || currentUser.email || NOT_RECORDED,
+        actorEmail: currentUser.email || NOT_RECORDED,
       });
 
       deleteTenant(selectedTenantForDestruction.id);

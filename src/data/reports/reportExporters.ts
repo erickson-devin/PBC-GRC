@@ -1,6 +1,7 @@
 import { CompiledDocument, MachineReadablePackage, POAMEntry } from '../../types/report';
 import { AssessmentState } from '../../types/cmmc';
 import { computeSha256 } from '../audit/cryptoUtils';
+import { NOT_RECORDED } from './documentDefaults';
 
 export { computeSha256 };
 
@@ -436,15 +437,15 @@ export function generatePrintableHtml(
         <div class="meta-grid">
           <div class="meta-item">
             <span class="meta-label">Information System</span>
-            <span class="meta-val">${escapeHtml(meta.systemName)}</span>
+            <span class="meta-val">${escapeHtml(meta.systemName || NOT_RECORDED)}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Governing Organization</span>
-            <span class="meta-val">${escapeHtml(meta.organizationName)}</span>
+            <span class="meta-val">${escapeHtml(meta.organizationName || NOT_RECORDED)}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">CAGE Code / SAM Status</span>
-            <span class="meta-val">${escapeHtml(meta.cageCode || 'N/A')} • ${escapeHtml(meta.samStatus || 'Active')}</span>
+            <span class="meta-val">${escapeHtml(meta.cageCode || NOT_RECORDED)} • ${escapeHtml(meta.samStatus || NOT_RECORDED)}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Operational Status</span>
@@ -452,11 +453,11 @@ export function generatePrintableHtml(
           </div>
           <div class="meta-item">
             <span class="meta-label">System Owner</span>
-            <span class="meta-val">${escapeHtml(meta.systemOwner)}</span>
+            <span class="meta-val">${escapeHtml(meta.systemOwner || NOT_RECORDED)}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Primary Assessor / Author</span>
-            <span class="meta-val">${escapeHtml(meta.primaryAssessor)}</span>
+            <span class="meta-val">${escapeHtml(meta.primaryAssessor || NOT_RECORDED)}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Assessment Date</span>

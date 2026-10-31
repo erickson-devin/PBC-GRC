@@ -14,12 +14,19 @@ import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 
 import { copyToClipboard } from '../../utils/clipboard';
+import { NOT_RECORDED } from '../../data/reports/documentDefaults';
+import { SSP_METADATA_NEED_OWNER_MESSAGE } from '../../data/sspMetadataSync';
 export const SSPBuilder: React.FC = () => {
   const {
     state,
     metrics,
     frameworkControls,
     updateSSPMetadata,
+    sspMetadataEditable,
+    sspMetadataStatus,
+    sspMetadataConflict,
+    resolveSspMetadataConflict,
+    sspMetadataNeedsOwner,
     exportAssessmentMarkdown,
   } = useAssessment();
 
@@ -27,6 +34,21 @@ export const SSPBuilder: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<'document' | 'form'>('document');
   const [copied, setCopied] = useState<boolean>(false);
+  const [resolvingConflict, setResolvingConflict] = useState<boolean>(false);
+  const [conflictFailed, setConflictFailed] = useState<boolean>(false);
+
+  const resolveConflict = async (choice: 'browser' | 'server') => {
+    setResolvingConflict(true);
+    setConflictFailed(false);
+    try {
+      await resolveSspMetadataConflict(choice);
+    } catch {
+      // A fixed notice only: the server's answer may name the text
+      setConflictFailed(true);
+    } finally {
+      setResolvingConflict(false);
+    }
+  };
 
   const meta = state.sspMetadata;
   // The active program's boundary summary describes the system when the plan's own boundary text is empty
@@ -43,7 +65,7 @@ export const SSPBuilder: React.FC = () => {
     let text = `SYSTEM SECURITY PLAN (SSP) - ${frameworkTitle.toUpperCase()} / ${guidance.authority.toUpperCase()}\n\n`;
     text += `ORGANIZATION: ${meta.organizationName}\n`;
     text += `CAGE CODE: ${meta.cageCode}\n`;
-    text += `SAM.GOV STATUS: ${meta.samStatus || 'Active'}\n`;
+    text += `SAM.GOV STATUS: ${meta.samStatus || NOT_RECORDED}\n`;
     if (activeProgram) text += `PROGRAM: ${activeProgram.name}\n`;
     text += `SYSTEM NAME: ${meta.systemName}\n`;
     text += `SYSTEM OWNER: ${meta.systemOwner}\n`;
@@ -167,6 +189,55 @@ export const SSPBuilder: React.FC = () => {
             </div>
           )}
 
+          {/* Where these details are saved. Fixed text only: the values may be CUI. */}
+          {currentTenant.serverBacked && (
+            <p className="text-xs text-slate-400" role="status" aria-live="polite">
+              {sspMetadataStatus === 'saving'
+                ? 'Saving…'
+                : sspMetadataStatus === 'saved'
+                  ? 'Saved to the server'
+                  : sspMetadataStatus === 'loading' && !sspMetadataNeedsOwner && !sspMetadataConflict
+                    ? 'Loading the server copy…'
+                    : 'These details are saved to the server, separately for each program.'}
+            </p>
+          )}
+
+          {sspMetadataNeedsOwner && (
+            <div role="alert" className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-center gap-2">
+              <Lock className="w-4 h-4 shrink-0" />
+              <span>{SSP_METADATA_NEED_OWNER_MESSAGE}</span>
+            </div>
+          )}
+
+          {sspMetadataConflict && (
+            <div role="alert" className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 space-y-3">
+              <p>
+                This browser and the server hold different text for: {sspMetadataConflict.fields.join(', ')}. Nothing has been changed yet. Choose which
+                copy to keep.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!canEdit || resolvingConflict}
+                  onClick={() => void resolveConflict('server')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 font-semibold disabled:opacity-60"
+                >
+                  Keep the server&apos;s
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEdit || resolvingConflict}
+                  onClick={() => void resolveConflict('browser')}
+                  className="px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold disabled:opacity-60"
+                >
+                  Use this browser&apos;s
+                </button>
+              </div>
+              {!canEdit && <p>Only an owner or MSP administrator can choose.</p>}
+              {conflictFailed && <p>The choice could not be saved to the server. Try again.</p>}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* System Name */}
             <div>
@@ -175,7 +246,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.systemName}
                 onChange={(e) => updateSSPMetadata({ systemName: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -190,7 +261,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.organizationName}
                 onChange={(e) => updateSSPMetadata({ organizationName: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -205,7 +276,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.cageCode}
                 onChange={(e) => updateSSPMetadata({ cageCode: e.target.value.toUpperCase() })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -220,7 +291,7 @@ export const SSPBuilder: React.FC = () => {
                 SAM.gov Registration Status
               </label>
               <select
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.samStatus}
                 onChange={(e) => updateSSPMetadata({ samStatus: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -239,7 +310,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.systemOwner}
                 onChange={(e) => updateSSPMetadata({ systemOwner: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -254,7 +325,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.authorName}
                 onChange={(e) => updateSSPMetadata({ authorName: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -269,7 +340,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="date"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.assessmentDate}
                 onChange={(e) => updateSSPMetadata({ assessmentDate: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -283,7 +354,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.version}
                 onChange={(e) => updateSSPMetadata({ version: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -298,7 +369,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <textarea
                 rows={4}
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.systemBoundaryScope}
                 onChange={(e) => updateSSPMetadata({ systemBoundaryScope: e.target.value })}
                 className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -313,7 +384,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.systemEnvironment}
                 onChange={(e) => updateSSPMetadata({ systemEnvironment: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -328,7 +399,7 @@ export const SSPBuilder: React.FC = () => {
               </label>
               <input
                 type="text"
-                disabled={!canEdit}
+                disabled={!canEdit || !sspMetadataEditable}
                 value={meta.cloudServiceProviders}
                 onChange={(e) => updateSSPMetadata({ cloudServiceProviders: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
@@ -392,7 +463,7 @@ export const SSPBuilder: React.FC = () => {
 
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-slate-500 block font-medium">CAGE Code</span>
-                <span className="text-slate-900 font-mono font-bold text-sm">{meta.cageCode || 'N/A'}</span>
+                <span className="text-slate-900 font-mono font-bold text-sm">{meta.cageCode || NOT_RECORDED}</span>
               </div>
 
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">

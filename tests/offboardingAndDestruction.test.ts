@@ -19,6 +19,7 @@ import { computeSha256, canonicalJson } from '../src/data/audit/auditLogger';
 import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetScope';
 import { createInitialState } from '../src/services/storageService';
 import { NO_CSP_RECORDED } from '../src/data/reports/documentCompilers';
+import { NOT_RECORDED, NO_BOUNDARY_RECORDED, NO_ASSESSOR_RECORDED } from '../src/data/reports/documentDefaults';
 import { copyText } from '../src/utils/clipboard';
 
 // Polyfill minimal localStorage for Node environment if absent
@@ -220,6 +221,18 @@ async function runTests() {
     const plain13 = (plain.reports.systemSecurityPlan.sections[0].subsections || []).find((s: { title: string }) => s.title.startsWith('1.3'));
     assert(plain13?.content === NO_CSP_RECORDED, 'OB-122b: the handover SSP section 1.3 states that no cloud service provider is recorded');
 
+    // #151: the handover invents no organization, assessor or boundary
+    const plain12 = (plain.reports.systemSecurityPlan.sections[0].subsections || []).find((s: { title: string }) => s.title.startsWith('1.2'));
+    assert(plain12?.content === NO_BOUNDARY_RECORDED, 'S151-14: the handover SSP boundary says none is recorded when the customer recorded none');
+    const plainItems = (plain.reports.systemSecurityPlan.sections[0].subsections || []).flatMap((s: { items?: { label: string; value: string }[] }) => s.items || []);
+    assert(plainItems.find((i: { label: string }) => i.label === 'Primary Assessor / Author')?.value === NO_ASSESSOR_RECORDED, 'S151-15: the handover SSP names no assessor the customer did not record');
+    const plainJson = JSON.stringify(plain);
+    assert(!plainJson.includes('Pitch Black Cyber GRC Engine') && !plainJson.includes('operations and compliance boundary'), 'S151-16: the handover package carries no invented assessor or boundary text');
+    const unknownCert = await executeCryptographicDestruction({ tenantId: 'tenant-unknown-151', actorName: 'A', actorEmail: 'a@b.c', clearEvidenceFiles: async () => {} });
+    assert(unknownCert.systemName === NOT_RECORDED && unknownCert.cageCode === NOT_RECORDED, 'S151-17: a certificate for an unrecorded system says not recorded');
+    const namedCert = await executeCryptographicDestruction({ tenantId: 'tenant-named-151', systemName: 'SYS-151', cageCode: '9Z9Z9', actorName: 'A', actorEmail: 'a@b.c', clearEvidenceFiles: async () => {} });
+    assert(namedCert.systemName === 'SYS-151' && namedCert.cageCode === '9Z9Z9', 'S151-18: a certificate carries the recorded system name and CAGE code');
+
     // #131: a browser-only tenant's handover uses the overlays its matrix uses
     const noOverlays = JSON.stringify({ nonNetworkedOnly: false });
     assert(JSON.stringify(readBrowserOverlayFilters('tenant-no-overlays-01')) === noOverlays, 'OB-P11: a tenant with no saved overlays reads all off');
@@ -299,6 +312,35 @@ async function runTests() {
       await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, bAssets, { ...deps, getProgramAssets: async () => { throw new Error('boom'); } });
     } catch (err) { failedClosed = err; }
     assert(failedClosed instanceof Error, 'OB-P10b: if the declared assets cannot be read the export rejects (no package with the wrong boundary)');
+
+    // #84: a program's package states that program's own SSP details from the server
+    const mPkg = await generateEnclaveHandoverPackage(progTenant.id, progTenant, undefined, {}, [], {
+      program: nistLow, download: false, sspMetadata: { systemEnvironment: 'ENV-84', cloudServiceProviders: 'CSP-84', systemBoundaryScope: 'BOUNDARY-84' },
+    });
+    const mMeta = mPkg.reports.systemSecurityPlan.metadata;
+    assert(mMeta.systemEnvironment === 'ENV-84' && mMeta.cloudServiceProviders === 'CSP-84', 'OB-M1: a program package carries the SSP environment and cloud providers it was given', JSON.stringify({ env: mMeta.systemEnvironment, csp: mMeta.cloudServiceProviders }));
+    assert(JSON.stringify(mPkg.reports.systemSecurityPlan).includes('BOUNDARY-84'), 'OB-M1b: the server\'s SSP boundary text wins over the tenant\'s');
+    const sspCalls: string[] = [];
+    const sspByProgram: Record<string, { metadata: Record<string, string> | null }> = {
+      'p-a': { metadata: { systemEnvironment: 'ENV-A', cloudServiceProviders: 'CSP-A' } },
+      'p-b': { metadata: { systemEnvironment: 'ENV-B', cloudServiceProviders: 'CSP-B' } },
+    };
+    const mAll = await buildProgramHandover(progTenant, { kind: 'all' }, undefined, {
+      ...deps, getSspMetadata: async (_t: string, p: string) => { sspCalls.push(p); return sspByProgram[p]; },
+    });
+    const mEnv = (i: number) => mAll.packages[i].reports.systemSecurityPlan.metadata;
+    assert(
+      sspCalls.join() === 'p-a,p-b' && mEnv(0).systemEnvironment === 'ENV-A' && mEnv(0).cloudServiceProviders === 'CSP-A' && mEnv(1).systemEnvironment === 'ENV-B' && mEnv(1).cloudServiceProviders === 'CSP-B',
+      'OB-M2: every program of the bundle carries its own SSP details, and each program is asked for them', sspCalls.join()
+    );
+    const mNone = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, deps);
+    const mNoneMeta = mNone.packages[0].reports.systemSecurityPlan.metadata;
+    assert(mNoneMeta.systemEnvironment === '' && mNoneMeta.cloudServiceProviders === '', 'OB-M3: without a way to read the SSP details the package states none (OB-122a still holds)');
+    let sspFailed: unknown = null;
+    try {
+      await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...deps, getSspMetadata: async () => { throw new Error('boom'); } });
+    } catch (err) { sspFailed = err; }
+    assert(sspFailed instanceof Error, 'OB-M4: if the SSP details cannot be read the export rejects');
 
     let notFound: unknown = null;
     try { await buildProgramHandover(progTenant, { kind: 'program', programId: 'nope' }, undefined, deps); } catch (err) { notFound = err; }

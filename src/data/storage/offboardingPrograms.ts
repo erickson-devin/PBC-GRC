@@ -8,6 +8,7 @@ import type { Tenant } from '../../types/tenant';
 import type { Program } from '../../types/program';
 import type { ControlState, EvidenceItem } from '../../types/cmmc';
 import type { EnclaveAsset } from '../../types/telemetry';
+import type { SspMetadataFields } from '../../types/sspMetadata';
 import { computeSha256, canonicalJson } from '../audit/auditLogger';
 import { boundaryAssets } from '../programAssets';
 import { generateEnclaveHandoverPackage, type EnclaveHandoverPackage } from './offboardingEngine';
@@ -21,6 +22,8 @@ export interface HandoverDeps {
   getEvidence: (tenantId: string, programId: string) => Promise<EvidenceItem[]>;
   /** The assets the program declares (issue #26). A failure rejects the export: never a package with the wrong boundary. */
   getProgramAssets?: (tenantId: string, programId: string) => Promise<{ declared: boolean; assetIds: string[] }>;
+  /** The program's SSP details (issue #84). A failure rejects the export: never a package that silently states no environment. */
+  getSspMetadata?: (tenantId: string, programId: string) => Promise<{ metadata: SspMetadataFields | null }>;
 }
 
 export interface EnclaveHandoverBundle {
@@ -69,7 +72,9 @@ export async function buildProgramHandover(
       const membership = await deps.getProgramAssets(tenant.id, program.id);
       programAssets = boundaryAssets(assets, membership.assetIds, membership.declared);
     }
-    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single }));
+    // The program's own SSP details (environment, cloud providers, boundary text), or none while the server holds no row
+    const sspMetadata = deps.getSspMetadata ? (await deps.getSspMetadata(tenant.id, program.id)).metadata ?? undefined : undefined;
+    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single, sspMetadata }));
   }
   if (single) return { packages, bundle: null };
 

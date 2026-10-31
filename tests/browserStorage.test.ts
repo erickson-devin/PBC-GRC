@@ -15,6 +15,7 @@ import {
   stripObjectiveNarrativesForCache,
   stripEvidenceIndexForCache,
   stripTenantRegistryForCache,
+  stripSspMetadataForCache,
   planLocalAssetCleanup,
   scrubAssessmentJson,
   computeNotesStatus,
@@ -371,6 +372,71 @@ async function main() {
     rE7
   );
 
+  console.log('\n--- SSP metadata (server tenants keep it on the server once uploaded, #84) ---');
+  const ENVMARK = 'ENV-MARK-84';
+  const withSsp = (tenantId: string, marker: boolean): AssessmentState => {
+    const base = makeState(tenantId, '');
+    return {
+      ...base,
+      sspMetadata: { ...base.sspMetadata, systemName: 'SYS-84', systemEnvironment: ENVMARK, cloudServiceProviders: 'CSP-84' },
+      ...(marker ? { sspMetadataMigratedAt: '2026-02-01T00:00:00.000Z' } : {}),
+    };
+  };
+  globalStore.clear();
+  StorageService.saveAssessment('srv1', withSsp('srv1', true));
+  const m1Raw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!;
+  const m1 = JSON.parse(m1Raw) as AssessmentState;
+  assert(!m1Raw.includes(ENVMARK) && !m1Raw.includes('SYS-84') && m1.sspMetadata.tenantId === 'srv1' && m1.sspMetadataMigratedAt === '2026-02-01T00:00:00.000Z', 'M1 saveAssessment with the marker stores no SSP text and keeps tenantId and the marker', m1.sspMetadata);
+  StorageService.saveAssessment('srv1', withSsp('srv1', true), { keepNotes: true });
+  assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(ENVMARK), 'M2 keepNotes (browser-only) keeps the SSP text even with a marker');
+  StorageService.saveAssessment('srv1', withSsp('srv1', false));
+  assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(ENVMARK), 'M3 without the marker the cache keeps the SSP text (it is the only copy)');
+  globalStore.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withSsp('srv1', true)));
+  globalStore.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', JSON.stringify(withSsp('brw1', true)));
+  const m4a = StorageService.loadAssessment(makeTenant('srv1', true));
+  assert(m4a.sspMetadata.systemEnvironment === '' && m4a.sspMetadata.systemName === '' && m4a.sspMetadata.tenantId === 'srv1', 'M4a loadAssessment of a marked server cache blanks the SSP text');
+  assert(StorageService.loadAssessment(makeTenant('brw1', false)).sspMetadata.systemEnvironment === ENVMARK, 'M4b a browser-only tenant keeps it');
+
+  const stM = new MemoryStorage();
+  stM.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'brw1' }, { id: 'srv2', serverBacked: true }]));
+  stM.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(withSsp('srv1', true)));
+  const brwSspRaw = JSON.stringify(withSsp('brw1', true));
+  stM.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', brwSspRaw);
+  stM.setItem(ASSESSMENT_KEY_PREFIX + 'srv2', JSON.stringify(withSsp('srv2', false)));
+  const logsM: string[] = [];
+  const rM5 = await runBrowserStorageScrub(stM, (m) => logsM.push(m));
+  assert(
+    rM5.sspMetadataCleared === 1 && stM.getItem(ASSESSMENT_KEY_PREFIX + 'brw1') === brwSspRaw && stM.getItem(ASSESSMENT_KEY_PREFIX + 'srv2')!.includes(ENVMARK) &&
+      !stM.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(ENVMARK),
+    'M5 the start-up scrub blanks a marked server cache; the marked browser-only and the unmarked server cache stay',
+    rM5
+  );
+  stM.setCalls.length = 0;
+  const rM6 = await runBrowserStorageScrub(stM, () => undefined);
+  assert(rM6.sspMetadataCleared === 0 && stM.setCalls.length === 0, 'M6 a second run writes nothing', rM6);
+  assert(logsM.length === 1 && !logsM[0].includes('srv1') && !logsM[0].includes(ENVMARK) && !logsM[0].includes('SYS-84'), 'M7 the log line holds no tenant id and no SSP text', logsM);
+
+  const stM8 = new MemoryStorage();
+  stM8.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }]));
+  stM8.setItem(ASSESSMENT_KEY_PREFIX + 'srv1::prog2', JSON.stringify(withSsp('srv1', true)));
+  stM8.setItem(ASSESSMENT_KEY_PREFIX + 'orphan9', JSON.stringify(withSsp('orphan9', true)));
+  const rM8 = await runBrowserStorageScrub(stM8, () => undefined);
+  assert(
+    rM8.sspMetadataCleared === 1 && !stM8.getItem(ASSESSMENT_KEY_PREFIX + 'srv1::prog2')!.includes(ENVMARK) && stM8.getItem(ASSESSMENT_KEY_PREFIX + 'orphan9')!.includes(ENVMARK),
+    'M8 a marked server program cache is blanked; an unregistered id (failed-move leftover) keeps its text',
+    rM8
+  );
+
+  const m9In = withSsp('srv1', true);
+  const m9Before = JSON.stringify(m9In);
+  const m9Out = stripSspMetadataForCache(m9In);
+  const m9Plain = withSsp('srv1', false);
+  assert(
+    JSON.stringify(m9In) === m9Before && m9Out !== m9In && m9Out.sspMetadata.systemEnvironment === '' && m9Out.sspMetadata.tenantId === 'srv1' && m9Out.sspMetadata.lastUpdated === m9In.sspMetadata.lastUpdated && stripSspMetadataForCache(m9Plain) === m9Plain,
+    'M9 the helper never mutates, blanks the text fields, and returns the same object without the marker'
+  );
+  assert(!/\.setItem\(|localStorage/.test(fs.readFileSync(path.join(process.cwd(), 'src/data/sspMetadataSync.ts'), 'utf8')), 'M10 the SSP sync module writes no browser storage');
+
   console.log('\n--- Asset cache and discovery keys ---');
   const NOTE7 = 'CUI-NOTE-7';
   const realAssets = JSON.stringify([{ id: 'a-1', hostName: 'WS-01', macAddress: '', notes: NOTE7 }]);
@@ -451,6 +517,17 @@ async function main() {
   assert(rR3b.registryEntriesStripped === 0 && stR.setCalls.length === 0, 'R3b a second run does not write the registry', rR3b);
   const tcLine = readSrc('src/context/TenantContext.tsx').split(/\r?\n/).find((l) => l.includes('localStorage.setItem(LIVE_TENANTS_STORAGE_KEY')) || '';
   assert(tcLine.includes('stripTenantRegistryForCache('), 'R5 TenantContext writes the stripped registry', tcLine);
+  const regMig = [
+    { id: 's1', serverBacked: true, name: 'Acme', domain: 'acme.test', systemBoundaryScope: 'BOUND-84', stackProfile: { identityProvider: 'OKTA' }, browserFieldsMigratedAt: '2026-02-01T00:00:00.000Z' },
+    { id: 's2', serverBacked: true, name: 'Beta', systemBoundaryScope: 'BOUND-84', stackProfile: { identityProvider: 'OKTA' } },
+    { id: 'b1', name: 'Local', systemBoundaryScope: 'BOUND-84', stackProfile: { identityProvider: 'OKTA' }, browserFieldsMigratedAt: '2026-02-01T00:00:00.000Z' },
+  ];
+  const regMigBefore = JSON.stringify(regMig);
+  const regMigOut = stripTenantRegistryForCache(regMig as any[]);
+  assert(!('systemBoundaryScope' in regMigOut[0]) && !('stackProfile' in regMigOut[0]) && regMigOut[0].domain === 'acme.test' && regMigOut[0].name === 'Acme', 'R6 a server entry with browserFieldsMigratedAt loses the boundary text and stack profile and keeps its other fields');
+  assert(regMigOut[1].systemBoundaryScope === 'BOUND-84' && regMigOut[1].stackProfile?.identityProvider === 'OKTA', 'R7 without the marker both stay');
+  assert(regMigOut[2] === regMig[2], 'R8 a browser-only entry with the marker is untouched');
+  assert(JSON.stringify(regMig) === regMigBefore && JSON.stringify(stripTenantRegistryForCache(regMigOut)) === JSON.stringify(regMigOut), 'R9 stripping is idempotent and never mutates its input');
 
   console.log('\n--- computeNotesStatus ---');
   const base = { serverBacked: true, liveControlsTenantId: null as string | null, tenantId: 't', syncError: null as string | null, hasToken: true };

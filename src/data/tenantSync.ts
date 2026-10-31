@@ -1,5 +1,6 @@
 import type { ComplianceFramework } from '../types/framework';
-import type { SamStatus, Tenant, TenantRole } from '../types/tenant';
+import type { EnclaveStackProfile, SamStatus, Tenant, TenantRole } from '../types/tenant';
+import { validateStackProfile } from './stackProfileSchema';
 import { isTenantRole } from '../utils/roles';
 
 /**
@@ -21,6 +22,8 @@ export interface ServerTenant {
   primaryFramework: string;
   createdAt: string | null;
   role: TenantRole;
+  /** The enclave stack survey the server holds (null: none yet, or one that failed validation). */
+  stackProfile: EnclaveStackProfile | null;
   /** 'claim' entries come from the token only and carry no tenant details. */
   source: 'membership' | 'claim';
 }
@@ -30,6 +33,13 @@ const SAM_STATUSES: readonly SamStatus[] = ['ACTIVE', 'PENDING', 'EXPIRED', 'NOT
 
 const isFramework = (v: unknown): v is ComplianceFramework => FRAMEWORKS.includes(v as ComplianceFramework);
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
+
+/** A stack profile that passes the server's own validation, else null: never trusted unchecked. */
+const validProfile = (v: unknown): EnclaveStackProfile | null => {
+  if (v === null || v === undefined) return null;
+  const checked = validateStackProfile(v);
+  return checked.ok ? checked.value : null;
+};
 
 /** Defensive parse of the HTTP response: anything malformed (or with an unknown role) is dropped, never trusted. */
 export function parseServerTenants(raw: unknown): ServerTenant[] {
@@ -51,6 +61,7 @@ export function parseServerTenants(raw: unknown): ServerTenant[] {
       primaryFramework: str(t.primaryFramework, 'CMMC_L1'),
       createdAt: typeof t.createdAt === 'string' ? t.createdAt : null,
       role: t.role,
+      stackProfile: validProfile(t.stackProfile),
       source: t.source === 'claim' ? 'claim' : 'membership',
     });
   }
@@ -106,6 +117,8 @@ export function serverTenantToTenant(server: ServerTenant, existing: Tenant | un
     }),
     ...authoritative,
     id: server.id,
+    // The server's stack profile wins once it holds one; until then the browser's copy stays (and is uploaded once, planStackProfileUpload).
+    ...(server.stackProfile ? { stackProfile: server.stackProfile } : {}),
     isConfigured: existing?.isConfigured ?? true, // a tenant that exists on the server must not trigger first-run onboarding
     serverBacked: true,
   };
@@ -188,6 +201,7 @@ export interface ServerTenantPatch {
   industry?: string;
   primaryFramework?: string;
   enabledFrameworks?: string[];
+  stackProfile?: EnclaveStackProfile;
 }
 
 const CAGE_CODE = /^[A-Za-z0-9]{5}$/;
@@ -196,8 +210,8 @@ const CAGE_CODE = /^[A-Za-z0-9]{5}$/;
 export const isValidCageCode = (value: unknown): value is string => typeof value === 'string' && CAGE_CODE.test(value.trim());
 
 /**
- * Picks the server-owned fields out of a local tenant edit and normalises them. Browser-only fields (domain, stack
- * profile, boundary text, licence tier, ...) are never sent. Empty strings and placeholder CAGE codes are dropped
+ * Picks the server-owned fields out of a local tenant edit and normalises them. Browser-only fields (domain,
+ * boundary text, licence tier, ...) are never sent. Empty strings and placeholder CAGE codes are dropped
  * rather than overwriting good server values.
  */
 export function toServerPatch(updates: Partial<Tenant>): ServerTenantPatch {
@@ -217,7 +231,15 @@ export function toServerPatch(updates: Partial<Tenant>): ServerTenantPatch {
   if (updates.primaryFramework && isFramework(updates.primaryFramework)) patch.primaryFramework = updates.primaryFramework;
   const frameworks = updates.enabledFrameworks?.filter(isFramework);
   if (frameworks && frameworks.length > 0) patch.enabledFrameworks = frameworks;
+  const profile = validProfile(updates.stackProfile);
+  if (profile) patch.stackProfile = profile;
   return patch;
+}
+
+/** The browser's stack profile to upload once: only when it is valid and the server holds none. Otherwise null. */
+export function planStackProfileUpload(server: Pick<ServerTenant, 'stackProfile'>, cached: unknown): EnclaveStackProfile | null {
+  if (server.stackProfile) return null;
+  return validProfile(cached);
 }
 
 /** True for assessor-style email domains (audit / C3PAO / assessor firms). */

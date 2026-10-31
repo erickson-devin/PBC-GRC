@@ -298,6 +298,19 @@ async function headers() {
     await ApiClient.updateProgram('t1', 'p1', { name: 'New', boundarySummary: 'S' });
     const putBody = JSON.parse(String(calls[0].init.body)) as Record<string, string>;
     assert(calls[0].init.method === 'PUT' && putBody.name === 'New' && putBody.systemBoundarySummary === 'S' && !('framework' in putBody) && !('baseline' in putBody), 'H8d updateProgram sends only the editable fields', putBody);
+
+    stub(200, { metadata: null, updatedAt: null, updatedBy: null });
+    const sspGot = await ApiClient.getSspMetadata('t1', 'p1');
+    assert(calls[0].url === '/api/v1/ssp-metadata' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === 'p1' && sspGot.metadata === null, 'H10 getSspMetadata is GET /api/v1/ssp-metadata with x-program-id', calls[0].url);
+    await ApiClient.getSspMetadata('t1', null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined, 'H10b a null program sends no x-program-id');
+    stub(200, { metadata: { systemName: 'S' }, updatedAt: '2026-10-31T00:00:00.000Z', updatedBy: 'u', changed: true });
+    const sspPut = await ApiClient.putSspMetadata('t1', { systemName: 'S' }, null, 'p1');
+    assert(calls[0].url === '/api/v1/ssp-metadata' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"metadata":{"systemName":"S"},"expectedUpdatedAt":null}' && headerOf(calls[0], 'x-program-id') === 'p1' && sspPut.changed === true, 'H10c putSspMetadata is PUT with the metadata and expectedUpdatedAt (null on a first write)', calls[0].init.body);
+    stub(409, { error: 'stale', code: 'stale_write' });
+    let sspStale = '';
+    try { await ApiClient.putSspMetadata('t1', { systemName: 'S' }, '2026-10-31T00:00:00.000Z'); } catch (err) { sspStale = String((err as { code?: unknown }).code ?? (err as Error).message); }
+    assert(sspStale !== '' && !sspStale.includes('"systemName"'), 'H10d a stale write rejects without echoing the metadata', sspStale);
     stub(201, { program: { id: 'p9', framework: 'NIST_800_53_REV5', baseline: 'HIGH', name: 'N' } });
     const created = await ApiClient.createProgram('t1', { name: 'N', framework: 'NIST_800_53_REV5', baseline: 'HIGH', seed: 'clone', sourceProgramId: 'p1' });
     const postBody = JSON.parse(String(calls[0].init.body)) as { seed?: { cloneFrom?: string }; frameworkId?: string };
@@ -522,7 +535,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;
@@ -580,7 +593,7 @@ async function main() {
   const iDrop = switchBody.indexOf('dropLiveData();');
   const iCommit = switchBody.indexOf('commitPrograms({ ...ps, activeId: programId })');
   assert(iPersist > 0 && iDrop > iPersist && iCommit > iDrop, 'T6g switchProgram persists the choice, then clears the live data (bumping the sequence), then commits the new program');
-  assert(/liveSeq\.current\+\+;\s+setLiveControls\(null\);\s+setLiveEvidence\(null\);\s+setLiveObjectives\(null\);\s+setLiveScopeKey\(null\);/.test(tenantCtx), 'T6h dropLiveData bumps the request sequence and clears controls, evidence, objectives and the scope key together');
+  assert(/liveSeq\.current\+\+;\s+setLiveControls\(null\);\s+setLiveEvidence\(null\);\s+setLiveObjectives\(null\);\s+setLiveSspMetadata\(null\);\s+setLiveScopeKey\(null\);/.test(tenantCtx), 'T6h dropLiveData bumps the request sequence and clears controls, evidence, objectives, SSP metadata and the scope key together');
   assert(!/liveControlsTenantId/.test(tenantCtx) && /liveScopeKey: string \| null/.test(tenantCtx), 'T6i TenantContext exposes liveScopeKey, not liveControlsTenantId');
   assert(!/ACTIVE_FRAMEWORK_KEY|ACTIVE_BASELINE_TIER_KEY|getItem\('pbc_active_cia_triad'\)|setItem\('pbc_active_cia_triad'/.test(tenantCtx), 'T6j the per-browser framework, baseline and CIA keys are no longer read or written');
   const legacy = tenantCtx.slice(tenantCtx.indexOf('const LEGACY_STORAGE_KEYS'), tenantCtx.indexOf('];', tenantCtx.indexOf('const LEGACY_STORAGE_KEYS')));

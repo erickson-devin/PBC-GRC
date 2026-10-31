@@ -10,6 +10,7 @@
  */
 
 import type { AssessmentState } from '../types/cmmc';
+import { SSP_METADATA_FIELDS } from '../types/sspMetadata';
 import { redactLedgerNotesExcerpts } from '../data/audit/auditLogger';
 import type { AuditLogEntry } from '../types/audit';
 import type { EnclaveAsset } from '../types/telemetry';
@@ -48,10 +49,14 @@ export interface BrowserStorageScrubResult {
   registryEntriesStripped: number;
   fleetCachesRemoved: number;
   failingAssetListsCleared: number;
+  sspMetadataCleared: number;
 }
 
 /** Tenant registry text a server tenant keeps on the server only (the browser copy holds it for browser-only tenants). */
 export const SERVER_TENANT_TEXT_FIELDS = ['systemName', 'systemOwner', 'industry'] as const;
+
+/** Registry fields a server tenant keeps on the server only once `browserFieldsMigratedAt` is set. */
+export const SERVER_TENANT_MIGRATED_FIELDS = ['systemBoundaryScope', 'stackProfile'] as const;
 
 /**
  * Returns a copy of the tenant list where every server-backed entry has its server-held text fields blanked ('' because
@@ -66,6 +71,15 @@ export function stripTenantRegistryForCache<T extends { serverBacked?: boolean }
       if (field in record && record[field] !== '' && record[field] != null) {
         if (!copy) copy = { ...record };
         copy[field] = '';
+      }
+    }
+    // The boundary text and stack profile leave the cache only once the client has marked them as on the server (#84).
+    if (record.browserFieldsMigratedAt) {
+      for (const field of SERVER_TENANT_MIGRATED_FIELDS) {
+        if (field in record) {
+          if (!copy) copy = { ...record };
+          delete copy[field];
+        }
       }
     }
     return copy ? (copy as unknown as T) : tenant;
@@ -140,6 +154,17 @@ export function stripImplementationNotesForCache(state: AssessmentState): Assess
   return { ...state, controls };
 }
 
+/**
+ * Returns a copy of the state with the SSP metadata text blanked (tenantId kept), once `sspMetadataMigratedAt` is set: the
+ * server then holds the only copy. The same object until then (the cache is the only copy). Never mutates the input.
+ */
+export function stripSspMetadataForCache(state: AssessmentState): AssessmentState {
+  if (!state.sspMetadataMigratedAt || !state.sspMetadata) return state;
+  const meta: Record<string, unknown> = { ...(state.sspMetadata as unknown as Record<string, unknown>) };
+  for (const field of SSP_METADATA_FIELDS) meta[field] = '';
+  return { ...state, sspMetadata: meta as unknown as AssessmentState['sspMetadata'] };
+}
+
 /** Returns a copy of the state with `failingAssets` (host names, IPs, scan output) removed from every control. Never mutates the input. */
 export function stripFailingAssetsForCache(state: AssessmentState): AssessmentState {
   const controls: Record<string, any> = {};
@@ -180,12 +205,13 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
   strippedObjectives: number;
   clearedEvidence: number;
   clearedFailingAssets: number;
+  clearedSspMetadata: number;
   malformed?: boolean;
 } {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.controls || typeof parsed.controls !== 'object') {
-      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, malformed: true };
+      return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, clearedSspMetadata: 0, malformed: true };
     }
     let stripped = 0;
     for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
@@ -223,12 +249,23 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
         }
       }
     }
-    if (stripped === 0 && strippedObjectives === 0 && clearedEvidence === 0 && clearedFailingAssets === 0) {
-      return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0 };
+    // SSP metadata text (system environment, boundary, CSPs) goes once the client has marked it as uploaded; same condition as the evidence.
+    let clearedSspMetadata = 0;
+    if (options.clearEvidence !== false && parsed.sspMetadataMigratedAt && parsed.sspMetadata && typeof parsed.sspMetadata === 'object') {
+      for (const field of SSP_METADATA_FIELDS) {
+        const value = (parsed.sspMetadata as Record<string, unknown>)[field];
+        if (typeof value === 'string' && value !== '') {
+          (parsed.sspMetadata as Record<string, unknown>)[field] = '';
+          clearedSspMetadata = 1;
+        }
+      }
     }
-    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives, clearedEvidence, clearedFailingAssets };
+    if (stripped === 0 && strippedObjectives === 0 && clearedEvidence === 0 && clearedFailingAssets === 0 && clearedSspMetadata === 0) {
+      return { changed: false, json: raw, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, clearedSspMetadata: 0 };
+    }
+    return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives, clearedEvidence, clearedFailingAssets, clearedSspMetadata };
   } catch {
-    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, malformed: true };
+    return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, clearedSspMetadata: 0, malformed: true };
   }
 }
 
@@ -304,16 +341,17 @@ function emptyResult(): BrowserStorageScrubResult {
     registryEntriesStripped: 0,
     fleetCachesRemoved: 0,
     failingAssetListsCleared: 0,
+    sspMetadataCleared: 0,
   };
 }
 
 function logCounts(r: BrowserStorageScrubResult, log: (message: string) => void): void {
-  if (r.scrubbed + r.malformed + r.ledgersRedacted + r.accretionKeysRemoved + r.assetListsRemoved + r.registryEntriesStripped + r.fleetCachesRemoved + r.failingAssetListsCleared === 0) return;
+  if (r.scrubbed + r.malformed + r.ledgersRedacted + r.accretionKeysRemoved + r.assetListsRemoved + r.registryEntriesStripped + r.fleetCachesRemoved + r.failingAssetListsCleared + r.sspMetadataCleared === 0) return;
   log(
     `[storage-scrub] assessments scrubbed ${r.scrubbed} (${r.narrativesRemoved} objective narratives, ${r.evidenceItemsCleared} evidence items), kept browser-only ${r.keptBrowserOnly}, malformed ${r.malformed}, ` +
       `ledgers redacted ${r.ledgersRedacted} (${r.ledgerEntriesRedacted} entries), ` +
       `accretion keys removed ${r.accretionKeysRemoved}, asset lists removed ${r.assetListsRemoved} (kept ${r.assetListsKept}), registry entries stripped ${r.registryEntriesStripped}, ` +
-      `fleet caches removed ${r.fleetCachesRemoved}, failing-asset lists cleared ${r.failingAssetListsCleared}`
+      `fleet caches removed ${r.fleetCachesRemoved}, failing-asset lists cleared ${r.failingAssetListsCleared}, SSP metadata caches cleared ${r.sspMetadataCleared}`
   );
 }
 
@@ -419,6 +457,7 @@ export function runAssessmentCacheScrub(
         result.narrativesRemoved += scrub.strippedObjectives;
         result.evidenceItemsCleared += scrub.clearedEvidence;
         result.failingAssetListsCleared += scrub.clearedFailingAssets;
+        result.sspMetadataCleared += scrub.clearedSspMetadata;
       }
     } catch {
       result.failed++;

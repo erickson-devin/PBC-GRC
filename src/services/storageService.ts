@@ -1,5 +1,6 @@
 import { AssessmentState, ControlState, SSPMetadata } from '../types/cmmc';
 import { Tenant } from '../types/tenant';
+import { SSP_METADATA_FIELDS } from '../types/sspMetadata';
 import { FrameworkControlDefinition, ComplianceFramework } from '../types/framework';
 import { getFrameworkControls } from '../data/frameworks';
 import {
@@ -8,6 +9,7 @@ import {
   stripFailingAssetsForCache,
   stripImplementationNotesForCache,
   stripObjectiveNarrativesForCache,
+  stripSspMetadataForCache,
 } from './browserStorageScrub';
 import { activeProgramStorageKey } from '../data/programSync';
 
@@ -34,6 +36,27 @@ export function createInitialControlsState(
   return initial;
 }
 
+/**
+ * #151: the old export form seeded invented values and "Save & Sync Metadata" wrote them into the SSP metadata.
+ * An exact match of one of those strings is treated as never recorded. Pure: returns the input when nothing matches.
+ */
+export function scrubInventedMetadata(meta: SSPMetadata): SSPMetadata {
+  if (!meta) return meta;
+  const boundary = meta.systemBoundaryScope || '';
+  const invented =
+    meta.organizationName === 'Organization Enclave' ||
+    meta.authorName === 'Compliance & Audit Assessment Team' ||
+    meta.authorName === 'Lead Compliance Assessor' ||
+    boundary.startsWith('The system boundary encompasses corporate identity tenants');
+  if (!invented) return meta;
+  return {
+    ...meta,
+    organizationName: meta.organizationName === 'Organization Enclave' ? '' : meta.organizationName,
+    authorName: meta.authorName === 'Compliance & Audit Assessment Team' || meta.authorName === 'Lead Compliance Assessor' ? '' : meta.authorName,
+    systemBoundaryScope: boundary.startsWith('The system boundary encompasses corporate identity tenants') ? '' : meta.systemBoundaryScope,
+  };
+}
+
 export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
   return {
     tenantId: tenant.id,
@@ -42,7 +65,7 @@ export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
     cageCode: tenant.cageCode || '',
     samStatus: tenant.samStatus || 'NOT_REGISTERED',
     systemOwner: tenant.systemOwner || '',
-    authorName: 'Compliance & Audit Assessment Team',
+    authorName: '',
     assessmentDate: new Date().toISOString().split('T')[0],
     systemBoundaryScope: tenant.systemBoundaryScope || '',
     systemEnvironment: '',
@@ -112,6 +135,11 @@ export const StorageService = {
         }
         // The evidence list (file names, descriptions) is likewise server-only for a live tenant; the live list replaces it.
         if (tenant.serverBacked) parsed.evidenceIndex = [];
+        if (parsed.sspMetadata) parsed.sspMetadata = scrubInventedMetadata(parsed.sspMetadata);
+        // Once the server holds this program's SSP metadata the cache holds none of it (#84); the server copy fills it in.
+        if (tenant.serverBacked && parsed.sspMetadataMigratedAt && parsed.sspMetadata) {
+          for (const field of SSP_METADATA_FIELDS) (parsed.sspMetadata as unknown as Record<string, unknown>)[field] = '';
+        }
         parsed.tenantId = tenant.id;
         return parsed;
       }
@@ -157,7 +185,7 @@ export const StorageService = {
    */
   saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean; segment?: string | null } = {}): void {
     try {
-      const base: AssessmentState = options.keepNotes ? state : stripEvidenceIndexForCache(stripObjectiveNarrativesForCache(stripFailingAssetsForCache(stripImplementationNotesForCache(state))));
+      const base: AssessmentState = options.keepNotes ? state : stripEvidenceIndexForCache(stripSspMetadataForCache(stripObjectiveNarrativesForCache(stripFailingAssetsForCache(stripImplementationNotesForCache(state)))));
       const payload: AssessmentState = {
         ...base,
         tenantId,
