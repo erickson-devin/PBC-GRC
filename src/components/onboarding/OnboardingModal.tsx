@@ -25,6 +25,7 @@ import { onboardingSummary } from '../../data/onboardingSummary';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
+import { OwnerMfaNotice } from '../auth/OwnerMfaNotice';
 interface OnboardingModalProps {
   isOpen: boolean;
   onClose?: () => void;
@@ -228,6 +229,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         </div>
 
         <ErrorNotice message={error} className="mx-6 mt-4" />
+        {step === 2 && <OwnerMfaNotice className="mx-6 mt-4" />}
 
         {/* Modal Form Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">

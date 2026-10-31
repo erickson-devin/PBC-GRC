@@ -53,6 +53,7 @@ import {
 } from '../data/teamSync';
 import { findControlDefinition, getFrameworkControls } from '../data/frameworks';
 import { tabOwnsStoredSession } from '../services/tabSession';
+import { isTabLocked, waitForUnlock } from '../services/idleLock';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
 import { OBJECTIVE_CASCADE_EVENT, applyImportResult, chunkItems, objectivesToUpload, stackCascadeFill } from '../data/objectiveSync';
 import {
@@ -659,8 +660,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const created = await ApiClient.createTenant(input, ref);
     const createdId = created.tenant.id;
 
-    // Pull the authoritative record (and our role) from the server.
-    const synced = await syncTenantsFromServer(ref, { force: true });
+    // Pull the authoritative record (and our role) from the server. A creator who just became an owner may now need two-step
+    // verification (#39): the screen locks on the next request and the person signs in again, so wait for that rather than let the
+    // refused requests count as failures. The reference is read again afterwards because the sign-in replaces it.
+    await waitForUnlock();
+    let synced = await syncTenantsFromServer(ApiClient.getSessionRef() ?? ref, { force: true });
+    if (!synced && isTabLocked()) {
+      await waitForUnlock();
+      synced = await syncTenantsFromServer(ApiClient.getSessionRef() ?? undefined, { force: true });
+    }
     let tenant = synced?.find((t) => t.id === createdId);
 
     if (!tenant) {

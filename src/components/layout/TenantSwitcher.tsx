@@ -12,6 +12,7 @@ import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { SamStatus } from '../../types/tenant';
 import { ErrorNotice } from '../common/ErrorNotice';
+import { OwnerMfaNotice } from '../auth/OwnerMfaNotice';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
@@ -374,6 +375,7 @@ export const TenantSwitcher: React.FC = () => {
                 />
               </div>
 
+              <OwnerMfaNotice />
               <ErrorNotice message={createError} />
 
               <div className="pt-2 flex items-center justify-end gap-2.5">

@@ -310,6 +310,7 @@ async function main() {
     'src/data/telemetry/assetTelemetryEngine.ts',
     'src/services/browserStorageScrub.ts',
     'src/services/failedMoves.ts',
+    'src/services/idleLock.ts', // the session lock record (an opaque session reference and a timestamp) and the last-input time, never a session or CUI (#163)
     'src/services/legacySessionScrub.ts', // writes the stored user records back with the legacy session JWT removed (#43)
     'src/services/storageService.ts',
   ].sort();

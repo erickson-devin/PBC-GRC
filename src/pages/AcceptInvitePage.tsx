@@ -512,6 +512,14 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
               {/* Error Alert */}
               <ErrorNotice message={claimError || authError} />
 
+              {/* An owner invitation: say beforehand that two-step verification may be asked for (the person is not signed in, so no lookup) */}
+              {invitation?.role === 'TENANT_OWNER' && !mfaChallenge && (
+                <div role="note" className="flex items-start gap-2 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-xs leading-relaxed">
+                  <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>Owners must use two-step verification on this installation; you may be asked to set it up right after accepting.</span>
+                </div>
+              )}
+
               {/* Second step: a code, or setting up an authenticator */}
               {mfaChallenge?.stage === 'verify' && (
                 <MfaChallengeForm onDone={() => void handleSecondStepDone()} onCancel={abandonSecondStep} />

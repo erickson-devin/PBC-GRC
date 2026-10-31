@@ -19,7 +19,7 @@ import { AccountSettingsModal } from './AccountSettingsModal';
 import { ApiTokensModal } from './ApiTokensModal';
 
 export const UserProfileDropdown: React.FC = () => {
-  const { currentUser, logout } = useAuth();
+  const { currentUser, logout, lockSession } = useAuth();
   const {
     currentTenant,
     currentRole,
@@ -230,6 +230,7 @@ export const UserProfileDropdown: React.FC = () => {
 
             {/* Sign Out */}
             <div className="p-1.5 border-t border-slate-800 bg-slate-950/80">
+              <button type="button" onClick={() => { setIsOpen(false); void lockSession('idle'); }} className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"><Lock className="w-4 h-4 text-slate-400" aria-hidden="true" /><span>Lock now</span></button>
               <button
                 onClick={async () => {
                   setIsOpen(false);

@@ -14,6 +14,7 @@ import {
   SWITCHED_ELSEWHERE_MESSAGE,
 } from '../src/services/sessionSignal';
 import { crossTabChange, pinTabSession, readStoredSession, resetTabSession } from '../src/services/tabSession';
+import { formatCountdown, lockHeading, lockReasonText, signOutWarning, IDLE_WARNING_ANNOUNCEMENT } from '../src/utils/sessionLock';
 
 /**
  * Cross-tab session sync (#32): the rule that compares this tab's pinned session with the browser's stored one, the signal it
@@ -275,6 +276,74 @@ assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE && S
 
   const af = slice(api, 'async function apiFetch', 'What GET /api/v1/tenants answered');
   assert(af.indexOf('isCrossTabReason(') >= 0 && af.indexOf('isCrossTabReason(') < af.indexOf('await fetch(input, init)'), 'S32-30 apiFetch refuses before it fetches');
+
+  console.log('\n--- S163 idle lock ---');
+  const lockSlice = slice(auth, 'const lockSession = useCallback', 'lockSessionRef.current = lockSession');
+  const iBefore = lockSlice.indexOf('runBeforeLock(');
+  const iHold = lockSlice.indexOf('holdSessionSignal(');
+  const iWrite = lockSlice.indexOf('writeLock(');
+  const iSignOut = lockSlice.indexOf('ApiClient.signOut');
+  assert(iBefore >= 0 && iBefore < iHold && iHold < iWrite && iWrite < iSignOut, 'S163-C1 lockSession sends typed notes, holds the signal, writes the lock record, then ends the server session');
+  assert(!lockSlice.includes('resetForSignOut') && !lockSlice.includes('location.hash') && !lockSlice.includes('setIsAuthenticated') && !lockSlice.includes('AUTH_USER_KEY'), 'S163-C1 lockSession tears nothing down: no reset, no hash change, no user record removal');
+
+  const resumeSlice = slice(auth, 'const resumeFromLock = useCallback', 'const enterSession = useCallback');
+  const iStore = resumeSlice.indexOf('setItem(AUTH_SESSION_REF_KEY');
+  const iRelease = resumeSlice.indexOf('releaseSessionSignal(');
+  const iResumePin = resumeSlice.indexOf('pinTabSession(');
+  const iClear = resumeSlice.indexOf('clearLock(');
+  const iResumeLoads = resumeSlice.indexOf('setServerLoadsPaused(');
+  const iResumeSync = resumeSlice.indexOf('syncAuthUser(');
+  assert(iStore >= 0 && iStore < iRelease && iRelease < iResumePin && iResumePin < iClear && iClear < iResumeLoads && iResumeLoads < iResumeSync, 'S163-C2 resuming stores the new reference before releasing the old signal, pins, clears the lock, resumes the loads and syncs');
+  const unlockSlice = slice(auth, 'const unlockWithPassword = useCallback', 'const stayActive');
+  assert(unlockSlice.includes('ApiClient.localLogin(') && unlockSlice.includes('resumeFromLock(') && !unlockSlice.includes('console.') && !unlockSlice.includes('setItem('), 'S163-C2 unlockWithPassword signs in again and resumes, and never stores or logs the password');
+  const enterSlice = slice(auth, 'const enterSession = useCallback', 'const loginWithEmailPassword');
+  assert(enterSlice.includes('lockRef.current') && enterSlice.indexOf('resumeFromLock(') >= 0 && enterSlice.indexOf('applySession(') > enterSlice.indexOf('resumeFromLock('), 'S163-C2 while locked a finished sign-in resumes the lock; otherwise it enters the app');
+  assert(slice(auth, 'const finishMfa', 'const cancelMfa').includes('enterSession(') && slice(auth, 'const completeMfa', 'const startEnrolment').includes('enterSession('), 'S163-C2 completeMfa and finishMfa resume through enterSession');
+
+  const rejected = slice(auth, 'onSessionRejected((ref, reason)', 'The first tenant sync');
+  const iReauth = rejected.indexOf('isReauthReason(');
+  assert(iReauth >= 0 && iReauth < rejected.indexOf('void logout()') && iReauth < rejected.indexOf('rescueUnsavedText('), 'S163-C3 the session-ended listener checks isReauthReason( before it rescues text and logs out');
+
+  const confirmSlice = slice(auth, 'const confirmEnrolment = useCallback', 'const finishMfa');
+  const iCfStore = confirmSlice.indexOf('setItem(AUTH_SESSION_REF_KEY');
+  assert(iCfStore >= 0 && confirmSlice.indexOf('releaseSessionSignal(', iCfStore) > iCfStore && confirmSlice.indexOf('pinTabSession(') > iCfStore, 'S163-C6 enrolment from a session adopts the replacement reference before releasing the old one');
+
+  const logoutSlice = slice(auth, 'const logout = useCallback', 'logoutRef.current = logout');
+  assert(logoutSlice.includes('clearLock(localStorage)') && logoutSlice.includes('clearActivity(localStorage)'), 'S163-C7 logout removes the lock and activity records');
+  const apiSrc163 = slice(api, 'async function apiFetch', 'What GET /api/v1/tenants answered');
+  assert(apiSrc163.indexOf('isTabLocked()') > apiSrc163.indexOf('isCrossTabReason(') && apiSrc163.indexOf('isTabLocked()') < apiSrc163.indexOf('await fetch(input, init)') && apiSrc163.includes("'session_locked'"), 'S163-C8 apiFetch refuses a marked request while locked, after the cross-tab check and before the fetch');
+  assert(tenant.indexOf('await waitForUnlock()') > tenant.indexOf('const createTenantOnServer') && tenant.indexOf('await waitForUnlock()') < tenant.indexOf('syncTenantsFromServer(ApiClient.getSessionRef() ?? ref'), 'S163-C9 createTenantOnServer waits for an unlock before the follow-up sync');
+  const assessmentSrc = read('src/context/AssessmentContext.tsx');
+  assert(assessmentSrc.includes("registerBeforeLock('notes'") && slice(assessmentSrc, "registerBeforeLock('notes'", '}), []);').includes('flushAll()'), 'S163-C10 the notes autosave registers a before-lock flush');
+
+  console.log('\n--- S163 lock screen (UI) ---');
+  {
+    const readUi = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
+    const lockSrc = readUi('src/components/auth/SessionLockScreen.tsx');
+    assert(formatCountdown(60) === '1:00' && formatCountdown(59) === '0:59' && formatCountdown(5) === '0:05' && formatCountdown(0) === '0:00' && formatCountdown(-3) === '0:00' && formatCountdown(NaN) === '0:00' && formatCountdown(61.9) === '1:01', 'S163-U1 formatCountdown renders m:ss and clamps bad input');
+    const rIdle = lockReasonText('idle');
+    const rSrv = lockReasonText('session_idle');
+    const rMfa = lockReasonText('mfa_required');
+    assert(lockHeading('mfa_required') === 'Two-step verification required' && lockHeading('idle') === 'Session locked' && lockHeading('session_idle') === 'Session locked', 'S163-U2 lockHeading');
+    assert(new Set([rIdle, rSrv, rMfa]).size === 3 && rMfa.includes('two-step verification') && !rIdle.includes('two-step verification') && !rSrv.includes('two-step verification'), 'S163-U2 the three reason texts differ and only mfa_required names two-step verification');
+    assert(signOutWarning(0) === 'You will go back to the sign-in page. No unsaved text was found in the open editors.', 'S163-U3 signOutWarning(0) is the exact text');
+    assert(signOutWarning(1).startsWith('1 unsaved field in the open editors has not'), 'S163-U3 signOutWarning(1) is singular');
+    assert(signOutWarning(3).includes('3 unsaved fields') && signOutWarning(3).includes('they are kept'), 'S163-U3 signOutWarning(3) is plural');
+    const u4 = ['onClose={ignoreEscape}', 'as="h1"', 'autoComplete="current-password"', 'autoComplete="username"', 'readOnly', "setAttribute('inert'", "setAttribute('aria-hidden', 'true')", 'MutationObserver', '<MfaChallengeForm', '<MfaEnrolmentPanel', 'role="alertdialog"', 'aria-live="polite"'];
+    assert(u4.every((s) => lockSrc.includes(s)) && lockSrc.split('data-session-lock=""').length - 1 >= 2, 'S163-U4 the lock screen source has the escape swallow, h1, autocomplete, inert, observer, MFA parts, alertdialog and live regions', u4.filter((s) => !lockSrc.includes(s)));
+    const overlayClass = /const LOCK_OVERLAY_CLASS = '([^']+)'/.exec(lockSrc)?.[1] ?? '';
+    assert(overlayClass.includes(' bg-slate-950 ') && overlayClass.includes('z-[200]') && !overlayClass.includes('bg-slate-950/') && !overlayClass.includes('backdrop-blur') && !overlayClass.includes('animate-'), 'S163-U5 the lock overlay is solid: no transparency, blur or fade', overlayClass);
+    assert(!/localStorage|sessionStorage|console\.|dangerouslySetInnerHTML/.test(lockSrc), 'S163-U6 the lock screen touches no browser storage, console or raw HTML');
+    const signOutSlice = lockSrc.slice(lockSrc.indexOf('const signOut = '), lockSrc.indexOf('return (', lockSrc.indexOf('const signOut = ')));
+    const iClear = signOutSlice.indexOf('clearAuthError(');
+    assert(iClear >= 0 && iClear < signOutSlice.indexOf('rescueUnsavedText(') && signOutSlice.indexOf('rescueUnsavedText(') < signOutSlice.indexOf('logout('), 'S163-U7 sign out clears the message, rescues the text, then logs out');
+    const appSrc = readUi('src/App.tsx');
+    const guardStart = appSrc.indexOf('isAuthenticated && mustChangePassword) return');
+    const guardSlice = appSrc.slice(guardStart, appSrc.indexOf('\n  return (', guardStart));
+    assert(appSrc.split('{sessionGuard}').length - 1 === 2 && guardSlice.includes('{sessionGuard}') && appSrc.includes('<SessionLockScreen />') && appSrc.includes('<IdleWarningBanner secondsLeft={idleWarning} onStay={stayActive} />'), 'S163-U8 App mounts the session guard on the password-change screen and on the app');
+    assert(lockSrc.includes('Stay signed in') && lockSrc.includes('aria-hidden="true" className="text-slate-300') && IDLE_WARNING_ANNOUNCEMENT.includes('about one minute'), 'S163-U9 the warning has a Stay signed in button and the countdown text is hidden from the live region');
+    assert(['src/components/auth/UserProfileDropdown.tsx', 'src/components/admin/SuperAdminDashboard.tsx'].every((f) => { const s = readUi(f); return s.includes("lockSession('idle')") && s.includes('<span>Lock now</span>'); }), 'S163-U10 both menus offer Lock now');
+  }
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

@@ -13,11 +13,18 @@ type SessionListener = (token: string, reason?: string) => void;
  */
 export type CrossTabReason = 'signed_out_elsewhere' | 'switched_elsewhere' | 'session_mismatch';
 
-export type SessionEndReason = 'session_missing' | 'session_invalid' | 'session_expired' | 'session_revoked' | CrossTabReason;
+/**
+ * `session_idle` (the server ended the session after a period without requests, #163) and `mfa_required` (the account's role now
+ * needs two-step verification, #39) are the two the app answers with a lock screen instead of a sign-out: see isReauthReason.
+ */
+export type SessionEndReason = 'session_missing' | 'session_invalid' | 'session_expired' | 'session_revoked' | 'session_idle' | 'mfa_required' | CrossTabReason;
 
 export const SESSION_ENDED_MESSAGE = 'Your session has ended. Please sign in again.';
 export const SESSION_EXPIRED_MESSAGE = 'Your session expired. Please sign in again.';
 export const SESSION_REVOKED_MESSAGE = 'Your session ended because your account was updated, for example a password change or an administrator action. Please sign in again. If you cannot sign in, contact your administrator.';
+
+export const SESSION_IDLE_MESSAGE = 'Your session was locked after a period of inactivity. Sign in again to continue.';
+export const MFA_REQUIRED_MESSAGE = 'Your role now requires two-step verification. Sign in again to continue.';
 
 export const SIGNED_OUT_ELSEWHERE_MESSAGE = 'You signed out in another tab. Sign in again to continue.';
 export const SWITCHED_ELSEWHERE_MESSAGE = 'Another account signed in from another tab of this browser, so this tab was signed out. Signing in here signs that tab out.';
@@ -27,6 +34,8 @@ export const SESSION_MISMATCH_MESSAGE = "This tab's session no longer matches th
 export function sessionEndedMessage(reason?: string | null): string {
   if (reason === 'session_expired') return SESSION_EXPIRED_MESSAGE;
   if (reason === 'session_revoked') return SESSION_REVOKED_MESSAGE;
+  if (reason === 'session_idle') return SESSION_IDLE_MESSAGE;
+  if (reason === 'mfa_required') return MFA_REQUIRED_MESSAGE;
   if (reason === 'signed_out_elsewhere') return SIGNED_OUT_ELSEWHERE_MESSAGE;
   if (reason === 'switched_elsewhere') return SWITCHED_ELSEWHERE_MESSAGE;
   if (reason === 'session_mismatch') return SESSION_MISMATCH_MESSAGE;
@@ -36,6 +45,11 @@ export function sessionEndedMessage(reason?: string | null): string {
 /** True for the reasons that come from another tab of this browser (or the browser's cookie) rather than from a rejected session. */
 export function isCrossTabReason(reason?: string | null): reason is CrossTabReason {
   return reason === 'signed_out_elsewhere' || reason === 'switched_elsewhere' || reason === 'session_mismatch';
+}
+
+/** True for the reasons the app answers by locking the screen (the person signs in again in place) instead of signing out. */
+export function isReauthReason(reason?: string | null): reason is 'session_idle' | 'mfa_required' {
+  return reason === 'session_idle' || reason === 'mfa_required';
 }
 
 const listeners = new Set<SessionListener>();

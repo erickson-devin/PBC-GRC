@@ -187,7 +187,7 @@ function fresh() {
   const teamEffectStart = tenant.indexOf('// A server-backed tenant\'s team and invitations live on the server');
   const teamEffectBody = tenant.slice(teamEffectStart, tenant.indexOf('refreshTeam, serverLoadsPaused]', teamEffectStart) + 40);
   assert(teamEffectStart > 0 && teamEffectBody.includes('mayLoadServerData(') && teamEffectBody.includes('serverLoadsPaused]'), 'P36-3 the team effect waits while the loads are paused and re-runs when they resume');
-  assert(auth.includes('useLayoutEffect(') && auth.includes('setServerLoadsPaused(isAuthenticated && mustChangePassword)'), 'P36-4 AuthContext pauses the loads in a layout effect while the password change is pending');
+  assert(auth.includes('useLayoutEffect(') && auth.includes('setServerLoadsPaused(isAuthenticated && (mustChangePassword || lock !== null))'), 'P36-4 AuthContext pauses the loads in a layout effect while the password change is pending or the session is locked (#163)');
   const programsBody = tenant.slice(tenant.indexOf('const refreshPrograms = useCallback'), tenant.indexOf('// Programs follow the active tenant'));
   assert(programsBody.includes('password_change_required') && programsBody.indexOf('password_change_required') < programsBody.indexOf("console.warn('[Programs]"), 'P36-5 refreshPrograms treats password_change_required as idle, before it warns');
 

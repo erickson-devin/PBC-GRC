@@ -31,6 +31,7 @@ import { hasNist80053Objectives } from '../data/frameworks/nist80053/objectives'
 import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectivesLazy';
 import { ApiClient, ApiError } from '../services/apiClient';
 import { unsavedControlNotes } from '../services/unsavedText';
+import { registerBeforeLock } from '../services/idleLock';
 import { useUnsavedTextProvider } from '../hooks/useUnsavedTextProvider';
 import { computeNotesStatus, NotesStatus } from '../services/browserStorageScrub';
 import { programCacheSegment, programScopeKey, shouldPersistAssessment } from '../data/programSync';
@@ -546,6 +547,15 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Leaving the program or the page sends what is typed; a tab that is hidden sends it too (it may never come back)
   useEffect(() => () => { notesAutosaveRef.current.flushAll(); }, [currentTenant.id, programScope]);
+  // The idle lock (#163) ends the server session: typed notes are sent first, and the lock waits for them (it gives up after 3 s)
+  useEffect(() => registerBeforeLock('notes', async () => {
+    notesAutosaveRef.current.flushAll();
+    const giveUpAt = Date.now() + 5000;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    while (saveChainRef.current.active() > 0 && Date.now() < giveUpAt) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    }
+  }), []);
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') notesAutosaveRef.current.flushAll();

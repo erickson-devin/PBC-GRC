@@ -1,9 +1,15 @@
 import fs from 'fs';
 import path from 'path';
-import { ApiClient, ApiError, mfaErrorMessage, parseLocalLoginResult } from '../src/services/apiClient';
+import { ApiClient, ApiError, getLastRequestAt, mfaErrorMessage, parseLocalLoginResult } from '../src/services/apiClient';
+import { clearLock, writeLock } from '../src/services/idleLock';
+import { MFA_REQUIRED_MESSAGE, SESSION_IDLE_MESSAGE } from '../src/services/sessionSignal';
+import { pinTabSession, resetTabSession } from '../src/services/tabSession';
 import { scrubLegacySessionToken } from '../src/services/legacySessionScrub';
 import { buildUserProfile } from '../src/utils/userProfile';
 import { groupSecret } from '../src/components/auth/MfaEnrolmentPanel';
+import { ACCOUNT_EVENTS_PAGE_SIZE, accountEventLabel, accountEventRows, accountEventsErrorText, formatEventTime } from '../src/utils/accountEvents';
+import { showOwnerMfaNotice } from '../src/utils/sessionLock';
+import type { AccountEvent } from '../src/services/apiClient';
 
 /**
  * Phase 5.9 client: the sign-in response parser, the plain-language error messages, the second-factor calls (against a stubbed
@@ -305,6 +311,76 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   const finallyBody = runBody.slice(runBody.indexOf('finally {'));
   assert(closeBody.includes("setStepUpCode('')") && finallyBody.includes("setStepUpCode('')"), 'the code is cleared on close and in finally');
   assert(!/console\./.test(runBody) && !/localStorage/.test(runBody), 'runAccountAction neither logs nor stores anything');
+
+  console.log('\n--- S163: idle lock and role change ---');
+  assert(mfaErrorMessage(401, { reason: 'mfa_required' }) === MFA_REQUIRED_MESSAGE, 'S163-M1 mfa_required has its plain text');
+  assert(mfaErrorMessage(401, { reason: 'session_idle' }) === SESSION_IDLE_MESSAGE, 'S163-M2 session_idle has its plain text');
+  const lockStore = new Map<string, string>([['pbc_session_ref_v3', 'sess']]);
+  const realStorage = (globalThis as { localStorage?: unknown }).localStorage;
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: { getItem: (k: string) => (lockStore.has(k) ? (lockStore.get(k) as string) : null), setItem: (k: string, v: string) => void lockStore.set(k, v), removeItem: (k: string) => void lockStore.delete(k) },
+    configurable: true,
+    writable: true,
+  });
+  try {
+    resetTabSession();
+    pinTabSession('sess', 'lu_1');
+    writeLock(globalThis.localStorage, 'sess', Date.now());
+    stub(200, { enrolled: false });
+    let lockErr: unknown;
+    try { await ApiClient.getMfaStatus(); } catch (e) { lockErr = e; }
+    assert(calls.length === 0 && lockErr instanceof ApiError && lockErr.status === 401 && lockErr.reason === 'session_locked' && lockErr.message === SESSION_IDLE_MESSAGE, 'S163-M3 while locked a request with the session marker is refused without a fetch', { calls: calls.length });
+    stub(200, { sessionIdleSeconds: 900 });
+    const cfg = await ApiClient.getAuthConfig();
+    assert(cfg.sessionIdleSeconds === 900 && calls.length === 1 && headerOf(calls[0], 'X-PBC-Session') === undefined && calls[0].url.endsWith('/auth/config'), 'S163-M4 getAuthConfig is anonymous and works while locked');
+    stub(204, null);
+    await ApiClient.signOut();
+    assert(calls.length === 1 && calls[0].url.endsWith('/auth/logout'), 'S163-M5 signOut (no marker) still goes out while locked');
+    clearLock(globalThis.localStorage);
+    stub(200, { enrolled: false });
+    await ApiClient.getMfaStatus();
+    assert(calls.length === 1, 'S163-M6 after the lock is cleared requests go out again');
+    assert(getLastRequestAt() > 0, 'S163-M7 apiFetch records when it last sent a request');
+    stub(200, { events: [{ id: 12, at: 'x', actorKind: 'admin', actorUserId: 'a', targetUserId: 't', action: 'account_disabled', tenantId: null, details: { via: 'session' } }, { nope: true }], nextBefore: 12 });
+    const page = await ApiClient.listAccountEvents(50, '99');
+    assert(calls[0].url.endsWith('/platform/account-events?limit=50&before=99') && page.events.length === 1 && page.events[0].id === '12' && page.nextBefore === '12', 'S163-M8 listAccountEvents sends limit and before, reads ids as strings and drops malformed rows', { url: calls[0].url, page });
+    stub(200, { events: [] });
+    const empty = await ApiClient.listAccountEvents();
+    assert(calls[0].url.endsWith('/platform/account-events') && empty.nextBefore === null, 'S163-M9 listAccountEvents without arguments has no query and no next page');
+    stub(200, { recoveryCodes: ['AAAAA-BBBBB'], enrolledAt: 'x', ...session, mfaEnrolled: true });
+    const replaced = await ApiClient.confirmMfaEnrolment('123456');
+    assert(replaced.session?.sessionRef === 'r' && replaced.session.mfaEnrolled === true, 'S163-M10 enrolment from a session returns the replacement session');
+  } finally {
+    globalThis.fetch = realFetch;
+    resetTabSession();
+    Object.defineProperty(globalThis, 'localStorage', { value: realStorage, configurable: true, writable: true });
+  }
+
+  console.log('\n--- S40 account events / S39 owner notice ---');
+  {
+    const readUi = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
+    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed'];
+    assert(codes.every((c) => accountEventLabel(c) !== c && !accountEventLabel(c).startsWith('Unrecognised')) && accountEventLabel('password_reset') === 'Password reset by an administrator' && accountEventLabel('x_y') === 'Unrecognised event (x_y)', 'S40-U1 every action code has a plain label; unknown codes are named as unrecognised');
+    const ev = (over: Partial<AccountEvent>): AccountEvent => ({ id: '1', at: '2026-01-01T00:00:00Z', actorKind: 'admin', actorUserId: 'u_admin', targetUserId: 'u_t', action: 'account_disabled', tenantId: null, details: {}, ...over });
+    const accounts = [{ id: 'u_admin', email: 'admin@x.test' }, { id: 'u_t', email: 't@x.test' }];
+    const r2 = accountEventRows([ev({})], accounts, [])[0];
+    assert(r2.actor === 'admin@x.test (administrator)' && r2.target === 't@x.test' && r2.tenant === 'None' && r2.details.length === 0, 'S40-U2 an administrator disabling an account', r2);
+    assert(accountEventRows([ev({ targetUserId: 'abcdef0123456789' })], [], [])[0].target === 'abcdef01…' && accountEventRows([ev({ targetUserId: 'u_9' })], [], [])[0].target === 'u_9', 'S40-U3 long ids are shortened, short ones stay');
+    assert(accountEventRows([ev({ actorKind: 'cli', actorUserId: null })], [], [])[0].actor === 'Command line' && accountEventRows([ev({ actorKind: 'system', actorUserId: null })], [], [])[0].actor === 'System', 'S40-U3 cli and system actors');
+    assert(accountEventRows([ev({ actorKind: 'user', actorUserId: 'u_t' })], [], [])[0].actor === 'The account itself' && accountEventRows([ev({ actorKind: 'user', actorUserId: null })], [], [])[0].actor === 'Unknown', 'S40-U3 an account acting on itself, and an unknown user');
+    const r4 = accountEventRows([ev({ action: 'role_changed', tenantId: 't1', details: { previousRole: 'ASSESSOR', newRole: 'TENANT_OWNER', via: 'member_update' } })], [], [{ id: 't1', name: 'Acme' }])[0];
+    assert(JSON.stringify(r4.details) === JSON.stringify(['Previous role: Assessor', 'New role: Tenant Owner', 'Via: team settings']) && r4.tenant === 'Acme', 'S40-U4 role change details use role labels and the tenant name', r4);
+    assert(accountEventRows([ev({ tenantId: 't9' })], [], [{ id: 't1', name: 'Acme' }])[0].tenant === 't9', 'S40-U4 a tenant that is not listed shows its id');
+    assert(JSON.stringify(accountEventRows([ev({ details: { mustChangePassword: true } })], [], [])[0].details) === JSON.stringify(['Must change password: yes']), 'S40-U5 booleans read yes/no');
+    assert(JSON.stringify(accountEventRows([ev({ details: { attempted: 'disable' } })], [], [])[0].details) === JSON.stringify(['Attempted: disable account']), 'S40-U5 attempted actions read in words');
+    assert(JSON.stringify(accountEventRows([ev({ details: { foo: 'bar', nested: { a: 1 } } })], [], [])[0].details) === JSON.stringify(['foo: bar']), 'S40-U5 unknown string keys follow; nested values are not shown');
+    assert(accountEventsErrorText(403) === 'Only a platform administrator can read account events.' && accountEventsErrorText(0) === 'Cannot reach the server, so the account events could not be loaded.' && accountEventsErrorText(500) === 'The account events could not be loaded. Try again.' && formatEventTime('not-a-date') === 'not-a-date' && ACCOUNT_EVENTS_PAGE_SIZE === 50, 'S40-U6 error texts, time fallback and page size');
+    const panelSrc = readUi('src/components/admin/AccountEventsPanel.tsx');
+    const dashSrc = readUi('src/components/admin/SuperAdminDashboard.tsx');
+    assert(['ApiClient.listAccountEvents(ACCOUNT_EVENTS_PAGE_SIZE, nextBefore)', 'Load older', 'No account events have been recorded yet.', '<caption className="sr-only">', 'scope="col"'].every((s) => panelSrc.includes(s)) && !/dangerouslySetInnerHTML|console\.|errorMessage\(|\.message/.test(panelSrc) && dashSrc.includes('<AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} />'), 'S40-U7 the panel pages, has a captioned table, shows no raw message; the console mounts it');
+    assert(showOwnerMfaNotice('privileged', false) && showOwnerMfaNotice('all', false) && !showOwnerMfaNotice('privileged', true) && !showOwnerMfaNotice('off', false) && !showOwnerMfaNotice(null, false), 'S39-U1 the owner notice shows only for a person without two-step verification under privileged or all');
+    assert(readUi('src/components/onboarding/OnboardingModal.tsx').includes('<OwnerMfaNotice') && readUi('src/components/layout/TenantSwitcher.tsx').includes('<OwnerMfaNotice') && readUi('src/components/auth/OwnerMfaNotice.tsx').includes('ApiClient.getMfaStatus()') && readUi('src/pages/AcceptInvitePage.tsx').includes('Owners must use two-step verification'), 'S39-U1 the notice is wired into onboarding, the tenant switcher and the invitation page');
+  }
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

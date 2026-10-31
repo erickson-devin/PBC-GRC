@@ -34,13 +34,14 @@ import { ProgramsPage } from './components/programs/ProgramsPage';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { SessionVerifyingScreen } from './components/auth/SessionVerifyingScreen';
 import { UnsavedTextBanner } from './components/auth/UnsavedTextBanner';
+import { IdleWarningBanner, SessionLockScreen } from './components/auth/SessionLockScreen';
 import { shouldHoldForVerification } from './data/sessionVerification';
 
 
 import { AppRoute, SIGNED_IN_DEFAULT, initialTabFromUrl, loginHref, resolveRoot, routeAfterSessionEnd, routeFromUrl, safeRedirectTarget } from './utils/appRoute';
 const AppContent: React.FC = () => {
   const { activeTab, setActiveTab, isExportModalOpen, setIsExportModalOpen } = useAssessment();
-  const { isAuthenticated, mustChangePassword, loading: authLoading, sessionCheck } = useAuth();
+  const { isAuthenticated, mustChangePassword, loading: authLoading, sessionCheck, lock, idleWarning, stayActive } = useAuth();
   const {
     isOnboardingModalOpen,
     setIsOnboardingModalOpen,
@@ -212,6 +213,9 @@ const AppContent: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [setActiveTab]);
 
+  // Session lock (#163): the opaque overlay hides every route while locked; the warning shows in the last minute before it
+  const sessionGuard = isAuthenticated ? (lock ? <SessionLockScreen /> : <IdleWarningBanner secondsLeft={idleWarning} onStay={stayActive} />) : null;
+
   // A temporary password (administrator reset, or an account created from the command line) must be replaced before anything else:
   // the server refuses every other request until then, so the app is not rendered at all.
   // A reload with a stored session waits for the server's first answer: a session it already ended must not flash the
@@ -221,6 +225,7 @@ const AppContent: React.FC = () => {
     <>
       <PasswordChangeScreen />
       <UnsavedTextBanner />
+      {sessionGuard}
     </>
   );
 
@@ -354,6 +359,7 @@ const AppContent: React.FC = () => {
       />
       {/* Unsaved text rescued when the server ended a session (memory only): shown on every route, revealed to the same user only */}
       <UnsavedTextBanner />
+      {sessionGuard}
     </>
   );
 };

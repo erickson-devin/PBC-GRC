@@ -10,6 +10,9 @@ import {
   reportResponseStatus,
   resetSessionSignal,
   sessionEndedMessage,
+  isReauthReason,
+  MFA_REQUIRED_MESSAGE,
+  SESSION_IDLE_MESSAGE,
   SESSION_ENDED_MESSAGE,
   SESSION_EXPIRED_MESSAGE,
   SESSION_MISMATCH_MESSAGE,
@@ -104,6 +107,9 @@ resetSessionSignal();
 assert(sessionEndedMessage('session_expired') === SESSION_EXPIRED_MESSAGE && sessionEndedMessage('session_revoked') === SESSION_REVOKED_MESSAGE, 'C33-4 expired and revoked have their own texts');
 assert(['session_missing', 'session_invalid', undefined, null, 'garbage'].every((r) => sessionEndedMessage(r) === SESSION_ENDED_MESSAGE), 'missing, invalid, unknown and absent reasons get the generic text');
 assert(sessionEndedMessage('session_mismatch') === SESSION_MISMATCH_MESSAGE, 'S149-1 session_mismatch has its own text');
+assert(sessionEndedMessage('session_idle') === SESSION_IDLE_MESSAGE && sessionEndedMessage('mfa_required') === MFA_REQUIRED_MESSAGE, 'S163-S1 session_idle and mfa_required have their own texts');
+assert(isReauthReason('session_idle') && isReauthReason('mfa_required') && !isReauthReason('session_revoked') && !isReauthReason('session_expired') && !isReauthReason(undefined) && !isReauthReason(null), 'S163-S2 only session_idle and mfa_required are re-authentication reasons');
+assert([SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE].every((m) => !/token/i.test(m)) && SESSION_IDLE_MESSAGE.includes('inactivity'), 'S163-S3 the new texts name no token');
 assert([SESSION_ENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SESSION_REVOKED_MESSAGE, SESSION_MISMATCH_MESSAGE].every((m) => !/token/i.test(m)), 'no session message mentions a token');
 
 console.log('\n--- Through ApiClient, against a stubbed fetch ---');
