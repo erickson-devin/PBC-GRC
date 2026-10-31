@@ -60,6 +60,7 @@ Recommended:
       `vm_insecure_transport` check.
 - [ ] `MFA_REQUIRED` left at its default `all` (`privileged` is a rollout stage, `off` warns at startup and is not for production).
 - [ ] `LOCAL_AUTH_TOKEN_TTL_SECONDS` left at 28800 (8 h); the app warns above 43200 (12 h, NIST SP 800-63B AAL2).
+- [ ] `SESSION_IDLE_MINUTES` left at 15 or set by policy; never 0.
 - [ ] `ALLOW_TENANT_CREATION=false` for a single-organisation install (platform administrators provision tenants). Leave it
       on only for an MSP install where every signed-in person may create their own tenant.
 - [ ] `ASSESSMENT_EVENT_RETENTION_DAYS` left at 1095 (three years) unless your records policy says otherwise; `0` keeps
@@ -114,6 +115,8 @@ Replace `grc.example.mil` with the host name on the certificate.
       and the `version` and `buildCommit` you wrote down. (It answers 503 `starting` until the schema check has finished.)
 - [ ] **Cookie.** `curl -si -X POST https://grc.example.mil/api/v1/auth/logout | grep -i set-cookie` shows `HttpOnly`,
       `SameSite=Strict`, `Path=/api` and `Secure`. No `Secure` means `TRUST_PROXY` or `X-Forwarded-Proto` is wrong.
+- [ ] **Sign-out revokes.** Sign in through the browser and copy the `pbc_session` cookie, sign out, then send the old cookie
+      (`curl -s -H 'Cookie: pbc_session=<value>' -H 'X-PBC-Session: <sessionRef>' https://grc.example.mil/api/v1/auth/me`): it answers 401 `session_revoked`.
 - [ ] **Setup closed.** `curl -s -X POST https://grc.example.mil/api/v1/setup -H 'Content-Type: application/json' -d '{}'`
       answers 409 (or 403 with a `SETUP_TOKEN`), never 200.
 - [ ] **Plain HTTP refused.** With `REQUIRE_TLS=true`, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/v1/controls`
@@ -168,5 +171,4 @@ Replace `grc.example.mil` with the host name on the certificate.
   proposes refreshes); the image is smoke-tested against PostgreSQL before publish (#156) but not signed (#158).
 - After two green runs, make "Live PostgreSQL checks" (#159) a required status check on `main`.
 - Scanner payloads and snapshots have no retention setting (#61).
-- An idle session lock (AC.L2-3.1.10) is not implemented (#163).
 - Forward-proxy support for the exporter (#67).

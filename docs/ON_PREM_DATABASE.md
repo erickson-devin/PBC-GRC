@@ -196,6 +196,38 @@ from `LOCAL_AUTH_SECRET` otherwise. Plain secrets and recovery codes are never s
 password change, an MFA reset or an administrator password reset ends that person's sessions on their next request (this
 costs one extra primary-key lookup per request; if the database is unavailable the answer is 503, not a sign-out).
 
+## Sessions: idle timeout, sign-out and account events
+
+**Idle timeout (AC.L2-3.1.10, 3.1.11).** `SESSION_IDLE_MINUTES` (default 15, whole minutes from 0 to 1440, `0` disables it; an
+unusable value stops the server at startup, and `0` in production logs a warning) ends a session that made no request for that
+long. The next request answers 401 `session_idle` and clears the cookie; the person signs in again. Every signed-in session has a
+row in `local_sessions` (keyed by the random session id, never the token). The last-seen time is kept in memory and written to the
+database at most once a minute per session, so a busy client costs one small UPDATE a minute.
+
+**Sign-out revokes the session.** `POST /api/v1/auth/logout` marks the session revoked on the server, so a copy of the cookie or
+token is dead at once, not only in the browser. Other sessions of the same account are untouched. A role raised mid-session (a
+viewer made a tenant owner, an invitation accepted) also ends a password-only session when a second factor is now required
+(401 `mfa_required`); the person signs in again and enrols. Someone who enrols through their open session gets a replacement session
+(new session reference) that already holds the second factor.
+
+**Upgrading needs no sign-in.** A valid token with no session row (issued before the upgrade) is adopted on its first request and
+counted as active at that moment.
+
+**One instance.** The in-memory last-seen time and the write throttle are per process: the supported deployment is one app
+container. Revocation is immediate on any number of instances because it is read from the database on every request.
+
+**The browser lock.** After the same idle period the screen locks (an opaque overlay, and the server session is revoked); unlocking
+is a fresh password (and code) sign-in. The page's text stays in the DOM behind the overlay, as in any single-page lock screen: it
+protects an unattended screen, not someone with the browser's developer tools.
+
+**Account events.** Password changes and resets, second-factor enrolment, regeneration and reset, disable and enable, role
+changes, member removal, sign-out and refused step-ups are recorded in `local_account_events`: who (an id or a kind, never a name
+or an email), what (a closed list of actions), when, and ids and codes as details. A platform administrator reads them with
+`GET /api/v1/platform/account-events?limit=<1..200>&before=<id>` (newest first; also listed in the administration console). A database
+trigger refuses UPDATE, DELETE and TRUNCATE for the application role (only the retention sweep may delete), and a CHECK refuses an
+`@` in the details. The table owner can still drop the trigger: it guards against application bugs, not a compromised database role.
+Events are deleted after `ACCOUNT_EVENT_RETENTION_DAYS` (default 1095, `0` keeps everything; see "Assessment history retention").
+
 ## Host paths (Docker Compose)
 
 The compose file keeps every host-specific location in a variable, so the same file runs on a laptop and on Unraid. The
@@ -229,6 +261,10 @@ sweep inside the app deletes rows older than `ASSESSMENT_EVENT_RETENTION_DAYS`:
 * `0`: keep everything;
 * 1 to 364: accepted, with a startup warning that an assessment may look back further;
 * anything else: nothing is deleted and the startup log says so.
+
+The account event log (see "Sessions: idle timeout, sign-out and account events") follows the same rules with
+`ACCOUNT_EVENT_RETENTION_DAYS`: unset 1095, `0` keeps everything, 1 to 364 warns, anything else keeps everything. Expired session
+rows are swept daily as well.
 
 The first sweep runs ten minutes after start, then daily; its log lines carry counts only. To see what a sweep would
 delete, or to run one by hand:
