@@ -1,7 +1,9 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { builtinModules } from 'module';
 import { readAppVersion } from '../server/version';
+import { assertStorageWritable } from '../server/evidence/storage';
 
 /**
  * On-prem only guard (Phase 5.8). PBC-GRC is deployed on the customer's own hardware: local accounts, local disk,
@@ -324,6 +326,7 @@ if (app) {
   assert(!('APP_PORT' in env), 'app environment has no APP_PORT key (the container always listens on 3000)');
   assert(env.MFA_REQUIRED === '${MFA_REQUIRED:-}', 'app environment: MFA_REQUIRED: ${MFA_REQUIRED:-} (empty means the default, all)', env.MFA_REQUIRED);
   assert(env.MFA_ENCRYPTION_KEY === '${MFA_ENCRYPTION_KEY:-}', 'app environment: MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-} (optional)', env.MFA_ENCRYPTION_KEY);
+  assert(env.REQUIRE_TLS === '${REQUIRE_TLS:-}', 'app environment: REQUIRE_TLS: ${REQUIRE_TLS:-} (empty means off)', env.REQUIRE_TLS);
   assert(!('GOOGLE_APPLICATION_CREDENTIALS' in env) && Object.keys(env).every((k) => !/^(GOOGLE_|GCP_|GCS_|FIREBASE_)/i.test(k)), 'app environment has no cloud-provider variables', Object.keys(env));
 }
 assert(services.every((s) => s.lines.some((l) => /^ {4}logging:\s*$/.test(l)) && /max-size/.test(s.lines.join('\n'))), 'every service rotates its container logs (logging with max-size)', services.filter((s) => !s.lines.some((l) => /^ {4}logging:\s*$/.test(l))).map((s) => s.name));
@@ -362,6 +365,16 @@ assert(globalNpmInstalls('RUN npm i --global esbuild\n') === 1 && globalNpmInsta
 assert(/^CMD \["node_modules\/\.bin\/tsx", "server\/index\.ts"\]\s*$/m.test(dockerfile) && !/^CMD \["tsx",/m.test(dockerfile), 'the Dockerfile starts the server with the tsx from node_modules');
 assert(dockerCode.filter((l) => /^CMD\s/.test(l)).length === 1 && !dockerCode.some((l) => /^ENTRYPOINT\s/.test(l)), 'the Dockerfile has exactly one CMD and no ENTRYPOINT');
 assert(runner.length > 0 && runner.filter((l) => /^RUN npm ci --omit=dev\s*$/.test(l)).length === 1 && runner.some((l) => /^COPY package\*\.json \.\/\s*$/.test(l)) && !runner.some((l) => /\bnpx\b/.test(l)), 'the runner stage installs from the lockfile once (npm ci --omit=dev) and never calls npx');
+{
+  // #146: the runner stage ends as the unprivileged node user, after its last RUN and before CMD
+  const lastRun = runner.reduce((n, l, i) => (/^RUN\s/.test(l) ? i : n), -1);
+  const userLines = runner.filter((l) => /^USER\s/.test(l));
+  const userIdx = runner.findIndex((l) => /^USER\s+node\s*$/.test(l));
+  const cmdIdx = runner.findIndex((l) => /^CMD\s/.test(l));
+  assert(userLines.length === 1 && userIdx > lastRun && lastRun >= 0 && userIdx < cmdIdx, 'the runner stage switches to USER node once, after its last RUN and before CMD (#146)', { lastRun, userIdx, cmdIdx, userLines });
+  assert(runner.some((l) => /^RUN mkdir -p \/app\/data\/evidence && chown -R node:node \/app\/data\s*$/.test(l)), 'the runner stage creates /app/data/evidence owned by node (#146)');
+  assert(!!app && !app.lines.some((l) => /^ {4}user:/.test(l)), 'the app service does not override the image user (#146)');
+}
 assert(typeof pkg.dependencies?.tsx === 'string' && pkg.devDependencies?.tsx === undefined, 'tsx is a production dependency, not a devDependency', { dep: pkg.dependencies?.tsx, dev: pkg.devDependencies?.tsx });
 const lockRoot = lock.packages?.[''] ?? {};
 assert(lockRoot.dependencies?.tsx === pkg.dependencies?.tsx && lockRoot.devDependencies?.tsx === undefined, 'package-lock.json lists tsx under the root dependencies with the same range', { lock: lockRoot.dependencies?.tsx, pkg: pkg.dependencies?.tsx });
@@ -407,6 +420,30 @@ assert(/^LOCAL_AUTH_SECRET=/m.test(envExample), '.env.example contains LOCAL_AUT
 assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has no VITE_FIREBASE / VITE_GCP / VITE_GCS');
 assert(/^# MFA_REQUIRED=/m.test(envExample), '.env.example documents MFA_REQUIRED');
 assert(/^# MFA_ENCRYPTION_KEY=/m.test(envExample), '.env.example documents MFA_ENCRYPTION_KEY');
+assert(/^# REQUIRE_TLS=/m.test(envExample), '.env.example documents REQUIRE_TLS (#166)');
+
+console.log('\n--- Non-root container and evidence directory (#146) ---');
+assert(onPremDoc.includes('chown -R 1000:1000'), 'docs/ON_PREM_DATABASE.md tells the operator to chown the evidence directory to uid 1000');
+const goLiveDoc = fs.readFileSync(path.join(root, 'docs/GO_LIVE_CHECKLIST.md'), 'utf8').replace(/\r\n/g, '\n');
+assert(!/runs as root inside the image/.test(goLiveDoc), 'docs/GO_LIVE_CHECKLIST.md no longer lists the root container as a known gap');
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'evw-'));
+  let threw = '';
+  try { assertStorageWritable(tmp); } catch (e) { threw = String(e); }
+  assert(threw === '', 'assertStorageWritable accepts a writable directory', threw);
+  const child = path.join(tmp, 'a', 'b');
+  threw = '';
+  try { assertStorageWritable(child); } catch (e) { threw = String(e); }
+  assert(threw === '' && fs.existsSync(child), 'assertStorageWritable creates a missing evidence root', threw);
+  let message = '';
+  try {
+    assertStorageWritable(tmp, () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); });
+  } catch (e) { message = e instanceof Error ? e.message : String(e); }
+  assert(message.includes('not readable and writable') && message.includes('EACCES') && message.includes('chown -R 1000:1000'), 'assertStorageWritable reports an unwritable root with the code and the chown fix', message);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+const indexSource = fs.readFileSync(path.join(root, 'server/index.ts'), 'utf8').replace(/\r\n/g, '\n');
+assert(indexSource.indexOf('assertStorageWritable();') > indexSource.indexOf('assertStorageConfig();') && indexSource.indexOf('assertStorageConfig();') > 0, 'server/index.ts checks the evidence directory right after the storage config');
 assert(/^DB_USER=grc_app\s*$/m.test(envExample) && !/^DB_USER=postgres/m.test(envExample), '.env.example connects as DB_USER=grc_app, never the superuser');
 const gitignoreLines = fs.readFileSync(path.join(root, '.gitignore'), 'utf8').split(/\r?\n/);
 const dockerignoreLines = fs.readFileSync(path.join(root, '.dockerignore'), 'utf8').split(/\r?\n/);

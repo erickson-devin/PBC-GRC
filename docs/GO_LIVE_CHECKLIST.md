@@ -17,7 +17,9 @@ the proxy's job; the security headers, the cookie session and the request limits
       use this clock.
 - [ ] **Disk.** Size the volumes for the database, the evidence directory and the scanner payloads (every scanner push is
       kept as the assessor-grade record, up to 64 MB each by default; there is no automatic deletion of them yet). Put
-      `DB_DATA_DIR` and `EVIDENCE_DIR` outside any git checkout, on encrypted, access-controlled storage.
+      `DB_DATA_DIR` and `EVIDENCE_DIR` outside any git checkout, on encrypted, access-controlled storage. The container
+      runs as uid 1000 (#146): before the first start `mkdir -p "$EVIDENCE_DIR" && sudo chown 1000:1000 "$EVIDENCE_DIR" && chmod 700 "$EVIDENCE_DIR"`
+      (the app refuses to start when it cannot write there).
 - [ ] **Image.** Decide the release: a version tag `vX.Y.Z` from `ghcr.io/erickson-devin/pbc-grc`, set as `IMAGE_TAG` in
       `.env` (never `latest`, `vX.Y` or `vX`: a rollback needs an exact name; `vX.Y.Z@sha256:<digest>` pins the exact
       image). Verify the digest against the release workflow's run summary:
@@ -27,7 +29,8 @@ the proxy's job; the security headers, the cookie session and the request limits
       repository digest). See "Releases" in `docs/ON_PREM_DATABASE.md`.
 - [ ] **Ollama (optional).** Pull the model offline (`llama3.2:3b` is what the CMMC import is tuned for) and keep
       `OLLAMA_BASE_URL` pointing at the compose service (`http://ollama:11434`) or at loopback. Never at another LAN host:
-      SSP text would travel to it over plain HTTP. `OLLAMA_ALLOW_REMOTE` stays unset.
+      SSP text would travel to it over plain HTTP, and the server logs a `[Startup]` warning when it is set that way. The
+      app never follows an HTTP redirect from Ollama. `OLLAMA_ALLOW_REMOTE` stays unset.
 - [ ] **TLS certificate.** Full chain plus key (key mode `0600`) from the enclave's CA, with a SAN matching the host name
       that people and scanners will use. Put the CA certificate where each scanner host can reference it
       (`PBC_CA_BUNDLE`).
@@ -51,6 +54,10 @@ Required:
 
 Recommended:
 
+- [ ] `REQUIRE_TLS=true` (needs `TRUST_PROXY`; the server refuses to start without it): a request that did not reach the app
+      over HTTPS through the proxy is refused (403 `tls_required` on `/api`, a 301 to `https://` for pages;
+      `GET /api/v1/health` stays open for the container health check). It answers before the scanner routes' own
+      `vm_insecure_transport` check.
 - [ ] `MFA_REQUIRED` left at its default `all` (`privileged` is a rollout stage, `off` warns at startup and is not for production).
 - [ ] `LOCAL_AUTH_TOKEN_TTL_SECONDS` left at 28800 (8 h); the app warns above 43200 (12 h, NIST SP 800-63B AAL2).
 - [ ] `ALLOW_TENANT_CREATION=false` for a single-organisation install (platform administrators provision tenants). Leave it
@@ -81,7 +88,9 @@ Recommended:
 - [ ] `docker compose up -d` (add `--profile ai` for the bundled Ollama). Then `docker compose logs singularity-app` shows
       `[Startup] Database mode: postgres`, `[PostgreSQL] Database schema, control mappings, and RLS policies verified.`,
       the `Assessment history retention` line, and no `[FATAL]`. A misconfiguration exits with code 1 and
-      `restart: unless-stopped` loops it: read the log before anything else. Understand every `[Startup]` warning.
+      `restart: unless-stopped` loops it: read the log before anything else. Understand every `[Startup]` warning, in
+      particular "Listening on all interfaces in production without TRUST_PROXY" and "OLLAMA_BASE_URL points at another
+      machine over plain HTTP": neither should appear on a finished install.
 - [ ] `docker exec singularity-app npm run db:verify-rls` exits 0 and prints "neither SUPERUSER nor BYPASSRLS". Run it on
       the empty database, **before** the setup wizard (it writes and removes `rls_verify_*` rows). Never run
       `db:verify-vm` or `db:prove-control-serialization` against a production database: they are for a throwaway one.
@@ -107,13 +116,15 @@ Replace `grc.example.mil` with the host name on the certificate.
       `SameSite=Strict`, `Path=/api` and `Secure`. No `Secure` means `TRUST_PROXY` or `X-Forwarded-Proto` is wrong.
 - [ ] **Setup closed.** `curl -s -X POST https://grc.example.mil/api/v1/setup -H 'Content-Type: application/json' -d '{}'`
       answers 409 (or 403 with a `SETUP_TOKEN`), never 200.
+- [ ] **Plain HTTP refused.** With `REQUIRE_TLS=true`, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/v1/controls`
+      (straight to the app, no proxy header) answers `403`.
 - [ ] **Loopback only.** From another machine on the LAN, port 3000 is closed; only 443 (and 80) answer.
 - [ ] **Sign in** through the browser, open one control, type a note, reload: the note is there. Upload one evidence
       file and open its preview.
 
 ## 6. Vault, logs and monitoring
 
-- [ ] `ls -ld "$EVIDENCE_DIR" && ls -l "$EVIDENCE_DIR"`: new files are owner-only (`-rw-------`). A vault created by an
+- [ ] `ls -ld "$EVIDENCE_DIR" && ls -ln "$EVIDENCE_DIR"`: the owner is 1000 and new files are owner-only (`-rw-------`). A vault created by an
       earlier release may hold `0644` files: `chmod -R go-rwx "$EVIDENCE_DIR"` once.
 - [ ] Container logs rotate (the compose file sets `max-size: 50m`, `max-file: 5` per service); or set the Docker daemon's
       `log-opts` globally. Treat stdout as sensitive when shipping it to a SIEM: it carries pseudonymous account
@@ -153,7 +164,6 @@ Replace `grc.example.mil` with the host name on the certificate.
 
 ## 10. Known gaps, tracked
 
-- The container runs as root inside the image (#146); vault files are owner-only through the umask meanwhile.
 - Releases are version tags from `v1.0.0`, and the base images and CI actions are pinned by digest or commit (Dependabot
   proposes refreshes); the image is not smoke-tested (#156) or signed (#158) before publish.
 - Scanner payloads and snapshots have no retention setting (#61).

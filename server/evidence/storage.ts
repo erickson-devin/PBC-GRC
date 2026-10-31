@@ -28,6 +28,26 @@ export function localStorageRoot(): string {
 }
 
 /**
+ * Startup check (#146): the image runs as the unprivileged uid 1000, so a bind-mounted evidence directory that Docker created
+ * as root cannot be written. Creates the root if missing, then needs read, write and search access to it and to tenants/.
+ * The message names the variable and the fix, never a file name. `access` is injectable for tests.
+ */
+export function assertStorageWritable(root: string = localStorageRoot(), access: (p: string, mode: number) => void = fs.accessSync): void {
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    const mode = fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK;
+    access(root, mode);
+    const tenants = path.join(root, 'tenants');
+    if (fs.existsSync(tenants)) access(tenants, mode);
+  } catch (err: unknown) {
+    const code = (err as { code?: unknown } | null)?.code;
+    throw new Error(
+      `The evidence directory (LOCAL_STORAGE_PATH=${root}) is not readable and writable by this process (uid ${process.getuid?.() ?? '?'}, ${typeof code === 'string' ? code : 'error'}). Under Docker the host directory (EVIDENCE_DIR) must belong to uid 1000: chown -R 1000:1000 "$EVIDENCE_DIR" (docs/ON_PREM_DATABASE.md "Host paths").`
+    );
+  }
+}
+
+/**
  * Resolves `candidate` and returns it only if it stays inside `root` (path-traversal guard).
  * Returns null for anything that escapes the root or is the root itself.
  */

@@ -61,6 +61,9 @@ To restrict access:
 * Reach the app only over a VPN.
 * With a TLS proxy, set `TRUST_PROXY` to the proxy's address and have the proxy send `X-Forwarded-Proto: https`, so the
   session cookie is marked `Secure` (and service-token creation is allowed).
+* Set `REQUIRE_TLS=true` (needs `TRUST_PROXY`) so the app itself refuses plain-HTTP requests: 403 `tls_required` on `/api`,
+  a 301 to `https://` for pages, and `GET /api/v1/health` stays open for the container health check. The server also logs a
+  `[Startup]` warning when it listens on all interfaces in production without `TRUST_PROXY`.
 
 The database and the other internal services are never exposed to the network: PostgreSQL is published on `127.0.0.1`
 only (`${DB_PORT:-5432}`), and Ollama (the optional `ai` profile) publishes no port and is reachable only on the internal
@@ -207,7 +210,14 @@ installation sets these in the `.env` next to `docker-compose.yml`:
 | `INITDB_DIR` | `/mnt/user/appdata/singularity/docker/postgres` | `./docker/postgres` (the repository copy) |
 
 Changing `DB_DATA_DIR` on an existing installation points PostgreSQL at a different (empty) directory: the init script runs
-again there and the old data stays where it was. The Unraid installation also runs `OLLAMA_MODEL=llama3.2:3b` with
+again there and the old data stays where it was.
+
+The app container runs as the unprivileged uid 1000 (#146), so `EVIDENCE_DIR` must belong to that user. Before the first
+start: `mkdir -p "$EVIDENCE_DIR" && sudo chown 1000:1000 "$EVIDENCE_DIR" && chmod 700 "$EVIDENCE_DIR"`. If the directory is
+missing, Docker creates it as root and the app refuses to start (the log says the evidence directory is not readable and
+writable). Unraid appdata is usually owned by `99:100`, so it needs the chown too.
+
+The Unraid installation also runs `OLLAMA_MODEL=llama3.2:3b` with
 `OLLAMA_NUM_CTX=4096` (the model the CMMC import is tuned for), set the same way.
 
 ## Assessment history retention
@@ -318,6 +328,12 @@ What makes an upgrade safe is the release routine around it:
    rotation" above). Changing `POSTGRES_PASSWORD` or `APP_DB_PASSWORD` in `.env` does not change the role's password once
    the database exists: run `docker exec -it singularity-db psql -U postgres -d cmmc_compliance_db -c "\password grc_app"` (or
    `postgres`) and then update `.env`.
+   **One-time step before the first deploy of the release that runs as a non-root user (#146).** The container now runs as
+   uid 1000, so an existing evidence directory (owned by root) must be handed over first, or the app refuses to start:
+
+   ```bash
+   docker compose stop singularity-app && sudo chown -R 1000:1000 "$EVIDENCE_DIR"
+   ```
 3. **Deploy**: set `IMAGE_TAG` in `.env` to the release you mean to run (`vX.Y.Z`, never `latest`, so that a rollback has
    a name; see "Releases"), then `docker compose pull && docker compose up -d`. Then check: `GET /api/v1/health` reports
    the new `version`, `buildCommit` and `"database":"connected"`, and you can sign in. Read `docker compose logs singularity-app` for
@@ -328,6 +344,7 @@ What makes an upgrade safe is the release routine around it:
    docker stop singularity-app
    docker exec -i singularity-db pg_restore -U postgres -d cmmc_compliance_db --clean --if-exists < /backups/db-<date>.dump
    tar -C "$EVIDENCE_DIR" -xzf /backups/evidence-<date>.tar.gz
+   sudo chown -R 1000:1000 "$EVIDENCE_DIR"
    docker start singularity-app
    ```
 

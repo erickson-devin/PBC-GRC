@@ -8,6 +8,8 @@ import {
   isLocalHost,
   type OllamaConfig,
 } from '../server/ssp/ollama';
+import fs from 'fs';
+import path from 'path';
 import { startFakeOllama } from './fakeOllama';
 
 /** The local Ollama client: configuration, the local-network guard, the model-availability check, and structured chat. */
@@ -29,7 +31,12 @@ const SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } }, requir
 async function run() {
   console.log('--- Configuration ---');
   const d = getOllamaConfig({} as NodeJS.ProcessEnv);
-  assert(!d.enabled && d.baseUrl === 'http://127.0.0.1:11434' && d.model === 'llama3.1:8b' && d.numCtx === 8192 && !d.allowRemote, 'defaults: off, local, Llama 3.1 8B, 8192 context', d);
+  assert(!d.enabled && d.baseUrl === 'http://127.0.0.1:11434' && d.model === 'llama3.2:3b' && d.numCtx === 8192 && !d.allowRemote, 'defaults: off, local, Llama 3.2 3B, 8192 context', d);
+  assert(getOllamaConfig({ OLLAMA_MODEL: '' } as unknown as NodeJS.ProcessEnv).model === 'llama3.2:3b', 'an empty OLLAMA_MODEL falls back to llama3.2:3b');
+  const stale = ['server/ssp/ollama.ts', 'docs/SSP_IMPORT.md', 'docker-compose.yml', '.env.example'].filter((f) =>
+    fs.readFileSync(path.join(process.cwd(), f), 'utf8').replace(/\r\n/g, '\n').includes('llama3.1:8b')
+  );
+  assert(stale.length === 0, 'no shipped file still names llama3.1:8b as the default model', stale);
   const c = getOllamaConfig({ SSP_AI_ENABLED: 'TRUE', OLLAMA_BASE_URL: 'http://ollama:11434/', OLLAMA_MODEL: ' llama3:8b ', OLLAMA_NUM_CTX: '16384', OLLAMA_TIMEOUT_MS: '60000' } as unknown as NodeJS.ProcessEnv);
   assert(c.enabled && c.baseUrl === 'http://ollama:11434' && c.model === 'llama3:8b' && c.numCtx === 16384 && c.timeoutMs === 60000, 'environment values are read and trimmed (trailing slash removed)', c);
   const bad = getOllamaConfig({ OLLAMA_NUM_CTX: 'banana', OLLAMA_TIMEOUT_MS: '1' } as unknown as NodeJS.ProcessEnv);
@@ -129,6 +136,27 @@ async function run() {
 
   const never = new OllamaClient(cfg({ baseUrl: 'https://api.openai.com' }));
   assert((await rejects(never.chatJson({ system: 'secret CUI', user: 'secret CUI', schema: SCHEMA })))?.code === 'blocked_host', 'a document is never sent to a host that is not local');
+
+  console.log('\n--- Redirects are never followed (#166) ---');
+  const sink = await startFakeOllama(['llama3.2:3b']);
+  fake.redirectTo = sink.url;
+  __resetOllamaCacheForTests();
+  const redirStatus = await new OllamaClient(cfg()).getStatus(true);
+  assert(!redirStatus.reachable && redirStatus.code === 'blocked_host' && /redirect/.test(redirStatus.reason ?? '') && sink.hits.length === 0, 'a redirect from /api/tags is refused and the target is never contacted', redirStatus);
+  fake.hits.length = 0;
+  const redirErr = await rejects(client.chatJson({ system: 'CUI-MARKER', user: 'CUI-MARKER', schema: SCHEMA }));
+  assert(redirErr?.code === 'blocked_host', 'a redirect from /api/chat is refused as blocked_host', redirErr?.message);
+  assert(sink.hits.length === 0 && sink.chats.length === 0, 'the document never reaches the redirect target');
+  assert(fake.hits.filter((h) => h === 'POST /api/chat').length === 1 && fake.hits.length === 1, 'a redirect is not retried');
+  fake.redirectStatus = 308;
+  const redirErr308 = await rejects(client.chatJson({ system: 'CUI-MARKER', user: 'CUI-MARKER', schema: SCHEMA }));
+  assert(redirErr308?.code === 'blocked_host' && sink.hits.length === 0, 'a 308 redirect (which keeps the POST body) is refused too');
+  assert(!(redirErr?.message ?? '').includes(String(sink.port)), 'the message names no host or port');
+  const ollamaSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'ssp', 'ollama.ts'), 'utf8').replace(/\r\n/g, '\n');
+  assert((ollamaSrc.match(/\bfetch\(/g) ?? []).length === 2 && (ollamaSrc.match(/redirect: 'error'/g) ?? []).length === 2, 'every fetch in ollama.ts sets redirect: error');
+  fake.redirectTo = null;
+  fake.redirectStatus = 307;
+  await sink.close();
 
   await fake.close();
 }
