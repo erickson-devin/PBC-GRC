@@ -3,7 +3,7 @@ name: CI
 # Pull requests only run the checks: typecheck, build and tests. Nothing here builds or pushes a Docker image, and it has
 # no access to the container registry (read-only permissions).
 # The publish workflow (docker-publish.yml) calls this one too, so an image is only ever published from a commit on
-# main that passed the same checks.
+# main that passed the same checks. A third job runs the live PostgreSQL scripts against a throwaway service container.
 on:
   pull_request:
     branches: [ "main" ]
@@ -73,3 +73,69 @@ jobs:
       - name: Offline smoke (dry run on the bundled sample)
         working-directory: exporters/pbc-vm-exporter
         run: python -m pbc_vm_exporter --dry-run --sample
+
+  # PostgreSQL-only behaviour (row-level security, FOR UPDATE, rollback) is invisible to the in-memory suites above: the three
+  # live scripts run here against a throwaway PostgreSQL 16 as the ordinary application role (#159). A separate job, so the
+  # fast gates stay fast. The publish workflow calls this file, so these checks also gate every published image.
+  live-postgres:
+    name: Live PostgreSQL checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # the same image and digest as docker-compose.yml (tests/onPremOnly.test.ts checks they match)
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-throwaway-admin
+          POSTGRES_DB: cmmc_compliance_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cmmc_compliance_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_DB_USER: grc_app
+      APP_DB_PASSWORD: ci-throwaway-app
+      # the ordinary application role, never the postgres superuser (superusers bypass row-level security)
+      DATABASE_URL: postgres://grc_app:ci-throwaway-app@127.0.0.1:5432/cmmc_compliance_db
+      LOCAL_AUTH_SECRET: ci-throwaway-local-auth-secret-0123456789abcdef
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The shipped init script, run inside the service container as compose runs it (it also creates the extensions)
+      - name: Create the application role
+        id: role
+        run: |
+          docker cp docker/postgres/10-app-role.sh "${{ job.services.postgres.id }}:/tmp/10-app-role.sh"
+          docker exec -e APP_DB_USER -e APP_DB_PASSWORD "${{ job.services.postgres.id }}" sh /tmp/10-app-role.sh
+          # CI only (throwaway database): lets db:verify-rls run 8e, the upgrade rehearsal in its own schema, instead of skipping it
+          docker exec "${{ job.services.postgres.id }}" psql -v ON_ERROR_STOP=1 -U postgres -d cmmc_compliance_db -c "GRANT CREATE ON DATABASE cmmc_compliance_db TO grc_app"
+
+      - name: Row-level security (db:verify-rls)
+        if: ${{ !cancelled() && steps.role.outcome == 'success' }}
+        shell: bash
+        run: |
+          npm run db:verify-rls 2>&1 | tee "$RUNNER_TEMP/verify-rls.log"
+          if grep -q 'SKIP:' "$RUNNER_TEMP/verify-rls.log"; then echo "::error::db:verify-rls skipped a section"; exit 1; fi
+
+      - name: Vulnerability management (db:verify-vm)
+        if: ${{ !cancelled() && steps.role.outcome == 'success' }}
+        run: npm run db:verify-vm
+
+      - name: Control write serialization (db:prove-control-serialization)
+        if: ${{ !cancelled() && steps.role.outcome == 'success' }}
+        run: npm run db:prove-control-serialization
