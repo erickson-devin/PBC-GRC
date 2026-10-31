@@ -5,7 +5,7 @@ import apiRouter from './routes/api';
 import { initDb, assertDbModeAllowed, getDbMode, pool } from './db';
 import { assertAuthConfig, authStartupWarnings } from './auth/localAuth';
 import { runtimeEnvWarnings } from './runtimeEnv';
-import { assertStorageConfig, localStorageRoot } from './evidence/storage';
+import { assertStorageConfig, assertStorageWritable, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
 import { createForwardedForWarning, parseTrustProxy } from './trustProxy';
 import { startVmScheduler, stopVmScheduler } from './vm/scheduler';
@@ -15,12 +15,13 @@ import { describeRetention, startAssessmentEventRetention, stopAssessmentEventRe
 import { SHUTDOWN_CANCEL_MESSAGE, VM_SHUTDOWN_MESSAGE, createShutdown, installSignalHandlers, trackedSspJobs } from './shutdown';
 import { cancelJob, isJobActive } from './ssp/runner';
 import { updateJob } from './ssp/store';
+import { assertRequireTlsConfig, createRequireTls, ollamaTransportWarnings, transportWarnings } from './transportSecurity';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Evidence, SSP uploads and VM payloads are CUI: new files are owner-only on the host bind mount.
-// (Existing vaults need a one-time chmod, see docs; a non-root container user (#146) will need a chown.)
+// (Existing vaults need a one-time chmod and, since the image runs as uid 1000 (#146), a chown: docs/ON_PREM_DATABASE.md.)
 process.umask(0o077);
 
 // Content-Security-Policy, enforced. One directive per line so each choice is reviewable.
@@ -74,6 +75,8 @@ app.use((_req, res, next) => {
   res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
   next();
 });
+// REQUIRE_TLS=true: refuse plain-HTTP requests (see transportSecurity.ts). After the headers so its replies carry them, before the body parsers.
+app.use(createRequireTls());
 // The ingest route hashes the exact request bytes, so it reads its own raw body
 const jsonParser = express.json({ limit: '15mb' });
 app.use((req, res, next) => (req.path.replace(/\/+$/, '').toLowerCase() === '/api/v1/vm/ingest' ? next() : jsonParser(req, res, next)));
@@ -112,10 +115,14 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
   // Fail loudly: a server that cannot reach its database (or is misconfigured) must not pretend to be healthy.
   try {
     for (const w of runtimeEnvWarnings()) console.warn('[Startup] ' + w);
+    assertRequireTlsConfig();
+    for (const w of transportWarnings(process.env, BIND_ADDRESS)) console.warn('[Startup] ' + w);
+    for (const w of ollamaTransportWarnings()) console.warn('[Startup] ' + w);
     assertDbModeAllowed();
     assertAuthConfig();
     for (const w of authStartupWarnings()) console.warn('[Startup] ' + w);
     assertStorageConfig();
+    assertStorageWritable();
     await initDb();
     console.log(`[Startup] Database mode: ${getDbMode()}`);
     console.log(`[Startup] Auth: local accounts | Storage: local (${localStorageRoot()})`);

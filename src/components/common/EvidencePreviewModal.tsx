@@ -16,7 +16,6 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { ApiClient } from '../../services/apiClient';
 import { previewKind, PreviewKind } from '../../services/evidenceBlobScrub';
-import { generateEvidenceObjectPath } from '../../data/audit/storageDriver';
 import { findControlDefinition } from '../../data/frameworks';
 
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
@@ -36,7 +35,6 @@ const EvidencePreviewModalContent: React.FC = () => {
   const [hasBlob, setHasBlob] = useState<boolean>(false);
   const [loadFailed, setLoadFailed] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<boolean>(false);
-  const [copiedPath, setCopiedPath] = useState<boolean>(false);
 
   useEffect(() => {
     let active = true;
@@ -112,13 +110,6 @@ const EvidencePreviewModalContent: React.FC = () => {
   const control = findControlDefinition(previewEvidence.controlId);
   const isImage = hasBlob ? kind === 'image' : previewKind(previewEvidence.mimeType, previewEvidence.name) === 'image';
 
-  const vaultPath = previewEvidence.gcsPath || generateEvidenceObjectPath(
-    currentTenant.id,
-    previewEvidence.controlId,
-    previewEvidence.id,
-    previewEvidence.name
-  );
-
   const handleDownload = () => {
     if (!downloadBlob) return;
     const url = URL.createObjectURL(downloadBlob);
@@ -136,12 +127,6 @@ const EvidencePreviewModalContent: React.FC = () => {
     copyToClipboard(previewEvidence.fileHash);
     setCopiedHash(true);
     setTimeout(() => setCopiedHash(false), 2000);
-  };
-
-  const handleCopyPath = () => {
-    copyToClipboard(vaultPath);
-    setCopiedPath(true);
-    setTimeout(() => setCopiedPath(false), 2000);
   };
 
   return (
@@ -189,19 +174,6 @@ const EvidencePreviewModalContent: React.FC = () => {
         {/* Vault Path & Cryptographic Audit Bar */}
         <div className="px-6 py-2.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Vault Path */}
-            <div className="flex items-center gap-1.5 font-mono text-xs text-slate-300">
-              <HardDrive className="w-3.5 h-3.5 text-brand-400 shrink-0" />
-              <span className="truncate max-w-[280px] sm:max-w-md">{vaultPath}</span>
-              <button
-                onClick={handleCopyPath}
-                title="Copy Path"
-                className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
-              >
-                {copiedPath ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-
             {/* SHA-256 Hash */}
             {previewEvidence.fileHash && (
               <div className="flex items-center gap-1.5 font-mono text-xs text-emerald-300 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">

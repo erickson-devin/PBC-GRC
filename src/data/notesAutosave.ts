@@ -121,6 +121,41 @@ export function createSaveChain(): SaveChain {
   };
 }
 
+export interface StampedSaveChain {
+  /** Like SaveChain.run, but `send` is given the stamp to expect: the later of the last answer's `updatedAt` for `key` and `liveStamp()` at the time it runs. */
+  run<T extends { updatedAt?: string | null } | null | undefined>(
+    key: string,
+    liveStamp: () => string | null | undefined,
+    send: (expected: string | null | undefined) => Promise<T>
+  ): Promise<T>;
+  busy(key: string): boolean;
+  /** Forgets the stamps only; saves already queued still run. */
+  clear(): void;
+}
+
+export function createStampedSaveChain(): StampedSaveChain {
+  const chain = createSaveChain();
+  const stamps = new Map<string, string>();
+  return {
+    run<T extends { updatedAt?: string | null } | null | undefined>(
+      key: string,
+      liveStamp: () => string | null | undefined,
+      send: (expected: string | null | undefined) => Promise<T>
+    ): Promise<T> {
+      return chain.run(key, async () => {
+        // Read when this save's turn comes, after the earlier ones have answered
+        const base = newerStamp(stamps.get(key), liveStamp());
+        const rec = await send(base);
+        // A rejected save never gets here: its stamp stays as it was
+        if (rec && typeof rec.updatedAt === 'string') stamps.set(key, rec.updatedAt);
+        return rec;
+      });
+    },
+    busy: key => chain.busy(key),
+    clear: () => stamps.clear(),
+  };
+}
+
 const stampTime = (s: unknown): number | null => {
   if (typeof s !== 'string') return null;
   const t = Date.parse(s);

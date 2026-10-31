@@ -26,10 +26,16 @@ export interface FakeOllama {
   failNext: number;
   /** Delay every chat reply, in ms. */
   delayMs: number;
+  /** Every request received, as "METHOD /path", oldest first. */
+  hits: string[];
+  /** When set, every request is answered with a redirect to this origin (same path). */
+  redirectTo: string | null;
+  /** Status of that redirect. */
+  redirectStatus: number;
   close: () => Promise<void>;
 }
 
-export async function startFakeOllama(models: string[] = ['llama3.1:8b']): Promise<FakeOllama> {
+export async function startFakeOllama(models: string[] = ['llama3.2:3b']): Promise<FakeOllama> {
   const fake: FakeOllama = {
     url: '',
     port: 0,
@@ -38,6 +44,9 @@ export async function startFakeOllama(models: string[] = ['llama3.1:8b']): Promi
     onChat: () => ({}),
     failNext: 0,
     delayMs: 0,
+    hits: [],
+    redirectTo: null,
+    redirectStatus: 307,
     close: () => Promise.resolve(),
   };
 
@@ -46,6 +55,12 @@ export async function startFakeOllama(models: string[] = ['llama3.1:8b']): Promi
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    fake.hits.push(`${req.method} ${req.url}`);
+    if (fake.redirectTo) {
+      res.writeHead(fake.redirectStatus, { Location: fake.redirectTo + (req.url ?? '/') });
+      res.end();
+      return;
+    }
     if (req.method === 'GET' && req.url === '/api/tags') {
       send(200, { models: fake.models.map((name) => ({ name, model: name })) });
       return;

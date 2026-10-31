@@ -213,6 +213,11 @@ function fresh() {
     r = await attempt(() => ApiClient.listMyTenants());
     const r2 = await attempt(() => ApiClient.getControls('t'));
     assert(r.value === null && r2.error !== undefined && fetchCalls === 0 && signals.length === 0, 'with no stored token no request is sent and nothing signals', { fetchCalls, signals });
+    assert(r2.error instanceof Error && r2.error.message === 'Not authenticated: no active session', 'S182-1 getControls without a session says there is no active session', { message: (r2.error as Error | undefined)?.message });
+    stored = null;
+    fetchCalls = 0;
+    const r3 = await attempt(() => ApiClient.getEvidence('t'));
+    assert(r3.error instanceof Error && r3.error.message === 'Not authenticated: no active session' && fetchCalls === 0, 'S182-2 getEvidence without a session says the same and sends nothing', { fetchCalls });
 
     fresh();
     const reasons: Array<string | undefined> = [];
@@ -241,6 +246,9 @@ function fresh() {
   const allowed = ['return await fetch(input, init)', 'res = await fetch(input, init)', '/api/v1/setup/status', '/api/v1/health', '/api/v1/controls/frameworks', 'fetch(url)'];
   const unexpected = rawFetch.filter((line) => !allowed.some((a) => line.includes(a)));
   assert(rawFetch.length === 5 && unexpected.length === 0, 'the only raw fetch calls are inside apiFetch and the anonymous status, health, frameworks and mappings reads', { rawFetch });
+
+  const apiSrc = fs.readFileSync(path.join(process.cwd(), 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
+  assert(!apiSrc.includes('ID token') && apiSrc.split("'Not authenticated: no active session'").length - 1 === 2, 'S182-3 apiClient names no ID token and has the no-session message exactly twice');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

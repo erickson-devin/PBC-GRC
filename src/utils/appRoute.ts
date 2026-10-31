@@ -39,6 +39,41 @@ export function initialTabFromUrl({ pathname, hash }: Pick<UrlParts, 'pathname' 
   return pathname.toLowerCase() === '/programs' || hash.toLowerCase().startsWith('#programs') ? 'programs' : null;
 }
 
+/** Where sign-in lands when it was not asked to return somewhere else (or was asked for somewhere unsafe). */
+export const SIGNED_IN_DEFAULT = '/#app';
+
+/** The sign-in address that returns to redirectUrl afterwards (the query lives inside the hash). */
+export const loginHref = (redirectUrl: string) => `/#login?redirectUrl=${encodeURIComponent(redirectUrl)}`;
+
+/**
+ * A redirect target sign-in may follow, or null. Only a same-origin address that opens the app or administration is
+ * accepted: no absolute or protocol-relative URL, scheme, backslash, whitespace or control character.
+ */
+export function safeRedirectTarget(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length < 1 || raw.length > 512) return null;
+  if (/[\\\s\u0000-\u001f\u007f]/.test(raw)) return null;
+  if (raw[0] !== '/' && raw[0] !== '#') return null;
+  if (raw.startsWith('//')) return null;
+  let u: URL;
+  try {
+    u = new URL(raw, 'http://app.invalid');
+  } catch {
+    return null;
+  }
+  if (u.origin !== 'http://app.invalid') return null;
+  const route = routeFromUrl({ pathname: u.pathname, hash: u.hash, search: u.search });
+  if (route !== 'app' && route !== 'admin') return null;
+  return u.pathname + u.search + u.hash;
+}
+
+/** The redirect target named by a sign-in URL (hash query first, then the search), or the default when absent or unsafe. */
+export function redirectFromLocation(loc: { hash: string; search: string }): string {
+  const q = loc.hash.indexOf('?');
+  const fromHash = q >= 0 ? new URLSearchParams(loc.hash.slice(q + 1)).get('redirectUrl') : null;
+  const raw = fromHash ?? new URLSearchParams(loc.search).get('redirectUrl');
+  return safeRedirectTarget(raw) ?? SIGNED_IN_DEFAULT;
+}
+
 /** Where '/' and every unknown path end up. */
 export const resolveRoot = (isAuthenticated: boolean): Exclude<AppRoute, 'root'> => (isAuthenticated ? 'app' : 'login');
 

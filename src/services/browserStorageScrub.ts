@@ -280,6 +280,13 @@ function readRegistryIds(
   return null;
 }
 
+/** Every tenant id the browser's registry knows (browser-only and server-backed), or null when no registry is readable. */
+export function registeredTenantIds(storage: ScrubStorage): Set<string> | null {
+  const reg = readRegistryIds(storage);
+  if (!reg) return null;
+  return new Set<string>([...reg.browserOnly, ...reg.serverBacked]);
+}
+
 function emptyResult(): BrowserStorageScrubResult {
   return {
     scrubbed: 0,

@@ -1,4 +1,4 @@
-import { routeFromUrl, resolveRoot, initialTabFromUrl, routeAfterSessionEnd } from '../src/utils/appRoute';
+import { routeFromUrl, resolveRoot, initialTabFromUrl, routeAfterSessionEnd, safeRedirectTarget, redirectFromLocation, loginHref } from '../src/utils/appRoute';
 import fs from 'fs';
 import path from 'path';
 
@@ -114,6 +114,36 @@ const sessionEndReplaceAt = appSrc.indexOf("window.history.replaceState(null, ''
 const earlyReturnAt = appSrc.indexOf('if (shouldHoldForVerification(sessionCheck)) return');
 assert(sessionEndAt > 0 && sessionEndReplaceAt > sessionEndAt && earlyReturnAt > sessionEndReplaceAt, 'App: the session-end redirect is an effect declared before the early returns');
 assert(!read('src/components/admin/SuperAdminDashboard.tsx').replace(/\r\n/g, '\n').includes('if (onNavigateToLogin) onNavigateToLogin();'), 'SuperAdminDashboard: sign-out no longer pushes a history entry itself');
+
+// #140: sign-in honours a safe redirectUrl, and only a safe one
+console.log('\n--- Sign-in redirect (#140) ---');
+const safe = (v: unknown) => safeRedirectTarget(v);
+assert(safe('/#app') === '/#app' && safe('/programs') === '/programs' && safe('#programs') === '/#programs' && safe('/#admin') === '/#admin' && safe('/admin') === '/admin', 'S140-1: app and admin addresses are accepted');
+assert(['https://evil.example/#app', '//evil.example/#app', '/\\evil.example', '\\\\evil'].every((v) => safe(v) === null), 'S140-2: absolute, protocol-relative and backslash targets are refused');
+assert(['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,x', '%2F%2Fevil.example'].every((v) => safe(v) === null), 'S140-3: schemes and encoded slashes are refused');
+assert([' /#app', '/#app\n', '/#a\tpp'].every((v) => safe(v) === null), 'S140-4: whitespace and control characters are refused');
+assert(['/#login', '/#setup', '/#accept-invite?token=x', '/pricing', '/'].every((v) => safe(v) === null), 'S140-5: any route other than app or admin is refused');
+assert(['', null, undefined, 42, '/#app' + 'x'.repeat(600)].every((v) => safe(v) === null), 'S140-6: empty, non-string and over-long values are refused');
+assert(
+  redirectFromLocation({ hash: loginHref('/#programs').slice(1), search: '' }) === '/#programs'
+    && redirectFromLocation({ hash: '#login?redirectUrl=https%3A%2F%2Fevil.example', search: '' }) === '/#app'
+    && redirectFromLocation({ hash: '#login', search: '?redirectUrl=%2Fprograms' }) === '/programs'
+    && redirectFromLocation({ hash: '#login', search: '' }) === '/#app',
+  'S140-7: redirectFromLocation reads the hash query, then the search, and falls back to the app'
+);
+const loginSrc = read('src/components/auth/LoginPage.tsx');
+const afterSignInAt = appSrc.indexOf('const navigateAfterSignIn = useCallback');
+const afterSignIn = appSrc.slice(afterSignInAt, appSrc.indexOf('}, [setActiveTab]);', afterSignInAt));
+const toLoginAt = appSrc.indexOf('const navigateToLogin = useCallback');
+const toLogin = appSrc.slice(toLoginAt, appSrc.indexOf('}, []);', toLoginAt));
+assert(
+  appSrc.includes('onSuccessRedirect={navigateAfterSignIn}') && !appSrc.includes('onSuccessRedirect={navigateToApp}')
+    && afterSignInAt > 0 && afterSignIn.includes('safeRedirectTarget(') && afterSignIn.includes('replaceState(')
+    && toLogin.includes('loginHref(')
+    && loginSrc.includes('redirectFromLocation(') && !loginSrc.includes('new URLSearchParams(window.location.search)')
+    && !read('src/utils/appRoute.ts').includes('console.'),
+  'S140-8: App and LoginPage use the validated redirect; appRoute logs nothing'
+);
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

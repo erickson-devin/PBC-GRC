@@ -71,7 +71,7 @@ const terminal = (j: Json) => ['READY_FOR_REVIEW', 'FAILED', 'CANCELLED', 'COMMI
 
 async function main() {
   await new Promise((r) => setTimeout(r, 500));
-  const fake = await startFakeOllama(['llama3.1:8b']);
+  const fake = await startFakeOllama(['llama3.2:3b']);
   fake.onChat = scriptedModel;
 
   const owner = person('u_ai_owner');
@@ -80,7 +80,7 @@ async function main() {
   await call('POST', `/tenants/${tenant}/members`, owner, tenant, { userId: 'u_ai_assessor', email: 'u_ai_assessor@test.mil', role: 'ASSESSOR' });
   const root = `/tenants/${tenant}/ssp-imports`;
   const docx = await makeDocx(DOC_LINES);
-  const reset = () => { __resetOllamaCacheForTests(); fake.chats.length = 0; fake.failNext = 0; fake.delayMs = 0; fake.models = ['llama3.1:8b']; };
+  const reset = () => { __resetOllamaCacheForTests(); fake.chats.length = 0; fake.failNext = 0; fake.delayMs = 0; fake.models = ['llama3.2:3b']; };
 
   console.log('--- The AI analysis is off by default ---');
   delete process.env.SSP_AI_ENABLED;
@@ -101,11 +101,11 @@ async function main() {
   process.env.SSP_AI_ENABLED = 'true';
   reset();
   const capOn = (await call('GET', `${root}/capabilities`, owner, tenant)).body as Json;
-  assert(capOn.ai === true && capOn.aiStatus.available === true && capOn.aiStatus.model === 'llama3.1:8b', 'enabled, reachable and the model installed: the AI analysis is offered');
+  assert(capOn.ai === true && capOn.aiStatus.available === true && capOn.aiStatus.model === 'llama3.2:3b', 'enabled, reachable and the model installed: the AI analysis is offered');
   fake.models = ['mistral:7b'];
   __resetOllamaCacheForTests();
   const capMissing = (await call('GET', `${root}/capabilities`, owner, tenant)).body as Json;
-  assert(capMissing.ai === false && /ollama pull llama3\.1:8b/.test(capMissing.aiStatus.reason) && /mistral:7b/.test(capMissing.aiStatus.reason), 'model not installed: not offered, and the reason says how to load it and what is installed', capMissing.aiStatus.reason);
+  assert(capMissing.ai === false && /ollama pull llama3.2:3b/.test(capMissing.aiStatus.reason) && /mistral:7b/.test(capMissing.aiStatus.reason), 'model not installed: not offered, and the reason says how to load it and what is installed', capMissing.aiStatus.reason);
   const refusedMissing = await upload(owner, tenant, docx, { framework: 'CMMC_L1', analysis: 'ai' });
   assert(refusedMissing.status === 409 && /not installed/.test(refusedMissing.body?.error) && fake.chats.length === 0, 'an upload asking for AI is refused up front when the model is missing, before any work', refusedMissing.body);
   assert(((await call('GET', root, owner, tenant)).body?.jobs ?? []).length === 0, 'no job and no stored document were created for the refused upload');
@@ -122,12 +122,12 @@ async function main() {
 
   console.log('\n--- An AI import end to end ---');
   const up = await upload(owner, tenant, docx, { framework: 'CMMC_L1', analysis: 'ai' });
-  assert(up.status === 202 && up.body?.job?.analyzer === 'ollama:llama3.1:8b', 'accepted (202), and the job records which model analysed it', up.body?.job?.analyzer);
+  assert(up.status === 202 && up.body?.job?.analyzer === 'ollama:llama3.2:3b', 'accepted (202), and the job records which model analysed it', up.body?.job?.analyzer);
   const jobId = up.body?.job?.id as string;
   const job = await waitFor(owner, tenant, jobId, terminal);
-  assert(job.status === 'READY_FOR_REVIEW' && job.analyzer === 'ollama:llama3.1:8b', 'ready for review, still marked as an AI analysis', job);
+  assert(job.status === 'READY_FOR_REVIEW' && job.analyzer === 'ollama:llama3.2:3b', 'ready for review, still marked as an AI analysis', job);
   const ai = job.stageProgress?.ai;
-  assert(ai?.model === 'llama3.1:8b' && ai.promptVersion === 'ssp-ai-1' && ai.sectionsAnalyzed >= 2 && ai.findingsGrounded >= 2 && ai.gapAnalyses >= 2, 'the AI run statistics are kept on the job', ai);
+  assert(ai?.model === 'llama3.2:3b' && ai.promptVersion === 'ssp-ai-1' && ai.sectionsAnalyzed >= 2 && ai.findingsGrounded >= 2 && ai.gapAnalyses >= 2, 'the AI run statistics are kept on the job', ai);
   const staged = ((await call('GET', `${root}/${jobId}/staged`, assessor, tenant)).body?.staged ?? []) as Json[];
   const byId = new Map(staged.map((s) => [s.controlId, s]));
   const ac = byId.get('AC.L1-3.1.1');
@@ -167,7 +167,7 @@ async function main() {
   __resetOllamaCacheForTests();
   const goingDone = await waitFor(owner, tenant, going.body?.job?.id, terminal);
   assert(goingDone.status === 'READY_FOR_REVIEW' && goingDone.analyzer === 'regex-v1' && /AI analysis could not be completed/.test(goingDone.stageProgress?.warning ?? ''), 'a model that disappears after the upload is noticed before work starts, and the import falls back', goingDone.stageProgress);
-  fake.models = ['llama3.1:8b'];
+  fake.models = ['llama3.2:3b'];
 
   console.log('\n--- Cancelling ---');
   reset();

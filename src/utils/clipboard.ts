@@ -37,3 +37,17 @@ export async function copyToClipboard(text: string): Promise<void> {
   }
   if (!copied) throw new Error('The browser blocked copying to the clipboard');
 }
+
+/**
+ * Copies text and reports whether it worked: true when copied, false when the browser refused.
+ * Never throws and never logs: the text can be an invitation link or CUI, and the error tells the user nothing useful.
+ * Call it straight from the click handler (no await before it) so the legacy fallback still runs inside the user gesture.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await copyToClipboard(text);
+    return true;
+  } catch {
+    return false;
+  }
+}

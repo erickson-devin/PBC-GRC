@@ -241,10 +241,8 @@ async function runStigAutomationTests() {
 
     const p3 = planStigNarratives({ X: mk({ status: 'IN_PROGRESS', implementationNotes: 'Intro N1 outro' }) }, { X: 'N1' }, planCtx);
     assert(
-      p3.length === 1
-        && p3[0].next.implementationNotes === 'Intro N1 outro'
-        && JSON.stringify(p3[0].serverUpdate) === '{"implementationNotes":"Intro N1 outro","updatedBy":"Ann"}',
-      'S79-3: text already present is kept and still counted (same count as before #79)'
+      p3.length === 0,
+      'S79-3: text already present and no status change plans nothing (#180)'
     );
 
     const p4 = planStigNarratives({ X: mk({ implementationNotes: '   ' }) }, { X: 'N1' }, planCtx);
@@ -280,6 +278,32 @@ async function runStigAutomationTests() {
       (bulkBody.match(/saveControl\(/g) ?? []).length === 1 && !planSrc.includes('console.'),
       'S79-8: one save call site in the bulk apply, and the plan helper never logs'
     );
+
+    // ---------------------------------------------------------------
+    // Test 9: a fill that changes nothing plans nothing (#180)
+    // ---------------------------------------------------------------
+    console.log('\n--- Test 9: idempotent STIG fill (#180) ---');
+    const c0 = { X: mk({ status: 'NOT_STARTED', implementationNotes: '' }) };
+    const a180 = planStigNarratives(c0, { X: 'N1' }, planCtx);
+    const c1 = { X: a180[0].next };
+    assert(a180.length === 1 && planStigNarratives(c1, { X: 'N1' }, planCtx).length === 0, 'S180-1: a second run of the same fill plans nothing');
+
+    const s180b = planStigNarratives({ X: mk({ status: 'NOT_STARTED', implementationNotes: 'Intro N1 outro' }) }, { X: 'N1' }, planCtx);
+    assert(
+      s180b.length === 1
+        && s180b[0].next.status === 'IN_PROGRESS'
+        && s180b[0].next.implementationNotes === 'Intro N1 outro'
+        && JSON.stringify(s180b[0].serverUpdate) === '{"updatedBy":"Ann","status":"IN_PROGRESS"}',
+      'S180-2: text present but NOT_STARTED plans only the status change'
+    );
+
+    const s180c = planStigNarratives({ A: mk({ id: 'A', implementationNotes: 'x a1 y' }), B: mk({ id: 'B' }) }, { A: 'a1', B: 'b1' }, planCtx);
+    assert(JSON.stringify(s180c.map(c => c.id)) === '["B"]', 'S180-3: a mixed fill plans only the controls that change');
+
+    assert(planStigNarratives({ X: mk({ implementationNotes: 'N1' }) }, { X: 'N1' }, planCtx).length === 0, 'S180-4: a MET control with the exact narrative plans nothing');
+
+    const modalSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'stigs', 'StigAutomationModal.tsx'), 'utf8');
+    assert(modalSrc.includes('Already applied; nothing changed.'), 'S180-5: the modal says so when nothing changed');
 
   } catch (err: any) {
     console.error('Test run failed with error:', err);

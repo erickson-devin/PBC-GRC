@@ -19,6 +19,7 @@ import { computeSha256, canonicalJson } from '../src/data/audit/auditLogger';
 import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetScope';
 import { createInitialState } from '../src/services/storageService';
 import { NO_CSP_RECORDED } from '../src/data/reports/documentCompilers';
+import { copyText } from '../src/utils/clipboard';
 
 // Polyfill minimal localStorage for Node environment if absent
 if (typeof (global as any).localStorage === 'undefined') {
@@ -326,10 +327,9 @@ async function runTests() {
       'OB-L1: no console line of the dashboard carries a raw error'
     );
     assert(
-      dashNorm.includes(`console.warn('Clipboard write failed:', ${nameOnly});`)
-        && dashNorm.includes(`console.error('Failed to export offboarding package:', ${nameOnly});`)
+      dashNorm.includes(`console.error('Failed to export offboarding package:', ${nameOnly});`)
         && dashNorm.includes(`console.error('Cryptographic destruction failed:', ${nameOnly});`),
-      'OB-L2: the three dashboard error logs state the error name only'
+      'OB-L2: the two dashboard error logs state the error name only'
     );
     assert(
       !dashNorm.includes('Failed to export offboarding package: ${errorMessage(err)') && !dashNorm.includes('Destruction protocol failed: ${errorMessage(err)'),
@@ -357,6 +357,43 @@ async function runTests() {
       /if \(notificationToast && notificationToast\.type !== 'error'\)/.test(dashNorm),
       'OB-L7: error toasts are not auto-dismissed'
     );
+
+    // #141: the team modal and the dashboard copy through copyText, which never throws and never logs
+    const teamNorm = readFileSync(join(process.cwd(), 'src/components/settings/TeamSettingsModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    const clipNorm = readFileSync(join(process.cwd(), 'src/utils/clipboard.ts'), 'utf8').replace(/\r\n/g, '\n');
+    assert(!teamNorm.includes('navigator.clipboard') && !teamNorm.includes('copyToClipboard(') && teamNorm.includes('copyText('), 'S141-1: the team modal has no bare navigator.clipboard and copies through copyText');
+    assert(teamNorm.includes('The link could not be copied. Select and copy it from the field.'), 'S141-2: the team modal states a failed copy in fixed text');
+    assert(teamNorm.includes('readOnly') && teamNorm.includes('value={copyFailedUrl}') && teamNorm.includes('htmlFor="team-invite-link-fallback"'), 'S141-3: the link is shown in a labelled read-only field');
+    assert(!/console\./.test(teamNorm) && !teamNorm.includes("'New invitation link created: ' +"), 'S141-4: the team modal logs nothing and never puts the link into a notice');
+    assert(dashNorm.includes('copyText(') && !dashNorm.includes('copyToClipboard(') && !dashNorm.includes('Clipboard write failed'), 'S141-5: the dashboard copies through copyText and logs no clipboard failure');
+    const copyTextBody = clipNorm.slice(clipNorm.indexOf('export async function copyText'));
+    assert(/export async function copyText\(text: string\): Promise<boolean>/.test(clipNorm) && !copyTextBody.includes('console.'), 'S141-6: copyText returns a boolean and logs nothing');
+
+    const g = globalThis as Record<string, unknown>;
+    const saved = { document: g.document, HTMLElement: g.HTMLElement, log: console.log, warn: console.warn, error: console.error, info: console.info, debug: console.debug };
+    const logged: string[] = [];
+    const capture = (...a: unknown[]) => { logged.push(a.map(String).join(' ')); };
+    const secret = 'https://grc.local/#accept-invite?token=S141-SECRET';
+    let execResult = true;
+    const field = { value: '', setAttribute() {}, style: { cssText: '' }, focus() {}, select() {}, setSelectionRange() {}, remove() {} };
+    let noDom: boolean | string, copied: boolean | string, refused: boolean | string;
+    console.log = console.warn = console.error = console.info = console.debug = capture;
+    try {
+      noDom = await copyText(secret).catch(() => 'rejected');
+      g.HTMLElement = class {};
+      g.document = { createElement: () => field, body: { appendChild() {} }, activeElement: null, execCommand: () => execResult };
+      copied = await copyText(secret).catch(() => 'rejected');
+      execResult = false;
+      refused = await copyText(secret).catch(() => 'rejected');
+    } finally {
+      Object.assign(console, { log: saved.log, warn: saved.warn, error: saved.error, info: saved.info, debug: saved.debug });
+      if (saved.document === undefined) delete g.document; else g.document = saved.document;
+      if (saved.HTMLElement === undefined) delete g.HTMLElement; else g.HTMLElement = saved.HTMLElement;
+    }
+    assert(noDom === false, 'S141-7: with no clipboard and no DOM, copyText resolves false instead of rejecting');
+    assert(copied === true, 'S141-8: when the fallback copy succeeds, copyText resolves true');
+    assert(refused === false, 'S141-9: when the browser refuses the copy, copyText resolves false');
+    assert(logged.length === 0 && !logged.some(l => l.includes('S141-SECRET')), 'S141-10: copyText writes nothing to the console, least of all the text');
     assert(
       dashSrc2.includes('getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p)') && dialogSrc.includes('declared its assets') && !dialogSrc.includes('Each package states the whole asset inventory'),
       'OB-U5: the handover follows the program\'s declared assets (the dashboard reads them, the chooser says so)'

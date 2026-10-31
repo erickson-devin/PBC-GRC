@@ -428,7 +428,6 @@ export const EvidenceVaultView: React.FC = () => {
                                 {currentTenant.serverBacked ? 'Server Vault' : 'Local Vault'}
                               </span>
                             </div>
-                            <p className="text-xs text-slate-400 font-mono truncate max-w-xs">{item.gcsPath || 'Local'}</p>
                           </div>
                         </div>
                       </td>

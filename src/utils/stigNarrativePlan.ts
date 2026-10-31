@@ -8,7 +8,7 @@ export interface StigNarrativeChange {
 
 /**
  * Pure: what a bulk STIG narrative fill changes. Same rules as before #79: append under a header,
- * keep text already present, NOT_STARTED -> IN_PROGRESS.
+ * keep text already present, NOT_STARTED -> IN_PROGRESS. A control the fill would leave unchanged is left out (#180).
  */
 export function planStigNarratives(
   controls: Readonly<Record<string, ControlState>>,
@@ -35,8 +35,15 @@ export function planStigNarratives(
       ? (existing.includes(text) ? existing : `${existing}\n\n[STIG Baseline Implementation]:\n${text}`)
       : text;
 
-    const serverUpdate: Partial<ControlState> = { implementationNotes: notes, updatedBy: ctx.updatedBy };
-    if (current.status === 'NOT_STARTED') serverUpdate.status = 'IN_PROGRESS';
+    // A fill that changes neither the text nor the status plans nothing (#180), so a second run is a no-op.
+    const notesChanged = notes !== (existing ?? '');
+    const statusChanged = current.status === 'NOT_STARTED';
+    if (!notesChanged && !statusChanged) continue;
+
+    const serverUpdate: Partial<ControlState> = notesChanged
+      ? { implementationNotes: notes, updatedBy: ctx.updatedBy }
+      : { updatedBy: ctx.updatedBy };
+    if (statusChanged) serverUpdate.status = 'IN_PROGRESS';
 
     out.push({
       id,

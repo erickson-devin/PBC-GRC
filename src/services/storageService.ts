@@ -230,7 +230,7 @@ export const StorageService = {
       if (ctrlEvidence.length > 0) {
         md += `**Audit Evidence Artifacts:**\n`;
         ctrlEvidence.forEach(e => {
-          md += `- **${e.name}** (${Math.round(e.fileSize / 1024)} KB) | Path: \`${e.gcsPath || 'Local'}\` | SHA-256: \`${e.fileHash || 'N/A'}\`\n`;
+          md += `- **${e.name}** (${Math.round(e.fileSize / 1024)} KB) | SHA-256: \`${e.fileHash || 'N/A'}\`\n`;
         });
       } else {
         md += `_No evidence files attached._\n`;

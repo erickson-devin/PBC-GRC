@@ -27,6 +27,7 @@ import {
   resolveConflict,
   stackCascadeFill,
 } from '../src/data/objectiveSync';
+import { createStampedSaveChain } from '../src/data/notesAutosave';
 import { StorageService } from '../src/services/storageService';
 import type { AssessmentState, ControlState } from '../src/types/cmmc';
 import type { AssessmentObjective } from '../src/types/assessment';
@@ -348,6 +349,113 @@ async function api() {
   }
 }
 
+// One objective's saves go out one at a time and each reuses the stamp the last answer returned (#154)
+async function staleStamps() {
+  console.log('\n--- Objective save queue (#154) ---');
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: { getItem: () => 'sess', setItem: () => undefined, removeItem: () => undefined },
+    configurable: true,
+    writable: true,
+  });
+  const ID = 'AC.L2-3.1.1[a]';
+  const K = `p1::${ID}`;
+  const T0 = '2026-10-30T00:00:00.000Z';
+  const T1 = '2026-10-30T01:00:00.000Z';
+  const T2 = '2026-10-30T02:00:00.000Z';
+  const T3 = '2026-10-30T03:00:00.000Z';
+  const T5 = '2026-10-30T05:00:00.000Z';
+  const advance: Record<string, string> = { [T0]: T1, [T1]: T2, [T2]: T3 };
+  let serverStamp: string | null = T0;
+  const bodies: Array<{ expectedUpdatedAt?: string | null }> = [];
+  const gates: Array<() => void> = [];
+  const reset = (stamp: string | null) => {
+    serverStamp = stamp;
+    bodies.length = 0;
+    gates.length = 0;
+  };
+  // A server simulator without timers: every request waits until the test releases it, then is checked against the stamp
+  const respond = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response;
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { expectedUpdatedAt?: string | null };
+    bodies.push(body);
+    await new Promise<void>((resolve) => gates.push(resolve));
+    if (body.expectedUpdatedAt !== serverStamp) return respond(409, { error: 'x', code: 'stale_write', current: { updatedAt: serverStamp, updatedBy: null } });
+    serverStamp = serverStamp === null ? T1 : advance[serverStamp] ?? T3;
+    return respond(200, { objective: record(ID, { updatedAt: serverStamp }), changed: true });
+  }) as typeof fetch;
+  const send = (n: string) => (exp: string | null | undefined) =>
+    ApiClient.putObjective('t1', { objectiveId: ID, controlId: 'AC.L2-3.1.1', narrative: n, expectedUpdatedAt: exp ?? null }, 'p1').then((r) => r.objective);
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const release = async () => { gates.shift()!(); await tick(); };
+  const live = (): string | null => T0;
+  try {
+    let c = createStampedSaveChain();
+    const p1 = c.run(K, live, send('A'));
+    const p2 = c.run(K, live, send('B'));
+    await tick();
+    assert(bodies.length === 1, 'S154-1 the second save of an objective waits for the first', bodies.length);
+    await release();
+    assert(bodies.length === 2 && bodies[0].expectedUpdatedAt === T0 && bodies[1].expectedUpdatedAt === T1, 'S154-2 the second save sends the stamp the first answered with', bodies);
+    gates.shift()!();
+    const settled = await Promise.allSettled([p1, p2]);
+    const second = settled[1].status === 'fulfilled' ? settled[1].value : null;
+    assert(settled.every((s) => s.status === 'fulfilled') && second?.updatedAt === T2 && Date.parse(bodies[1].expectedUpdatedAt as string) > Date.parse(bodies[0].expectedUpdatedAt as string), 'S154-3 both saves succeed and the stamps only move forward', settled.map((s) => s.status));
+
+    reset(T0);
+    const q1 = send('A')(T0);
+    const q2 = send('B')(T0);
+    await tick();
+    gates.shift()!();
+    gates.shift()!();
+    const old = await Promise.allSettled([q1, q2]);
+    assert(old[0].status === 'fulfilled' && old[1].status === 'rejected' && isStaleWriteError((old[1] as PromiseRejectedResult).reason), 'S154-4 without the queue the second save is refused as stale', old.map((s) => s.status));
+
+    reset(null);
+    c = createStampedSaveChain();
+    const n1 = c.run(K, () => null, send('A'));
+    const n2 = c.run(K, () => null, send('B'));
+    await tick();
+    await release();
+    gates.shift()!();
+    const none = await Promise.allSettled([n1, n2]);
+    assert(bodies[0].expectedUpdatedAt === null && bodies[1].expectedUpdatedAt === T1 && none.every((s) => s.status === 'fulfilled'), 'S154-5 a new objective sends null, then the stamp it got back', bodies);
+
+    reset(T5);
+    c = createStampedSaveChain();
+    const f1 = c.run(K, live, send('A'));
+    const f2 = c.run(K, live, send('B'));
+    await tick();
+    await release();
+    assert(bodies.length === 2 && bodies[1].expectedUpdatedAt === T0, 'S154-6 a refused save does not stop the next one, which sends the live stamp', bodies);
+    gates.shift()!();
+    await Promise.allSettled([f1, f2]);
+
+    reset(T0);
+    c = createStampedSaveChain();
+    const g1 = c.run(K, live, send('A'));
+    await tick();
+    await release();
+    await g1;
+    c.clear();
+    const g2 = c.run(K, live, send('B'));
+    await tick();
+    gates.shift()!();
+    await Promise.allSettled([g2]);
+    assert(bodies.length === 2 && bodies[1].expectedUpdatedAt === T0, 'S154-7 clear() forgets the stamps: the next save sends the live one', bodies);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  const root = process.cwd();
+  const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+  const slice = (src: string, from: string, to: string) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from) + 1));
+  const assess = read('src/context/AssessmentContext.tsx');
+  const narrative = slice(assess, 'const updateObjectiveNarrative = useCallback', 'const applyObjectivePrefilledNarrative');
+  const saveSlice = slice(assess, 'const saveObjectives = useCallback', 'const objectivePendingReview');
+  const liveObjective = slice(read('src/context/TenantContext.tsx'), 'const updateLiveObjective = useCallback', 'const updateLiveObjectivesBulk = useCallback');
+  assert(!narrative.includes('liveObjectivesRef') && narrative.includes('checkStale: true') && saveSlice.includes('objectiveSavesRef.current.run(') && assess.includes('objectiveSavesRef.current.clear()') && liveObjective.includes('programId !== undefined'), 'S154-8 the narrative writer asks for the check, saveObjectives queues, a switch clears the stamps, updateLiveObjective takes the program');
+}
+
 function controlSaveFailures() {
   console.log('\n--- Control save failures ---');
   const SECRET = 'SECRET-CUI-TEXT';
@@ -419,6 +527,7 @@ function controlSaveFailures() {
 
 async function main() {
   await api();
+  await staleStamps();
   controlSaveFailures();
 
   console.log('\n--- Static checks ---');

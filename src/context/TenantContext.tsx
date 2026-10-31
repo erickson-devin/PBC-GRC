@@ -383,7 +383,7 @@ interface TenantContextType {
   ) => Promise<void>;
   updateLiveControl: (controlId: string, updates: Partial<ControlState> & { expectedUpdatedAt?: string | null }, programId?: string | null) => Promise<ControlState>;
   /** Saves one objective (status, narrative, evidence links) to the program that is on screen when the call starts. Rejects when the server refuses or is unreachable. */
-  updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null }) => Promise<ObjectiveRecord>;
+  updateLiveObjective: (objectiveId: string, controlId: string, patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null }, programId?: string | null) => Promise<ObjectiveRecord>;
   /** Saves many objectives (500 per request, each request all-or-nothing). Rejects when a request fails. */
   updateLiveObjectivesBulk: (items: ObjectiveInput[]) => Promise<void>;
   /** Moves browser-cached objectives to the server (5000 per request, insert-only); resolves with every id's result, rejects when a request fails. */
@@ -1201,12 +1201,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateLiveObjective = useCallback(async (
     objectiveId: string,
     controlId: string,
-    patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null }
+    patch: Omit<ObjectiveInput, 'objectiveId' | 'controlId'> & { expectedUpdatedAt?: string | null },
+    programId?: string | null
   ): Promise<ObjectiveRecord> => {
-    // The program (and so the scope) is fixed when the edit starts
-    const scope = scopeNow(currentTenant.id);
-    const programId = programIdFor(currentTenant.id);
-    const { objective } = await ApiClient.putObjective(currentTenant.id, { objectiveId, controlId, ...patch }, programId);
+    // The program (and so the scope) is fixed when the edit starts. A save that waits in a queue passes the program it was made in.
+    const program = programId !== undefined ? programId : programIdFor(currentTenant.id);
+    const scope = programId !== undefined ? programScopeKey(currentTenant.id, programId) : scopeNow(currentTenant.id);
+    const { objective } = await ApiClient.putObjective(currentTenant.id, { objectiveId, controlId, ...patch }, program);
     if (scopeNow(currentTenant.id) === scope) {
       setLiveObjectives(prev => ({ ...(prev ?? {}), [objectiveId]: objective }));
     }

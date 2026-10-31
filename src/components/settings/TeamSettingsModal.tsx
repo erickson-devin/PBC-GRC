@@ -23,7 +23,7 @@ import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 import { enclaveSaveErrorMessage } from '../../utils/enclaveEdit';
 interface TeamSettingsModalProps {
   isOpen: boolean;
@@ -64,6 +64,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
+  // A link the browser refused to copy, shown in a read-only field so it can be copied by hand
+  const [copyFailedUrl, setCopyFailedUrl] = useState<string | null>(null);
+  const copyFallbackRef = React.useRef<HTMLInputElement>(null);
   const [showRoleInfo, setShowRoleInfo] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -79,6 +82,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
       setActionError(null);
       setScopeError(null);
       setPendingAction(null);
+      setCopyFailedUrl(null);
       void refreshTeam(currentTenant.id);
     }
   }, [isOpen, currentTenant.id, refreshTeam]);
@@ -110,6 +114,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     }
   }, [isOpen, currentTenant.id, currentTenant.primaryFramework, currentTenant.enabledFrameworks]);
 
+  // Put the cursor in the fallback field with the link selected, ready for Ctrl+C
+  React.useEffect(() => {
+    if (copyFailedUrl) {
+      copyFallbackRef.current?.focus();
+      copyFallbackRef.current?.select();
+    }
+  }, [copyFailedUrl]);
+
   const members = getTenantMembers(currentTenant.id);
 
   // Filter members by search
@@ -121,12 +133,12 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
   const handleCopyInvite = async (token: string, memberId: string) => {
     const inviteUrl = buildInviteUrl(token);
-    try {
-      await copyToClipboard(inviteUrl);
+    setCopyFailedUrl(null);
+    if (await copyText(inviteUrl)) {
       setCopiedTokenId(memberId);
       setTimeout(() => setCopiedTokenId(null), 2000);
-    } catch (err) {
-      console.warn('Clipboard write failed:', err);
+    } else {
+      setCopyFailedUrl(inviteUrl);
     }
   };
 
@@ -154,11 +166,12 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const handleResend = (invitationId: string) =>
     runAction(async () => {
       const res = await resendInvitation(invitationId);
-      try {
-        await copyToClipboard(res.inviteUrl);
+      setCopyFailedUrl(null);
+      if (await copyText(res.inviteUrl)) {
         setNotice('New invitation link created and copied to the clipboard. The previous link no longer works.');
-      } catch {
-        setNotice('New invitation link created: ' + res.inviteUrl);
+      } else {
+        setNotice('New invitation link created. The previous link no longer works.');
+        setCopyFailedUrl(res.inviteUrl);
       }
     });
 
@@ -403,6 +416,24 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                 {notice && (
                   <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">{notice}</div>
                 )}
+                {copyFailedUrl && (
+                  <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                    <p role="alert">The link could not be copied. Select and copy it from the field.</p>
+                    <div className="flex items-center gap-2">
+                      <label htmlFor="team-invite-link-fallback" className="sr-only">Invitation link</label>
+                      <input
+                        id="team-invite-link-fallback"
+                        ref={copyFallbackRef}
+                        type="text"
+                        readOnly
+                        value={copyFailedUrl}
+                        onFocus={e => e.currentTarget.select()}
+                        className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-cyan-300 select-all focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400"
+                      />
+                      <button type="button" onClick={() => setCopyFailedUrl(null)} className="px-3 py-1.5 font-semibold text-slate-300 hover:text-white shrink-0">Dismiss</button>
+                    </div>
+                  </div>
+                )}
                 {pendingAction && (
                   <div role="alertdialog" aria-label="Confirm" className="flex flex-col gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200 sm:flex-row sm:items-center sm:justify-between">
                     <span>
@@ -502,14 +533,16 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   <>
                                     {member.invitationToken && (
                                     <button
+                                      type="button"
                                       onClick={() => handleCopyInvite(member.invitationToken!, member.id)}
                                       className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                       title="Copy Invite Link"
+                                      aria-label={copiedTokenId === member.id ? 'Invitation link copied' : 'Copy invitation link'}
                                     >
                                       {copiedTokenId === member.id ? (
-                                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                        <Check aria-hidden="true" className="w-3.5 h-3.5 text-emerald-400" />
                                       ) : (
-                                        <Copy className="w-3.5 h-3.5" />
+                                        <Copy aria-hidden="true" className="w-3.5 h-3.5" />
                                       )}
                                     </button>
                                     )}

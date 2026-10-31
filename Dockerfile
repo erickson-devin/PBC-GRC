@@ -33,9 +33,6 @@ ENV LOCAL_STORAGE_PATH=/app/data/evidence
 ARG BUILD_COMMIT=dev
 ENV BUILD_COMMIT=$BUILD_COMMIT
 
-# Create local evidence storage directory
-RUN mkdir -p /app/data/evidence
-
 # Copy production package manifests and install production-only dependencies. tsx (and the esbuild it uses) is a production dependency, installed here from package-lock.json by integrity hash; there is no global npm install (tests/onPremOnly.test.ts checks this).
 COPY package*.json ./
 RUN npm ci --omit=dev
@@ -50,6 +47,10 @@ COPY --from=builder /app/tsconfig*.json ./
 
 # Operational scripts (e.g. `npm run auth:create-user` for the air-gapped local accounts)
 COPY --from=builder /app/scripts ./scripts
+
+# Run as the unprivileged node user (uid 1000) from here on (#146). A bind-mounted EVIDENCE_DIR must be writable by uid 1000: docs/ON_PREM_DATABASE.md "Host paths".
+RUN mkdir -p /app/data/evidence && chown -R node:node /app/data
+USER node
 
 # Expose default application port
 EXPOSE 3000

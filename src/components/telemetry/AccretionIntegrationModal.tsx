@@ -17,7 +17,7 @@ import { errorMessage } from '../../utils/errors';
 import { AccretionIngestResult } from '../../types/telemetry';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 interface AccretionIntegrationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -39,11 +39,13 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<AccretionIngestResult | null>(null);
   const [selectedSnippetTab, setSelectedSnippetTab] = useState<'curl' | 'python' | 'json'>('curl');
+  const [copyFailed, setCopyFailed] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setSimulationResult(null);
       setSimulationError(null);
+      setCopyFailed(false);
     }
   }, [isOpen, tenantId]);
 
@@ -51,10 +53,17 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
 
   const webhookUrl = discoveryEndpointUrl(typeof window === 'undefined' ? '' : window.location.origin, tenantId);
 
-  const handleCopy = (text: string, fieldId: string) => {
-    copyToClipboard(text);
-    setCopiedField(fieldId);
-    setTimeout(() => setCopiedField(null), 2500);
+  // Scripts and scanners push with a VM service token (the discovery endpoint above only takes a signed-in browser session)
+  const ingestUrl = `${typeof window === 'undefined' ? '' : window.location.origin}/api/v1/vm/ingest`;
+
+  const handleCopy = async (text: string, fieldId: string) => {
+    setCopyFailed(false);
+    if (await copyText(text)) {
+      setCopiedField(fieldId);
+      setTimeout(() => setCopiedField(null), 2500);
+    } else {
+      setCopyFailed(true);
+    }
   };
 
   const handleRunSimulation = async () => {
@@ -77,48 +86,23 @@ export const AccretionIntegrationModal: React.FC<AccretionIntegrationModalProps>
     }
   };
 
-  const curlSnippet = `curl -X POST ${webhookUrl} \\
-  -H "Authorization: Bearer <SESSION_TOKEN>" \\
+  const curlSnippet = `curl -X POST "${ingestUrl}" \\
+  -H "Authorization: Bearer <SERVICE_TOKEN>" \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "items": [
-      {
-        "agentId": "accretion-sensor-vlan50",
-        "macAddress": "00:1A:2B:3C:4D:5E",
-        "ipAddress": "10.0.50.155",
-        "hostName": "UNMANAGED-DEV-01",
-        "osFingerprint": "Linux 5.15.0 (Ubuntu)",
-        "osProfile": "ubuntu2204",
-        "discoveredPorts": [22, 8080, 5432],
-        "connectionType": "WIRELESS"
-      }
-    ]
-  }'`;
+  -d @findings.json`;
 
-  const pythonSnippet = `import requests
+  const pythonSnippet = `import os
+import requests
 
-url = "${webhookUrl}"
+url = "${ingestUrl}"
 headers = {
-    "Authorization": "Bearer <SESSION_TOKEN>",
+    "Authorization": "Bearer " + os.environ["PBC_SERVICE_TOKEN"],
     "Content-Type": "application/json"
 }
-payload = {
-    "items": [
-        {
-            "agentId": "accretion-sensor-vlan50",
-            "macAddress": "00:1A:2B:3C:4D:5E",
-            "ipAddress": "10.0.50.155",
-            "hostName": "UNMANAGED-DEV-01",
-            "osFingerprint": "Linux 5.15.0 (Ubuntu)",
-            "osProfile": "ubuntu2204",
-            "discoveredPorts": [22, 8080, 5432],
-            "connectionType": "WIRELESS"
-        }
-    ]
-}
 
-response = requests.post(url, json=payload, headers=headers)
-print("Accretion Ingest Response:", response.status_code, response.json())`;
+with open("findings.json", "rb") as f:
+    response = requests.post(url, data=f.read(), headers=headers, timeout=60)
+print("Ingest Response:", response.status_code, response.json())`;
 
   const jsonSnippet = `{
   "items": [
@@ -239,6 +223,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-cyan-300 select-all"
             />
             <button
+              type="button"
               onClick={() => handleCopy(webhookUrl, 'url')}
               className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"
             >
@@ -249,16 +234,21 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
         </div>
 
         {/* ─── Authentication note ─── */}
-        <p className="text-xs text-slate-400">
-          This endpoint accepts a signed-in Tenant Owner or MSP Admin session (<code className="text-cyan-400">Authorization: Bearer &lt;SESSION_TOKEN&gt;</code>). There is no separate sensor key. For scheduled machine pushes, use a VM service token with <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).
-        </p>
+        <div className="space-y-2 text-xs text-slate-400">
+          <p>
+            This discovery endpoint accepts only a signed-in Tenant Owner or MSP Admin in this browser (the Simulate button above uses it). Your browser session is kept in an HttpOnly cookie, so it cannot be copied or read by scripts, and this endpoint has no machine credential yet.
+          </p>
+          <p>
+            For scripts and scanners, create a VM service token and send it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide). The supported scanner integration is the exporter in <code className="text-cyan-400">exporters/pbc-vm-exporter</code>.
+          </p>
+        </div>
 
         {/* ─── Payload Format Code Snippets ─── */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
               <Code className="w-4 h-4 text-violet-400" />
-              <span>Accretion Webhook Integration Snippet</span>
+              <span>Scanner Push Example (Service Token)</span>
             </span>
             <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
               {(['curl', 'python', 'json'] as const).map(tab => (
@@ -279,6 +269,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
 
           <div className="relative rounded-xl bg-slate-950 border border-slate-800 p-4 font-mono text-xs leading-relaxed text-slate-300 overflow-x-auto">
             <button
+              type="button"
               onClick={() => {
                 const text = selectedSnippetTab === 'curl' ? curlSnippet : selectedSnippetTab === 'python' ? pythonSnippet : jsonSnippet;
                 handleCopy(text, 'snippet');
@@ -288,6 +279,7 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
               {copiedField === 'snippet' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
               <span>{copiedField === 'snippet' ? 'Copied' : 'Copy Code'}</span>
             </button>
+            <p className="mb-2 pr-24 font-sans text-xs text-slate-400">{selectedSnippetTab === 'json' ? 'Body format of the discovery endpoint above, sent by the signed-in browser session.' : 'Pushes a scanner export (findings.json, format in the vulnerability-management guide) with a VM service token.'}</p>
             <pre className="text-xs text-slate-300">
               {selectedSnippetTab === 'curl' && curlSnippet}
               {selectedSnippetTab === 'python' && pythonSnippet}
@@ -295,6 +287,8 @@ print("Accretion Ingest Response:", response.status_code, response.json())`;
             </pre>
           </div>
         </div>
+
+        <ErrorNotice message={copyFailed ? 'The text could not be copied. Select it in the field or the code block and copy it by hand.' : null} />
 
         {/* Footer */}
         <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">

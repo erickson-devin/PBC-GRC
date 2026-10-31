@@ -1,12 +1,12 @@
 /**
  * Client for a LOCAL Ollama instance (https://github.com/ollama/ollama), used to read System Security Plans with a model such
- * as Llama 3.1 8B. Nothing here can reach the internet: the base URL comes from server configuration only, and a host that
+ * as Llama 3.2 3B. Nothing here can reach the internet: the base URL comes from server configuration only, and a host that
  * is not on this machine or a private network is refused unless an operator explicitly allows it.
  *
  *   SSP_AI_ENABLED=true            turn the AI analysis on (off by default: imports then use the rule-based mapping)
  *   OLLAMA_BASE_URL                default http://127.0.0.1:11434 ; in Docker http://ollama:11434 or
  *                                  http://host.docker.internal:11434 for an Ollama running on the host
- *   OLLAMA_MODEL                   default llama3.1:8b
+ *   OLLAMA_MODEL                   default llama3.2:3b
  *   OLLAMA_NUM_CTX                 context window to request, default 8192
  *   OLLAMA_TIMEOUT_MS              per request, default 240000 (a first request also loads the model onto the GPU)
  *   OLLAMA_ALLOW_REMOTE=true       permit a base URL outside the local / private network (not recommended: SSPs contain CUI)
@@ -43,7 +43,7 @@ export function getOllamaConfig(env: NodeJS.ProcessEnv = process.env): OllamaCon
   return {
     enabled: bool(env.SSP_AI_ENABLED),
     baseUrl: (env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').trim().replace(/\/+$/, ''),
-    model: (env.OLLAMA_MODEL || 'llama3.1:8b').trim(),
+    model: (env.OLLAMA_MODEL || 'llama3.2:3b').trim(),
     numCtx: int(env.OLLAMA_NUM_CTX, 8192, 2048, 131072),
     timeoutMs: int(env.OLLAMA_TIMEOUT_MS, 240_000, 5_000, 3_600_000),
     allowRemote: bool(env.OLLAMA_ALLOW_REMOTE),
@@ -138,6 +138,14 @@ function combine(signals: Array<AbortSignal | undefined>): AbortSignal {
   return AbortSignal.any(signals.filter((s): s is AbortSignal => Boolean(s)));
 }
 
+const REDIRECT_REFUSED = 'Ollama answered with a redirect, which is never followed: documents are sent only to OLLAMA_BASE_URL.';
+
+/** A request made with redirect "error" rejects with TypeError('fetch failed') whose cause is Error('unexpected redirect'). */
+function isRefusedRedirect(err: unknown): boolean {
+  const message = (err as { cause?: { message?: unknown } })?.cause?.message;
+  return typeof message === 'string' && /redirect/i.test(message);
+}
+
 /** Does the installed list contain the configured model? "llama3.1" means "llama3.1:latest", as in Ollama itself. */
 export function hasModel(installed: string[], wanted: string): boolean {
   const w = wanted.includes(':') ? wanted : `${wanted}:latest`;
@@ -170,7 +178,7 @@ export class OllamaClient {
 
     let value: OllamaStatus;
     try {
-      const res = await fetch(this.url('/api/tags'), { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
+      const res = await fetch(this.url('/api/tags'), { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS), redirect: 'error' });
       if (!res.ok) throw new OllamaError('unreachable', `Ollama answered ${res.status}.`);
       const body = (await res.json()) as { models?: Array<{ name?: string; model?: string }> };
       const installed = (body.models ?? []).map((m) => String(m.name ?? m.model ?? '')).filter(Boolean);
@@ -188,7 +196,7 @@ export class OllamaClient {
             }),
       };
     } catch (err: unknown) {
-      const e = err instanceof OllamaError ? err : null;
+      const e = err instanceof OllamaError ? err : isRefusedRedirect(err) ? new OllamaError('blocked_host', REDIRECT_REFUSED) : null;
       value = {
         ...base,
         reason: e ? e.message : `Cannot reach Ollama at ${config.baseUrl}.`,
@@ -232,6 +240,7 @@ export class OllamaClient {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body,
+            redirect: 'error',
             signal: combine([req.signal, AbortSignal.timeout(config.timeoutMs)]),
           });
           if (res.status === 404) {
@@ -266,6 +275,7 @@ export class OllamaClient {
           return { data, raw, promptTokens: payload.prompt_eval_count ?? null, replyTokens: payload.eval_count ?? null, durationMs: Date.now() - started };
         } catch (err: unknown) {
           if (err instanceof OllamaError) throw err;
+          if (isRefusedRedirect(err)) throw new OllamaError('blocked_host', REDIRECT_REFUSED);
           if (req.signal?.aborted) throw new OllamaError('cancelled', 'The analysis was cancelled.');
           const name = (err as { name?: string })?.name;
           if (name === 'TimeoutError' || name === 'AbortError') throw new OllamaError('timeout', `Ollama did not answer within ${Math.round(config.timeoutMs / 1000)} s.`);

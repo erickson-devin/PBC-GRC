@@ -132,6 +132,8 @@ services:
       SSP_AI_GAP_MODE: ${SSP_AI_GAP_MODE:-}
       # Vulnerability management ingest (docs/VULNERABILITY_MANAGEMENT.md); empty means the built-in default. Compose passes no env_file, so list each one.
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # true: plain-HTTP requests are refused (403 tls_required on /api, 301 to https:// for pages). Needs TRUST_PROXY. It answers before the VM routes' own vm_insecure_transport check, so REQUIRE_TLS wins.
+      REQUIRE_TLS: ${REQUIRE_TLS:-}
       VM_ALLOW_INSECURE_TOKENS: ${VM_ALLOW_INSECURE_TOKENS:-}
       VM_INGEST_MAX_BYTES: ${VM_INGEST_MAX_BYTES:-}
       VM_SLA_DAYS_CRITICAL: ${VM_SLA_DAYS_CRITICAL:-}
