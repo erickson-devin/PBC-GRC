@@ -13,7 +13,7 @@
  * throttled last_used_at / list / cap / revoke, and run-store receive / dedupe / source resolution / list / update, each
  * under two tenants to prove isolation, then the normalization worker end to end (findings, closure, assets, a forced failure that
  * must roll the whole run back, reprocess idempotence), and finally the scheduler (section 14: the cross-tenant enumeration
- * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history). It inserts and removes rows named
+ * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63). It inserts and removes rows named
  * "vm_verify..." / "vm-verify..." (and "VM-VERIFY-" and "CVE-2099-" rows in vm_vulns), the snapshot evidence and control
  * rows of the two verify tenants, and payload and snapshot files under the tenant's vault directory.
  * Exit code 0 = all checks passed.
@@ -34,9 +34,10 @@ const { createVmToken, listVmTokens, revokeVmToken, lookupVmTokenByHash, sha256H
   await import('../server/vm/tokens');
 const { recordReceivedRun, findRunBySha, getRun, listRuns, listSources, resetRunForReprocess, updateRun, enumerateSchedulerSources, VmStoreError } = await import('../server/vm/store');
 const { listFindings } = await import('../server/vm/findingsStore');
+const { createAgentReportedAsset } = await import('../server/assets');
 const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = await import('../server/vm/worker');
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
-const { runVmSnapshot, latestSnapshotAt } = await import('../server/vm/snapshotWriter');
+const { runVmSnapshot, latestSnapshotAt, __setVmSnapshotFaultForTests } = await import('../server/vm/snapshotWriter');
 const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
 const { ensureDefaultProgram } = await import('../server/programs');
 const { VM_NOTES_BEGIN } = await import('../server/vm/snapshot');
@@ -198,7 +199,7 @@ async function main() {
     });
     check(verdict.ok, 'a minimal valid payload is accepted under NODE_ENV=production', verdict.ok ? '' : verdict.error);
     console.log('\n--- 11. Worker end to end ---');
-    const writeRun = async (label: string, collectedAt: string, hosts: Array<{ agent: string; name: string; cves: Array<[string, string]> }>) => {
+    const writeRun = async (label: string, collectedAt: string, hosts: Array<{ agent: string; name: string; cves: Array<[string, string]> }>, tenant = TENANT_X) => {
       const id = crypto.randomUUID();
       const bytes = Buffer.from(
         JSON.stringify({
@@ -209,11 +210,11 @@ async function main() {
           hosts: hosts.map((h) => ({ agent_id: h.agent, hostname: h.name, findings: h.cves.map(([vuln_id, severity]) => ({ vuln_id, severity })) })),
         }),
       );
-      const file = path.join(localStorageRoot(), 'tenants', TENANT_X, 'vm', 'runs', `${id}.json`);
+      const file = path.join(localStorageRoot(), 'tenants', tenant, 'vm', 'runs', `${id}.json`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, bytes);
       rawFiles.push(file);
-      await recordReceivedRun(TENANT_X, {
+      await recordReceivedRun(tenant, {
         id,
         kind: 'WAZUH',
         label,
@@ -247,6 +248,14 @@ async function main() {
       JSON.stringify(agentAssets.rows),
     );
     check((await listFindings(TENANT_Y, { limit: 100 })).length === 0, 'listFindings(Y) is empty');
+    check((await count('SELECT count(*)::int AS n FROM vm_run_assets WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, workerRun1])) === 2, 'vm_run_assets records the 2 assets the first run reported (#62)');
+    const workerSourceId = (await listSources(TENANT_X)).find((s) => s.label === 'vm_verify_worker')?.id;
+    const h1Keys = await queryWithTenant(TENANT_X, "SELECT agent_ids FROM enclave_assets WHERE tenant_id = $1 AND asset_name = 'vm-verify-h1'", [TENANT_X]);
+    check(
+      JSON.stringify(h1Keys.rows[0]?.agent_ids) === JSON.stringify({ [`wazuh:${workerSourceId}`]: 'vmv-1' }),
+      'the agent id is stored under wazuh:<source id>, with no bare "wazuh" key (#63)',
+      JSON.stringify(h1Keys.rows[0]?.agent_ids),
+    );
 
     const workerRun2 = await writeRun('vm_verify_worker', '2099-01-02T00:00:00Z', [
       { agent: 'vmv-1', name: 'vm-verify-h1', cves: [['CVE-2099-0001', 'HIGH']] },
@@ -271,12 +280,14 @@ async function main() {
     check((await count("SELECT count(*)::int AS n FROM vm_findings WHERE tenant_id = $1 AND vuln_id = 'CVE-2099-0003'", [TENANT_X])) === 0, 'no finding of the failed run survived (the transaction rolled back)');
     check((await count('SELECT count(*)::int AS n FROM vm_sightings WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, workerRun3])) === 0, 'no sighting of the failed run survived');
     check((await count("SELECT count(*)::int AS n FROM enclave_assets WHERE tenant_id = $1 AND asset_name = 'vm-verify-h3'", [TENANT_X])) === 0, 'the asset created by the failed run was rolled back too');
+    check((await count('SELECT count(*)::int AS n FROM vm_run_assets WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, workerRun3])) === 0, 'no vm_run_assets row of the failed run survived');
     await resetRunForReprocess(TENANT_X, workerRun3);
     enqueueVmRun(TENANT_X, workerRun3);
     await __drainVmWorkerForTests();
     const retried = await getRun(TENANT_X, workerRun3);
     check(retried?.status === 'NORMALIZED' && retried.error === null, 'after clearing the fault, reprocessing the run -> NORMALIZED', JSON.stringify(retried));
     check((await count("SELECT count(*)::int AS n FROM vm_findings WHERE tenant_id = $1 AND vuln_id = 'CVE-2099-0003'", [TENANT_X])) === 1, 'and the finding exists now');
+    check((await count('SELECT count(*)::int AS n FROM vm_run_assets WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, workerRun3])) === 1, 'and so does its vm_run_assets row');
 
     console.log('\n--- 13. Sightings are unique per run ---');
     await resetRunForReprocess(TENANT_X, workerRun1);
@@ -284,13 +295,14 @@ async function main() {
     await __drainVmWorkerForTests();
     check((await getRun(TENANT_X, workerRun1))?.status === 'NORMALIZED', 'the first run is reprocessed (NORMALIZED)');
     check((await count('SELECT count(*)::int AS n FROM vm_sightings WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, workerRun1])) === 3, 'it still has exactly 3 sightings after the reprocess');
+    check((await count('SELECT count(*)::int AS n FROM vm_run_assets WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, workerRun1])) === 2, 'and still exactly 2 vm_run_assets rows (idempotent)');
 
     console.log('\n--- 14. Scheduler enumeration and snapshot ---');
     // a. The scheduler's one cross-tenant read.
-    const SOURCE_KEYS = ['enabled', 'expectedIntervalMinutes', 'label', 'lastRunAt', 'sourceId', 'staleSince', 'tenantId'];
+    const SOURCE_KEYS = ['enabled', 'expectedIntervalMinutes', 'label', 'lastNormalizedAt', 'lastRunAt', 'sourceId', 'staleSince', 'tenantId'];
     const enumerated = await enumerateSchedulerSources();
     check(enumerated.some((r) => r.tenantId === TENANT_X && r.label === 'vm_verify_worker'), 'enumerateSchedulerSources() includes the worker source of tenant X', JSON.stringify(enumerated.map((r) => [r.tenantId, r.label])));
-    check(enumerated.length > 0 && enumerated.every((r) => Object.keys(r).sort().join() === SOURCE_KEYS.join()), 'every row has exactly the 7 documented keys', JSON.stringify(enumerated[0] ? Object.keys(enumerated[0]) : []));
+    check(enumerated.length > 0 && enumerated.every((r) => Object.keys(r).sort().join() === SOURCE_KEYS.join()), 'every row has exactly the 8 documented keys', JSON.stringify(enumerated[0] ? Object.keys(enumerated[0]) : []));
     // b, c, d, e. The policy is closed without the setting, and the setting is transaction-local and SELECT-only.
     const noGuc = await pool.query('SELECT count(*)::int AS n FROM vm_sources');
     check(noGuc.rows[0]?.n === 0, 'no tenant context and no scheduler setting => zero vm_sources rows visible', String(noGuc.rows[0]?.n));
@@ -396,6 +408,92 @@ async function main() {
     check((await eventCount()) === beforeRollback, 'and its event was rolled back with it (the event count is unchanged)', `${beforeRollback} -> ${await eventCount()}`);
     const noContextEvents = await pool.query('SELECT count(*)::int AS n FROM control_assessment_events');
     check(Number(noContextEvents.rows[0].n) === 0, 'without a tenant context no control_assessment_events row is visible', String(noContextEvents.rows[0].n));
+
+    console.log('\n--- 16. Staleness follows the last normalized run (#59) ---');
+    const normalizedMs = async (): Promise<number | null> => {
+      const t = (await workerSource())?.lastNormalizedAt;
+      return t ? new Date(t).getTime() : null;
+    };
+    const workerId = (await workerSource())?.id;
+    const newestNormalized = Math.max(...(await listRuns(TENANT_X)).filter((r) => r.sourceId === workerId && r.status === 'NORMALIZED').map((r) => new Date(r.receivedAt).getTime()));
+    const workerNormalized = await normalizedMs();
+    check(workerNormalized !== null && workerNormalized === newestNormalized, 'the worker source lastNormalizedAt is the received time of its newest NORMALIZED run (to the millisecond)', `${workerNormalized} vs ${newestNormalized}`);
+    await recordReceivedRun(TENANT_X, { ...input, id: crypto.randomUUID(), label: 'vm_verify_received_only', rawSha256: 'e'.repeat(64), rawPath: '/vm_verify/r' });
+    await runVmSchedulerTick({ now: new Date(), onlyTenantIds: [TENANT_X] });
+    const receivedOnly = (await listSources(TENANT_X)).find((s) => s.label === 'vm_verify_received_only');
+    check(receivedOnly !== undefined && receivedOnly.lastRunAt !== null && receivedOnly.lastNormalizedAt === null && receivedOnly.staleSince !== null, 'a source that only received a run has no lastNormalizedAt and a real-time tick marks it stale', JSON.stringify(receivedOnly));
+    await pool.query('ALTER TABLE vm_sources DROP COLUMN last_normalized_at');
+    await initDb();
+    check((await normalizedMs()) === workerNormalized, 'after dropping the column, initDb() restores the worker value from the NORMALIZED runs (backfill)', `${await normalizedMs()} vs ${workerNormalized}`);
+    await initDb();
+    check((await normalizedMs()) === workerNormalized, 'a second initDb() leaves it unchanged (the backfill runs once)', `${await normalizedMs()} vs ${workerNormalized}`);
+    const leaked = await pool.query("SELECT current_setting('app.current_tenant_id', true) AS tenant, current_setting('app.vm_scheduler', true) AS scheduler");
+    check(!leaked.rows[0]?.tenant && !leaked.rows[0]?.scheduler, 'no tenant or scheduler setting is left set after initDb()', JSON.stringify(leaked.rows[0]));
+
+    console.log('\n--- 17. A failed snapshot leaves nothing behind (#56) ---');
+    const snapDir = path.join(localStorageRoot(), 'tenants', TENANT_X, 'vm', 'snapshots');
+    const snapFiles = (): number => (fs.existsSync(snapDir) ? fs.readdirSync(snapDir).length : 0);
+    const siNotes = async (): Promise<string | undefined> => (await readControlAssessments(await scopeOf(TENANT_X))).get('SI.L1-3.14.1')?.notes;
+    const rowsBefore = (await snapshotRows()).length;
+    const eventsBefore = await eventCount();
+    const notesBefore = await siNotes();
+    const latestBefore = await latestSnapshotAt(TENANT_X);
+    const filesBefore = snapFiles();
+    __setVmSnapshotFaultForTests(TENANT_X, 'after_first_note');
+    const failedSnapshot = await thrown(() => runVmSnapshot(TENANT_X, { trigger: 'manual' }));
+    __setVmSnapshotFaultForTests(null);
+    check(failedSnapshot !== null, 'a failure after the first control note makes runVmSnapshot throw', describe(failedSnapshot));
+    check(rowsBefore === 24 && (await snapshotRows()).length === rowsBefore, 'the snapshot evidence rows stay at 24', `${rowsBefore} -> ${(await snapshotRows()).length}`);
+    check((await eventCount()) === eventsBefore, 'no history event was left behind', `${eventsBefore} -> ${await eventCount()}`);
+    check((await siNotes()) === notesBefore, 'the SI.L1-3.14.1 notes are unchanged');
+    check((await latestSnapshotAt(TENANT_X)) === latestBefore, 'latestSnapshotAt is unchanged (the retry is not postponed)');
+    check(snapFiles() === filesBefore, 'the snapshot directory holds the same number of files (the failed snapshot files were removed)', `${filesBefore} -> ${snapFiles()}`);
+    await runVmSnapshot(TENANT_X, { trigger: 'manual' });
+    check((await snapshotRows()).length === 36, 'with the fault cleared the retry writes the snapshot (36 rows)', String((await snapshotRows()).length));
+
+    console.log('\n--- 18. Two managers: agent ids per source, closure waits for every source (#62, #63) ---');
+    const runAs = async (tenant: string, label: string, collectedAt: string, hosts: Array<{ agent: string; name: string; cves: string[] }>): Promise<string> => {
+      const id = await writeRun(label, collectedAt, hosts.map((h) => ({ agent: h.agent, name: h.name, cves: h.cves.map((c): [string, string] => [c, 'HIGH']) })), tenant);
+      enqueueVmRun(tenant, id);
+      await __drainVmWorkerForTests();
+      return id;
+    };
+    const assetNamed = async (tenant: string, name: string): Promise<string | undefined> =>
+      (await queryWithTenant(tenant, 'SELECT id FROM enclave_assets WHERE tenant_id = $1 AND asset_name = $2', [tenant, name])).rows[0]?.id as string | undefined;
+    await runAs(TENANT_X, 'vm_verify_mgr_a', '2099-02-01T00:00:00Z', [{ agent: '600', name: 'vm-verify-a-600', cves: [] }]);
+    await runAs(TENANT_X, 'vm_verify_mgr_b', '2099-02-01T00:00:01Z', [{ agent: '600', name: 'vm-verify-b-600', cves: [] }]);
+    const idA600 = await assetNamed(TENANT_X, 'vm-verify-a-600');
+    const idB600 = await assetNamed(TENANT_X, 'vm-verify-b-600');
+    check(Boolean(idA600) && Boolean(idB600) && idA600 !== idB600, 'agent 600 of two managers are two different assets', `${idA600} / ${idB600}`);
+    await runAs(TENANT_X, 'vm_verify_mgr_a', '2099-02-01T00:00:02Z', [{ agent: '600', name: 'vm-verify-a-600-renamed', cves: [] }]);
+    check((await assetNamed(TENANT_X, 'vm-verify-a-600-renamed')) === undefined, "a renamed host is still manager A's agent 600: no new asset");
+
+    await runAs(TENANT_X, 'vm_verify_mgr_a', '2099-02-01T01:00:00Z', [{ agent: '500', name: 'vm-verify-shared', cves: ['CVE-2099-0010'] }]);
+    await runAs(TENANT_X, 'vm_verify_mgr_b', '2099-02-01T01:00:01Z', [{ agent: '501', name: 'vm-verify-shared', cves: ['CVE-2099-0010'] }]);
+    const sharedFinding = async () =>
+      (await queryWithTenant(TENANT_X, "SELECT status, resolved_run_id FROM vm_findings WHERE tenant_id = $1 AND vuln_id = 'CVE-2099-0010'", [TENANT_X])).rows;
+    check(JSON.stringify((await sharedFinding()).map((r) => r.status)) === '["OPEN"]', 'both managers report one host: one OPEN finding', JSON.stringify(await sharedFinding()));
+    await runAs(TENANT_X, 'vm_verify_mgr_a', '2099-02-01T01:00:02Z', [{ agent: '500', name: 'vm-verify-shared', cves: [] }]);
+    check((await sharedFinding())[0]?.status === 'OPEN', 'manager A drops the finding while manager B still lists it: it stays OPEN', JSON.stringify(await sharedFinding()));
+    const bDrops = await runAs(TENANT_X, 'vm_verify_mgr_b', '2099-02-01T01:00:03Z', [{ agent: '501', name: 'vm-verify-shared', cves: [] }]);
+    check((await sharedFinding())[0]?.status === 'RESOLVED' && (await sharedFinding())[0]?.resolved_run_id === bDrops, 'manager B drops it too: RESOLVED by that run', JSON.stringify(await sharedFinding()));
+
+    console.log('\n--- 19. Legacy bare-kind agent id keys (#63) ---');
+    for (const [name, agentId] of [['vm-verify-legacy-1', 'lg-1'], ['vm-verify-legacy-2', 'lg-2']] as const) {
+      await createAgentReportedAsset(TENANT_Y, {
+        agentId, hostName: name, ipAddress: '', macAddress: '', osProfile: 'custom', notes: 'vm_verify legacy key',
+        agentIds: { wazuh: agentId }, sourceOrigin: 'AGENT_REPORT', discoveryStatus: 'UNCONFIRMED_DISCOVERY', cmmcAssetCategory: 'CONTRACTOR_RISK',
+      }, new Date().toISOString(), 'vm_verify');
+    }
+    const legacyKeys = async () => (await queryWithTenant(TENANT_Y, "SELECT asset_name, agent_ids FROM enclave_assets WHERE tenant_id = $1 AND asset_name LIKE 'vm-verify-legacy-%' ORDER BY asset_name", [TENANT_Y])).rows;
+    check(JSON.stringify((await legacyKeys()).map((r) => r.agent_ids)) === '[{"wazuh":"lg-1"},{"wazuh":"lg-2"}]', 'two legacy assets exist with the bare "wazuh" key', JSON.stringify(await legacyKeys()));
+    await runAs(TENANT_Y, 'vm_verify_legacy', '2099-03-01T00:00:00Z', [{ agent: 'lg-1', name: 'vm-verify-legacy-renamed', cves: [] }]);
+    const srcY = (await listSources(TENANT_Y)).find((s) => s.label === 'vm_verify_legacy')?.id;
+    check((await assetNamed(TENANT_Y, 'vm-verify-legacy-renamed')) === undefined, "the legacy key still matched the tenant's only wazuh source: no new asset");
+    const rewritten = JSON.stringify((await legacyKeys()).map((r) => r.agent_ids));
+    check(Boolean(srcY) && rewritten === JSON.stringify([{ [`wazuh:${srcY}`]: 'lg-1' }, { [`wazuh:${srcY}`]: 'lg-2' }]) && !rewritten.includes('"wazuh"'), 'both rows were rewritten to wazuh:<source id>, with no bare "wazuh" key', rewritten);
+    await runAs(TENANT_Y, 'vm_verify_legacy', '2099-03-01T00:00:01Z', [{ agent: 'lg-1', name: 'vm-verify-legacy-renamed', cves: [] }]);
+    check(JSON.stringify((await legacyKeys()).map((r) => r.agent_ids)) === rewritten, 'a second run changes nothing');
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
@@ -404,6 +502,7 @@ async function main() {
       await inProgram('DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_sightings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_findings WHERE tenant_id = $1', [t]).catch(() => undefined);
+      await queryWithTenant(t, 'DELETE FROM vm_run_assets WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'vm-verify%'", []).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_runs WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path LIKE '/vm_verify/%'", []).catch(() => undefined);

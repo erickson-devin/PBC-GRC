@@ -295,6 +295,24 @@ export function __seedLegacyRowForTests(
 }
 
 /**
+ * Memory mode only (throws otherwise): copies the tenant's control and evidence rows and returns the undo, which deletes the rows
+ * added since and restores the copies. It stands in for ROLLBACK where the in-memory store has none (the VM snapshot, issue #56).
+ */
+export function memoryTenantCheckpoint(tenantId: string): () => void {
+  if (!isMemoryMode()) throw new Error('memoryTenantCheckpoint requires DB_MODE=memory');
+  const controls = new Map<string, InMemoryControl>();
+  for (const [key, item] of memoryControls) if (item.tenant_id === tenantId) controls.set(key, { ...item, tags: [...item.tags] });
+  const evidence = new Map<string, InMemoryEvidence>();
+  for (const [key, item] of memoryEvidence) if (item.tenant_id === tenantId) evidence.set(key, { ...item });
+  return () => {
+    for (const [key, item] of [...memoryControls]) if (item.tenant_id === tenantId && !controls.has(key)) memoryControls.delete(key);
+    for (const [key, item] of controls) memoryControls.set(key, item);
+    for (const [key, item] of [...memoryEvidence]) if (item.tenant_id === tenantId && !evidence.has(key)) memoryEvidence.delete(key);
+    for (const [key, item] of evidence) memoryEvidence.set(key, item);
+  };
+}
+
+/**
  * Executes queries against in-memory store while strictly enforcing
  * tenant isolation equivalent to PostgreSQL Row-Level Security (RLS).
  * The control_assessments and evidence_metadata statements also mirror the RESTRICTIVE program policy and fail closed: they see and

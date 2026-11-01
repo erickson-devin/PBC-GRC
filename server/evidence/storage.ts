@@ -78,6 +78,16 @@ export async function readTenantFile(tenantId: string, candidate: unknown): Prom
   }
 }
 
+/**
+ * Removes a file the tenant's vault holds (same confinement as readTenantFile's resolver: a path outside <root>/tenants/<tenantId>/
+ * is ignored). Best effort for cleaning up a failed write: a missing file is not an error, and nothing is logged.
+ */
+export async function removeTenantFile(tenantId: string, candidate: unknown): Promise<void> {
+  const resolved = resolveTenantLocalPath(tenantId, candidate);
+  if (!resolved) return;
+  await fs.promises.rm(resolved, { force: true });
+}
+
 const TENANT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**

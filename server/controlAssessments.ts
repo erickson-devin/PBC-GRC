@@ -195,6 +195,19 @@ export function __resetControlAssessmentEventsForTests(): void {
   memoryEvents.clear();
 }
 
+/**
+ * Memory mode: remembers how long the scope's history is and returns the undo, which cuts it back to that length (the stand-in for
+ * ROLLBACK of the events a failed multi-control write added, issue #56).
+ */
+export function memoryEventsCheckpoint(scope: ProgramScope): () => void {
+  const key = eventsKey(scope);
+  const length = memoryEvents.get(key)?.length ?? 0;
+  return () => {
+    const list = memoryEvents.get(key);
+    if (list) list.length = Math.min(list.length, length);
+  };
+}
+
 type Run = (sql: string, params: (string | number | boolean | null)[]) => Promise<pg.QueryResult>;
 
 async function writeWith(

@@ -53,7 +53,7 @@ export async function runVmSchedulerTick(opts: { now?: Date; onlyTenantIds?: str
       result.tenants += 1;
       try {
         for (const change of planStalenessChanges(rows, now.getTime())) {
-          const changed = await setSourceStaleSince(change.tenantId, change.sourceId, change.staleSince, change.lastRunAt);
+          const changed = await setSourceStaleSince(change.tenantId, change.sourceId, change.staleSince, change.lastNormalizedAt);
           if (!changed) continue;
           if (change.staleSince === null) result.staleCleared += 1;
           else result.staleSet += 1;

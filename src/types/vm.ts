@@ -59,6 +59,8 @@ export interface VmSource {
   expectedIntervalMinutes: number;
   lastRunId: string | null;
   lastRunAt: string | null;
+  /** received_at of the newest NORMALIZED run; staleness is measured from this, not from receipt. */
+  lastNormalizedAt: string | null;
   staleSince: string | null;
   createdAt: string;
   updatedAt: string;

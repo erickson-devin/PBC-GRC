@@ -15,6 +15,7 @@ import { markRunInterrupted, recordReceivedRun, updateRun } from '../server/vm/s
 import { VM_SHUTDOWN_MESSAGE } from '../server/shutdown';
 import { countOpenPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
 import { ensureDefaultProgram } from '../server/programs';
+import { createAgentReportedAsset, listAgentAssetCandidates } from '../server/assets';
 
 /**
  * Vulnerability-management Phase 2 over HTTP: service tokens (create / list / revoke, transport rule), the scanner push
@@ -309,6 +310,7 @@ async function run() {
   const sources = (await call('GET', `/tenants/${A}/vm/sources`, ownerA, A)).body as Json;
   const src = (sources.sources as Json[]).find((s) => s.label === 'wazuh-main') as Json;
   assert(sources.tenantId === A && sources.totalCount === 1 && src?.kind === 'WAZUH' && src.lastRunId === ok.body?.run_id && src.enabled === true, 'the sources list shows the source with its last run', sources);
+  assert(src.lastNormalizedAt === stat.receivedAt, 'the source lastNormalizedAt is the received time of its normalized run (#59)', { lastNormalizedAt: src.lastNormalizedAt, receivedAt: stat.receivedAt });
   const used = (await listTokens(ownerA, A)).find((t) => t.id === tokenARecord.id);
   assert(Boolean(used?.lastUsedAt), 'lastUsedAt is set after the first ingest', used);
   assert((await call('GET', `/tenants/${A}/vm/runs?limit=1`, ownerA, A)).body?.runs.length === 1, '?limit=1 returns one run');
@@ -560,6 +562,47 @@ async function run() {
   assert(poamIngest.status === 202 && poamItems.length >= 1, 'an overdue finding creates an automatic POA&M item', [poamIngest.status, poamItems.length]);
   assert(poamItems.every((p) => p.programId === defaultA.id), "every automatic POA&M item carries the tenant's default program id", poamItems.map((p) => p.programId));
   assert((await countOpenPoamItems({ tenantId: A, programId: defaultA.id })) === poamItems.filter((p) => p.status === 'OPEN' || p.status === 'IN_PROGRESS').length, 'the default program counts those items as its open POA&M');
+
+  console.log('\n--- Two managers: agent ids are per source (#63), closure waits for every source (#62) ---');
+  const mgrRun = async (token: string, label: string, collectedAt: string, hosts: Array<{ agent: string; hostname: string; vulns: string[] }>) => {
+    const res = await ingest(token, Buffer.from(JSON.stringify({
+      ...payloadOf({ label }),
+      collected_at: collectedAt,
+      hosts: hosts.map((h) => ({ agent_id: h.agent, hostname: h.hostname, findings: h.vulns.map((v) => ({ vuln_id: v, severity: 'HIGH' })) })),
+    })));
+    await __drainVmWorkerForTests();
+    return res;
+  };
+  const a600 = await mgrRun(tokenA, 'mgr-a', '2026-10-21T00:00:00Z', [{ agent: '600', hostname: 'a-600', vulns: [] }]);
+  const b600 = await mgrRun(tokenA, 'mgr-b', '2026-10-21T00:00:01Z', [{ agent: '600', hostname: 'b-600', vulns: [] }]);
+  const idA600 = await assetIdByName('a-600');
+  const idB600 = await assetIdByName('b-600');
+  assert(a600.status === 202 && b600.status === 202 && idA600 !== '' && idB600 !== '' && idA600 !== idB600, 'agent 600 of two managers are two different assets', [idA600, idB600]);
+  await mgrRun(tokenA, 'mgr-a', '2026-10-21T00:00:02Z', [{ agent: '600', hostname: 'a-600-renamed', vulns: [] }]);
+  assert((await assetIdByName('a-600-renamed')) === '', "a renamed host is still manager A's agent 600: no new asset (matched by the per-source key)");
+
+  const sharedVuln = 'CVE-2024-0500';
+  await mgrRun(tokenA, 'mgr-a', '2026-10-21T01:00:00Z', [{ agent: '500', hostname: 'shared-500', vulns: [sharedVuln] }]);
+  await mgrRun(tokenA, 'mgr-b', '2026-10-21T01:00:01Z', [{ agent: '501', hostname: 'shared-500', vulns: [sharedVuln] }]);
+  const sharedId = await assetIdByName('shared-500');
+  const shared = async () => (await findingsOf(A, ownerA, `?assetId=${sharedId}`)).find((f) => f.vulnId === sharedVuln) as Json;
+  assert(sharedId !== '' && (await shared())?.status === 'OPEN', 'both managers report one host (by hostname): one OPEN finding', await shared());
+  await mgrRun(tokenA, 'mgr-a', '2026-10-21T01:00:02Z', [{ agent: '500', hostname: 'shared-500', vulns: [] }]);
+  assert((await shared()).status === 'OPEN', 'manager A drops the finding while manager B still lists it: it stays OPEN');
+  const bDrops = await mgrRun(tokenA, 'mgr-b', '2026-10-21T01:00:03Z', [{ agent: '501', hostname: 'shared-500', vulns: [] }]);
+  const closedShared = await shared();
+  assert(closedShared.status === 'RESOLVED' && closedShared.resolvedRunId === bDrops.body?.run_id, 'manager B drops it too: RESOLVED by that run', closedShared);
+
+  const srcB = ((await call('GET', `/tenants/${B}/vm/sources`, ownerB, B)).body?.sources ?? [])[0]?.id as string;
+  await createAgentReportedAsset(B, {
+    agentId: 'L1', hostName: 'legacy-host', ipAddress: '', macAddress: '', osProfile: 'custom', notes: 'legacy key',
+    agentIds: { wazuh: 'L1' }, sourceOrigin: 'AGENT_REPORT', discoveryStatus: 'UNCONFIRMED_DISCOVERY', cmmcAssetCategory: 'CONTRACTOR_RISK',
+  }, '2026-10-01T00:00:00.000Z', 'test');
+  const legacyRun = await mgrRun(tokenB, 'wazuh-main', '2026-10-21T02:00:00Z', [{ agent: 'L1', hostname: 'legacy-renamed', vulns: [] }]);
+  const bCandidates = await listAgentAssetCandidates(B);
+  assert(legacyRun.status === 202 && !bCandidates.some((c) => c.hostName === 'legacy-renamed'), "a legacy bare-kind key still matches tenant B's only wazuh source: no new asset");
+  const legacyHost = bCandidates.find((c) => c.hostName === 'legacy-host');
+  assert(Boolean(srcB) && JSON.stringify(legacyHost?.agentIds) === JSON.stringify({ [`wazuh:${srcB}`]: 'L1' }), 'and the key was rewritten to wazuh:<source id>', legacyHost?.agentIds);
 
   console.log('\n--- Ingest requires TLS ---');
   const tlsBytes = bytesOf({ label: 'tls-src', agents: ['t1'] });
