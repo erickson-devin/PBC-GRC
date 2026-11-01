@@ -104,6 +104,7 @@ docker/, Dockerfile, docker-compose.yml, nginx.conf
 * [Assessment programs and platform administrators](docs/ASSESSMENT_PROGRAMS.md)
 * [SSP import](docs/SSP_IMPORT.md)
 * [Vulnerability management design](docs/VULNERABILITY_MANAGEMENT.md)
+* [Connecting scanners: Wazuh, SCAP files, Action1, SentinelOne](docs/SCANNER_INTEGRATIONS.md)
 * [Exporter](exporters/pbc-vm-exporter/README.md)
 * [Privacy policy](docs/PRIVACY_POLICY.md) and [terms of service](docs/TERMS_OF_SERVICE.md)
 
