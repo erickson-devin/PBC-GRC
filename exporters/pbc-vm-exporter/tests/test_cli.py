@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from conftest import EXPORTER_DIR, SERVER_SCHEMA, TOKEN
+from conftest import EXPORTER_DIR, FIXTURES, SERVER_SCHEMA, TOKEN
 from pbc_vm_exporter import cli
 from pbc_vm_exporter.adapter import encode_payload
 from pbc_vm_exporter.cli import build_parser, main
@@ -203,3 +203,77 @@ def test_module_runs_as_a_process():
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["chunks"]
+
+
+# ------------------------------------------------------------------------------------------------ xccdf source
+
+X1 = str(FIXTURES / "xccdf12_results.xml")
+SCAP_ENV = {"PBC_SOURCE_LABEL": "scap-test"}
+
+
+def test_xccdf_dry_run_prints_a_scap_payload_and_no_names_on_stderr():
+    code, out, err = run(["--dry-run", "--source", "xccdf", "--input", X1], SCAP_ENV)
+    assert code == 0
+    doc = json.loads(out)
+    (chunk,) = doc["chunks"]
+    assert chunk["payload"]["source"] == {"kind": "SCAP", "label": "scap-test"}
+    assert validate_payload(chunk["payload"]) is None and chunk["results"] == 4 and chunk["findings"] == 0
+    assert hashlib.sha256(encode_payload(chunk["payload"])).hexdigest() == chunk["sha256"]
+    for needle in ("cfg-host-01", "192.0.2.10", "xccdf-", "xccdf12_results"):
+        assert needle not in err
+    assert "input 1" in err
+
+
+def test_xccdf_sample_dry_run():
+    code, out, _ = run(["--dry-run", "--sample", "--source", "xccdf"])
+    assert code == 0
+    payload = json.loads(out)["chunks"][0]["payload"]
+    assert payload["source"]["kind"] == "SCAP" and payload["source"]["label"] == "sample-scap"
+    assert validate_payload(payload) is None
+
+
+def test_xccdf_not_xccdf_is_exit_3():
+    code, _, err = run(["--dry-run", "--source", "xccdf", "--input", str(FIXTURES / "not_xccdf.xml")], SCAP_ENV)
+    assert code == 3 and "nothing was sent" in err and "not_xccdf" not in err
+
+
+def test_xccdf_doctype_is_exit_3_without_the_path():
+    code, _, err = run(["--dry-run", "--source", "xccdf", "--input", str(FIXTURES / "doctype.xml")], SCAP_ENV)
+    assert code == 3 and "input 1" in err and "doctype.xml" not in err
+
+
+def test_xccdf_sample_without_dry_run_is_exit_2():
+    code, _, err = run(["--sample", "--source", "xccdf"])
+    assert code == 2 and "--dry-run" in err
+
+
+def test_xccdf_usage_errors():
+    assert run(["--dry-run", "--source", "xccdf"], SCAP_ENV)[0] == 2
+    assert run(["--dry-run", "--sample", "--source", "xccdf", "--input", X1])[0] == 2
+    assert run(["--dry-run", "--input", X1], SCAP_ENV)[0] == 2
+
+
+def test_xccdf_posts_the_validated_bytes_and_logs_no_names(monkeypatch):
+    sent = []
+
+    class Ok:
+        def __init__(self, url, token, verify, timeout, **k):
+            pass
+
+        def send_all(self, bodies, metas):
+            sent.extend(bodies)
+            return []
+
+    monkeypatch.setattr(cli, "IngestClient", Ok)
+    code, _, err = run(["--source", "xccdf", "--input", X1], {**ENV, **SCAP_ENV})
+    assert code == 0 and len(sent) == 1 and validate_payload(json.loads(sent[0])) is None
+    assert "cfg-host-01" not in err
+
+
+def test_xccdf_sample_process_dry_run():
+    result = subprocess.run(
+        [sys.executable, "-m", "pbc_vm_exporter", "--dry-run", "--sample", "--source", "xccdf"],
+        cwd=str(EXPORTER_DIR), capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["chunks"][0]["payload"]["source"]["kind"] == "SCAP"

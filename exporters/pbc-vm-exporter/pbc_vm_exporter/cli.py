@@ -1,7 +1,7 @@
 """Command line entry point.
 
-Exit codes: 0 success, 2 configuration, 3 Wazuh read error (including a run that reads zero hosts), 4 payload
-validation, 5 rejected by PBC-GRC, 6 transport or hash mismatch, 7 partial (every POST succeeded but hosts were
+Exit codes: 0 success, 2 configuration, 3 Wazuh read error (including a run that reads zero hosts) or an unreadable /
+refused XCCDF / ARF file (including inputs with no results), 4 payload validation, 5 rejected by PBC-GRC, 6 transport or hash mismatch, 7 partial (every POST succeeded but hosts were
 skipped), 130 interrupted, 1 unexpected. There is deliberately no option that accepts a token or a password.
 """
 
@@ -14,18 +14,20 @@ import sys
 from pathlib import Path
 from typing import Mapping, Sequence, TextIO
 
-from .adapter import build_payloads, encode_payload
+from .adapter import build_config_payloads, build_payloads, encode_payload
 from .client import IngestClient
 from .config import Config, RedactingFilter, load_config, redact
 from .detect import resolve_mode
-from .errors import ConfigError, ExporterError, PayloadValidationError, WazuhReadError
+from .errors import ConfigError, ExporterError, PayloadValidationError, ScanFileError, WazuhReadError
 from .validate import contract_sha256, validate_payload
 from .wazuh_api import ApiReader
 from .wazuh_indexer import IndexerReader, group_documents
+from .xccdf import expand_inputs, read_xccdf
 
 log = logging.getLogger("pbc_vm_exporter")
 
 SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "indexer_sample.json"
+XCCDF_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "xccdf_sample.xml"
 
 
 class _UsageError(Exception):
@@ -47,6 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="build and validate the payloads, print them, send nothing")
     parser.add_argument("--env-file", metavar="PATH", help="KEY=value file (default: ./.env if present)")
     parser.add_argument("--mode", choices=("auto", "indexer", "api"), help="Wazuh reader (overrides WAZUH_MODE)")
+    parser.add_argument(
+        "--source", choices=("wazuh", "xccdf"), default="wazuh",
+        help="wazuh (default): read Wazuh vulnerability state; xccdf: read XCCDF / ARF result files (needs --input)",
+    )
+    parser.add_argument(
+        "--input", metavar="PATH", action="append", default=[],
+        help="XCCDF 1.1/1.2 or ARF result file, or a directory of *.xml files (repeatable; --source xccdf only)",
+    )
     parser.add_argument("--print-contract-sha256", action="store_true", help="print the sha256 of the vendored contract")
     parser.add_argument("--sample", action="store_true", help="use the bundled synthetic data (requires --dry-run)")
     return parser
@@ -55,6 +65,52 @@ def build_parser() -> argparse.ArgumentParser:
 def load_sample_hosts() -> list[dict]:
     data = json.loads(SAMPLE_PATH.read_text(encoding="utf-8"))
     return group_documents([h["_source"] for h in data["hits"]["hits"]])
+
+
+def _run_xccdf(args: argparse.Namespace, cfg: Config, stdout: TextIO, stderr: TextIO) -> int:
+    """Configuration results from XCCDF / ARF files. Nothing here names a file, host, address or agent id."""
+    paths = [XCCDF_SAMPLE_PATH] if args.sample else expand_inputs(args.input)
+    hosts = read_xccdf(paths)
+    label = cfg.source_label or "sample-scap"
+    payloads, skipped = build_config_payloads(
+        hosts, label=label, max_hosts=cfg.max_hosts, max_bytes=cfg.max_bytes
+    )
+    bodies = [encode_payload(p) for p in payloads]
+    for i, body in enumerate(bodies):
+        error = validate_payload(json.loads(body))
+        if error is not None:
+            raise PayloadValidationError(f"chunk {i + 1}/{len(bodies)} does not satisfy the contract: {error}")
+    metas = [
+        {
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "bytes": len(body),
+            "hosts": len(p["hosts"]),
+            "findings": 0,
+            "results": sum(len(s["results"]) for h in p["hosts"] for s in h["configuration"]),
+        }
+        for body, p in zip(bodies, payloads)
+    ]
+    if skipped:
+        log.warning("%d host(s) skipped whole: too large to send in one payload", len(skipped))
+    if not payloads:
+        raise ScanFileError("no host could be exported; nothing was sent")
+
+    if args.dry_run:
+        out = {
+            "contract_sha256": contract_sha256(),
+            "chunks": [dict(meta, payload=p) for meta, p in zip(metas, payloads)],
+            "skipped_hosts": len(skipped),
+        }
+        stdout.write(redact(json.dumps(out, indent=2), cfg.secrets()) + "\n")
+        return 0
+
+    assert cfg.pbc_url is not None and cfg.pbc_token is not None
+    client = IngestClient(cfg.pbc_url, cfg.pbc_token, cfg.pbc_verify, cfg.timeout)
+    client.send_all(bodies, metas)
+    if skipped:
+        stderr.write(f"partial export: {len(skipped)} host(s) skipped\n")
+        return 7
+    return 0
 
 
 def read_hosts(cfg: Config) -> list[dict]:
@@ -80,6 +136,8 @@ def read_hosts(cfg: Config) -> list[dict]:
 def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, stderr: TextIO, flt: RedactingFilter) -> int:
     cfg = load_config(environ, args.env_file, mode_override=args.mode, dry_run=args.dry_run, sample=args.sample)
     flt.secrets = cfg.secrets()
+    if args.source == "xccdf":
+        return _run_xccdf(args, cfg, stdout, stderr)
 
     raw_hosts = load_sample_hosts() if args.sample else read_hosts(cfg)
     if not raw_hosts:
@@ -166,6 +224,12 @@ def main(
         if args.print_contract_sha256:
             stdout.write(contract_sha256() + "\n")
             return 0
+        if args.source != "xccdf" and args.input:
+            fail("--input requires --source xccdf")
+            return 2
+        if args.source == "xccdf" and args.sample == bool(args.input):
+            fail("--source xccdf needs either --input PATH or --sample (not both)")
+            return 2
         if args.sample and not args.dry_run:
             fail("--sample requires --dry-run (synthetic hosts must never reach a real tenant)")
             return 2

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head><title>Not a scan result</title></head>
+  <body><p>This file is well-formed XML but holds no XCCDF TestResult.</p></body>
+</html>

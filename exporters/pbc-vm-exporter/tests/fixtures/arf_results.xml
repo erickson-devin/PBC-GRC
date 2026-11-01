@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<arf:asset-report-collection xmlns:arf="http://scap.nist.gov/schema/asset-reporting-format/1.1" xmlns:core="http://scap.nist.gov/schema/reporting-core/1.1" xmlns:ai="http://scap.nist.gov/schema/asset-identification/1.1" xmlns:xccdf="http://checklists.nist.gov/xccdf/1.2">
+  <core:relationships xmlns:arfvocab="http://scap.nist.gov/specifications/arf/vocabulary/relationships/1.0#">
+    <core:relationship type="arfvocab:isAbout" subject="xccdf1">
+      <core:ref>asset0</core:ref>
+    </core:relationship>
+  </core:relationships>
+  <arf:report-requests/>
+  <core:assets>
+    <core:asset id="asset0">
+      <ai:computing-device>
+        <ai:connections>
+          <ai:connection>
+            <ai:ip-address><ai:ip-v4>127.0.0.1</ai:ip-v4></ai:ip-address>
+          </ai:connection>
+          <ai:connection>
+            <ai:ip-address><ai:ip-v4>192.0.2.11</ai:ip-v4></ai:ip-address>
+            <ai:mac-address>00:00:5E:00:53:11</ai:mac-address>
+          </ai:connection>
+        </ai:connections>
+        <ai:fqdn>cfg-host-02.example.test</ai:fqdn>
+        <ai:hostname>cfg-host-02</ai:hostname>
+      </ai:computing-device>
+    </core:asset>
+  </core:assets>
+  <core:reports>
+    <core:report id="xccdf1">
+      <core:content>
+        <xccdf:Benchmark id="benchmark_arf">
+          <xccdf:title>Fixture ARF baseline</xccdf:title>
+          <xccdf:version>2.0</xccdf:version>
+          <xccdf:Rule id="rule_sshd_disable_root_login" severity="medium">
+            <xccdf:title>Disable SSH root login</xccdf:title>
+          </xccdf:Rule>
+          <xccdf:Rule id="rule_accounts_password_minlen" severity="medium">
+            <xccdf:title>Set a minimum password length</xccdf:title>
+          </xccdf:Rule>
+          <xccdf:TestResult id="testresult_arf" start-time="2026-10-02T08:00:00+00:00" end-time="2026-10-02T08:03:00+00:00" test-system="cpe:/a:example:scanner:2.0">
+            <xccdf:benchmark id="benchmark_arf"/>
+            <xccdf:profile idref="profile_arf"/>
+            <xccdf:target>cfg-host-02</xccdf:target>
+            <xccdf:rule-result idref="rule_sshd_disable_root_login" severity="medium">
+              <xccdf:result>pass</xccdf:result>
+              <xccdf:ident system="http://cce.mitre.org">CCE-27445-6</xccdf:ident>
+            </xccdf:rule-result>
+            <xccdf:rule-result idref="rule_accounts_password_minlen" severity="medium">
+              <xccdf:result>fail</xccdf:result>
+            </xccdf:rule-result>
+          </xccdf:TestResult>
+        </xccdf:Benchmark>
+      </core:content>
+    </core:report>
+  </core:reports>
+</arf:asset-report-collection>

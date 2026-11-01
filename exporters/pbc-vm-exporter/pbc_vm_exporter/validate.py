@@ -16,6 +16,7 @@ from typing import Any, Sequence
 
 CONTRACT_PATH = Path(__file__).resolve().parent / "contract" / "ingest.schema.json"
 MAX_TOTAL_FINDINGS = 50000
+MAX_TOTAL_CONFIG_RESULTS = 100000
 
 # Annotations are ignored; everything else must be in SUPPORTED_KEYWORDS or assert_supported_keywords raises, so a
 # contract that gains a keyword (say minItems) fails the Python tests instead of being silently unchecked.
@@ -215,7 +216,7 @@ def validate_payload(obj: Any, schema: dict | None = None) -> str | None:
     if err:
         return err
     hosts = obj["hosts"]
-    total = sum(len(h["findings"]) for h in hosts)
+    total = sum(len(h.get("findings", [])) for h in hosts)
     if total > MAX_TOTAL_FINDINGS:
         return f"$.hosts: at most {MAX_TOTAL_FINDINGS} findings in total"
     seen: dict[str, int] = {}
@@ -224,4 +225,20 @@ def validate_payload(obj: Any, schema: dict | None = None) -> str | None:
         if agent in seen:
             return f"$.hosts[{j}].agent_id: duplicate agent_id (also at $.hosts[{seen[agent]}])"
         seen[agent] = j
+    # A host reports findings, configuration results or both (a configuration-only host has no findings key).
+    for j, host in enumerate(hosts):
+        if "findings" not in host and "configuration" not in host:
+            return f"$.hosts[{j}].findings: required (a host reports findings, configuration results or both)"
+    total_results = sum(len(scan["results"]) for h in hosts for scan in h.get("configuration", []))
+    if total_results > MAX_TOTAL_CONFIG_RESULTS:
+        return f"$.hosts: at most {MAX_TOTAL_CONFIG_RESULTS} configuration results in total"
+    for j, host in enumerate(hosts):
+        for k, scan in enumerate(host.get("configuration", [])):
+            rule_ids: dict[str, int] = {}
+            for i, result in enumerate(scan["results"]):
+                first = rule_ids.get(result["rule_id"])
+                if first is not None:
+                    here = f"$.hosts[{j}].configuration[{k}].results"
+                    return f"{here}[{i}].rule_id: duplicate rule_id (also at {here}[{first}])"
+                rule_ids[result["rule_id"]] = i
     return None
