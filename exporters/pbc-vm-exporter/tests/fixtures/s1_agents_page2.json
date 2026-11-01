@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "1900000000000000002", "uuid": "9c3a7d10-4e2b-4f55-8b7c-6a1e2d3f4b22", "computerName": "s1-lin-02.example",
+      "osName": "Ubuntu 22.04", "osRevision": "5.15.0-97", "lastIpToMgmt": "192.0.2.22", "isDecommissioned": false,
+      "siteId": "222",
+      "networkInterfaces": [ { "name": "eth0", "inet": ["192.0.2.22"], "physical": "00:00:5E:00:53:23" } ]
+    },
+    {
+      "id": "1900000000000000004", "uuid": "3b6f9a05-2c7d-4e18-b4a9-8e5d1c2f7a44", "computerName": "s1-clean-04",
+      "osName": "Windows 11 Pro", "osRevision": "22631", "lastIpToMgmt": "192.0.2.24", "isDecommissioned": false,
+      "siteId": "222", "networkInterfaces": []
+    }
+  ],
+  "pagination": { "nextCursor": null, "totalItems": 3 }
+}

@@ -1,0 +1,39 @@
+{
+  "_comment": "Synthetic data only: *.example hostnames, documentation addresses and MACs, public CVE ids and KB ids. Shaped like Action1 endpoints with their missing updates. Quirks on purpose: one update fixing two CVEs, a security update with no CVE (reported by its KB id), a non-security update (dropped), an Unspecified severity, and a patched endpoint (not reported).",
+  "endpoints": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001", "name": "a1-win-01", "address": "192.0.2.31",
+      "MAC": "00:00:5E:00:53:31", "OS": "Windows 11 Pro 23H2",
+      "missing_updates": [
+        {
+          "id": "upd-0001", "name": "2024-02 Cumulative Update for Windows 11 (KB5034765)", "version": "KB5034765",
+          "severity": "Important", "release_date": "2024-02-13", "security": true,
+          "cve": ["CVE-2024-21412", "CVE-2024-21351"], "kb": "KB5034765", "category": "security"
+        },
+        {
+          "id": "upd-0002", "name": "Windows Recovery Environment update (KB5034441)", "version": "KB5034441",
+          "severity": "Moderate", "release_date": "2024-01-09", "security": true, "cve": [], "kb": "KB5034441",
+          "category": "security"
+        },
+        {
+          "id": "upd-0003", "name": "Intel graphics driver 31.0.101.5186", "version": "31.0.101.5186",
+          "severity": "Unspecified", "release_date": "2024-02-01", "security": false, "cve": [], "category": "driver"
+        }
+      ]
+    },
+    {
+      "id": "a1b2c3d4-0002-4000-8000-000000000002", "name": "a1-win-02.example", "address": "192.0.2.32",
+      "MAC": "00:00:5E:00:53:32", "OS": "Windows Server 2022",
+      "missing_updates": [
+        {
+          "id": "upd-0004", "name": "7-Zip 23.01", "version": "23.01", "severity": "Unspecified",
+          "release_date": "2023-06-20", "security": true, "cve": ["CVE-2023-31102"], "category": "security"
+        }
+      ]
+    },
+    {
+      "id": "a1b2c3d4-0003-4000-8000-000000000003", "name": "a1-patched-03", "address": "198.51.100.33",
+      "MAC": "00:00:5E:00:53:33", "OS": "Windows 11 Pro 23H2", "missing_updates": []
+    }
+  ]
+}

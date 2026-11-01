@@ -78,6 +78,14 @@ jobs:
         working-directory: exporters/pbc-vm-exporter
         run: python -m pbc_vm_exporter --dry-run --sample --source xccdf
 
+      - name: Offline smoke (dry run on the bundled Action1 sample)
+        working-directory: exporters/pbc-vm-exporter
+        run: python -m pbc_vm_exporter --dry-run --sample --source action1
+
+      - name: Offline smoke (dry run on the bundled SentinelOne sample)
+        working-directory: exporters/pbc-vm-exporter
+        run: python -m pbc_vm_exporter --dry-run --sample --source sentinelone
+
   # PostgreSQL-only behaviour (row-level security, FOR UPDATE, rollback) is invisible to the in-memory suites above: the three
   # live scripts run here against a throwaway PostgreSQL 16 as the ordinary application role (#159). A separate job, so the
   # fast gates stay fast. The publish workflow calls this file, so these checks also gate every published image.

@@ -1,13 +1,14 @@
 # pbc-vm-exporter
 
-Reads vulnerability state from Wazuh and pushes it to PBC-GRC (`POST /api/v1/vm/ingest`).
+Reads vulnerability state from Wazuh, Action1 or SentinelOne (and configuration results from XCCDF / ARF files) and pushes it to PBC-GRC (`POST /api/v1/vm/ingest`).
 
 ## 1. What it is
 
-A push-model exporter. It runs inside the enclave next to Wazuh, reads Wazuh, builds payloads that satisfy the ingest contract (`server/vm/ingest.schema.json`) and POSTs them to PBC-GRC with a service token.
+A push-model exporter. It runs inside the enclave next to Wazuh (or anywhere that can reach the Action1 or SentinelOne cloud), reads the source, builds payloads that satisfy the ingest contract (`server/vm/ingest.schema.json`) and POSTs them to PBC-GRC with a service token.
 
 * It is not part of the PBC-GRC application image.
-* Data goes only to PBC-GRC. There is no other egress, and proxy settings from the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `.netrc`, `REQUESTS_CA_BUNDLE`) are ignored on purpose (`trust_env=False`).
+* Data goes only to PBC-GRC. With `--source wazuh` or `--source xccdf` there is no other egress. With `--source action1` or `--source sentinelone` the exporter also makes read-only outbound HTTPS calls to that vendor's cloud (the machine needs outbound HTTPS to it); nothing from PBC-GRC is ever sent there, and the vendor's credentials are never sent to PBC-GRC.
+* Proxy settings from the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `.netrc`, `REQUESTS_CA_BUNDLE`) are ignored on purpose (`trust_env=False`). The only proxy is the optional `ACTION1_PROXY_URL` / `S1_PROXY_URL`, used for that vendor's requests and never for PBC-GRC.
 * AI is not involved.
 
 ## 2. Requirements and install
@@ -45,12 +46,21 @@ Everything comes from the environment or from an env file (`--env-file PATH`, de
 | `WAZUH_INDEXER_INDEX` | no | Default `wazuh-states-vulnerabilities-*` |
 | `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD` | api and auto mode | Wazuh manager API (4.7 and earlier; also used by `auto` to read the version) |
 | `WAZUH_CA_BUNDLE` | no | CA bundle file for the Wazuh certificates |
+| `ACTION1_BASE_URL` | `--source action1` | The full Action1 API root, for example `https://app.action1.com/api/3.0` (North America) or `https://app.eu.action1.com/api/3.0` (Europe) |
+| `ACTION1_CLIENT_ID`, `ACTION1_CLIENT_SECRET` | `--source action1` | OAuth client credentials of an Action1 API key (secret 1 to 1024 characters; never logged) |
+| `ACTION1_ORG_ID` | `--source action1` | Action1 organization id, 1 to 64 characters from `A-Z a-z 0-9 -` |
+| `ACTION1_INCLUDE_PATCH_FINDINGS` | no | Default on. `false` drops security updates that name no CVE instead of reporting them by KB id |
+| `ACTION1_CA_BUNDLE`, `ACTION1_PROXY_URL` | no | CA bundle for Action1's certificate; an `http://` or `https://` egress proxy for the Action1 requests only |
+| `S1_CONSOLE_URL` | `--source sentinelone` | The console host only, for example `https://example.sentinelone.net` (the exporter appends `/web/api/v2.1`) |
+| `S1_API_TOKEN` | `--source sentinelone` | API token, 20 to 4096 characters, no whitespace (never logged). Use a service-user token with a chosen expiry |
+| `S1_SITE_IDS` | `--source sentinelone` | Comma-separated numeric site ids to read, 1 to 100 (duplicates are removed) |
+| `S1_CA_BUNDLE`, `S1_PROXY_URL` | no | CA bundle for the console's certificate; an `http://` or `https://` egress proxy for the SentinelOne requests only |
 | `EXPORT_MAX_HOSTS_PER_REQUEST` | no | Hosts per POST, default 500, range 1..1000 |
 | `EXPORT_MAX_FINDINGS_PER_REQUEST` | no | Findings per POST, default 50000, range 1..50000 |
 | `EXPORT_MAX_BYTES` | no | Body bytes per POST, default 33554432 (32 MiB), range 1048576..104857600. Lower it if the server's `VM_INGEST_MAX_BYTES` is below 32 MiB |
 | `EXPORT_TIMEOUT_SECONDS` | no | Read timeout, default 60, range 5..600 |
 
-URLs must be `https` and must not contain credentials, a query or a fragment. A number that is not a positive integer falls back to the default with a warning; a number outside its range is clamped.
+URLs must be `https` (the two proxy URLs may be `http`) and must not contain credentials, a query or a fragment. The Action1 and SentinelOne variables are required only by their own `--source` and not at all with `--sample`; `WAZUH_MODE` and `WAZUH_INDEXER_INDEX` are not read for those sources. A number that is not a positive integer falls back to the default with a warning; a number outside its range is clamped.
 
 Env file format: `KEY=value`, an optional `export ` prefix, full-line `#` comments, blank lines. There are no inline comments (a `#` inside a password survives), one pair of matching outer quotes is stripped, and there is no interpolation. A malformed line is reported by number only; its content is never echoed.
 
@@ -63,6 +73,8 @@ A run splits a large fleet across several POSTs by hosts, findings and bytes. A 
 * `api` reads `/agents` and `/vulnerability/{id}` from the manager API. An agent that never connected, or has no completed scan, is not reported. A scanned agent with no vulnerabilities is reported with an empty findings list, which is correct: its findings close.
 
 All Wazuh field names and endpoints are from knowledge of Wazuh 4.x, not from a running system. They live in one dictionary per source (`INDEXER_FIELDS` in `wazuh_indexer.py`, `API_FIELDS` in `wazuh_api.py`). Verify them against your running Wazuh before the first live push; a wrong guess is a one-line fix.
+
+The Action1 and SentinelOne endpoints and field names are likewise from vendor documentation, not from a live tenant, and live in one dictionary per module (`A1_PATHS` / `A1_FIELDS` in `action1.py`, `S1_PATHS` / `S1_FIELDS` in `sentinelone.py`). Sections 10b and 10c list what to confirm on the first live run.
 
 ## 5. Creating the service token
 
@@ -148,6 +160,7 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 * `--dry-run` builds and validates the payloads, prints one JSON document to stdout and sends nothing: `{"contract_sha256", "chunks": [{"sha256", "bytes", "hosts", "findings", "payload"}], "skipped_hosts", "dropped_rows"}`. The `sha256` is that of the real bytes that would be sent. The output goes through redaction.
 * `--sample` (requires `--dry-run`) uses the bundled synthetic Wazuh data (`samples/indexer_sample.json`, fake hostnames and public CVE ids) and needs no Wazuh or PBC-GRC configuration. It can never reach a tenant.
 * `--print-contract-sha256` prints the contract hash and exits.
+* `--sample --source action1` and `--sample --source sentinelone` (require `--dry-run`) use the bundled synthetic data (`samples/action1_sample.json`, `samples/sentinelone_sample.json`: `*.example` hostnames, documentation addresses, public CVE ids). `skipped_hosts` is a count for these sources.
 * `--sample --source xccdf` (requires `--dry-run`) uses the bundled synthetic XCCDF file (`samples/xccdf_sample.xml`, documentation addresses only). The dry-run document then has `"results"` (rule results in the chunk) next to `"findings"` (always 0) and `"skipped_hosts"` is a count.
 
 ## 10a. Configuration results from XCCDF / ARF files (`--source xccdf`)
@@ -160,6 +173,47 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 * Untrusted input: a file over 512 MiB, or one that contains `<!DOCTYPE` or `<!ENTITY` (any case), or that is UTF-16 / UTF-32, is refused before it is parsed. Messages and logs name an input by number (`input 1`) with counts and sha256 prefixes; they never print a path, host name, address or agent id. The dry-run output on stdout is the payload itself and does contain the host identity.
 * A scan holds at most 5000 distinct rules, a host at most 20 scans per run, and a payload at most 100000 rule results; a host is never split across payloads.
 
+## 10b. Missing updates from Action1 (`--source action1`)
+
+Reads the missing updates of every managed endpoint of one Action1 organization and pushes them as a source of kind `ACTION1`. `PBC_URL`, `PBC_SERVICE_TOKEN` and `PBC_SOURCE_LABEL` are required as usual (keep the label distinct from every other source's); `--mode` does not apply.
+
+```
+ACTION1_BASE_URL=https://app.action1.com/api/3.0
+ACTION1_CLIENT_ID=...
+ACTION1_CLIENT_SECRET=...
+ACTION1_ORG_ID=...
+python -m pbc_vm_exporter --source action1 --dry-run
+```
+
+* Authentication: `POST {ACTION1_BASE_URL}/oauth2/token` with the client id and secret, then a Bearer token. A 401 authenticates once more; a second 401 is exit 3. Create the API key in Action1 with read-only access.
+* Findings: one finding per CVE that a missing security update fixes (the server merges them per host and CVE). A security update that names no CVE becomes one finding keyed by its KB or update id; set `ACTION1_INCLUDE_PATCH_FINDINGS=false` to drop those instead. Updates that are not security updates are dropped and counted. The vendor severity is mapped (Critical, Important to HIGH, Moderate to MEDIUM, Low, Unspecified to UNKNOWN; the server grades UNKNOWN from a CVSS score when it has one). There is no detection time, so the first-seen time is the first run that reports the finding.
+* Host identity: `agent_id` is the Action1 endpoint id; the MAC and then the host name match an existing asset.
+* Only endpoints with at least one finding are reported; a fully patched endpoint is not, so its last findings are not closed by this exporter.
+* The whole read finishes before anything is sent: any error is exit 3 and no partial host is exported. A `next_page` link is followed only when its scheme, host and port equal `ACTION1_BASE_URL`'s. At most 10000 pages per listing; a 429 is retried once after `Retry-After` (capped at 60 s). The exporter makes one request per endpoint, so a large estate takes proportionally long.
+* Logs and errors carry counts only: no host name, endpoint id, address, or organization id.
+
+First live run, confirm: the regional base URL and `/api/3.0`; the token endpoint (form or JSON body, `expires_in`); paging (`items`, `next_page`, `limit`); the endpoint fields (`id`, `name`, `address`, `MAC`, `OS`); the missing-updates path and fields (`id`, `name`, `version`, `severity` words, `release_date`, the security flag, the CVE list field name, the KB field); whether a per-endpoint CVE list exists (preferred if it does); rate limits.
+
+## 10c. Vulnerabilities from SentinelOne (`--source sentinelone`)
+
+Reads the application vulnerabilities (risks) of the agents of the listed sites and pushes them as a source of kind `SENTINELONE`. It needs a SentinelOne Vulnerability Management licence and a token whose role can read agents and application risks. `PBC_URL`, `PBC_SERVICE_TOKEN` and `PBC_SOURCE_LABEL` are required as usual; `--mode` does not apply.
+
+```
+S1_CONSOLE_URL=https://example.sentinelone.net
+S1_API_TOKEN=...
+S1_SITE_IDS=1234567890123456789
+python -m pbc_vm_exporter --source sentinelone --dry-run
+```
+
+* Authentication: `Authorization: ApiToken <token>`. The token expires (30 days by default for a user token; a service-user token has the expiry chosen when it was created) and SentinelOne has no refresh: an expired token is exit 3 with the message `SentinelOne rejected the API token (HTTP 401); it may have expired: generate a new token and update S1_API_TOKEN`. Put the expiry date in a calendar.
+* Reads `GET /agents` and `GET /application-management/risks` (cursor paging, `siteIds`, limit 1000). A risk row joins to its agent on the endpoint id; a row with an unknown endpoint, and every decommissioned agent, is dropped and counted.
+* Host identity: `agent_id` is the agent's uuid (stable per install); the host name is `computerName` (often a short name, not an FQDN); the IP is `lastIpToMgmt`; the MAC is that of the interface that holds this IP, and only that one.
+* Findings: one per CVE, application and version (`applicationName` / `applicationVersion` as the package; there is no fixed version). Severity is mapped (NONE to UNKNOWN; the server grades UNKNOWN from the CVSS score when it has one). The CVSS score field's version is not stated by the vendor and is taken as given.
+* Only agents with at least one finding are reported; a clean agent is not, so its last findings are not closed by this exporter.
+* The whole read finishes before anything is sent: any error is exit 3 and no partial host is exported. At most 10000 pages per listing; a 429 is retried once after `Retry-After` (capped at 60 s). Logs and errors carry counts only.
+
+First live run, confirm: the base path and the `ApiToken` header; the `/agents` fields (`uuid`, `computerName`, `osName`, `osRevision`, `lastIpToMgmt`, `networkInterfaces[].inet` and `.physical`, `isDecommissioned`); the risks path and that the licence returns rows; the row fields (`cveId`, the severity words including NONE, `endpointId` equal to the agent `id` or to the `uuid`, `applicationName`, `applicationVersion`, `detectionDate`, the CVSS field name and version, a published date); `pagination.nextCursor` and the maximum limit; the 401 body at expiry; whether `siteIds` filters the risks.
+
 ## 11. Exit codes
 
 | Code | Meaning |
@@ -167,11 +221,11 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 | 0 | Success |
 | 1 | Unexpected error (one redacted line, no traceback) |
 | 2 | Configuration error (including bad command-line usage) |
-| 3 | Wazuh read error, including a run that reads zero hosts (nothing is sent: an empty export would hide a read failure). With `--source xccdf`: a result file that cannot be read or is refused (over 512 MiB, DOCTYPE / ENTITY, not well-formed, not UTF-8), or inputs that hold no TestResult with results |
+| 3 | Source read error (Wazuh, Action1 or SentinelOne: authentication, a request, a body, a pagination loop or an expired token), including a run that reads zero hosts (nothing is sent: an empty export would hide a read failure). With `--source xccdf`: a result file that cannot be read or is refused (over 512 MiB, DOCTYPE / ENTITY, not well-formed, not UTF-8), or inputs that hold no TestResult with results |
 | 4 | A payload does not satisfy the contract (nothing is sent) |
 | 5 | Rejected by PBC-GRC (400, 401, 403, 409, 413, 415, 503 `vm_requires_local_storage`, redirects, other 4xx) |
 | 6 | Transport failure after retries, or the server acknowledged different bytes (sha256 mismatch) |
-| 7 | Partial: every POST succeeded but one or more hosts were skipped (over 5000 findings, or too large for the byte budget). The skipped agent ids are printed on stderr |
+| 7 | Partial: every POST succeeded but one or more hosts were skipped (over 5000 findings, or too large for the byte budget). With `--source wazuh` the skipped agent ids are printed on stderr; with `--source action1` or `sentinelone` only the number of skipped hosts is |
 | 130 | Interrupted |
 
 Retries: 429 honours `Retry-After` (capped at 60 s); 500, 502, 503 and 504 and connection errors are tried 3 times with 2 s then 4 s pauses; other 4xx are not retried. A retry resends the same bytes, so a lost 202 is answered with `200 {"duplicate": true}`. Chunks are sent one after another with a 2.5 s pause (the server allows 30 per minute) and the run stops at the first failure.
@@ -196,3 +250,8 @@ Retries: 429 honours `Retry-After` (capped at 60 s); 500, 502, 503 and 504 and c
 * Keep `PBC_SOURCE_LABEL` stable. A new label is a new source, and the old source's findings never close.
 * One exporter and one label per Wazuh manager or cluster.
 * Wazuh field names are unverified against a running system (see section 4).
+* Action1 and SentinelOne endpoints and field names are unverified against a live tenant (sections 10b and 10c): this support is dry-run tested only until a first live run is recorded.
+* Action1 and SentinelOne export only hosts that have findings (see above), and an Action1 patch is a finding keyed by CVE (or KB id), not an installed-software inventory.
+* A host with more than 5000 findings (a developer machine in SentinelOne, for example) is skipped whole with exit code 7; the number of skipped hosts is on stderr.
+* SentinelOne host names are often short while Wazuh names are FQDNs; the same machine in both sources can appear as two assets until the names agree (the agent id and MAC match first).
+* The Wazuh path still names skipped agent ids in its log and exit-7 message; the Action1 and SentinelOne paths do not.

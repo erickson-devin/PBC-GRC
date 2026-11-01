@@ -1,0 +1,9 @@
+{
+  "items": [
+    {
+      "id": "upd-0004", "name": "Example Archiver 23.01", "version": "23.01", "severity": "Critical",
+      "release_date": "2023-06-20", "security": true, "cve": "CVE-2023-31102", "category": "security"
+    }
+  ],
+  "total_items": 1, "next_page": null
+}

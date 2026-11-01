@@ -9,8 +9,22 @@ class ConfigError(ExporterError):
     exit_code = 2
 
 
-class WazuhReadError(ExporterError):
+class SourceReadError(ExporterError):
+    """A vulnerability source could not be read completely. Nothing is sent after one of these."""
+
     exit_code = 3
+
+
+class WazuhReadError(SourceReadError):
+    pass
+
+
+class Action1ReadError(SourceReadError):
+    pass
+
+
+class SentinelOneReadError(SourceReadError):
+    pass
 
 
 class ScanFileError(ExporterError):

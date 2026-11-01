@@ -277,3 +277,112 @@ def test_xccdf_sample_process_dry_run():
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["chunks"][0]["payload"]["source"]["kind"] == "SCAP"
+
+
+# ------------------------------------------------------------------------------------------------ vendor sources
+
+from pbc_vm_exporter.action1 import group_action1, load_action1_sample  # noqa: E402
+from pbc_vm_exporter.adapter import build_hosts  # noqa: E402
+from pbc_vm_exporter.errors import Action1ReadError, SentinelOneReadError  # noqa: E402
+from pbc_vm_exporter.sentinelone import group_sentinelone, load_sentinelone_sample  # noqa: E402
+
+A1_ENV = {
+    "PBC_SOURCE_LABEL": "a1-test", "ACTION1_BASE_URL": "https://app.example/api/3.0", "ACTION1_CLIENT_ID": "client-1",
+    "ACTION1_CLIENT_SECRET": "client-secret-" + "z" * 20, "ACTION1_ORG_ID": "org-1",
+}
+S1_ENV = {
+    "PBC_SOURCE_LABEL": "s1-test", "S1_CONSOLE_URL": "https://console.example", "S1_API_TOKEN": "s1-token-" + "x" * 30,
+    "S1_SITE_IDS": "111",
+}
+
+
+def sample_hosts(source):
+    if source == "action1":
+        return build_hosts(group_action1(load_action1_sample(cli.ACTION1_SAMPLE_PATH)))[0]
+    return build_hosts(group_sentinelone(*load_sentinelone_sample(cli.SENTINELONE_SAMPLE_PATH)))[0]
+
+
+@pytest.mark.parametrize("source,kind", [("action1", "ACTION1"), ("sentinelone", "SENTINELONE")])
+def test_vendor_sample_dry_run(source, kind):
+    code, out, err = run(["--dry-run", "--sample", "--source", source])
+    assert code == 0
+    doc = json.loads(out)
+    expected = sample_hosts(source)
+    assert doc["skipped_hosts"] == 0
+    total = 0
+    for chunk in doc["chunks"]:
+        assert validate_payload(chunk["payload"]) is None
+        assert chunk["payload"]["source"] == {"kind": kind, "label": f"sample-{source}"}
+        assert hashlib.sha256(encode_payload(chunk["payload"])).hexdigest() == chunk["sha256"]
+        total += chunk["findings"]
+    assert total == sum(len(h["findings"]) for h in expected) and total > 0
+    for host in expected:
+        assert host["hostname"] not in err and host["agent_id"] not in err
+
+
+@pytest.mark.parametrize("source", ["action1", "sentinelone"])
+def test_vendor_usage_errors(source):
+    code, _, err = run(["--sample", "--source", source])
+    assert code == 2 and "--dry-run" in err
+    code, _, err = run(["--dry-run", "--sample", "--source", source, "--input", "x.xml"])
+    assert code == 2 and "--input" in err
+    code, _, err = run(["--dry-run", "--sample", "--source", source, "--mode", "api"])
+    assert code == 2 and "--mode applies to --source wazuh only" in err
+
+
+def test_action1_read_error_is_exit_3(monkeypatch):
+    def boom(cfg):
+        raise Action1ReadError("action1 authentication returned HTTP 401")
+    monkeypatch.setattr(cli, "read_action1_hosts", boom)
+    code, _, err = run(["--source", "action1"], {**A1_ENV, "PBC_URL": "https://grc.local", "PBC_SERVICE_TOKEN": TOKEN})
+    assert code == 3 and "HTTP 401" in err and A1_ENV["ACTION1_CLIENT_SECRET"] not in err
+
+
+def test_sentinelone_zero_hosts_is_exit_3_and_posts_nothing(monkeypatch):
+    monkeypatch.setattr(cli, "read_sentinelone_hosts", lambda cfg: [])
+    monkeypatch.setattr(cli, "IngestClient", lambda *a, **k: (_ for _ in ()).throw(AssertionError("posted")))
+    code, _, err = run(["--source", "sentinelone"], {**S1_ENV, "PBC_URL": "https://grc.local", "PBC_SERVICE_TOKEN": TOKEN})
+    assert code == 3 and "zero hosts" in err
+
+
+def test_sentinelone_missing_variable_is_exit_2():
+    code, _, err = run(["--dry-run", "--source", "sentinelone"], {"PBC_SOURCE_LABEL": "s1-test"})
+    assert code == 2 and "S1_CONSOLE_URL" in err
+
+
+def test_vendor_dry_run_with_real_hosts_uses_the_configured_label(monkeypatch):
+    monkeypatch.setattr(cli, "read_action1_hosts", lambda cfg: RAW)
+    code, out, _ = run(["--dry-run", "--source", "action1"], A1_ENV)
+    payload = json.loads(out)["chunks"][0]["payload"]
+    assert code == 0 and payload["source"] == {"kind": "ACTION1", "label": "a1-test"}
+
+
+def test_sentinelone_partial_export_is_exit_7_and_names_a_count_only(monkeypatch):
+    big = {"agent_id": "agent-secret-id", "rows": [
+        {"vuln_id": f"CVE-2024-{i:04d}", "severity": "Low"} for i in range(1, 5002)
+    ]}
+    monkeypatch.setattr(cli, "read_sentinelone_hosts", lambda cfg: RAW + [big])
+    sent = []
+    monkeypatch.setattr(
+        cli, "IngestClient", lambda *a, **k: type("C", (), {"send_all": lambda self, b, m: sent.extend(b) or []})()
+    )
+    code, _, err = run(["--source", "sentinelone"], {**S1_ENV, "PBC_URL": "https://grc.local", "PBC_SERVICE_TOKEN": TOKEN})
+    assert code == 7 and "1 host(s) skipped" in err and "agent-secret-id" not in err
+    assert json.loads(sent[0])["source"]["kind"] == "SENTINELONE"
+
+
+def test_sentinelone_read_error_is_exit_3(monkeypatch):
+    def boom(cfg):
+        raise SentinelOneReadError("sentinelone agents returned HTTP 500")
+    monkeypatch.setattr(cli, "read_sentinelone_hosts", boom)
+    assert run(["--dry-run", "--source", "sentinelone"], S1_ENV)[0] == 3
+
+
+@pytest.mark.parametrize("source", ["action1", "sentinelone"])
+def test_vendor_sample_process_dry_run(source):
+    result = subprocess.run(
+        [sys.executable, "-m", "pbc_vm_exporter", "--dry-run", "--sample", "--source", source],
+        cwd=str(EXPORTER_DIR), capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["chunks"][0]["payload"]["source"]["kind"] == source.upper()

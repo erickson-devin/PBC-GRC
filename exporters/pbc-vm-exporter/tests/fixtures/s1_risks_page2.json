@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "endpointId": "1900000000000000002", "endpointName": "s1-lin-02.example", "cveId": "CVE-2022-0847",
+      "severity": "NONE", "nvdBaseScore": null, "applicationName": "linux-kernel", "applicationVersion": "5.15.0-97",
+      "detectionDate": "2024-04-02T10:00:00Z", "status": "Unresolved"
+    },
+    {
+      "endpointId": "1900000000000000099", "endpointName": "s1-unknown", "cveId": "CVE-2020-1472",
+      "severity": "CRITICAL", "nvdBaseScore": 10.0, "applicationName": "Netlogon", "applicationVersion": "10.0.17763",
+      "detectionDate": "2024-04-02T10:00:00Z", "status": "Unresolved"
+    },
+    {
+      "endpointId": "1900000000000000003", "endpointName": "s1-old-03", "cveId": "CVE-2019-0708",
+      "severity": "CRITICAL", "nvdBaseScore": 9.8, "applicationName": "Remote Desktop Services",
+      "applicationVersion": "10.0.19041", "detectionDate": "2024-04-02T10:00:00Z", "status": "Unresolved"
+    }
+  ],
+  "pagination": { "nextCursor": null, "totalItems": 4 }
+}

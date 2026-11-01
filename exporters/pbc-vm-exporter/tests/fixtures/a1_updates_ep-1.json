@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": "upd-0001", "name": "2024-02 Cumulative Update for Windows 11 (KB5034765)", "version": "KB5034765",
+      "severity": "Important", "release_date": "2024-02-13", "security": true,
+      "cve": ["CVE-2024-21412", "CVE-2024-21351"], "kb": "KB5034765", "category": "security"
+    },
+    {
+      "id": "upd-0002", "name": "Windows Recovery Environment update (KB5034441)", "version": "KB5034441",
+      "severity": "Moderate", "release_date": "2024-01-09", "security": true, "cve": [], "kb": "KB5034441",
+      "category": "security"
+    },
+    {
+      "id": "upd-0003", "name": "Example graphics driver 31.0.101.5186", "version": "31.0.101.5186",
+      "severity": "Unspecified", "release_date": "2024-02-01", "security": false, "cve": [], "category": "driver"
+    }
+  ],
+  "total_items": 3, "next_page": null
+}
