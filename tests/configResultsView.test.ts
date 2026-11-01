@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  CONFIG_RESULTS_COPY, EXPORTER_XCCDF_COMMAND, applyBlock, applyConfirmText, applyResultMessage, archivedMessage, assetLabel, boundaryCaption,
+  CONFIG_RESULTS_COPY, EXPORTER_XCCDF_COMMAND, INVENTORY_COPY, applyBlock, applyConfirmText, applyResultMessage, archivedMessage, assetLabel, boundaryCaption,
+  assetConfigSummary, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption, latestScansByAsset,
   countSummary, failingAssetNames, groupResultCounts, noSuggestionsMessage, outsideNote, ruleSummary, shownCaption, sortScanRows,
   sortSuggestions, splitByProgramControls, statusLabel, suggestionLabel, suggestionStatus, unmappedNote, unsupportedMessage,
 } from '../src/data/telemetry/configResultsView';
@@ -143,12 +144,10 @@ function main() {
   const walk = (dir: string): string[] => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.tsx?$/.test(e.name) ? [`${dir}/${e.name}`] : []));
   const importers = walk('src').filter((f) => read(f).includes('scapIngestEngine'));
   assert(importers.length === 0 && !exists('src/data/telemetry/scapIngestEngine.ts'), 'V2 nothing under src mentions scapIngestEngine and the file is gone', importers);
-  const engine = read('src/data/telemetry/assetTelemetryEngine.ts');
   const ctx = read('src/context/AssessmentContext.tsx');
   assert(
-    !['status: rollup.status', 'applyBoundaryTelemetryToControls', 'remediateAssetRule', 'Math.random'].some((s) => engine.includes(s)) &&
-      !ctx.includes('aggregateAssetTelemetry') && !ctx.includes('refreshBoundaryTelemetry'),
-    'V3 the fleet engine writes no control status, fakes no remediation and the context no longer rolls up the fleet'
+    !exists('src/data/telemetry/assetTelemetryEngine.ts') && !ctx.includes('aggregateAssetTelemetry') && !ctx.includes('refreshBoundaryTelemetry'),
+    'V3 the fleet engine is gone and the context no longer rolls up the fleet'
   );
   assert(!view.includes('dangerouslySetInnerHTML') && !view.includes('innerHTML'), 'V4 the view never injects HTML: exporter strings are text nodes');
   assert(
@@ -181,6 +180,58 @@ function main() {
   );
   const inventory = read('src/components/telemetry/AssetInventoryManager.tsx');
   assert(!inventory.includes('onTriggerScan') && !inventory.includes('Run automated Photon SCAP Scan') && !inventory.includes('<Play'), 'V10 the inventory has no no-op Scan button');
+
+  console.log('\n--- inventory: latest configuration scan per asset (#206) ---');
+  const withCounts = (s: VmConfigScan, counts: Partial<VmConfigScan['resultCounts']>, scannedAt?: string): VmConfigScan => ({ ...s, scannedAt: scannedAt ?? s.scannedAt, resultCounts: { ...s.resultCounts, ...counts } });
+  const g1 = scanOf('s1', 'a1', 'B1');
+  const g2 = scanOf('s2', 'a1', 'B2');
+  const g3 = scanOf('s3', 'a2', 'B1');
+  const grouped = latestScansByAsset([g1, g3, g2]);
+  assert(grouped.size === 2 && same(grouped.get('a1')!.map((s) => s.id), ['s1', 's2']) && same(grouped.get('a2')!.map((s) => s.id), ['s3']) && latestScansByAsset([]).size === 0, 'V11 latestScansByAsset groups by asset and keeps the input order');
+  const sum = assetConfigSummary([
+    withCounts(g1, { pass: 40, fixed: 1, fail: 2, error: 1 }, '2026-10-01T00:00:00.000Z'),
+    withCounts(g2, { pass: 10, notapplicable: 5 }, '2026-10-03T00:00:00.000Z'),
+  ]);
+  const none = assetConfigSummary(undefined);
+  const empty = assetConfigSummary([]);
+  const onlyNa = assetConfigSummary([withCounts(g1, { notapplicable: 4 })]);
+  assert(
+    sum.pass === 51 && sum.fail === 2 && sum.error === 1 && sum.benchmarks === 2 && sum.lastScannedAt === '2026-10-03T00:00:00.000Z' && sum.score === 94 &&
+      none.score === null && none.lastScannedAt === null && none.pass === 0 && none.fail === 0 && none.error === 0 && none.benchmarks === 0 &&
+      empty.score === null && empty.lastScannedAt === null && onlyNa.score === null && onlyNa.lastScannedAt !== null,
+    'V12 assetConfigSummary sums the results of every benchmark, scores pass over pass, fail and error, and has no score without them',
+    { sum, none, empty, onlyNa }
+  );
+  assert(averageScore([94, null, 50]) === 72 && averageScore([null]) === null && averageScore([]) === null, 'V13 averageScore rounds the scores that exist');
+  assert(
+    assetScanCountsLabel(sum) === 'Rules: 2 failing, 51 passing, 1 with errors (2 benchmarks)' &&
+      assetScanCountsLabel({ pass: 51, fail: 2, error: 1, benchmarks: 1 }) === 'Rules: 2 failing, 51 passing, 1 with errors',
+    'V14a assetScanCountsLabel names the benchmarks only when there are several'
+  );
+  assert(
+    inventoryScoreCaption({ serverBacked: false, status: 'idle', scored: 0 }) === 'Needs a server-backed organization' &&
+      inventoryScoreCaption({ serverBacked: true, status: 'loading', scored: 0 }) === 'Loading configuration scans…' &&
+      inventoryScoreCaption({ serverBacked: true, status: 'idle', scored: 0 }) === 'Loading configuration scans…' &&
+      inventoryScoreCaption({ serverBacked: true, status: 'error', scored: 0 }) === 'Configuration scans could not be loaded' &&
+      inventoryScoreCaption({ serverBacked: true, status: 'ready', scored: 0 }) === 'No configuration scans yet' &&
+      inventoryScoreCaption({ serverBacked: true, status: 'ready', scored: 1 }) === 'Average of 1 scanned asset' &&
+      inventoryScoreCaption({ serverBacked: true, status: 'ready', scored: 3 }) === 'Average of 3 scanned assets',
+    'V14b inventoryScoreCaption covers every state'
+  );
+  const scanView = (o: Partial<{ serverBacked: boolean; status: 'idle' | 'loading' | 'ready' | 'error'; truncated: boolean }>, summary = sum) => assetScanView({ serverBacked: true, status: 'ready', truncated: false, summary, ...o });
+  assert(
+    scanView({ serverBacked: false }) === 'unavailable' && scanView({ status: 'error' }) === 'unavailable' && scanView({ status: 'idle' }) === 'loading' && scanView({ status: 'loading' }) === 'loading' &&
+      scanView({}, none) === 'never' && scanView({ truncated: true }, none) === 'notLoaded' && scanView({}, onlyNa) === 'unscored' && scanView({}) === 'scored',
+    'V14c assetScanView tells unavailable, loading, never, not loaded, unscored and scored apart'
+  );
+  assert(INVENTORY_COPY.scoreTitle === 'Configuration score' && INVENTORY_COPY.scanHeader === 'Last configuration scan' && INVENTORY_COPY.never === 'Never scanned' && INVENTORY_COPY.unscored === 'Unscored', 'V14d the inventory copy');
+  assert(
+    !/STIG|PHOTON AGENT|Fleet Health/.test(inventory) && inventory.includes('ApiClient.listConfigScans(tenantId, { latest: true, limit: 500 })') && inventory.includes('assetConfigSummary(') && inventory.includes('assetScanView(') &&
+      inventory.includes('INVENTORY_COPY.scanHeader') && inventory.includes('INVENTORY_COPY.scoreNote') && inventory.includes('aria-hidden="true" className="w-16') &&
+      !inventory.includes('asset.complianceScore') && !inventory.includes('asset.lastScannedAt') &&
+      !/console\.|localStorage|sessionStorage/.test(inventory) && inventory.split('colSpan={columnCount}').length - 1 === 2,
+    'V15 the inventory reads the latest configuration scans, shows no stored score or scan time, and stores and logs nothing'
+  );
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

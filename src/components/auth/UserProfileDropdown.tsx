@@ -197,8 +197,8 @@ export const UserProfileDropdown: React.FC = () => {
                 }}
                 className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
               >
-                <Key className="w-4 h-4 text-slate-400" />
-                <span>API Session Token</span>
+                <Key className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                <span>API Keys & Service Tokens</span>
               </button>
             </div>
 

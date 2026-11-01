@@ -112,7 +112,7 @@ export const StorageService = {
       const key = this.getAssessmentKey(tenant.id, segment);
       const data = localStorage.getItem(key);
       if (data) {
-        const parsed = JSON.parse(data) as AssessmentState;
+        const parsed = stripFailingAssetsForCache(JSON.parse(data) as AssessmentState);
         const targetControls = getFrameworkControls(framework);
         // Ensure all framework controls are present
         for (const ctrl of targetControls) {
@@ -132,8 +132,6 @@ export const StorageService = {
         // until the server copy loads. Browser-only tenants keep their (only) copy.
         for (const ctrl of Object.values(parsed.controls)) {
           ctrl.implementationNotes = tenant.serverBacked ? '' : typeof ctrl.implementationNotes === 'string' ? ctrl.implementationNotes : '';
-          // Failing-asset lists (host names, IPs, scan output) are session-only for a live tenant
-          if (tenant.serverBacked) delete ctrl.failingAssets;
         }
         // The evidence list (file names, descriptions) is likewise server-only for a live tenant; the live list replaces it.
         if (tenant.serverBacked) parsed.evidenceIndex = [];
@@ -183,11 +181,13 @@ export const StorageService = {
 
   /**
    * Save assessment state under strict tenant namespace. Implementation notes (possible CUI) are stripped from the
-   * cache unless `keepNotes` is set, which only browser-only tenants may do (their cache is the only copy).
+   * cache unless `keepNotes` is set, which only browser-only tenants may do (their cache is the only copy). Failing-asset lists
+   * (host names, IPs, scan output) are never cached, whatever `keepNotes` says: nothing reads them since #206.
    */
   saveAssessment(tenantId: string, state: AssessmentState, options: { keepNotes?: boolean; segment?: string | null } = {}): void {
     try {
-      const base: AssessmentState = options.keepNotes ? state : stripEvidenceIndexForCache(stripSspMetadataForCache(stripObjectiveNarrativesForCache(stripFailingAssetsForCache(stripImplementationNotesForCache(state)))));
+      const lean = stripFailingAssetsForCache(state);
+      const base: AssessmentState = options.keepNotes ? lean : stripEvidenceIndexForCache(stripSspMetadataForCache(stripObjectiveNarrativesForCache(stripImplementationNotesForCache(lean))));
       const payload: AssessmentState = {
         ...base,
         tenantId,

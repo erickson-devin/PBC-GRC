@@ -18,15 +18,14 @@ import {
   stripSspMetadataForCache,
   planLocalAssetCleanup,
   scrubAssessmentJson,
+  stripFailingAssetsJson,
+  removeLegacyFleetCache,
   computeNotesStatus,
   runBrowserStorageScrub,
 } from '../src/services/browserStorageScrub';
 import { StorageService } from '../src/services/storageService';
 import { redactLedgerNotesExcerpts, recordAuditEvent, verifyAuditChain, loadLedger, describeNotesForLedger, describeAddressForLedger } from '../src/data/audit/auditLogger';
 import { ingestAccretionDiscoveryPayload } from '../src/data/telemetry/assetRegistry';
-import * as fleetEngine from '../src/data/telemetry/assetTelemetryEngine';
-import { getEnclaveFleet, saveEnclaveFleet, saveAssetRecord, clearEnclaveFleet, fleetStorageMode } from '../src/data/telemetry/assetTelemetryEngine';
-import type { AssetTelemetryRecord } from '../src/types/telemetry';
 import type { AssessmentState } from '../src/types/cmmc';
 import type { AuditLogEntry } from '../src/types/audit';
 import type { Tenant } from '../src/types/tenant';
@@ -301,7 +300,6 @@ async function main() {
     'src/data/storage/offboardingEngine.ts',
     'src/data/storage/retentionPolicy.ts',
     'src/data/telemetry/assetRegistry.ts',
-    'src/data/telemetry/assetTelemetryEngine.ts',
     'src/services/browserStorageScrub.ts',
     'src/services/failedMoves.ts',
     'src/services/idleLock.ts', // the session lock record (an opaque session reference and a timestamp) and the last-input time, never a session or CUI (#163)
@@ -670,51 +668,41 @@ async function main() {
   const raceEntries = JSON.parse(storedRace) as AuditLogEntry[];
   assert(rRace.failed === 0 && raceEntries.some((e) => e.id === ext12[ext12.length - 1].id) && !storedRace.includes(HOST) && !storedRace.includes(IP) && (await verifyAuditChain(raceEntries)).isValid, 'I12 an entry appended during the scrub is kept, redacted and the chain verifies', rRace);
 
-  console.log('\n--- Fleet scan data (server tenants never keep it in browser storage) ---');
+  console.log('\n--- Legacy fleet cache (read and written by nothing since #206; the scrub removes every copy) ---');
   globalStore.clear();
-  const flRecord: AssetTelemetryRecord = { assetId: 'asset_fl1', hostName: 'HOST-MARK-FL', ipAddress: '10.79.0.1', osProfile: 'rhel9', macAddress: '', lastScanTimestamp: '2026-10-01T00:00:00.000Z', totalRulesEvaluated: 1, passedRuleCount: 0, failedRuleCount: 1, assetComplianceScore: 0, ruleResults: [{ ruleId: 'sshd_disable_root_login', cceId: '', cmmcControlId: 'AC.L1-3.1.1', status: 'FAIL', severity: 'CAT_II', title: 't', stdout: '', fixScript: '' }] };
-  saveAssetRecord(flRecord, 'srvF', 'memory');
-  assert(
-    globalStore.getItem(FLEET_KEY_PREFIX + 'srvF') === null &&
-      !Array.from({ length: globalStore.length }, (_, i) => globalStore.getItem(globalStore.key(i)!)!).some((v) => v.includes('HOST-MARK-FL')) &&
-      getEnclaveFleet('srvF', 'memory').length === 1,
-    'FL1 a memory-mode ingest writes nothing to browser storage and the fleet is readable in memory'
-  );
-  saveAssetRecord(flRecord, 'brwF', 'browser');
-  const flBrwCache = globalStore.getItem(FLEET_KEY_PREFIX + 'brwF');
-  assert(flBrwCache !== null && JSON.parse(flBrwCache).length === 1, 'FL2 a browser-mode ingest keeps the fleet in browser storage');
-  assert(
-    ['ingestScanReportToAsset', 'aggregateAssetTelemetry', 'applyBoundaryTelemetryToControls', 'remediateAssetRule', 'generateAssetId'].every((n) => !(n in fleetEngine)),
-    'FL3 the fleet engine no longer scans, rolls up, writes control statuses or fakes remediation (#103)'
-  );
-  const flOne = [{ assetId: 'a1', hostName: 'HOST-MARK-FL', ipAddress: '10.79.0.2', ruleResults: [] }] as any;
-  globalStore.setItem(FLEET_KEY_PREFIX + 'srvG', JSON.stringify(flOne));
-  saveEnclaveFleet([], 'srvG', 'memory');
-  assert(globalStore.getItem(FLEET_KEY_PREFIX + 'srvG') === null, 'FL4 a memory-mode save removes a leftover browser copy');
-  globalStore.setItem(FLEET_KEY_PREFIX + 'srvH', JSON.stringify(flOne));
-  assert(getEnclaveFleet('srvH', 'memory').length === 0, 'FL5 a memory-mode read never reads a leftover browser copy');
-  saveAssetRecord({ ...flRecord, failedRuleCount: 0 }, 'srvF', 'memory');
-  const flAfter = getEnclaveFleet('srvF', 'memory');
-  assert(
-    flAfter.length === 1 && flAfter[0].failedRuleCount === 0 && globalStore.getItem(FLEET_KEY_PREFIX + 'srvF') === null,
-    'FL6 saving a record again updates the memory fleet and still writes nothing to browser storage'
-  );
-  saveAssetRecord(flRecord, 'srvD');
-  assert(globalStore.getItem(FLEET_KEY_PREFIX + 'srvD') === null, 'FL7 the default mode is memory');
-  assert(fleetStorageMode({ serverBacked: true }) === 'memory' && fleetStorageMode({}) === 'browser', 'FL8 fleetStorageMode maps server-backed to memory');
-  clearEnclaveFleet('srvF');
-  clearEnclaveFleet('brwF');
-  assert(getEnclaveFleet('srvF', 'memory').length === 0 && globalStore.getItem(FLEET_KEY_PREFIX + 'brwF') === null, 'FL9 clearEnclaveFleet clears the memory and the browser copy');
+  const enginePath = path.join(process.cwd(), 'src/data/telemetry/assetTelemetryEngine.ts');
+  assert(!fs.existsSync(enginePath), 'FL1 the fleet engine file is gone');
+  const flStale: string[] = [];
+  const walkStale = (dir: string): void => {
+    for (const e of fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walkStale(rel);
+      else if (/\.tsx?$/.test(e.name) && /\b(getEnclaveFleet|saveEnclaveFleet|clearEnclaveFleet|saveAssetRecord|fleetStorageMode|AssetTelemetryRecord|AssetRuleResult|FailingAssetInfo)\b/.test(fs.readFileSync(path.join(process.cwd(), rel), 'utf8'))) flStale.push(rel);
+    }
+  };
+  walkStale('src');
+  assert(flStale.length === 0, 'FL2 nothing in src names the removed fleet engine or its types', flStale);
+  globalStore.setItem(FLEET_KEY_PREFIX + 'mv1', '[]');
+  removeLegacyFleetCache(globalStore, 'mv1');
+  assert(globalStore.getItem(FLEET_KEY_PREFIX + 'mv1') === null, 'FL3 removeLegacyFleetCache removes the tenant\'s fleet key');
+  let flThrew = false;
+  try {
+    removeLegacyFleetCache({ removeItem() { throw new Error('blocked'); } }, 'a');
+  } catch {
+    flThrew = true;
+  }
+  assert(!flThrew, 'FL4 removeLegacyFleetCache never throws when storage is unavailable');
 
+  const flOne = [{ assetId: 'a1', hostName: 'HOST-MARK-FL', ipAddress: '10.79.0.2', ruleResults: [] }] as any;
   const stF = new MemoryStorage();
   stF.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }, { id: 'brw1' }]));
   for (const id of ['srv1', 'brw1', 'orphan9']) stF.setItem(FLEET_KEY_PREFIX + id, JSON.stringify(flOne));
   const fsLogs: string[] = [];
   const fs1 = await runBrowserStorageScrub(stF, (m) => fsLogs.push(m));
   assert(
-    fs1.fleetCachesRemoved === 1 && stF.getItem(FLEET_KEY_PREFIX + 'srv1') === null &&
-      stF.getItem(FLEET_KEY_PREFIX + 'brw1') === JSON.stringify(flOne) && stF.getItem(FLEET_KEY_PREFIX + 'orphan9') === JSON.stringify(flOne),
-    'FS1 the scrub removes only a registered server tenant\'s fleet key', fs1
+    fs1.fleetCachesRemoved === 3 && stF.getItem(FLEET_KEY_PREFIX + 'srv1') === null &&
+      stF.getItem(FLEET_KEY_PREFIX + 'brw1') === null && stF.getItem(FLEET_KEY_PREFIX + 'orphan9') === null,
+    'FS1 the scrub removes every fleet key: server tenant, browser-only tenant and unregistered id', fs1
   );
   stF.setCalls.length = 0;
   const fs2 = await runBrowserStorageScrub(stF, () => undefined);
@@ -723,7 +711,7 @@ async function main() {
   stF3.setItem('pbc_live_tenants_v4', 'garbage');
   stF3.setItem(FLEET_KEY_PREFIX + 'srv1', JSON.stringify(flOne));
   const fs3 = await runBrowserStorageScrub(stF3, () => undefined);
-  assert(fs3.registryUnreadable && stF3.getItem(FLEET_KEY_PREFIX + 'srv1') === JSON.stringify(flOne), 'FS3 an unreadable registry leaves the fleet key alone', fs3);
+  assert(fs3.registryUnreadable && fs3.fleetCachesRemoved === 1 && stF3.getItem(FLEET_KEY_PREFIX + 'srv1') === null, 'FS3 an unreadable registry still removes the fleet key', fs3);
   assert(fsLogs.length > 0 && fsLogs.every((l) => !l.includes('srv1') && !l.includes('HOST-MARK-FL')), 'FS4 the scrub log line carries counts only', fsLogs);
 
   console.log('\n--- failingAssets (host names, IPs) never cached for server tenants ---');
@@ -734,15 +722,15 @@ async function main() {
   const faRaw = globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!;
   assert(!faRaw.includes('HOST-MARK-FA') && !faRaw.includes('10.80.0.1') && Object.values(JSON.parse(faRaw).controls).every((c: any) => c.failingAssets === undefined), 'FA1 saveAssessment strips failingAssets');
   StorageService.saveAssessment('brw1', faState, { keepNotes: true });
-  assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'brw1')!.includes('HOST-MARK-FA'), 'FA2 keepNotes keeps failingAssets for a browser-only tenant');
+  assert(!globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'brw1')!.includes('HOST-MARK-FA'), 'FA2 keepNotes no longer keeps failingAssets (#206)');
   globalStore.clear();
   globalStore.setItem(ASSESSMENT_KEY_PREFIX + 'srv1', JSON.stringify(faState));
   globalStore.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', JSON.stringify(faState));
   const faSrv = StorageService.loadAssessment(makeTenant('srv1', true));
   const faBrw = StorageService.loadAssessment(makeTenant('brw1', false));
   assert(
-    Object.values(faSrv.controls).every((c) => c.failingAssets === undefined) && Object.keys(faState.controls).every((id) => Array.isArray(faBrw.controls[id].failingAssets) && faBrw.controls[id].failingAssets!.length === 1),
-    'FA3 loadAssessment drops failingAssets for a server tenant and keeps them for a browser-only one'
+    Object.values(faSrv.controls).every((c) => c.failingAssets === undefined) && Object.values(faBrw.controls).every((c) => c.failingAssets === undefined),
+    'FA3 loadAssessment drops failingAssets for a server tenant and for a browser-only one'
   );
   const stFA = new MemoryStorage();
   stFA.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'srv1', serverBacked: true }]));
@@ -752,13 +740,35 @@ async function main() {
   stFA.setItem(ASSESSMENT_KEY_PREFIX + 'orphan9', JSON.stringify(faNoNotes));
   const fa4 = await runBrowserStorageScrub(stFA, () => undefined);
   assert(
-    fa4.failingAssetListsCleared === Object.keys(faState.controls).length && stFA.getItem(ASSESSMENT_KEY_PREFIX + 'orphan9') === JSON.stringify(faNoNotes) &&
+    fa4.failingAssetListsCleared === 2 * Object.keys(faState.controls).length && !stFA.getItem(ASSESSMENT_KEY_PREFIX + 'orphan9')!.includes('HOST-MARK-FA') &&
       !stFA.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes('HOST-MARK-FA'),
-    'FA4 the scrub clears failingAssets for a registered server tenant only', fa4
+    'FA4 the scrub clears failingAssets for a registered server tenant and for an unregistered id', fa4
   );
   const faBefore = JSON.stringify(faState);
   const faOut = stripFailingAssetsForCache(faState);
   assert(Object.values(faOut.controls).every((c) => c.failingAssets === undefined) && JSON.stringify(faState) === faBefore, 'FA5 stripFailingAssetsForCache never mutates its input');
+
+  const stFB = new MemoryStorage();
+  stFB.setItem('pbc_live_tenants_v4', JSON.stringify([{ id: 'brw1' }]));
+  const faBrwState = makeState('brw1', 'BRW-NOTE-6');
+  for (const c of Object.values(faBrwState.controls)) (c as any).failingAssets = [{ hostName: 'HOST-MARK-FA', ipAddress: '10.80.0.1' }];
+  stFB.setItem(ASSESSMENT_KEY_PREFIX + 'brw1', JSON.stringify(faBrwState));
+  const fa6 = await runBrowserStorageScrub(stFB, () => undefined);
+  const fa6Raw = stFB.getItem(ASSESSMENT_KEY_PREFIX + 'brw1')!;
+  assert(
+    fa6.failingAssetListsCleared === Object.keys(faBrwState.controls).length && !fa6Raw.includes('HOST-MARK-FA') && fa6Raw.includes('BRW-NOTE-6') && fa6.keptBrowserOnly === 1,
+    'FA6 the scrub clears failingAssets of a browser-only tenant and keeps its notes', fa6
+  );
+  const fa7a = stripFailingAssetsJson(JSON.stringify({ controls: { X: { id: 'X', implementationNotes: 'N', failingAssets: [{ hostName: 'h' }] } } }));
+  const fa7Parsed = fa7a.json ? JSON.parse(fa7a.json) : null;
+  const fa7Raw = '{"controls":{}}';
+  const fa7c = stripFailingAssetsJson(fa7Raw);
+  const fa7b = stripFailingAssetsJson('garbage');
+  assert(
+    fa7a.changed && fa7a.cleared === 1 && fa7Parsed.controls.X.implementationNotes === 'N' && fa7Parsed.controls.X.failingAssets === undefined &&
+      !fa7b.changed && fa7b.json === null && fa7b.cleared === 0 && !fa7c.changed && fa7c.json === fa7Raw && fa7c.cleared === 0,
+    'FA7 stripFailingAssetsJson clears only the lists, never throws and returns the same string when unchanged'
+  );
 
   const readSrcN = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
   const fleetCallers: string[] = [];
@@ -766,12 +776,14 @@ async function main() {
     for (const e of fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
       const rel = `${dir}/${e.name}`;
       if (e.isDirectory()) walkFleet(rel);
-      else if (/\.tsx?$/.test(e.name) && /\b(getEnclaveFleet|saveEnclaveFleet|saveAssetRecord)\(/.test(readSrcN(rel))) fleetCallers.push(rel);
+      else if (/\.tsx?$/.test(e.name) && /\b(getEnclaveFleet|saveEnclaveFleet|clearEnclaveFleet|saveAssetRecord)\(/.test(readSrcN(rel))) fleetCallers.push(rel);
     }
   };
   for (const d of ['src/components', 'src/context', 'src/hooks']) walkFleet(d);
-  assert(fleetCallers.length === 0 && readSrcN('src/context/TenantContext.tsx').includes('clearEnclaveFleet('), 'FSrc1 no screen or context reads or writes the fleet any more; switching tenants still clears it', fleetCallers);
-  assert(!readSrcN('src/data/telemetry/assetTelemetryEngine.ts').split('\n').some((l) => /console\.\w+\(.*\berr\b/.test(l)), 'FSrc2 the fleet engine logs no error objects');
+  const tenantCtxSrc = readSrcN('src/context/TenantContext.tsx');
+  assert(fleetCallers.length === 0 && !tenantCtxSrc.includes('clearEnclaveFleet(') && tenantCtxSrc.includes('removeLegacyFleetCache(localStorage, target.id)'), 'FSrc1 no screen or context reads or writes the fleet any more; moving to the server still removes the old copy', fleetCallers);
+  const scrubSrc = readSrcN('src/services/browserStorageScrub.ts');
+  assert(scrubSrc.indexOf('FLEET_KEY_PREFIX)) continue') > 0 && scrubSrc.indexOf('FLEET_KEY_PREFIX)) continue') < scrubSrc.indexOf('const registry = readRegistryIds(storage)'), 'FSrc2 the fleet keys are removed before the registry is read');
   assert(readSrcN('src/data/storage/offboardingEngine.ts').includes('FLEET_KEY_PREFIX'), 'FSrc3 offboarding purges the fleet key');
 
   console.log('\n================================================================');

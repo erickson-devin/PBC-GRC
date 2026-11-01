@@ -1,5 +1,4 @@
 import type { AssessmentState, ControlState, ControlStatus } from '../types/cmmc';
-import type { FailingAssetInfo } from '../types/telemetry';
 
 // What a control edit does, worked out from the current controls before anything is set, sent or recorded. A state updater must stay
 // pure (StrictMode runs it twice), so the ledger entry and the server save are made once, outside it, from these plans.
@@ -62,7 +61,6 @@ export function planControlStatus(
   controls: Record<string, ControlState>,
   controlId: string,
   status: ControlStatus,
-  failingAssets: FailingAssetInfo[] | undefined,
   ctx: ControlEditContext
 ): { next: ControlState; previousStatus: ControlStatus } {
   const current = baseControlState(controls, controlId, ctx.tenantId, ctx.timestamp);
@@ -70,7 +68,6 @@ export function planControlStatus(
     next: {
       ...current,
       status,
-      failingAssets: failingAssets !== undefined ? failingAssets : current.failingAssets,
       lastUpdated: ctx.timestamp,
       updatedBy: ctx.updatedBy,
     },

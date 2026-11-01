@@ -66,7 +66,7 @@ All Wazuh field names and endpoints are from knowledge of Wazuh 4.x, not from a 
 
 ## 5. Creating the service token
 
-A TENANT_OWNER or MSP_ADMIN creates it with `POST /api/v1/tenants/:tenantId/vm/tokens` over HTTPS. The token is shown once. The default expiry is 365 days: rotate before it expires. See `docs/VULNERABILITY_MANAGEMENT.md`.
+A TENANT_OWNER or MSP_ADMIN creates it over HTTPS in the app (profile menu, "API Keys & Service Tokens": name, expiry 1 to 730 days, default 90) or with `POST /api/v1/tenants/:tenantId/vm/tokens`. The token is shown once. Through the API alone the default expiry is 365 days. Rotate before it expires. See `docs/VULNERABILITY_MANAGEMENT.md`.
 
 ## 6. TLS requirements
 

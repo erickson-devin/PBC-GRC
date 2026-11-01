@@ -29,7 +29,7 @@ import { SspGateBanner } from './SspGateBanner';
 export const ComplianceOverview: React.FC = () => {
   const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
   const { currentTenant, canEdit, currentRole, activeFramework } = useTenant();
-  const storageConfig = useStorageConfig(currentTenant?.id);
+  const storageConfig = useStorageConfig(currentTenant);
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
   const guidance = getFrameworkGuidanceText(activeFramework);

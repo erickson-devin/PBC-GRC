@@ -51,12 +51,15 @@ console.log('--- planStarterTemplate ---');
 
 console.log('\n--- planControlStatus and planControlRole ---');
 {
-  const s = planControlStatus({}, 'X', 'MET', undefined, ctx);
+  const s = planControlStatus({}, 'X', 'MET', ctx);
   assert(s.previousStatus === 'NOT_STARTED' && s.next.status === 'MET', 'S181-4 a fresh control was NOT_STARTED', s);
-  const fa = [{ assetId: 'a' }] as unknown as NonNullable<ControlState['failingAssets']>;
-  const keep = planControlStatus({ X: existing({ failingAssets: fa }) }, 'X', 'MET', undefined, ctx);
-  const clear = planControlStatus({ X: existing({ failingAssets: fa }) }, 'X', 'MET', [], ctx);
-  assert(keep.next.failingAssets === fa && Array.isArray(clear.next.failingAssets) && clear.next.failingAssets.length === 0, 'S181-4 failing assets are kept when not passed and replaced when passed');
+  const set = planControlStatus({ X: existing() }, 'X', 'MET', ctx);
+  const planSrc = fs.readFileSync(path.join(process.cwd(), 'src/utils/controlEditPlan.ts'), 'utf8');
+  const assessSrc = fs.readFileSync(path.join(process.cwd(), 'src/context/AssessmentContext.tsx'), 'utf8');
+  assert(
+    set.next.status === 'MET' && set.previousStatus === 'NOT_STARTED' && !planSrc.includes('failingAssets') && !planSrc.includes('FailingAssetInfo') && !assessSrc.includes('failingAssets') && !assessSrc.includes('FailingAssetInfo'),
+    'S181-4b a status edit takes no failing-asset list (#206)'
+  );
   const r = planControlRole({ X: existing({ responsibleRole: 'R' }) }, 'X', 'New', ctx);
   assert(r.previousRole === 'R' && r.next.responsibleRole === 'New' && r.next.updatedBy === 'Ann', 'S181-5 the role plan reports the previous role and sets the new one', r);
 }

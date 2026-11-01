@@ -1,13 +1,17 @@
-import React from 'react';
+import React, { useId } from 'react';
 import {
   X,
   Key,
+  KeyRound,
+  Lock,
   ShieldCheck,
   Clock,
   Terminal,
   Server,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { VM_TOKENS_COPY } from '../../data/telemetry/vmTokensView';
+import { VmServiceTokensSection } from './VmServiceTokensSection';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface ApiTokensModalProps {
@@ -19,7 +23,9 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { currentTenant } = useTenant();
+  const { currentTenant, canEdit } = useTenant();
+  const serverBacked = Boolean(currentTenant.serverBacked);
+  const tokensHeadingId = useId();
 
   if (!isOpen) return null;
 
@@ -30,7 +36,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
-      <div className="w-full max-w-lg p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
+      <div className="w-full max-w-2xl p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="max-h-[calc(94vh-0.75rem)] overflow-y-auto p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
           
           {/* Header */}
@@ -40,8 +46,8 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
                 <Key className="w-4 h-4" />
               </div>
               <div>
-                <DialogTitle as="h3" className="text-sm font-bold text-white">API Keys & Session Tokens</DialogTitle>
-                <p className="text-xs text-slate-400">Service tokens for scripts and scanners</p>
+                <DialogTitle as="h2" className="text-sm font-bold text-white">API Keys & Service Tokens</DialogTitle>
+                <p className="text-xs text-slate-400">Your browser session, and the service tokens scanners push with</p>
               </div>
             </div>
             <button aria-label="Close"
@@ -66,9 +72,31 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </div>
 
             <p className="text-slate-400 leading-relaxed">
-              Your browser session is kept in an HttpOnly cookie, so it cannot be copied or read by scripts. For scripts and scanners, create a VM service token and send it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).
+              Your browser session is kept in an HttpOnly cookie, so it cannot be copied or read by scripts.{' '}
+              {!serverBacked ? (
+                <>Scripts and scanners push to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> with a VM service token, which needs a server-backed organization.</>
+              ) : canEdit ? (
+                <>For scripts and scanners, create a VM service token below and send it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).</>
+              ) : (
+                <>For scripts and scanners, a Tenant Owner or MSP Admin creates a VM service token here; it is sent to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).</>
+              )}
             </p>
           </div>
+
+          {/* VM service tokens */}
+          {serverBacked && canEdit ? (
+            <VmServiceTokensSection key={currentTenant.id} tenantId={currentTenant.id} tenantName={currentTenant.name} />
+          ) : (
+            <section aria-labelledby={tokensHeadingId} className="space-y-2 text-xs pt-4 border-t border-slate-800">
+              <h3 id={tokensHeadingId} className="text-sm font-bold text-white flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-brand-400" aria-hidden="true" />{VM_TOKENS_COPY.heading}
+              </h3>
+              <p role="note" className="flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-slate-300">
+                <Lock className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <span>{serverBacked ? VM_TOKENS_COPY.notOwner : VM_TOKENS_COPY.browserOnly}</span>
+              </p>
+            </section>
+          )}
 
           {/* cURL Usage snippet */}
           <div className="space-y-2 text-xs">
@@ -85,7 +113,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
           <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs text-slate-400 flex items-start gap-2">
             <Server className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
             <span>
-              Calls with a service token automatically resolve PostgreSQL Row-Level Security (RLS) for tenant enclave: <strong className="text-slate-300">{currentTenant.name}</strong>.
+              A service token belongs to one organization: everything pushed with it is stored for <strong className="text-slate-300">{currentTenant.name}</strong> only.
             </span>
           </div>
 

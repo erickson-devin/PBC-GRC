@@ -1,4 +1,3 @@
-import { FailingAssetInfo } from './telemetry';
 import { AssessmentObjective } from './assessment';
 
 export type ControlStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'MET' | 'NOT_MET';
@@ -68,7 +67,6 @@ export interface ControlState {
   lastUpdated: string;
   tags: string[];
   updatedBy?: string;
-  failingAssets?: FailingAssetInfo[];
   telemetrySyncedAt?: string;
   updatedAt?: string | null; // the server's stored timestamp (null: no row yet)
 }
