@@ -1,4 +1,4 @@
-import React, { useState, useRef, useId, useMemo } from 'react';
+import React, { useState, useRef, useId, useMemo, useCallback, useEffect } from 'react';
 import {
   Server,
   Monitor,
@@ -22,6 +22,7 @@ import {
   Info,
   PlusCircle,
   MinusCircle,
+  ListChecks,
 } from 'lucide-react';
 import {
   EnclaveAsset,
@@ -32,6 +33,10 @@ import {
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, summarizeScope } from '../../data/telemetry/assetScope';
 import { describeFipsModule } from '../../data/telemetry/fipsValidation';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
+import { ApiClient } from '../../services/apiClient';
+import type { VmConfigScan } from '../../types/vm';
+import { INVENTORY_COPY, assetConfigSummary, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption, latestScansByAsset, shownCaption } from '../../data/telemetry/configResultsView';
+import type { InventoryScanStatus } from '../../data/telemetry/configResultsView';
 import { useTenant } from '../../context/TenantContext';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
@@ -46,10 +51,14 @@ import { BoundaryChangePlan, BoundaryFilter, boundaryBlockMessage, boundaryEditB
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 
+const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700';
+
 export const AssetInventoryManager: React.FC = () => {
   const { currentTenant, activeProgram, programs, programsStatus } = useTenant();
   // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
+  const serverBacked = Boolean(currentTenant.serverBacked);
+  const tenantId = currentTenant.id;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedOs, setSelectedOs] = useState<string>('ALL');
@@ -82,6 +91,29 @@ export const AssetInventoryManager: React.FC = () => {
   const columnCount = showBoundary ? 8 : 7;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Latest configuration scans (#206): one tenant-wide request, grouped by asset. Server-backed organizations only (the server receives the scans).
+  const [scanState, setScanState] = useState<{ status: InventoryScanStatus; byAsset: Map<string, VmConfigScan[]>; shown: number; total: number }>({ status: 'idle', byAsset: new Map(), shown: 0, total: 0 });
+  const scanTenantRef = useRef(tenantId);
+  const loadScans = useCallback(async (): Promise<void> => {
+    if (!serverBacked) return;
+    const at = tenantId;
+    setScanState((st) => ({ ...st, status: 'loading' }));
+    try {
+      const r = await ApiClient.listConfigScans(tenantId, { latest: true, limit: 500 });
+      if (scanTenantRef.current !== at) return;
+      setScanState({ status: 'ready', byAsset: latestScansByAsset(r.scans), shown: r.scans.length, total: r.totalCount });
+    } catch {
+      if (scanTenantRef.current !== at) return;
+      setScanState((st) => ({ ...st, status: 'error' }));
+    }
+  }, [tenantId, serverBacked]);
+  useEffect(() => {
+    scanTenantRef.current = tenantId;
+    setScanState({ status: 'idle', byAsset: new Map(), shown: 0, total: 0 });
+    void loadScans();
+  }, [tenantId, serverBacked, loadScans]);
+  const truncated = scanState.status === 'ready' && scanState.total > scanState.shown;
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -239,10 +271,9 @@ export const AssetInventoryManager: React.FC = () => {
   );
   const cardSummary = useMemo(() => (cardAssets === assets ? summary : summarizeScope(cardAssets)), [cardAssets, assets, summary]);
   const totalCount = cardSummary.total;
-  const scoredAssets = cardAssets.filter(a => a.complianceScore !== null);
-  const avgComplianceScore = scoredAssets.length > 0
-    ? Math.round(scoredAssets.reduce((sum, a) => sum + (a.complianceScore || 0), 0) / scoredAssets.length)
-    : null; // nothing scanned yet: there is no average to show (never a flattering 100%)
+  const cardScores = cardAssets.map((a) => assetConfigSummary(scanState.byAsset.get(a.id)).score);
+  const scoredCount = cardScores.filter((sc) => sc !== null).length;
+  const avgScore = averageScore(cardScores); // nothing scanned yet: there is no average to show (never a flattering 100%)
 
   // OS Badge styling helper
   const renderOsBadge = (os: string) => {
@@ -275,16 +306,10 @@ export const AssetInventoryManager: React.FC = () => {
           </span>
         );
       case 'PHOTON_AGENT':
-        return (
-          <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
-            <Zap className="w-2.5 h-2.5 text-violet-400" />
-            <span>PHOTON AGENT</span>
-          </span>
-        );
       case 'AGENT_REPORT':
         return (
           <span className="badge inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-violet-500/15 text-violet-300 border border-violet-500/40">
-            <Zap className="w-2.5 h-2.5 text-violet-400" />
+            <Zap className="w-2.5 h-2.5 text-violet-400" aria-hidden="true" />
             <span>AGENT REPORT</span>
           </span>
         );
@@ -370,7 +395,7 @@ export const AssetInventoryManager: React.FC = () => {
             <span>Enclave Asset & Hardware Inventory Manager</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Registered enclave endpoints, CMMC 2.0 scoping categorizations, and DISA STIG telemetry linkage.
+            {INVENTORY_COPY.subtitle}
           </p>
         </div>
 
@@ -438,6 +463,13 @@ export const AssetInventoryManager: React.FC = () => {
         <div className="flex items-center justify-between gap-3">
           <ErrorNotice message="The program boundaries could not be loaded, so membership is not shown and cannot be changed. The inventory itself is unaffected." className="flex-1" />
           <button type="button" onClick={() => void boundary.reload()} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">Retry</button>
+        </div>
+      )}
+
+      {serverBacked && scanState.status === 'error' && (
+        <div className="flex items-center justify-between gap-3">
+          <ErrorNotice message={INVENTORY_COPY.loadError} className="flex-1" />
+          <button type="button" onClick={() => void loadScans()} className={RETRY_CLASS}>Retry</button>
         </div>
       )}
 
@@ -516,13 +548,13 @@ export const AssetInventoryManager: React.FC = () => {
           );
         })}
 
-        <div className="rounded-xl border border-emerald-500/20 bg-emerald-950/20 p-4">
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-emerald-300">Fleet Health</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-semibold text-slate-300">{INVENTORY_COPY.scoreTitle}</span>
+            <ListChecks className="w-4 h-4 text-cyan-400" aria-hidden="true" />
           </div>
-          <p className="text-2xl font-black text-emerald-400 mt-1.5">{avgComplianceScore === null ? '—' : `${avgComplianceScore}%`}</p>
-          <span className="text-xs text-emerald-400/70">{avgComplianceScore === null ? 'No scans yet' : 'STIG Pass Average'}</span>
+          <p className="text-2xl font-black text-white mt-1.5">{avgScore === null ? '—' : `${avgScore}%`}</p>
+          <span className="text-xs text-slate-400">{inventoryScoreCaption({ serverBacked, status: scanState.status, scored: scoredCount })}</span>
         </div>
       </div>
 
@@ -628,17 +660,17 @@ export const AssetInventoryManager: React.FC = () => {
 
       {/* ─── Inventory Asset Table ─── */}
       <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
-        <table aria-busy={busy || undefined} className="w-full text-left text-xs border-collapse">
+        <table aria-busy={busy || (serverBacked && (scanState.status === 'idle' || scanState.status === 'loading')) || undefined} className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="border-b border-slate-800 bg-slate-900/80 text-slate-400 font-semibold">
-              <th className="py-2.5 px-3">Endpoint / Hostname</th>
-              <th className="py-2.5 px-3">IP Address</th>
-              <th className="py-2.5 px-3">OS Platform</th>
-              <th className="py-2.5 px-3">CMMC Scope Category</th>
-              <th className="py-2.5 px-3">Last STIG Scan</th>
-              <th className="py-2.5 px-3">Compliance Score</th>
-              {showBoundary && <th className="py-2.5 px-3">Programs</th>}
-              <th className="py-2.5 px-3 text-right">Actions</th>
+              <th scope="col" className="py-2.5 px-3">Endpoint / Hostname</th>
+              <th scope="col" className="py-2.5 px-3">IP Address</th>
+              <th scope="col" className="py-2.5 px-3">OS Platform</th>
+              <th scope="col" className="py-2.5 px-3">CMMC Scope Category</th>
+              <th scope="col" className="py-2.5 px-3">{INVENTORY_COPY.scanHeader}</th>
+              <th scope="col" className="py-2.5 px-3">{INVENTORY_COPY.scoreTitle}</th>
+              {showBoundary && <th scope="col" className="py-2.5 px-3">Programs</th>}
+              <th scope="col" className="py-2.5 px-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/60">
@@ -656,6 +688,8 @@ export const AssetInventoryManager: React.FC = () => {
               </tr>
             ) : (
               filteredAssets.map(asset => {
+                const cfg = assetConfigSummary(scanState.byAsset.get(asset.id));
+                const view = assetScanView({ serverBacked, status: scanState.status, truncated, summary: cfg });
                 return (
                   <tr
                     key={asset.id}
@@ -764,44 +798,64 @@ export const AssetInventoryManager: React.FC = () => {
                       )}
                     </td>
 
-                    {/* Last Scan Date */}
-                    <td className="py-3 px-3 text-slate-400 font-mono text-xs">
-                      {asset.lastScannedAt ? (
-                        <span>
-                          {new Date(asset.lastScannedAt).toLocaleDateString([], {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
+                    {/* Last configuration scan: the asset's latest scans, summed (never a stored score or date) */}
+                    <td className="py-3 px-3 text-xs text-slate-300 min-w-[10rem]">
+                      {view === 'unavailable' ? (
+                        <>
+                          <span aria-hidden="true" className="text-slate-400">—</span>
+                          <span className="sr-only">{INVENTORY_COPY.notAvailable}</span>
+                        </>
+                      ) : view === 'loading' ? (
+                        <span className="text-slate-400">{INVENTORY_COPY.loadingCell}</span>
+                      ) : view === 'never' ? (
+                        <span className="text-slate-400">{INVENTORY_COPY.never}</span>
+                      ) : view === 'notLoaded' ? (
+                        <span className="text-slate-400">{INVENTORY_COPY.notLoaded}</span>
                       ) : (
-                        <span className="text-slate-400">Never Scanned</span>
+                        <>
+                          <time dateTime={cfg.lastScannedAt!} className="font-mono text-slate-200 whitespace-nowrap">
+                            {new Date(cfg.lastScannedAt!).toLocaleDateString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </time>
+                          <span className="block mt-0.5 text-slate-400">{assetScanCountsLabel(cfg)}</span>
+                        </>
                       )}
                     </td>
 
-                    {/* Compliance Score */}
+                    {/* Configuration score */}
                     <td className="py-3 px-3">
-                      {asset.complianceScore !== null ? (
+                      {view === 'scored' && cfg.score !== null ? (
                         <div className="flex items-center gap-2">
-                          <div className="w-16 bg-slate-800 h-2 rounded-full overflow-hidden shrink-0">
+                          <div aria-hidden="true" className="w-16 bg-slate-800 h-2 rounded-full overflow-hidden shrink-0">
                             <div
                               className={`h-full rounded-full transition-all ${
-                                asset.complianceScore === 100
+                                cfg.score === 100
                                   ? 'bg-emerald-400'
-                                  : asset.complianceScore >= 80
+                                  : cfg.score >= 80
                                   ? 'bg-cyan-400'
                                   : 'bg-rose-500'
                               }`}
-                              style={{ width: `${asset.complianceScore}%` }}
+                              style={{ width: `${cfg.score}%` }}
                             />
                           </div>
                           <span className="font-mono font-bold text-white text-xs">
-                            {asset.complianceScore}%
+                            {cfg.score}%
                           </span>
                         </div>
+                      ) : view === 'unscored' ? (
+                        <>
+                          <span className="text-xs font-mono text-slate-400">{INVENTORY_COPY.unscored}</span>
+                          <span className="block text-xs text-slate-400">{INVENTORY_COPY.unscoredHint}</span>
+                        </>
                       ) : (
-                        <span className="text-xs font-mono text-slate-400">Unscored</span>
+                        <>
+                          <span aria-hidden="true" className="text-xs font-mono text-slate-400">—</span>
+                          <span className="sr-only">{view === 'loading' ? INVENTORY_COPY.loadingCell : view === 'unavailable' ? INVENTORY_COPY.notAvailable : INVENTORY_COPY.unscored}</span>
+                        </>
                       )}
                     </td>
 
@@ -884,6 +938,15 @@ export const AssetInventoryManager: React.FC = () => {
           </tbody>
         </table>
       </div>
+
+      {serverBacked && (
+        <>
+          <p className="text-xs text-slate-400">{INVENTORY_COPY.scoreNote}</p>
+          {shownCaption(scanState.shown, scanState.total, 'configuration scans') && (
+            <p className="text-xs text-slate-400">{shownCaption(scanState.shown, scanState.total, 'configuration scans')}</p>
+          )}
+        </>
+      )}
 
       {/* ─── Add / Edit Modal ─── */}
       <AddAssetModal

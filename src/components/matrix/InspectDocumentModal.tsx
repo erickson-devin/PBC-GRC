@@ -81,7 +81,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram } = useTenant();
-  const storageConfig = useStorageConfig(currentTenant?.id);
+  const storageConfig = useStorageConfig(currentTenant);
 
   // Primary active tab defaults to 'objectives' as specified
   const [activeTab, setActiveTab] = useState<

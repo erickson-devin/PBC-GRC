@@ -108,6 +108,15 @@ export async function fetchStorageConfig(tenantId: string, sessionRef?: string |
 }
 
 /**
+ * Whether the storage configuration may be requested now (#208). The route checks the caller against the requested tenant, so the
+ * request waits for a tenant the server has verified: a server-backed one, after the tenant list has synced and the session is known.
+ * A browser-only tenant never asks, and nothing is asked twice once the server has answered.
+ */
+export function mayFetchStorageConfig(p: { tenantId?: string | null; serverBacked?: boolean; sessionRef?: string | null; tenantsSynced: boolean; loaded: boolean }): boolean {
+  return Boolean(p.tenantId && p.serverBacked && p.sessionRef && p.tenantsSynced && !p.loaded);
+}
+
+/**
  * The path to show people: the server's value, or null while it is not known (never the client default, which
  * is not where the server keeps evidence).
  */

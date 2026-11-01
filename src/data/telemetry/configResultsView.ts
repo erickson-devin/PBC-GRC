@@ -161,3 +161,86 @@ export function unmappedNote(n: number): string {
 export function shownCaption(shown: number, total: number, noun: string): string {
   return total <= shown ? '' : `Showing ${shown} of ${total} ${noun}.`;
 }
+
+// The asset inventory (#206): each asset's latest configuration scans, worked out here so the table stays plain markup.
+
+export const INVENTORY_COPY = {
+  subtitle: 'Registered enclave endpoints, their CMMC scoping categories and their latest configuration scan results.',
+  scoreTitle: 'Configuration score',
+  scanHeader: 'Last configuration scan',
+  never: 'Never scanned',
+  unscored: 'Unscored',
+  unscoredHint: 'No pass or fail results',
+  notLoaded: 'Not among the loaded scans',
+  notAvailable: 'Not available',
+  loadingCell: 'Loading…',
+  loadError: 'Configuration scan results could not be loaded. The inventory itself is unaffected.',
+  scoreNote: "Configuration score: passing rules as a share of the passing, failing and errored rules in each asset's latest scan of every benchmark.",
+} as const;
+
+export type InventoryScanStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface AssetConfigSummary {
+  lastScannedAt: string | null;
+  score: number | null;
+  pass: number;
+  fail: number;
+  error: number;
+  benchmarks: number;
+}
+
+/** Groups scans by asset id, keeping the input order within each asset. */
+export function latestScansByAsset(scans: readonly VmConfigScan[]): Map<string, VmConfigScan[]> {
+  const byAsset = new Map<string, VmConfigScan[]>();
+  for (const scan of scans) {
+    const list = byAsset.get(scan.assetId);
+    if (list) list.push(scan);
+    else byAsset.set(scan.assetId, [scan]);
+  }
+  return byAsset;
+}
+
+/** One asset's scans summed: the score is the share of passing rules among passing, failing and errored ones (null when there are none). */
+export function assetConfigSummary(scans?: readonly VmConfigScan[]): AssetConfigSummary {
+  let pass = 0;
+  let fail = 0;
+  let error = 0;
+  let lastScannedAt: string | null = null;
+  for (const scan of scans ?? []) {
+    const g = groupResultCounts(scan.resultCounts);
+    pass += g.pass;
+    fail += g.fail;
+    error += g.error;
+    if (lastScannedAt === null || Date.parse(scan.scannedAt) > Date.parse(lastScannedAt)) lastScannedAt = scan.scannedAt;
+  }
+  const denominator = pass + fail + error;
+  return { lastScannedAt, score: denominator === 0 ? null : Math.round((100 * pass) / denominator), pass, fail, error, benchmarks: scans ? scans.length : 0 };
+}
+
+/** The rounded average of the scores that exist (null when none does). */
+export function averageScore(scores: ReadonlyArray<number | null>): number | null {
+  const present = scores.filter((s): s is number => s !== null);
+  return present.length === 0 ? null : Math.round(present.reduce((a, b) => a + b, 0) / present.length);
+}
+
+export function assetScanCountsLabel(s: Pick<AssetConfigSummary, 'pass' | 'fail' | 'error' | 'benchmarks'>): string {
+  return `Rules: ${s.fail} failing, ${s.pass} passing, ${s.error} with errors${s.benchmarks > 1 ? ` (${s.benchmarks} benchmarks)` : ''}`;
+}
+
+export function inventoryScoreCaption(p: { serverBacked: boolean; status: InventoryScanStatus; scored: number }): string {
+  if (!p.serverBacked) return 'Needs a server-backed organization';
+  if (p.status === 'idle' || p.status === 'loading') return 'Loading configuration scans…';
+  if (p.status === 'error') return 'Configuration scans could not be loaded';
+  if (p.scored === 0) return 'No configuration scans yet';
+  return `Average of ${p.scored} scanned asset${p.scored === 1 ? '' : 's'}`;
+}
+
+export type AssetScanView = 'unavailable' | 'loading' | 'never' | 'notLoaded' | 'unscored' | 'scored';
+
+/** What an asset's scan cells show. 'notLoaded': no scan among the loaded ones, but the server holds more than were loaded. */
+export function assetScanView(p: { serverBacked: boolean; status: InventoryScanStatus; truncated: boolean; summary: AssetConfigSummary }): AssetScanView {
+  if (!p.serverBacked || p.status === 'error') return 'unavailable';
+  if (p.status === 'idle' || p.status === 'loading') return 'loading';
+  if (p.summary.lastScannedAt === null) return p.truncated ? 'notLoaded' : 'never';
+  return p.summary.score === null ? 'unscored' : 'scored';
+}

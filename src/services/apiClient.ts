@@ -26,7 +26,7 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse } from '../types/vm';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmServiceToken } from '../types/vm';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -745,6 +745,27 @@ export const ApiClient = {
   /** GET /api/v1/tenants/:id/vm/config/suggestions for the program (x-program-id): computed on read, never written to a control. */
   async getConfigSuggestions(tenantId: string, programId?: string | null): Promise<VmConfigSuggestionsResponse> {
     return authedJson<VmConfigSuggestionsResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/suggestions`, { tenantId, programId });
+  },
+
+  /** GET /api/v1/tenants/:id/vm/tokens (owner / MSP admin): the organization's service tokens, newest first. Never includes a token value. */
+  async listVmTokens(tenantId: string): Promise<VmServiceToken[]> {
+    const data = await authedJson<{ tokens?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/tokens`, { tenantId });
+    if (!Array.isArray(data?.tokens)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.tokens as VmServiceToken[];
+  },
+
+  /** POST .../vm/tokens. The returned `token` is shown ONCE: the server keeps only its hash. */
+  async createVmToken(tenantId: string, input: { name: string; expiresInDays: number }): Promise<{ token: string; record: VmServiceToken }> {
+    const data = await authedJson<{ token?: unknown; record?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/tokens`, { tenantId, body: { name: input.name, scopes: ['vm:ingest'], expiresInDays: input.expiresInDays } });
+    if (typeof data?.token !== 'string' || !data.token || !data.record || typeof data.record !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { token: data.token, record: data.record as VmServiceToken };
+  },
+
+  /** POST .../vm/tokens/:id/revoke: idempotent; returns the revoked record. */
+  async revokeVmToken(tenantId: string, tokenId: string): Promise<VmServiceToken> {
+    const data = await authedJson<{ token?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/tokens/${encodeURIComponent(tokenId)}/revoke`, { tenantId, body: {} });
+    if (!data?.token || typeof data.token !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.token as VmServiceToken;
   },
 
   /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */

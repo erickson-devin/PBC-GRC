@@ -69,7 +69,6 @@ import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import { planStigNarratives } from '../utils/stigNarrativePlan';
 import { applyControlNext, planControlRole, planControlStatus, planStarterTemplate } from '../utils/controlEditPlan';
-import { FailingAssetInfo } from '../types/telemetry';
 import type { ControlDecisionOutcome } from '../data/telemetry/configResultsView';
 
 export type NavigationTab =
@@ -118,7 +117,7 @@ interface AssessmentContextType {
   setPreviewEvidence: (item: EvidenceItem | null) => void;
 
   // Actions with RBAC enforcement
-  updateControlStatus: (controlId: string, status: ControlStatus, failingAssets?: FailingAssetInfo[]) => void;
+  updateControlStatus: (controlId: string, status: ControlStatus) => void;
   /** Records a status a person chose from a configuration-results suggestion (#103): only ever called from a click, saved with the control's stamp so a newer change is refused, never alerts. */
   decideControlStatus: (controlId: string, status: ControlStatus) => Promise<ControlDecisionOutcome>;
   updateControlNotes: (controlId: string, notes: string) => void;
@@ -450,11 +449,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [currentTenant.id, currentTenant.serverBacked, programScope, updateLiveControl]);
 
   // Action: Update Control Status with RBAC Check
-  const updateControlStatus = useCallback((
-    controlId: string,
-    status: ControlStatus,
-    failingAssets?: FailingAssetInfo[]
-  ) => {
+  const updateControlStatus = useCallback((controlId: string, status: ControlStatus) => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to modify controls for this tenant.');
       return;
@@ -466,7 +461,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // Worked out once from the current controls: the ledger entry and the save are made here, never inside the state updater
     const plan = planControlStatus(
-      stateRef.current.controls, controlId, status, failingAssets,
+      stateRef.current.controls, controlId, status,
       { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() }
     );
 
@@ -543,7 +538,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (outcome !== 'saved') return outcome;
     if (programScopeRef.current !== scope) return 'saved';
     const plan = planControlStatus(
-      stateRef.current.controls, controlId, status, undefined,
+      stateRef.current.controls, controlId, status,
       { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() }
     );
     recordAuditEvent({

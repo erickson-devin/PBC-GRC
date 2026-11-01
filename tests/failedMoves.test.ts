@@ -369,7 +369,7 @@ async function main() {
   );
   assert(mig.indexOf('recordFailedControlMove(') >= 0 && mig.indexOf('recordFailedControlMove(') < mig.indexOf('StorageService.migrateAssessment('), 'MG9 the failed control answers are recorded before the old cache is stripped and removed');
   assert(/legacyControls\.filter\(\(_, i\) => pushed\[i\]\.status === 'rejected'\)/.test(mig), 'MG10 the failed controls are identified by position in the push results');
-  assert(mig.includes('clearEnclaveFleet(target.id)'), 'MG11 the old tenant\'s scan results are cleared from this browser');
+  assert(mig.includes('removeLegacyFleetCache(localStorage, target.id)') && !mig.includes('clearEnclaveFleet('), 'MG11 the old tenant\'s legacy scan cache is removed from this browser');
   assert(legacyNotice.includes('retry from the control matrix'), 'MG12 the notice points to the control matrix retry');
   const pkg = JSON.parse(readSrc('package.json')).scripts as Record<string, string>;
   assert(

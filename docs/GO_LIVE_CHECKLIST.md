@@ -150,8 +150,8 @@ Replace `grc.example.mil` with the host name on the certificate.
 
 ## 8. Scanner integration (optional)
 
-- [ ] Create the service token from an HTTPS session (the app refuses token creation and scanner pushes over plain HTTP
-      unless `VM_ALLOW_INSECURE_TOKENS=true`, which is not for production). Expiry 90 to 180 days.
+- [ ] Create the service token from an HTTPS session, in the profile menu under "API Keys & Service Tokens" (the app refuses token creation and scanner pushes over plain HTTP
+      unless `VM_ALLOW_INSECURE_TOKENS=true`, which is not for production). Expiry 90 to 180 days (the screen defaults to 90).
 - [ ] On the scanner host: `PBC_URL=https://grc.example.mil` (exact host, the exporter follows no redirect),
       `PBC_CA_BUNDLE` for a private CA, `PBC_ALLOW_INSECURE_TRANSPORT` unset. The host needs to reach only port 443 on the
       proxy; there is no forward-proxy support yet.

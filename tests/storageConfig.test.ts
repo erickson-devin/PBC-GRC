@@ -1,7 +1,10 @@
+import fs from 'fs';
+import path from 'path';
 import { ApiClient } from '../src/services/apiClient';
 import {
   fetchStorageConfig,
   getStorageConfig,
+  mayFetchStorageConfig,
   storagePathLabel,
   setServerStorageConfig,
   subscribeStorageConfig,
@@ -55,6 +58,19 @@ assert(storagePathLabel({ loaded: true, localStoragePath: '' }) === null, 'a loa
 
 const noPath = setServerStorageConfig({ provider: 'local', isAirGapped: true });
 assert(noPath.localStoragePath === '' && getStorageConfig().localStoragePath === '', 'a server answer without a path keeps it empty (no invented default)');
+
+console.log('\n--- mayFetchStorageConfig: only a verified server tenant asks (#208) ---');
+const gate = { tenantId: 't1', serverBacked: true, sessionRef: 'r', tenantsSynced: true, loaded: false };
+assert(mayFetchStorageConfig(gate) === true, 'a synced server-backed tenant with a session and no answer yet may fetch');
+assert(mayFetchStorageConfig({ ...gate, serverBacked: false }) === false, 'a browser-only tenant never fetches');
+assert(mayFetchStorageConfig({ ...gate, tenantsSynced: false }) === false, 'nothing is fetched before the tenant list has synced');
+assert(mayFetchStorageConfig({ ...gate, sessionRef: null }) === false, 'nothing is fetched without the session reference');
+assert(mayFetchStorageConfig({ ...gate, loaded: true }) === false, 'nothing is fetched twice once the server has answered');
+assert(mayFetchStorageConfig({ ...gate, tenantId: undefined }) === false, 'nothing is fetched without a tenant');
+const readSrc = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
+const hookSrc = readSrc('src/hooks/useStorageConfig.ts');
+assert(hookSrc.includes('mayFetchStorageConfig(') && hookSrc.includes("tenantSync.status === 'synced'"), 'the hook gates on the shared rule and the tenant sync status');
+assert(readSrc('src/components/dashboard/ComplianceOverview.tsx').includes('useStorageConfig(currentTenant)') && readSrc('src/components/matrix/InspectDocumentModal.tsx').includes('useStorageConfig(currentTenant)'), 'both screens pass the whole tenant, not just its id');
 
 (async () => {
   console.log('\n--- getStorageInfo / fetchStorageConfig send the session reference they are given ---');

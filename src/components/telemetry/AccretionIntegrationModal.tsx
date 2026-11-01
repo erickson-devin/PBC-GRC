@@ -239,7 +239,7 @@ print("Ingest Response:", response.status_code, response.json())`;
             This discovery endpoint accepts only a signed-in Tenant Owner or MSP Admin in this browser (the Simulate button above uses it). Your browser session is kept in an HttpOnly cookie, so it cannot be copied or read by scripts, and this endpoint has no machine credential yet.
           </p>
           <p>
-            For scripts and scanners, create a VM service token and send it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide). The supported scanner integration is the exporter in <code className="text-cyan-400">exporters/pbc-vm-exporter</code>.
+            For scripts and scanners, a Tenant Owner or MSP Admin creates a VM service token under <strong className="text-slate-300">API Keys & Service Tokens</strong> in the profile menu and sends it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide). The supported scanner integration is the exporter in <code className="text-cyan-400">exporters/pbc-vm-exporter</code>.
           </p>
         </div>
 

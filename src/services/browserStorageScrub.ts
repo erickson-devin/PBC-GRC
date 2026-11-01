@@ -239,14 +239,12 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
       clearedEvidence = parsed.evidenceIndex.length;
       parsed.evidenceIndex = [];
     }
-    // Failing-asset lists (host names, IPs, scan output) are session-only for a live tenant: same condition as the evidence.
+    // Failing-asset lists (host names, IPs, scan output) are read by nothing since #206: cleared for every tenant, browser-only included.
     let clearedFailingAssets = 0;
-    if (options.clearEvidence !== false) {
-      for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
-        if (control && typeof control === 'object' && 'failingAssets' in (control as object)) {
-          delete (control as Record<string, unknown>).failingAssets;
-          clearedFailingAssets++;
-        }
+    for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
+      if (control && typeof control === 'object' && 'failingAssets' in (control as object)) {
+        delete (control as Record<string, unknown>).failingAssets;
+        clearedFailingAssets++;
       }
     }
     // SSP metadata text (system environment, boundary, CSPs) goes once the client has marked it as uploaded; same condition as the evidence.
@@ -266,6 +264,39 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
     return { changed: true, json: JSON.stringify(parsed), strippedControls: stripped, strippedObjectives, clearedEvidence, clearedFailingAssets, clearedSspMetadata };
   } catch {
     return { changed: false, json: null, strippedControls: 0, strippedObjectives: 0, clearedEvidence: 0, clearedFailingAssets: 0, clearedSspMetadata: 0, malformed: true };
+  }
+}
+
+/**
+ * Removes only the `failingAssets` lists (host names, IPs, scan output) from a cached assessment, leaving everything else (a
+ * browser-only tenant's notes included). Never throws: a value that is not an assessment comes back as malformed.
+ */
+export function stripFailingAssetsJson(raw: string): { changed: boolean; json: string | null; cleared: number } {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.controls || typeof parsed.controls !== 'object') {
+      return { changed: false, json: null, cleared: 0 };
+    }
+    let cleared = 0;
+    for (const control of Object.values(parsed.controls as Record<string, unknown>)) {
+      if (control && typeof control === 'object' && 'failingAssets' in (control as object)) {
+        delete (control as Record<string, unknown>).failingAssets;
+        cleared++;
+      }
+    }
+    if (cleared === 0) return { changed: false, json: raw, cleared: 0 };
+    return { changed: true, json: JSON.stringify(parsed), cleared };
+  } catch {
+    return { changed: false, json: null, cleared: 0 };
+  }
+}
+
+/** Removes a tenant's legacy fleet cache (the engine that wrote it is gone). Never throws: an unavailable storage simply keeps it. */
+export function removeLegacyFleetCache(storage: Pick<ScrubStorage, 'removeItem'>, tenantId: string): void {
+  try {
+    storage.removeItem(FLEET_KEY_PREFIX + tenantId);
+  } catch {
+    // storage unavailable: the scrub at the next start removes it
   }
 }
 
@@ -382,6 +413,16 @@ export function runAssessmentCacheScrub(
       result.failed++;
     }
   }
+  // The legacy fleet cache (host names, IPs, scan output) is read and written by nothing since #206: every copy goes, even when the registry cannot be read.
+  for (const key of keys) {
+    if (!key.startsWith(FLEET_KEY_PREFIX)) continue;
+    try {
+      storage.removeItem(key);
+      result.fleetCachesRemoved++;
+    } catch {
+      result.failed++;
+    }
+  }
   const registry = readRegistryIds(storage);
   if (!registry) {
     result.registryUnreadable = true;
@@ -421,17 +462,6 @@ export function runAssessmentCacheScrub(
       // unreadable value: left alone
     }
   }
-  // A server tenant's fleet scan data (host names, IPs, scan output) is session-only: any browser copy goes.
-  for (const key of keys) {
-    if (!key.startsWith(FLEET_KEY_PREFIX)) continue;
-    if (!serverBacked.has(key.slice(FLEET_KEY_PREFIX.length))) continue;
-    try {
-      storage.removeItem(key);
-      result.fleetCachesRemoved++;
-    } catch {
-      result.failed++;
-    }
-  }
   for (const key of keys) {
     const prefix = key.startsWith(ASSESSMENT_KEY_PREFIX)
       ? ASSESSMENT_KEY_PREFIX
@@ -443,6 +473,15 @@ export function runAssessmentCacheScrub(
       const id = key.slice(prefix.length);
       if (browserOnly.has(id)) {
         result.keptBrowserOnly++;
+        // A browser-only tenant keeps its notes, but its failing-asset lists (host names, IPs, scan output) go all the same.
+        const own = storage.getItem(key);
+        if (own !== null) {
+          const failing = stripFailingAssetsJson(own);
+          if (failing.changed && failing.json !== null) {
+            storage.setItem(key, failing.json);
+            result.failingAssetListsCleared += failing.cleared;
+          }
+        }
         continue;
       }
       const raw = storage.getItem(key);
