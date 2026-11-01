@@ -48,6 +48,8 @@ export interface ReportMetadata {
    * present the SSP cites them under 3.13.11; an empty list makes the SSP say that none are recorded.
    */
   cryptoModules?: FipsModuleRef[];
+  /** The principal service commitments and system requirements a SOC 2 system description states (1.2). */
+  serviceCommitments?: string;
 }
 
 export interface POAMMilestone {

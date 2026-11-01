@@ -29,7 +29,7 @@ export async function purgeTenantData(params: {
   const certificateId = `CERT-DEST-${params.tenantId.toUpperCase()}-${Date.now()}`;
 
   // Count items being sanitized
-  const controlCount = params.state ? Object.keys(params.state.controls).length : 17;
+  const controlCount = params.state ? Object.keys(params.state.controls).length : 0;
   const evidenceCount = params.state?.evidenceIndex?.length || 0;
   const totalPurgedCount = controlCount + evidenceCount + 1; // +1 for SSP metadata
 

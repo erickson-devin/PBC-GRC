@@ -242,7 +242,7 @@ assert(T122.every((k) => text.has(k)), 'S122-3: the scan includes the four #122 
 // ----------------------------------------------------------------------------- Invented values (#151)
 
 console.log('\n--- Invented values (#151) ---');
-const INVENTED_151 = ['Pitch Black Cyber Enclave', 'Pitch Black Cyber Cloud Services', 'Pitch Black Cyber GRC Engine', 'Pitch Black Cyber Super Admin', 'Health Technologies Group', 'Defense Contracting Information Network', 'Enterprise SaaS Multi-Tenant Platform', 'Electronic Health Data Enclave', 'Defense Industrial Base Contractor', 'Corporate Operations Enclave', '99.95%', 'uptime availability', 'encrypted at rest using AES-256', 'reviewed bi-weekly', 'reviewed monthly', 'Third-Party Compliance Assessor', 'Third-Party Healthcare Compliance Assessor', 'AICPA Certified CPA Firm', 'Lead Information System Owner', 'operations and compliance boundary', 'Organization Enclave', 'Lead Compliance Assessor', 'Compliance & Audit Assessment Team', 'The system boundary encompasses', 'The ePHI boundary encompasses', 'automated continuous checks verified'];
+const INVENTED_151 = ['Pitch Black Cyber Enclave', 'Pitch Black Cyber Cloud Services', 'Pitch Black Cyber GRC Engine', 'Pitch Black Cyber Super Admin', 'Health Technologies Group', 'Defense Contracting Information Network', 'Enterprise SaaS Multi-Tenant Platform', 'Electronic Health Data Enclave', 'Defense Industrial Base Contractor', 'Corporate Operations Enclave', '99.95%', 'uptime availability', 'encrypted at rest using AES-256', 'reviewed bi-weekly', 'reviewed monthly', 'Third-Party Compliance Assessor', 'Third-Party Healthcare Compliance Assessor', 'AICPA Certified CPA Firm', 'Lead Information System Owner', 'operations and compliance boundary', 'Organization Enclave', 'Lead Compliance Assessor', 'Compliance & Audit Assessment Team', 'The system boundary encompasses', 'The ePHI boundary encompasses', 'automated continuous checks verified', 'Defense Enclave Organization', 'CAGE-DEF', 'Boundary Enclave', 'Information System Security Manager', 'Security Engineering Lead', 'HIPAA Compliance Officer', '$4,200 estimated', '$10,500 estimated', 'continuously enforced through automated integration', 'hardware destruction'];
 function fallback151(body: string): string[] {
   const src = body.replace(/\r\n/g, '\n');
   const found: string[] = [];
@@ -286,8 +286,35 @@ assert(fallback151('placeholder="e.g. Corporate Operations Enclave (COE)"').leng
   assert(ret151.includes('params.systemName || NOT_RECORDED'), 'S151-23 the certificate says not recorded for a missing system name');
 }
 {
-  const need151 = ['src/data/reports/documentDefaults.ts', 'src/data/reports/documentCompilers.ts', 'src/data/reports/reportExporters.ts', 'src/data/storage/offboardingEngine.ts', 'src/data/storage/retentionPolicy.ts', 'src/components/reports/ArtifactExportModal.tsx', 'src/components/ssp/SSPBuilder.tsx'];
+  const need151 = ['src/data/reports/documentDefaults.ts', 'src/data/reports/documentCompilers.ts', 'src/data/reports/reportExporters.ts', 'src/data/reports/policyDocumentGenerator.ts', 'src/data/storage/offboardingEngine.ts', 'src/data/storage/retentionPolicy.ts', 'src/components/reports/ArtifactExportModal.tsx', 'src/components/ssp/SSPBuilder.tsx'];
   assert(need151.every((k) => text.has(k)), 'S151-24 the scan includes the #151 target files');
+}
+
+// ----------------------------------------------------------------------------- Documents state only what is recorded (#196 #197 #198 #200)
+
+console.log('\n--- Documents honesty (#196 to #200) ---');
+{
+  const offenders: string[] = [];
+  const dated: string[] = [];
+  for (const [k, body] of text) {
+    if (!k.startsWith('src/data/reports/') && !k.startsWith('src/data/storage/')) continue;
+    const src = body.replace(/\r\n/g, '\n');
+    src.split('\n').forEach((line, i) => { if (/responsibleRole\s*\|\|\s*['"`]/.test(line)) offenders.push(`${k}:${i + 1}`); });
+    if (src.includes('addDaysToDate')) dated.push(k);
+  }
+  assert(offenders.length === 0, 'S198-6: no report compiler or storage engine falls back to an invented responsible role', offenders);
+  assert(dated.length === 0, 'S198-6: no report compiler or storage engine computes a due date', dated);
+  const ret198 = (text.get('src/data/storage/retentionPolicy.ts') ?? '').replace(/\r\n/g, '\n');
+  assert(!ret198.includes(': 17;'), 'S198-7: the destruction certificate counts no invented controls');
+  const pol200 = (text.get('src/data/reports/policyDocumentGenerator.ts') ?? '').replace(/\r\n/g, '\n');
+  assert(pol200.includes('NO_STACK_PROFILE_RECORDED') && !pol200.includes('ENTRA_ID_COMMERCIAL'), 'S200-4: the policy generator invents no Microsoft stack');
+  const SUFFIXES_197 = ['(Signature on Record)', '(Attested)', '(Approved)', '(Concurred)', '(Signed)', '(Verified)'];
+  const suffixed: string[] = [];
+  for (const [k, body] of text) {
+    if (!k.startsWith('src/data/reports/')) continue;
+    body.replace(/\r\n/g, '\n').split('\n').forEach((line, i) => { if (SUFFIXES_197.some((s) => line.includes(s))) suffixed.push(`${k}:${i + 1}`); });
+  }
+  assert(suffixed.length === 0, 'S197-5: no report line appends a signature or approval suffix to a name', suffixed);
 }
 {
   const m = (text.get('src/components/reports/ArtifactExportModal.tsx') ?? '').replace(/\r\n/g, '\n');
@@ -297,9 +324,10 @@ assert(fallback151('placeholder="e.g. Corporate Operations Enclave (COE)"').leng
   assert(!region.includes('formData.') && !region.includes('disabled='), 'S151-27 the checklist never echoes a value and never disables an export');
   assert(region.includes('(optional for this document)') && region.includes('(required)') && region.includes('All recorded values are present.'), 'S151-28 advisory and required gaps differ in text, not only colour');
   assert(m.includes("setActiveTab('metadata');") && m.includes('document.getElementById(metaId(pendingFocusField))'), 'S151-29 a gap opens Boundary Metadata and focuses its input');
-  const fields151 = ['systemName', 'organizationName', 'systemOwner', 'primaryAssessor', 'boundaryDescription', 'cageCode', 'samStatus'];
+  const fields151 = ['systemName', 'organizationName', 'systemOwner', 'primaryAssessor', 'boundaryDescription', 'cageCode', 'samStatus', 'serviceCommitments'];
   const missing151 = fields151.filter((f) => !m.includes(`htmlFor={metaId('${f}')}`) || !m.includes(`id={metaId('${f}')}`));
   assert(missing151.length === 0, 'S151-30 every field getExportGaps can report has a labelled input with an id', missing151);
+  assert(m.includes("serviceCommitments: meta.serviceCommitments || '',") && m.includes('serviceCommitments: formData.serviceCommitments'), 'S199-5 the export form loads and saves the service commitments');
 }
 
 // ----------------------------------------------------------------------------- Part 2: container and config shape

@@ -14,6 +14,7 @@ import { FrameworkControlDefinition } from '../../types/framework';
 import { ControlState, SSPMetadata } from '../../types/cmmc';
 import { ReportMetadata, POAMEntry } from '../../types/report';
 import { SprsScoreResult } from '../../types/audit';
+import { NOT_RECORDED, recordedRole } from './documentDefaults';
 
 export const SPRS_MAX_SCORE = 110;
 export const SPRS_MIN_SCORE = -203;
@@ -249,11 +250,11 @@ export function generateEmassControlMatrixCsv(
     else if (status === 'IN_PROGRESS') emassStatus = 'Planned / In Progress';
 
     const narrative = state?.implementationNotes || ctrl.plainEnglishSummary || 'Pending assessor evaluation.';
-    const role = state?.responsibleRole || 'Information System Security Officer (ISSO)';
+    const role = recordedRole(state?.responsibleRole);
     const evalDate = state?.lastUpdated ? state.lastUpdated.split('T')[0] : metadata.assessmentDate || new Date().toISOString().split('T')[0];
 
     const row = [
-      escapeCsv(metadata.systemName || 'Enclave System'),
+      escapeCsv(metadata.systemName || NOT_RECORDED),
       escapeCsv(metadata.cageCode || 'N/A'),
       escapeCsv(ctrl.id),
       escapeCsv(mapsTo171 ? nistId : 'N/A'),
@@ -265,7 +266,7 @@ export function generateEmassControlMatrixCsv(
       escapeCsv(role),
       escapeCsv(evalDate),
       escapeCsv(state?.tags ? state.tags.join('; ') : 'Self-Assessment Narrative'),
-      escapeCsv(status !== 'MET' ? '90 Days from Baseline' : 'N/A'),
+      escapeCsv(status !== 'MET' ? NOT_RECORDED : 'N/A'),
     ];
 
     csv += row.join(',') + '\r\n';
@@ -302,7 +303,7 @@ export function generateSprsAssessmentSummary(
     organizationProfile: {
       commercialEntity: metadata.organizationName,
       cageCode: metadata.cageCode || 'N/A',
-      samStatus: metadata.samStatus || 'Active',
+      samStatus: metadata.samStatus || NOT_RECORDED,
       systemName: metadata.systemName,
       systemOwner: metadata.systemOwner,
       primaryAssessor: metadata.primaryAssessor,
@@ -333,7 +334,7 @@ export function generateSprsAssessmentSummary(
     },
     remediationMilestonesSummary: {
       totalPoamWeaknesses: poamEntries.length,
-      estimatedRemediationHorizon: poamEntries.length > 0 ? '90 Days' : '0 Days (Audit Ready)',
+      estimatedRemediationHorizon: poamEntries.length > 0 ? NOT_RECORDED : 'No open POA&M weaknesses',
       activeWeaknesses: poamEntries.slice(0, 10).map(p => ({
         weaknessId: p.weaknessId,
         controlId: p.controlId,

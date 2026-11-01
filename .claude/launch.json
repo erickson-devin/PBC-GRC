@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "api",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:server"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--env-file=.env.development.local", "--import", "tsx", "server/dev.ts"],
       "port": 3000
     },
     {

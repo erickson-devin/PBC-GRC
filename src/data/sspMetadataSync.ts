@@ -21,7 +21,7 @@ const NON_CONTENT_FIELDS: readonly SspField[] = ['assessmentDate'];
 
 const asText = (v: unknown): string => (typeof v === 'string' ? v : '');
 
-/** The 11 text fields of the metadata that are strings (empty ones included), as the server stores them. */
+/** The 12 text fields of the metadata that are strings (empty ones included), as the server stores them. */
 export function pickSspFields(meta: Partial<SSPMetadata> | null | undefined): SspMetadataFields {
   const out: SspMetadataFields = {};
   if (!meta) return out;

@@ -3,54 +3,33 @@ import { getCascadedObjectiveNarrative } from '../frameworks/policyCompiler';
 import { getObjectivesForControl } from '../frameworks/assessmentObjectives';
 import { getFrameworkControls } from '../frameworks/frameworkRegistry';
 import type { FipsModuleRef } from '../telemetry/fipsValidation';
+import {
+  NO_ORGANIZATION_RECORDED,
+  NO_SYSTEM_NAME_RECORDED,
+  NO_SYSTEM_OWNER_RECORDED,
+  NO_STACK_PROFILE_RECORDED,
+  NO_FAMILY_IMPLEMENTATION_RECORDED,
+  UNNAMED_SYSTEM,
+} from './documentDefaults';
 
 export function generatePolicyDocument(
-  tenantOrFamily: Tenant | string,
-  controlFamilyOrStack?: string | EnclaveStackProfile,
-  familyTitleOrFramework?: string,
+  tenant: Tenant,
+  controlFamily: string,
+  familyTitleArg?: string,
   frameworkArg?: string,
   /** Validated cryptographic modules from the asset inventory (collectFipsModules): cited in 3.13.11. */
   cryptoModules?: ReadonlyArray<FipsModuleRef>
 ): string {
-  let tenant: Tenant;
-  let controlFamily: string;
-  let familyTitle: string;
-  let activeFramework: string;
+  // #200: nothing is invented. A tenant without a recorded stack survey gets no implementation statements.
+  const stack: EnclaveStackProfile | undefined = tenant.stackProfile;
+  const orgName = tenant.name || NO_ORGANIZATION_RECORDED;
+  const systemName = tenant.systemName || NO_SYSTEM_NAME_RECORDED;
+  const theSystem = tenant.systemName ? `the ${tenant.systemName}` : UNNAMED_SYSTEM;
+  const systemOwner = tenant.systemOwner || NO_SYSTEM_OWNER_RECORDED;
 
-  if (typeof tenantOrFamily === 'string') {
-    // Called as (familyCode, stack, activeFramework)
-    controlFamily = tenantOrFamily;
-    const stack = (controlFamilyOrStack as EnclaveStackProfile) || {};
-    activeFramework = familyTitleOrFramework || 'NIST_800_53_REV5';
-    familyTitle = `${controlFamily} Policy`;
-    tenant = {
-      id: 'default-tenant',
-      name: 'Defense Enclave Organization',
-      cageCode: 'CAGE-DEF',
-      samStatus: 'ACTIVE',
-      systemName: 'Boundary Enclave',
-      systemOwner: 'Information System Security Manager',
-      industry: 'Defense Industrial Base',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      stackProfile: stack as EnclaveStackProfile,
-    };
-  } else {
-    // Called as (tenant, controlFamily, familyTitle, activeFramework)
-    tenant = tenantOrFamily;
-    controlFamily = (controlFamilyOrStack as string) || 'AC';
-    familyTitle = familyTitleOrFramework || `${controlFamily} Policy`;
-    activeFramework = frameworkArg || tenant.primaryFramework || 'NIST_800_53_REV5';
-  }
-
-  const stack: EnclaveStackProfile = tenant.stackProfile || {
-    identityProvider: 'ENTRA_ID_COMMERCIAL',
-    edrSolution: 'DEFENDER_FOR_ENDPOINT',
-    infrastructure: 'AZURE_GOV',
-    mdmSolution: 'INTUNE',
-    siemSolution: 'SENTINEL',
-    odpParams: {},
-  };
+  controlFamily = controlFamily || 'AC';
+  const familyTitle = familyTitleArg || `${controlFamily} Policy`;
+  const activeFramework = frameworkArg || tenant.primaryFramework || 'NIST_800_53_REV5';
 
   const normFamily = (controlFamily || '').split('-')[0].trim().toUpperCase();
   const normFramework = (activeFramework || '').toUpperCase();
@@ -82,17 +61,17 @@ export function generatePolicyDocument(
   );
 
   let markdown = `# ${familyTitle} (${normFamily}) - ${frameworkTitle}\n\n`;
-  markdown += `**Organization:** ${tenant.name}\n`;
-  markdown += `**System Name:** ${tenant.systemName}\n`;
+  markdown += `**Organization:** ${orgName}\n`;
+  markdown += `**System Name:** ${systemName}\n`;
   markdown += `**Framework Scope:** ${frameworkTitle} (${activeFramework})\n`;
   markdown += `**Date:** ${new Date().toISOString().split('T')[0]}\n`;
-  markdown += `**Authorizing Official:** ${tenant.systemOwner}\n\n`;
+  markdown += `**System Owner:** ${systemOwner}\n\n`;
 
   markdown += `## 1. Purpose\n`;
   markdown += `The purpose of this policy is to establish the requirements for the ${familyTitle} family of controls ${frameworkCitation}\n\n`;
 
   markdown += `## 2. Scope\n`;
-  markdown += `This policy applies to all systems, networks, and personnel operating within the ${tenant.systemName} boundary.\n\n`;
+  markdown += `This policy applies to all systems, networks, and personnel operating within ${theSystem} boundary.\n\n`;
 
   markdown += `## 3. Policy Statements\n\n`;
 
@@ -105,7 +84,7 @@ export function generatePolicyDocument(
       const objectives = getObjectivesForControl(control.id, control.title);
       if (objectives && objectives.length > 0) {
         objectives.forEach((obj) => {
-          const narrative = getCascadedObjectiveNarrative(control.id, obj.letter, stack, cryptoModules);
+          const narrative = stack ? getCascadedObjectiveNarrative(control.id, obj.letter, stack, cryptoModules) : NO_STACK_PROFILE_RECORDED;
           markdown += `**Objective ${obj.letter}**: ${obj.text}\n\n`;
           markdown += `**Implementation**: ${narrative}\n\n`;
         });
@@ -122,19 +101,19 @@ export function generatePolicyDocument(
           id: `${normFamily}-1`,
           title: `${familyTitle} Policy and Operational Procedures`,
           req: `The organization develops, documents, disseminates, and reviews/updates at least annually a formal ${familyTitle} policy and operational procedures.`,
-          impl: `This document serves as the formal baseline for ${familyTitle} within the ${tenant.systemName} boundary, governed by ${tenant.systemOwner} and enforced across ${stack.infrastructure}.`,
+          impl: NO_FAMILY_IMPLEMENTATION_RECORDED,
         },
         {
           id: `${normFamily}-2`,
           title: `${familyTitle} Operational Controls & Safeguards`,
           req: `Personnel and automated mechanisms execute ${familyTitle} safeguards adhering to defense baseline standards and continuous monitoring SLAs.`,
-          impl: `Operational controls are continuously enforced through automated integration with ${stack.identityProvider}, ${stack.edrSolution}, and telemetry ingestion into ${stack.siemSolution}.`,
+          impl: NO_FAMILY_IMPLEMENTATION_RECORDED,
         },
         {
           id: `${normFamily}-3`,
           title: `${familyTitle} Continuous Monitoring and Oversight`,
           req: `Review and verify compliance metrics and technical telemetry associated with ${familyTitle}.`,
-          impl: `Audit evidence is collected continuously into the enclave evidence vault, and non-compliances are tracked within the System Security Plan (SSP) and POA&M registers.`,
+          impl: NO_FAMILY_IMPLEMENTATION_RECORDED,
         },
       ];
 
@@ -152,9 +131,9 @@ export function generatePolicyDocument(
   markdown += `| ${new Date().toISOString().split('T')[0]} | 1.0 | Initial Policy Generation (${frameworkTitle}) | Automated System |\n\n`;
   
   markdown += `## 5. Authorizing Official Block\n\n`;
-  markdown += `I have reviewed and approved this policy for the ${tenant.systemName}.\n\n`;
+  markdown += `I have reviewed and approved this policy for ${theSystem}.\n\n`;
   markdown += `**Signature:** ___________________________  **Date:** _________________\n\n`;
-  markdown += `**Name:** ${tenant.systemOwner}\n\n`;
+  markdown += `**Name:** ${systemOwner}\n\n`;
   markdown += `**Title:** System Owner\n`;
 
   return markdown;

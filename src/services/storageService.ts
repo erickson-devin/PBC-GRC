@@ -12,6 +12,7 @@ import {
   stripSspMetadataForCache,
 } from './browserStorageScrub';
 import { activeProgramStorageKey } from '../data/programSync';
+import { NOT_RECORDED } from '../data/reports/documentDefaults';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -71,6 +72,7 @@ export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
     systemEnvironment: '',
     cloudServiceProviders: '',
     version: '1.0.0',
+    serviceCommitments: '',
     lastUpdated: new Date().toISOString(),
   };
 }
@@ -251,7 +253,7 @@ export const StorageService = {
       if (authority) md += `- **Authority Reference:** ${authority}\n`;
       md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
       md += `- **Evaluation Status:** **${cState?.status || 'NOT_STARTED'}**\n`;
-      md += `- **Responsible Role:** ${cState?.responsibleRole || 'IT / Security Lead'}\n`;
+      md += `- **Responsible Role:** ${cState?.responsibleRole || NOT_RECORDED}\n`;
       md += `\n**Implementation Statement:**\n`;
       md += `${cState?.implementationNotes || '_No implementation narrative provided._'}\n\n`;
 

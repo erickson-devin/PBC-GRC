@@ -25,10 +25,12 @@ import {
   FRAMEWORK_REGISTRY,
 } from '../src/data/frameworks';
 import { ReportMetadata, ReportSection } from '../src/types/report';
-import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED } from '../src/data/reports/documentDefaults';
+import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED, NOT_RECORDED, NO_MILESTONES_RECORDED, NO_CUECS_RECORDED, NO_STACK_PROFILE_RECORDED, NO_FAMILY_IMPLEMENTATION_RECORDED, UNSIGNED_ATTESTATION_NOTE } from '../src/data/reports/documentDefaults';
 import { getExportGaps } from '../src/data/reports/exportReadiness';
 import { createDefaultSspMetadata, scrubInventedMetadata } from '../src/services/storageService';
 import type { Tenant } from '../src/types/tenant';
+import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
+import { getObjectivesForControl } from '../src/data/frameworks/assessmentObjectives';
 import { ControlState, EvidenceItem, AssessmentState } from '../src/types/cmmc';
 
 let totalTests = 0;
@@ -178,11 +180,11 @@ async function runArtifactGeneratorTests() {
 
     const entry1 = poamDoc.poamEntries?.[0];
     assert(Boolean(entry1?.weaknessId.startsWith('POAM-')), `Generated structured weakness ID (found: ${entry1?.weaknessId})`);
-    assert(Boolean(entry1?.scheduledCompletionDate), `Generated scheduled completion date (found: ${entry1?.scheduledCompletionDate})`);
-    assert(Boolean(entry1?.requiredResources), `Included allocated resources (found: ${entry1?.requiredResources})`);
-    assert(Boolean(entry1?.responsibleRole), `Included responsible role (found: ${entry1?.responsibleRole})`);
+    assert(entry1?.scheduledCompletionDate === NOT_RECORDED, `Scheduled completion date is not recorded, never invented (found: ${entry1?.scheduledCompletionDate})`);
+    assert(entry1?.requiredResources === NOT_RECORDED, `Allocated resources are not recorded, never invented (found: ${entry1?.requiredResources})`);
+    assert(entry1?.responsibleRole === 'CISO / Security Engineering Lead', `Included the recorded responsible role (found: ${entry1?.responsibleRole})`);
     assert(Boolean(entry1?.remediationPlan.includes('Validate objective')), 'Generated actionable remediation plan with objectives');
-    assert(Boolean(entry1?.milestones && entry1.milestones.length === 3), 'Generated 3 tactical intermediate milestones per weakness');
+    assert(Boolean(entry1?.milestones && entry1.milestones.length === 0), 'Generated no milestones: none are recorded');
 
     // Verify POA&M master table
     const poamMatrixSec = poamDoc.sections.find(s => s.id === 'poam-sec-2-matrix');
@@ -393,7 +395,7 @@ async function runArtifactGeneratorTests() {
     const fullSsp = compileNistSSP(mockMetadata, cmmcL1Controls, mockControlStates);
     assert(itemOf(fullSsp, 'Organization Name') === 'Vanguard Defense Systems, LLC', 'S151-4 SSP 1.1 states the recorded organization');
     assert(subTitled(fullSsp, '1.2')?.content === mockMetadata.boundaryDescription, 'S151-4 SSP 1.2 states the recorded boundary');
-    assert(itemOf(fullSsp, 'Information System Owner') === 'Alex Mercer, CMMC CCA (Signature on Record)', 'S151-4 SSP attestation keeps the suffix when the owner is recorded');
+    assert(itemOf(fullSsp, 'Information System Owner') === 'Alex Mercer, CMMC CCA', 'S151-4 SSP attestation prints the recorded owner as a bare name');
 
     const blankSoc2 = compileSoc2SystemDescription({ ...blank, framework: 'SOC_2_TYPE_II' }, soc2Controls, mockSoc2States, mockEvidence);
     assert(itemOf(blankSoc2, 'Service Organization') === NO_ORGANIZATION_RECORDED && itemOf(blankSoc2, 'System Evaluated') === NO_SYSTEM_NAME_RECORDED, 'S151-5 SOC 2 1.1 states no organization and no system name are recorded');
@@ -433,7 +435,7 @@ async function runArtifactGeneratorTests() {
     const gapSys = getExportGaps('NIST_SP_800_18_SSP', { ...mockMetadata, systemName: '  ' });
     assert(gapSys.length === 1 && gapSys[0].field === 'systemName', 'B-1 a whitespace-only system name is one gap');
     assert(getExportGaps('POAM', { ...mockMetadata, boundaryDescription: '' }).length === 0, 'B-1 a POA&M needs no boundary description');
-    assert(getExportGaps('SOC_2_SYSTEM_DESCRIPTION', blank).length === 4, 'B-1 a blank SOC 2 description has four gaps');
+    assert(getExportGaps('SOC_2_SYSTEM_DESCRIPTION', blank).filter(g => !g.advisory).length === 4, 'B-1 a blank SOC 2 description has four gaps that stop an export');
     assert(getExportGaps('NIST_SP_800_18_SSP', { ...mockMetadata, cageCode: '' }).every(g => g.advisory), 'B-1 a missing CAGE code is advisory only');
 
     // R1: values written by the old "Save & Sync Metadata" read back as never recorded
@@ -443,6 +445,81 @@ async function runArtifactGeneratorTests() {
     assert(scrubInventedMetadata({ ...legacyMeta, authorName: 'Compliance & Audit Assessment Team' }).authorName === '', 'S151-25 the scrub empties the second legacy author value');
     const realMeta = { ...legacyMeta, organizationName: 'Vanguard', authorName: 'Dr. Reed', systemBoundaryScope: 'Our enclave.' };
     assert(scrubInventedMetadata(realMeta) === realMeta, 'S151-25 the scrub leaves real values alone (same object)');
+
+    // -------------------------------------------------------------
+    // Test 11: #196 #197 #198 #200 documents state only what is recorded
+    // -------------------------------------------------------------
+    console.log('\n--- Test 11: #196 #197 #198 #200 recorded-only documents ---');
+    type Row = (string | number)[] | { cells: (string | number)[] };
+    const cellsOf = (r: Row) => (Array.isArray(r) ? r : r.cells);
+    const sectionRows = (doc: { sections: ReportSection[] }, id: string) => {
+      const sec = doc.sections.find(s => s.id === id);
+      return [...(sec?.table?.rows || []), ...(sec?.subsections || []).flatMap(sub => sub.table?.rows || [])].map(r => cellsOf(r as Row));
+    };
+
+    const emptyPoam = compilePOAM(mockMetadata, cmmcL1Controls, {});
+    const emptyEntries = emptyPoam.poamEntries || [];
+    assert(emptyEntries.length === cmmcL1Controls.length, 'S198-1 a POA&M with no recorded states has one entry per control');
+    assert(emptyEntries.every(e => e.responsibleRole === NOT_RECORDED && e.scheduledCompletionDate === NOT_RECORDED && e.requiredResources === NOT_RECORDED), 'S198-1 every role, date and resource is not recorded');
+    const legacyStates: Record<string, ControlState> = {};
+    cmmcL1Controls.forEach(c => { legacyStates[c.id] = { id: c.id, status: 'NOT_STARTED', implementationNotes: '', responsibleRole: 'IT / Security Lead', lastUpdated: '', tags: [] }; });
+    assert((compilePOAM(mockMetadata, cmmcL1Controls, legacyStates).poamEntries || []).every(e => e.responsibleRole === NOT_RECORDED), 'S198-2 the legacy default role prints as not recorded');
+    assert(JSON.stringify(compilePOAM(mockMetadata, cmmcL1Controls, mockControlStates).poamEntries) === JSON.stringify(compilePOAM({ ...mockMetadata, assessmentDate: '' }, cmmcL1Controls, mockControlStates).poamEntries), 'S198-3 the POA&M entries do not depend on the assessment date');
+
+    const noStateSsp = compileNistSSP(mockMetadata, cmmcL1Controls, {});
+    const noStateSoc2 = compileSoc2SystemDescription(soc2Meta, soc2Controls, {}, []);
+    const noStateHipaa = compileHipaaAssessment(hipaaMeta, hipaaControls, {}, []);
+    const roleRows = [
+      ...sectionRows(noStateSsp, 'sec-3-control-narratives'),
+      ...sectionRows(noStateSoc2, 'soc2-sec-3-control-activities'),
+      ...['hipaa-sec-2-admin', 'hipaa-sec-3-phys', 'hipaa-sec-4-tech', 'hipaa-sec-5-org-doc'].flatMap(id => sectionRows(noStateHipaa, id)),
+    ];
+    assert(roleRows.length > 0 && roleRows.every(r => r[5] === NOT_RECORDED), 'S198-4 every control row states the role as not recorded when none is');
+    const noStateJson = [noStateSsp, noStateSoc2, noStateHipaa, emptyPoam].map(d => JSON.stringify(d));
+    const INVENTED_198 = ['Security Engineering Lead', 'HIPAA Compliance Officer', '$4,200', '$10,500', 'Engineering: ', 'System currently lacks'];
+    assert(INVENTED_198.every(lit => noStateJson.every(j => !j.includes(lit))), 'S198-4 no document carries an invented role, cost or deficiency claim');
+    const milestoneSubs = emptyPoam.sections.find(s => s.id === 'poam-sec-3-milestones')?.subsections || [];
+    assert(milestoneSubs.length > 0 && milestoneSubs.every(s => (s.content || '').includes(NO_MILESTONES_RECORDED) && !s.table), 'S198-5 every weakness states that no milestones are recorded and prints no milestone table');
+
+    const soc2Sec2Cells = sectionRows(soc2Doc, 'soc2-sec-2-summary').flat().map(c => String(c));
+    assert(!soc2Sec2Cells.includes('Tested') && !soc2Sec2Cells.includes('Integrated'), 'S196-1 SOC 2 section 2 hard-codes no test result');
+    assert(['Operating Effectively', 'CUEC-01', 'hardware destruction', 'Tested'].every(lit => !JSON.stringify(soc2Doc).includes(lit)), 'S196-1 the SOC 2 description carries no invented test result, CUEC or subservice claim');
+    const availRow = sectionRows(noStateSoc2, 'soc2-sec-2-summary').find(r => r[0] === 'Availability');
+    const availCount = soc2Controls.filter(c => c.domain === 'A1').length;
+    assert(!!availRow && availRow[1] === availCount && availRow[2] === 0 && availRow[4] === availCount && availRow[5] === '0%', 'S196-2 the Availability row counts recorded statuses from the controls');
+    assert(subTitled(soc2Doc, '4.1')?.content === NO_CUECS_RECORDED, 'S196-3 SOC 2 4.1 states that no CUECs are recorded');
+    assert(generatePrintableHtml(poamDoc, mockMetadata as never).includes('status-not-met">NOT_MET<') && !generatePrintableHtml(poamDoc, mockMetadata as never).includes('status-met">NOT_MET<'), 'S196-4 a NOT_MET status renders the not-met badge');
+
+    const blankTenant = { id: 't-blank', name: '', cageCode: '', samStatus: 'ACTIVE', systemName: '', systemOwner: '', industry: '', createdAt: '', updatedAt: '' } as Tenant;
+    const blankPolicy = generatePolicyDocument(blankTenant, 'AC', 'Access Control', 'CMMC_L1');
+    assert(blankPolicy.includes(`**Organization:** ${NO_ORGANIZATION_RECORDED}`) && !blankPolicy.includes('undefined'), 'S200-1 a policy for a blank tenant states no organization and prints no "undefined"');
+    assert(!/ENTRA|DEFENDER|AZURE|INTUNE|SENTINEL|Entra|Defender|Azure|Intune|Sentinel/.test(blankPolicy), 'S200-1 a policy for a tenant without a stack names no vendor');
+    const acObjectiveCount = cmmcL1Controls.filter(c => c.domain === 'AC').reduce((n, c) => n + getObjectivesForControl(c.id, c.title).length, 0);
+    assert(acObjectiveCount > 0 && blankPolicy.split(NO_STACK_PROFILE_RECORDED).length - 1 === acObjectiveCount, 'S200-2 every objective states that no stack profile is recorded');
+    const stackTenant = { ...blankTenant, name: 'Acme', systemName: 'Enclave', systemOwner: 'Owner', stackProfile: { identityProvider: 'OKTA', edrSolution: 'GENERIC_AV', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'MANUAL_GPO', siemSolution: 'LOCAL_AUDITD' } } as Tenant;
+    const zzPolicy = generatePolicyDocument(stackTenant, 'ZZ', 'Zeta', 'NIST_800_53_REV5');
+    assert(zzPolicy.includes('### ZZ-1') && zzPolicy.includes(NO_FAMILY_IMPLEMENTATION_RECORDED) && !zzPolicy.includes('continuously enforced'), 'S200-3 a family without catalog controls states no implementation and no continuous enforcement');
+
+    const attestDocs = [fullSsp, poamDoc, soc2Doc, hipaaDoc];
+    const SUFFIXES_197 = ['(Signature on Record)', '(Attested)', '(Approved)', '(Concurred)', '(Signed)', '(Verified)'];
+    assert(attestDocs.every(d => SUFFIXES_197.every(s => !JSON.stringify(d).includes(s))), 'S197-1 no attestation carries a signature or approval suffix');
+    const contentOf = (d: { sections: ReportSection[] }, id: string) => d.sections.find(s => s.id === id)?.content || '';
+    assert([contentOf(fullSsp, 'sec-4-attestation'), contentOf(poamDoc, 'poam-sec-4-governance'), contentOf(soc2Doc, 'soc2-sec-5-assertion'), contentOf(hipaaDoc, 'hipaa-sec-6-attestation')].every(c => c.startsWith(UNSIGNED_ATTESTATION_NOTE)), 'S197-2 every attestation starts with the unsigned note');
+    assert(itemOf(soc2Doc, 'Primary Assessor / Service Auditor') === undefined, 'S197-3 the management assertion has no service auditor row');
+    const sigHtml = generatePrintableHtml(fullSsp, mockMetadata as never);
+    assert(!/class="signature-line">[^<]+</.test(sigHtml) && !sigHtml.includes('Certified Lead Assessor'), 'S197-4 the cover signature lines are blank and nobody is called certified');
+
+    // #199: principal service commitments
+    const scDoc = compileSoc2SystemDescription({ ...soc2Meta, serviceCommitments: 'SC-199 recorded.' }, soc2Controls, mockSoc2States, mockEvidence);
+    assert(subTitled(scDoc, '1.2')?.content === 'SC-199 recorded.', 'S199-1 SOC 2 1.2 prints the recorded service commitments');
+    const scBlank = compileSoc2SystemDescription({ ...soc2Meta, serviceCommitments: '   ' }, soc2Controls, mockSoc2States, mockEvidence);
+    assert(subTitled(scBlank, '1.2')?.content === NO_SERVICE_COMMITMENTS_RECORDED, 'S199-2 blank service commitments print as not recorded');
+    const scGaps = getExportGaps('SOC_2_SYSTEM_DESCRIPTION', blank);
+    assert(scGaps.length === 5 && scGaps.filter(g => g.advisory).length === 1 && scGaps.find(g => g.advisory)?.field === 'serviceCommitments', 'S199-3 a blank SOC 2 description has one advisory gap, the service commitments');
+    assert(getExportGaps('SOC_2_SYSTEM_DESCRIPTION', { ...mockMetadata, serviceCommitments: 'x' }).length === 0, 'S199-4 a complete SOC 2 description with service commitments has no gaps');
+
+    // Extra: no label next to the blank signature rows asserts an attestation or assertion date
+    assert(attestDocs.every(d => !JSON.stringify(d).includes('Attestation Date') && !JSON.stringify(d).includes('Date of Assertion')), 'S197-6 no document labels a generated date as an attestation or assertion date');
 
     // -------------------------------------------------------------
     // Summary

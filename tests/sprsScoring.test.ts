@@ -8,6 +8,7 @@ import {
   extractNistRequirementId,
   formatSprsScore,
   generateSprsAssessmentSummary,
+  generateEmassControlMatrixCsv,
   getSprsPointDeduction,
   isSspComplete,
 } from '../src/data/reports/sprsCompiler';
@@ -18,6 +19,8 @@ import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 import { CMMC_LEVEL_2_CONTROLS as CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls';
 import type { ControlState, ControlStatus } from '../src/types/cmmc';
 import type { ReportMetadata } from '../src/types/report';
+import { NOT_RECORDED } from '../src/data/reports/documentDefaults';
+import { generatePOAMEntries } from '../src/data/reports/documentCompilers';
 
 /**
  * NIST SP 800-171 DoD Assessment Methodology v1.2.1 (Annex A):
@@ -163,6 +166,12 @@ assert(
   scored.sprsMetrics.activeSprsScore === 110 && scored.sprsMetrics.compliancePosture === 'Full NIST SP 800-171 Compliance',
   'summary reports 110 with a complete SSP'
 );
+
+console.log('\n--- SPRS exports state only what is recorded (#198) ---');
+const blankCsv = generateEmassControlMatrixCsv(CONTROLS.slice(0, 3), {}, { ...meta, systemName: '' });
+assert(!blankCsv.includes('Information System Security Officer') && !blankCsv.includes('90 Days from Baseline') && !blankCsv.includes('Enclave System'), 'the eMASS matrix invents no role, system name or remediation window');
+const gapSummary = generateSprsAssessmentSummary(CONTROLS, {}, meta, generatePOAMEntries(CONTROLS.slice(0, 3), {})) as { remediationMilestonesSummary: Record<string, unknown> };
+assert(gapSummary.remediationMilestonesSummary.estimatedRemediationHorizon === NOT_RECORDED, 'the remediation horizon is not recorded when weaknesses are open');
 
 console.log('\n--- Dashboard remediation priority (SPRS points only for CMMC L2) ---');
 const stateOf = (status: ControlStatus) => ({ status } as ControlState);

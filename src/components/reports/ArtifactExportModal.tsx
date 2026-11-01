@@ -125,6 +125,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     systemEnvironment: meta.systemEnvironment || '',
     operationalStatus: 'Operational' as SystemOperationalStatus,
     cloudServiceProviders: meta.cloudServiceProviders || '',
+    serviceCommitments: meta.serviceCommitments || '',
     classificationLevel: (activeFramework === 'SOC_2_TYPE_II'
       ? 'CONFIDENTIAL'
       : activeFramework === 'HIPAA_SECURITY'
@@ -168,6 +169,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
         boundaryDescription: meta.systemBoundaryScope || activeProgram?.boundarySummary || currentTenant.systemBoundaryScope || prev.boundaryDescription,
         systemEnvironment: meta.systemEnvironment || prev.systemEnvironment,
         cloudServiceProviders: meta.cloudServiceProviders || prev.cloudServiceProviders,
+        serviceCommitments: meta.serviceCommitments || prev.serviceCommitments,
         framework: activeFramework,
       }));
     }
@@ -190,6 +192,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       systemBoundaryScope: formData.boundaryDescription,
       systemEnvironment: formData.systemEnvironment,
       cloudServiceProviders: formData.cloudServiceProviders,
+      serviceCommitments: formData.serviceCommitments ?? '',
       version: formData.version,
       assessmentDate: formData.assessmentDate,
     });
@@ -274,7 +277,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       label: 'Plan of Action & Milestones',
       icon: AlertTriangle,
       badge: 'Deficiency Tracking',
-      desc: 'Aggregates all NOT_MET & IN_PROGRESS controls with weakness IDs, scheduled dates, and milestones.',
+      desc: 'Lists every control not yet met. Dates, owners, resources and milestones print as Not recorded until they are recorded.',
     },
     {
       id: 'SOC_2_SYSTEM_DESCRIPTION',
@@ -802,6 +805,23 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
                 />
               </div>
+
+              {/* Principal service commitments (SOC 2 only) */}
+              {selectedDocType === 'SOC_2_SYSTEM_DESCRIPTION' && (
+                <div>
+                  <label htmlFor={metaId('serviceCommitments')} className="block text-xs font-semibold text-slate-300 mb-1.5">
+                    Principal service commitments and system requirements
+                  </label>
+                  <textarea
+                    id={metaId('serviceCommitments')}
+                    rows={4}
+                    value={formData.serviceCommitments ?? ''}
+                    onChange={(e) => setFormData({ ...formData, serviceCommitments: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none leading-relaxed"
+                    placeholder="The commitments made to customers and the system requirements that support them (leave empty if none are recorded)"
+                  />
+                </div>
+              )}
             </div>
           )}
 

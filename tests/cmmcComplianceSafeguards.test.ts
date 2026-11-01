@@ -421,6 +421,7 @@ async function runTestSuite() {
   assert(destructionCert.sanitizationMethod.includes('Cryptographic Erase'), 'Method is Cryptographic Erase');
   assert(destructionCert.complianceStandard === 'DFARS 252.204-7012', 'Standard is DFARS 252.204-7012');
   assert(destructionCert.certificateSha256.length === 64, 'Certificate includes 64-char SHA-256 signature');
+  assert(destructionCert.purgedObjectsCount === 1, 'Certificate counts no invented controls when no state is passed (SSP metadata only)');
 
   // 3.4 Verification that destruction was recorded in audit ledger
   const postWipeLogs = getAuditLogs(testTenant);

@@ -429,6 +429,17 @@ async function main() {
     'M9 the helper never mutates, blanks the text fields, and returns the same object without the marker'
   );
   assert(!/\.setItem\(|localStorage/.test(fs.readFileSync(path.join(process.cwd(), 'src/data/sspMetadataSync.ts'), 'utf8')), 'M10 the SSP sync module writes no browser storage');
+  // M11/M12: the SOC 2 service commitments are SSP text like the rest: never kept in a marked server cache
+  const SCMARK = 'SC-84';
+  const withSc = (marker: boolean): AssessmentState => {
+    const s = withSsp('srv1', marker);
+    return { ...s, sspMetadata: { ...s.sspMetadata, serviceCommitments: SCMARK } };
+  };
+  globalStore.clear();
+  StorageService.saveAssessment('srv1', withSc(true));
+  assert(!globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(SCMARK), 'M11 saveAssessment with the marker stores no serviceCommitments text');
+  const m12 = scrubAssessmentJson(JSON.stringify(withSc(true)));
+  assert(m12.clearedSspMetadata === 1 && m12.json !== null && !m12.json.includes(SCMARK), 'M12 the scrub clears serviceCommitments from a marked cache', m12.clearedSspMetadata);
 
   console.log('\n--- Asset cache and discovery keys ---');
   const NOTE7 = 'CUI-NOTE-7';

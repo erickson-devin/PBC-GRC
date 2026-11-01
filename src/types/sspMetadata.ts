@@ -13,6 +13,7 @@ export const SSP_METADATA_FIELDS = [
   'systemEnvironment',
   'cloudServiceProviders',
   'version',
+  'serviceCommitments',
 ] as const;
 
 export type SspField = typeof SSP_METADATA_FIELDS[number];
@@ -29,6 +30,7 @@ export const SSP_METADATA_MAX_CHARS: Record<SspField, number> = {
   systemBoundaryScope: 20000,
   systemEnvironment: 20000,
   cloudServiceProviders: 20000,
+  serviceCommitments: 20000,
 };
 
 export const SSP_METADATA_MAX_BYTES = 262144;

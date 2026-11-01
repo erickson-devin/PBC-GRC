@@ -84,10 +84,19 @@ assert(r9.outcome === 'marked' && r9.conflictFields === undefined, 'R9 a cache f
 console.log('\n--- helpers ---');
 assert(!hasUserSspContent(stateWith({ assessmentDate: '1999-01-01' }).sspMetadata, defaults) && hasUserSspContent(stateWith({ cloudServiceProviders: 'C' }).sspMetadata, defaults), 'H1 hasUserSspContent ignores the date and the defaults');
 const picked = pickSspFields({ ...defaults, tenantId: 't1', lastUpdated: 'x' });
-assert(!('tenantId' in picked) && !('lastUpdated' in picked) && picked.systemName === 'Enclave', 'H2 pickSspFields keeps the 11 text fields only');
+assert(!('tenantId' in picked) && !('lastUpdated' in picked) && picked.systemName === 'Enclave', 'H2 pickSspFields keeps the 12 text fields only');
 const merged = mergeServerSspMetadata(defaults, record({ systemName: 'Srv' }));
 assert(merged.systemName === 'Srv' && merged.organizationName === defaults.organizationName && merged.tenantId === 't1' && merged.lastUpdated === STAMP && mergeServerSspMetadata(defaults, record(null, null)).systemName === defaults.systemName, 'H3 mergeServerSspMetadata lays the server fields over the defaults');
 assert(!SSP_METADATA_STALE_MESSAGE.includes('"') && SSP_METADATA_STALE_MESSAGE.length > 20 && SSP_METADATA_NEED_OWNER_MESSAGE.length > 20, 'H4 the two notice texts are fixed text');
+const scState = stateWith({ serviceCommitments: 'S' });
+assert(
+  pickSspFields(scState.sspMetadata).serviceCommitments === 'S' && hasUserSspContent(scState.sspMetadata, defaults) && mergeServerSspMetadata(defaults, record({ serviceCommitments: 'Srv' })).serviceCommitments === 'Srv',
+  'H5 pickSspFields, hasUserSspContent and mergeServerSspMetadata carry serviceCommitments'
+);
+const oldCache = stateWith({});
+delete (oldCache.sspMetadata as unknown as Record<string, unknown>).serviceCommitments;
+const r10 = reconcileSspMetadata(oldCache, record({ serviceCommitments: 'S' }), opts(true));
+assert(r10.outcome === 'marked' && r10.state.sspMetadata.serviceCommitments === 'S' && r10.conflictFields === undefined, 'H6 an old cache without the serviceCommitments key takes the server value and is marked', r10.outcome);
 
 console.log('\n--- createDebouncedSave ---');
 function fakeScheduler() {
