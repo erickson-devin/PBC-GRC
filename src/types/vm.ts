@@ -5,8 +5,18 @@
  */
 
 /** Append-only: the CHECK on vm_sources.kind is re-created from this list on every boot, so removing a kind that rows still use would fail initDb. */
-export const VM_SOURCE_KINDS = ['WAZUH', 'SENTINELONE', 'ACTION1', 'GREENBONE', 'NUCLEI', 'NMAP'] as const;
+export const VM_SOURCE_KINDS = ['WAZUH', 'SENTINELONE', 'ACTION1', 'GREENBONE', 'NUCLEI', 'NMAP', 'SCAP'] as const;
 export type VmSourceKind = (typeof VM_SOURCE_KINDS)[number];
+
+/** Source kinds that report configuration results only: they never take part in the vulnerability snapshot or its sources check. */
+export const VM_CONFIG_ONLY_SOURCE_KINDS: readonly VmSourceKind[] = ['SCAP'];
+
+/** XCCDF rule result values (docs/VULNERABILITY_MANAGEMENT.md section 5.5); the CHECK on vm_config_results.result is built from this list. */
+export const VM_CONFIG_RESULTS = ['pass', 'fail', 'error', 'unknown', 'notapplicable', 'notchecked', 'notselected', 'informational', 'fixed'] as const;
+export type VmConfigResult = (typeof VM_CONFIG_RESULTS)[number];
+
+export const VM_CONFIG_SEVERITIES = ['high', 'medium', 'low', 'info', 'unknown'] as const;
+export type VmConfigSeverity = (typeof VM_CONFIG_SEVERITIES)[number];
 
 export const VM_TOKEN_SCOPES = ['vm:ingest'] as const;
 export type VmTokenScope = (typeof VM_TOKEN_SCOPES)[number];
@@ -76,6 +86,8 @@ export interface VmRun {
   exporterVersion: string;
   hostCount: number;
   findingCount: number;
+  /** Rule results across every configuration scan in the run. */
+  configResultCount: number;
   rawPath: string;
   rawSha256: string;
   rawBytes: number;
@@ -151,4 +163,58 @@ export interface VmPoamItem {
   updatedAt: string;
   /** The program the item belongs to; null for a legacy item that was never backfilled. */
   programId?: string | null;
+}
+
+/** One configuration (XCCDF) scan of one asset in one run. Timestamps are ISO strings. */
+export interface VmConfigScan {
+  id: string;
+  tenantId: string;
+  runId: string;
+  sourceId: string;
+  assetId: string;
+  benchmarkId: string;
+  benchmarkVersion: string;
+  benchmarkTitle: string;
+  profileId: string;
+  profileTitle: string;
+  scannerName: string;
+  scannerVersion: string;
+  startedAt: string | null;
+  scannedAt: string;
+  receivedAt: string;
+  sourceSha256: string | null;
+  /** Count of rules per result value; every value in VM_CONFIG_RESULTS is present. */
+  resultCounts: Record<VmConfigResult, number>;
+}
+
+export interface VmConfigRuleResult {
+  scanId: string;
+  ruleId: string;
+  cce: string | null;
+  result: VmConfigResult;
+  severity: VmConfigSeverity | null;
+  title: string;
+}
+
+/** A suggestion is computed on read from the latest scans; it is never written to a control. */
+export type VmConfigSuggestionValue = 'MET' | 'NOT_MET' | 'REVIEW';
+
+export interface VmConfigSuggestion {
+  controlId: string;
+  suggestion: VmConfigSuggestionValue;
+  assets: { inScope: number; evaluated: number; failing: number; passing: number; error: number; unconfirmed: number };
+  rules: { mapped: number; failing: number };
+  failingAssetIds: string[];
+  latestScanAt: string | null;
+}
+
+export interface VmConfigSuggestionsResponse {
+  tenantId: string;
+  programId: string;
+  frameworkId: string;
+  supported: boolean;
+  boundary: { declared: boolean; inScope: number; evaluated: number };
+  generatedAt: string;
+  controls: VmConfigSuggestion[];
+  unmappedRuleCount: number;
 }

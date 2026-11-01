@@ -13,7 +13,7 @@
  * throttled last_used_at / list / cap / revoke, and run-store receive / dedupe / source resolution / list / update, each
  * under two tenants to prove isolation, then the normalization worker end to end (findings, closure, assets, a forced failure that
  * must roll the whole run back, reprocess idempotence), and finally the scheduler (section 14: the cross-tenant enumeration
- * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63). It inserts and removes rows named
+ * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63; section 20: configuration scan results, issue #103). It inserts and removes rows named
  * "vm_verify..." / "vm-verify..." (and "VM-VERIFY-" and "CVE-2099-" rows in vm_vulns), the snapshot evidence and control
  * rows of the two verify tenants, and payload and snapshot files under the tenant's vault directory.
  * Exit code 0 = all checks passed.
@@ -494,6 +494,81 @@ async function main() {
     check(Boolean(srcY) && rewritten === JSON.stringify([{ [`wazuh:${srcY}`]: 'lg-1' }, { [`wazuh:${srcY}`]: 'lg-2' }]) && !rewritten.includes('"wazuh"'), 'both rows were rewritten to wazuh:<source id>, with no bare "wazuh" key', rewritten);
     await runAs(TENANT_Y, 'vm_verify_legacy', '2099-03-01T00:00:01Z', [{ agent: 'lg-1', name: 'vm-verify-legacy-renamed', cves: [] }]);
     check(JSON.stringify((await legacyKeys()).map((r) => r.agent_ids)) === rewritten, 'a second run changes nothing');
+
+    console.log('\n--- 20. Configuration results (#103) ---');
+    const writeScapRun = async (label: string, collectedAt: string, hostname: string, tenant = TENANT_X) => {
+      const id = crypto.randomUUID();
+      const results = [
+        { rule_id: 'xccdf_org.ssgproject.content_rule_sshd_disable_root_login', result: 'pass' },
+        { rule_id: 'xccdf_org.ssgproject.content_rule_accounts_password_pam_minlen', cce: 'CCE-27407-6', result: 'fail' },
+        { rule_id: 'foo_bar', result: 'notapplicable' },
+      ];
+      const bytes = Buffer.from(
+        JSON.stringify({
+          schema_version: 1,
+          source: { kind: 'SCAP', label },
+          exporter: { name: 'vm-verify', version: '0.0.0' },
+          collected_at: collectedAt,
+          hosts: [
+            {
+              agent_id: 'xccdf-' + crypto.createHash('sha256').update(hostname).digest('hex').slice(0, 32),
+              hostname,
+              configuration: [{ benchmark: { id: 'vm_verify_bench' }, scanner: { name: 'vm-verify' }, scanned_at: collectedAt, results }],
+            },
+          ],
+        }),
+      );
+      const file = path.join(localStorageRoot(), 'tenants', tenant, 'vm', 'runs', `${id}.json`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, bytes);
+      rawFiles.push(file);
+      await recordReceivedRun(tenant, {
+        id,
+        kind: 'SCAP',
+        label,
+        collectedAt,
+        exporterName: 'vm-verify',
+        exporterVersion: '0.0.0',
+        hostCount: 1,
+        findingCount: 0,
+        configResultCount: results.length,
+        rawPath: file,
+        rawSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+        rawBytes: bytes.length,
+      });
+      return id;
+    };
+    const scansOfRun = (runId: string) => count('SELECT count(*)::int AS n FROM vm_config_scans WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, runId]);
+    const resultsOfRun = (runId: string) =>
+      count('SELECT count(*)::int AS n FROM vm_config_results r JOIN vm_config_scans s ON s.tenant_id = r.tenant_id AND s.id = r.scan_id WHERE s.tenant_id = $1 AND s.run_id = $2', [TENANT_X, runId]);
+
+    const scapRun1 = await writeScapRun('vm_verify_scap', '2099-04-01T00:00:00Z', 'vm-verify-cfg-1');
+    enqueueVmRun(TENANT_X, scapRun1);
+    await __drainVmWorkerForTests();
+    const scapNormalized = await getRun(TENANT_X, scapRun1);
+    check(scapNormalized?.status === 'NORMALIZED' && scapNormalized.error === null, 'a SCAP run is NORMALIZED by the worker', JSON.stringify(scapNormalized));
+    check((await scansOfRun(scapRun1)) === 1 && (await resultsOfRun(scapRun1)) === 3, 'the run stored one scan with three rule results');
+    check(scapNormalized?.configResultCount === 3 && scapNormalized.findingCount === 0, 'the run records 3 configuration results and 0 findings', JSON.stringify(scapNormalized));
+    const cfgAsset = await queryWithTenant(TENANT_X, "SELECT discovery_status, last_vuln_seen_at FROM enclave_assets WHERE tenant_id = $1 AND asset_name = 'vm-verify-cfg-1'", [TENANT_X]);
+    check(cfgAsset.rows.length === 1 && cfgAsset.rows[0].discovery_status === 'UNCONFIRMED_DISCOVERY' && cfgAsset.rows[0].last_vuln_seen_at === null, 'the new asset is UNCONFIRMED_DISCOVERY and its last_vuln_seen_at stays null (no vulnerability scanner saw it)', JSON.stringify(cfgAsset.rows));
+    check((await count('SELECT count(*)::int AS n FROM vm_run_assets WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, scapRun1])) === 0, 'a configuration-only host has no vm_run_assets row (it takes no part in closure or coverage)');
+    const cfgPlain = await queryWithTenant(TENANT_X, "SELECT scanned_at, received_at, result_counts FROM vm_config_scans WHERE tenant_id = $1 AND run_id = $2", [TENANT_X, scapRun1]);
+    check(cfgPlain.rows[0]?.result_counts?.pass === 1 && cfgPlain.rows[0]?.result_counts?.fail === 1 && cfgPlain.rows[0]?.result_counts?.notapplicable === 1, 'result_counts holds the per-value counts', JSON.stringify(cfgPlain.rows[0]?.result_counts));
+
+    await resetRunForReprocess(TENANT_X, scapRun1);
+    enqueueVmRun(TENANT_X, scapRun1);
+    await __drainVmWorkerForTests();
+    check((await getRun(TENANT_X, scapRun1))?.status === 'NORMALIZED' && (await scansOfRun(scapRun1)) === 1 && (await resultsOfRun(scapRun1)) === 3, 'reprocessing the run keeps exactly one scan and three results (idempotent)');
+
+    __setVmWorkerFaultForTests('after_save');
+    const scapRun2 = await writeScapRun('vm_verify_scap', '2099-04-02T00:00:00Z', 'vm-verify-cfg-2');
+    enqueueVmRun(TENANT_X, scapRun2);
+    await __drainVmWorkerForTests();
+    __setVmWorkerFaultForTests(null);
+    check((await getRun(TENANT_X, scapRun2))?.status === 'FAILED', 'a failure after the scans were saved -> run FAILED');
+    check((await scansOfRun(scapRun2)) === 0 && (await resultsOfRun(scapRun2)) === 0, 'no scan or result of the failed run survived (the transaction rolled back)');
+    check((await count("SELECT count(*)::int AS n FROM enclave_assets WHERE tenant_id = $1 AND asset_name = 'vm-verify-cfg-2'", [TENANT_X])) === 0, 'the asset created by the failed run was rolled back too');
+    check((await scansOfRun(scapRun1)) === 1, 'the earlier run keeps its scan');
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
@@ -503,6 +578,7 @@ async function main() {
       await queryWithTenant(t, 'DELETE FROM vm_sightings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_findings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_run_assets WHERE tenant_id = $1', [t]).catch(() => undefined);
+      await queryWithTenant(t, 'DELETE FROM vm_config_scans WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'vm-verify%'", []).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_runs WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path LIKE '/vm_verify/%'", []).catch(() => undefined);

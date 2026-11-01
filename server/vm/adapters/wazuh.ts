@@ -70,7 +70,7 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 export function normalizeWazuh(payload: IngestPayload): NormalizedHost[] {
   return payload.hosts.map((h) => {
     const groups = new Map<string, NormalizedFinding>();
-    for (const f of h.findings) {
+    for (const f of h.findings ?? []) {
       const vulnId = canonicalVulnId(f.vuln_id);
       const severity = recheckSeverity(f.severity, f.cvss_v3);
       const detectedAt = iso(f.detected_at);

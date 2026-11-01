@@ -6,7 +6,8 @@ import { localStorageRoot, resolveTenantLocalPath } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
 import { resolveVmTargetProgram } from '../programs';
 import type { VmRun } from '../../src/types/vm';
-import { normalizeWazuh, type NormalizedHost } from './adapters/wazuh';
+import { normalizeConfiguration } from './adapters/config';
+import { normalizeWazuh } from './adapters/wazuh';
 import { agentKey, kindKey, planAssetMatches } from './assetMatch';
 import {
   insertMissingVulns,
@@ -22,6 +23,7 @@ import {
   saveFindings,
   withVmTenantTx,
 } from './findingsStore';
+import { replaceRunConfigScans, type ConfigScanDraft } from './configStore';
 import { VM_SHUTDOWN_MESSAGE } from '../shutdown';
 import { validateIngestPayload } from './ingestSchema';
 import { getRun, listSources, listUnfinishedRuns, updateRun } from './store';
@@ -124,6 +126,7 @@ interface RunSummary {
   resolved: number;
   sightings: number;
   poam: number;
+  configResults: number;
 }
 
 async function processRun(tenantId: string, runId: string): Promise<void> {
@@ -162,9 +165,12 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     checkpoint();
 
     const kind = payload.source.kind;
-    let hosts: NormalizedHost[];
-    if (kind === 'WAZUH') hosts = normalizeWazuh(payload);
-    else throw new RunFailure(`No normalizer for ${kind} yet.`);
+    // A host that reports findings takes part in closure and coverage; a configuration-only host (no findings key) is only matched to an asset.
+    const vulnAgentIds = new Set(payload.hosts.filter((h) => h.findings !== undefined).map((h) => h.agent_id));
+    if (vulnAgentIds.size > 0 && kind !== 'WAZUH') throw new RunFailure(`No normalizer for ${kind} yet.`);
+    // Every host is normalized for identity (a configuration-only host comes out with no findings); its configuration is read separately.
+    const hosts = normalizeWazuh(payload);
+    const configScans = normalizeConfiguration(payload);
 
     const now = new Date().toISOString();
     // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the default program when none is set, decision 6).
@@ -186,7 +192,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
 
       const raced: Array<{ agentId: string; hostName: string }> = [];
       for (const draft of plan.toCreate) {
-        const created = await createAgentReportedAsset(tenantId, draft, run.receivedAt, VM_WORKER_ACTOR, pgClient);
+        const created = await createAgentReportedAsset(tenantId, draft, vulnAgentIds.has(draft.agentId) ? run.receivedAt : null, VM_WORKER_ACTOR, pgClient);
         if (created) assetOf.set(draft.agentId, created.id);
         else raced.push({ agentId: draft.agentId, hostName: draft.hostName });
       }
@@ -197,17 +203,17 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
           const hit = candidates.find((c) => c.hostName.trim().toLowerCase() === r.hostName.trim().toLowerCase());
           if (!hit) throw new Error('An asset name was taken but the asset could not be found');
           assetOf.set(r.agentId, hit.id);
-          await recordAgentReport(tenantId, hit.id, agentKey(kind, run.sourceId), r.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient);
+          await recordAgentReport(tenantId, hit.id, agentKey(kind, run.sourceId), r.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient, { vulnSeen: vulnAgentIds.has(r.agentId) });
         }
       }
       for (const m of plan.matched) {
-        await recordAgentReport(tenantId, m.assetId, agentKey(kind, run.sourceId), m.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient);
+        await recordAgentReport(tenantId, m.assetId, agentKey(kind, run.sourceId), m.agentId, run.receivedAt, VM_WORKER_ACTOR, pgClient, { vulnSeen: vulnAgentIds.has(m.agentId) });
       }
 
       const reported: ReportedHost[] = [];
       for (const host of hosts) {
         const assetId = assetOf.get(host.agentId);
-        if (assetId) reported.push({ assetId, host });
+        if (assetId && vulnAgentIds.has(host.agentId)) reported.push({ assetId, host });
       }
 
       const reportedAssetIds = [...new Set(reported.map((r) => r.assetId))];
@@ -239,6 +245,13 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       await saveFindings(tenantId, result, client);
       await insertSightings(tenantId, result.sightings, client);
       await insertRunAssets(tenantId, run, reportedAssetIds, client);
+      // The run's configuration scans replace any stored by an earlier pass over the same run (reprocessing is idempotent).
+      const scanDrafts: ConfigScanDraft[] = [];
+      for (const [agentId, scans] of configScans) {
+        const assetId = assetOf.get(agentId);
+        if (assetId) for (const scan of scans) scanDrafts.push({ assetId, scan });
+      }
+      const configResults = await replaceRunConfigScans(tenantId, run, scanDrafts, client);
       if (faultForTests === 'after_save') throw new Error('fault injected for tests');
       if (faultForTests === 'interrupt_after_save') controllers.get(runId)?.controller.abort();
       checkpoint();
@@ -253,11 +266,11 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
 
       const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;
       await markRunNormalized(tenantId, run, now, warning, client);
-      return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam };
+      return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam, configResults };
     }, programId);
 
     console.log(
-      `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M)`,
+      `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M, ${summary.configResults} configuration results)`,
     );
   } catch (err: unknown) {
     // The transaction (if any) rolled back; the run's status is written on its own.
@@ -272,7 +285,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       return;
     }
     console.error('[VM Worker]', errorMessage(err));
-    console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (0/0/0 findings, 0 sightings, 0 POA&M)`);
+    console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (0/0/0 findings, 0 sightings, 0 POA&M, 0 configuration results)`);
     await fail(tenantId, runId, GENERIC);
   }
 }

@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql } from '../server/schema';
 import { validateAssetInput } from '../server/assets';
 import {
+  VM_CONFIG_RESULTS,
+  VM_CONFIG_SEVERITIES,
   VM_FINDING_STATUSES,
   VM_HUMAN_DECISIONS,
   VM_POAM_STATUSES,
@@ -53,9 +55,10 @@ function parseEnum(body: string, constraintName: string): string[] {
 }
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items'];
+const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items', 'vm_config_scans', 'vm_config_results'];
 const ALL_TABLES = [...TENANT_TABLES, 'vm_vulns'];
 const NL = String.fromCharCode(10);
+const at = (t: string) => TABLES_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${t}`);
 
 console.log('--- Tables exist ---');
 for (const t of ALL_TABLES) assert(TABLES_SQL.includes(`CREATE TABLE IF NOT EXISTS ${t} (`), `${t} is created`);
@@ -157,13 +160,37 @@ assert(vulns.includes("source VARCHAR(16) NOT NULL DEFAULT 'INGEST'"), 'vm_vulns
 assert(same(vulnSources, VM_VULN_SOURCES) && same(vulnSources, ['INGEST', 'FEED', 'ADMIN']), 'vm_vulns source list equals VM_VULN_SOURCES (INGEST, FEED, ADMIN)', vulnSources);
 assert(!TABLES_SQL.includes('ALTER TABLE vm_vulns'), 'vm_vulns is never ALTERed on boot: an inline CHECK avoids rescanning the global CVE table under an exclusive lock at every start');
 
+console.log('\n--- vm_config_scans, vm_config_results (issue #103) ---');
+const configScans = block('vm_config_scans');
+assert(
+  configScans.includes('FOREIGN KEY (tenant_id, run_id) REFERENCES vm_runs (tenant_id, id) ON DELETE CASCADE') &&
+    configScans.includes('FOREIGN KEY (tenant_id, source_id) REFERENCES vm_sources (tenant_id, id)') &&
+    configScans.includes('FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE'),
+  'every configuration scan key is composite (run and asset cascade)',
+);
+assert((configScans.match(/FOREIGN KEY \(tenant_id, /g) || []).length === 3, 'vm_config_scans has exactly three foreign keys, all composite on tenant_id');
+assert(!/_id VARCHAR\(64\)[^,\n]*REFERENCES/.test(configScans), 'no single-column key on vm_config_scans (it would accept another tenant\'s row)');
+assert(configScans.includes('CONSTRAINT unq_vm_config_scans_tenant_id UNIQUE (tenant_id, id)'), 'vm_config_scans is a composite foreign-key target');
+assert(configScans.includes('CONSTRAINT unq_vm_config_scan UNIQUE (tenant_id, run_id, asset_id, benchmark_id, profile_id, scanned_at)'), 'a run stores one scan per asset, benchmark, profile and time');
+assert(configScans.includes('scanned_at TIMESTAMPTZ NOT NULL') && configScans.includes('received_at TIMESTAMPTZ NOT NULL'), 'scan and receipt times are required');
+assert(TABLES_SQL.includes('idx_vm_config_scans_asset ON vm_config_scans (tenant_id, asset_id, scanned_at DESC)'), 'vm_config_scans is indexed for the latest scan per asset');
+const configResults = block('vm_config_results');
+assert(configResults.includes('PRIMARY KEY (tenant_id, scan_id, rule_id)'), 'a scan stores a rule once (primary key)');
+assert(configResults.includes('FOREIGN KEY (tenant_id, scan_id) REFERENCES vm_config_scans (tenant_id, id) ON DELETE CASCADE'), 'vm_config_results rows go with their scan (composite key, cascade)');
+assert(same(parseEnum(configResults, 'vm_config_results_result_check'), VM_CONFIG_RESULTS), 'result list equals VM_CONFIG_RESULTS');
+const severityMatch = /vm_config_results_severity_check CHECK \(severity IS NULL OR severity IN \(([^)]*)\)\)/.exec(configResults);
+const severityValues = severityMatch ? [...severityMatch[1].matchAll(/'([^']*)'/g)].map((x) => x[1]) : [];
+assert(same(severityValues, VM_CONFIG_SEVERITIES), 'severity list equals VM_CONFIG_SEVERITIES (null allowed)', severityValues);
+assert(!configScans.includes('program_id') && !configResults.includes('program_id'), 'configuration results are tenant-wide: no program_id');
+assert(TABLES_SQL.includes('ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS config_result_count INTEGER NOT NULL DEFAULT 0'), 'vm_runs.config_result_count is added idempotently');
+assert(at('vm_runs') < at('vm_config_scans') && at('vm_config_scans') < at('vm_config_results') && at('vm_config_results') < TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_admins'), 'the configuration tables sit in the VM block, after vm_runs');
+
 console.log('\n--- enclave_assets additions and ordering ---');
 assert(TABLES_SQL.includes("ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS agent_ids JSONB NOT NULL DEFAULT '{}'::jsonb"), 'enclave_assets.agent_ids is added');
 assert(TABLES_SQL.includes('ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS last_vuln_seen_at TIMESTAMPTZ'), 'enclave_assets.last_vuln_seen_at is added');
 const assetKey = TABLES_SQL.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS unq_enclave_assets_tenant_id ON enclave_assets(tenant_id, id)');
 const findingsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS vm_findings');
 assert(assetKey > 0 && assetKey < findingsAt, 'the enclave_assets (tenant_id, id) key exists before vm_findings references it');
-const at = (t: string) => TABLES_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${t}`);
 assert(at('vm_vulns') < at('vm_findings') && at('vm_sources') < at('vm_findings') && at('vm_runs') < at('vm_findings'), 'vm_vulns, vm_sources and vm_runs are created before vm_findings');
 assert(at('vm_findings') < at('vm_sightings') && at('vm_findings') < at('vm_poam_items'), 'vm_findings is created before vm_sightings and vm_poam_items');
 assert(at('vm_runs') < at('vm_run_assets') && at('vm_run_assets') < at('vm_poam_items'), 'vm_run_assets is created after vm_runs and before vm_poam_items');

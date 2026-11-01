@@ -7,12 +7,14 @@ import {
   INGEST_LIMITS,
   INGEST_PATTERN_SOURCES,
   formatJsonPath,
+  ingestConfigScanSchema,
   ingestExporterSchema,
   ingestFindingSchema,
   ingestHostSchema,
   ingestOsSchema,
   ingestPackageSchema,
   ingestPayloadSchema,
+  ingestRuleResultSchema,
   ingestSourceSchema,
   validateIngestPayload,
   vmIngestMaxBytes,
@@ -25,7 +27,7 @@ import {
   isLocalStorageConfigured,
   writeTenantFile,
 } from '../server/evidence/storage';
-import { VM_SEVERITIES, VM_SOURCE_KINDS } from '../src/types/vm';
+import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_SEVERITIES, VM_SOURCE_KINDS } from '../src/types/vm';
 
 /**
  * Pure checks (no server): the ingest validator, its parity with server/vm/ingest.schema.json, the tenant storage helper and
@@ -88,6 +90,25 @@ function hostsWith(counts: number[]): Obj[] {
     findings: Array.from({ length: n }, () => ({ vuln_id: 'CVE-2024-0001', severity: 'LOW' })),
   }));
 }
+
+const configScan = () => ({
+  benchmark: { id: 'xccdf_org.ssgproject.content_benchmark_RHEL-9', version: '0.1.69', title: 'Example benchmark' },
+  profile: { id: 'xccdf_org.ssgproject.content_profile_cui', title: 'CUI' },
+  scanner: { name: 'OpenSCAP', version: '1.3.9' },
+  started_at: '2026-10-18T11:00:00Z',
+  scanned_at: '2026-10-18T11:05:00Z',
+  source_sha256: 'a'.repeat(64),
+  results: [
+    { rule_id: 'xccdf_org.ssgproject.content_rule_sshd_disable_root_login', cce: 'CCE-27445-6', cci: ['CCI-000366'], result: 'pass', severity: 'medium', title: 'Disable root login' },
+    { rule_id: 'accounts_password_pam_minlen', result: 'fail' },
+  ],
+});
+const configOnly = (): Obj => mutate((p) => (p.hosts = [{ agent_id: 'xccdf-1', configuration: [configScan()] }]));
+const withScan = (fn: (scan: Obj, host: Obj) => void): Obj =>
+  mutate((p) => {
+    p.hosts = [{ agent_id: 'x', configuration: [configScan()] }];
+    fn(p.hosts[0].configuration[0], p.hosts[0]);
+  });
 
 async function main() {
   // ---------------------------------------------------------------------------------------------- validator
@@ -169,6 +190,41 @@ async function main() {
   const dup = errorOf(mutate((p) => (p.hosts = [{ agent_id: 'a', findings: [] }, { agent_id: 'b', findings: [] }, { agent_id: 'a', findings: [] }])));
   assert(dup === '$.hosts[2].agent_id: duplicate agent_id (also at $.hosts[0])', 'duplicate agent_id exact message', dup);
 
+  // Configuration results (issue #103).
+  assert(validateIngestPayload(configOnly()).ok, 'configuration-only host accepted');
+  assert(validateIngestPayload(mutate((p) => (p.hosts[0].configuration = [configScan()]))).ok, 'findings and configuration on one host accepted');
+  assert(validateIngestPayload(mutate((p) => (p.source.kind = 'SCAP'))).ok, 'source kind SCAP accepted');
+  assert(errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x' }]))).startsWith('$.hosts[0].findings:'), 'host with neither findings nor configuration rejected at findings');
+  assert(
+    errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x' }]))) === '$.hosts[0].findings: required (a host reports findings, configuration results or both)',
+    'neither: exact message',
+  );
+  assert(errorOf(mutate((p) => (p.hosts = [{ agent_id: 'a', findings: [] }, { agent_id: 'b' }]))).startsWith('$.hosts[1].findings:'), 'second host with neither names its index');
+  const badResult = (fn: (r: Obj) => void) => errorOf(withScan((scan) => fn(scan.results[0])));
+  assert(badResult((r) => (r.result = 'PASS')).startsWith('$.hosts[0].configuration[0].results[0].result:'), 'result PASS (uppercase) rejected');
+  assert(badResult((r) => (r.cce = 'CCE-1')).startsWith('$.hosts[0].configuration[0].results[0].cce:'), 'cce pattern');
+  assert(badResult((r) => (r.cci = ['CCI-1'])).startsWith('$.hosts[0].configuration[0].results[0].cci[0]:'), 'cci pattern');
+  assert(badResult((r) => (r.severity = 'critical')).startsWith('$.hosts[0].configuration[0].results[0].severity:'), 'severity enum');
+  assert(badResult((r) => (r.rule_id = 'bad rule')).startsWith('$.hosts[0].configuration[0].results[0].rule_id:'), 'rule_id pattern');
+  assert(badResult((r) => (r.x = 1)) === '$.hosts[0].configuration[0].results[0].x: unknown field', 'unknown result field');
+  const badScan = (fn: (c: Obj) => void) => errorOf(withScan((scan) => fn(scan)));
+  assert(badScan((c) => (c.scanned_at = '2026-13-01T00:00:00Z')) === '$.hosts[0].configuration[0].scanned_at: not a valid date-time', 'scanned_at validated');
+  assert(badScan((c) => (c.x = 1)) === '$.hosts[0].configuration[0].x: unknown field', 'unknown scan field');
+  assert(badScan((c) => delete c.scanner).startsWith('$.hosts[0].configuration[0].scanner:'), 'scanner required');
+  assert(badScan((c) => (c.source_sha256 = 'ABC')).startsWith('$.hosts[0].configuration[0].source_sha256:'), 'source_sha256 pattern');
+  assert(badScan((c) => (c.benchmark.id = '')).startsWith('$.hosts[0].configuration[0].benchmark.id:'), 'empty benchmark id rejected');
+  const dupRule = errorOf(withScan((scan) => scan.results.push({ rule_id: 'accounts_password_pam_minlen', result: 'pass' })));
+  assert(dupRule === '$.hosts[0].configuration[0].results[2].rule_id: duplicate rule_id (also at $.hosts[0].configuration[0].results[1])', 'duplicate rule_id exact message', dupRule);
+  assert(validateIngestPayload(withScan((_scan, host) => host.configuration.push(configScan()))).ok, 'the same rule_id in two different scans is accepted');
+  const tooManyScans = errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x', configuration: Array.from({ length: 21 }, () => configScan()) }])));
+  assert(tooManyScans.startsWith('$.hosts[0].configuration:'), '21 scans on one host rejected', tooManyScans);
+  const scanOf = (n: number) => ({ ...configScan(), results: Array.from({ length: n }, (_, i) => ({ rule_id: 'rule_' + i, result: 'pass' })) });
+  assert(errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x', configuration: [scanOf(5001)] }]))).startsWith('$.hosts[0].configuration[0].results:'), '5001 results in one scan rejected');
+  const manyHosts = (n: number) => Array.from({ length: n }, (_, i) => ({ agent_id: 'h' + i, configuration: [scanOf(5000)] }));
+  assert(validateIngestPayload(mutate((p) => (p.hosts = manyHosts(20)))).ok, '100000 configuration results in total accepted');
+  const overResults = errorOf(mutate((p) => (p.hosts = manyHosts(20).concat([{ agent_id: 'extra', configuration: [scanOf(1)] }]))));
+  assert(overResults === '$.hosts: at most 100000 configuration results in total', '100001 configuration results in total exact message', overResults);
+
   // The first issue follows shape order: source before exporter before collected_at before hosts.
   const order = errorOf({ source: { kind: 'WAZUH', label: 'x' }, exporter: { name: '!', version: '1' }, collected_at: 'bad', hosts: 'nope' });
   assert(order.startsWith('$.exporter.name:'), 'issue order follows shape order (exporter before collected_at)', order);
@@ -209,6 +265,8 @@ async function main() {
     ['os', props(defs.host).os, ingestOsSchema],
     ['finding', defs.finding, ingestFindingSchema],
     ['package', props(defs.finding).package, ingestPackageSchema],
+    ['configScan', defs.configScan, ingestConfigScanSchema],
+    ['ruleResult', defs.ruleResult, ingestRuleResultSchema],
   ];
   for (const [name, obj, zodObj] of objects) {
     assert(obj.additionalProperties === false, `${name}: additionalProperties false`);
@@ -221,6 +279,29 @@ async function main() {
 
   assert(props(doc).hosts.maxItems === INGEST_LIMITS.maxHosts, 'maxItems hosts');
   assert(props(defs.host).findings.maxItems === INGEST_LIMITS.maxFindingsPerHost, 'maxItems findings per host');
+  assert(props(defs.host).configuration.maxItems === INGEST_LIMITS.maxConfigScansPerHost, 'maxItems configuration scans per host');
+  assert(props(defs.configScan).results.maxItems === INGEST_LIMITS.maxResultsPerScan, 'maxItems results per scan');
+  assert(props(defs.ruleResult).cci.maxItems === INGEST_LIMITS.maxCciPerResult, 'maxItems cci per result');
+  assert(INGEST_LIMITS.maxTotalConfigResults === 100000, 'total configuration results limit is 100000');
+  assert(String(doc.description).includes('100000'), 'description states the 100000 configuration results limit');
+  assert(same([...defs.host.required], ['agent_id']), 'host requires only agent_id (findings and configuration are each optional)');
+  assert(same([...defs.configScan.required].sort(), ['benchmark', 'results', 'scanned_at', 'scanner']), 'configScan required keys');
+  assert(same([...defs.ruleResult.required].sort(), ['result', 'rule_id']), 'ruleResult required keys');
+  assert(JSON.stringify(props(defs.ruleResult).result.enum) === JSON.stringify([...VM_CONFIG_RESULTS]), 'result enum equals VM_CONFIG_RESULTS');
+  assert(JSON.stringify(props(defs.ruleResult).severity.enum) === JSON.stringify([...VM_CONFIG_SEVERITIES]), 'config severity enum equals VM_CONFIG_SEVERITIES');
+  assert(props(defs.configScan).benchmark.properties.id.pattern === INGEST_PATTERN_SOURCES.xccdfId, 'pattern xccdfId (benchmark id)');
+  assert(props(defs.configScan).profile.properties.id.pattern === INGEST_PATTERN_SOURCES.xccdfId, 'pattern xccdfId (profile id)');
+  assert(props(defs.ruleResult).rule_id.pattern === INGEST_PATTERN_SOURCES.xccdfId, 'pattern xccdfId (rule id)');
+  assert(props(defs.ruleResult).cce.pattern === INGEST_PATTERN_SOURCES.cce, 'pattern cce');
+  assert(props(defs.ruleResult).cci.items.pattern === INGEST_PATTERN_SOURCES.cci, 'pattern cci');
+  assert(props(defs.configScan).source_sha256.pattern === INGEST_PATTERN_SOURCES.sha256, 'pattern sha256');
+  assert(props(defs.configScan).scanner.properties.name.maxLength === INGEST_LIMITS.scannerNameMax, 'maxLength scanner name');
+  assert(props(defs.configScan).scanner.properties.version.maxLength === INGEST_LIMITS.scannerVersionMax, 'maxLength scanner version');
+  assert(props(defs.configScan).benchmark.properties.version.maxLength === INGEST_LIMITS.benchmarkVersionMax, 'maxLength benchmark version');
+  assert(props(defs.configScan).benchmark.properties.title.maxLength === INGEST_LIMITS.benchmarkTitleMax, 'maxLength benchmark title');
+  assert(props(defs.configScan).profile.properties.title.maxLength === INGEST_LIMITS.benchmarkTitleMax, 'maxLength profile title');
+  assert(props(defs.ruleResult).title.maxLength === INGEST_LIMITS.titleMax, 'maxLength rule title');
+  assert(props(defs.ruleResult).title.pattern === INGEST_PATTERN_SOURCES.line && props(defs.configScan).scanner.properties.name.pattern === INGEST_PATTERN_SOURCES.line, 'pattern line (config titles, scanner)');
   assert(props(defs.finding).refs.maxItems === INGEST_LIMITS.maxRefs, 'maxItems refs');
   assert(props(defs.finding).refs.items.maxLength === INGEST_LIMITS.refMax, 'maxLength ref');
   assert(props(props(doc).source).label.maxLength === INGEST_LIMITS.labelMax, 'maxLength label');

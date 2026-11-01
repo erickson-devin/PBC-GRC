@@ -2,6 +2,13 @@ import { Router, Request, Response } from 'express';
 import { VmTokenError, createVmToken, listVmTokens, revokeVmToken } from '../vm/tokens';
 import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
 import { listFindings } from '../vm/findingsStore';
+import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults } from '../vm/configStore';
+import { computeConfigSuggestions } from '../vm/configSuggestions';
+import { listAssets } from '../assets';
+import { getProgram } from '../programs';
+import { getProgramBoundary } from '../programAssets';
+import { frameworksDefiningControl } from '../middleware/frameworkGuard';
+import { mapConfigRule } from '../../src/data/telemetry/configRuleMap';
 import { enqueueVmRun, isVmRunActive, recoverStaleRuns } from '../vm/worker';
 import {
   VmSnapshotError,
@@ -14,8 +21,8 @@ import {
 import { VM_MANUAL_SNAPSHOT_MIN_INTERVAL_MS, manualSnapshotAllowed } from '../vm/snapshot';
 import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
-import { VM_FINDING_STATUSES, VM_SEVERITIES, VM_TOKEN_SCOPES } from '../../src/types/vm';
-import type { VmFindingStatus, VmSeverity, VmTokenScope } from '../../src/types/vm';
+import { VM_CONFIG_RESULTS, VM_FINDING_STATUSES, VM_SEVERITIES, VM_TOKEN_SCOPES } from '../../src/types/vm';
+import type { VmConfigResult, VmFindingStatus, VmSeverity, VmTokenScope } from '../../src/types/vm';
 
 /**
  * Tenant-scoped vulnerability management, mounted at /api/v1/tenants/:tenantId/vm by the tenants router, AFTER
@@ -236,6 +243,124 @@ router.get('/sources', async (req: Request, res: Response): Promise<void> => {
     res.json({ tenantId: req.tenantId, totalCount: sources.length, sources });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the sources');
+  }
+});
+
+/** A positive integer query parameter within [1, max]: undefined when absent, null when it is not valid. */
+function limitParam(raw: unknown, fallback: number, max: number): number | null {
+  if (raw === undefined) return fallback;
+  const n = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  return Number.isInteger(n) && n >= 1 && n <= max ? n : null;
+}
+
+/**
+ * GET .../vm/config/scans?assetId=&latest=&limit=: configuration scans, newest first (issue #103). Open to every role, like /findings.
+ * latest=true keeps only the newest scan per asset, source, benchmark and profile. The stored raw payload is never served.
+ */
+router.get('/config/scans', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const { assetId, latest } = req.query;
+  if (assetId !== undefined && (typeof assetId !== 'string' || !TOKEN_ID_PATTERN.test(assetId))) {
+    res.status(400).json({ error: 'Invalid assetId' });
+    return;
+  }
+  if (latest !== undefined && latest !== 'true' && latest !== 'false') {
+    res.status(400).json({ error: 'Invalid latest: true or false' });
+    return;
+  }
+  const limit = limitParam(req.query.limit, 100, 500);
+  if (limit === null) {
+    res.status(400).json({ error: 'Invalid limit: between 1 and 500' });
+    return;
+  }
+  try {
+    const { totalCount, scans } = await listConfigScans(req.tenantId!, { assetId: assetId as string | undefined, latestOnly: latest === 'true', limit });
+    res.json({ tenantId: req.tenantId, totalCount, scans });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the configuration scans');
+  }
+});
+
+/** GET .../vm/config/scans/:id/results?result=&limit=: the rule results of one scan, by rule id, with the controls each rule maps to. */
+router.get('/config/scans/:id/results', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const id = String(req.params.id);
+  if (!TOKEN_ID_PATTERN.test(id)) {
+    res.status(404).json({ error: 'Configuration scan not found' });
+    return;
+  }
+  const { result } = req.query;
+  if (result !== undefined && !(typeof result === 'string' && (VM_CONFIG_RESULTS as readonly string[]).includes(result))) {
+    res.status(400).json({ error: 'Invalid result: ' + VM_CONFIG_RESULTS.join(', ') });
+    return;
+  }
+  const limit = limitParam(req.query.limit, 5000, 5000);
+  if (limit === null) {
+    res.status(400).json({ error: 'Invalid limit: between 1 and 5000' });
+    return;
+  }
+  try {
+    const scan = await getConfigScan(req.tenantId!, id);
+    if (!scan) {
+      res.status(404).json({ error: 'Configuration scan not found' });
+      return;
+    }
+    const { totalCount, results } = await listConfigResults(req.tenantId!, id, { result: result as VmConfigResult | undefined, limit });
+    res.json({
+      tenantId: req.tenantId,
+      scanId: id,
+      totalCount,
+      results: results.map(({ scanId: _scanId, ...rest }) => {
+        const mapped = mapConfigRule({ ruleId: rest.ruleId, cce: rest.cce });
+        return { ...rest, controls: mapped ? { cmmc: mapped.controlId, nist80053: mapped.nist80053 } : null };
+      }),
+    });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the configuration results');
+  }
+});
+
+/**
+ * GET .../vm/config/suggestions: what the latest configuration scans suggest for the controls of the request's program (x-program-id, else
+ * the default program), over that program's boundary. Computed on every read and never stored: nothing here writes a control. Accepting a
+ * suggestion is an ordinary control update by a person. SOC 2 and HIPAA programs get supported: false and no controls.
+ */
+router.get('/config/suggestions', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  try {
+    const program = req.program ?? (req.programId ? await getProgram(tenantId, req.programId) : null);
+    if (!program) {
+      res.status(404).json({ error: 'Program not found', code: 'program_not_found' });
+      return;
+    }
+    const boundary = await getProgramBoundary(tenantId, program.id);
+    const inventory = await listAssets(tenantId);
+    const members = new Set(boundary.assetIds);
+    const assets = (boundary.declared ? inventory.filter((a) => members.has(a.id)) : inventory).map((a) => ({
+      id: a.id,
+      discoveryStatus: a.discoveryStatus ?? 'ACTIVE',
+      cmmcCategory: a.cmmcAssetCategory,
+    }));
+    const { scans, results } = await loadLatestConfigResults(tenantId, assets.map((a) => a.id));
+    const computed = computeConfigSuggestions({
+      scans,
+      results,
+      boundary: { declared: boundary.declared, assets },
+      framework: program.frameworkId,
+    });
+    res.json({
+      tenantId,
+      programId: program.id,
+      frameworkId: program.frameworkId,
+      supported: computed.supported,
+      boundary: { declared: boundary.declared, inScope: computed.inScope, evaluated: computed.evaluated },
+      generatedAt: new Date().toISOString(),
+      controls: computed.controls.filter((c) => frameworksDefiningControl(c.controlId).has(program.frameworkId)),
+      unmappedRuleCount: computed.unmappedRuleCount,
+    });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to compute the configuration suggestions');
   }
 });
 
