@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic XCCDF 1.2 results for the offline dry run. Documentation addresses only; no real host. -->
+<Benchmark xmlns="http://checklists.nist.gov/xccdf/1.2" id="xccdf_test.example_benchmark_sample" resolved="true" xml:lang="en-US">
+  <status>draft</status>
+  <title>Sample Linux Baseline</title>
+  <version>1.0</version>
+  <Profile id="xccdf_test.example_profile_baseline">
+    <title>Sample baseline profile</title>
+  </Profile>
+  <Rule id="xccdf_test.example_rule_sshd_disable_root_login" selected="true" severity="medium">
+    <title>Disable SSH root login</title>
+  </Rule>
+  <Rule id="xccdf_test.example_rule_accounts_password_minlen" selected="true" severity="medium">
+    <title>Set a minimum password length</title>
+  </Rule>
+  <Rule id="xccdf_test.example_rule_service_telnet_disabled" selected="true" severity="high">
+    <title>Disable the telnet service</title>
+  </Rule>
+  <Rule id="xccdf_test.example_rule_audit_logging_enabled" selected="true" severity="low">
+    <title>Enable audit logging</title>
+  </Rule>
+  <TestResult id="xccdf_test.example_testresult_sample" start-time="2026-10-01T10:00:00Z" end-time="2026-10-01T10:05:00Z" test-system="cpe:/a:example:scanner:1.0" version="1.0">
+    <benchmark id="xccdf_test.example_benchmark_sample"/>
+    <profile idref="xccdf_test.example_profile_baseline"/>
+    <target>sample-cfg-01.example.test</target>
+    <target-address>192.0.2.50</target-address>
+    <target-facts>
+      <fact name="urn:xccdf:fact:asset:identifier:fqdn" type="string">sample-cfg-01.example.test</fact>
+      <fact name="urn:xccdf:fact:asset:identifier:mac" type="string">00:00:5E:00:53:50</fact>
+    </target-facts>
+    <rule-result idref="xccdf_test.example_rule_sshd_disable_root_login" severity="medium">
+      <result>pass</result>
+      <ident system="http://cce.mitre.org">CCE-27445-6</ident>
+    </rule-result>
+    <rule-result idref="xccdf_test.example_rule_accounts_password_minlen" severity="medium">
+      <result>fail</result>
+      <ident system="http://cce.mitre.org">CCE-27293-0</ident>
+      <ident system="http://cyber.mil/cci">CCI-000205</ident>
+    </rule-result>
+    <rule-result idref="xccdf_test.example_rule_service_telnet_disabled" severity="high">
+      <result>notapplicable</result>
+    </rule-result>
+    <rule-result idref="xccdf_test.example_rule_audit_logging_enabled" severity="low">
+      <result>error</result>
+    </rule-result>
+  </TestResult>
+</Benchmark>

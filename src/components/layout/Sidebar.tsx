@@ -17,6 +17,7 @@ import {
   Lock,
   Scroll,
   FileUp,
+  ListChecks,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -108,7 +109,7 @@ export const Sidebar: React.FC = () => {
     ? '100%'
     : `${metrics.completionPercentage}%`;
 
-  // Photon (the SCAP scanning arm, #103) is linked only when the install names it in VITE_PHOTON_URL: there is no built-in URL
+  // The install's own configuration scanner console is linked only when VITE_PHOTON_URL names it (#93, #103): there is no built-in URL
   const photonEnv = ((typeof import.meta !== 'undefined' && import.meta.env?.VITE_PHOTON_URL) || '').trim();
   const photonUrl = /^https?:\/\//i.test(photonEnv) ? photonEnv : '';
 
@@ -139,9 +140,10 @@ export const Sidebar: React.FC = () => {
     {
       title: 'Automation & Evidence',
       items: [
+        { id: 'configresults', label: 'Configuration Results', icon: ListChecks },
         ...(photonUrl ? [{
           kind: 'external',
-          label: 'Technical Baselines & STIGs',
+          label: 'Scanner Console',
           icon: Terminal,
           href: photonUrl,
           badgeVariant: 'status',
@@ -267,6 +269,8 @@ export const Sidebar: React.FC = () => {
                   return (
                     <button
                       key={item.label}
+                      type="button"
+                      aria-label={`${item.label} (opens in a new tab)`}
                       onClick={() => handleExternalClick(item.href)}
                       className="w-full flex items-center justify-between min-h-[36px] px-3 py-1.5 rounded-xl font-medium text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent transition-all text-left group"
                     >

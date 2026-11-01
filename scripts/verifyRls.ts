@@ -441,6 +441,79 @@ async function main() {
     const runAssetsCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_run_assets WHERE run_id = $1', [runIdX2]);
     check(runAssetsCascade.rows.length === 0, 'vm_run_assets: rows go with their run (ON DELETE CASCADE)', `saw ${runAssetsCascade.rows.length}`);
 
+    // 12. vm_config_scans: one configuration scan of an asset in a run (issue #103), tenant-wide like every VM table
+    const insertConfigScan =
+      "INSERT INTO vm_config_scans (tenant_id, run_id, source_id, asset_id, benchmark_id, scanner_name, scanned_at, received_at) VALUES ($1, $2, $3, $4, 'rls_verify_bench', 'rls_verify', NOW(), NOW()) RETURNING id";
+    const scanX = await queryWithTenant(TENANT_X, insertConfigScan, [TENANT_X, runIdX, srcIdX, assetIdX]);
+    const scanIdX = scanX.rows[0]?.id;
+    check(Boolean(scanIdX), 'vm_config_scans: tenant X can record a scan for its own run, source and asset');
+    check(
+      await rejectsWith(TENANT_X, insertConfigScan, [TENANT_X, runIdX, srcIdX, assetIdY], { code: '23503', constraint: 'fk_vm_config_scans_asset' }),
+      "vm_config_scans: a scan naming tenant Y's asset is refused (composite foreign key)", lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, insertConfigScan, [TENANT_X, runIdY, srcIdX, assetIdX], { code: '23503', constraint: 'fk_vm_config_scans_run' }),
+      "vm_config_scans: a scan naming tenant Y's run is refused (composite foreign key)", lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, insertConfigScan, [TENANT_X, runIdX, srcIdY, assetIdX], { code: '23503', constraint: 'fk_vm_config_scans_source' }),
+      "vm_config_scans: a scan naming tenant Y's source is refused (composite foreign key)", lastRejection
+    );
+    const scansStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_config_scans WHERE tenant_id = $1', [TENANT_X]);
+    check(scansStolen.rows.length === 0, 'vm_config_scans: tenant Y cannot read tenant X rows even by naming the tenant');
+    const scansNoCtx = await pool.query('SELECT 1 FROM vm_config_scans WHERE run_id = $1', [runIdX]);
+    check(scansNoCtx.rowCount === 0, 'vm_config_scans: no tenant context => zero rows visible', `saw ${scansNoCtx.rowCount}`);
+    check(
+      await rejectsWith(TENANT_X, insertConfigScan, [TENANT_Y, runIdX, srcIdX, assetIdX], { code: '42501' }),
+      'vm_config_scans: tenant X cannot insert a row for tenant Y (WITH CHECK)', lastRejection
+    );
+
+    // 13. vm_config_results: the rule results of a scan
+    const insertConfigResult = "INSERT INTO vm_config_results (tenant_id, scan_id, rule_id, result) VALUES ($1, $2, 'rls_verify_rule', $3)";
+    let configResultOk = false;
+    try {
+      await queryWithTenant(TENANT_X, insertConfigResult, [TENANT_X, scanIdX, 'pass']);
+      configResultOk = true;
+    } catch {
+      configResultOk = false;
+    }
+    check(configResultOk, 'vm_config_results: tenant X can record a rule result for its own scan');
+    check(
+      await rejectsWith(TENANT_X, insertConfigResult, [TENANT_X, scanIdX, 'PASS'], { code: '23514', constraint: 'vm_config_results_result_check' }),
+      'vm_config_results: a result value outside the XCCDF list is refused', lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, insertConfigResult, [TENANT_X, scanIdX, 'fail'], { code: '23505', constraint: 'vm_config_results_pkey' }),
+      'vm_config_results: the same rule twice in one scan is refused (primary key)', lastRejection
+    );
+    const scanY = await queryWithTenant(TENANT_Y, insertConfigScan, [TENANT_Y, runIdY, srcIdY, assetIdY]);
+    const scanIdY = scanY.rows[0]?.id;
+    check(
+      await rejectsWith(TENANT_X, insertConfigResult, [TENANT_X, scanIdY, 'pass'], { code: '23503', constraint: 'fk_vm_config_results_scan' }),
+      "vm_config_results: a row naming tenant Y's scan is refused (composite foreign key)", lastRejection
+    );
+    const resultsStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_config_results WHERE tenant_id = $1', [TENANT_X]);
+    check(resultsStolen.rows.length === 0, 'vm_config_results: tenant Y cannot read tenant X rows even by naming the tenant');
+    const resultsNoCtx = await pool.query('SELECT 1 FROM vm_config_results WHERE scan_id = $1', [scanIdX]);
+    check(resultsNoCtx.rowCount === 0, 'vm_config_results: no tenant context => zero rows visible', `saw ${resultsNoCtx.rowCount}`);
+    check(
+      await rejectsWith(TENANT_X, insertConfigResult, [TENANT_Y, scanIdX, 'pass'], { code: '42501' }),
+      'vm_config_results: tenant X cannot insert a row for tenant Y (WITH CHECK)', lastRejection
+    );
+    const runX3 = await queryWithTenant(
+      TENANT_X,
+      "INSERT INTO vm_runs (tenant_id, source_id, raw_path, raw_sha256) VALUES ($1, $2, 'rls_verify', $3) RETURNING id",
+      [TENANT_X, srcIdX, '7'.repeat(64)]
+    );
+    const runIdX3 = runX3.rows[0]?.id;
+    const scanX3 = await queryWithTenant(TENANT_X, insertConfigScan, [TENANT_X, runIdX3, srcIdX, assetIdX]);
+    const scanIdX3 = scanX3.rows[0]?.id;
+    await queryWithTenant(TENANT_X, insertConfigResult, [TENANT_X, scanIdX3, 'fail']);
+    await queryWithTenant(TENANT_X, 'DELETE FROM vm_runs WHERE id = $1', [runIdX3]);
+    const scanCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_config_scans WHERE id = $1', [scanIdX3]);
+    const resultCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_config_results WHERE scan_id = $1', [scanIdX3]);
+    check(scanCascade.rows.length === 0 && resultCascade.rows.length === 0, 'vm_config_scans and vm_config_results: rows go with their run (ON DELETE CASCADE)', `saw ${scanCascade.rows.length} scans, ${resultCascade.rows.length} results`);
+
     console.log('\n--- 3c. Control assessment history ---');
     // control_assessment_events is program-scoped: every insert and read below runs in the program of its tenant (both settings)
     const programX = await mkProgram(TENANT_X, 'rls_verify_events_x', true);
@@ -555,6 +628,7 @@ async function main() {
       await queryWithTenant(t, "DELETE FROM vm_sightings WHERE source_id IN (SELECT id FROM vm_sources WHERE label LIKE 'rls_verify_%')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_findings WHERE vuln_id LIKE 'RLS-VERIFY-%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_run_assets WHERE run_id IN (SELECT id FROM vm_runs WHERE raw_path = 'rls_verify')", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_config_scans WHERE run_id IN (SELECT id FROM vm_runs WHERE raw_path = 'rls_verify')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path = 'rls_verify'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_sources WHERE label LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_service_tokens WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);

@@ -26,6 +26,7 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse } from '../types/vm';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -444,6 +445,11 @@ export interface RegisterOutcome {
   role: TenantRole;
 }
 
+/** One rule result of a configuration scan with the controls the rule maps to (null when it maps to none). */
+export interface VmConfigRuleResultRow extends VmConfigRuleResult {
+  controls: { cmmc: string | null; nist80053: string | null } | null;
+}
+
 export const ApiClient = {
   /**
    * GET /api/v1/setup/status
@@ -713,6 +719,32 @@ export const ApiClient = {
       updatedExistingCount: Number(data?.updatedExistingCount ?? 0),
       created: parseServerAssets(data?.created),
     };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/config/scans (#103): configuration scans, tenant-wide (every role reads). `latest` keeps the newest scan per asset, source, benchmark and profile. */
+  async listConfigScans(tenantId: string, options?: { assetId?: string; latest?: boolean; limit?: number }): Promise<{ totalCount: number; scans: VmConfigScan[] }> {
+    const q = new URLSearchParams();
+    if (options?.assetId) q.set('assetId', options.assetId);
+    if (options?.latest) q.set('latest', 'true');
+    if (options?.limit !== undefined) q.set('limit', String(options.limit));
+    const qs = q.toString();
+    const data = await authedJson<{ totalCount?: unknown; scans?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/scans${qs ? `?${qs}` : ''}`, { tenantId });
+    return { totalCount: typeof data?.totalCount === 'number' ? data.totalCount : 0, scans: Array.isArray(data?.scans) ? (data.scans as VmConfigScan[]) : [] };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/config/scans/:scanId/results: the rule results of one scan, tenant-wide. */
+  async getConfigScanResults(tenantId: string, scanId: string, options?: { result?: VmConfigResult; limit?: number }): Promise<{ totalCount: number; results: VmConfigRuleResultRow[] }> {
+    const q = new URLSearchParams();
+    if (options?.result) q.set('result', options.result);
+    if (options?.limit !== undefined) q.set('limit', String(options.limit));
+    const qs = q.toString();
+    const data = await authedJson<{ totalCount?: unknown; results?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/scans/${encodeURIComponent(scanId)}/results${qs ? `?${qs}` : ''}`, { tenantId });
+    return { totalCount: typeof data?.totalCount === 'number' ? data.totalCount : 0, results: Array.isArray(data?.results) ? (data.results as VmConfigRuleResultRow[]) : [] };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/config/suggestions for the program (x-program-id): computed on read, never written to a control. */
+  async getConfigSuggestions(tenantId: string, programId?: string | null): Promise<VmConfigSuggestionsResponse> {
+    return authedJson<VmConfigSuggestionsResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/suggestions`, { tenantId, programId });
   },
 
   /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */

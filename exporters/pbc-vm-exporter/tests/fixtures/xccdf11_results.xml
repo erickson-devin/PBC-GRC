@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Benchmark xmlns="http://checklists.nist.gov/xccdf/1.1" id="benchmark_sample" resolved="true" xml:lang="en-US">
+  <status>draft</status>
+  <title>Fixture baseline 1.1</title>
+  <version>1.0</version>
+  <Profile id="profile_baseline">
+    <title>Sample baseline profile</title>
+  </Profile>
+  <Rule id="rule_sshd_disable_root_login" selected="true" severity="medium">
+    <title>Disable SSH root login</title>
+  </Rule>
+  <Rule id="rule_accounts_password_minlen" selected="true" severity="medium">
+    <title>Set a minimum password length</title>
+  </Rule>
+  <Rule id="rule_service_telnet_disabled" selected="true" severity="high">
+    <title>Disable the telnet service</title>
+  </Rule>
+  <Rule id="rule_audit_logging_enabled" selected="true" severity="low">
+    <title>Enable audit logging</title>
+  </Rule>
+  <TestResult id="testresult_sample" start-time="2026-10-01T10:00:00" end-time="2026-10-01T10:05:00" test-system="cpe:/a:example:scanner:1.0">
+    <benchmark id="benchmark_sample"/>
+    <profile idref="profile_baseline"/>
+    <target>cfg-host-01</target>
+    <target-address>192.0.2.10</target-address>
+    <target-facts>
+      <fact name="urn:xccdf:fact:asset:identifier:host_name" type="string">cfg-host-01</fact>
+      <fact name="urn:xccdf:fact:asset:identifier:mac" type="string">00:00:5E:00:53:10</fact>
+    </target-facts>
+    <rule-result idref="rule_sshd_disable_root_login" severity="medium">
+      <result>pass</result>
+      <ident system="http://cce.mitre.org">CCE-27445-6</ident>
+    </rule-result>
+    <rule-result idref="rule_accounts_password_minlen" severity="medium">
+      <result>fail</result>
+      <ident system="http://cce.mitre.org">CCE-27293-0</ident>
+      <ident system="http://cyber.mil/cci">CCI-000205</ident>
+    </rule-result>
+    <rule-result idref="rule_service_telnet_disabled" severity="high">
+      <result>notapplicable</result>
+    </rule-result>
+    <rule-result idref="rule_audit_logging_enabled" severity="low">
+      <result>error</result>
+    </rule-result>
+  </TestResult>
+</Benchmark>

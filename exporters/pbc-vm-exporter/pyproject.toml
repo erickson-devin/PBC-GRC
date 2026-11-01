@@ -23,7 +23,7 @@ packages = ["pbc_vm_exporter"]
 version = { attr = "pbc_vm_exporter.__version__" }
 
 [tool.setuptools.package-data]
-pbc_vm_exporter = ["contract/*.json", "samples/*.json"]
+pbc_vm_exporter = ["contract/*.json", "samples/*.json", "samples/*.xml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

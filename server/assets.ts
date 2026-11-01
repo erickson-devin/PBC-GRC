@@ -639,11 +639,12 @@ export async function countAssets(tenantId: string, client?: pg.PoolClient): Pro
 /**
  * Creates an asset reported by a vulnerability agent (Contractor Risk Managed + UNCONFIRMED_DISCOVERY until a person
  * classifies it). Returns null when the name is already taken (a concurrent insert), so the caller can pick another name.
+ * `seenAt` is null for a host that reported configuration results only: it has not been seen by a vulnerability scanner.
  */
 export async function createAgentReportedAsset(
   tenantId: string,
   draft: AgentAssetDraft,
-  seenAt: string,
+  seenAt: string | null,
   actor: string,
   client?: pg.PoolClient,
 ): Promise<AgentAssetCandidate | null> {
@@ -696,7 +697,7 @@ export async function createAgentReportedAsset(
 /**
  * Records that an agent of kind `key` reported this asset: stores (or replaces) the agent id and moves last_vuln_seen_at
  * forward. updated_by / updated_at change only when the agent id itself changes. Never touches the name, category, ip, mac,
- * os or discovery status.
+ * os or discovery status. `opts.vulnSeen` false (a configuration-only report) leaves last_vuln_seen_at alone.
  */
 export async function recordAgentReport(
   tenantId: string,
@@ -706,13 +707,15 @@ export async function recordAgentReport(
   seenAt: string,
   actor: string,
   client?: pg.PoolClient,
+  opts?: { vulnSeen?: boolean },
 ): Promise<void> {
+  const vulnSeen = opts?.vulnSeen ?? true;
   if (isMemory()) {
     const m = memoryAssets.get(assetId);
     if (!m || m.tenantId !== tenantId) return;
     const changed = (m.agentIds ?? {})[key] !== agentId;
     m.agentIds = { ...(m.agentIds ?? {}), [key]: agentId };
-    if (!m.lastVulnSeenAt || seenAt > m.lastVulnSeenAt) m.lastVulnSeenAt = seenAt;
+    if (vulnSeen && (!m.lastVulnSeenAt || seenAt > m.lastVulnSeenAt)) m.lastVulnSeenAt = seenAt;
     if (changed) {
       m.updatedBy = actor;
       m.updatedAt = new Date().toISOString();
@@ -723,11 +726,11 @@ export async function recordAgentReport(
     await c.query(
       `UPDATE enclave_assets SET
          agent_ids = COALESCE(agent_ids, $7::jsonb) || jsonb_build_object($3::text, $4::text),
-         last_vuln_seen_at = GREATEST(COALESCE(last_vuln_seen_at, $5::timestamptz), $5::timestamptz),
+         last_vuln_seen_at = CASE WHEN $8::boolean THEN GREATEST(COALESCE(last_vuln_seen_at, $5::timestamptz), $5::timestamptz) ELSE last_vuln_seen_at END,
          updated_by = CASE WHEN agent_ids->>$3 IS DISTINCT FROM $4 THEN $6 ELSE updated_by END,
          updated_at = CASE WHEN agent_ids->>$3 IS DISTINCT FROM $4 THEN NOW() ELSE updated_at END
        WHERE id = $1 AND tenant_id = $2`,
-      [assetId, tenantId, key, agentId, seenAt, actor, '{}'],
+      [assetId, tenantId, key, agentId, seenAt, actor, '{}', vulnSeen],
     );
   });
 }

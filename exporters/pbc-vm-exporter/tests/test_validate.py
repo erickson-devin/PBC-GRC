@@ -240,3 +240,75 @@ def test_keyword_audit_fails_closed_on_a_new_keyword():
     schema["properties"]["hosts"]["minItems"] = 1
     with pytest.raises(ValueError):
         assert_supported_keywords(schema)
+
+
+# ------------------------------------------------------------------------------------------------ configuration results
+
+def config_scan(rule_ids=("sshd_disable_root_login",)):
+    return {
+        "benchmark": {"id": "xccdf_test_benchmark"},
+        "scanner": {"name": "test-scanner"},
+        "scanned_at": "2026-10-01T10:05:00Z",
+        "results": [{"rule_id": r, "result": "pass"} for r in rule_ids],
+    }
+
+
+def config_payload(*hosts):
+    return {**valid_payload(), "source": {"kind": "SCAP", "label": "scap-test"}, "hosts": list(hosts)}
+
+
+def test_configuration_only_host_is_accepted():
+    assert validate_payload(config_payload({"agent_id": "xccdf-a", "configuration": [config_scan()]})) is None
+
+
+def test_host_with_neither_findings_nor_configuration():
+    p = config_payload({"agent_id": "xccdf-a"})
+    assert validate_payload(p) == "$.hosts[0].findings: required (a host reports findings, configuration results or both)"
+
+
+def test_mixed_host_is_accepted():
+    p = valid_payload()
+    p["hosts"][0]["configuration"] = [config_scan()]
+    assert validate_payload(p) is None
+
+
+def test_duplicate_rule_id_in_one_scan():
+    p = config_payload({"agent_id": "a", "configuration": [config_scan(), config_scan(["x", "y", "x"])]})
+    assert validate_payload(p) == (
+        "$.hosts[0].configuration[1].results[2].rule_id: duplicate rule_id "
+        "(also at $.hosts[0].configuration[1].results[0])"
+    )
+
+
+def test_same_rule_id_in_two_scans_is_fine():
+    assert validate_payload(config_payload({"agent_id": "a", "configuration": [config_scan(), config_scan()]})) is None
+
+
+def test_total_configuration_results_limit():
+    def host(i, n):
+        return {"agent_id": f"h{i}", "configuration": [config_scan([f"r{k}" for k in range(n)])]}
+
+    assert validate_payload(config_payload(*[host(i, 5000) for i in range(20)])) is None
+    assert validate_payload(config_payload(*[host(i, 5000) for i in range(20)], host(20, 1))) == (
+        "$.hosts: at most 100000 configuration results in total"
+    )
+
+
+def test_configuration_shape_errors():
+    p = config_payload({"agent_id": "a", "configuration": [config_scan()]})
+    p["hosts"][0]["configuration"][0]["results"][0]["result"] = "PASS"
+    assert validate_payload(p).startswith("$.hosts[0].configuration[0].results[0].result:")
+    p = config_payload({"agent_id": "a", "configuration": [config_scan()]})
+    p["hosts"][0]["configuration"][0]["results"][0]["cce"] = "CCE-1"
+    assert validate_payload(p).startswith("$.hosts[0].configuration[0].results[0].cce:")
+    p = config_payload({"agent_id": "a", "configuration": [config_scan()]})
+    p["hosts"][0]["configuration"][0]["results"][0]["cci"] = ["CCI-1"]
+    assert validate_payload(p).startswith("$.hosts[0].configuration[0].results[0].cci[0]:")
+    p = config_payload({"agent_id": "a", "configuration": [config_scan()]})
+    p["hosts"][0]["configuration"][0]["scanned_at"] = "2026-13-01T00:00:00Z"
+    assert validate_payload(p) == "$.hosts[0].configuration[0].scanned_at: not a valid date-time"
+    p = config_payload({"agent_id": "a", "configuration": [config_scan()]})
+    p["hosts"][0]["configuration"][0]["x"] = 1
+    assert validate_payload(p) == "$.hosts[0].configuration[0].x: unknown field"
+    p = config_payload({"agent_id": "a", "configuration": [config_scan() for _ in range(21)]})
+    assert validate_payload(p).startswith("$.hosts[0].configuration:")

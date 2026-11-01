@@ -13,6 +13,12 @@ class WazuhReadError(ExporterError):
     exit_code = 3
 
 
+class ScanFileError(ExporterError):
+    """A scan result file (XCCDF / ARF) cannot be read or is refused. Messages carry input numbers, never paths."""
+
+    exit_code = 3
+
+
 class PayloadValidationError(ExporterError):
     exit_code = 4
 

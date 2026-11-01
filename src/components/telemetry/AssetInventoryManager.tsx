@@ -7,7 +7,6 @@ import {
   Search,
   CheckCircle2,
   AlertTriangle,
-  Play,
   Edit2,
   Trash2,
   FileSpreadsheet,
@@ -46,17 +45,8 @@ import { boundaryAssets, membershipLabels } from '../../data/programAssets';
 import { BoundaryChangePlan, BoundaryFilter, boundaryBlockMessage, boundaryEditBlock, boundaryErrorMessage, emptyTableMessage, matchesBoundaryFilter, planBoundaryChange, rowChangeNeedsConfirm, summaryCaption } from '../../data/boundaryView';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-interface AssetInventoryManagerProps {
-  onTriggerScan?: (asset: EnclaveAsset) => void;
-  onSelectAsset?: (asset: EnclaveAsset) => void;
-  selectedHost?: string;
-}
 
-export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
-  onTriggerScan,
-  onSelectAsset,
-  selectedHost,
-}) => {
+export const AssetInventoryManager: React.FC = () => {
   const { currentTenant, activeProgram, programs, programsStatus } = useTenant();
   // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
@@ -666,14 +656,10 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
               </tr>
             ) : (
               filteredAssets.map(asset => {
-                const isSelected = selectedHost === asset.hostName;
-
                 return (
                   <tr
                     key={asset.id}
-                    className={`hover:bg-slate-800/40 transition-colors ${
-                      isSelected ? 'bg-cyan-950/20' : ''
-                    }`}
+                    className="hover:bg-slate-800/40 transition-colors"
                   >
                     {/* Hostname & Origin Badge */}
                     <td className="py-3 px-3">
@@ -844,22 +830,6 @@ export const AssetInventoryManager: React.FC<AssetInventoryManagerProps> = ({
                     {/* Actions Menu */}
                     <td className="py-3 px-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {/* Run Photon Scan Button */}
-                        <button
-                          onClick={() => {
-                            if (onTriggerScan) {
-                              onTriggerScan(asset);
-                            } else if (onSelectAsset) {
-                              onSelectAsset(asset);
-                            }
-                          }}
-                          className="btn-primary px-2 py-1 rounded-lg text-xs flex items-center gap-1"
-                          title="Run automated Photon SCAP Scan on this endpoint"
-                        >
-                          <Play className="w-3 h-3" />
-                          <span>Scan</span>
-                        </button>
-
                         {canEdit && pendingDelete?.id === asset.id ? (
                           <div className="flex items-center gap-1.5" role="group" aria-label={`Confirm removing ${asset.hostName}`}>
                             <span className="text-xs text-rose-300">Remove {asset.hostName}?</span>

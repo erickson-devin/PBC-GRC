@@ -86,7 +86,7 @@ const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 const dialogOverlay = read('src/components/common/DialogOverlay.tsx');
 assert(/import \{ createPortal \} from 'react-dom'/.test(dialogOverlay) && /createPortal\([\s\S]*document\.body\s*\)/.test(dialogOverlay), 'DialogOverlay renders through a portal into document.body (a backdrop-blur ancestor such as the header would otherwise become the containing block of `fixed inset-0`)');
 assert(/no-print/.test(dialogOverlay), 'the portalled overlay is still hidden when printing (no-print)');
-const componentFiles = walk(path.join(root, 'src/components')).filter((f) => /\.tsx$/.test(f)).filter((f) => !/common[\\/]DialogOverlay\.tsx$|telemetry[\\/]AssetRemediationDrawer\.tsx$|reports[\\/]ArtifactExportModal\.tsx$/.test(f));
+const componentFiles = walk(path.join(root, 'src/components')).filter((f) => /\.tsx$/.test(f)).filter((f) => !/common[\\/]DialogOverlay\.tsx$|reports[\\/]ArtifactExportModal\.tsx$/.test(f));
 const uncapped: string[] = [];
 for (const f of componentFiles) {
   const text = fs.readFileSync(f, 'utf8');

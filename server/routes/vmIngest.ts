@@ -89,12 +89,13 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
       exporterName: payload.exporter.name,
       exporterVersion: payload.exporter.version,
       hostCount: payload.hosts.length,
-      findingCount: payload.hosts.reduce((n, h) => n + h.findings.length, 0),
+      findingCount: payload.hosts.reduce((n, h) => n + (h.findings?.length ?? 0), 0),
+      configResultCount: payload.hosts.reduce((n, h) => n + (h.configuration ?? []).reduce((m, s) => m + s.results.length, 0), 0),
       rawPath: stored.absPath,
       rawSha256: sha256,
       rawBytes: stored.size,
     });
-    console.log(`[VM Ingest] ${actor} -> run ${run.id} in ${tenantId}: ${run.hostCount} hosts, ${run.findingCount} findings`);
+    console.log(`[VM Ingest] ${actor} -> run ${run.id} in ${tenantId}: ${run.hostCount} hosts, ${run.findingCount} findings, ${run.configResultCount} configuration results`);
     enqueueVmRun(tenantId, run.id);
     void recoverStaleRuns(tenantId);
     res.status(202).json({ run_id: run.id, status: 'RECEIVED', sha256 });

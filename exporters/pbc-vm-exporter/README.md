@@ -148,6 +148,17 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 * `--dry-run` builds and validates the payloads, prints one JSON document to stdout and sends nothing: `{"contract_sha256", "chunks": [{"sha256", "bytes", "hosts", "findings", "payload"}], "skipped_hosts", "dropped_rows"}`. The `sha256` is that of the real bytes that would be sent. The output goes through redaction.
 * `--sample` (requires `--dry-run`) uses the bundled synthetic Wazuh data (`samples/indexer_sample.json`, fake hostnames and public CVE ids) and needs no Wazuh or PBC-GRC configuration. It can never reach a tenant.
 * `--print-contract-sha256` prints the contract hash and exits.
+* `--sample --source xccdf` (requires `--dry-run`) uses the bundled synthetic XCCDF file (`samples/xccdf_sample.xml`, documentation addresses only). The dry-run document then has `"results"` (rule results in the chunk) next to `"findings"` (always 0) and `"skipped_hosts"` is a count.
+
+## 10a. Configuration results from XCCDF / ARF files (`--source xccdf`)
+
+`--source xccdf --input PATH` reads result files written by an SCAP scanner (for example `oscap xccdf eval --results` or `--results-arf`) and pushes them as a source of kind `SCAP`: each host carries a `configuration` list (one scan per XCCDF TestResult) and no findings. `--input` is repeatable and accepts a file or a directory (its `*.xml` files, sorted). This is also the manual upload path: there is no browser upload. `PBC_URL`, `PBC_SERVICE_TOKEN` and `PBC_SOURCE_LABEL` are required as usual; the Wazuh settings are not used. Keep the label stable and distinct from any Wazuh label (a label belongs to one source kind).
+
+* Formats: XCCDF 1.1 and 1.2 results files and ARF collections (namespaces are ignored). The rule title comes from the Rule in the file, the CCE from an `ident` of the CCE system, CCI numbers from any `ident` that looks like `CCI-nnnnnn`.
+* Host identity: `agent_id` is `xccdf-` plus the first 32 hex characters of sha256 of the lower-case FQDN (ARF asset or the `urn:xccdf:fact:asset:identifier:fqdn` fact), else of the lower-case TestResult target. The server falls back to the MAC address, then the host name, to match an existing asset. A rule id that occurs more than once in one TestResult is folded to its worst outcome (fail, error, unknown, pass, fixed, then the rest).
+* Times: a TestResult time without an offset is read as **UTC**. `scanned_at` is the end time (the start time if there is none), `started_at` the start time. `source_sha256` is the sha256 of the file's bytes.
+* Untrusted input: a file over 512 MiB, or one that contains `<!DOCTYPE` or `<!ENTITY` (any case), or that is UTF-16 / UTF-32, is refused before it is parsed. Messages and logs name an input by number (`input 1`) with counts and sha256 prefixes; they never print a path, host name, address or agent id. The dry-run output on stdout is the payload itself and does contain the host identity.
+* A scan holds at most 5000 distinct rules, a host at most 20 scans per run, and a payload at most 100000 rule results; a host is never split across payloads.
 
 ## 11. Exit codes
 
@@ -156,7 +167,7 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 | 0 | Success |
 | 1 | Unexpected error (one redacted line, no traceback) |
 | 2 | Configuration error (including bad command-line usage) |
-| 3 | Wazuh read error, including a run that reads zero hosts (nothing is sent: an empty export would hide a read failure) |
+| 3 | Wazuh read error, including a run that reads zero hosts (nothing is sent: an empty export would hide a read failure). With `--source xccdf`: a result file that cannot be read or is refused (over 512 MiB, DOCTYPE / ENTITY, not well-formed, not UTF-8), or inputs that hold no TestResult with results |
 | 4 | A payload does not satisfy the contract (nothing is sent) |
 | 5 | Rejected by PBC-GRC (400, 401, 403, 409, 413, 415, 503 `vm_requires_local_storage`, redirects, other 4xx) |
 | 6 | Transport failure after retries, or the server acknowledged different bytes (sha256 mismatch) |

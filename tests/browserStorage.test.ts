@@ -24,16 +24,9 @@ import {
 import { StorageService } from '../src/services/storageService';
 import { redactLedgerNotesExcerpts, recordAuditEvent, verifyAuditChain, loadLedger, describeNotesForLedger, describeAddressForLedger } from '../src/data/audit/auditLogger';
 import { ingestAccretionDiscoveryPayload } from '../src/data/telemetry/assetRegistry';
-import { ingestScapScanReport, generateSimulatedScanReport } from '../src/data/telemetry/scapIngestEngine';
-import {
-  ingestScanReportToAsset,
-  getEnclaveFleet,
-  saveEnclaveFleet,
-  aggregateAssetTelemetry,
-  remediateAssetRule,
-  clearEnclaveFleet,
-  fleetStorageMode,
-} from '../src/data/telemetry/assetTelemetryEngine';
+import * as fleetEngine from '../src/data/telemetry/assetTelemetryEngine';
+import { getEnclaveFleet, saveEnclaveFleet, saveAssetRecord, clearEnclaveFleet, fleetStorageMode } from '../src/data/telemetry/assetTelemetryEngine';
+import type { AssetTelemetryRecord } from '../src/types/telemetry';
 import type { AssessmentState } from '../src/types/cmmc';
 import type { AuditLogEntry } from '../src/types/audit';
 import type { Tenant } from '../src/types/tenant';
@@ -642,12 +635,7 @@ async function main() {
   const w1Last = w1[w1.length - 1];
   const w1s = w1Last?.newState as any;
   assert(w1Last?.actionType === 'TELEMETRY_INGESTED' && w1s.hostName === await describeNotesForLedger('HOST-MARK-W1') && w1s.ipAddress === '(9 chars)' && w1s.macAddress === '(17 chars)' && !['HOST-MARK-W1', '10.77.0.1', '00:77:00:00:00:01'].some((s) => JSON.stringify(w1).includes(s)), 'I10 the discovery writer records descriptors only', w1s);
-  const rep = generateSimulatedScanReport('W2', 'HOST-MARK-W2', '10.78.0.1');
-  const scap = await ingestScapScanReport(rep, () => undefined, () => undefined, 'W2');
-  const w2 = loadLedger('W2');
-  const w2Last = w2[w2.length - 1];
-  const w2s = w2Last.newState as any;
-  assert(w2Last.targetEntity.startsWith('SCAP Scan: ') && w2s.hostName === await describeNotesForLedger('HOST-MARK-W2') && w2s.targetIp === '(9 chars)' && !['HOST-MARK-W2', '10.78.0.1'].some((s) => JSON.stringify(w2).includes(s)) && scap.auditHash === w2Last.sha256Hash && (await verifyAuditChain(w2)).isValid, 'I11 the SCAP writer records descriptors only and its audit hash matches the ledger', w2s);
+  assert(!fs.existsSync(path.join(process.cwd(), 'src/data/telemetry/scapIngestEngine.ts')), 'I11 the browser SCAP writer is gone: configuration results reach the server through the exporter (#103)');
 
   // compare-and-set: another tab appends while the scrub is hashing
   const fix12 = await mkIdent('L4');
@@ -673,34 +661,34 @@ async function main() {
 
   console.log('\n--- Fleet scan data (server tenants never keep it in browser storage) ---');
   globalStore.clear();
-  const flRep = generateSimulatedScanReport('srvF', 'HOST-MARK-FL', '10.79.0.1');
-  flRep.results[0].status = 'FAIL';
-  await ingestScanReportToAsset(flRep, 'srvF', 'memory');
+  const flRecord: AssetTelemetryRecord = { assetId: 'asset_fl1', hostName: 'HOST-MARK-FL', ipAddress: '10.79.0.1', osProfile: 'rhel9', macAddress: '', lastScanTimestamp: '2026-10-01T00:00:00.000Z', totalRulesEvaluated: 1, passedRuleCount: 0, failedRuleCount: 1, assetComplianceScore: 0, ruleResults: [{ ruleId: 'sshd_disable_root_login', cceId: '', cmmcControlId: 'AC.L1-3.1.1', status: 'FAIL', severity: 'CAT_II', title: 't', stdout: '', fixScript: '' }] };
+  saveAssetRecord(flRecord, 'srvF', 'memory');
   assert(
     globalStore.getItem(FLEET_KEY_PREFIX + 'srvF') === null &&
       !Array.from({ length: globalStore.length }, (_, i) => globalStore.getItem(globalStore.key(i)!)!).some((v) => v.includes('HOST-MARK-FL')) &&
       getEnclaveFleet('srvF', 'memory').length === 1,
     'FL1 a memory-mode ingest writes nothing to browser storage and the fleet is readable in memory'
   );
-  await ingestScanReportToAsset(flRep, 'brwF', 'browser');
+  saveAssetRecord(flRecord, 'brwF', 'browser');
   const flBrwCache = globalStore.getItem(FLEET_KEY_PREFIX + 'brwF');
   assert(flBrwCache !== null && JSON.parse(flBrwCache).length === 1, 'FL2 a browser-mode ingest keeps the fleet in browser storage');
-  const flAgg = await aggregateAssetTelemetry('srvF', 'memory');
-  assert(flAgg.totalAssets === getEnclaveFleet('srvF', 'memory').length && flAgg.totalAssets === 1, 'FL3 the boundary rollup reads the memory fleet');
+  assert(
+    ['ingestScanReportToAsset', 'aggregateAssetTelemetry', 'applyBoundaryTelemetryToControls', 'remediateAssetRule', 'generateAssetId'].every((n) => !(n in fleetEngine)),
+    'FL3 the fleet engine no longer scans, rolls up, writes control statuses or fakes remediation (#103)'
+  );
   const flOne = [{ assetId: 'a1', hostName: 'HOST-MARK-FL', ipAddress: '10.79.0.2', ruleResults: [] }] as any;
   globalStore.setItem(FLEET_KEY_PREFIX + 'srvG', JSON.stringify(flOne));
   saveEnclaveFleet([], 'srvG', 'memory');
   assert(globalStore.getItem(FLEET_KEY_PREFIX + 'srvG') === null, 'FL4 a memory-mode save removes a leftover browser copy');
   globalStore.setItem(FLEET_KEY_PREFIX + 'srvH', JSON.stringify(flOne));
   assert(getEnclaveFleet('srvH', 'memory').length === 0, 'FL5 a memory-mode read never reads a leftover browser copy');
-  const flFleet = getEnclaveFleet('srvF', 'memory');
-  await remediateAssetRule('srvF', flFleet[0].assetId, flRep.results[0].ruleId, 'memory');
+  saveAssetRecord({ ...flRecord, failedRuleCount: 0 }, 'srvF', 'memory');
   const flAfter = getEnclaveFleet('srvF', 'memory');
   assert(
-    flAfter[0].ruleResults.find((r) => r.ruleId === flRep.results[0].ruleId)?.status === 'PASS' && globalStore.getItem(FLEET_KEY_PREFIX + 'srvF') === null,
-    'FL6 remediation updates the memory fleet and still writes nothing to browser storage'
+    flAfter.length === 1 && flAfter[0].failedRuleCount === 0 && globalStore.getItem(FLEET_KEY_PREFIX + 'srvF') === null,
+    'FL6 saving a record again updates the memory fleet and still writes nothing to browser storage'
   );
-  await ingestScanReportToAsset(flRep, 'srvD');
+  saveAssetRecord(flRecord, 'srvD');
   assert(globalStore.getItem(FLEET_KEY_PREFIX + 'srvD') === null, 'FL7 the default mode is memory');
   assert(fleetStorageMode({ serverBacked: true }) === 'memory' && fleetStorageMode({}) === 'browser', 'FL8 fleetStorageMode maps server-backed to memory');
   clearEnclaveFleet('srvF');
@@ -762,11 +750,16 @@ async function main() {
   assert(Object.values(faOut.controls).every((c) => c.failingAssets === undefined) && JSON.stringify(faState) === faBefore, 'FA5 stripFailingAssetsForCache never mutates its input');
 
   const readSrcN = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
-  assert(
-    ['src/context/AssessmentContext.tsx', 'src/components/telemetry/AssetComplianceTable.tsx', 'src/components/telemetry/PhotonScanConsole.tsx', 'src/components/telemetry/AssetRemediationDrawer.tsx']
-      .every((p) => readSrcN(p).includes('fleetStorageMode(currentTenant)')),
-    'FSrc1 every fleet caller passes fleetStorageMode(currentTenant)'
-  );
+  const fleetCallers: string[] = [];
+  const walkFleet = (dir: string): void => {
+    for (const e of fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walkFleet(rel);
+      else if (/\.tsx?$/.test(e.name) && /\b(getEnclaveFleet|saveEnclaveFleet|saveAssetRecord)\(/.test(readSrcN(rel))) fleetCallers.push(rel);
+    }
+  };
+  for (const d of ['src/components', 'src/context', 'src/hooks']) walkFleet(d);
+  assert(fleetCallers.length === 0 && readSrcN('src/context/TenantContext.tsx').includes('clearEnclaveFleet('), 'FSrc1 no screen or context reads or writes the fleet any more; switching tenants still clears it', fleetCallers);
   assert(!readSrcN('src/data/telemetry/assetTelemetryEngine.ts').split('\n').some((l) => /console\.\w+\(.*\berr\b/.test(l)), 'FSrc2 the fleet engine logs no error objects');
   assert(readSrcN('src/data/storage/offboardingEngine.ts').includes('FLEET_KEY_PREFIX'), 'FSrc3 offboarding purges the fleet key');
 

@@ -5,7 +5,7 @@ import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { OBJECTIVE_CHANGE_SOURCES, OBJECTIVE_STATUSES } from '../src/types/controlObjectives';
 import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES } from '../src/types/sspMetadata';
 import { STACK_PROFILE_ENUM_KEYS, STACK_PROFILE_MAX_BYTES } from '../src/data/stackProfileSchema';
-import { VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
+import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -38,6 +38,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_sightings', tenantColumn: 'tenant_id' },
   { table: 'vm_run_assets', tenantColumn: 'tenant_id' },
   { table: 'vm_poam_items', tenantColumn: 'tenant_id' },
+  { table: 'vm_config_scans', tenantColumn: 'tenant_id' },
+  { table: 'vm_config_results', tenantColumn: 'tenant_id' },
   { table: 'programs', tenantColumn: 'tenant_id' },
   { table: 'control_objectives', tenantColumn: 'tenant_id' },
   { table: 'control_objective_events', tenantColumn: 'tenant_id' },
@@ -100,6 +102,8 @@ const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
 const vmFindingStatusList = VM_FINDING_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmPoamStatusList = VM_POAM_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmVulnSourceList = VM_VULN_SOURCES.map((s) => `'${s}'`).join(', ');
+const vmConfigResultList = VM_CONFIG_RESULTS.map((r) => `'${r}'`).join(', ');
+const vmConfigSeverityList = VM_CONFIG_SEVERITIES.map((s) => `'${s}'`).join(', ');
 
 /** The framework ids a program may carry: the registry ids (src/data/frameworks/frameworkRegistry.ts), canonical spelling only. */
 export const PROGRAM_FRAMEWORK_IDS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'] as const;
@@ -465,6 +469,7 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vm_runs_source ON vm_runs (tenant_id, source_id, received_at DESC);
   CREATE INDEX IF NOT EXISTS idx_vm_runs_status ON vm_runs (tenant_id, status);
   ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT;
+  ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS config_result_count INTEGER NOT NULL DEFAULT 0;
 
   -- Staleness is measured from the newest NORMALIZED run (issue #59), not from receipt. The column is added once and backfilled from
   -- vm_runs in the same step; a re-run finds the column and skips. The scheduler setting only lets this block LIST the tenants; each
@@ -600,6 +605,47 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_finding ON vm_poam_items (tenant_id, finding_id);
   -- Makes the worker's auto-created POA&M item unique per finding even across processes.
   CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_auto ON vm_poam_items (tenant_id, finding_id) WHERE created_by = 'system:vm-worker' AND finding_id IS NOT NULL;
+
+  -- Configuration scan results (issue #103): tenant-wide like every VM table; one row per scan of an asset in a run.
+  CREATE TABLE IF NOT EXISTS vm_config_scans (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      run_id VARCHAR(64) NOT NULL,
+      source_id VARCHAR(64) NOT NULL,
+      asset_id VARCHAR(64) NOT NULL,
+      benchmark_id VARCHAR(255) NOT NULL,
+      benchmark_version VARCHAR(64) NOT NULL DEFAULT '',
+      benchmark_title VARCHAR(255) NOT NULL DEFAULT '',
+      profile_id VARCHAR(255) NOT NULL DEFAULT '',
+      profile_title VARCHAR(255) NOT NULL DEFAULT '',
+      scanner_name VARCHAR(128) NOT NULL,
+      scanner_version VARCHAR(64) NOT NULL DEFAULT '',
+      started_at TIMESTAMPTZ,
+      scanned_at TIMESTAMPTZ NOT NULL,
+      received_at TIMESTAMPTZ NOT NULL,
+      source_sha256 CHAR(64),
+      result_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+      CONSTRAINT unq_vm_config_scans_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT unq_vm_config_scan UNIQUE (tenant_id, run_id, asset_id, benchmark_id, profile_id, scanned_at),
+      CONSTRAINT fk_vm_config_scans_run FOREIGN KEY (tenant_id, run_id) REFERENCES vm_runs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_vm_config_scans_source FOREIGN KEY (tenant_id, source_id) REFERENCES vm_sources (tenant_id, id),
+      CONSTRAINT fk_vm_config_scans_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_config_scans_asset ON vm_config_scans (tenant_id, asset_id, scanned_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_vm_config_scans_run ON vm_config_scans (tenant_id, run_id);
+  CREATE TABLE IF NOT EXISTS vm_config_results (
+      tenant_id VARCHAR(64) NOT NULL,
+      scan_id VARCHAR(64) NOT NULL,
+      rule_id VARCHAR(255) NOT NULL,
+      cce VARCHAR(16),
+      result VARCHAR(16) NOT NULL,
+      severity VARCHAR(16),
+      title TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, scan_id, rule_id),
+      CONSTRAINT fk_vm_config_results_scan FOREIGN KEY (tenant_id, scan_id) REFERENCES vm_config_scans (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT vm_config_results_result_check CHECK (result IN (${vmConfigResultList})),
+      CONSTRAINT vm_config_results_severity_check CHECK (severity IS NULL OR severity IN (${vmConfigSeverityList}))
+  );
 
   -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
   -- server/platformSetup.ts). Global, not tenant-bound.

@@ -75,6 +75,7 @@ function rowToRun(r: pg.QueryResultRow): VmRun {
     exporterVersion: r.exporter_version,
     hostCount: Number(r.host_count),
     findingCount: Number(r.finding_count),
+    configResultCount: Number(r.config_result_count ?? 0),
     rawPath: r.raw_path,
     rawSha256: r.raw_sha256,
     rawBytes: Number(r.raw_bytes),
@@ -95,6 +96,8 @@ export interface ReceivedRunInput {
   exporterVersion: string;
   hostCount: number;
   findingCount: number;
+  /** Rule results across the payload's configuration scans; 0 when it has none. */
+  configResultCount?: number;
   rawPath: string;
   rawSha256: string;
   rawBytes: number;
@@ -161,6 +164,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
       exporterVersion: input.exporterVersion,
       hostCount: input.hostCount,
       findingCount: input.findingCount,
+      configResultCount: input.configResultCount ?? 0,
       rawPath: input.rawPath,
       rawSha256: input.rawSha256,
       rawBytes: input.rawBytes,
@@ -192,8 +196,8 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
     try {
       const inserted = await client.query(
         `INSERT INTO vm_runs (id, tenant_id, source_id, collected_at, exporter_name, exporter_version, host_count, finding_count,
-                              raw_path, raw_sha256, raw_bytes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'RECEIVED')
+                              config_result_count, raw_path, raw_sha256, raw_bytes, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'RECEIVED')
          RETURNING *`,
         [
           input.id,
@@ -204,6 +208,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
           input.exporterVersion,
           input.hostCount,
           input.findingCount,
+          input.configResultCount ?? 0,
           input.rawPath,
           input.rawSha256,
           input.rawBytes,

@@ -24,6 +24,7 @@ import {
   snapshotFileKeys,
 } from './snapshot';
 import type { SnapshotInput, SnapshotReport, VmSnapshotConfig } from './snapshot';
+import { VM_CONFIG_ONLY_SOURCE_KINDS } from '../../src/types/vm';
 
 /**
  * Writes a vulnerability management snapshot (docs/VULNERABILITY_MANAGEMENT.md, section 7): the evaluation from ./snapshot is
@@ -43,9 +44,14 @@ export class VmSnapshotError extends Error {
 
 // ------------------------------------------------------------------------------------------------ input
 
+async function vulnerabilitySources(tenantId: string) {
+  return (await listSources(tenantId)).filter((s) => !VM_CONFIG_ONLY_SOURCE_KINDS.includes(s.kind));
+}
+
 export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnapshotConfig, snapshotId: string, programId?: string): Promise<SnapshotInput> {
   const windowStart = new Date(now.getTime() - cfg.snapshotIntervalHours * 3_600_000).toISOString();
-  const sources = await listSources(tenantId);
+  // Configuration-only sources (SCAP) report no vulnerabilities: they are not part of the vulnerability snapshot.
+  const sources = await vulnerabilitySources(tenantId);
   const runs = await listRunsSince(tenantId, windowStart);
   const assets = await listAssets(tenantId);
   // AssetRecord has no last_vuln_seen_at: join the candidate list by id.
@@ -318,7 +324,7 @@ export async function runVmSnapshot(
   if (running.has(tenantId)) throw new VmSnapshotError('in_progress');
   running.add(tenantId);
   try {
-    if ((await listSources(tenantId)).length === 0) throw new VmSnapshotError('no_sources');
+    if ((await vulnerabilitySources(tenantId)).length === 0) throw new VmSnapshotError('no_sources');
     faultAt(tenantId, 'start');
 
     const now = opts.now ?? new Date();

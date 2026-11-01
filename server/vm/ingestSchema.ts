@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import type { Validation } from '../assets';
-import { VM_SEVERITIES, VM_SOURCE_KINDS } from '../../src/types/vm';
+import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_SEVERITIES, VM_SOURCE_KINDS } from '../../src/types/vm';
 
 /**
  * Validator for the vulnerability ingest payload (docs/VULNERABILITY_MANAGEMENT.md, section 5). server/vm/ingest.schema.json
  * is the published contract; this zod schema enforces it, plus what JSON Schema cannot express (total findings, unique
- * agent_id, date-times that parse). tests/vmIngestSchema.test.ts compares the two so they cannot drift.
+ * agent_id, rule_id unique within a scan, date-times that parse). tests/vmIngestSchema.test.ts compares the two so they cannot drift.
  */
 
 /** Pattern sources in JSON Schema syntax, exactly as they appear in ingest.schema.json (the parity test compares the strings). */
@@ -17,12 +17,20 @@ export const INGEST_PATTERN_SOURCES = {
   mac: '^[0-9A-Fa-f:.-]{0,32}$',
   vulnId: '^(CVE-[0-9]{4}-[0-9]{4,7}|[A-Za-z0-9][A-Za-z0-9._:-]{0,63})$',
   ref: '^https?://[^\\s]+$',
+  xccdfId: '^[A-Za-z0-9_][A-Za-z0-9._:-]{0,254}$',
+  cce: '^CCE-[0-9]{1,6}-[0-9]$',
+  cci: '^CCI-[0-9]{6}$',
+  sha256: '^[0-9a-f]{64}$',
 } as const;
 
 export const INGEST_LIMITS = {
   maxHosts: 1000,
   maxFindingsPerHost: 5000,
   maxTotalFindings: 50000,
+  maxConfigScansPerHost: 20,
+  maxResultsPerScan: 5000,
+  maxTotalConfigResults: 100000,
+  maxCciPerResult: 20,
   maxRefs: 20,
   labelMax: 128,
   agentIdMax: 128,
@@ -35,6 +43,11 @@ export const INGEST_LIMITS = {
   fixedVersionMax: 128,
   refMax: 2048,
   dateTimeMax: 40,
+  scannerNameMax: 128,
+  scannerVersionMax: 64,
+  benchmarkVersionMax: 64,
+  benchmarkTitleMax: 255,
+  xccdfIdMax: 255,
 } as const;
 
 const RE = {
@@ -45,6 +58,10 @@ const RE = {
   mac: new RegExp(INGEST_PATTERN_SOURCES.mac),
   vulnId: new RegExp(INGEST_PATTERN_SOURCES.vulnId),
   ref: new RegExp(INGEST_PATTERN_SOURCES.ref),
+  xccdfId: new RegExp(INGEST_PATTERN_SOURCES.xccdfId),
+  cce: new RegExp(INGEST_PATTERN_SOURCES.cce),
+  cci: new RegExp(INGEST_PATTERN_SOURCES.cci),
+  sha256: new RegExp(INGEST_PATTERN_SOURCES.sha256),
 };
 
 /** RFC 3339 date-time. Date.parse alone is too lenient ("yesterday"-like and locale forms), so the shape is checked first. */
@@ -101,6 +118,46 @@ export const ingestFindingSchema = z
   })
   .strict();
 
+export const ingestRuleResultSchema = z
+  .object({
+    rule_id: z.string().regex(RE.xccdfId),
+    cce: z.string().regex(RE.cce).optional(),
+    cci: z.array(z.string().regex(RE.cci)).max(INGEST_LIMITS.maxCciPerResult).optional(),
+    result: z.enum(VM_CONFIG_RESULTS),
+    severity: z.enum(VM_CONFIG_SEVERITIES).optional(),
+    title: line(INGEST_LIMITS.titleMax).optional(),
+  })
+  .strict();
+
+export const ingestConfigScanSchema = z
+  .object({
+    benchmark: z
+      .object({
+        id: z.string().regex(RE.xccdfId),
+        version: line(INGEST_LIMITS.benchmarkVersionMax).optional(),
+        title: line(INGEST_LIMITS.benchmarkTitleMax).optional(),
+      })
+      .strict(),
+    profile: z
+      .object({
+        id: z.string().regex(RE.xccdfId),
+        title: line(INGEST_LIMITS.benchmarkTitleMax).optional(),
+      })
+      .strict()
+      .optional(),
+    scanner: z
+      .object({
+        name: z.string().min(1).max(INGEST_LIMITS.scannerNameMax).regex(RE.line),
+        version: line(INGEST_LIMITS.scannerVersionMax).optional(),
+      })
+      .strict(),
+    started_at: dateTime.optional(),
+    scanned_at: dateTime,
+    source_sha256: z.string().regex(RE.sha256).optional(),
+    results: z.array(ingestRuleResultSchema).max(INGEST_LIMITS.maxResultsPerScan),
+  })
+  .strict();
+
 export const ingestHostSchema = z
   .object({
     agent_id: z.string().min(1).max(INGEST_LIMITS.agentIdMax).regex(RE.line),
@@ -108,7 +165,8 @@ export const ingestHostSchema = z
     ip: z.string().regex(RE.ip).optional(),
     mac: z.string().regex(RE.mac).optional(),
     os: ingestOsSchema.optional(),
-    findings: z.array(ingestFindingSchema).max(INGEST_LIMITS.maxFindingsPerHost),
+    findings: z.array(ingestFindingSchema).max(INGEST_LIMITS.maxFindingsPerHost).optional(),
+    configuration: z.array(ingestConfigScanSchema).max(INGEST_LIMITS.maxConfigScansPerHost).optional(),
   })
   .strict();
 
@@ -152,7 +210,7 @@ export function validateIngestPayload(raw: unknown): Validation<IngestPayload> {
   const payload = parsed.data;
 
   let total = 0;
-  for (const host of payload.hosts) total += host.findings.length;
+  for (const host of payload.hosts) total += host.findings?.length ?? 0;
   if (total > INGEST_LIMITS.maxTotalFindings) {
     return { ok: false, error: `$.hosts: at most ${INGEST_LIMITS.maxTotalFindings} findings in total` };
   }
@@ -166,6 +224,41 @@ export function validateIngestPayload(raw: unknown): Validation<IngestPayload> {
     }
     seen.set(id, j);
   }
+
+  // A host reports findings, configuration results or both (a configuration-only host has no findings key).
+  for (let j = 0; j < payload.hosts.length; j++) {
+    const host = payload.hosts[j];
+    if (host.findings === undefined && host.configuration === undefined) {
+      return { ok: false, error: `$.hosts[${j}].findings: required (a host reports findings, configuration results or both)` };
+    }
+  }
+
+  let totalResults = 0;
+  for (const host of payload.hosts) {
+    for (const scan of host.configuration ?? []) totalResults += scan.results.length;
+  }
+  if (totalResults > INGEST_LIMITS.maxTotalConfigResults) {
+    return { ok: false, error: `$.hosts: at most ${INGEST_LIMITS.maxTotalConfigResults} configuration results in total` };
+  }
+
+  for (let j = 0; j < payload.hosts.length; j++) {
+    const scans = payload.hosts[j].configuration ?? [];
+    for (let k = 0; k < scans.length; k++) {
+      const ruleIds = new Map<string, number>();
+      for (let i = 0; i < scans[k].results.length; i++) {
+        const id = scans[k].results[i].rule_id;
+        const first = ruleIds.get(id);
+        if (first !== undefined) {
+          return {
+            ok: false,
+            error: `$.hosts[${j}].configuration[${k}].results[${i}].rule_id: duplicate rule_id (also at $.hosts[${j}].configuration[${k}].results[${first}])`,
+          };
+        }
+        ruleIds.set(id, i);
+      }
+    }
+  }
+
   return { ok: true, value: payload };
 }
 

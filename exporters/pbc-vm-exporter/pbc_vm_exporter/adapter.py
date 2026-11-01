@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 SEVERITY_MAP = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low": "LOW", "untriaged": "UNKNOWN"}
 
 MAX_FINDINGS_PER_HOST = 5000
+MAX_CONFIG_RESULTS_PER_PAYLOAD = 100000
 ENVELOPE_BYTES = 1024  # allowance for the payload outside the hosts array
 
 _VULN_ID = re.compile(r"(CVE-[0-9]{4}-[0-9]{4,7}|[A-Za-z0-9][A-Za-z0-9._:-]{0,63})")
@@ -262,7 +263,7 @@ def chunk_hosts(
     cur_findings = 0
     cur_bytes = ENVELOPE_BYTES
     for host in hosts:
-        n = len(host["findings"])
+        n = len(host.get("findings", []))
         size = len(encode_payload(host)) + 1
         if n > max_findings or ENVELOPE_BYTES + size > max_bytes:
             log.warning("skipping agent %s: too large to send whole (%d findings, %d bytes)", host["agent_id"], n, size)
@@ -279,6 +280,59 @@ def chunk_hosts(
     if current:
         chunks.append(current)
     return chunks, skipped
+
+
+def chunk_config_hosts(
+    hosts: list[dict], *, max_hosts: int, max_results: int, max_bytes: int
+) -> tuple[list[list[dict]], list[str]]:
+    """Like chunk_hosts for configuration-only hosts: the budget is rule results. A host is never split."""
+    chunks: list[list[dict]] = []
+    skipped: list[str] = []
+    current: list[dict] = []
+    cur_results = 0
+    cur_bytes = ENVELOPE_BYTES
+    for host in hosts:
+        n = sum(len(scan["results"]) for scan in host.get("configuration", []))
+        size = len(encode_payload(host)) + 1
+        if n > max_results or ENVELOPE_BYTES + size > max_bytes:
+            skipped.append(host["agent_id"])
+            continue
+        if current and (len(current) >= max_hosts or cur_results + n > max_results or cur_bytes + size > max_bytes):
+            chunks.append(current)
+            current, cur_results, cur_bytes = [], 0, ENVELOPE_BYTES
+        current.append(host)
+        cur_results += n
+        cur_bytes += size
+    if current:
+        chunks.append(current)
+    return chunks, skipped
+
+
+def build_config_payloads(
+    hosts: list[dict],
+    *,
+    label: str,
+    now: datetime | None = None,
+    max_hosts: int = 500,
+    max_results: int = MAX_CONFIG_RESULTS_PER_PAYLOAD,
+    max_bytes: int = 33554432,
+) -> tuple[list[dict], list[str]]:
+    """SCAP payloads (hosts carry `configuration`, no `findings`). Returns the payloads and the skipped agent ids."""
+    chunks, skipped = chunk_config_hosts(hosts, max_hosts=max_hosts, max_results=max_results, max_bytes=max_bytes)
+    if not chunks:
+        return [], skipped
+    collected_at = utc_now_rfc3339(now)  # once per export: a retry resends identical bytes
+    payloads = [
+        {
+            "schema_version": 1,
+            "source": {"kind": "SCAP", "label": label},
+            "exporter": {"name": EXPORTER_NAME, "version": __version__},
+            "collected_at": collected_at,
+            "hosts": chunk,
+        }
+        for chunk in chunks
+    ]
+    return payloads, skipped
 
 
 def build_payloads(

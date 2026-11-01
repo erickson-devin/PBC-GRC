@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:pbc-grc:vm:ingest:1",
   "title": "PBC-GRC vulnerability ingest payload",
-  "description": "Pushed by an exporter inside the enclave to POST /api/v1/vm/ingest. Also enforced by server/vm/ingestSchema.ts, which adds checks JSON Schema cannot express: at most 50000 findings in total, agent_id unique within the payload, and date-times that parse.",
+  "description": "Pushed by an exporter inside the enclave to POST /api/v1/vm/ingest. Also enforced by server/vm/ingestSchema.ts, which adds checks JSON Schema cannot express: at most 50000 findings in total, at most 100000 configuration results in total, agent_id unique within the payload, rule_id unique within one configuration scan, a host that reports findings, configuration results or both, and date-times that parse.",
   "type": "object",
   "additionalProperties": false,
   "required": ["source", "exporter", "collected_at", "hosts"],
@@ -13,7 +13,7 @@
       "additionalProperties": false,
       "required": ["kind", "label"],
       "properties": {
-        "kind": { "enum": ["WAZUH", "SENTINELONE", "ACTION1", "GREENBONE", "NUCLEI", "NMAP"] },
+        "kind": { "enum": ["WAZUH", "SENTINELONE", "ACTION1", "GREENBONE", "NUCLEI", "NMAP", "SCAP"] },
         "label": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" }
       }
     },
@@ -39,7 +39,7 @@
     "host": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agent_id", "findings"],
+      "required": ["agent_id"],
       "properties": {
         "agent_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" },
         "hostname": { "type": "string", "maxLength": 255, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" },
@@ -57,7 +57,72 @@
           "type": "array",
           "maxItems": 5000,
           "items": { "$ref": "#/$defs/finding" }
+        },
+        "configuration": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/configScan" }
         }
+      }
+    },
+    "configScan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["benchmark", "scanner", "scanned_at", "results"],
+      "properties": {
+        "benchmark": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._:-]{0,254}$" },
+            "version": { "type": "string", "maxLength": 64, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" },
+            "title": { "type": "string", "maxLength": 255, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" }
+          }
+        },
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._:-]{0,254}$" },
+            "title": { "type": "string", "maxLength": 255, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" }
+          }
+        },
+        "scanner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" },
+            "version": { "type": "string", "maxLength": 64, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" }
+          }
+        },
+        "started_at": { "$ref": "#/$defs/dateTime" },
+        "scanned_at": { "$ref": "#/$defs/dateTime" },
+        "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "results": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": { "$ref": "#/$defs/ruleResult" }
+        }
+      }
+    },
+    "ruleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "result"],
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._:-]{0,254}$" },
+        "cce": { "type": "string", "pattern": "^CCE-[0-9]{1,6}-[0-9]$" },
+        "cci": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "pattern": "^CCI-[0-9]{6}$" }
+        },
+        "result": { "enum": ["pass", "fail", "error", "unknown", "notapplicable", "notchecked", "notselected", "informational", "fixed"] },
+        "severity": { "enum": ["high", "medium", "low", "info", "unknown"] },
+        "title": { "type": "string", "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" }
       }
     },
     "finding": {
