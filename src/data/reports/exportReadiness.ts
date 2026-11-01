@@ -16,6 +16,7 @@ const LABELS: Partial<Record<keyof ReportMetadata, string>> = {
   boundaryDescription: 'System boundary description',
   cageCode: 'CAGE code',
   samStatus: 'SAM.gov registration status',
+  serviceCommitments: 'Principal service commitments',
 };
 
 const REQUIRED: Record<ReportDocumentType, (keyof ReportMetadata)[]> = {
@@ -27,6 +28,7 @@ const REQUIRED: Record<ReportDocumentType, (keyof ReportMetadata)[]> = {
 
 const ADVISORY: Partial<Record<ReportDocumentType, (keyof ReportMetadata)[]>> = {
   NIST_SP_800_18_SSP: ['cageCode', 'samStatus'],
+  SOC_2_SYSTEM_DESCRIPTION: ['serviceCommitments'],
 };
 
 /** The recorded values a document of this type would otherwise print as "not recorded" (#151). Pure; a blank or whitespace-only value is a gap. */

@@ -28,6 +28,7 @@ import {
 import { getCascadedObjectiveNarrative } from '../src/data/frameworks/policyCompiler';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import { compileNistSSP } from '../src/data/reports/documentCompilers';
+import { NO_STACK_PROFILE_RECORDED } from '../src/data/reports/documentDefaults';
 import { getFrameworkControls } from '../src/data/frameworks';
 import type { EnclaveStackProfile, Tenant } from '../src/types/tenant';
 import type { ReportMetadata } from '../src/types/report';
@@ -159,8 +160,8 @@ function compilerTests() {
   assert(!plain.includes('Certificate #') && !plain.includes('[No FIPS-validated'), 'a document generated without inventory data is exactly as before');
   const gap = generatePolicyDocument(tenant, 'SC', 'System and Communications Protection', 'CMMC_L2', []);
   assert(gap.includes('[No FIPS-validated cryptographic module is recorded'), 'a document generated with an empty inventory shows the gap');
-  const stringForm = generatePolicyDocument('SC', stack, 'CMMC_L2', undefined, [falcon]);
-  assert(stringForm.includes('Certificate #4211'), 'the (family, stack, framework) call form accepts the modules too');
+  const stacklessDoc = generatePolicyDocument({ ...tenant, stackProfile: undefined }, 'SC', 'System and Communications Protection', 'CMMC_L2', [falcon]);
+  assert(stacklessDoc.includes(NO_STACK_PROFILE_RECORDED) && !stacklessDoc.includes('Certificate #4211'), 'a tenant without a stack profile gets no implementation statement, so no certificate is cited');
 
   console.log('\n--- SSP narrative ---');
   const meta: ReportMetadata = {

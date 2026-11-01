@@ -381,14 +381,18 @@ export function generatePrintableHtml(
 
     if (headerLower.includes('status') || headerLower.includes('operating status') || headerLower.includes('compliance posture')) {
       const upper = text.toUpperCase();
-      if (upper.includes('MET') || upper.includes('EFFECTIVELY') || upper.includes('COMPLIANT')) {
-        return `<span class="status-badge status-met">${escapeHtml(text)}</span>`;
+      // Negative statuses first: 'NOT_MET' contains 'MET'
+      if (upper.includes('NOT_MET') || upper.includes('NOT MET') || upper.includes('DEFICIENCY') || upper.includes('GAP') || upper.includes('EXCEPTION')) {
+        return `<span class="status-badge status-not-met">${escapeHtml(text)}</span>`;
+      }
+      if (upper.includes('NOT_STARTED') || upper.includes('NOT STARTED')) {
+        return `<span class="status-badge status-not-started">${escapeHtml(text)}</span>`;
       }
       if (upper.includes('PROGRESS') || upper.includes('UNDERWAY') || upper.includes('TESTING')) {
         return `<span class="status-badge status-in-progress">${escapeHtml(text)}</span>`;
       }
-      if (upper.includes('NOT_MET') || upper.includes('DEFICIENCY') || upper.includes('GAP') || upper.includes('EXCEPTION')) {
-        return `<span class="status-badge status-not-met">${escapeHtml(text)}</span>`;
+      if (upper.includes('MET') || upper.includes('EFFECTIVELY') || upper.includes('COMPLIANT')) {
+        return `<span class="status-badge status-met">${escapeHtml(text)}</span>`;
       }
       return `<span class="status-badge status-not-started">${escapeHtml(text)}</span>`;
     }
@@ -483,14 +487,14 @@ export function generatePrintableHtml(
       <!-- Formal Attestation Signature Block -->
       <div class="signature-grid">
         <div class="signature-box">
-          <div class="signature-line">${escapeHtml(meta.systemOwner)}</div>
-          <div class="signature-role">System Owner Attestation</div>
-          <div class="signature-name">${escapeHtml(meta.systemOwner)} — Date: ${escapeHtml(meta.assessmentDate)}</div>
+          <div class="signature-line"></div>
+          <div class="signature-role">System Owner</div>
+          <div class="signature-name">Name: ${escapeHtml(meta.systemOwner || NOT_RECORDED)} — Date: ________</div>
         </div>
         <div class="signature-box">
-          <div class="signature-line">${escapeHtml(meta.primaryAssessor)}</div>
-          <div class="signature-role">Certified Lead Assessor</div>
-          <div class="signature-name">${escapeHtml(meta.primaryAssessor)} — Date: ${escapeHtml(meta.assessmentDate)}</div>
+          <div class="signature-line"></div>
+          <div class="signature-role">Assessor / Author</div>
+          <div class="signature-name">Name: ${escapeHtml(meta.primaryAssessor || NOT_RECORDED)} — Date: ________</div>
         </div>
       </div>
     </div>

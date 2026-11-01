@@ -5,7 +5,6 @@ import {
   ReportSection,
   DocumentSummaryMetrics,
   POAMEntry,
-  POAMMilestone,
 } from '../../types/report';
 import { FrameworkControlDefinition, ComplianceFramework } from '../../types/framework';
 import { ControlState, EvidenceItem, ControlStatus } from '../../types/cmmc';
@@ -28,6 +27,13 @@ import {
   NO_BOUNDARY_RECORDED,
   NO_SERVICE_COMMITMENTS_RECORDED,
   UNNAMED_SYSTEM,
+  NO_MILESTONES_RECORDED,
+  NO_CUECS_RECORDED,
+  SOC2_TESTS_BY_SERVICE_AUDITOR,
+  NO_SUBSERVICE_RELIANCE_RECORDED,
+  UNSIGNED_ATTESTATION_NOTE,
+  SIGNATURE_BLANK,
+  recordedRole,
 } from './documentDefaults';
 
 /** Tests and callers import it from here (#122); the text lives in documentDefaults.ts (#151). */
@@ -86,28 +92,12 @@ export function calculateSummaryMetrics(
 }
 
 /**
- * Calculates a future date (in YYYY-MM-DD format) offset by a given number of days.
- */
-function addDaysToDate(baseDateStr: string, days: number): string {
-  try {
-    const d = new Date(baseDateStr);
-    if (isNaN(d.getTime())) throw new Error();
-    d.setDate(d.getDate() + days);
-    return d.toISOString().split('T')[0];
-  } catch {
-    const now = new Date();
-    now.setDate(now.getDate() + days);
-    return now.toISOString().split('T')[0];
-  }
-}
-
-/**
  * Automatically aggregates NOT_MET and IN_PROGRESS (and unaddressed) controls into structured POA&M entries.
+ * #198: only what is recorded is stated. A due date, resources and milestones are never invented; they print as not recorded.
  */
 export function generatePOAMEntries(
   controls: FrameworkControlDefinition[],
-  controlStates: Record<string, ControlState>,
-  baseDate: string = new Date().toISOString().split('T')[0]
+  controlStates: Record<string, ControlState>
 ): POAMEntry[] {
   const poamEntries: POAMEntry[] = [];
   let counter = 1;
@@ -122,57 +112,27 @@ export function generatePOAMEntries(
       const weaknessId = `POAM-${ctrl.domain}-${padNum}`;
       counter++;
 
-      // Schedule realistic milestone date based on current status
-      const daysOffset = status === 'IN_PROGRESS' ? 45 : 90;
-      const scheduledCompletionDate = addDaysToDate(baseDate, daysOffset);
-
-      // Extract weakness description from notes or summary
+      // Weakness description: the recorded notes when there are any, else the requirement itself
       const notes = state?.implementationNotes?.trim();
-      const weaknessDesc = notes && notes.length > 10
-        ? `Remediation in progress: ${notes.substring(0, 160)}...`
-        : `Control requirement unmet: ${ctrl.plainEnglishSummary || ctrl.title}. System currently lacks automated enforcement or required artifacts.`;
-
-      // Resource allocation estimation
-      const requiredResources = status === 'IN_PROGRESS'
-        ? 'Engineering: 24 hrs, Security Lead: 8 hrs ($4,200 estimated)'
-        : 'Engineering: 60 hrs, Enterprise Policy Review, Audit Evidence ($10,500 estimated)';
+      const weaknessDesc = notes
+        ? `Recorded implementation notes: ${notes.substring(0, 160)}${notes.length > 160 ? '...' : ''}`
+        : `Control requirement not met: ${ctrl.plainEnglishSummary || ctrl.title}.`;
 
       // Remediation action plan
       const primaryObjective = ctrl.assessmentObjectives?.[0] || 'Verify technical and administrative safeguards satisfy baseline.';
       const remediationPlan = `1. Complete procedural policy for ${ctrl.title}.\n2. Configure automated technical baseline or identity enforcement.\n3. Validate objective: "${primaryObjective}".\n4. Collect and upload immutable SHA-256 verification artifacts into GRC Vault.`;
-
-      const milestones: POAMMilestone[] = [
-        {
-          id: `M1-${ctrl.id}`,
-          description: 'Policy & Procedural Specification Approval',
-          targetDate: addDaysToDate(baseDate, Math.floor(daysOffset * 0.33)),
-          completed: status === 'IN_PROGRESS',
-        },
-        {
-          id: `M2-${ctrl.id}`,
-          description: 'Technical Configuration & Endpoint Hardening',
-          targetDate: addDaysToDate(baseDate, Math.floor(daysOffset * 0.66)),
-          completed: false,
-        },
-        {
-          id: `M3-${ctrl.id}`,
-          description: 'Assessor Evidence Ingestion & Control Sign-Off',
-          targetDate: scheduledCompletionDate,
-          completed: false,
-        },
-      ];
 
       poamEntries.push({
         weaknessId,
         controlId: ctrl.id,
         controlTitle: ctrl.title,
         weaknessDescription: weaknessDesc,
-        scheduledCompletionDate,
-        requiredResources,
-        responsibleRole: state?.responsibleRole || 'IT / Security Lead',
+        scheduledCompletionDate: NOT_RECORDED,
+        requiredResources: NOT_RECORDED,
+        responsibleRole: recordedRole(state?.responsibleRole),
         remediationPlan,
         status,
-        milestones,
+        milestones: [],
       });
     }
   }
@@ -297,7 +257,7 @@ export function compileNistSSP(
       if (metadata.cryptoModules && isCryptographicProtectionControl(ctrl.id)) {
         narrative = applyFipsModules(narrative, metadata.cryptoModules, { bold: false });
       }
-      const role = cState?.responsibleRole || 'IT / Security Lead';
+      const role = recordedRole(cState?.responsibleRole);
       const ctrlEvidence = evidence.filter(e => e.controlId === ctrl.id);
       const evidenceSummary = ctrlEvidence.length > 0
         ? ctrlEvidence.map(e => `${e.name} [SHA-256: ${(e.fileHash || 'N/A').substring(0, 8)}...]`).join('; ')
@@ -326,7 +286,7 @@ export function compileNistSSP(
   sections.push({
     id: 'sec-3-control-narratives',
     title: '3. Security Control Implementation Statements (NIST SP 800-18)',
-    summary: 'Detailed operational implementation statements and auditor verification evidence for all controls.',
+    summary: 'Detailed operational implementation statements for all controls.',
     subsections: controlSubsections,
   });
 
@@ -334,15 +294,16 @@ export function compileNistSSP(
   sections.push({
     id: 'sec-4-attestation',
     title: '4. System Security Plan Attestation & Approvals',
-    content: `I hereby attest that the information contained in this System Security Plan represents an accurate, rigorous, and truthful representation of the security controls implemented within ${metadata.systemName || UNNAMED_SYSTEM}. All administrative, technical, and physical safeguards have been verified against ${fwDef.name}.`,
+    content: `${UNSIGNED_ATTESTATION_NOTE} I hereby attest that the information contained in this System Security Plan represents an accurate, rigorous, and truthful representation of the security controls implemented within ${metadata.systemName || UNNAMED_SYSTEM}. All administrative, technical, and physical safeguards have been verified against ${fwDef.name}.`,
     subsections: [
       {
         title: 'Formal Signatures & Assessment Record',
         items: [
-          { label: 'Information System Owner', value: metadata.systemOwner ? `${metadata.systemOwner} (Signature on Record)` : NO_SYSTEM_OWNER_RECORDED },
-          { label: 'Primary Assessor / Lead Auditor', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Attested)` : NO_ASSESSOR_RECORDED },
-          { label: 'Attestation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
-          { label: 'Enclave Cryptographic State', value: 'Immutable On-Premises Vault Evidence Hash Ingestion Active' },
+          { label: 'Information System Owner', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Primary Assessor / Lead Auditor', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
+          { label: 'Signature', value: SIGNATURE_BLANK },
+          { label: 'Date signed', value: SIGNATURE_BLANK },
+          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
         ],
       },
     ],
@@ -357,7 +318,7 @@ export function compileNistSSP(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates, metadata.assessmentDate),
+    poamEntries: generatePOAMEntries(controls, controlStates),
   };
 }
 
@@ -371,7 +332,7 @@ export function compilePOAM(
   controlStates: Record<string, ControlState>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
-  const poamEntries = generatePOAMEntries(controls, controlStates, metadata.assessmentDate);
+  const poamEntries = generatePOAMEntries(controls, controlStates);
   const fwDef = FRAMEWORK_REGISTRY[metadata.framework] || FRAMEWORK_REGISTRY.CMMC_L1;
 
   const sections: ReportSection[] = [];
@@ -387,8 +348,8 @@ export function compilePOAM(
         ['Total Evaluated Controls', controls.length, `${fwDef.name} Catalog`],
         ['Compliant Controls (MET)', metrics.metCount, 'Baseline satisfied'],
         ['Active POA&M Weaknesses', poamEntries.length, poamEntries.length > 0 ? 'Remediation actively required' : 'Zero deficiencies on record'],
-        ['Controls IN PROGRESS', metrics.inProgressCount, 'Work underway; intermediate milestones targeted'],
-        ['Controls NOT MET / Unaddressed', metrics.notMetCount + metrics.notStartedCount, 'Immediate corrective action scheduled'],
+        ['Controls IN PROGRESS', metrics.inProgressCount, 'Recorded as in progress'],
+        ['Controls NOT MET / Unaddressed', metrics.notMetCount + metrics.notStartedCount, 'Recorded as not met or not started'],
       ],
     },
   });
@@ -427,24 +388,32 @@ export function compilePOAM(
   });
 
   // Section 3: Milestone Schedule Breakdown
-  const milestoneSubsections = poamEntries.map(entry => ({
-    title: `Weakness [${entry.weaknessId}] — ${entry.controlId}: ${entry.controlTitle}`,
-    content: `Responsible Owner: ${entry.responsibleRole} | Target Date: ${entry.scheduledCompletionDate}\nResource Allocation: ${entry.requiredResources}\nDeficiency Summary: ${entry.weaknessDescription}`,
-    table: {
-      headers: ['Milestone ID', 'Remediation Objective', 'Target Completion Date', 'Resolution Status'],
-      rows: (entry.milestones || []).map(m => [
-        m.id,
-        m.description,
-        m.targetDate,
-        m.completed ? 'COMPLETED' : 'PENDING',
-      ]),
-    },
-  }));
+  const milestoneSubsections = poamEntries.map(entry => {
+    const milestones = entry.milestones || [];
+    const summaryLines = `Responsible Owner: ${entry.responsibleRole} | Target Date: ${entry.scheduledCompletionDate}\nResource Allocation: ${entry.requiredResources}\nDeficiency Summary: ${entry.weaknessDescription}`;
+    return {
+      title: `Weakness [${entry.weaknessId}] — ${entry.controlId}: ${entry.controlTitle}`,
+      content: milestones.length > 0 ? summaryLines : `${summaryLines}\n${NO_MILESTONES_RECORDED}`,
+      ...(milestones.length > 0
+        ? {
+            table: {
+              headers: ['Milestone ID', 'Remediation Objective', 'Target Completion Date', 'Resolution Status'],
+              rows: milestones.map(m => [
+                m.id,
+                m.description,
+                m.targetDate,
+                m.completed ? 'COMPLETED' : 'PENDING',
+              ]),
+            },
+          }
+        : {}),
+    };
+  });
 
   sections.push({
     id: 'poam-sec-3-milestones',
     title: '3. Intermediate Milestone Action Schedules',
-    summary: 'Granular tactical milestones established to ensure accountability prior to formal audit re-assessment.',
+    summary: 'Milestones recorded for each weakness.',
     subsections: milestoneSubsections,
   });
 
@@ -452,14 +421,16 @@ export function compilePOAM(
   sections.push({
     id: 'poam-sec-4-governance',
     title: '4. Corrective Action Plan Sign-Off',
-    content: `Management agrees to provide the allocated technical and budgetary resources required to execute the corrective action milestones detailed herein.`,
+    content: `${UNSIGNED_ATTESTATION_NOTE} Management agrees to provide the resources this plan records for the corrective action milestones detailed herein.`,
     subsections: [
       {
         title: 'Authorized Approvals',
         items: [
-          { label: 'System Owner Attestation', value: metadata.systemOwner ? `${metadata.systemOwner} (Approved)` : NO_SYSTEM_OWNER_RECORDED },
-          { label: 'Lead Assessor Concurrence', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Concurred)` : NO_ASSESSOR_RECORDED },
-          { label: 'POA&M Generation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'System Owner Attestation', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Lead Assessor Concurrence', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
+          { label: 'Signature', value: SIGNATURE_BLANK },
+          { label: 'Date signed', value: SIGNATURE_BLANK },
+          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
         ],
       },
     ],
@@ -490,6 +461,17 @@ export function compileSoc2SystemDescription(
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
 
+  // Trust Services categories present in this catalog (CC = Security / Common Criteria)
+  const soc2CategoryOf = (domain: string): string => /^CC/.test(domain) ? 'CC' : /^PI/.test(domain) ? 'PI' : /^A/.test(domain) ? 'A1' : /^C/.test(domain) ? 'C1' : /^P/.test(domain) ? 'P' : 'CC';
+  const SOC2_CATEGORY_NAMES: Array<[string, string]> = [
+    ['CC', 'Security (Common Criteria)'],
+    ['A1', 'Availability'],
+    ['C1', 'Confidentiality'],
+    ['PI', 'Processing Integrity'],
+    ['P', 'Privacy'],
+  ];
+  const presentCategories = SOC2_CATEGORY_NAMES.filter(([code]) => controls.some(c => soc2CategoryOf(c.domain || 'CC1') === code));
+
   // Group controls by SOC 2 criteria (CC1–CC9, A1, C1)
   const criteriaGroups: Record<string, FrameworkControlDefinition[]> = {};
   for (const ctrl of controls) {
@@ -513,14 +495,15 @@ export function compileSoc2SystemDescription(
           { label: 'System Evaluated', value: metadata.systemName || NO_SYSTEM_NAME_RECORDED },
           { label: 'System Owner', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
           { label: 'Independent Service Auditor', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
-          { label: 'Applicable Trust Services Criteria', value: 'Security (Common Criteria), Availability, and Confidentiality' },
-          { label: 'Examination Period', value: `Operational review through ${metadata.assessmentDate || new Date().toISOString().split('T')[0]}` },
+          { label: 'Trust Services Categories in This Assessment', value: presentCategories.length > 0 ? presentCategories.map(([, name]) => name).join(', ') : NOT_RECORDED },
+          { label: 'Examination Period', value: NOT_RECORDED },
+          { label: 'Assessment Date', value: metadata.assessmentDate || NOT_RECORDED },
           { label: 'Operational State', value: metadata.operationalStatus || 'Operational' },
         ],
       },
       {
         title: '1.2 Principal Service Commitments & System Requirements',
-        content: NO_SERVICE_COMMITMENTS_RECORDED,
+        content: metadata.serviceCommitments?.trim() ? metadata.serviceCommitments : NO_SERVICE_COMMITMENTS_RECORDED,
       },
       {
         title: '1.3 System Boundaries and Subservice Organizations',
@@ -533,14 +516,16 @@ export function compileSoc2SystemDescription(
   sections.push({
     id: 'soc2-sec-2-summary',
     title: '2. Trust Services Criteria Evaluation Summary',
-    summary: 'Overall compliance and testing effectiveness posture across AICPA Trust Services Categories.',
+    summary: `Recorded status across the AICPA Trust Services Categories in this assessment. ${SOC2_TESTS_BY_SERVICE_AUDITOR}`,
     table: {
-      headers: ['Trust Criteria Category', 'Total Control Activities', 'Operating Effectively', 'Deficiencies / Testing Gaps', 'Effectiveness Rate'],
+      headers: ['Trust Criteria Category', 'Control Activities', 'Recorded MET', 'Recorded NOT MET / In Progress', 'Not Started', 'Recorded MET %'],
       rows: [
-        ['Common Criteria (CC1 - CC9 Security)', controls.filter(c => c.domain.startsWith('CC')).length, metrics.metCount, metrics.notMetCount + metrics.inProgressCount, `${metrics.completionPercentage}%`],
-        ['Availability Criteria (A1)', controls.filter(c => c.domain.startsWith('A')).length || 'Integrated', 'Tested', 'None', '100%'],
-        ['Confidentiality Criteria (C1)', controls.filter(c => c.domain.startsWith('C1')).length || 'Integrated', 'Tested', 'None', '100%'],
-        ['Overall System Posture', controls.length, metrics.metCount, metrics.notMetCount + metrics.inProgressCount, `${metrics.completionPercentage}% Operating Effectively`],
+        ...presentCategories.map(([code, name]) => {
+          const catCtrls = controls.filter(c => soc2CategoryOf(c.domain || 'CC1') === code);
+          const m = calculateSummaryMetrics(catCtrls, controlStates);
+          return [name, catCtrls.length, m.metCount, m.notMetCount + m.inProgressCount, m.notStartedCount, `${m.completionPercentage}%`];
+        }),
+        ['Overall System Posture', controls.length, metrics.metCount, metrics.notMetCount + metrics.inProgressCount, metrics.notStartedCount, `${metrics.completionPercentage}%`],
       ],
     },
   });
@@ -555,7 +540,7 @@ export function compileSoc2SystemDescription(
       const cState = controlStates[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
       const narrative = cState?.implementationNotes || 'No implementation narrative documented.';
-      const role = cState?.responsibleRole || 'Security Engineering Lead';
+      const role = recordedRole(cState?.responsibleRole);
       const ctrlEvidence = evidence.filter(e => e.controlId === ctrl.id);
       const evidenceSummary = ctrlEvidence.length > 0
         ? ctrlEvidence.map(e => `${e.name} (SHA-256: ${(e.fileHash || 'N/A').substring(0, 8)})`).join(', ')
@@ -565,7 +550,7 @@ export function compileSoc2SystemDescription(
         ctrl.id,
         ctrl.title,
         ctrl.authorityReference || 'AICPA TSC 2017',
-        status === 'MET' ? 'Operating Effectively' : status === 'IN_PROGRESS' ? 'Testing Underway' : 'Control Exception',
+        status === 'MET' ? 'Met (self-assessed)' : status === 'IN_PROGRESS' ? 'In progress' : status === 'NOT_MET' ? 'Not met' : 'Not started',
         narrative,
         role,
         evidenceSummary,
@@ -575,7 +560,7 @@ export function compileSoc2SystemDescription(
     return {
       title: categoryTitle,
       table: {
-        headers: ['Criteria Ref', 'Control Activity Title', 'AICPA Reference', 'Operating Status', 'Control Activity Description', 'Responsible Party', 'Testing Evidence'],
+        headers: ['Criteria Ref', 'Control Activity Title', 'AICPA Reference', 'Recorded Status', 'Control Activity Description', 'Responsible Party', 'Evidence on File'],
         rows,
       },
     };
@@ -583,8 +568,8 @@ export function compileSoc2SystemDescription(
 
   sections.push({
     id: 'soc2-sec-3-control-activities',
-    title: '3. AICPA Trust Services Control Activities & Operational Effectiveness',
-    summary: 'Detailed specification of control activities implemented by the service organization to meet Trust Services Criteria.',
+    title: '3. AICPA Trust Services Control Activities',
+    summary: `Detailed specification of control activities implemented by the service organization to meet Trust Services Criteria. ${SOC2_TESTS_BY_SERVICE_AUDITOR}`,
     subsections: criteriaSubsections,
   });
 
@@ -596,15 +581,11 @@ export function compileSoc2SystemDescription(
     subsections: [
       {
         title: '4.1 Required Customer Responsibilities',
-        items: [
-          { label: 'CUEC-01: User Credential Lifecycle', value: 'Customers must promptly deactivate credentials of separated personnel within their IdP.' },
-          { label: 'CUEC-02: Workstation Endpoint Hardening', value: 'Customers must ensure endpoints accessing the platform enforce full-disk encryption and screen-lock.' },
-          { label: 'CUEC-03: Authorized Access Approvals', value: 'Customer administrators must periodically review tenant RBAC role assignments at least semi-annually.' },
-        ],
+        content: NO_CUECS_RECORDED,
       },
       {
         title: '4.2 Subservice Organization Controls (CSOCs)',
-        content: metadata.cloudServiceProviders ? 'Management relies upon the SOC 2 Type II reports issued for the subservice organizations listed in section 1.3, covering physical data center security, environmental redundancy, and hardware destruction.' : 'No subservice organization is recorded for this system, so no subservice SOC 2 report is relied upon.',
+        content: metadata.cloudServiceProviders ? NO_SUBSERVICE_RELIANCE_RECORDED : 'No subservice organization is recorded for this system, so no subservice SOC 2 report is relied upon.',
       },
     ],
   });
@@ -613,14 +594,15 @@ export function compileSoc2SystemDescription(
   sections.push({
     id: 'soc2-sec-5-assertion',
     title: '5. Management Assertion',
-    content: `We have prepared the accompanying description titled "System Description for ${metadata.systemName || UNNAMED_SYSTEM}" for customer organizations that have used the system throughout the examination period. We assert that the description fairly presents the system that was designed and implemented in accordance with the description criteria, and the controls stated in the description operated effectively throughout the period to provide reasonable assurance that the service commitments and system requirements were achieved based on the Trust Services Criteria.`,
+    content: `${UNSIGNED_ATTESTATION_NOTE} We have prepared the accompanying description titled "System Description for ${metadata.systemName || UNNAMED_SYSTEM}" for customer organizations that have used the system throughout the examination period. We assert that the description fairly presents the system that was designed and implemented in accordance with the description criteria, and the controls stated in the description operated effectively throughout the period to provide reasonable assurance that the service commitments and system requirements were achieved based on the Trust Services Criteria.`,
     subsections: [
       {
         title: 'Attestation Sign-off',
         items: [
-          { label: 'Service Organization Management', value: metadata.systemOwner ? `${metadata.systemOwner} (Signed)` : NO_SYSTEM_OWNER_RECORDED },
-          { label: 'Primary Assessor / Service Auditor', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Signed)` : NO_ASSESSOR_RECORDED },
-          { label: 'Date of Assertion', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Service Organization Management', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
+          { label: 'Signature', value: SIGNATURE_BLANK },
+          { label: 'Date signed', value: SIGNATURE_BLANK },
+          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
         ],
       },
     ],
@@ -635,7 +617,7 @@ export function compileSoc2SystemDescription(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates, metadata.assessmentDate),
+    poamEntries: generatePOAMEntries(controls, controlStates),
   };
 }
 
@@ -690,7 +672,7 @@ export function compileHipaaAssessment(
       const cState = controlStates[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
       const narrative = cState?.implementationNotes || 'No implementation narrative documented.';
-      const role = cState?.responsibleRole || 'HIPAA Compliance Officer';
+      const role = recordedRole(cState?.responsibleRole);
       const ctrlEvidence = evidence.filter(e => e.controlId === ctrl.id);
       const evidenceSummary = ctrlEvidence.length > 0
         ? ctrlEvidence.map(e => `${e.name} [SHA-256: ${(e.fileHash || 'N/A').substring(0, 8)}]`).join(', ')
@@ -758,14 +740,16 @@ export function compileHipaaAssessment(
   sections.push({
     id: 'hipaa-sec-6-attestation',
     title: '6. Risk Remediation Roadmap & HIPAA Officer Attestation',
-    content: `This security assessment evaluates the recorded safeguard status against the Department of Health and Human Services (HHS) HIPAA Security Rule.`,
+    content: `${UNSIGNED_ATTESTATION_NOTE} This security assessment evaluates the recorded safeguard status against the Department of Health and Human Services (HHS) HIPAA Security Rule.`,
     subsections: [
       {
         title: 'Official Attestation of Compliance',
         items: [
-          { label: 'Designated HIPAA Security Official', value: metadata.systemOwner ? `${metadata.systemOwner} (Attested)` : NO_SECURITY_OFFICIAL_RECORDED },
-          { label: 'Lead Assessor / Risk Analyst', value: metadata.primaryAssessor ? `${metadata.primaryAssessor} (Verified)` : NO_ASSESSOR_RECORDED },
-          { label: 'Attestation Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Designated HIPAA Security Official', value: metadata.systemOwner || NO_SECURITY_OFFICIAL_RECORDED },
+          { label: 'Lead Assessor / Risk Analyst', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
+          { label: 'Signature', value: SIGNATURE_BLANK },
+          { label: 'Date signed', value: SIGNATURE_BLANK },
+          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
           { label: 'Compliance Score', value: `${metrics.completionPercentage}% of Safeguards Implemented (${metrics.metCount}/${metrics.totalControls})` },
         ],
       },
@@ -781,7 +765,7 @@ export function compileHipaaAssessment(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates, metadata.assessmentDate),
+    poamEntries: generatePOAMEntries(controls, controlStates),
   };
 }
 
