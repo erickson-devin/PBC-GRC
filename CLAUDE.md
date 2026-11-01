@@ -6,11 +6,11 @@ On-prem CMMC / NIST compliance platform: React + Vite client (`src/`), Express 5
 
 Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>=22.13`). Run from the repo root.
 
-| Gate | Command | Baseline (2026-11-01, branch `feature/documents-honesty`) |
+| Gate | Command | Baseline (2026-11-01, branch `feature/vm-polish`) |
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) | exit 0 |
 | Build | `npm run build` (`tsc && vite build`) | exit 0 |
-| Tests | `npm run test:all` (about 2m) | exit 0: 81 suites, 6040 of 6040 assertions |
+| Tests | `npm run test:all` (about 2m) | exit 0: 82 suites, 6094 of 6094 assertions |
 | One suite | `npx tsx tests/<name>.test.ts` (or `npm run test:<name>`) | each prints a final `📊 TEST RESULTS: n / n` line |
 | Node 22 (what CI runs) | `npx -y -p node@22 -- npm run test:all` | passes |
 | Exporter (Python) | `cd exporters/pbc-vm-exporter && python -m pytest -q` (venv: `python -m venv .venv`, then `pip install -e ".[dev]"`) | 227 passed, 1 skipped (POSIX-only); CI job "exporter" |
