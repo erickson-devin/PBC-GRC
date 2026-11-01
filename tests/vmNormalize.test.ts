@@ -1,5 +1,6 @@
 import {
   canonicalVulnId,
+  normalizeFindings,
   normalizeWazuh,
   recheckSeverity,
   severityFromCvss,
@@ -27,6 +28,7 @@ import {
   type PoamCandidate,
   type VmSlaConfig,
 } from '../server/vm/transitions';
+import { findingsNormalizerFor } from '../server/vm/adapters/registry';
 import { agentKey, kindKey, migrateLegacyAgentIds, normalizeMac, planAssetMatches, type AgentAssetCandidate } from '../server/vm/assetMatch';
 import { validateIngestPayload, type IngestPayload } from '../server/vm/ingestSchema';
 import type { VmFinding, VmRun } from '../src/types/vm';
@@ -597,9 +599,9 @@ const ahost = (o: Partial<NormalizedHost> = {}): NormalizedHost => nhost([], { a
 function finding1(vuln_id: string, o: Record<string, unknown> = {}) {
   return { vuln_id, severity: 'HIGH' as const, ...o };
 }
-function payload(hosts: Array<Record<string, unknown>>): IngestPayload {
+function payload(hosts: Array<Record<string, unknown>>, kind = 'WAZUH'): IngestPayload {
   return {
-    source: { kind: 'WAZUH', label: 'wazuh-prod' },
+    source: { kind, label: 'wazuh-prod' },
     exporter: { name: 'pbc-wazuh-exporter', version: '1.0.0' },
     collected_at: '2026-10-18T12:00:00Z',
     hosts: hosts.map((h) => ({ findings: [], ...h })),
@@ -677,6 +679,56 @@ function payload(hosts: Array<Record<string, unknown>>): IngestPayload {
     ]),
   );
   assert(many[0].findings[0].refs.length === 20, 'normalizeWazuh refs capped at 20', many[0].findings[0].refs.length);
+}
+
+// ---------- Findings normalizer registry (#105, #217) ----------
+{
+  for (const k of ['WAZUH', 'SENTINELONE', 'ACTION1']) {
+    assert(findingsNormalizerFor(k) === normalizeFindings, `findingsNormalizerFor(${k}) is the generic normalizer`);
+  }
+  for (const k of ['GREENBONE', 'NUCLEI', 'NMAP', 'SCAP']) {
+    assert(findingsNormalizerFor(k) === null, `findingsNormalizerFor(${k}) is null`);
+  }
+  assert(normalizeWazuh === normalizeFindings, 'normalizeWazuh stays exported as an alias of normalizeFindings');
+
+  const s1 = payload(
+    [
+      {
+        agent_id: '0f7e1c2a-5b3d-4e8f-9a6b-1c2d3e4f5a6b',
+        hostname: 'WIN-S1',
+        mac: '00-00-5E-00-53-21',
+        findings: [
+          finding1('cve-2024-3094', { severity: 'UNKNOWN', cvss_v3: 10 }),
+          finding1('CVE-2024-3094', { severity: 'HIGH', package: { name: 'xz', version: '5.6.0' } }),
+        ],
+      },
+    ],
+    'SENTINELONE',
+  );
+  assert(validateIngestPayload(s1).ok, 'a SENTINELONE payload passes the ingest schema');
+  const s1hosts = findingsNormalizerFor('SENTINELONE')!(s1);
+  const s1f = s1hosts[0].findings;
+  assert(s1hosts.length === 1 && s1f.length === 1 && s1f[0].vulnId === 'CVE-2024-3094' && s1f[0].severity === 'CRITICAL', 'SENTINELONE findings merge on the canonical id, UNKNOWN graded from CVSS', s1hosts);
+  assert(eq(s1f[0].reportedSeverities, ['CRITICAL', 'HIGH']), 'SENTINELONE reportedSeverities are the rechecked severities', s1f[0].reportedSeverities);
+  assert(eq(s1f[0].packages, [{ name: 'xz', version: '5.6.0', fixedVersion: null }]), 'SENTINELONE package without a fixed version -> fixedVersion null', s1f[0].packages);
+
+  const a1 = normalizeFindings(payload([{ agent_id: 'ep-1', findings: [finding1('KB5034441')] }], 'ACTION1'));
+  assert(a1[0].findings[0].vulnId === 'KB5034441', 'ACTION1 non-CVE patch id is kept unchanged', a1[0].findings);
+
+  const sameHosts = [{ agent_id: 'x1', hostname: 'h1', findings: [finding1('cve-2026-0100', { severity: 'UNKNOWN', cvss_v3: 5 }), finding1('GHSA-abcd', { severity: 'LOW' })] }];
+  assert(eq(normalizeFindings(payload(sameHosts, 'ACTION1')), normalizeFindings(payload(sameHosts, 'WAZUH'))), 'the normalizer output does not depend on the source kind');
+
+  const s1plan = planAssetMatches(
+    [nhost([], { agentId: 'uuid-9', hostname: ' WEB-01 ', mac: '' })],
+    [acand({ agentIds: { 'wazuh:src-w': '001' }, hostName: 'web-01' })],
+    'SENTINELONE',
+    'src-s1',
+    10,
+  );
+  assert(s1plan.matched.length === 1 && s1plan.matched[0].by === 'hostname', 'a SENTINELONE host with a matching hostname is matched to the Wazuh asset', s1plan);
+  assert(eq(s1plan.matched[0].agentIds, { 'wazuh:src-w': '001', 'sentinelone:src-s1': 'uuid-9' }), 'the matched asset keeps both agent id keys', s1plan.matched[0].agentIds);
+  const s1new = planAssetMatches([nhost([], { agentId: 'uuid-9', hostname: '', mac: '' })], [], 'SENTINELONE', 'src-s1', 10);
+  assert(s1new.toCreate.length === 1 && s1new.toCreate[0].hostName === 'sentinelone-uuid-9', 'a SENTINELONE host without a hostname is named sentinelone-<id>', s1new.toCreate);
 }
 
 // ---------- Stale runs ----------

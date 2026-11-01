@@ -3,8 +3,9 @@ import { VM_SEVERITIES, type VmSeverity } from '../../../src/types/vm';
 import { worstSeverity } from '../transitions';
 
 /**
- * Wazuh adapter: turns a validated ingest payload into one record per host and canonical vulnerability id
- * (docs/VULNERABILITY_MANAGEMENT.md, section 6). Pure: no database, no filesystem.
+ * Generic findings adapter (WAZUH, SENTINELONE, ACTION1; see adapters/registry.ts): turns a validated ingest payload
+ * into one record per host and canonical vulnerability id (docs/VULNERABILITY_MANAGEMENT.md, section 6).
+ * It reads contract fields only and never the source kind. Pure: no database, no filesystem.
  */
 
 export interface NormalizedPackage {
@@ -67,7 +68,7 @@ const iso = (v: string | null | undefined): string | null => {
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-export function normalizeWazuh(payload: IngestPayload): NormalizedHost[] {
+export function normalizeFindings(payload: IngestPayload): NormalizedHost[] {
   return payload.hosts.map((h) => {
     const groups = new Map<string, NormalizedFinding>();
     for (const f of h.findings ?? []) {
@@ -119,3 +120,6 @@ export function normalizeWazuh(payload: IngestPayload): NormalizedHost[] {
     };
   });
 }
+
+/** Kept so assetMatch, transitions and the tests keep their import; the normalizer never depended on the kind. */
+export const normalizeWazuh = normalizeFindings;
