@@ -295,7 +295,8 @@ counts only.
 
 A release is an annotated SemVer tag `vX.Y.Z` on a commit that is already on `main` and whose `package.json` `version` is
 `X.Y.Z`. The release pull request bumps `package.json` and the `docker-compose.yml` default (`IMAGE_TAG`) together; a test
-enforces that they match. After the merge:
+enforces that they match. Versions below `1.0.0` are pre-release builds for evaluation; `v1.0.0` is reserved for go-live
+(docs/GO_LIVE_CHECKLIST.md). After the merge:
 
 ```bash
 git tag -a vX.Y.Z <merge commit> -m "vX.Y.Z" && git push origin vX.Y.Z
