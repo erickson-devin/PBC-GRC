@@ -8,6 +8,5 @@ export {
   AssessmentMatrix as ControlMatrix,
   default,
 } from '../dashboard/AssessmentMatrix';
-export { AssetRemediationDrawer } from '../telemetry/AssetRemediationDrawer';
 export { ObjectiveChecklist } from './ObjectiveChecklist';
 export { InspectDocumentModal } from './InspectDocumentModal';

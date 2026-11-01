@@ -26,6 +26,7 @@ import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
 import { AssetInventoryManager } from './components/telemetry/AssetInventoryManager';
+import { ConfigurationResultsView } from './components/telemetry/ConfigurationResultsView';
 import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
@@ -293,6 +294,7 @@ const AppContent: React.FC = () => {
                 )}
                 {activeTab === 'ssp' && <SSPBuilder />}
                 {activeTab === 'sspimport' && <SspImportView />}
+                {activeTab === 'configresults' && <ConfigurationResultsView />}
                 {activeTab === 'policies' && <PolicyLibraryView />}
                 {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
                 {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}

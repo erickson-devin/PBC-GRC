@@ -69,17 +69,8 @@ import { useTenant } from './TenantContext';
 import { recordAuditEvent, describeNotesForLedger } from '../data/audit/auditLogger';
 import { planStigNarratives } from '../utils/stigNarrativePlan';
 import { applyControlNext, planControlRole, planControlStatus, planStarterTemplate } from '../utils/controlEditPlan';
-import {
-  AssetTelemetryRecord,
-  BoundaryAggregationResult,
-  FailingAssetInfo,
-} from '../types/telemetry';
-import {
-  getEnclaveFleet,
-  aggregateAssetTelemetry,
-  applyBoundaryTelemetryToControls,
-  fleetStorageMode,
-} from '../data/telemetry/assetTelemetryEngine';
+import { FailingAssetInfo } from '../types/telemetry';
+import type { ControlDecisionOutcome } from '../data/telemetry/configResultsView';
 
 export type NavigationTab =
   | 'dashboard'
@@ -90,6 +81,7 @@ export type NavigationTab =
   | 'vault'       // Legacy alias → renders same as 'evidence'
   | 'policies'    // Living Policy Library
   | 'ssp'         // System Security Plan
+  | 'configresults' // Configuration results: received XCCDF / ARF scans and the control statuses they suggest (#103)
   | 'sspimport'   // SSP import: upload an existing plan and review the controls it maps to
   | 'poam'        // Plan of Action & Milestones
   | 'export'      // Export Audit Package
@@ -125,13 +117,10 @@ interface AssessmentContextType {
   previewEvidence: EvidenceItem | null;
   setPreviewEvidence: (item: EvidenceItem | null) => void;
 
-  // Boundary Telemetry & Fleet State
-  fleetAssets: AssetTelemetryRecord[];
-  boundaryAggregation: BoundaryAggregationResult | null;
-  refreshBoundaryTelemetry: () => Promise<BoundaryAggregationResult>;
-
   // Actions with RBAC enforcement
   updateControlStatus: (controlId: string, status: ControlStatus, failingAssets?: FailingAssetInfo[]) => void;
+  /** Records a status a person chose from a configuration-results suggestion (#103): only ever called from a click, saved with the control's stamp so a newer change is refused, never alerts. */
+  decideControlStatus: (controlId: string, status: ControlStatus) => Promise<ControlDecisionOutcome>;
   updateControlNotes: (controlId: string, notes: string) => void;
   /** Sends a control's typed notes to the server now (the notes are otherwise saved a moment after the last keystroke). */
   flushControlNotes: (controlId: string) => void;
@@ -271,33 +260,6 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [exportModalInitialDocType, setExportModalInitialDocType] = useState<ReportDocumentType | undefined>(undefined);
-
-  // Boundary Telemetry & Fleet State
-  const [fleetAssets, setFleetAssets] = useState<AssetTelemetryRecord[]>(() => getEnclaveFleet(currentTenant.id, fleetStorageMode(currentTenant)));
-  const [boundaryAggregation, setBoundaryAggregation] = useState<BoundaryAggregationResult | null>(null);
-
-  const refreshBoundaryTelemetry = useCallback(async () => {
-    try {
-      const boundary = await aggregateAssetTelemetry(currentTenant.id, fleetStorageMode(currentTenant));
-      setBoundaryAggregation(boundary);
-      setFleetAssets(getEnclaveFleet(currentTenant.id, fleetStorageMode(currentTenant)));
-
-      setState(prev => ({
-        ...prev,
-        controls: applyBoundaryTelemetryToControls(prev.controls, boundary),
-      }));
-
-      return boundary;
-    } catch {
-      const fallback = await aggregateAssetTelemetry(currentTenant.id, fleetStorageMode(currentTenant));
-      return fallback;
-    }
-  }, [currentTenant.id, currentTenant.serverBacked]);
-
-  // Initial boundary evaluation on mount / tenant switch / program switch (the reloaded program's controls get the telemetry too)
-  useEffect(() => {
-    refreshBoundaryTelemetry();
-  }, [currentTenant.id, programScope, refreshBoundaryTelemetry]);
 
   const openExportModal = useCallback((initialDocType?: ReportDocumentType) => {
     setExportModalInitialDocType(initialDocType);
@@ -445,8 +407,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const saveControl = useCallback(async (
     controlId: string,
     update: Partial<ControlState>,
-    opts?: { programId?: string; fromAutosave?: boolean }
-  ): Promise<'saved' | 'failed' | 'unreachable'> => {
+    opts?: { programId?: string; fromAutosave?: boolean; checkStale?: boolean; quiet?: boolean }
+  ): Promise<'saved' | 'stale' | 'archived' | 'failed' | 'unreachable'> => {
     // A browser-only tenant keeps its controls in this browser: nothing to send
     if (!currentTenant.serverBacked) return 'saved';
     const hasNotes = 'implementationNotes' in update;
@@ -455,14 +417,16 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const key = notesKey(scope, controlId);
     // An edit made now supersedes a draft that has not gone out yet
     if (!opts?.fromAutosave && hasNotes) notesAutosaveRef.current.cancel(key);
-    return saveChainRef.current.run(key, async (): Promise<'saved' | 'failed' | 'unreachable'> => {
+    return saveChainRef.current.run(key, async (): Promise<'saved' | 'stale' | 'archived' | 'failed' | 'unreachable'> => {
       // After a stale refusal nothing goes out until the page is reloaded: the server's text was not seen
       if (hasNotes && staleNotesRef.current.has(key)) return 'failed';
       try {
         let sendUpdate: Partial<ControlState> & { expectedUpdatedAt?: string | null } = update;
-        if (hasNotes) {
+        if (hasNotes || opts?.checkStale) {
           const base = newerStamp(serverStampRef.current.get(key), liveControlsRef.current?.[controlId]?.updatedAt);
+          // A checked status decision with no stamp at all expects no stored row (null): a row saved meanwhile is refused as stale
           if (base !== undefined) sendUpdate = { ...update, expectedUpdatedAt: base };
+          else if (opts?.checkStale) sendUpdate = { ...update, expectedUpdatedAt: null };
         }
         const saved = await updateLiveControl(controlId, sendUpdate, opts?.programId);
         if (saved?.updatedAt) serverStampRef.current.set(key, saved.updatedAt);
@@ -476,8 +440,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const next = revertFailedControlFields(local, liveControlsRef.current?.[controlId], update);
           return next === local ? prev : { ...prev, controls: { ...prev.controls, [controlId]: next } };
         });
-        const message = controlSaveFailureMessage(controlId, update, err);
+        const message = opts?.quiet ? null : controlSaveFailureMessage(controlId, update, err);
         if (message !== null) setControlSaveError(p => coalesceSaveFailure(p, message));
+        if (isStaleWriteError(err)) return 'stale';
+        if ((err as { reason?: unknown } | null)?.reason === 'program_archived') return 'archived';
         return (err as { status?: unknown } | null)?.status === 0 ? 'unreachable' : 'failed';
       }
     });
@@ -564,6 +530,36 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const flushControlNotes = useCallback((controlId: string) => {
     notesAutosaveRef.current.flush(notesKey(programScope, controlId));
   }, [programScope]);
+
+  // Action: Record a status chosen from a configuration-results suggestion (#103). Only ever called from a person's click on Apply and its
+  // confirmation; the suggestion itself is never written. The save carries the control's stamp, so a status someone else saved since is
+  // refused (409) instead of overwritten. Nothing is shown as saved before the server says so; the ledger gets the id and statuses only.
+  const decideControlStatus = useCallback(async (controlId: string, status: ControlStatus): Promise<ControlDecisionOutcome> => {
+    if (!canEdit) return 'read_only';
+    if (activeProgram?.archived) return 'archived';
+    if (!notesEditable) return 'not_loaded';
+    const scope = programScope;
+    const outcome = await saveControl(controlId, { status, updatedBy: currentUser.name }, { checkStale: true, quiet: true });
+    if (outcome !== 'saved') return outcome;
+    if (programScopeRef.current !== scope) return 'saved';
+    const plan = planControlStatus(
+      stateRef.current.controls, controlId, status, undefined,
+      { tenantId: currentTenant.id, updatedBy: currentUser.name, timestamp: new Date().toISOString() }
+    );
+    recordAuditEvent({
+      tenantId: currentTenant.id,
+      metadata: auditMetadata,
+      actorId: currentUser.id,
+      actorEmail: currentUser.email,
+      actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+      actionType: 'CONTROL_STATUS_UPDATED',
+      targetEntity: controlId,
+      previousState: plan.previousStatus,
+      newState: status,
+    }).catch(() => {});
+    setState(prev => (programScopeKey(prev.tenantId, prev.programId) === scope ? applyControlNext(prev, controlId, plan.next) : prev));
+    return 'saved';
+  }, [canEdit, activeProgram?.archived, notesEditable, programScope, saveControl, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, auditMetadata]);
 
   // Leaving the program or the page sends what is typed; a tab that is hidden sends it too (it may never come back)
   useEffect(() => () => { notesAutosaveRef.current.flushAll(); }, [currentTenant.id, programScope]);
@@ -1826,9 +1822,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     previewEvidence,
     setPreviewEvidence,
 
-    fleetAssets,
-    boundaryAggregation,
-    refreshBoundaryTelemetry,
+    decideControlStatus,
 
     updateControlStatus,
     updateControlNotes,
@@ -1880,9 +1874,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     selectedStatusFilter,
     searchQuery,
     previewEvidence,
-    fleetAssets,
-    boundaryAggregation,
-    refreshBoundaryTelemetry,
+    decideControlStatus,
     updateControlStatus,
     updateControlNotes,
     flushControlNotes,
