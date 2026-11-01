@@ -1340,6 +1340,9 @@ async function verifyProgramIsolation() {
     const smNumber = await rejectsIn(scopeB, insertMeta, [TENANT_X, programB, JSON.stringify({ systemName: 5 }), 'rls_verify_actor'], smShape);
     const smTooBig = await rejectsIn(scopeB, insertMeta, [TENANT_X, programB, JSON.stringify({ systemEnvironment: 'x'.repeat(262144) }), 'rls_verify_actor'], smShape);
     check(smUnknownKey.ok && smNumber.ok && smTooBig.ok, '8l. program_ssp_metadata: an unknown key, a numeric value and a value over 262 144 bytes are each refused (23514, program_ssp_metadata_shape_check)', [smUnknownKey.detail, smNumber.detail, smTooBig.detail].join(' | '));
+    // the twelfth key (serviceCommitments) is accepted by the shape CHECK: merging it into program A's row under A's scope updates exactly that row
+    const smServiceCommitments = await queryWithProgram(scopeA, "UPDATE program_ssp_metadata SET metadata = metadata || jsonb_build_object('serviceCommitments', 'rls_verify_sc') WHERE program_id = $1", [programA]);
+    check((smServiceCommitments.rowCount ?? 0) === 1, '8l. program_ssp_metadata: the serviceCommitments key is accepted by the shape CHECK (one row updated under program A)', 'updated ' + smServiceCommitments.rowCount);
     // the stack profile of a tenant: only the known keys, at most 16 384 bytes. The CHECK runs on the proposed row before
     // ON CONFLICT is considered, so this insert is refused whether or not the tenant row exists and never writes anything.
     let stackProfileBad = 'no error';

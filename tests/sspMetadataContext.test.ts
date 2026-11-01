@@ -75,7 +75,7 @@ assert(dash.includes('getSspMetadata: (t, p) => ApiClient.getSspMetadata(t, p)')
 assert(!/setItem|localStorage|sessionStorage|indexedDB/.test(syncSrc), 'C8: sspMetadataSync.ts writes no browser storage');
 
 // C9: the screen
-assert(builder.includes('sspMetadataEditable') && count(builder, 'disabled={!canEdit || !sspMetadataEditable}') === 11, 'C9: all eleven SSP inputs are disabled until the server copy is editable', count(builder, 'disabled={!canEdit || !sspMetadataEditable}'));
+assert(builder.includes('sspMetadataEditable') && count(builder, 'disabled={!canEdit || !sspMetadataEditable}') === 12, 'C9: all twelve SSP inputs are disabled until the server copy is editable', count(builder, 'disabled={!canEdit || !sspMetadataEditable}'));
 assert(builder.includes('Keep the server&apos;s') && builder.includes('Use this browser&apos;s'), 'C9b: the conflict notice offers the two choices');
 assert(builder.includes('SSP_METADATA_NEED_OWNER_MESSAGE') && builder.includes('sspMetadataConflict.fields.join'), 'C9c: the needs-owner notice is fixed text and the conflict names fields only');
 assert(builder.includes('Loading the server copy…') && builder.includes('Saved to the server'), 'C9d: the status line says loading and saved');
@@ -91,6 +91,7 @@ assert(assessCtx.includes('isStaleWriteError(err)') && assessCtx.includes('SSP_M
 // Export modal
 const modalSave = between(modal, 'const handleSaveMetadata = useCallback(', '// Dynamic Live Document Compilation');
 assert(modalSave.includes('!sspMetadataEditable') && modalSave.indexOf('!sspMetadataEditable') < modalSave.indexOf('updateSSPMetadata({'), 'C13: the export form refuses to save (and says so) while the details are not editable');
+assert(builder.includes('updateSSPMetadata({ serviceCommitments:') && builder.includes("meta.serviceCommitments ?? ''"), 'C14: the SSP Builder edits the SOC 2 service commitments');
 
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 process.exitCode = passed === total ? 0 : 1;

@@ -1,7 +1,7 @@
 import './testEnv';
 import { server } from '../server/index';
 import { readSspMetadata } from '../server/sspMetadata';
-import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_CHARS, validateSspMetadata } from '../src/types/sspMetadata';
+import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES, SSP_METADATA_MAX_CHARS, validateSspMetadata } from '../src/types/sspMetadata';
 import { STACK_PROFILE_MAX_BYTES, validateStackProfile } from '../src/data/stackProfileSchema';
 
 /**
@@ -70,7 +70,9 @@ async function run() {
   assert(!leak.ok && leak.error.includes('systemName') && !validateSspMetadata({ systemEnvironment: 7 }).ok, 'V3 the error names the field');
   const leakValue = validateSspMetadata({ systemName: 'ok', samStatus: 'S'.repeat(40) + MARK });
   assert(!leakValue.ok && !leakValue.error.includes(MARK), 'V4 the error never echoes the value');
-  assert(SSP_METADATA_FIELDS.length === 11 && SSP_METADATA_FIELDS.every((k) => SSP_METADATA_MAX_CHARS[k] > 0), 'V5 eleven fields, each with a limit');
+  assert(SSP_METADATA_FIELDS.length === 12 && SSP_METADATA_FIELDS.every((k) => SSP_METADATA_MAX_CHARS[k] > 0), 'V5 twelve fields, each with a limit');
+  const worstBytes = SSP_METADATA_FIELDS.reduce((sum, k) => sum + SSP_METADATA_MAX_CHARS[k] * 3, 0) + 1024;
+  assert(worstBytes <= SSP_METADATA_MAX_BYTES, 'V9 every field at its limit in 3-byte characters plus 1 KB overhead fits the byte budget', { worstBytes, max: SSP_METADATA_MAX_BYTES });
 
   const goodProfile = { identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC' };
   assert(validateStackProfile(goodProfile).ok && validateStackProfile({ ...goodProfile, odpParams: { AC_2_MAX: '30' } }).ok, 'V6 validateStackProfile accepts the five enums, with or without odpParams');
@@ -101,7 +103,8 @@ async function run() {
   const P2 = await newProgram('SSP second');
   const P3 = await newProgram('SSP third');
   const P4 = await newProgram('SSP fourth');
-  assert(Boolean(T && R && DEF && P2 && P3 && P4), 'setup: tenants and programs exist', { T, R, DEF, P2, P3, P4 });
+  const P5 = await newProgram('SSP fifth');
+  assert(Boolean(T && R && DEF && P2 && P3 && P4 && P5), 'setup: tenants and programs exist', { T, R, DEF, P2, P3, P4, P5 });
 
   const sm1 = await call('GET', '/ssp-metadata', owner, T);
   assert(sm1.status === 200 && sm1.body?.metadata === null && sm1.body.updatedAt === null && sm1.body.updatedBy === null, 'SM1 GET on the default program with no row -> 200, metadata null, updatedAt null', sm1.body);
@@ -222,9 +225,29 @@ async function run() {
   );
   assert(!JSON.stringify(events).includes(MARK) && !JSON.stringify(events).includes('SYS-A'), 'SM21b no event carries any of the text');
 
+  // SM-SC: the SOC 2 service commitments field (a program of its own, so the three events pinned on DEF stay three)
+  const SC_MARK = 'SC-MARK-199';
+  const scPut = await call('PUT', '/ssp-metadata', owner, T, { metadata: { serviceCommitments: SC_MARK }, expectedUpdatedAt: null }, P5);
+  const scGet = await call('GET', '/ssp-metadata', owner, T, undefined, P5);
+  assert(scPut.status === 200 && scGet.status === 200 && scGet.body?.metadata?.serviceCommitments === SC_MARK, 'SM-SC1 PUT serviceCommitments -> 200 and GET returns it', [scPut.status, scGet.status]);
+  const scTooLong = await call('PUT', '/ssp-metadata', owner, T, { metadata: { serviceCommitments: 'x'.repeat(20001) }, expectedUpdatedAt: scPut.body?.updatedAt }, P5);
+  assert(
+    scTooLong.status === 400 && scTooLong.body?.code === 'invalid_ssp_metadata' && JSON.stringify(scTooLong.body).includes('serviceCommitments') && !JSON.stringify(scTooLong.body).includes('xxxxxxxx'),
+    'SM-SC2 20001 characters -> 400 invalid_ssp_metadata naming the field, no value echoed',
+    scTooLong.body
+  );
+  const scEvents = ((await call('GET', `/tenants/${T}/programs/${P5}/events`, owner, T)).body?.events ?? []) as Json[];
+  const scChanged = scEvents.filter((e) => e.kind === 'ssp_metadata_changed');
+  const scField = scChanged[0]?.newValue?.fields?.serviceCommitments;
+  assert(
+    scChanged.length === 1 && /^[0-9a-f]{64}$/.test(scField?.sha256 ?? '') && scField?.length === SC_MARK.length && !JSON.stringify(scEvents).includes(SC_MARK),
+    'SM-SC3 the history event carries a sha256 and the length of serviceCommitments, never the text',
+    scChanged.map((e) => e.newValue?.fields)
+  );
+
   console.log = origLog;
   console.error = origError;
-  assert(captured.length > 0 && !captured.some((l) => l.includes(MARK) || l.includes('SYS-A') || l.includes('P2-NAME')), 'SM20 no console line written during the suite contains the text', captured.filter((l) => l.includes(MARK)));
+  assert(captured.length > 0 && !captured.some((l) => l.includes(MARK) || l.includes('SYS-A') || l.includes('P2-NAME') || l.includes(SC_MARK)), 'SM20 no console line written during the suite contains the text', captured.filter((l) => l.includes(MARK)));
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

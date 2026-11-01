@@ -86,6 +86,7 @@ export interface SSPMetadata {
   systemEnvironment: string;
   cloudServiceProviders: string;
   version: string;
+  serviceCommitments: string; // SOC 2 principal service commitments and system requirements
   lastUpdated?: string;
 }
 

@@ -406,6 +406,22 @@ export const SSPBuilder: React.FC = () => {
                 placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
               />
             </div>
+
+            {/* Service Commitments (SOC 2) */}
+            <div className="md:col-span-2">
+              <label htmlFor="ssp-service-commitments" className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Principal service commitments and system requirements (SOC 2)
+              </label>
+              <textarea
+                id="ssp-service-commitments"
+                rows={4}
+                disabled={!canEdit || !sspMetadataEditable}
+                value={meta.serviceCommitments ?? ''}
+                onChange={(e) => updateSSPMetadata({ serviceCommitments: e.target.value })}
+                className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+                placeholder="Commitments made to customers (SLAs, security and privacy commitments) and the system requirements that support them. Used by the SOC 2 system description."
+              />
+            </div>
           </div>
 
           <div className="pt-4 border-t border-slate-800 flex justify-end">
