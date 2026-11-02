@@ -10,3 +10,4 @@ data/
 !.env.example
 scanner-agent/
 .claude/
+offline-bundle-*

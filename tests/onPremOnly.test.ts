@@ -477,6 +477,23 @@ assert(dockerCode.filter((l) => /^CMD\s/.test(l)).length === 1 && !dockerCode.so
   const rendered = notices.renderNotices(root, path.join(root, 'no-such-apk-db'));
   assert(/aports/.test(rendered) && /GNU General Public License version 2/.test(rendered) && /SIL Open Font License 1\.1/.test(rendered), 'the notices point to the GPL source and name the font licence');
 }
+{
+  // Offline install bundle (docs/OFFLINE_INSTALL.md)
+  const build = fs.readFileSync(path.join(root, 'scripts', 'build-offline-bundle.sh'), 'utf8');
+  const load = fs.readFileSync(path.join(root, 'scripts', 'offline-load.sh'), 'utf8');
+  const guide = fs.readFileSync(path.join(root, 'docs', 'OFFLINE_INSTALL.md'), 'utf8');
+  const lines = (f: string) => fs.readFileSync(path.join(root, f), 'utf8').replace(/\r\n/g, '\n');
+  assert(!build.includes('\r') && !load.includes('\r') && build.startsWith('#!/usr/bin/env bash\n') && load.startsWith('#!/usr/bin/env bash\n'), 'the offline scripts are bash with LF line endings');
+  assert(build.includes('set -euo pipefail') && load.includes('set -euo pipefail'), 'the offline scripts stop on the first error');
+  assert(build.includes('docker save') && build.includes('SHA256SUMS') && build.includes('IMAGES.txt') && build.includes('-pbc-${digest:0:12}'), 'the bundle saves the images under plain tags, records their IDs and writes SHA256SUMS');
+  assert(build.includes('POSTGRES_IMAGE=') && build.includes('OLLAMA_IMAGE_TAG=') && build.includes('env -u POSTGRES_IMAGE -u OLLAMA_IMAGE_TAG'), 'the bundle points compose at the retagged images and ignores overrides in the builder\'s shell');
+  const copies = build.split('\n').filter((l) => /^\s*cp\s/.test(l));
+  assert(copies.length > 0 && copies.every((l) => !/(^|\s)\.env(\s|$)/.test(l)), 'the bundle never copies a .env (only .env.example)', copies);
+  assert(load.includes('sha256sum --check') && load.includes("docker image inspect --format '{{.Id}}'") && load.includes('chmod 0600 .env'), 'the loader checks the checksums and every image ID, and keeps .env private');
+  assert(!/docker pull|docker login|curl |wget /.test(load), 'the loader never reaches the network');
+  assert(guide.includes('docker compose up -d --pull never'), 'the guide starts compose with --pull never');
+  assert(/^offline-bundle-\*\/$/m.test(lines('.gitignore')) && /^offline-bundle-\*$/m.test(lines('.dockerignore')), 'bundles stay out of git and out of the image build context');
+}
 assert(runner.length > 0 && runner.filter((l) => /^RUN npm ci --omit=dev\s*$/.test(l)).length === 1 && runner.some((l) => /^COPY package\*\.json \.\/\s*$/.test(l)) && !runner.some((l) => /\bnpx\b/.test(l)), 'the runner stage installs from the lockfile once (npm ci --omit=dev) and never calls npx');
 {
   // #146: the runner stage ends as the unprivileged node user, after its last RUN and before CMD
@@ -579,7 +596,7 @@ if (app) {
   assert(!app.lines.some((l) => /^\s+image:.*latest/.test(l)), 'the app image never references latest');
   assert(!('IMAGE_TAG' in mapOf(app, 'environment')), 'IMAGE_TAG is a compose variable only, not passed into the app environment');
 }
-assert(!!db && db.lines.some((l) => /^image: postgres:16-alpine@sha256:[0-9a-f]{64}$/.test(l.trim())), 'the db service image is postgres:16-alpine pinned by a sha256 digest', db && db.lines.filter((l) => /^\s+image:/.test(l)));
+assert(!!db && db.lines.some((l) => /^image: \$\{POSTGRES_IMAGE:-postgres:16-alpine@sha256:[0-9a-f]{64}\}$/.test(l.trim())), 'the db service image is postgres:16-alpine pinned by a sha256 digest (POSTGRES_IMAGE overrides it only for an offline install)', db && db.lines.filter((l) => /^\s+image:/.test(l)));
 const composeImages = services.flatMap((s) => s.lines).filter((l) => /^\s+image:/.test(l));
 assert(composeImages.length >= 3 && composeImages.every((l) => !/latest/i.test(l)), 'no compose image: line references latest (#169)', composeImages);
 assert(!!ollama && ollama.lines.some((l) => /^image: ollama\/ollama:\$\{OLLAMA_IMAGE_TAG:-\d+\.\d+\.\d+@sha256:[0-9a-f]{64}\}$/.test(l.trim())), 'the ollama image is ollama/ollama pinned by version and sha256 digest in the OLLAMA_IMAGE_TAG default (#169)', ollama && ollama.lines.filter((l) => /^\s+image:/.test(l)));
@@ -615,7 +632,7 @@ const stepsOf = (block: string): string[] => block.split('\n      - name:');
 const imagesOf = (text: string): string[] => [...text.matchAll(/^\s+image:\s*(\S+)\s*$/gm)].map((m) => m[1]);
 const jobsSelf = jobsOf('jobs:\n  a:\n    x: 1\n  b:\n    y: 2\n');
 assert(JSON.stringify([...jobsSelf.keys()]) === '["a","b"]' && (jobsSelf.get('a') ?? '').includes('x: 1') && !(jobsSelf.get('a') ?? '').includes('y: 2'), 'jobsOf splits a workflow into its jobs (self-test)', [...jobsSelf.keys()]);
-const composeDbImage = (db ? db.lines.map((l) => /^\s*image:\s*(\S+)\s*$/.exec(l)).find((m) => !!m)?.[1] : undefined) ?? '';
+const composeDbImage = ((db ? db.lines.map((l) => /^\s*image:\s*(\S+)\s*$/.exec(l)).find((m) => !!m)?.[1] : undefined) ?? '').replace(/^\$\{POSTGRES_IMAGE:-(.*)\}$/, '$1');
 assert(/^postgres:16-alpine@sha256:[0-9a-f]{64}$/.test(composeDbImage), 'the compose db image is readable for the CI digest comparison', composeDbImage);
 const ciWf = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
 const ciJobs = jobsOf(ciWf);

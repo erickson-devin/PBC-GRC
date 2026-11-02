@@ -317,6 +317,9 @@ third-party notices at `/app/THIRD_PARTY_NOTICES.txt`, generated during the buil
 with `docker run --rm --entrypoint cat ghcr.io/erickson-devin/pbc-grc:vX.Y.Z /app/THIRD_PARTY_NOTICES.txt`. The build fails
 if a dependency's licence is not on the allow list in `scripts/generateThirdPartyNotices.ts`.
 
+For a host without internet access, `scripts/build-offline-bundle.sh` turns a release into a bundle for a flash
+drive and `offline-load.sh` loads it: see `docs/OFFLINE_INSTALL.md`.
+
 Operators set `IMAGE_TAG=vX.Y.Z` in `.env` (or `vX.Y.Z@sha256:<digest>` for an immutable pin). To verify an image:
 `docker buildx imagetools inspect ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows its digest before a pull, and after a pull
 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows it; once running,

@@ -51,3 +51,6 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .venv/
+
+# Offline install bundles (scripts/build-offline-bundle.sh)
+offline-bundle-*/

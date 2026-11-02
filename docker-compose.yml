@@ -40,8 +40,9 @@
 services:
   # ── 1. PostgreSQL 16 Relational Storage with RLS Support ───────────────────
   singularity-db:
-    # pinned by digest, resolved 2026-10-30; refresh in a reviewed PR
-    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    # pinned by digest, resolved 2026-10-30; refresh in a reviewed PR. POSTGRES_IMAGE is set only by an offline install
+    # (docs/OFFLINE_INSTALL.md): a loaded image is matched by a plain tag that points at this same digest.
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab}
     container_name: singularity-db
     restart: unless-stopped
     logging:
