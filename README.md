@@ -108,9 +108,17 @@ docker/, Dockerfile, docker-compose.yml, nginx.conf
 * [Exporter](exporters/pbc-vm-exporter/README.md)
 * [Privacy policy](docs/PRIVACY_POLICY.md) and [terms of service](docs/TERMS_OF_SERVICE.md)
 
-## Contributing
+## Licence
+
+Proprietary and confidential. Copyright Pitch Black Cyber, LLC. All rights reserved. See [LICENSE](LICENSE): the software
+may be used only under a written agreement with Pitch Black Cyber, LLC. Third-party components keep their own licences;
+every container image carries `THIRD_PARTY_NOTICES.txt`, generated at build time by
+`scripts/generateThirdPartyNotices.ts` (`npm run notices` prints it locally). The image build fails if a dependency's
+licence is not on that script's allow list.
+
+## Contributing (internal)
 
 Work on a feature branch and open a pull request against `main`; CI must be green, including the live PostgreSQL checks.
-No new runtime dependencies without discussion: the on-premises install is supply-chain sensitive, and base images and
-actions are pinned by digest. Generated catalogs under `src/data/frameworks/` are verified against their sources with
+No new runtime dependencies without discussion: the on-premises install is supply-chain sensitive, base images and
+actions are pinned by digest, and a dependency must carry a licence compatible with proprietary distribution. Generated catalogs under `src/data/frameworks/` are verified against their sources with
 `npx tsx scripts/generateNist80053.ts --check`.

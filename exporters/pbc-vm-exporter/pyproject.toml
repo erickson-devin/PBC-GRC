@@ -9,6 +9,8 @@ description = "Pushes Wazuh vulnerability state to PBC-GRC (POST /api/v1/vm/inge
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["requests>=2.31"]
+# Proprietary: see LICENSE. "Private :: Do Not Upload" makes PyPI refuse an accidental upload.
+classifiers = ["License :: Other/Proprietary License", "Private :: Do Not Upload"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

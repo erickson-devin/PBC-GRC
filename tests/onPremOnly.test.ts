@@ -457,6 +457,26 @@ assert(globalTsxPins(dockerfile).length === 0, 'the Dockerfile does not install 
 assert(globalNpmInstalls('RUN npm i --global esbuild\n') === 1 && globalNpmInstalls('# RUN npm install -g x\n') === 0 && globalNpmInstalls(dockerfile) === 0, 'the Dockerfile has no global npm install of anything');
 assert(/^CMD \["node_modules\/\.bin\/tsx", "server\/index\.ts"\]\s*$/m.test(dockerfile) && !/^CMD \["tsx",/m.test(dockerfile), 'the Dockerfile starts the server with the tsx from node_modules');
 assert(dockerCode.filter((l) => /^CMD\s/.test(l)).length === 1 && !dockerCode.some((l) => /^ENTRYPOINT\s/.test(l)), 'the Dockerfile has exactly one CMD and no ENTRYPOINT');
+{
+  // Proprietary licence and third-party notices
+  const licence = fs.readFileSync(path.join(root, 'LICENSE'), 'utf8');
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as { license?: string; private?: boolean };
+  assert(/PROPRIETARY AND CONFIDENTIAL/.test(licence) && /Pitch Black Cyber, LLC/.test(licence) && /All rights reserved/.test(licence), 'LICENSE declares the software proprietary to Pitch Black Cyber, LLC');
+  assert(fs.readFileSync(path.join(root, 'exporters/pbc-vm-exporter/LICENSE'), 'utf8') === licence, 'the exporter carries the same LICENSE');
+  assert(pkgJson.license === 'UNLICENSED' && pkgJson.private === true, 'package.json is private and "UNLICENSED" (npm: proprietary)', pkgJson.license);
+  assert(/License :: Other\/Proprietary License/.test(fs.readFileSync(path.join(root, 'exporters/pbc-vm-exporter/pyproject.toml'), 'utf8')), 'the exporter is classified as proprietary');
+  assert(dockerCode.some((l) => /^COPY --from=builder \/app\/LICENSE \.\/LICENSE\s*$/.test(l)) && dockerCode.some((l) => /^RUN node_modules\/\.bin\/tsx scripts\/generateThirdPartyNotices\.ts --out \/app\/THIRD_PARTY_NOTICES\.txt\s*$/.test(l)), 'the image carries LICENSE and generates THIRD_PARTY_NOTICES.txt at build time');
+  const notices = await import('../scripts/generateThirdPartyNotices');
+  const pkgs = notices.collectPackages(root);
+  const refused = pkgs.filter((p) => !p.allowed).map((p) => `${p.name}: ${p.declared}`);
+  assert(refused.length === 0, 'every production dependency has a licence on the notices allow list', refused);
+  const direct = Object.keys((JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }).dependencies);
+  assert(direct.every((d) => pkgs.some((p) => p.name === d)), 'the notices list every direct production dependency', direct.filter((d) => !pkgs.some((p) => p.name === d)));
+  assert(notices.electLicense('(MIT OR GPL-3.0-or-later)').allowed && /^MIT \(elected from/.test(notices.electLicense('(MIT OR GPL-3.0-or-later)').used), 'a dual licence is used under its permissive option');
+  assert(!notices.electLicense('GPL-3.0-only').allowed && !notices.electLicense('(MIT AND GPL-2.0-only)').allowed && notices.electLicense('(MIT AND Zlib)').allowed, 'a copyleft licence, alone or in an AND, is refused');
+  const rendered = notices.renderNotices(root, path.join(root, 'no-such-apk-db'));
+  assert(/aports/.test(rendered) && /GNU General Public License version 2/.test(rendered) && /SIL Open Font License 1\.1/.test(rendered), 'the notices point to the GPL source and name the font licence');
+}
 assert(runner.length > 0 && runner.filter((l) => /^RUN npm ci --omit=dev\s*$/.test(l)).length === 1 && runner.some((l) => /^COPY package\*\.json \.\/\s*$/.test(l)) && !runner.some((l) => /\bnpx\b/.test(l)), 'the runner stage installs from the lockfile once (npm ci --omit=dev) and never calls npx');
 {
   // #146: the runner stage ends as the unprivileged node user, after its last RUN and before CMD

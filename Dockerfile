@@ -48,6 +48,11 @@ COPY --from=builder /app/tsconfig*.json ./
 # Operational scripts (e.g. `npm run auth:create-user` for the air-gapped local accounts)
 COPY --from=builder /app/scripts ./scripts
 
+# The product licence, and the third-party notices for exactly what this image contains: the production node_modules and
+# the Alpine packages of the base image. The script fails the build when a dependency's licence is not on its allow list.
+COPY --from=builder /app/LICENSE ./LICENSE
+RUN node_modules/.bin/tsx scripts/generateThirdPartyNotices.ts --out /app/THIRD_PARTY_NOTICES.txt
+
 # Run as the unprivileged node user (uid 1000) from here on (#146). A bind-mounted EVIDENCE_DIR must be writable by uid 1000: docs/ON_PREM_DATABASE.md "Host paths".
 RUN mkdir -p /app/data/evidence && chown -R node:node /app/data
 USER node

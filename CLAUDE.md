@@ -6,11 +6,11 @@ On-prem CMMC / NIST compliance platform: React + Vite client (`src/`), Express 5
 
 Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>=22.13`). Run from the repo root.
 
-| Gate | Command | Baseline (2026-11-01, branch `feature/connectors`) |
+| Gate | Command | Baseline (2026-11-01, branch `chore/proprietary-license`) |
 | --- | --- | --- |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) | exit 0 |
 | Build | `npm run build` (`tsc && vite build`) | exit 0 |
-| Tests | `npm run test:all` (about 2m) | exit 0: 82 suites, 6122 of 6122 assertions |
+| Tests | `npm run test:all` (about 2m) | exit 0: 82 suites, 6132 of 6132 assertions |
 | One suite | `npx tsx tests/<name>.test.ts` (or `npm run test:<name>`) | each prints a final `📊 TEST RESULTS: n / n` line |
 | Node 22 (what CI runs) | `npx -y -p node@22 -- npm run test:all` | passes |
 | Exporter (Python) | `cd exporters/pbc-vm-exporter && python -m pytest -q` (venv: `python -m venv .venv`, then `pip install -e ".[dev]"`) | 346 passed, 1 skipped (POSIX-only); CI job "exporter" |
@@ -24,7 +24,7 @@ Node is on PATH (v24 locally; CI and the Dockerfile use Node 22, `engines` is `>
 
 * No direct pushes to `main`: work on a feature branch, push it, the user opens and merges the PR. Commit and push only when asked.
 * Commit messages end with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
-* No new dependencies without asking (the on-prem install is supply-chain sensitive). No Puppeteer or browser-test tooling in the repo (browser checks live in a scratch folder).
+* Proprietary software (`LICENSE`, `package.json` `"license": "UNLICENSED"`). No new dependencies without asking (the on-prem install is supply-chain sensitive); a dependency's licence must be on the allow list in `scripts/generateThirdPartyNotices.ts`, or the image build fails (pinned in `tests/onPremOnly.test.ts`). No Puppeteer or browser-test tooling in the repo (browser checks live in a scratch folder).
 * Documents and CUI never leave the machine; the local Ollama client refuses non-local hosts. AI output is untrusted and is only ever staged for human review, never written to a control directly.
 * CMMC (Level 1 / 2) behaviour of the SSP import is tuned for `llama3.2:3b` (candidate limit 4, BM25 floor 9, confidence floor 0.5, extractive gap analysis): do not change it as a side effect of other work.
 * Gotchas: source files mix LF and CRLF; shell heredocs lose backslashes (use the Write / Edit tools for code with regexes); never junction or symlink `node_modules` into a git worktree (removing the worktree wipes the real one).
