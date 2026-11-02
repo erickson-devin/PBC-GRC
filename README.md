@@ -101,6 +101,7 @@ docker/, Dockerfile, docker-compose.yml, nginx.conf
 
 * [Go-live checklist](docs/GO_LIVE_CHECKLIST.md)
 * [On-premises database, identity and releases](docs/ON_PREM_DATABASE.md)
+* [Offline install from a flash drive](docs/OFFLINE_INSTALL.md)
 * [Assessment programs and platform administrators](docs/ASSESSMENT_PROGRAMS.md)
 * [SSP import](docs/SSP_IMPORT.md)
 * [Vulnerability management design](docs/VULNERABILITY_MANAGEMENT.md)
