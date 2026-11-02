@@ -236,6 +236,21 @@ console.log('\n=== Snapshot evaluation ===');
   );
 }
 {
+  const r = compute({
+    sources: [
+      source('s1', 'wazuh-hq'),
+      source('s2', 'action1-hq', { kind: 'ACTION1' }),
+      source('s3', 's1-hq', { kind: 'SENTINELONE', lastRunAt: '2026-10-15T00:00:00.000Z' }),
+    ],
+  });
+  assert(
+    r.criteria.sourcesWithinInterval.met === false && r.criteria.sourcesWithinInterval.reason.includes('s1-hq') &&
+      !r.criteria.sourcesWithinInterval.reason.includes('action1-hq') && eq(r.sources.items.map((i) => i.kind), ['ACTION1', 'SENTINELONE', 'WAZUH']),
+    'S06b ACTION1 and SENTINELONE sources take part in the sources-within-interval criterion',
+    { items: r.sources.items.map((i) => i.kind), c: r.criteria.sourcesWithinInterval },
+  );
+}
+{
   const r = compute({ assets: manyAssets(20, 19) });
   assert(
     r.coverage.covered === 19 && r.coverage.inScopeTotal === 20 && r.coverage.ratio === 0.95 && r.criteria.coverage.met === true &&

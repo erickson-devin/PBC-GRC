@@ -276,3 +276,34 @@ def test_same_input_gives_identical_bytes():
     a, _ = build_payloads(raw, label="l", now=now)
     b, _ = build_payloads(list(reversed(raw)), label="l", now=now)
     assert [encode_payload(p) for p in a] == [encode_payload(p) for p in b]
+
+
+# ------------------------------------------------------------------------------------------------ source kind and names
+
+@pytest.mark.parametrize("kind", ["ACTION1", "SENTINELONE"])
+def test_build_payloads_takes_the_source_kind(kind):
+    payloads, _ = build_payloads([raw_host()], label="vendor", kind=kind)
+    assert payloads[0]["source"] == {"kind": kind, "label": "vendor"} and validate_payload(payloads[0]) is None
+
+
+def test_build_payloads_defaults_to_wazuh():
+    payloads, _ = build_payloads([raw_host()], label="vendor")
+    assert payloads[0]["source"]["kind"] == "WAZUH"
+
+
+def test_name_hosts_false_keeps_agent_ids_out_of_the_log(caplog):
+    big = raw_host("agent-secret-id", rows=[row(vuln_id=f"CVE-2024-{i:04d}") for i in range(1, 5002)])
+    twin = raw_host("agent-twin-id", hostname="one")
+    twin_again = raw_host("agent-twin-id", hostname="two")
+    with caplog.at_level("WARNING"):
+        _, stats = build_payloads([big, twin, twin_again], label="l", name_hosts=False)
+    assert stats.skipped_hosts == ["agent-secret-id"]  # the caller still gets the ids; only the log is count-only
+    assert "agent-secret-id" not in caplog.text and "agent-twin-id" not in caplog.text
+    assert "skipping a host" in caplog.text and "different hostnames" in caplog.text
+
+
+def test_name_hosts_default_still_names_the_agent(caplog):
+    big = raw_host("agent-secret-id", rows=[row(vuln_id=f"CVE-2024-{i:04d}") for i in range(1, 5002)])
+    with caplog.at_level("WARNING"):
+        build_payloads([big], label="l")
+    assert "agent-secret-id" in caplog.text

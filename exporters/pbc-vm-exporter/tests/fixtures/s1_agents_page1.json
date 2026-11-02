@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "id": "1900000000000000001", "uuid": "0f7e1c2a-5b3d-4c8e-9a61-2d4f6b8c0a11", "computerName": "s1-win-01",
+      "osName": "Windows 11 Pro", "osRevision": "22631", "lastIpToMgmt": "192.0.2.21", "isDecommissioned": false,
+      "siteId": "111", "accountId": "9001",
+      "networkInterfaces": [
+        { "name": "VPN", "inet": ["198.51.100.7"], "physical": "00:00:5E:00:53:22" },
+        { "name": "Ethernet", "inet": ["192.0.2.21"], "physical": "00:00:5E:00:53:21" }
+      ]
+    },
+    {
+      "id": "1900000000000000003", "uuid": "5d8b2e44-7a19-4c03-a2f6-1b9c8d7e6f33", "computerName": "s1-old-03",
+      "osName": "Windows 10 Pro", "osRevision": "19045", "lastIpToMgmt": "192.0.2.23", "isDecommissioned": true,
+      "siteId": "111", "networkInterfaces": []
+    }
+  ],
+  "pagination": { "nextCursor": "agents-cursor-2", "totalItems": 3 }
+}

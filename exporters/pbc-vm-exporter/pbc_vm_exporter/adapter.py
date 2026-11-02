@@ -183,7 +183,8 @@ def _sort_key(f: dict) -> tuple[str, str, str]:
     return f["vuln_id"], package.get("name", ""), package.get("version", "")
 
 
-def build_hosts(raw_hosts: list[dict]) -> tuple[list[dict], AdapterStats]:
+def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list[dict], AdapterStats]:
+    """`name_hosts=False` keeps agent ids out of the log (the vendor cloud sources log counts only)."""
     stats = AdapterStats()
     merged: dict[str, dict] = {}
     for raw in raw_hosts:
@@ -200,7 +201,10 @@ def build_hosts(raw_hosts: list[dict]) -> tuple[list[dict], AdapterStats]:
             first = clean_line(entry["raw"].get("hostname"), 255)
             second = clean_line(raw.get("hostname"), 255)
             if first and second and first != second:
-                log.warning("agent %s appears with different hostnames; keeping the first", agent_id)
+                if name_hosts:
+                    log.warning("agent %s appears with different hostnames; keeping the first", agent_id)
+                else:
+                    log.warning("an agent appears with different hostnames; keeping the first")
         entry["rows"].extend(raw.get("rows") or [])
 
     hosts: list[dict] = []
@@ -221,8 +225,12 @@ def build_hosts(raw_hosts: list[dict]) -> tuple[list[dict], AdapterStats]:
             findings.append(finding)
         findings.sort(key=_sort_key)
         if len(findings) > MAX_FINDINGS_PER_HOST:
-            log.warning("skipping agent %s: %d findings exceed the %d per host limit", agent_id, len(findings),
-                        MAX_FINDINGS_PER_HOST)
+            if name_hosts:
+                log.warning("skipping agent %s: %d findings exceed the %d per host limit", agent_id, len(findings),
+                            MAX_FINDINGS_PER_HOST)
+            else:
+                log.warning("skipping a host: %d findings exceed the %d per host limit", len(findings),
+                            MAX_FINDINGS_PER_HOST)
             stats.skipped_hosts.append(agent_id)
             continue
         host: dict[str, Any] = {"agent_id": agent_id}
@@ -254,7 +262,7 @@ def encode_payload(p: dict) -> bytes:
 
 
 def chunk_hosts(
-    hosts: list[dict], *, max_hosts: int, max_findings: int, max_bytes: int
+    hosts: list[dict], *, max_hosts: int, max_findings: int, max_bytes: int, name_hosts: bool = True
 ) -> tuple[list[list[dict]], list[str]]:
     """Greedy packing by hosts, findings and bytes. A host that does not fit an empty chunk is skipped, never cut."""
     chunks: list[list[dict]] = []
@@ -266,7 +274,10 @@ def chunk_hosts(
         n = len(host.get("findings", []))
         size = len(encode_payload(host)) + 1
         if n > max_findings or ENVELOPE_BYTES + size > max_bytes:
-            log.warning("skipping agent %s: too large to send whole (%d findings, %d bytes)", host["agent_id"], n, size)
+            if name_hosts:
+                log.warning("skipping agent %s: too large to send whole (%d findings, %d bytes)", host["agent_id"], n, size)
+            else:
+                log.warning("skipping a host: too large to send whole (%d findings, %d bytes)", n, size)
             skipped.append(host["agent_id"])
             continue
         if current and (
@@ -339,13 +350,17 @@ def build_payloads(
     raw_hosts: list[dict],
     *,
     label: str,
+    kind: str = "WAZUH",
     now: datetime | None = None,
     max_hosts: int = 500,
     max_findings: int = 50000,
     max_bytes: int = 33554432,
+    name_hosts: bool = True,
 ) -> tuple[list[dict], AdapterStats]:
-    hosts, stats = build_hosts(raw_hosts)
-    chunks, skipped = chunk_hosts(hosts, max_hosts=max_hosts, max_findings=max_findings, max_bytes=max_bytes)
+    hosts, stats = build_hosts(raw_hosts, name_hosts=name_hosts)
+    chunks, skipped = chunk_hosts(
+        hosts, max_hosts=max_hosts, max_findings=max_findings, max_bytes=max_bytes, name_hosts=name_hosts
+    )
     stats.skipped_hosts.extend(skipped)
     if not chunks:
         return [], stats
@@ -353,7 +368,7 @@ def build_payloads(
     payloads = [
         {
             "schema_version": 1,
-            "source": {"kind": "WAZUH", "label": label},
+            "source": {"kind": kind, "label": label},
             "exporter": {"name": EXPORTER_NAME, "version": __version__},
             "collected_at": collected_at,
             "hosts": chunk,

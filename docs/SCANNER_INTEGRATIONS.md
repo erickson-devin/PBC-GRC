@@ -16,7 +16,7 @@ So there are two sets of credentials, and they live in two different places:
 | Credential | Issued by | Lives on | Never goes to |
 | --- | --- | --- | --- |
 | PBC-GRC service token (`pbcvm_…`) | PBC-GRC, by a Tenant Owner or MSP Admin | the exporter host, in its env file | the scanner, a ticket, email, a command line |
-| Scanner credentials (Wazuh indexer or API user; later Action1 / SentinelOne API keys) | the scanner | the exporter host, in the same env file | PBC-GRC |
+| Scanner credentials (Wazuh indexer or API user, Action1 API client, SentinelOne API token) | the scanner | the exporter host, in the same env file | PBC-GRC |
 
 What is supported **today**:
 
@@ -24,11 +24,12 @@ What is supported **today**:
 | --- | --- | --- |
 | Wazuh 4.x | **supported** (first adapter) | vulnerability state per agent, daily push, findings lifecycle, POA&M drafts, snapshot evidence |
 | Any SCAP scanner (OpenSCAP, SCC, STIG Viewer output) | **supported** | configuration results from XCCDF / ARF files, per-control suggestions |
-| Action1 | **not yet**: adapter is roadmap item #105 (parked in #184) | nothing pushes today |
-| SentinelOne | **not yet**: adapter is issue #217 (see section 4) | nothing pushes today |
+| Action1 | **dry-run tested, unverified live** (issue #105 phase 1) | missing-update (patch) findings per endpoint, same lifecycle as Wazuh |
+| SentinelOne | **dry-run tested, unverified live** (issue #217) | application vulnerabilities (CVE per application per endpoint), same lifecycle as Wazuh |
 
-For Action1 and SentinelOne, section 4 says exactly what to collect now so the adapter can be built later without you
-having to rediscover anything.
+"Dry-run tested, unverified live" means the readers are covered by offline tests against vendor response shapes written
+from the vendors' documentation; nobody has run them against a real tenant yet. Section 4 is the how-to and the list of
+what the first live run must confirm.
 
 ## 1. App side: the service token (once per scanner)
 
@@ -165,34 +166,173 @@ this (a different env file, e.g. `/etc/pbc-vm-exporter/env.xccdf`): it is a diff
 show in the app under **Configuration Results** with per-control suggestions that a person accepts or not. Note that the
 built-in rule-to-control map is small (23 rules, issue #203), so expect few suggestions until it is curated.
 
-## 4. Action1 and SentinelOne (not supported yet): what to collect now
+## 4. Action1 and SentinelOne (dry-run tested, unverified live)
 
-Neither has an adapter, and the server deliberately refuses vulnerability findings from a source kind it has no
-normalizer for ("No normalizer for ACTION1 yet"), so there is no workaround to push them today. Do not relabel another
-tool's data as Wazuh to get it in: the lifecycle rules assume the source kind.
+The same exporter reads both tools and pushes the results with `kind` `ACTION1` or `SENTINELONE`. The server treats them
+exactly like Wazuh findings: one finding per host and vulnerability id, the same lifecycle (opened, resolved when the
+source stops reporting it, reopened), SLA clock, POA&M drafts and snapshot evidence. A finding that two tools both report
+on one host stays open until **every** tool that saw it stops reporting it.
 
-Building each adapter is a few days of exporter work (Python, `requests` only, following `wazuh_indexer.py`) plus a server
-normalizer. What the developer will need from you, which you can gather now and keep with your other credentials:
+Two things differ from Wazuh:
+* The exporter makes **read-only outbound HTTPS calls to the vendor's cloud** (Action1's API, your SentinelOne console).
+  Nothing from PBC-GRC is sent there. The exporter ignores `HTTPS_PROXY`; if the enclave's egress needs a proxy, set
+  `ACTION1_PROXY_URL` / `S1_PROXY_URL` (used for the vendor only, never for PBC-GRC).
+* The vendor field names in the exporter were written from the vendors' documentation and have **not** been checked
+  against a live tenant (section 4.3).
 
-**Action1**
-* The API base URL for your region (Action1's cloud API; North America and Europe have different hosts).
-* An **API client ID and secret** created in the Action1 console under your organization with **read-only** rights, and
-  the **organization ID**.
-* One saved example of the vulnerabilities endpoint's JSON for one endpoint (device), redacted, so the field names are
-  real rather than from documentation.
-* Which Action1 fields you consider the identity of a device (hostname, serial, Action1's own ID).
+Use a **separate** `PBC_SOURCE_LABEL`, and a separate env file, for each tool (for example `/etc/pbc-vm-exporter/env.action1`
+and `env.sentinelone`). A label is tied to one tool for good: reusing a Wazuh label for Action1 is refused (409
+`vm_source_kind_mismatch`). Install and token creation are the same as sections 1 and 2.1.
+
+### 4.1 Action1
+
+On the Action1 side, in the console under your organization, create an **API client** with **read-only** rights and note
+the client ID, the secret and the **organization ID**. The exporter asks for an access token with them on every run.
+
+`/etc/pbc-vm-exporter/env.action1` (same file rules as section 2.3):
+
+```
+PBC_URL=https://grc.example.mil
+PBC_SERVICE_TOKEN=pbcvm_...................................................
+PBC_SOURCE_LABEL=action1-hq
+
+ACTION1_BASE_URL=https://app.action1.com/api/3.0
+ACTION1_CLIENT_ID=...
+ACTION1_CLIENT_SECRET=...
+ACTION1_ORG_ID=...
+# ACTION1_CA_BUNDLE=/etc/pbc-vm-exporter/action1-ca.pem
+# ACTION1_INCLUDE_PATCH_FINDINGS=true
+# ACTION1_PROXY_URL=http://proxy.example.mil:3128
+```
+
+| Variable | Rule |
+| --- | --- |
+| `ACTION1_BASE_URL` | required, `https://`, the **full API root** for your region: North America `https://app.action1.com/api/3.0`, Europe `https://app.eu.action1.com/api/3.0` |
+| `ACTION1_CLIENT_ID` | required, 1 to 256 characters |
+| `ACTION1_CLIENT_SECRET` | required, 1 to 1024 characters; a secret, never printed |
+| `ACTION1_ORG_ID` | required, letters, digits and hyphens, 1 to 64 characters |
+| `ACTION1_CA_BUNDLE` | optional, PEM file for a private CA |
+| `ACTION1_INCLUDE_PATCH_FINDINGS` | optional, on by default: security updates that fix no CVE become one finding each, identified by the update's KB or id |
+| `ACTION1_PROXY_URL` | optional egress proxy for Action1 only |
+
+What a finding is: Action1 reports **missing updates**, not CVEs. Each missing security update becomes one finding per CVE
+it fixes (the server merges them by CVE id); a security update with no CVE becomes one finding whose id is the KB number
+(for example `KB5034441`). Non-security updates are dropped and counted. Severity comes from Action1's grade
+(Critical, Important becomes HIGH, Moderate becomes MEDIUM, Low), and a severity the exporter cannot grade is graded from
+the CVSS score when there is one. Action1 gives no detection date, so the finding's SLA clock starts when PBC-GRC first
+sees it. The update's own version is recorded as the fixed version.
+
+Run it (the `--sample` run needs no credentials):
+
+```bash
+cd /opt/pbc-vm-exporter
+.venv/bin/python -m pbc_vm_exporter --dry-run --sample --source action1
+sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env.action1 --source action1 --dry-run
+sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env.action1 --source action1
+```
+
+The exporter reads **everything** before it sends anything: any API error stops the run with exit 3 and nothing is pushed,
+so a half-read tenant never closes findings. A 401 is retried once with a fresh token; a second 401 is exit 3. `--mode`
+applies to Wazuh only and is refused with `--source action1`.
+
+**One-line fixes.** The URL paths and field names are in two dictionaries at the top of
+`exporters/pbc-vm-exporter/pbc_vm_exporter/action1.py` (`ACTION1_PATHS`, `ACTION1_FIELDS`), and the severity words in
+`ACTION1_SEVERITY`. If the dry run shows zero hosts or empty findings, compare one real response with them and change the
+key that differs.
+
+### 4.2 SentinelOne
+
+On the SentinelOne side, create an **API token** for a **service user** (read-only rights are enough), scoped
+to the site or account that holds the enclave's endpoints, and note the **site ID(s)**. The **Singularity Vulnerability
+Management** (application risk) module must be licensed: without it the console returns no vulnerabilities per endpoint.
+Token lifetime is the calendar's problem: a token has an expiry (30 days by default; a service user's token has the
+expiry chosen when it was created), SentinelOne does not refresh it, and the exporter will start failing the day it
+lapses. Put the expiry date in your calendar and regenerate the token before it.
+
+`/etc/pbc-vm-exporter/env.sentinelone`:
+
+```
+PBC_URL=https://grc.example.mil
+PBC_SERVICE_TOKEN=pbcvm_...................................................
+PBC_SOURCE_LABEL=sentinelone-hq
+
+S1_CONSOLE_URL=https://example.sentinelone.net
+S1_API_TOKEN=...
+S1_SITE_IDS=1234567890123456789
+# S1_CA_BUNDLE=/etc/pbc-vm-exporter/s1-ca.pem
+# S1_PROXY_URL=http://proxy.example.mil:3128
+```
+
+| Variable | Rule |
+| --- | --- |
+| `S1_CONSOLE_URL` | required, `https://`, the console **host only** (the exporter appends `/web/api/v2.1`) |
+| `S1_API_TOKEN` | required, 20 to 4096 characters, no spaces; a secret, never printed |
+| `S1_SITE_IDS` | required, comma-separated numeric site ids, 1 to 100 of them (duplicates are dropped) |
+| `S1_CA_BUNDLE` | optional, PEM file for a private CA |
+| `S1_PROXY_URL` | optional egress proxy for SentinelOne only |
+
+What a finding is: one finding per CVE per application per endpoint, which the server merges per host and CVE id. The
+host is identified by SentinelOne's agent UUID; decommissioned agents are left out; the host's MAC address is the one of
+the interface that holds the management IP. Severity comes from SentinelOne's grade (NONE becomes unrated and is then
+graded from CVSS when there is a score).
+
+```bash
+cd /opt/pbc-vm-exporter
+.venv/bin/python -m pbc_vm_exporter --dry-run --sample --source sentinelone
+sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env.sentinelone --source sentinelone --dry-run
+sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env.sentinelone --source sentinelone
+```
+
+Same all-or-nothing read as Action1 (any error is exit 3, nothing pushed). A 401 stops at once with "SentinelOne rejected
+the API token (HTTP 401); it may have expired: generate a new token and update S1_API_TOKEN". A 429 is retried once after
+the pause SentinelOne asks for.
+
+**One-line fixes.** The paths and field names are in `S1_PATHS` and `S1_FIELDS` at the top of
+`exporters/pbc-vm-exporter/pbc_vm_exporter/sentinelone.py`, the severity words in `S1_SEVERITY`.
+
+### 4.3 What the first live run must confirm
+
+Record the results in issues #105 (Action1) and #217 (SentinelOne), and fix the dictionaries above for anything that
+differs. The dry run against a real tenant prints what would be pushed; compare it with the vendor console.
 
 **SentinelOne**
-* The management console URL (`https://<tenant>.sentinelone.net`) and an **API token** for a read-only user, scoped to
-  the site or account that holds your enclave's endpoints. Note the token's expiry: SentinelOne tokens expire and must be
-  regenerated.
-* Confirmation that the **Singularity Vulnerability Management** (application risk) module is licensed; the agent and
-  threat APIs alone do not expose vulnerabilities per endpoint.
-* One saved example of the per-endpoint application-vulnerability JSON, redacted.
-* The site ID(s) in scope.
+* The base path `/web/api/v2.1` and the `Authorization: ApiToken` header.
+* The `/agents` fields: `uuid`, `computerName`, `osName`, `osRevision`, `lastIpToMgmt`, `networkInterfaces[].inet` and
+  `.physical`, `isDecommissioned`.
+* The vulnerability endpoint path, and that your licence returns rows from it.
+* The row fields: `cveId`, `severity` (and whether `NONE` occurs), `endpointId` (is it the agent `id` or the `uuid`),
+  `applicationName` / `applicationVersion`, `detectionDate`, the CVSS field name and version, and whether a published date
+  exists.
+* Paging (`pagination.nextCursor`) and the largest accepted `limit`.
+* What an expired token returns, and the token's lifetime.
+* Whether `siteIds` really filters the vulnerability rows.
 
-Until the adapters exist, SentinelOne's and Action1's own exports are still useful as **evidence files** attached to the
-relevant controls in the evidence vault; they just do not drive findings.
+**Action1**
+* The regional base URL and the `/api/3.0` prefix.
+* The token endpoint (form body or JSON) and `expires_in`.
+* Paging (`items`, `next_page`, `limit` / `from`).
+* The endpoint fields: `id`, `name`, `address`, `MAC`, OS.
+* The missing-updates path and fields: id, KB, name, version, severity words, `release_date`, the security flag and the
+  name of the CVE-list field.
+* Whether a per-endpoint **CVE** list exists (it is preferable to the missing-update view).
+* Rate limits (the exporter makes one call per endpoint).
+
+**Both**
+* The hostname form (short name or FQDN) compared with the same hosts in Wazuh: see "Known limitations".
+
+### 4.4 Known limitations
+
+* **Hostname forms.** Hosts are matched across tools by agent id, then MAC address, then hostname. If SentinelOne reports
+  `web-01` and Wazuh reports `web-01.example.mil` and no MAC address matches, PBC-GRC creates a second, unconfirmed asset
+  and the two tools' findings do not share one lifecycle. Classify or decommission the duplicate by hand
+  (`docs/VULNERABILITY_MANAGEMENT.md` section 6.5).
+* **Clean hosts are not reported.** Only hosts with at least one finding are pushed; a host with none does not appear, and
+  its asset is not marked as seen by that tool until it has a finding.
+* **Very large hosts.** A host with more than 5000 findings (typical for developer machines in SentinelOne) is skipped as a
+  whole and the run ends with exit 7 ("partial export"). Its findings stay as they were.
+* **Inventory is not collected yet.** Installed software, patch age and a patch SLA are issue #105 phase 2; this phase
+  reports findings only.
+* The Wazuh path still names agent ids in its warnings; the new readers log counts only.
 
 ## 5. Where everything is, in one table
 
@@ -200,7 +340,9 @@ relevant controls in the evidence vault; they just do not drive findings.
 | --- | --- |
 | Service token value | only in the exporter host's env file (`/etc/pbc-vm-exporter/env`, mode 0600) |
 | Service token list, create, revoke | app → profile menu → API Keys & Service Tokens (Owner / MSP Admin, HTTPS) |
-| Scanner credentials | the same env file, `WAZUH_*` variables |
+| Scanner credentials | the same env file: `WAZUH_*`, `ACTION1_*` (client ID and secret) or `S1_*` (API token) variables |
+| Optional egress proxy for Action1 / SentinelOne | `ACTION1_PROXY_URL` / `S1_PROXY_URL` in the env file (vendor calls only, never PBC-GRC) |
+| Where the vendor field names live (one-line fixes) | `pbc_vm_exporter/action1.py` (`ACTION1_PATHS`, `ACTION1_FIELDS`), `pbc_vm_exporter/sentinelone.py` (`S1_PATHS`, `S1_FIELDS`) |
 | Source name as PBC-GRC sees it | `PBC_SOURCE_LABEL` in the env file: never change it |
 | Exporter code and README | `exporters/pbc-vm-exporter/` in the repository |
 | Push interval expectation | daily (server setting `VM_SNAPSHOT_INTERVAL_HOURS` / staleness in `docs/VULNERABILITY_MANAGEMENT.md`) |

@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "id": "ep-3", "name": "a1-win-03.example", "address": "192.0.2.33", "MAC": "00:00:5E:00:53:33",
+      "OS": "Windows Server 2022", "platform": "Windows", "online_status": "Offline", "last_seen": "2024-03-30T10:00:00Z"
+    }
+  ],
+  "total_items": 3,
+  "next_page": null,
+  "prev_page": "https://app.example/api/3.0/endpoints/managed/org-1?limit=2"
+}

@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "endpointId": "1900000000000000001", "endpointName": "s1-win-01", "cveId": "CVE-2024-3094", "severity": "CRITICAL",
+      "nvdBaseScore": 10.0, "applicationName": "xz-utils", "applicationVendor": "Example Vendor",
+      "applicationVersion": "5.6.0", "detectionDate": "2024-04-01T08:30:00Z", "publishedDate": "2024-03-29T17:15:00Z",
+      "status": "Unresolved"
+    },
+    {
+      "endpointId": "1900000000000000001", "endpointName": "s1-win-01", "cveId": "CVE-2023-4863", "severity": "HIGH",
+      "nvdBaseScore": 7.5, "applicationName": "Example Browser", "applicationVendor": "Example Vendor",
+      "applicationVersion": "116.0.5845.110", "detectionDate": "2024-04-01T08:30:00Z",
+      "publishedDate": "2023-09-12T15:15:00Z", "status": "Unresolved"
+    }
+  ],
+  "pagination": { "nextCursor": "risks-cursor-2", "totalItems": 4 }
+}

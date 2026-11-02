@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "id": "ep-1", "name": "a1-win-01", "address": "192.0.2.31", "MAC": "00:00:5E:00:53:31",
+      "OS": "Windows 11 Pro 23H2", "platform": "Windows", "online_status": "Online", "last_seen": "2024-04-02T10:00:00Z"
+    },
+    {
+      "id": "ep-2", "name": "a1-patched-02", "address": "198.51.100.32", "MAC": "00:00:5E:00:53:32",
+      "OS": "Windows 11 Pro 23H2", "platform": "Windows", "online_status": "Online", "last_seen": "2024-04-02T10:00:00Z"
+    }
+  ],
+  "total_items": 3,
+  "next_page": "https://app.example/api/3.0/endpoints/managed/org-1?limit=2&from=2",
+  "prev_page": null
+}

@@ -504,10 +504,10 @@ async function run() {
   const outsideRun = await runById(outsideId);
   assert(outsideRun.status === 'FAILED' && outsideRun.error === 'The stored payload could not be read.', 'a recorded path outside the tenant directory is not read (FAILED unreadable)', outsideRun);
 
-  const s1 = await ingest(tokenA, bytesOf({ label: 's1-src', kind: 'SENTINELONE', agents: ['s1'] }));
+  const s1 = await ingest(tokenA, bytesOf({ label: 'gb-src', kind: 'GREENBONE', agents: ['s1'] }));
   await __drainVmWorkerForTests();
   const s1Run = await runById(s1.body?.run_id);
-  assert(s1.status === 202 && s1Run.status === 'FAILED' && s1Run.error === 'No normalizer for SENTINELONE yet.', 'a kind without an adapter -> FAILED "No normalizer for SENTINELONE yet." (T68)', s1Run);
+  assert(s1.status === 202 && s1Run.status === 'FAILED' && s1Run.error === 'No normalizer for GREENBONE yet.', 'a kind without an adapter -> FAILED "No normalizer for GREENBONE yet." (T68)', s1Run);
 
   const happyId = ok.body?.run_id as string;
   const happyBefore = await runById(happyId);
@@ -533,7 +533,7 @@ async function run() {
   const re2 = await call('POST', `/tenants/${A}/vm/runs/${s1.body?.run_id}/reprocess`, ownerA, A);
   await __drainVmWorkerForTests();
   const s1Again = await runById(s1.body?.run_id);
-  assert(re2.status === 202 && s1Again.status === 'FAILED' && s1Again.error === 'No normalizer for SENTINELONE yet.', 'reprocessing the SENTINELONE run -> 202 and FAILED again with the same message', [re2.body, s1Again]);
+  assert(re2.status === 202 && s1Again.status === 'FAILED' && s1Again.error === 'No normalizer for GREENBONE yet.', 'reprocessing the GREENBONE run -> 202 and FAILED again with the same message', [re2.body, s1Again]);
 
   console.log('\n--- Worker: fault after save (in memory there is no rollback) ---');
   __setVmWorkerFaultForTests('after_save');
@@ -564,9 +564,9 @@ async function run() {
   assert((await countOpenPoamItems({ tenantId: A, programId: defaultA.id })) === poamItems.filter((p) => p.status === 'OPEN' || p.status === 'IN_PROGRESS').length, 'the default program counts those items as its open POA&M');
 
   console.log('\n--- Two managers: agent ids are per source (#63), closure waits for every source (#62) ---');
-  const mgrRun = async (token: string, label: string, collectedAt: string, hosts: Array<{ agent: string; hostname: string; vulns: string[] }>) => {
+  const mgrRun = async (token: string, label: string, collectedAt: string, hosts: Array<{ agent: string; hostname: string; vulns: string[] }>, kind = 'WAZUH') => {
     const res = await ingest(token, Buffer.from(JSON.stringify({
-      ...payloadOf({ label }),
+      ...payloadOf({ label, kind }),
       collected_at: collectedAt,
       hosts: hosts.map((h) => ({ agent_id: h.agent, hostname: h.hostname, findings: h.vulns.map((v) => ({ vuln_id: v, severity: 'HIGH' })) })),
     })));
@@ -603,6 +603,51 @@ async function run() {
   assert(legacyRun.status === 202 && !bCandidates.some((c) => c.hostName === 'legacy-renamed'), "a legacy bare-kind key still matches tenant B's only wazuh source: no new asset");
   const legacyHost = bCandidates.find((c) => c.hostName === 'legacy-host');
   assert(Boolean(srcB) && JSON.stringify(legacyHost?.agentIds) === JSON.stringify({ [`wazuh:${srcB}`]: 'L1' }), 'and the key was rewritten to wazuh:<source id>', legacyHost?.agentIds);
+
+  console.log('\n--- Second vulnerability kinds: SENTINELONE and ACTION1 (#105, #217) ---');
+  const s1Main = await ingest(tokenA, bytesOf({ label: 's1-main', kind: 'SENTINELONE', agents: ['s1a'] }));
+  await __drainVmWorkerForTests();
+  const s1MainRun = await runById(s1Main.body?.run_id);
+  const s1Asset = await assetIdByName('host-s1a');
+  const s1Findings = await findingsOf(A, ownerA, `?assetId=${s1Asset}`);
+  assert(s1Main.status === 202 && s1MainRun.status === 'NORMALIZED' && s1Asset !== '', 'a SENTINELONE run is NORMALIZED and creates its asset', s1MainRun);
+  assert(s1Findings.length === 2 && s1Findings.every((f) => f.status === 'OPEN') && JSON.stringify(s1Findings.map((f) => f.vulnId).sort()) === '["CVE-2024-0001","CVE-2024-0002"]', 'the SENTINELONE run opens two findings', s1Findings);
+
+  const a1Main = await ingest(tokenA, bytesOf({ label: 'a1-main', kind: 'ACTION1', agents: ['a1a'] }));
+  await __drainVmWorkerForTests();
+  const a1MainRun = await runById(a1Main.body?.run_id);
+  const a1Asset = await assetIdByName('host-a1a');
+  const a1Findings = await findingsOf(A, ownerA, `?assetId=${a1Asset}`);
+  assert(a1Main.status === 202 && a1MainRun.status === 'NORMALIZED' && a1Findings.length === 2 && a1Findings.every((f) => f.status === 'OPEN'), 'an ACTION1 run is NORMALIZED and opens two findings', [a1MainRun, a1Findings]);
+
+  const a1Second = await ingest(tokenA, Buffer.from(JSON.stringify({
+    ...payloadOf({ label: 'a1-main', kind: 'ACTION1' }),
+    collected_at: '2026-10-22T12:00:00Z',
+    hosts: [{ agent_id: 'a1a', hostname: 'host-a1a', findings: [{ vuln_id: 'CVE-2024-0001', severity: 'HIGH' }] }],
+  })));
+  await __drainVmWorkerForTests();
+  const a1After = await findingsOf(A, ownerA, `?assetId=${a1Asset}`);
+  const a1Gone = a1After.find((f) => f.vulnId === 'CVE-2024-0002') as Json;
+  assert(a1Second.status === 202 && a1Gone?.status === 'RESOLVED' && a1Gone.resolvedRunId === a1Second.body?.run_id && a1After.find((f) => f.vulnId === 'CVE-2024-0001')?.status === 'OPEN', 'a later ACTION1 run without CVE-2024-0002 resolves it with that run id; the other stays OPEN', a1After);
+
+  const mixVuln = 'CVE-2024-0700';
+  await mgrRun(tokenA, 'mix-w', '2026-10-22T13:00:00Z', [{ agent: '700', hostname: 'mixed-700', vulns: [mixVuln] }]);
+  await mgrRun(tokenA, 'mix-s1', '2026-10-22T13:00:01Z', [{ agent: 'uuid-700', hostname: 'mixed-700', vulns: [mixVuln] }], 'SENTINELONE');
+  const mixId = await assetIdByName('mixed-700');
+  const mixed = async () => (await findingsOf(A, ownerA, `?assetId=${mixId}`)).filter((f) => f.vulnId === mixVuln) as Json[];
+  const mixCandidate = (await listAgentAssetCandidates(A)).find((c) => c.id === mixId);
+  const mixKeys = Object.keys(mixCandidate?.agentIds ?? {});
+  assert(mixId !== '' && (await assetIdByName('mixed-700-2')) === '', 'a WAZUH and a SENTINELONE source reporting one hostname share one asset (matched by hostname)', mixKeys);
+  assert(mixKeys.some((k) => k.startsWith('wazuh:')) && mixKeys.some((k) => k.startsWith('sentinelone:')), 'the asset keeps an agent id for each kind', mixCandidate?.agentIds);
+  assert((await mixed()).length === 1 && (await mixed())[0].status === 'OPEN', 'both kinds report the finding: one OPEN finding', await mixed());
+  await mgrRun(tokenA, 'mix-w', '2026-10-22T13:00:02Z', [{ agent: '700', hostname: 'mixed-700', vulns: [] }]);
+  assert((await mixed())[0].status === 'OPEN', 'the WAZUH source drops it while the SENTINELONE source still lists it: it stays OPEN');
+  const mixDrop = await mgrRun(tokenA, 'mix-s1', '2026-10-22T13:00:03Z', [{ agent: 'uuid-700', hostname: 'mixed-700', vulns: [] }], 'SENTINELONE');
+  const mixClosed = (await mixed())[0];
+  assert(mixClosed.status === 'RESOLVED' && mixClosed.resolvedRunId === mixDrop.body?.run_id, 'the SENTINELONE source drops it too: RESOLVED by the SENTINELONE run', mixClosed);
+
+  const kindClash = await ingest(tokenA, bytesOf({ label: 's1-main', kind: 'ACTION1', agents: ['a1z'] }));
+  assert(kindClash.status === 409 && kindClash.body?.error === 'vm_source_kind_mismatch', 'a SENTINELONE source label reused with kind ACTION1 -> 409 vm_source_kind_mismatch', kindClash.body);
 
   console.log('\n--- Ingest requires TLS ---');
   const tlsBytes = bytesOf({ label: 'tls-src', agents: ['t1'] });

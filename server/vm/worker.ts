@@ -7,7 +7,8 @@ import { errorMessage } from '../../src/utils/errors';
 import { resolveVmTargetProgram } from '../programs';
 import type { VmRun } from '../../src/types/vm';
 import { normalizeConfiguration } from './adapters/config';
-import { normalizeWazuh } from './adapters/wazuh';
+import { normalizeFindings } from './adapters/wazuh';
+import { findingsNormalizerFor } from './adapters/registry';
 import { agentKey, kindKey, planAssetMatches } from './assetMatch';
 import {
   insertMissingVulns,
@@ -167,9 +168,10 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     const kind = payload.source.kind;
     // A host that reports findings takes part in closure and coverage; a configuration-only host (no findings key) is only matched to an asset.
     const vulnAgentIds = new Set(payload.hosts.filter((h) => h.findings !== undefined).map((h) => h.agent_id));
-    if (vulnAgentIds.size > 0 && kind !== 'WAZUH') throw new RunFailure(`No normalizer for ${kind} yet.`);
+    const normalize = findingsNormalizerFor(kind);
+    if (vulnAgentIds.size > 0 && !normalize) throw new RunFailure(`No normalizer for ${kind} yet.`);
     // Every host is normalized for identity (a configuration-only host comes out with no findings); its configuration is read separately.
-    const hosts = normalizeWazuh(payload);
+    const hosts = (normalize ?? normalizeFindings)(payload);
     const configScans = normalizeConfiguration(payload);
 
     const now = new Date().toISOString();
