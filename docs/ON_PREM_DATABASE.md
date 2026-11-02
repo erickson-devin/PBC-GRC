@@ -312,6 +312,11 @@ the application role), waits for `GET /api/v1/health` to report `"database":"con
 in a separate job (#159). The `postgres` digest used by those workflows is pinned equal to the compose digest: refresh
 both together in the same pull request.
 
+Each image carries the product licence at `/app/LICENSE` (proprietary: use only under the customer agreement) and the
+third-party notices at `/app/THIRD_PARTY_NOTICES.txt`, generated during the build from the image's own packages; read them
+with `docker run --rm --entrypoint cat ghcr.io/erickson-devin/pbc-grc:vX.Y.Z /app/THIRD_PARTY_NOTICES.txt`. The build fails
+if a dependency's licence is not on the allow list in `scripts/generateThirdPartyNotices.ts`.
+
 Operators set `IMAGE_TAG=vX.Y.Z` in `.env` (or `vX.Y.Z@sha256:<digest>` for an immutable pin). To verify an image:
 `docker buildx imagetools inspect ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows its digest before a pull, and after a pull
 `docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/erickson-devin/pbc-grc:vX.Y.Z` shows it; once running,

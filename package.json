@@ -1,6 +1,7 @@
 {
   "name": "pbc-grc",
   "private": true,
+  "license": "UNLICENSED",
   "version": "0.2.0",
   "type": "module",
   "engines": {
@@ -93,6 +94,7 @@
     "test:notes-autosave": "tsx tests/notesAutosave.test.ts",
     "auth:create-user": "tsx scripts/createLocalUser.ts",
     "auth:reset-mfa": "tsx scripts/resetLocalUserMfa.ts",
+    "notices": "tsx scripts/generateThirdPartyNotices.ts",
     "db:verify-rls": "tsx scripts/verifyRls.ts",
     "db:backfill-program-ids": "tsx scripts/backfillProgramIds.ts",
     "db:prune-assessment-events": "tsx scripts/pruneAssessmentEvents.ts",
