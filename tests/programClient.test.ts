@@ -1,6 +1,15 @@
 import fs from 'fs';
 import path from 'path';
-import { ApiClient } from '../src/services/apiClient';
+import { ApiClient, onProgramRequired } from '../src/services/apiClient';
+import {
+  archiveImpactLines,
+  createsOrganizationDefault,
+  nextOrganizationDefault,
+  noProgramCopy,
+  PROGRAM_SCOPED_TABS,
+  programGate,
+  shouldPromptFirstProgram,
+} from '../src/data/programDefaultChoice';
 import {
   activeProgramStorageKey,
   isCurrentResponse,
@@ -89,16 +98,57 @@ const list = [
   { id: 'p2', isDefault: false, archived: false },
 ];
 assert(pickActiveProgramId('p2', list) === 'p2', 'A1 a stored id that exists is kept');
-assert(pickActiveProgramId('gone', list) === 'p1', 'A2 a stored id that is gone falls back to the default');
-assert(pickActiveProgramId('p2', [list[0], { id: 'p2', isDefault: false, archived: true }]) === 'p1', 'A3 an archived stored id falls back to the default');
+assert(pickActiveProgramId('gone', list) === 'p1', 'A2 a stored id that is gone falls back to the organization default');
+assert(pickActiveProgramId('p2', [list[0], { id: 'p2', isDefault: false, archived: true }]) === 'p1', 'A3 an archived stored id falls back to the organization default');
 assert(pickActiveProgramId(null, [{ id: 'pA', isDefault: false, archived: true }, { id: 'pB', isDefault: false, archived: false }]) === 'pB', 'A4 without a default flag the first open program is used');
+const mine = [
+  { id: 'p1', isDefault: true, isMyDefault: false, archived: false },
+  { id: 'p2', isDefault: false, isMyDefault: true, archived: false },
+];
+assert(pickActiveProgramId(null, mine) === 'p2', 'A7 the user\'s own default beats the organization default');
+assert(pickActiveProgramId('p1', mine) === 'p1', 'A8 a stored open choice beats the user\'s own default');
+assert(pickActiveProgramId(null, [mine[0], { ...mine[1], archived: true }]) === 'p1', 'A9 an archived own default falls back to the organization default');
+const dated = [
+  { id: 'new', isDefault: false, archived: false, createdAt: '2026-10-02T00:00:00.000Z' },
+  { id: 'old', isDefault: false, archived: false, createdAt: '2026-10-01T00:00:00.000Z' },
+  { id: 'undated', isDefault: false, archived: false },
+];
+assert(pickActiveProgramId(null, dated) === 'old', 'A10 with no default flag the oldest createdAt wins, a program without createdAt last');
+assert(pickActiveProgramId(null, []) === null, 'A11 no programs and no stored id gives null');
 assert(pickActiveProgramId('p1', []) === null, 'A5 no programs gives null');
 assert(pickActiveProgramId('p1', [{ id: 'p1', isDefault: true, archived: true }]) === null, 'A6 only archived programs gives null');
 
 console.log('\n--- scope keys ---');
 assert(activeProgramStorageKey('t1') === 'pbc_active_program_t1', 'K1 the active-program storage key');
 assert(programScopeKey('t1', 'p1') === 't1::p1' && programScopeKey('t1', null) === 't1', 'K4 programScopeKey is t::p, or t without a program');
-assert(programCacheSegment({ isDefault: true, id: 'p1' }) === null && programCacheSegment({ isDefault: false, id: 'p9' }) === 'p9' && programCacheSegment(null) === null, 'K5 the default program has no cache segment, any other uses its id');
+assert(programCacheSegment({ isDefault: true, id: 'p1' } as { id: string }) === 'p1' && programCacheSegment({ id: 'p9' }) === 'p9' && programCacheSegment(null) === null, 'K5 every program uses its id as the cache segment (the default no longer shares the legacy key), none gives null');
+const mp = parseProgramList({ programs: [{ id: 'a', framework: 'CMMC_L2', isMyDefault: true }, { id: 'b', framework: 'CMMC_L2', is_my_default: true }, { id: 'c', framework: 'CMMC_L2' }] });
+assert(mp[0].isMyDefault === true && mp[1].isMyDefault === true && mp[2].isMyDefault === false, 'P9 isMyDefault / is_my_default parse, absent is false', mp);
+
+console.log('\n--- programDefaultChoice ---');
+const open1 = { id: 'o1', name: 'Alpha', archived: false, isDefault: true, createdAt: '2026-10-01T00:00:00.000Z' };
+const open2 = { id: 'o2', name: 'Beta', archived: false, isDefault: false, createdAt: '2026-10-02T00:00:00.000Z' };
+const open3 = { id: 'o3', name: 'Gamma', archived: false, isDefault: false, createdAt: '2026-10-03T00:00:00.000Z' };
+const gone = { id: 'x', name: 'Old', archived: true, isDefault: false, createdAt: '2026-09-01T00:00:00.000Z' };
+assert(programGate({ programsStatus: 'loading', programs: [], canManagePrograms: true }) === null && programGate({ programsStatus: 'error', programs: [], canManagePrograms: true }) === null, 'D1 no gate while the programs are not loaded');
+assert(programGate({ programsStatus: 'ready', programs: [open1], canManagePrograms: true }) === null, 'D2 no gate with an open program');
+assert(JSON.stringify(programGate({ programsStatus: 'ready', programs: [], canManagePrograms: true })) === '{"kind":"none","canCreate":true}' && JSON.stringify(programGate({ programsStatus: 'ready', programs: [gone], canManagePrograms: false })) === '{"kind":"all-archived","canCreate":false}', 'D3 the gate says none or all-archived, and whether the viewer can create');
+const promptBase = { programsStatus: 'ready', programs: [], canManagePrograms: true, onboardingOpen: false, dismissed: false };
+assert(shouldPromptFirstProgram(promptBase), 'D4 the first-program form opens for a manager with no program');
+assert(!shouldPromptFirstProgram({ ...promptBase, canManagePrograms: false }) && !shouldPromptFirstProgram({ ...promptBase, onboardingOpen: true }) && !shouldPromptFirstProgram({ ...promptBase, dismissed: true }) && !shouldPromptFirstProgram({ ...promptBase, programsStatus: 'loading' }) && !shouldPromptFirstProgram({ ...promptBase, programs: [gone] }), 'D5 it stays closed for a reader, during onboarding, once dismissed, while loading, and when programs exist (archived ones too)');
+assert(noProgramCopy({ kind: 'none', canCreate: true }).title === 'Create your first program' && noProgramCopy({ kind: 'none', canCreate: false }).title === 'No program yet' && noProgramCopy({ kind: 'all-archived', canCreate: true }).body.includes('Restore one on the Programs page') && noProgramCopy({ kind: 'all-archived', canCreate: false }).body.includes('Ask a tenant owner'), 'D6 the four no-program texts');
+assert(nextOrganizationDefault([open1, open2, open3, gone], 'o1')?.id === 'o2' && nextOrganizationDefault([open1], 'o1') === null && nextOrganizationDefault([open1, gone], 'o1') === null, 'D7 the next organization default is the oldest other open program');
+assert(createsOrganizationDefault([]) && createsOrganizationDefault([gone]) && !createsOrganizationDefault([open1, open2]), 'D8 a new program becomes the organization default only when no open program is');
+const lines1 = archiveImpactLines(open1, [open1, open2, open3]);
+assert(lines1.length === 1 && lines1[0].tone === 'info' && lines1[0].text === 'It is the organization default. Beta (the oldest remaining active program) becomes the organization default.', 'D9 archiving the organization default names its successor', lines1);
+const lines2 = archiveImpactLines({ ...open2, isMyDefault: true }, [open1, open2]);
+assert(lines2.length === 1 && lines2[0].text.startsWith('It is your default program.'), 'D10 archiving your own default says where you land instead', lines2);
+const lines2b = archiveImpactLines({ ...open2, isMyDefault: true }, [{ ...open2, isMyDefault: true }]);
+assert(lines2b.length === 1 && lines2b[0].tone === 'warn', 'D10b archiving your own default when it is the last active program only warns (there is no default left to land on)', lines2b);
+const lines3 = archiveImpactLines(open1, [open1, gone]);
+assert(lines3.some((l) => l.tone === 'warn' && l.text.startsWith('It is the only active program.')) && !lines3.some((l) => l.text.includes('becomes the organization default')), 'D11 archiving the last active program warns', lines3);
+assert(archiveImpactLines(open3, [open1, open2, open3]).length === 0, 'D12 an ordinary program has no impact lines');
+assert(['dashboard', 'matrix', 'controls', 'evidence', 'vault', 'ssp', 'sspimport', 'configresults', 'poam', 'export'].every((t) => PROGRAM_SCOPED_TABS.has(t)) && !PROGRAM_SCOPED_TABS.has('programs') && !PROGRAM_SCOPED_TABS.has('settings') && !PROGRAM_SCOPED_TABS.has('rbac'), 'D13 the program-scoped tabs');
 
 console.log('\n--- validateProgramInput ---');
 const ctx = { tenantFrameworks: ['CMMC_L2', 'NIST_800_53_REV5'], existing: [{ id: 'p1', name: 'Boundary A' }] };
@@ -298,6 +348,24 @@ async function headers() {
     await ApiClient.updateProgram('t1', 'p1', { name: 'New', boundarySummary: 'S' });
     const putBody = JSON.parse(String(calls[0].init.body)) as Record<string, string>;
     assert(calls[0].init.method === 'PUT' && putBody.name === 'New' && putBody.systemBoundarySummary === 'S' && !('framework' in putBody) && !('baseline' in putBody), 'H8d updateProgram sends only the editable fields', putBody);
+
+    stub(200, { ok: true });
+    await ApiClient.setMyDefaultProgram('t1', 'p1');
+    assert(calls[0].url === '/api/v1/me/default-program' && calls[0].init.method === 'PUT' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === undefined && calls[0].init.body === '{"programId":"p1"}', 'H11 setMyDefaultProgram is PUT /api/v1/me/default-program with x-tenant-id, no x-program-id', calls[0]);
+    await ApiClient.setMyDefaultProgram('t1', null);
+    assert(calls[1].init.body === '{"programId":null}', 'H11b clearing sends programId null', calls[1].init.body);
+    await ApiClient.setOrganizationDefaultProgram('t1', 'p 1');
+    assert(calls[2].url === '/api/v1/tenants/t1/programs/p%201/default' && calls[2].init.method === 'PUT' && headerOf(calls[2], 'x-tenant-id') === 't1' && headerOf(calls[2], 'x-program-id') === undefined && calls[2].init.body === '{}', 'H11c setOrganizationDefaultProgram is PUT .../programs/:id/default with an empty body', calls[2]);
+    let requiredHeard = 0;
+    const unsubscribe = onProgramRequired(() => { requiredHeard++; });
+    stub(409, { code: 'program_required', error: 'x' });
+    try { await ApiClient.getControls('t1', undefined, null); } catch { /* expected */ }
+    stub(409, { code: 'program_archived', error: 'x' });
+    try { await ApiClient.getControls('t1', undefined, null); } catch { /* expected */ }
+    unsubscribe();
+    stub(409, { code: 'program_required', error: 'x' });
+    try { await ApiClient.getControls('t1', undefined, null); } catch { /* expected */ }
+    assert(requiredHeard === 1, 'H12 a 409 program_required (and only that) notifies the listeners, until they unsubscribe', requiredHeard);
 
     stub(200, { metadata: null, updatedAt: null, updatedBy: null });
     const sspGot = await ApiClient.getSspMetadata('t1', 'p1');
@@ -636,6 +704,13 @@ async function main() {
   assert(/<ProgramSwitcher\s*\/>/.test(header) && /<FrameworkSwitcher\s*\/>/.test(header) && header.indexOf('<TenantSwitcher') < header.indexOf('<ProgramSwitcher'), 'T5c Header renders the ProgramSwitcher after the TenantSwitcher (FrameworkSwitcher stays only as the overlays menu)');
   assert(!/setCiaImpact|toggleAllControlsApplied|setActiveFramework|CIA Triad/.test(overlaysMenu) && (overlaysMenu.match(/toggleOverlayFilter\('/g) ?? []).length === 4, 'T5d FrameworkSwitcher is the overlays menu: four overlay toggles, no framework menu, no CIA editor');
   assert(/Programs/.test(profileMenu) && !/Switch Organization/.test(profileMenu) && /window\.location\.hash = 'programs'/.test(profileMenu), 'T5e the profile menu has "Programs" (to #programs) and no "Switch Organization"');
+
+  assert(/No program yet/.test(switcher) && /Org default/.test(switcher) && /p\.isMyDefault/.test(switcher) && /Organization default/.test(switcher), 'T5f the switcher has the no-program chip and the Org default / My default badges');
+  assert(/isMyDefault \?\? raw\.is_my_default/.test(read('src/data/programSync.ts')), 'T5g the parser reads isMyDefault');
+  const choiceSrc = read('src/data/programDefaultChoice.ts');
+  assert(!/console\.|localStorage|sessionStorage/.test(choiceSrc), 'T6 programDefaultChoice.ts logs nothing and touches no storage');
+  assert(/hasAssessmentCache\(currentTenant\.id, null\)/.test(assessCtx) && /activeProgram\?\.isDefault/.test(assessCtx) && /!StorageService\.hasAssessmentCache\(currentTenant\.id, cacheSegment\)/.test(assessCtx) && /blankAssessment\(currentTenant\)/.test(assessCtx), 'K13 the legacy cache is read once, only for the default program with no cache of its own; no program reads no cache');
+  assert(!/segment: null|saveAssessment\([^)]*,\s*null\)/.test(assessCtx) && /segment: cacheSegment/.test(assessCtx), 'K14 the auto-save only ever writes the program\'s own key');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

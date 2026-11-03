@@ -32,6 +32,9 @@ import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
 import { SspImportView } from './components/sspImport/SspImportView';
 import { ProgramsPage } from './components/programs/ProgramsPage';
+import { FirstProgramPrompt } from './components/programs/FirstProgramPrompt';
+import { NoProgramNotice } from './components/programs/NoProgramNotice';
+import { PROGRAM_SCOPED_TABS, programGate } from './data/programDefaultChoice';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { SessionVerifyingScreen } from './components/auth/SessionVerifyingScreen';
 import { UnsavedTextBanner } from './components/auth/UnsavedTextBanner';
@@ -53,7 +56,12 @@ const AppContent: React.FC = () => {
     setIsStigModalOpen,
     isStackSurveyModalOpen,
     setIsStackSurveyModalOpen,
+    programs,
+    programsStatus,
+    canManagePrograms,
   } = useTenant();
+  // No active program: the pages whose data belongs to a program show a notice instead (the others keep working)
+  const programBlocked = PROGRAM_SCOPED_TABS.has(activeTab) && programGate({ programsStatus, programs, canManagePrograms }) !== null;
 
   // Legal Modal State (Privacy Policy & Terms of Service)
   const [legalModalState, setLegalModalState] = useState<{
@@ -272,7 +280,9 @@ const AppContent: React.FC = () => {
               <Sidebar />
 
               {/* Dynamic Tab Content Area */}
-              <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0">
+              <main id="app-main" tabIndex={-1} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0 focus:outline-none">
+                {programBlocked ? <NoProgramNotice /> : (
+                <>
                 {activeTab === 'dashboard' && <ComplianceOverview />}
                 {(activeTab === 'matrix' || activeTab === 'controls') && <ControlsList />}
                 {activeTab === 'assets' && (
@@ -304,6 +314,8 @@ const AppContent: React.FC = () => {
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
                 {activeTab === 'settings' && <EnclaveSettings />}
                 {activeTab === 'programs' && <ProgramsPage />}
+                </>
+                )}
               </main>
             </div>
 
@@ -343,6 +355,8 @@ const AppContent: React.FC = () => {
         isOpen={currentRoute === 'app' && (isOnboardingModalOpen || needsOnboarding)}
         onClose={() => setIsOnboardingModalOpen(false)}
       />
+      {/* An organization with no program yet: a tenant owner or MSP administrator is asked to create the first one (after onboarding) */}
+      {currentRoute === 'app' && <FirstProgramPrompt />}
       <TeamSettingsModal
         isOpen={isTeamModalOpen}
         onClose={() => setIsTeamModalOpen(false)}

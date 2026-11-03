@@ -24,7 +24,10 @@ export interface Program {
   scoping: ProgramScoping;
   /** True for the tenant's VM target: the program that receives vulnerability-management snapshots and POA&M items. */
   vmTarget: boolean;
+  /** The organization's fallback program (at most one, never archived): where people land when they have not chosen their own. */
   isDefault: boolean;
+  /** The signed-in user's own landing program (their choice, next sign-in); absent from servers that predate it. */
+  isMyDefault?: boolean;
   archived: boolean;
   createdAt?: string;
   updatedAt?: string;

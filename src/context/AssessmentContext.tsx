@@ -199,7 +199,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // What is on screen: the tenant, or tenant::program. Live data, the cache and every save are matched against it.
   const programId = activeProgram?.id;
   const programScope = programScopeKey(currentTenant.id, programId);
-  // The default program keeps the legacy cache key; any other program has its own (see StorageService.getAssessmentKey)
+  // Every program has its own cache key (the legacy tenant-level key is read once as a migration source, never written; see the load effect)
   const cacheSegment = programCacheSegment(activeProgram);
   // Every ledger entry says which program it was made in (the ledger itself stays one per tenant)
   const auditMetadata = useMemo(() => ({ programId: programId ?? null }), [programId]);
@@ -268,7 +268,21 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // When the active tenant or program changes, reload that scope's partitioned assessment from its own cache key and reset what
   // was selected in the previous one. (Nothing of the previous program survives in `state`: it is replaced as a whole.)
   useEffect(() => {
-    const scopeState = StorageService.loadAssessment(currentTenant, activeProgram?.framework ?? 'CMMC_L1', cacheSegment);
+    const framework = activeProgram?.framework ?? 'CMMC_L1';
+    let scopeState: AssessmentState;
+    if (currentTenant.serverBacked && !cacheSegment) {
+      // No program: nothing of any program's cache is read (and nothing is written until one exists)
+      scopeState = StorageService.blankAssessment(currentTenant);
+    } else if (
+      currentTenant.serverBacked && cacheSegment && activeProgram?.isDefault &&
+      !StorageService.hasAssessmentCache(currentTenant.id, cacheSegment) && StorageService.hasAssessmentCache(currentTenant.id, null)
+    ) {
+      // One-time migration: the organization default program that has no cache of its own yet starts from the legacy tenant-level
+      // cache (the old default program's). The legacy key is only ever read; the auto-save below writes the program's own key.
+      scopeState = StorageService.loadAssessment(currentTenant, framework, null);
+    } else {
+      scopeState = StorageService.loadAssessment(currentTenant, activeProgram?.framework ?? 'CMMC_L1', cacheSegment);
+    }
     setState({ ...scopeState, programId });
     setSelectedControlId(null);
     setSelectedDomainFilter('ALL');

@@ -10,6 +10,7 @@ import type { ProgramInputField } from '../../data/programSync';
 import { OVERLAY_DETAILS, OVERLAY_KEYS, OVERLAY_TITLES, programOverlayLabels } from '../../data/overlayScoping';
 import { scopingToOverlays } from '../../data/programScope';
 import { defaultCloneSourceId } from '../../data/programCloneSource';
+import { createsOrganizationDefault } from '../../data/programDefaultChoice';
 import type { OverlayFilters } from '../../types/framework';
 import type { Program, ProgramBaseline, ProgramSeed } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
@@ -23,6 +24,10 @@ interface ProgramFormModalProps {
   onClose: () => void;
   /** Called after a successful save with the saved program. */
   onSaved?: (program: Program) => void;
+  /** 'first' is the "Create Your First Program" form of an organization that has no program yet (create mode). */
+  variant?: 'standard' | 'first';
+  /** Create mode: values to start the name and boundary description with (the first program starts from the onboarding answers). */
+  initial?: { name?: string; boundarySummary?: string };
 }
 
 const BASELINE_OPTIONS: { value: ProgramBaseline; label: string }[] = [
@@ -54,7 +59,7 @@ const inputClass = 'w-full px-3 py-2 text-xs bg-slate-950 border border-slate-80
  * baseline (NIST SP 800-53 only), descriptions and a seed (blank or a clone of another program). Edit: name and descriptions;
  * the framework and the baseline are fixed at creation and shown read-only. Creating switches to the new program.
  */
-export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, program, onClose, onSaved }) => {
+export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, program, onClose, onSaved, variant = 'standard', initial }) => {
   const { currentTenant } = useTenant();
   const { programs, openPrograms, activeProgram, createProgram, updateProgram, switchProgram } = useProgram();
   const isEdit = mode === 'edit' && Boolean(program);
@@ -69,15 +74,14 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
     return PROGRAM_FRAMEWORKS.filter((f) => allowed.has(f));
   }, [currentTenant.enabledFrameworks, currentTenant.primaryFramework]);
 
-  const [name, setName] = useState(program?.name ?? '');
-  const [framework, setFramework] = useState<string>(
-    program?.framework ?? (activeProgram && frameworkOptions.includes(activeProgram.framework) ? activeProgram.framework : frameworkOptions[0] ?? '')
-  );
+  const [name, setName] = useState(program?.name ?? initial?.name ?? '');
+  // Creating: no framework is preselected, the person chooses it (it cannot be changed afterwards)
+  const [framework, setFramework] = useState<string>(program?.framework ?? '');
   const [baseline, setBaseline] = useState<string>(program?.baseline ?? '');
   const [privacyBaseline, setPrivacyBaseline] = useState(false);
   const [scoping, setScoping] = useState<OverlayFilters>({ nonNetworkedOnly: false });
   const [description, setDescription] = useState(program?.description ?? '');
-  const [boundarySummary, setBoundarySummary] = useState(program?.boundarySummary ?? '');
+  const [boundarySummary, setBoundarySummary] = useState(program?.boundarySummary ?? initial?.boundarySummary ?? '');
   // Text typed here and not saved yet is reported to the unsaved-text rescue (the name is not text worth rescuing)
   useUnsavedTextProvider(() => unsavedProgramFields(
     { description, boundarySummary },
@@ -110,6 +114,8 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
     ? { name: validation.errors.name, description: validation.errors.description, boundarySummary: validation.errors.boundarySummary }
     : validation.errors;
   const isNist = framework === 'NIST_800_53_REV5';
+  const isFirst = !isEdit && variant === 'first';
+  const needsFramework = !isEdit && !framework;
   // A clone does not copy overlays on the server: choosing a NIST source prefills its overlays here, where they can still be changed
   const chooseSource = (id: string, fw: string = framework) => {
     setSourceProgramId(id);
@@ -173,10 +179,14 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
             </div>
             <div>
               <DialogTitle as="h3" className="text-sm font-bold text-white">
-                {isEdit ? 'Edit Program Boundary' : 'New Program / ATO Effort'}
+                {isEdit ? 'Edit Program Boundary' : isFirst ? 'Create Your First Program' : 'New Program / ATO Effort'}
               </DialogTitle>
               <p className="text-xs text-slate-400">
-                {isEdit ? 'Rename the program and update its boundary details' : 'An authorization boundary with its own framework, answers and evidence'}
+                {isEdit
+                  ? 'Rename the program and update its boundary details'
+                  : isFirst
+                    ? 'Answers, evidence, SSP imports and POA&M items belong to a program: an authorization boundary with its own framework'
+                    : 'An authorization boundary with its own framework, answers and evidence'}
               </p>
             </div>
           </div>
@@ -192,6 +202,11 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+          {!isEdit && createsOrganizationDefault(programs) && (
+            <p className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
+              This program becomes the organization default: people land on it when they sign in unless they choose their own default. A tenant owner or MSP administrator can change it later, and it can be archived like any other program.
+            </p>
+          )}
           <div>
             <label htmlFor={fieldId('name')} className="block text-xs font-medium text-slate-300 mb-1">
               Program / Boundary Name <span className="text-rose-400">*</span>
@@ -236,7 +251,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   className={inputClass}
                   {...errorProps('framework')}
                 >
-                  {frameworkOptions.length === 0 && <option value="">No framework enabled</option>}
+                  <option value="">{frameworkOptions.length === 0 ? 'No framework enabled' : 'Choose a framework'}</option>
                   {frameworkOptions.map((f) => (
                     <option key={f} value={f}>{frameworkLabel(f)}</option>
                   ))}
@@ -246,6 +261,9 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
               <p className="mt-1 text-xs text-slate-400">
                 {isEdit ? 'Fixed when the program was created.' : 'Cannot be changed after creation.'}
               </p>
+              {needsFramework && frameworkOptions.length > 0 && (
+                <p id={`${fieldId('framework')}-hint`} className="mt-1 text-xs text-amber-300">Choose a framework to continue.</p>
+              )}
             </div>
 
             {(isNist || (isEdit && program?.framework === 'NIST_800_53_REV5')) && (
@@ -415,14 +433,15 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
               disabled={isSaving}
               className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors disabled:opacity-50"
             >
-              Cancel
+              {isFirst ? 'Not Now' : 'Cancel'}
             </button>
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || needsFramework}
+              aria-describedby={needsFramework && frameworkOptions.length > 0 ? `${fieldId('framework')}-hint` : undefined}
               className="px-5 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-500 rounded-xl shadow-lg shadow-brand-500/25 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {isSaving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Program'}
+              {isSaving ? 'Saving…' : isEdit ? 'Save Changes' : isFirst ? 'Create First Program' : 'Create Program'}
             </button>
           </div>
         </form>

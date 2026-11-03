@@ -66,7 +66,7 @@ assert(consoleLines.length >= 2 && consoleLines.every((l) => !/cachedBoundary|bo
 // C6: "Move to server" carries the two registry-held fields
 const migrate = between(tenantCtx, 'const migrateTenantToServer = useCallback(', '"Move to server": the user-facing action');
 assert(migrate.includes('target.stackProfile') && migrate.includes('target.systemBoundaryScope'), 'C6: migrateTenantToServer moves the stack profile and the boundary text');
-assert(migrate.includes('ApiClient.updateProgram(created.id') && migrate.includes('boundarySummary: boundaryToSend'), 'C6b: the boundary text becomes the new default program\'s boundary summary');
+assert(migrate.includes('ApiClient.createProgram(created.id') && migrate.includes('boundarySummary: boundaryToSend') && migrate.indexOf('ApiClient.createProgram(created.id') < migrate.indexOf('ApiClient.updateControl(created.id'), 'C6b: the first program is created explicitly (with the boundary text) before the answers and files are uploaded');
 
 // C7: the handover reads each program's SSP metadata
 assert(dash.includes('getSspMetadata: (t, p) => ApiClient.getSspMetadata(t, p)'), 'C7: the dashboard binds the handover to the server\'s SSP metadata');

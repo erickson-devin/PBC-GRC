@@ -16,6 +16,8 @@ export function useProgram() {
     updateProgram,
     archiveProgram,
     unarchiveProgram,
+    setMyDefaultProgram,
+    setOrganizationDefaultProgram,
     deleteProgram,
     canManagePrograms,
   } = useTenant();
@@ -34,6 +36,8 @@ export function useProgram() {
     updateProgram,
     archiveProgram,
     unarchiveProgram,
+    setMyDefaultProgram,
+    setOrganizationDefaultProgram,
     deleteProgram,
     canManagePrograms,
   };

@@ -204,6 +204,30 @@ const programsPage = read('src/components/programs/ProgramsPage.tsx');
 assert(programsPage.includes('ArchivedProgramList') && programsPage.includes('Declared assets') && programsPage.includes('Declared no assets: its boundary was the whole inventory.') && programsPage.includes('max-h-40 overflow-y-auto') && programsPage.includes('openList.map((p) => renderCard(p))'), 'PV-A7 the archived list shows the declared assets and the open list does not pass the index');
 assert(!/console\./.test(programsPage) && !/localStorage|sessionStorage/.test(programsPage) && !programsPage.includes('updateProgramAssets'), 'PV-A7 the page logs nothing, stores nothing and never writes membership');
 
+console.log('--- no default program: first-program flow, defaults ---');
+const noProgramCtx = { supported: true, canEdit: true, hasActiveProgram: false, archived: false, status: 'loading' as const };
+assert(boundaryEditBlock({ ...noProgramCtx, noProgram: true }) === 'no_program' && boundaryEditBlock({ ...noProgramCtx, canEdit: false, noProgram: true }) === 'viewer' && boundaryEditBlock({ ...noProgramCtx, supported: false, noProgram: true }) === 'unsupported' && boundaryEditBlock(noProgramCtx) === 'loading', 'BV6b no program blocks the boundary after the viewer check, otherwise it stays loading');
+assert(read('src/data/boundaryView.ts').includes('No program exists yet, so no assets can be declared inside a boundary. Create a program first.') && read('src/components/telemetry/AssetInventoryManager.tsx').includes("noProgram: programsStatus === 'ready' && activeProgram === null"), 'BV6c the no-program message and the inventory passing noProgram');
+assert(!programsPage.includes('The default program cannot be archived or deleted.') && !programsPage.includes('program.isDefault || Boolean(busyId)') && !programsPage.includes('program_is_default'), 'PV-D1 the programs page no longer blocks archiving or deleting the default program');
+assert(programsPage.includes('program_is_vm_target') && programsPage.includes('program.vmTarget || Boolean(busyId)') && programsPage.includes('Choose another VM target before archiving it.'), 'PV-D2 only the VM target blocks archive (with a described-by note)');
+assert(programsPage.includes('Set as My Default') && programsPage.includes('Clear My Default') && programsPage.includes('Make Organization Default') && programsPage.includes('Organization default') && programsPage.includes('My default'), 'PV-D3 the card has the two default actions and badges');
+assert(programsPage.includes('role="group"') && programsPage.includes('Default program settings for') && programsPage.includes('role="status" aria-live="polite" className="sr-only"'), 'PV-D4 the default actions are a labelled group and results are announced');
+assert(programsPage.includes('You will land on it the next time you sign in.') && programsPage.includes('Your default program was cleared.') && programsPage.includes('is now the organization default.'), 'PV-D5 the announcements say it takes effect at the next sign-in');
+assert(programsPage.includes('archiveImpactLines(') && programsPage.includes('border-amber-800/40 bg-amber-950/30') && programsPage.includes('programGate(') && programsPage.includes('noProgramCopy('), 'PV-D6 the archive dialog lists the impact and the empty state uses the no-program copy');
+const formSrc = read('src/components/programs/ProgramFormModal.tsx');
+assert(formSrc.includes('Create Your First Program') && formSrc.includes('createsOrganizationDefault(programs)') && formSrc.includes('initial?.name') && formSrc.includes('Not Now'), 'PV-D7 the form has the first-program variant, the organization-default note, the prefill and "Not Now"');
+assert(formSrc.includes("useState<string>(program?.framework ?? '')") && !/frameworkOptions\[0\]/.test(formSrc) && formSrc.includes('disabled={isSaving || needsFramework}'), 'PV-D8 no framework is preselected on create and Create is disabled until one is chosen');
+const appSrc = read('src/App.tsx');
+assert(appSrc.includes('PROGRAM_SCOPED_TABS.has(activeTab)') && appSrc.includes('<NoProgramNotice />') && appSrc.includes('<FirstProgramPrompt />') && appSrc.includes('id="app-main" tabIndex={-1}'), 'PV-D9 App gates the program-scoped tabs with the notice and mounts the first-program prompt');
+const promptSrc = read('src/components/programs/FirstProgramPrompt.tsx');
+assert(promptSrc.includes('shouldPromptFirstProgram(') && promptSrc.includes('variant="first"') && promptSrc.includes('role="status"') && promptSrc.includes("was created and is the organization default.") && !/localStorage|sessionStorage|console\./.test(promptSrc), 'PV-D10 the prompt follows shouldPromptFirstProgram, announces the result and keeps nothing in storage');
+const noticeSrc = read('src/components/programs/NoProgramNotice.tsx');
+assert(noticeSrc.includes('Create a Program') && noticeSrc.includes('Open Programs &amp; Boundaries') && noticeSrc.includes('noProgramCopy(gate)') && !/localStorage|console\./.test(noticeSrc), 'PV-D11 the notice offers the right button and uses the shared copy');
+const tenantSrc = read('src/context/TenantContext.tsx');
+assert(tenantSrc.includes('programsReady && !noOpenProgram') && tenantSrc.includes("const noOpenProgram = programsStatus === 'ready' && !programs.some(p => !p.archived);") && tenantSrc.includes('onProgramRequired('), 'PV-D12 no live data is requested without an open program, and a 409 program_required refreshes the programs');
+assert(tenantSrc.includes('setMyDefaultProgram') && tenantSrc.includes('setOrganizationDefaultProgram') && read('src/hooks/useProgram.ts').includes('setMyDefaultProgram'), 'PV-D13 the context and the hook expose both default setters');
+assert(read('src/components/layout/ProgramSwitcher.tsx').includes('<ProgramFormModal mode="create" variant="first"'), 'PV-D14 the switcher can create the first program from its no-program chip');
+
 console.log('--- no stale scope identifiers ---');
 for (const rel of FILES) assert(!read(rel).includes('liveControlsTenantId'), `${path.basename(rel)} does not reference liveControlsTenantId`);
 

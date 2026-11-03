@@ -59,6 +59,7 @@ function parseProgram(raw: unknown): Program | null {
     scoping,
     vmTarget: (raw.vmTarget ?? raw.vm_target) === true,
     isDefault: (raw.isDefault ?? raw.is_default) === true,
+    isMyDefault: (raw.isMyDefault ?? raw.is_my_default) === true,
     archived: raw.archived === true || (typeof archivedAt === 'string' && archivedAt !== ''),
   };
   const createdAt = raw.createdAt ?? raw.created_at;
@@ -97,13 +98,21 @@ export function parseProgramMetrics(body: unknown): ProgramMetrics {
 }
 
 /**
- * The program to show: the stored choice when it still exists and is not archived, else the default program, else the first
- * program that is not archived. Null when there is none.
+ * The program to show: the stored choice when it still exists and is not archived, else the user's own default, else the
+ * organization default, else the oldest program that is not archived (one without a createdAt last). Null when there is none.
  */
-export function pickActiveProgramId(storedId: string | null | undefined, programs: ReadonlyArray<Pick<Program, 'id' | 'isDefault' | 'archived'>>): string | null {
+export function pickActiveProgramId(storedId: string | null | undefined, programs: ReadonlyArray<Pick<Program, 'id' | 'isDefault' | 'archived'> & { isMyDefault?: boolean; createdAt?: string }>): string | null {
   const open = programs.filter((p) => !p.archived);
   if (storedId && open.some((p) => p.id === storedId)) return storedId;
-  return (open.find((p) => p.isDefault) ?? open[0])?.id ?? null;
+  const chosen = open.find((p) => p.isMyDefault) ?? open.find((p) => p.isDefault);
+  if (chosen) return chosen.id;
+  const time = (p: { createdAt?: string }): number => {
+    const t = p.createdAt ? Date.parse(p.createdAt) : NaN;
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  };
+  let oldest: (typeof open)[number] | undefined;
+  for (const p of open) if (!oldest || time(p) < time(oldest)) oldest = p;
+  return oldest?.id ?? null;
 }
 
 /** The browser-storage key of a tenant's active program. */
@@ -116,9 +125,9 @@ export function programScopeKey(tenantId: string, programId: string | null | und
   return programId ? `${tenantId}::${programId}` : tenantId;
 }
 
-/** The suffix of a program's assessment cache key: null for the default program (it keeps the legacy key), else its id. */
-export function programCacheSegment(program: Pick<Program, 'id' | 'isDefault'> | null | undefined): string | null {
-  return !program || program.isDefault ? null : program.id;
+/** The suffix of a program's assessment cache key: the program's id for every program (no program shares the legacy tenant-level key), null when there is none. */
+export function programCacheSegment(program: Pick<Program, 'id'> | null | undefined): string | null {
+  return program ? program.id : null;
 }
 
 export type ProgramInputField = 'name' | 'framework' | 'baseline' | 'description' | 'boundarySummary' | 'scoping' | 'seed';

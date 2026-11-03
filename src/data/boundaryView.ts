@@ -9,7 +9,7 @@ export type BoundaryFilter = 'ALL' | 'IN' | 'NOT_IN';
 export type BoundaryDirection = 'add' | 'remove';
 /** As useProgramAssets reports it ('unsupported': a browser-only tenant, which has no programs). */
 export type BoundaryStatus = 'unsupported' | 'loading' | 'ready' | 'error';
-export type BoundaryBlock = 'unsupported' | 'viewer' | 'archived' | 'error' | 'loading';
+export type BoundaryBlock = 'unsupported' | 'viewer' | 'no_program' | 'archived' | 'error' | 'loading';
 
 const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
@@ -77,9 +77,12 @@ export function describeBoundaryChange(plan: BoundaryChangePlan, programName: st
 
 export function boundaryEditBlock(ctx: {
   supported: boolean; canEdit: boolean; hasActiveProgram: boolean; archived: boolean; status: BoundaryStatus;
+  /** The programs are loaded and the organization has no open program (the boundary never loads: there is nothing to declare assets in). */
+  noProgram?: boolean;
 }): BoundaryBlock | null {
   if (!ctx.supported || ctx.status === 'unsupported') return 'unsupported';
   if (!ctx.canEdit) return 'viewer';
+  if (ctx.noProgram) return 'no_program';
   if (ctx.hasActiveProgram && ctx.archived) return 'archived';
   if (ctx.status === 'error') return 'error';
   if (!ctx.hasActiveProgram || ctx.status === 'loading') return 'loading';
@@ -90,6 +93,7 @@ export function boundaryBlockMessage(block: BoundaryBlock, programName: string):
   switch (block) {
     case 'unsupported': return 'This organization is kept in this browser only: it has no programs, so its boundary is the whole inventory.';
     case 'viewer': return 'Read-only: only a Tenant Owner or MSP Admin can change which assets a program declares.';
+    case 'no_program': return 'No program exists yet, so no assets can be declared inside a boundary. Create a program first.';
     case 'archived': return `${programName} is archived, so its boundary is read-only.`;
     case 'error': return 'The program boundaries could not be loaded, so membership cannot be changed right now.';
     case 'loading': return 'Loading the program boundary…';

@@ -35,7 +35,7 @@ import { keys as idbKeys, get as idbGet, set as idbSet, del as idbDel } from 'id
 import { listLocalEvidenceCopies, moveLocalEvidenceCopy, moveLocalEvidenceKey, remapEvidenceLinks, sha256Hex } from '../services/localEvidenceCopies';
 import { recordFailedControlMove, recordFailedMove } from '../services/failedMoves';
 import { pushAssetsToServer } from '../services/assetMove';
-import { ApiClient, ApiError, InvitePreview, UploadUrlResponse } from '../services/apiClient';
+import { ApiClient, ApiError, InvitePreview, UploadUrlResponse, onProgramRequired } from '../services/apiClient';
 import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
 import {
   activeProgramStorageKey,
@@ -365,6 +365,10 @@ interface TenantContextType {
   archiveProgram: (programId: string) => Promise<void>;
   unarchiveProgram: (programId: string) => Promise<void>;
   deleteProgram: (programId: string) => Promise<void>;
+  /** The signed-in user's own landing program (null clears it). It takes effect the next time they sign in; any role. */
+  setMyDefaultProgram: (programId: string | null) => Promise<void>;
+  /** The organization default program (TENANT_OWNER and MSP_ADMIN). */
+  setOrganizationDefaultProgram: (programId: string) => Promise<void>;
   /** Who may create, edit, archive and delete programs (TENANT_OWNER and MSP_ADMIN). */
   canManagePrograms: boolean;
   isSyncing: boolean;
@@ -784,10 +788,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       { domain: target.domain, isConfigured: target.isConfigured ?? true, activate }
     );
     // The stack profile and the boundary text lived only in this browser's registry (#84): they move too, or "Move to server" would
-    // lose them. The profile goes to the tenant, the boundary text becomes the new default program's boundary summary. A failure is
+    // lose them. The profile goes to the tenant, the boundary text becomes the first program's boundary summary. A failure is
     // not fatal: it is counted (registryFieldsFailed, like the other counts: nothing is logged) and the new tenant is marked only
     // when both arrived, so the browser keeps trying on later loads.
     let registryFieldsFailed = 0;
+    const boundaryToSend = (target.systemBoundaryScope ?? '').trim();
     const profileToSend = toServerPatch({ stackProfile: target.stackProfile }).stackProfile;
     if (profileToSend) {
       try {
@@ -797,16 +802,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         registryFieldsFailed++;
       }
     }
-    const boundaryToSend = (target.systemBoundaryScope ?? '').trim();
-    if (boundaryToSend) {
-      try {
-        const createdPrograms = await ApiClient.listPrograms(created.id);
-        const defaultProgram = createdPrograms.find(p => p.isDefault);
-        if (!defaultProgram) throw new Error('no default program');
-        await ApiClient.updateProgram(created.id, defaultProgram.id, { boundarySummary: boundaryToSend });
-      } catch {
-        registryFieldsFailed++;
-      }
+    // A new tenant has no program (none is created for it), and the data below belongs to one: the first program is created here, with
+    // the browser's framework, system name and boundary text. It becomes the organization default, so the uploads below (which carry no
+    // program header) go to it. A failure is counted like the other registry fields and the uploads then count as failed.
+    try {
+      await ApiClient.createProgram(created.id, {
+        name: (target.systemName ?? '').trim() || created.name,
+        framework: created.primaryFramework ?? target.primaryFramework ?? 'CMMC_L1',
+        boundarySummary: boundaryToSend,
+      });
+    } catch {
+      registryFieldsFailed++;
     }
     // The new tenant carries what it just received, so the registry cache drops the browser copy straight away
     if (registryFieldsFailed === 0) {
@@ -1098,6 +1104,21 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await refreshPrograms(tenantId);
   }, [refreshPrograms]);
 
+  const setMyDefaultProgram = useCallback(async (programId: string | null): Promise<void> => {
+    const tenantId = currentTenantIdRef.current;
+    await ApiClient.setMyDefaultProgram(tenantId, programId);
+    await refreshPrograms(tenantId);
+  }, [refreshPrograms]);
+
+  const setOrganizationDefaultProgram = useCallback(async (programId: string): Promise<void> => {
+    const tenantId = currentTenantIdRef.current;
+    await ApiClient.setOrganizationDefaultProgram(tenantId, programId);
+    await refreshPrograms(tenantId);
+  }, [refreshPrograms]);
+
+  // The server says the organization has no active program (409 program_required): re-read the list so the no-program screens take over
+  useEffect(() => onProgramRequired(() => { void refreshPrograms(currentTenantIdRef.current); }), [refreshPrograms]);
+
   const deleteProgram = useCallback(async (programId: string): Promise<void> => {
     const tenantId = currentTenantIdRef.current;
     await ApiClient.deleteProgram(tenantId, programId);
@@ -1122,7 +1143,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const current = ps.programs.find(p => p.id === ps.activeId);
     if (current && current.framework === framework) return;
     const matching = ps.programs.filter(p => !p.archived && p.framework === framework);
-    const target = matching.find(p => p.isDefault) ?? matching[0];
+    const target = matching.find(p => p.isMyDefault) ?? matching.find(p => p.isDefault) ?? matching[0];
     if (target) switchProgram(target.id);
   }, [switchProgram]);
 
@@ -1183,6 +1204,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // The program: the one asked for, else the active one of that tenant (null: the server's default program)
     const ps = programsRef.current;
+    // No open program: every program-scoped call would answer 409 program_required, so none is made (any caller, any path)
+    if (ps.tenantId === targetTenantId && ps.status === 'ready' && !ps.programs.some(p => !p.archived)) {
+      dropLiveData();
+      setIsSyncing(false);
+      return;
+    }
     const programId = programToFetch !== undefined ? programToFetch : ps.tenantId === targetTenantId ? ps.activeId : null;
     const program = programId && ps.tenantId === targetTenantId ? ps.programs.find(p => p.id === programId) : undefined;
     const scope = programScopeKey(targetTenantId, programId);
@@ -1231,10 +1258,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // A server-backed tenant's data is not requested before its programs are known (or known to be unavailable): the first
   // request would otherwise go to the default program and be thrown away when the active program turns out to be another.
   const programsReady = programsStatus === 'ready' || programsStatus === 'error' || programsStatus === 'unsupported';
+  // A server-backed tenant with no open program has nothing to load: every program-scoped endpoint answers 409 program_required
+  const noOpenProgram = programsStatus === 'ready' && !programs.some(p => !p.archived);
 
   // Automatically pull live controls & evidence when tenant, program, framework, or overlay changes
   useEffect(() => {
-    if (ApiClient.getSessionRef() && programsReady) {
+    if (ApiClient.getSessionRef() && programsReady && !noOpenProgram) {
       refreshLiveData(currentTenant.id, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly ? 'NON_NETWORKED' : 'NONE', activeProgramId);
     } else {
       liveSeq.current++;
@@ -1245,7 +1274,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setLiveScopeKey(null);
       setIsSyncing(false);
     }
-  }, [currentTenant.id, activeProgramId, programsReady, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData]);
+  }, [currentTenant.id, activeProgramId, programsReady, activeFramework, activeBaselineTier, activeOverlayFilters.nonNetworkedOnly, refreshLiveData, noOpenProgram]);
 
   const updateLiveControl = useCallback(async (
     controlId: string,
@@ -2211,6 +2240,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateProgram,
     archiveProgram,
     unarchiveProgram,
+    setMyDefaultProgram,
+    setOrganizationDefaultProgram,
     deleteProgram,
     canManagePrograms,
     isSyncing,
@@ -2299,6 +2330,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateProgram,
     archiveProgram,
     unarchiveProgram,
+    setMyDefaultProgram,
+    setOrganizationDefaultProgram,
     deleteProgram,
     canManagePrograms,
     isSyncing,

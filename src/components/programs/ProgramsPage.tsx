@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Layers, Plus, Check, Pencil, Archive, ArchiveRestore, Trash2, ChevronDown, ChevronRight, Loader2, Server } from 'lucide-react';
+import { Layers, Plus, Check, Pencil, Archive, ArchiveRestore, Trash2, ChevronDown, ChevronRight, Loader2, Server, UserCheck, Building2 } from 'lucide-react';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { ProgramFormModal } from './ProgramFormModal';
@@ -10,13 +10,15 @@ import { useProgramAssets } from '../../hooks/useProgramAssets';
 import { ApiClient } from '../../services/apiClient';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { programOverlayLabels } from '../../data/overlayScoping';
+import { archiveImpactLines, nextOrganizationDefault, noProgramCopy, programGate } from '../../data/programDefaultChoice';
 import { declaredAssetsView, type DeclaredAssetsView } from '../../data/programAssets';
 import type { Program, ProgramMetrics } from '../../types/program';
 import { errorMessage } from '../../utils/errors';
 
 /** The server's refusals for archive / restore / delete, in plain language (its own message is used for anything else). */
 const ACTION_MESSAGES: Record<string, string> = {
-  program_is_default: 'The default program cannot be archived or deleted.',
+  program_is_vm_target: 'This program receives the vulnerability-management data. Choose another VM target first.',
+  program_required: 'This organization has no active program. Create one or restore an archived one first.',
   program_not_empty: 'This program still holds evidence files, SSP imports or POA&M items. Deleting it would orphan them, so the server refuses. Keep it archived instead.',
   program_not_found: 'This program no longer exists. The list has been refreshed.',
   program_archived: 'An archived program cannot be edited. Restore it first.',
@@ -36,6 +38,7 @@ const badgeClass = 'inline-flex items-center shrink-0 rounded-full px-2.5 py-0.5
 const NEUTRAL_BADGE = `${badgeClass} bg-slate-800/60 text-slate-300 border border-slate-700/50`;
 const STATUS_BADGE = `${badgeClass} bg-cyan-950/40 text-cyan-400 border border-cyan-800/40`;
 const ACCENT_BADGE = `${badgeClass} bg-purple-950/40 text-purple-300 border border-purple-800/40`;
+const MINE_BADGE = `${badgeClass} bg-emerald-950/40 text-emerald-300 border border-emerald-800/40`;
 const buttonClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const SECONDARY_BUTTON = `${buttonClass} bg-slate-800/60 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white`;
 const PRIMARY_BUTTON = `${buttonClass} bg-brand-600 text-white border-brand-500/40 hover:bg-brand-500 shadow-lg shadow-brand-500/25`;
@@ -198,7 +201,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ title, confirmLabel, dang
   </DialogOverlay>
 );
 
-type Pending = { kind: 'archive' | 'delete'; program: Program };
+type Pending = { kind: 'archive' | 'delete' | 'org-default'; program: Program };
 
 /**
  * The programs page (#programs): every program (authorization boundary) of the organization as a card, with its framework,
@@ -208,7 +211,7 @@ type Pending = { kind: 'archive' | 'delete'; program: Program };
  */
 export const ProgramsPage: React.FC = () => {
   const { currentTenant } = useTenant();
-  const { programs, activeProgram, programsStatus, switchProgram, refreshPrograms, archiveProgram, unarchiveProgram, deleteProgram, canManagePrograms } = useProgram();
+  const { programs, activeProgram, programsStatus, switchProgram, refreshPrograms, archiveProgram, unarchiveProgram, setMyDefaultProgram, setOrganizationDefaultProgram, deleteProgram, canManagePrograms } = useProgram();
   const uid = useId();
 
   const [modal, setModal] = useState<{ mode: 'create' | 'edit'; program?: Program } | null>(null);
@@ -218,6 +221,8 @@ export const ProgramsPage: React.FC = () => {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // Read out to screen readers after a default changes (the badge change alone is silent)
+  const [announcement, setAnnouncement] = useState('');
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -248,10 +253,15 @@ export const ProgramsPage: React.FC = () => {
     setDialogError(null);
     try {
       if (kind === 'archive') await archiveProgram(program.id);
-      else await deleteProgram(program.id);
+      else if (kind === 'org-default') {
+        await setOrganizationDefaultProgram(program.id);
+        if (mounted.current) setAnnouncement(`${program.name} is now the organization default.`);
+      } else await deleteProgram(program.id);
       if (mounted.current) setPending(null);
     } catch (err: unknown) {
-      if (mounted.current) setDialogError(actionError(err, kind === 'archive' ? 'Could not archive the program. Please try again.' : 'Could not delete the program. Please try again.'));
+      if (mounted.current) {
+        setDialogError(actionError(err, kind === 'archive' ? 'Could not archive the program. Please try again.' : kind === 'org-default' ? 'Could not change the organization default. Please try again.' : 'Could not delete the program. Please try again.'));
+      }
     } finally {
       if (mounted.current) setBusyId(null);
     }
@@ -268,6 +278,32 @@ export const ProgramsPage: React.FC = () => {
     } finally {
       if (mounted.current) setBusyId(null);
     }
+  };
+
+  // Your own default: any role. It only decides where you land the next time you sign in; the program on screen does not change.
+  const changeMyDefault = async (program: Program) => {
+    if (busyId) return;
+    const clearing = program.isMyDefault === true;
+    setBusyId(program.id);
+    setPageError(null);
+    try {
+      await setMyDefaultProgram(clearing ? null : program.id);
+      if (mounted.current) {
+        setAnnouncement(clearing
+          ? 'Your default program was cleared. You will land on the organization default when you sign in.'
+          : `${program.name} is now your default program. You will land on it the next time you sign in.`);
+      }
+    } catch (err: unknown) {
+      if (mounted.current) setPageError(actionError(err, 'Could not change your default program. Please try again.'));
+    } finally {
+      if (mounted.current) setBusyId(null);
+    }
+  };
+
+  /** " It replaces X as the organization default." when another program holds that role now. */
+  const replacedDefault = (leavingId: string): string => {
+    const current = openList.find((p) => p.isDefault && p.id !== leavingId);
+    return current ? ` It replaces ${current.name} as the organization default.` : '';
   };
 
   const header = (
@@ -335,6 +371,8 @@ export const ProgramsPage: React.FC = () => {
   }
 
   const readOnly = !canManagePrograms;
+  const gate = programGate({ programsStatus, programs, canManagePrograms });
+  const emptyCopy = noProgramCopy(gate ?? { kind: 'none', canCreate: canManagePrograms });
 
   const renderCard = (program: Program, assets?: React.ReactNode) => {
     const isActive = activeProgram?.id === program.id;
@@ -347,9 +385,10 @@ export const ProgramsPage: React.FC = () => {
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-2">
             <h3 id={nameId} className="text-sm font-bold text-white break-words min-w-0">{program.name}</h3>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
               {isActive && <span className={STATUS_BADGE}>Active</span>}
-              {program.isDefault && <span className={ACCENT_BADGE}>Default</span>}
+              {program.isDefault && <span className={ACCENT_BADGE}>Organization default</span>}
+              {program.isMyDefault && <span className={MINE_BADGE}>My default</span>}
               {program.archived && <span className={NEUTRAL_BADGE}>Archived</span>}
             </div>
           </div>
@@ -374,7 +413,7 @@ export const ProgramsPage: React.FC = () => {
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> : <ArchiveRestore className="w-3.5 h-3.5" aria-hidden="true" />}
                   Restore
                 </button>
-                {!program.isDefault && (
+                {!program.vmTarget && (
                   <button type="button" onClick={() => startAction('delete', program)} disabled={Boolean(busyId)} className={DANGER_BUTTON}>
                     <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                     Delete
@@ -397,8 +436,8 @@ export const ProgramsPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => startAction('archive', program)}
-                    disabled={program.isDefault || Boolean(busyId)}
-                    aria-describedby={program.isDefault ? `${nameId}-default` : undefined}
+                    disabled={program.vmTarget || Boolean(busyId)}
+                    aria-describedby={program.vmTarget ? `${nameId}-vm` : undefined}
                     className={SECONDARY_BUTTON}
                   >
                     <Archive className="w-3.5 h-3.5" aria-hidden="true" />
@@ -409,8 +448,22 @@ export const ProgramsPage: React.FC = () => {
             </>
           )}
         </div>
-        {program.isDefault && canManagePrograms && (
-          <p id={`${nameId}-default`} className="text-xs text-slate-400">The default program cannot be archived or deleted.</p>
+        {!program.archived && (
+          <div role="group" aria-label={`Default program settings for ${program.name}`} className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => { void changeMyDefault(program); }} disabled={Boolean(busyId)} className={SECONDARY_BUTTON}>
+              <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+              {program.isMyDefault ? 'Clear My Default' : 'Set as My Default'}
+            </button>
+            {canManagePrograms && !program.isDefault && (
+              <button type="button" onClick={() => startAction('org-default', program)} disabled={Boolean(busyId)} className={SECONDARY_BUTTON}>
+                <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
+                Make Organization Default
+              </button>
+            )}
+          </div>
+        )}
+        {program.vmTarget && canManagePrograms && !program.archived && (
+          <p id={`${nameId}-vm`} className="text-xs text-slate-400">This program receives the vulnerability-management data. Choose another VM target before archiving it.</p>
         )}
       </li>
     );
@@ -419,6 +472,8 @@ export const ProgramsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {header}
+      <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
+      <p className="text-xs text-slate-400">Your default program is where you land the next time you sign in. Setting it does not switch the program you are viewing now.</p>
 
       {readOnly && (
         <p role="note" className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-400">
@@ -431,12 +486,8 @@ export const ProgramsPage: React.FC = () => {
       {openList.length === 0 ? (
         <div className="rounded-2xl bg-slate-900/60 border border-dashed border-slate-700 p-8 text-center space-y-3">
           <Layers className="w-7 h-7 text-slate-400 mx-auto" aria-hidden="true" />
-          <p className="text-sm font-semibold text-white">No programs yet</p>
-          <p className="text-xs text-slate-400">
-            {canManagePrograms
-              ? 'Create a program to give an ATO effort its own framework, answers and evidence.'
-              : 'Ask the tenant owner or an MSP administrator to create the first program.'}
-          </p>
+          <p className="text-sm font-semibold text-white">{emptyCopy.title}</p>
+          <p className="text-xs text-slate-400">{emptyCopy.body}</p>
           {canManagePrograms && (
             <button type="button" onClick={() => setModal({ mode: 'create' })} className={PRIMARY_BUTTON}>
               <Plus className="w-3.5 h-3.5" aria-hidden="true" />
@@ -475,13 +526,31 @@ export const ProgramsPage: React.FC = () => {
           title={`Archive "${pending.program.name}"?`}
           confirmLabel="Archive Program"
           busy={busyId === pending.program.id}
-          confirmDisabled={pending.program.isDefault}
-          error={pending.program.isDefault ? ACTION_MESSAGES.program_is_default : dialogError}
+          error={dialogError}
           onConfirm={() => { void confirm(); }}
           onCancel={closeDialog}
         >
           <p>An archived program stays readable, but its answers, evidence and imports can no longer be changed. You can restore it later.</p>
-          {pending.program.id === activeProgram?.id && <p>It is the active program: the app moves to another program.</p>}
+          {pending.program.id === activeProgram?.id && nextOrganizationDefault(programs, pending.program.id) && <p>It is the active program: the app moves to another program.</p>}
+          {archiveImpactLines(pending.program, programs).map((line) => (
+            <p key={line.text} className={line.tone === 'warn' ? 'rounded-xl border border-amber-800/40 bg-amber-950/30 px-3 py-2 text-amber-200' : undefined}>{line.text}</p>
+          ))}
+        </ConfirmDialog>
+      )}
+
+      {pending?.kind === 'org-default' && (
+        <ConfirmDialog
+          title={`Make "${pending.program.name}" the organization default?`}
+          confirmLabel="Make Organization Default"
+          busy={busyId === pending.program.id}
+          error={dialogError}
+          onConfirm={() => { void confirm(); }}
+          onCancel={closeDialog}
+        >
+          <p>
+            People who have not chosen their own default land on it when they sign in.
+            {replacedDefault(pending.program.id)} Personal defaults are not changed.
+          </p>
         </ConfirmDialog>
       )}
 

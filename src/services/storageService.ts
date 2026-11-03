@@ -103,6 +103,20 @@ export const StorageService = {
     return this.getAssessmentKey(tenantId, null);
   },
 
+  /** True when a cache exists under this key (never creates one). */
+  hasAssessmentCache(tenantId: string, segment: string | null | undefined): boolean {
+    try {
+      return localStorage.getItem(this.getAssessmentKey(tenantId, segment)) !== null;
+    } catch {
+      return false;
+    }
+  },
+
+  /** A blank state for a tenant, in memory only: nothing is read from or written to the browser. */
+  blankAssessment(tenant: Tenant, framework?: ComplianceFramework): AssessmentState {
+    return createInitialState(tenant, framework);
+  },
+
   /**
    * Load isolated assessment for a specific tenant, performing legacy migration if needed. `segment` selects a non-default
    * program's cache (see getAssessmentKey); a program that has no cache yet starts blank for `framework`.

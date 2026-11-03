@@ -136,6 +136,42 @@ export const ProgramSwitcher: React.FC = () => {
     );
   }
 
+  // Loaded, and the organization has no open program (none yet, or all archived): say so, and offer the way out
+  if (programsStatus === 'ready' && !activeProgram && openPrograms.length === 0) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-dashed border-slate-700 text-slate-200 shadow-sm">
+          <div className="w-5 h-5 rounded-md bg-slate-800 text-slate-400 flex items-center justify-center border border-slate-700">
+            <Layers className="w-3 h-3" aria-hidden="true" />
+          </div>
+          <div className="text-left">
+            <div className="text-xs text-slate-400 font-mono leading-none">PROGRAM</div>
+            <div className="text-xs font-bold text-white mt-0.5">No program yet</div>
+          </div>
+        </div>
+        {canManagePrograms ? (
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="py-1.5 px-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>New Program</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { window.location.hash = 'programs'; }}
+            className="py-1.5 px-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-medium transition-colors"
+          >
+            View
+          </button>
+        )}
+        {isCreateOpen && <ProgramFormModal mode="create" variant="first" onClose={closeCreate} />}
+      </div>
+    );
+  }
+
   // Loading, or the list could not be loaded and there is nothing to show
   if (!activeProgram && openPrograms.length === 0) {
     const failed = programsStatus === 'error';
@@ -238,7 +274,13 @@ export const ProgramSwitcher: React.FC = () => {
                     <div className="text-xs font-bold flex items-center gap-1.5">
                       <span className="truncate">{p.name}</span>
                       {p.isDefault && (
-                        <span className="badge text-xs px-1 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">Default</span>
+                        <span className="badge text-xs px-1 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          <span aria-hidden="true">Org default</span>
+                          <span className="sr-only">Organization default</span>
+                        </span>
+                      )}
+                      {p.isMyDefault && (
+                        <span className="badge text-xs px-1 py-0.5 rounded bg-emerald-950/40 text-emerald-300 border border-emerald-800/40">My default</span>
                       )}
                     </div>
                     <div className="mt-1">

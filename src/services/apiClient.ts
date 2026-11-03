@@ -106,6 +106,13 @@ export function mfaErrorMessage(status: number, body: unknown): string {
   return serverMessage || (status >= 500 ? 'The server could not complete the request. Please try again.' : 'The request was not accepted.');
 }
 
+/** Callers that want to know when the server says the organization has no active program (409 program_required). Returns the unsubscribe. */
+const programRequiredListeners = new Set<() => void>();
+export function onProgramRequired(listener: () => void): () => void {
+  programRequiredListeners.add(listener);
+  return () => { programRequiredListeners.delete(listener); };
+}
+
 /** Turns a failed response into an ApiError carrying the server's `reason` (when it sent one). */
 function apiErrorFromResponse(status: number, body: unknown): ApiError {
   const err = baseApiError(status, body);
@@ -113,6 +120,8 @@ function apiErrorFromResponse(status: number, body: unknown): ApiError {
   const code = (body as { code?: unknown } | null)?.code;
   const reason = bodyReason(body) ?? (typeof code === 'string' && code ? code : undefined);
   if (reason) err.reason = reason;
+  // A program-scoped call with no active program in the organization: whoever shows the programs refreshes them so the screen can take over
+  if (status === 409 && reason === 'program_required') for (const listener of [...programRequiredListeners]) listener();
   return err;
 }
 
@@ -618,7 +627,17 @@ export const ApiClient = {
     return parseProgramResponse(await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/unarchive`, { tenantId, body: {} }));
   },
 
-  /** DELETE .../programs/:programId. Only a non-default program with no evidence, imports or POA&M items. */
+  /** PUT /api/v1/me/default-program: the signed-in user's own landing program (null clears it). Any role; not program-scoped. */
+  async setMyDefaultProgram(tenantId: string, programId: string | null): Promise<void> {
+    await authedJson('PUT', '/me/default-program', { tenantId, body: { programId } });
+  },
+
+  /** PUT .../programs/:programId/default: the organization default. Owner / MSP admin only; an archived program is refused. */
+  async setOrganizationDefaultProgram(tenantId: string, programId: string): Promise<void> {
+    await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/default`, { tenantId, body: {} });
+  },
+
+  /** DELETE .../programs/:programId. Only an empty program that is not the VM target (no evidence, imports or POA&M items). */
   async deleteProgram(tenantId: string, programId: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId });
   },

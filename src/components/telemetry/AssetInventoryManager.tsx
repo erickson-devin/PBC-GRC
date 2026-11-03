@@ -87,7 +87,7 @@ export const AssetInventoryManager: React.FC = () => {
   const boundaryReady = showBoundary && activeProgram !== null && boundary.status === 'ready';
   // The filter applies only while the boundary is known; otherwise the whole inventory is shown
   const boundaryFilter: BoundaryFilter = boundaryReady ? boundaryFilterChoice : 'ALL';
-  const boundaryBlock = boundaryEditBlock({ supported: showBoundary, canEdit, hasActiveProgram: activeProgram !== null, archived: Boolean(activeProgram?.archived), status: boundary.status });
+  const boundaryBlock = boundaryEditBlock({ supported: showBoundary, canEdit, hasActiveProgram: activeProgram !== null, archived: Boolean(activeProgram?.archived), status: boundary.status, noProgram: programsStatus === 'ready' && activeProgram === null });
   const columnCount = showBoundary ? 8 : 7;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
