@@ -337,8 +337,10 @@ change the Ollama pin only in a reviewed pull request and run an SSP import befo
 
 A release never needs the database wiped. At startup the server applies its schema in place (`CREATE ... IF NOT EXISTS`,
 `ADD COLUMN IF NOT EXISTS`, constraints dropped and re-added), and data that predates a feature is adopted on first use (for
-example, each tenant's existing rows move into its "Default Authorization Boundary" program the first time the tenant is
-used). If a release seems to need a wipe, that is a bug: report it instead.
+example, each tenant's existing rows move into the tenant's default program the first time the tenant is used). A tenant that has
+no program yet is not given one: the first program it creates becomes the organization default, and each user may pick a personal
+default (`user_program_defaults`, created at boot like the other tables). If a release seems to need a wipe, that is a bug:
+report it instead.
 
 The release that moves SSP details to the server (issue #84) adds the table `program_ssp_metadata` and the column
 `tenants.stack_profile` the same way, idempotently at boot, with their constraints dropped and re-added; nothing is migrated by
@@ -359,7 +361,7 @@ docker exec singularity-app npm run db:backfill-program-ids -- --all
 
 It prints table names, tenant ids and row counts only, and exits 0 once `program_id` is NOT NULL on all six tables. You can
 also name tenants instead of `--all`. A tenant whose `tenant_id` has no tenant record is listed too and gets a default program
-like any other.
+like any other (this operator backfill is the one place a default program is still created for a tenant that has none).
 
 The unused `ssp_documents` table is dropped at startup when it is empty; a table that still holds rows is kept and logs a
 warning (`ssp_documents still holds rows and was not dropped`).
