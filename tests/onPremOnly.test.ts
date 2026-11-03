@@ -491,6 +491,10 @@ assert(dockerCode.filter((l) => /^CMD\s/.test(l)).length === 1 && !dockerCode.so
   assert(copies.length > 0 && copies.every((l) => !/(^|\s)\.env(\s|$)/.test(l)), 'the bundle never copies a .env (only .env.example)', copies);
   assert(load.includes('sha256sum --check') && load.includes("docker image inspect --format '{{.Id}}'") && load.includes('chmod 0600 .env'), 'the loader checks the checksums and every image ID, and keeps .env private');
   assert(!/docker pull|docker login|curl |wget /.test(load), 'the loader never reaches the network');
+  const layerTemplate = "'{{range .RootFS.Layers}}{{println .}}{{end}}'";
+  assert(build.includes(layerTemplate) && load.includes(layerTemplate) && build.includes('"$plain" "$id" "$layers" "$ref"'), 'the build records each image\'s layer fingerprint and the loader computes it the same way (the image ID differs between image stores)');
+  assert(['POSTGRES_PASSWORD', 'APP_DB_PASSWORD', 'LOCAL_AUTH_SECRET', 'MFA_ENCRYPTION_KEY'].every((k) => load.includes(k)) && load.includes('openssl rand -hex 32') && load.includes('fresh=1') && load.includes('elif [ "$fresh" = 1 ]'), 'the loader generates the secrets only for a .env it just created');
+  assert(!load.split('\n').some((l) => /^\s*(echo|printf)\b.*\$\{?(secret|current)\b/.test(l) && !/>>\s*\.env\s*$/.test(l)), 'the loader never prints a secret value (it only appends it to .env)');
   assert(guide.includes('docker compose up -d --pull never'), 'the guide starts compose with --pull never');
   assert(/^offline-bundle-\*\/$/m.test(lines('.gitignore')) && /^offline-bundle-\*$/m.test(lines('.dockerignore')), 'bundles stay out of git and out of the image build context');
 }

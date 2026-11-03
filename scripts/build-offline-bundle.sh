@@ -22,7 +22,10 @@
 # Why images are retagged: a compose file that pins an image by digest (postgres:16-alpine@sha256:...) may not recognise
 # that image after `docker save` / `docker load`, depending on the engine's image store. Each pinned image is therefore
 # saved under a plain tag that points at the same content, offline.env tells compose to use those tags, and IMAGES.txt
-# records each image's ID so the loader can prove the loaded content is the pinned content.
+# records each image's ID and its layer fingerprint so the loader can prove the loaded content is the pinned content.
+# Both are needed because the engine's image ID depends on its image store (classic: the config digest; containerd:
+# the manifest digest), so the same image has a different ID on a host with the other store. The layer diff IDs do not
+# depend on the store, and the fingerprint is their hash.
 set -euo pipefail
 
 TAG=""
@@ -43,7 +46,7 @@ while [ $# -gt 0 ]; do
     --with-ai) WITH_AI=1; shift ;;
     --ollama-models) MODELS_DIR="${2:-}"; shift 2 ;;
     --no-exporter) WITH_EXPORTER=0; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) die "unknown option: $1 (see --help)" ;;
   esac
 done
@@ -91,6 +94,7 @@ for ref in "${REFS[@]}"; do
   echo "pulling $ref"
   docker pull --quiet "$ref" >/dev/null
   id="$(docker image inspect --format '{{.Id}}' "$ref")"
+  layers="$(docker image inspect --format '{{range .RootFS.Layers}}{{println .}}{{end}}' "$ref" | sha256sum | cut -d' ' -f1)"
   if [[ "$ref" == *@sha256:* ]]; then
     # name:tag@sha256:digest -> name:tag-pbc-<first 12 hex of the digest>, a plain tag that survives save / load
     name_tag="${ref%@*}"
@@ -105,7 +109,7 @@ for ref in "${REFS[@]}"; do
   else
     plain="$ref"
   fi
-  printf '%s  %s  %s\n' "$plain" "$id" "$ref" >> "$OUT/IMAGES.txt"
+  printf '%s  %s  %s  %s\n' "$plain" "$id" "$layers" "$ref" >> "$OUT/IMAGES.txt"
   SAVE+=("$plain")
 done
 echo "IMAGE_TAG=$TAG" >> "$OUT/offline.env"
