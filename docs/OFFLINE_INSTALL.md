@@ -59,8 +59,12 @@ cd /opt/pbc-grc
 ./offline-load.sh
 ```
 
-It checks every file against `SHA256SUMS`, loads the images, verifies each image ID, creates `.env` from `.env.example`
-on a first install (mode 0600) and writes the three image settings into it. A mismatch stops it before anything runs.
+It checks every file against `SHA256SUMS`, loads the images, verifies each image, creates `.env` from `.env.example`
+on a first install (mode 0600), writes the three image settings into it, creates the evidence folder (`EVIDENCE_DIR`,
+default `./data/evidence`) owned by uid 1000, the app's user, and, on a first install, generates the secrets (see
+section 3). It checks each image by its ID, or by its layer fingerprint where the engine numbers images differently
+(Docker's containerd image store gives the same image another ID than the classic store). A mismatch stops it before
+anything runs.
 
 With the AI profile and a model store in the bundle, unpack the models where `OLLAMA_MODELS_DIR` points (default: the
 named volume; on Unraid the host folder you set):
@@ -72,10 +76,12 @@ tar -C /mnt/user/appdata/singularity/ollama-models -xzf ollama-models.tar.gz
 
 ## 3. Configure
 
-Edit `.env` (it stays on the host; never copy it back to the drive). Fill in at least `POSTGRES_PASSWORD`,
-`APP_DB_PASSWORD`, `LOCAL_AUTH_SECRET` and `MFA_ENCRYPTION_KEY` (`openssl rand -hex 32` each), the host paths if the
-defaults do not suit, and the proxy settings. `docs/GO_LIVE_CHECKLIST.md` section 2 lists every setting; leave the three
-image lines `offline-load.sh` wrote as they are.
+On a first install `offline-load.sh` has already generated `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `LOCAL_AUTH_SECRET`
+and `MFA_ENCRYPTION_KEY` (64 random hex characters each, written only to `.env` and never printed). On an upgrade it keeps
+the existing `.env` and never replaces a secret. Review `.env` (it stays on the host; never copy it back to the drive):
+the host paths if the defaults do not suit, and the proxy settings. `docs/GO_LIVE_CHECKLIST.md` section 2 lists every
+setting; leave the three image lines `offline-load.sh` wrote as they are. If you change `EVIDENCE_DIR`, run `./offline-load.sh` again
+(it keeps `.env` and its secrets) so the new folder is created for uid 1000.
 
 ## 4. Start
 
@@ -116,6 +122,8 @@ The loader keeps the existing `.env` and replaces only the three image lines. Ta
 | Symptom | Cause and fix |
 | --- | --- |
 | `offline-load: a file does not match SHA256SUMS` | the copy is damaged or changed: copy the bundle again and compare `sha256sum SHA256SUMS` with the delivery note |
-| `image ... has ID ..., expected ...` | the loaded image is not the bundled one: do not start; rebuild the bundle |
+| `image ... does not match the release` | the loaded image is not the bundled one: do not start; rebuild the bundle |
+| `image ... has ID ..., expected ...; this bundle predates layer fingerprints` | the bundle was built by an older `build-offline-bundle.sh` and this engine numbers images differently (containerd image store): rebuild the bundle with the current script |
 | `docker compose up` says an image was not found / tries to pull | the image lines in `.env` are missing or edited: run `./offline-load.sh` again, then compare `docker compose config --images` with the first column of `IMAGES.txt` |
+| the app keeps restarting; its log says `The evidence directory ... is not readable and writable ... (uid 1000, EACCES)` | the evidence folder belongs to another user (Docker creates a missing one as root): `sudo chown -R 1000:1000` on it (`EVIDENCE_DIR`, default `./data/evidence`), or run `./offline-load.sh` again as root, then `docker compose up -d --pull never` |
 | PostgreSQL starts but the app cannot log in on a first install | `docker/postgres/` was not next to `docker-compose.yml` when the database volume was created: see `docs/ON_PREM_DATABASE.md` "Existing data volume" |
