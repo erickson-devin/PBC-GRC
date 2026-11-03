@@ -3,8 +3,8 @@
 #
 # Checks every file against SHA256SUMS, loads the images, proves each loaded image is the pinned release content (by the
 # image ID recorded when the bundle was built, or by the layer fingerprint where this engine numbers images differently),
-# adds the bundle's image settings to .env and, on a first install, generates its secrets. It never reaches the network
-# and never prints a secret. INSTALL.md is the full procedure.
+# adds the bundle's image settings to .env, creates the evidence folder for the app's uid 1000 and, on a first install,
+# generates the secrets. It never reaches the network and never prints a secret. INSTALL.md is the full procedure.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -12,15 +12,15 @@ die() { echo "offline-load: $*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker is required"
 command -v sha256sum >/dev/null || die "sha256sum is required"
 
-echo "1/5 checking files against SHA256SUMS"
+echo "1/6 checking files against SHA256SUMS"
 sha256sum --check --quiet SHA256SUMS || die "a file does not match SHA256SUMS: the bundle is damaged or was changed"
 
-echo "2/5 loading images"
+echo "2/6 loading images"
 gunzip -c images.tar.gz | docker load
 
 # The engine's image ID depends on its image store (classic: config digest; containerd: manifest digest), the layer diff
 # IDs do not: the fingerprint is the hash of those IDs, one per line, as computed by build-offline-bundle.sh.
-echo "3/5 checking images"
+echo "3/6 checking images"
 while read -r plain id layers _ref; do
   [ -n "$plain" ] || continue
   got="$(docker image inspect --format '{{.Id}}' "$plain" 2>/dev/null)" || die "image $plain is not present after loading"
@@ -37,7 +37,7 @@ while read -r plain id layers _ref; do
   fi
 done < IMAGES.txt
 
-echo "4/5 image settings for docker compose"
+echo "4/6 image settings for docker compose"
 # A first install starts .env from the example; an upgrade keeps the existing .env and only replaces the image settings.
 fresh=0
 if [ ! -f .env ]; then
@@ -55,7 +55,29 @@ while IFS='=' read -r key value; do
   echo "  $key=$value"
 done < offline.env
 
-echo "5/5 secrets"
+echo "5/6 evidence folder"
+# The app runs as uid 1000 (the image's node user) and will not start when it cannot write the evidence folder. Docker
+# creates a missing bind-mount folder owned by root, so the loader creates it first and gives it to uid 1000.
+evidence="$(grep -m1 '^EVIDENCE_DIR=' .env | cut -d= -f2- | sed 's/[[:space:]]\{1,\}#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//' || true)"
+evidence="${evidence:-./data/evidence}"
+created=0
+if [ ! -d "$evidence" ]; then
+  mkdir -p "$evidence" || die "cannot create the evidence folder $evidence: run this script with sudo"
+  created=1
+fi
+if [ "$(stat -c %u "$evidence")" = 1000 ]; then
+  echo "  ok  $evidence (uid 1000)"
+elif [ "$(id -u)" = 0 ]; then
+  chown -R 1000:1000 "$evidence"
+  echo "  $evidence now belongs to uid 1000"
+else
+  echo "  warning: $evidence must belong to uid 1000 or the app will not start: sudo chown -R 1000:1000 \"$evidence\"" >&2
+fi
+if [ "$created" = 1 ]; then
+  chmod 0700 "$evidence"
+fi
+
+echo "6/6 secrets"
 # Only a first install gets new secrets: on an upgrade a new database password would not match the existing volume and a
 # new MFA_ENCRYPTION_KEY would break the existing MFA enrolments. Values go to .env only and are never printed.
 for key in POSTGRES_PASSWORD APP_DB_PASSWORD LOCAL_AUTH_SECRET MFA_ENCRYPTION_KEY; do

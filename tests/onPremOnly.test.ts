@@ -495,6 +495,7 @@ assert(dockerCode.filter((l) => /^CMD\s/.test(l)).length === 1 && !dockerCode.so
   assert(build.includes(layerTemplate) && load.includes(layerTemplate) && build.includes('"$plain" "$id" "$layers" "$ref"'), 'the build records each image\'s layer fingerprint and the loader computes it the same way (the image ID differs between image stores)');
   assert(['POSTGRES_PASSWORD', 'APP_DB_PASSWORD', 'LOCAL_AUTH_SECRET', 'MFA_ENCRYPTION_KEY'].every((k) => load.includes(k)) && load.includes('openssl rand -hex 32') && load.includes('fresh=1') && load.includes('elif [ "$fresh" = 1 ]'), 'the loader generates the secrets only for a .env it just created');
   assert(!load.split('\n').some((l) => /^\s*(echo|printf)\b.*\$\{?(secret|current)\b/.test(l) && !/>>\s*\.env\s*$/.test(l)), 'the loader never prints a secret value (it only appends it to .env)');
+  assert(load.includes("grep -m1 '^EVIDENCE_DIR=' .env") && load.includes('${evidence:-./data/evidence}') && load.includes('chown -R 1000:1000 "$evidence"'), 'the loader creates the evidence folder for the app\'s uid 1000 (Docker would create it as root and the app would not start)');
   assert(guide.includes('docker compose up -d --pull never'), 'the guide starts compose with --pull never');
   assert(/^offline-bundle-\*\/$/m.test(lines('.gitignore')) && /^offline-bundle-\*$/m.test(lines('.dockerignore')), 'bundles stay out of git and out of the image build context');
 }
