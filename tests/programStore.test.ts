@@ -10,26 +10,30 @@ import {
   countProgramUsage,
   createProgram,
   deleteProgram,
-  ensureDefaultProgram,
   getProgram,
   getProgramMetrics,
+  getTenantDefaultProgram,
   listProgramEvents,
   listPrograms,
   migrateTenantToPrograms,
   resolveVmTargetProgram,
+  setTenantDefaultProgram,
   setVmTargetProgram,
   unarchiveProgram,
   updateProgram,
 } from '../server/programs';
+import { getUserDefaultProgramId, resolveLandingProgramId, setUserDefaultProgram } from '../server/userProgramDefaults';
+import { firstProgram } from './programFixture';
 import { PROGRAM_FRAMEWORK_IDS } from '../server/schema';
 import { FRAMEWORK_REGISTRY } from '../src/data/frameworks/frameworkRegistry';
 import { programFrameworkControls } from '../src/data/programScope';
 import type { OverlayFilters } from '../src/types/framework';
 
 /**
- * The program (authorization boundary) data layer in the in-memory store: no server, no database. Covers the default program and its
- * framework / baseline, the validation codes, the 50-program cap, archive and delete rules, tenant isolation of getProgram, the lazy
- * backfill of legacy rows (migrateTenantToPrograms) and queryWithProgram isolation. The PostgreSQL side is covered by the DDL checks
+ * The program (authorization boundary) data layer in the in-memory store: no server, no database. Covers the organization default (the
+ * first program created, never created implicitly) and the per-user defaults, the validation codes, the 50-program cap, archive and
+ * delete rules, tenant isolation of getProgram, the backfill of legacy rows (migrateTenantToPrograms) and queryWithProgram isolation.
+ * The PostgreSQL side is covered by the DDL checks
  * in tests/dbSchema.test.ts and, against a real database, by `npm run db:verify-rls`.
  */
 let passed = 0;
@@ -55,6 +59,7 @@ async function codeOf(p: Promise<unknown>): Promise<string | null> {
 }
 
 const owner = { userId: 'owner-1', email: 'owner@example.com', name: 'Owner' };
+const who0 = { actor: 'Owner', userId: 'owner-1' };
 const mkTenant = (id: string, primaryFramework: string, enabledFrameworks: string[]) =>
   createTenantWithOwner({ id, name: id, systemName: `${id} system`, systemOwner: 'Owner', enabledFrameworks, primaryFramework }, owner);
 
@@ -79,21 +84,24 @@ async function main() {
   const registryIds = Object.keys(FRAMEWORK_REGISTRY).filter((k) => FRAMEWORK_REGISTRY[k].id === k);
   assert(JSON.stringify([...PROGRAM_FRAMEWORK_IDS].sort()) === JSON.stringify([...registryIds].sort()), 'PROGRAM_FRAMEWORK_IDS equals the canonical registry ids', registryIds);
 
-  console.log('\n--- ensureDefaultProgram ---');
-  const d1 = await ensureDefaultProgram('t1');
-  const d1b = await ensureDefaultProgram('t1');
+  console.log('\n--- a new tenant has no program ---');
+  assert((await listPrograms('t1')).length === 0 && (await listPrograms('t1')).length === 0, 'listing the programs of a new tenant twice -> [] both times (nothing is created)');
+  assert((await getTenantDefaultProgram('t1')) === null, 'getTenantDefaultProgram(new tenant) -> null');
+  assert((await listPrograms('t1', { includeArchived: true })).length === 0, 'and no archived program either');
+  const d1 = await firstProgram('t1');
+  const d1x = await createProgram('t1', { name: 'Second Boundary', frameworkId: 'CMMC_L1' }, 'u');
   const listed = await listPrograms('t1');
-  assert(d1.id === d1b.id, 'twice -> the same program id');
-  assert(listed.length === 1 && listed[0].id === d1.id, 'the tenant has exactly one program');
-  assert(d1.isDefault === true && d1.name === DEFAULT_PROGRAM_NAME && d1.name === 'Default Authorization Boundary' && d1.archivedAt === null, 'it is the default, named Default Authorization Boundary, not archived', d1);
+  assert(listed.length === 2 && listed[0].id === d1.id, 'the tenant has the two programs it created, the default first');
+  assert(d1.isDefault === true && d1x.isDefault === false && d1.archivedAt === null, 'the first program created is the default, the second is not', [d1.isDefault, d1x.isDefault]);
+  assert((await getTenantDefaultProgram('t1'))?.id === d1.id, 'getTenantDefaultProgram returns it');
   assert(d1.tenantId === 't1' && /^[A-Za-z0-9_-]{1,64}$/.test(d1.id), 'it belongs to the tenant and its id is a valid identifier', d1.id);
-  assert(d1.frameworkId === 'CMMC_L1' && d1.baseline === null, 'a tenant with no tenant record gets CMMC_L1 and no baseline', d1);
+  assert(d1.frameworkId === 'CMMC_L1' && d1.baseline === null, 'the fixture program is CMMC_L1 with no baseline', d1);
   await mkTenant('t-l2', 'CMMC_L2', ['CMMC_L2']);
-  const dl2 = await ensureDefaultProgram('t-l2');
-  assert(dl2.frameworkId === 'CMMC_L2' && dl2.baseline === null, 'a CMMC_L2 tenant gets CMMC_L2 and no baseline', dl2);
+  const dl2 = await createProgram('t-l2', { name: 'L2 first', frameworkId: 'CMMC_L2' }, 'u');
+  assert(dl2.frameworkId === 'CMMC_L2' && dl2.baseline === null && dl2.isDefault === true, 'a first CMMC_L2 program is the default with no baseline', dl2);
   await mkTenant('t-nist', 'NIST_800_53_REV5', ['NIST_800_53_REV5']);
-  const dn = await ensureDefaultProgram('t-nist');
-  assert(dn.frameworkId === 'NIST_800_53_REV5' && dn.baseline === 'MODERATE', 'a NIST tenant gets NIST_800_53_REV5 and baseline MODERATE', dn);
+  const dn = await createProgram('t-nist', { name: 'Nist first', frameworkId: 'NIST_800_53_REV5' }, 'u');
+  assert(dn.frameworkId === 'NIST_800_53_REV5' && dn.baseline === 'MODERATE' && dn.isDefault === true, 'a first NIST program is the default with baseline MODERATE', dn);
 
   console.log('\n--- createProgram validation ---');
   await mkTenant('t-val', 'CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
@@ -107,25 +115,20 @@ async function main() {
   assert((await codeOf(createProgram('t-val', { name: 'Low', frameworkId: 'CMMC_L2', baseline: 'LOW' }, 'u'))) === 'invalid_baseline', 'CMMC_L2 with a baseline -> invalid_baseline');
   assert((await codeOf(createProgram('t-val', { name: 'Clone', frameworkId: 'CMMC_L2', seed: { cloneFrom: 'no-such-program' } }, 'u'))) === 'program_not_found', 'a clone seed naming an unknown source program -> program_not_found');
   const a = await createProgram('t-val', { name: '  Boundary A  ', frameworkId: 'CMMC_L2', description: 'd', systemBoundarySummary: 's' }, 'alice');
-  assert(a.name === 'Boundary A' && a.frameworkId === 'CMMC_L2' && a.baseline === null && a.isDefault === false && a.createdBy === 'alice' && a.description === 'd' && a.systemBoundarySummary === 's', 'a valid program is created (name trimmed)', a);
+  assert(a.name === 'Boundary A' && a.frameworkId === 'CMMC_L2' && a.baseline === null && a.isDefault === true && a.createdBy === 'alice' && a.description === 'd' && a.systemBoundarySummary === 's', 'a valid program is created (name trimmed; the first one is the default)', a);
   assert((await codeOf(createProgram('t-val', { ...base, name: 'boundary a' }, 'u'))) === 'program_name_taken', "'boundary a' after 'Boundary A' -> program_name_taken");
-  assert((await codeOf(createProgram('t-val', { ...base, name: DEFAULT_PROGRAM_NAME.toUpperCase() }, 'u'))) === 'program_name_taken', 'the default program name is taken too');
   const n1 = await createProgram('t-val', { name: 'Nist High', frameworkId: 'NIST_800_53_REV5', baseline: 'high' }, 'u');
   const n2 = await createProgram('t-val', { name: 'Nist Default Baseline', frameworkId: 'nist-800-53-r5' }, 'u');
   assert(n1.baseline === 'HIGH' && n2.frameworkId === 'NIST_800_53_REV5' && n2.baseline === 'MODERATE', 'NIST takes LOW, MODERATE or HIGH (any case), MODERATE when omitted, and the registry alias is accepted', [n1.baseline, n2.baseline, n2.frameworkId]);
-  assert((await listPrograms('t-val')).length === 4 && (await listPrograms('t-val'))[0].isDefault, 'the default program was created with the first program and is listed first');
+  assert((await listPrograms('t-val')).length === 3 && (await listPrograms('t-val'))[0].id === a.id && (await listPrograms('t-val'))[0].isDefault, 'the first program is the default and is listed first');
 
   console.log('\n--- the 50-program cap ---');
   await mkTenant('t-cap', 'CMMC_L2', ['CMMC_L2']);
-  await ensureDefaultProgram('t-cap');
-  for (let i = 1; i < MAX_PROGRAMS_PER_TENANT; i++) await createProgram('t-cap', { name: `P${i}`, frameworkId: 'CMMC_L2' }, 'u');
-  assert((await listPrograms('t-cap')).length === 50, 'default + 49 = 50 programs');
+  for (let i = 0; i < MAX_PROGRAMS_PER_TENANT; i++) await createProgram('t-cap', { name: `P${i}`, frameworkId: 'CMMC_L2' }, 'u');
+  assert((await listPrograms('t-cap')).length === 50, '50 programs');
   assert((await codeOf(createProgram('t-cap', { name: 'P51', frameworkId: 'CMMC_L2' }, 'u'))) === 'program_limit', 'the 51st -> program_limit');
 
   console.log('\n--- update, archive, delete ---');
-  const dVal = await ensureDefaultProgram('t-val');
-  assert((await codeOf(archiveProgram('t-val', dVal.id))) === 'program_is_default', 'archiveProgram(default) -> program_is_default');
-  assert((await codeOf(deleteProgram('t-val', dVal.id))) === 'program_is_default', 'deleteProgram(default) -> program_is_default');
   assert((await codeOf(archiveProgram('t-val', 'nope'))) === 'program_not_found', 'an unknown program -> program_not_found');
   const renamed = await updateProgram('t-val', a.id, { name: 'Boundary A2', description: 'new', systemBoundarySummary: 'sum' });
   assert(renamed.name === 'Boundary A2' && renamed.description === 'new' && renamed.systemBoundarySummary === 'sum' && renamed.frameworkId === 'CMMC_L2', 'name, description and summary can change', renamed);
@@ -157,6 +160,70 @@ async function main() {
   assert((await codeOf(updateProgram('t2', d1.id, { name: 'Hijack' }))) === 'program_not_found', 'another tenant cannot edit it');
   assert((await codeOf(archiveProgram('t2', a.id))) === 'program_not_found' && (await codeOf(deleteProgram('t2', a.id))) === 'program_not_found', 'another tenant cannot archive or delete it');
 
+  console.log('\n--- the organization default moves, never disappears silently ---');
+  await mkTenant('t-new', 'CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
+  assert((await resolveVmTargetProgram('t-new')) === null, 'D1: a tenant with no program has no VM target');
+  const nd1 = await createProgram('t-new', { name: 'First', frameworkId: 'CMMC_L2' }, 'u');
+  const nd2 = await createProgram('t-new', { name: 'Second', frameworkId: 'CMMC_L2' }, 'u');
+  const nd3 = await createProgram('t-new', { name: 'Third', frameworkId: 'CMMC_L2' }, 'u');
+  assert(nd1.isDefault && !nd2.isDefault && !nd3.isDefault, 'D2: only the first of three programs is the default', [nd1.isDefault, nd2.isDefault, nd3.isDefault]);
+  const vmFallback = await resolveVmTargetProgram('t-new');
+  assert(vmFallback?.program.id === nd1.id && vmFallback.explicit === false, 'D3: a CMMC default is the VM fallback (not explicit)', vmFallback);
+  const nd1Archived = await archiveProgram('t-new', nd1.id);
+  assert(nd1Archived.isDefault === false && nd1Archived.archivedAt !== null && (await getTenantDefaultProgram('t-new'))?.id === nd2.id, 'D4: archiving the default is allowed; the oldest active program becomes the default', (await getTenantDefaultProgram('t-new'))?.id);
+  assert((await listPrograms('t-new')).filter((p) => p.isDefault).length === 1, 'D4: exactly one default is flagged');
+  assert((await codeOf(setTenantDefaultProgram('t-new', nd1.id))) === 'program_archived', 'D5: an archived program cannot be made the default -> program_archived');
+  assert((await codeOf(setTenantDefaultProgram('t-new', 'nope'))) === 'program_not_found', 'D5: an unknown program -> program_not_found');
+  assert((await setTenantDefaultProgram('t-new', nd3.id)).isDefault === true && (await getTenantDefaultProgram('t-new'))?.id === nd3.id && (await getProgram('t-new', nd2.id))?.isDefault === false, 'D6: setTenantDefaultProgram moves the flag');
+  assert((await setTenantDefaultProgram('t-new', nd3.id)).id === nd3.id, 'D6: choosing the current default again is fine');
+  await archiveProgram('t-new', nd3.id);
+  assert((await getTenantDefaultProgram('t-new'))?.id === nd2.id, 'D7: archiving the default again promotes the next one');
+  await archiveProgram('t-new', nd2.id);
+  assert((await getTenantDefaultProgram('t-new')) === null && (await listPrograms('t-new')).length === 0 && (await listPrograms('t-new', { includeArchived: true })).length === 3, 'D8: archiving the last active program is allowed and leaves no default');
+  assert((await resolveVmTargetProgram('t-new')) === null, 'D8: and no VM target');
+  const nd2Back = await unarchiveProgram('t-new', nd2.id);
+  const nd1Back = await unarchiveProgram('t-new', nd1.id);
+  assert(nd2Back.isDefault === true && nd1Back.isDefault === false && (await listPrograms('t-new', { includeArchived: true })).filter((p) => p.isDefault).length === 1, 'D9: unarchiving with no active default makes that program the default; a later unarchive does not', [nd2Back.isDefault, nd1Back.isDefault]);
+  await deleteProgram('t-new', nd2.id);
+  assert((await getTenantDefaultProgram('t-new'))?.id === nd1.id, 'D10: deleting the default (empty) promotes the oldest active program');
+  assert((await codeOf(setTenantDefaultProgram('t-val', nd1.id))) === 'program_not_found', "D11: another tenant's program id -> program_not_found");
+
+  await mkTenant('t-race', 'CMMC_L2', ['CMMC_L2']);
+  const raced = await Promise.all([createProgram('t-race', { name: 'Race A', frameworkId: 'CMMC_L2' }, 'u'), createProgram('t-race', { name: 'Race B', frameworkId: 'CMMC_L2' }, 'u')]);
+  assert(raced.filter((p) => p.isDefault).length === 1 && (await listPrograms('t-race')).filter((p) => p.isDefault).length === 1, 'R1: two concurrent first creations leave exactly one default', raced.map((p) => p.isDefault));
+
+  await mkTenant('t-nistdef', 'NIST_800_53_REV5', ['NIST_800_53_REV5', 'CMMC_L2']);
+  const nistFirst = await createProgram('t-nistdef', { name: 'Nist first', frameworkId: 'NIST_800_53_REV5' }, 'u');
+  assert(nistFirst.isDefault && (await resolveVmTargetProgram('t-nistdef')) === null, 'D12: a NIST default with no flagged target gives no VM target');
+  const cmmcSecond = await createProgram('t-nistdef', { name: 'Cmmc second', frameworkId: 'CMMC_L2' }, 'u');
+  assert((await resolveVmTargetProgram('t-nistdef')) === null, 'D12: a CMMC program that is not the default is not a fallback either');
+  const nistSet = await setVmTargetProgram('t-nistdef', cmmcSecond.id, who0);
+  const nistRes = await resolveVmTargetProgram('t-nistdef');
+  assert(nistSet.previousId === null && nistRes?.program.id === cmmcSecond.id && nistRes.explicit === true, 'D13: an explicitly flagged CMMC program is the target whatever the default is (previousId null: there was none)', [nistSet.previousId, nistRes?.explicit]);
+
+  console.log('\n--- per-user default programs ---');
+  await mkTenant('t-ud', 'CMMC_L2', ['CMMC_L2']);
+  const u1p = await createProgram('t-ud', { name: 'UD one', frameworkId: 'CMMC_L2' }, 'u');
+  const u2p = await createProgram('t-ud', { name: 'UD two', frameworkId: 'CMMC_L2' }, 'u');
+  assert((await getUserDefaultProgramId('t-ud', 'u1')) === null && (await resolveLandingProgramId('t-ud', 'u1')) === u1p.id, 'U1: with no personal default a user lands in the organization default');
+  await setUserDefaultProgram('t-ud', 'u1', u2p.id);
+  assert((await getUserDefaultProgramId('t-ud', 'u1')) === u2p.id && (await resolveLandingProgramId('t-ud', 'u1')) === u2p.id, 'U2: u1 picks the second program and lands in it');
+  assert((await getUserDefaultProgramId('t-ud', 'u2')) === null && (await resolveLandingProgramId('t-ud', 'u2')) === u1p.id, 'U2: u2 is not affected');
+  await archiveProgram('t-ud', u2p.id);
+  assert((await resolveLandingProgramId('t-ud', 'u1')) === u1p.id, 'U3: an archived personal default falls back to the organization default');
+  assert((await codeOf(setUserDefaultProgram('t-ud', 'u2', u2p.id))) === 'program_archived', 'U3: an archived program cannot be picked -> program_archived');
+  assert((await codeOf(setUserDefaultProgram('t-ud', 'u2', 'nope'))) === 'program_not_found', 'U4: an unknown program -> program_not_found');
+  assert((await codeOf(setUserDefaultProgram('t-new', 'u2', u1p.id))) === 'program_not_found', "U4: another tenant's program -> program_not_found");
+  const u3p = await createProgram('t-ud', { name: 'UD three', frameworkId: 'CMMC_L2' }, 'u');
+  await setUserDefaultProgram('t-ud', 'u3', u3p.id);
+  await deleteProgram('t-ud', u3p.id);
+  assert((await getUserDefaultProgramId('t-ud', 'u3')) === null, 'U5: deleting an empty program clears the personal defaults that pointed at it');
+  await setUserDefaultProgram('t-ud', 'u2', u1p.id);
+  await setUserDefaultProgram('t-ud', 'u2', null);
+  assert((await getUserDefaultProgramId('t-ud', 'u2')) === null, 'U6: null clears the personal default');
+  await archiveProgram('t-ud', u1p.id);
+  assert((await resolveLandingProgramId('t-ud', 'u2')) === null, 'U7: a tenant with no active program has no landing program');
+
   console.log('\n--- legacy rows are adopted by the default program ---');
   __resetProgramsForTests();
   const legacyTenant = 'legacy-1';
@@ -178,7 +245,7 @@ async function main() {
   const other = await migrateTenantToPrograms('legacy-2');
   assert(other.total === 0, "one tenant's migration touches nothing of another tenant");
   assert((await queryWithProgram(defScope, 'SELECT * FROM control_assessments WHERE tenant_id = $1', [legacyTenant])).rows.length === 1, 'the adopted row is still the only row');
-  await ensureDefaultProgram('legacy-3'); // runs the migration once; a legacy row written afterwards stays until it is migrated again
+  await migrateTenantToPrograms('legacy-3'); // the operator backfill creates the legacy default; a legacy row written afterwards stays until it is migrated again
   __seedLegacyRowForTests('legacy-3', 'control_assessments', { control_id: 'AC.L1-3.1.2', status: 'NOT_STARTED', updated_by: 'tester' });
   const late = await migrateTenantToPrograms('legacy-3');
   assert(late.control_assessments === 1, 'migrateTenantToPrograms can be called again to adopt a row written after the first run', late);
@@ -225,8 +292,8 @@ async function main() {
 
   console.log('\n--- the privacy baseline (issue #20) ---');
   await mkTenant('t-priv', 'NIST_800_53_REV5', ['NIST_800_53_REV5', 'CMMC_L2']);
-  const privDefault = await ensureDefaultProgram('t-priv');
-  assert(privDefault.privacyBaseline === false && d1.privacyBaseline === false, 'a default program has no privacy baseline', [privDefault.privacyBaseline, d1.privacyBaseline]);
+  const privDefault = await createProgram('t-priv', { name: 'Priv first', frameworkId: 'NIST_800_53_REV5' }, 'u');
+  assert(privDefault.privacyBaseline === false && d1.privacyBaseline === false, 'a program created without the privacy baseline has none', [privDefault.privacyBaseline, d1.privacyBaseline]);
   const mp = await createProgram('t-priv', { name: 'MOD plus privacy', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true }, 'u');
   const mod = await createProgram('t-priv', { name: 'MOD plain', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE' }, 'u');
   const modNull = await createProgram('t-priv', { name: 'MOD null', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: null }, 'u');
@@ -258,7 +325,7 @@ async function main() {
 
   console.log('\n--- scoping (issue #22) ---');
   await mkTenant('t-sc', 'NIST_800_53_REV5', ['NIST_800_53_REV5', 'CMMC_L2']);
-  const who = { actor: 'Owner', userId: 'owner-1' };
+  const who = who0;
   const n1s = await createProgram('t-sc', { name: 'N1', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', scoping: { noWireless: true } }, 'u');
   const scEvents = await listProgramEvents({ tenantId: 't-sc', programId: n1s.id });
   assert(JSON.stringify(n1s.scoping) === JSON.stringify({ noWireless: true }) && scEvents.length === 1 && scEvents[0].kind === 'scoping_set', 'S1: a scoped program stores the scoping and records one scoping_set event', [n1s.scoping, scEvents.map((e) => e.kind)]);
@@ -288,9 +355,9 @@ async function main() {
   const wwProgram = await createProgram('t-sc', { name: 'N wireless', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', scoping: { noWireless: true } }, 'u');
   const wwMetrics = await getProgramMetrics(wwProgram);
   assert(wwMetrics.total === scopedWw && scopedWw < unscoped, 'S10: the metrics total follows the overlays of the program', [wwMetrics.total, scopedWw, unscoped]);
-  const dSc = await ensureDefaultProgram('t-sc');
+  const dSc = await getTenantDefaultProgram('t-sc');
   const resolvedSc = await resolveVmTargetProgram('t-sc');
-  assert(JSON.stringify(dSc.scoping) === '{}' && dSc.vmTarget === false && resolvedSc.program.id === dSc.id && resolvedSc.explicit === false, 'S11: the default program has no scoping and is not a target; with no target it is the fallback', [dSc, resolvedSc.explicit]);
+  assert(dSc?.id === n1s.id && dSc.vmTarget === false && resolvedSc === null, 'S11: the default program (the first one, NIST) is not a target, and a NIST default without an explicit target is no fallback (no VM target)', [dSc?.frameworkId, resolvedSc]);
 
   console.log('\n--- a stale overlay save is refused (issue #115) ---');
   await mkTenant('t-cf', 'NIST_800_53_REV5', ['NIST_800_53_REV5']);
@@ -311,13 +378,13 @@ async function main() {
 
   console.log('\n--- the VM target (issue #21) ---');
   await mkTenant('t-vm', 'CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
-  const dVm = await ensureDefaultProgram('t-vm');
+  const dVm = await createProgram('t-vm', { name: 'VM Default', frameworkId: 'CMMC_L2' }, 'u');
   const vmA = await createProgram('t-vm', { name: 'Target A', description: 'secret boundary text', frameworkId: 'CMMC_L2' }, 'u');
   const vmB = await createProgram('t-vm', { name: 'Target B', frameworkId: 'CMMC_L2' }, 'u');
   const vmN = await createProgram('t-vm', { name: 'Target N', frameworkId: 'NIST_800_53_REV5' }, 'u');
   const r1 = await setVmTargetProgram('t-vm', vmA.id, who);
   const res1 = await resolveVmTargetProgram('t-vm');
-  assert((await getProgram('t-vm', vmA.id))?.vmTarget === true && res1.program.id === vmA.id && res1.explicit === true && r1.program.vmTarget === true, 'V1: setting a CMMC program makes it the explicit target', [r1.previousId, res1.explicit]);
+  assert((await getProgram('t-vm', vmA.id))?.vmTarget === true && res1?.program.id === vmA.id && res1.explicit === true && r1.program.vmTarget === true, 'V1: setting a CMMC program makes it the explicit target', [r1.previousId, res1?.explicit]);
   assert(r1.previousId === dVm.id, 'V1: the first target replaces the default program as the receiver (previousId)', r1.previousId);
   const r2 = await setVmTargetProgram('t-vm', vmB.id, who);
   const vmEvA = await listProgramEvents({ tenantId: 't-vm', programId: vmA.id });
@@ -339,8 +406,8 @@ async function main() {
   const r5 = await setVmTargetProgram('t-vm', dVm.id, who);
   const res5 = await resolveVmTargetProgram('t-vm');
   assert(
-    r5.program.id === dVm.id && res5.program.id === dVm.id && (await listPrograms('t-vm', { includeArchived: true })).filter((p) => p.vmTarget).length === 1,
-    'V5: the default program can be the target and then is the only flagged one', res5.program.id
+    r5.program.id === dVm.id && res5?.program.id === dVm.id && (await listPrograms('t-vm', { includeArchived: true })).filter((p) => p.vmTarget).length === 1,
+    'V5: the default program can be the target and then is the only flagged one', res5?.program.id
   );
   const allEvents = (await Promise.all([vmA, vmB, dVm, n1s, wwProgram].map((p) => listProgramEvents({ tenantId: p.tenantId, programId: p.id })))).flat();
   const eventJson = JSON.stringify(allEvents);
@@ -348,7 +415,7 @@ async function main() {
 
   console.log('\n--- Clone history source ---');
   await mkTenant('t-clone-src', 'CMMC_L2', ['CMMC_L2']);
-  const dClone = await ensureDefaultProgram('t-clone-src');
+  const dClone = await firstProgram('t-clone-src', 'CMMC_L2');
   await queryWithProgram({ tenantId: 't-clone-src', programId: dClone.id }, ...control('t-clone-src', dClone.id, 'AC.L1-3.1.1', 'MET'));
   const cloned = await createProgram('t-clone-src', { name: 'Clone src', frameworkId: 'CMMC_L2', seed: { cloneFrom: dClone.id } }, 'u');
   const cloneEv = await listControlAssessmentEvents({ tenantId: 't-clone-src', programId: cloned.id }, 'AC.L1-3.1.1', 10);

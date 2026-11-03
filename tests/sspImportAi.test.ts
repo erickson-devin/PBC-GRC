@@ -2,6 +2,7 @@ import './testEnv';
 import { SSP_TEST_VAULT } from './sspEnv';
 import fs from 'fs';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { __resetOllamaCacheForTests } from '../server/ssp/ollama';
 import { startFakeOllama } from './fakeOllama';
 import { scriptedModel } from './fakeSspModel';
@@ -78,6 +79,7 @@ async function main() {
   const assessor = person('u_ai_assessor');
   const tenant = (await call('POST', '/tenants', owner, undefined, { name: 'AI Org' })).body?.tenant?.id as string;
   await call('POST', `/tenants/${tenant}/members`, owner, tenant, { userId: 'u_ai_assessor', email: 'u_ai_assessor@test.mil', role: 'ASSESSOR' });
+  await firstProgram(tenant); // a tenant starts with no program
   const root = `/tenants/${tenant}/ssp-imports`;
   const docx = await makeDocx(DOC_LINES);
   const reset = () => { __resetOllamaCacheForTests(); fake.chats.length = 0; fake.failNext = 0; fake.delayMs = 0; fake.models = ['llama3.2:3b']; };

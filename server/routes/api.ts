@@ -9,6 +9,9 @@ import sspMetadataRouter from './sspMetadata';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
+import { ProgramError } from '../programs';
+import { errorMessage } from '../../src/utils/errors';
+import { getUserDefaultProgramId, resolveLandingProgramId, setUserDefaultProgram } from '../userProgramDefaults';
 import { getDatabaseStatus, isDbReady } from '../db';
 import { APP_VERSION } from '../version';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
@@ -78,8 +81,45 @@ router.use('/platform/account-events', authOnlyMiddleware, platformAccountEvents
 router.get('/tenants', authOnlyMiddleware, listMyTenantsHandler);
 router.post('/tenants', authOnlyMiddleware, createTenantHandler);
 
+// The signed-in user's personal default program in the active tenant (x-tenant-id, membership checked by authMiddleware). A preference
+// of the user, not a change to the tenant's data: every role may set it, so it does not go through the write guard.
+// GET -> { programId, landingProgramId } (the picked default, and the program they land in: own default, else the organization default,
+// else the oldest active program, else null). PUT { programId: string | null } sets or clears it; 404 program_not_found (unknown, or
+// another tenant's), 409 program_archived.
+router.get('/me/default-program', authMiddleware, async (req, res) => {
+  const tenantId = req.tenantId!;
+  const userId = req.user!.uid;
+  try {
+    res.json({ programId: await getUserDefaultProgramId(tenantId, userId), landingProgramId: await resolveLandingProgramId(tenantId, userId) });
+  } catch (err: unknown) {
+    console.error('[Me API] Failed to read the default program:', errorMessage(err));
+    res.status(500).json({ error: 'Failed to read the default program' });
+  }
+});
+router.put('/me/default-program', authMiddleware, async (req, res) => {
+  const tenantId = req.tenantId!;
+  const userId = req.user!.uid;
+  const programId: unknown = (req.body ?? {}).programId;
+  if (programId !== null && typeof programId !== 'string') {
+    res.status(400).json({ error: 'Invalid programId: expected a program id or null' });
+    return;
+  }
+  try {
+    await setUserDefaultProgram(tenantId, userId, programId);
+    res.json({ programId, landingProgramId: await resolveLandingProgramId(tenantId, userId) });
+  } catch (err: unknown) {
+    if (err instanceof ProgramError && (err.code === 'program_not_found' || err.code === 'program_archived')) {
+      res.status(err.code === 'program_not_found' ? 404 : 409).json({ error: err.message, code: err.code });
+      return;
+    }
+    console.error('[Me API] Failed to set the default program:', errorMessage(err));
+    res.status(500).json({ error: 'Failed to set the default program' });
+  }
+});
+
 // Everything else is protected by authentication AND tenant membership
-// Controls and evidence belong to a program (authorization boundary): programContext resolves it from x-program-id (default program without it)
+// Controls and evidence belong to a program (authorization boundary): programContext resolves it from x-program-id (the organization default
+// program without it; 409 program_required when the tenant has no program yet)
 router.use('/controls', authMiddleware, programContext, controlsRouter);
 router.use('/objectives', authMiddleware, programContext, objectivesRouter);
 router.use('/ssp-metadata', authMiddleware, programContext, sspMetadataRouter);

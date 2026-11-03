@@ -1,5 +1,6 @@
 import './testEnv';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 
 /**
  * Tenant bootstrap: POST /api/v1/tenants creates a tenant and makes the caller its first TENANT_OWNER in
@@ -58,6 +59,7 @@ async function run() {
   });
   assert(created.status === 201, 'POST /tenants -> 201 (no x-tenant-id needed: the caller has no tenant yet)', created);
   const tenantId: string = created.body?.tenant?.id;
+  await firstProgram(tenantId, 'CMMC_L1'); // a tenant starts with no program
   assert(/^tenant-acme-defense-systems-[0-9a-f]{8}$/.test(tenantId), 'server generates a slugged, unguessable tenant id', tenantId);
   assert(created.body?.role === 'TENANT_OWNER' && created.body?.member?.role === 'TENANT_OWNER', 'caller is assigned TENANT_OWNER');
   assert(created.body?.member?.userId === 'u_founder' && created.body?.member?.tenantId === tenantId, 'tenant_users row links the caller to the new tenant');

@@ -46,6 +46,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_events', tenantColumn: 'tenant_id' },
   { table: 'program_assets', tenantColumn: 'tenant_id' },
   { table: 'program_ssp_metadata', tenantColumn: 'tenant_id' },
+  { table: 'user_program_defaults', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -964,6 +965,18 @@ export const TABLES_SQL = `
   );
   ALTER TABLE program_ssp_metadata DROP CONSTRAINT IF EXISTS program_ssp_metadata_shape_check;
   ALTER TABLE program_ssp_metadata ADD CONSTRAINT program_ssp_metadata_shape_check CHECK (jsonb_typeof(metadata) = 'object' AND (metadata - ARRAY[${sspMetadataFieldList}]) = '{}'::jsonb AND NOT jsonb_path_exists(metadata, '$.* ? (@.type() != "string")') AND octet_length(metadata::text) <= ${SSP_METADATA_MAX_BYTES});
+
+  -- Per-user default program: the program a user lands in when no program is chosen in the browser. Preference only (one row per user and
+  -- tenant, ids only); the programs.is_default flag stays the organization fallback. No foreign key to tenant_users: a platform admin may
+  -- have no membership row, so removing a member deletes the row in code instead.
+  CREATE TABLE IF NOT EXISTS user_program_defaults (
+      tenant_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(128) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_user_program_defaults PRIMARY KEY (tenant_id, user_id),
+      CONSTRAINT fk_user_program_defaults_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
+  );
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

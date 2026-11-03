@@ -23,8 +23,8 @@ import sspImportsRouter from './sspImports';
 import aiAssistRouter from './aiAssist';
 import vmRouter from './vm';
 import programsRouter from './programs';
-import { programContext } from '../middleware/programContext';
-import { ensureDefaultProgram } from '../programs';
+import { optionalProgramContext, programContext } from '../middleware/programContext';
+import { clearUserProgramDefault } from '../userProgramDefaults';
 import { isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
@@ -210,8 +210,6 @@ export async function createTenantHandler(req: Request, res: Response): Promise<
       // The creator is now a TENANT_OWNER: a privileged role, so the second-factor requirement is looked up afresh on their next request.
       invalidateMfaRequirement(owner.userId);
       await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: owner.userId, targetUserId: owner.userId, action: 'role_changed', scopeTenantId: id, details: { newRole: 'TENANT_OWNER', via: 'tenant_created' } });
-      // The tenant's default program, from its primary framework (created lazily on first use if this fails)
-      await ensureDefaultProgram(id).catch((err: unknown) => console.warn(`[Tenants API] Default program of ${id} not created yet:`, errorMessage(err)));
       console.log(`[Tenants API] ${owner.userId} created tenant ${id} and is its TENANT_OWNER`);
       res.status(201).json({ tenant: created.tenant, member: created.member, role: 'TENANT_OWNER' });
       return;
@@ -231,12 +229,12 @@ router.use(requireWriteRole);
 // Invitations: /api/v1/tenants/:tenantId/invites (create / list / revoke / resend / extend / edit)
 router.use('/:tenantId/invites', tenantInvitesRouter);
 router.use('/:tenantId/assets', tenantAssetsRouter);
-// SSP imports and the VM module resolve the program from x-program-id; the programs API itself (it works on archived programs and names
-// them in the URL) and ai-assist do not.
+// SSP imports resolve the program from x-program-id (409 program_required when the tenant has none); the VM module only optionally (most of it
+// is tenant-wide); the programs API itself (it works on archived programs and names them in the URL) and ai-assist do not.
 router.use('/:tenantId/programs', programsRouter);
 router.use('/:tenantId/ssp-imports', programContext, sspImportsRouter);
 router.use('/:tenantId/ai-assist', aiAssistRouter);
-router.use('/:tenantId/vm', programContext, vmRouter);
+router.use('/:tenantId/vm', optionalProgramContext, vmRouter);
 
 const USER_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,128}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
@@ -365,6 +363,7 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
       }
     }
     await removeTenantMember(tenantId, userId);
+    await clearUserProgramDefault(tenantId, userId).catch((err: unknown) => console.warn('[Tenants API] Could not clear the default program of a removed member:', errorMessage(err)));
     await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: req.user?.uid ?? null, targetUserId: userId, action: 'member_removed', scopeTenantId: tenantId, details: { previousRole: targetRole } });
     console.log('[Tenants API] ' + req.user?.uid + ' removed ' + userId + ' (' + targetRole + ') from ' + tenantId);
     res.json({ removed: true, userId, previousRole: targetRole });

@@ -1,5 +1,6 @@
 import './testEnv';
 import app, { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import http from 'http';
 
 // Helper to make HTTP requests against local Express test instance
@@ -94,6 +95,9 @@ async function runTests() {
     const tenantB = 'tenant_company_b';
     const tokenA = generateMockJwt(tenantA, 'security@companya.mil');
     const tokenB = generateMockJwt(tenantB, 'audit@companyb.com');
+    // a tenant starts with no program: the first one is its organization default
+    await firstProgram(tenantA);
+    await firstProgram(tenantB);
 
     // 2. Fetch Controls for Company A
     console.log('--- Test 2: Fetch Controls for Company A ---');

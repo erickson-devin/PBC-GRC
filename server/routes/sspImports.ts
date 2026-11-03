@@ -3,7 +3,6 @@ import path from 'path';
 import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { getTenantFrameworkPolicy, type ProgramScope } from '../db';
-import { ensureDefaultProgram } from '../programs';
 import { ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { ensureActiveTenant } from './tenantGuards';
 import { commitReviewedSuggestions } from '../ssp/commit';
@@ -52,11 +51,12 @@ router.use(guard);
 
 /**
  * The program the request works in: the one the programContext middleware resolved from x-program-id (validated, active tenant
- * only) or, without it, the tenant's default program. Jobs are stamped with it and every read and write below stays inside it.
+ * only) or, without it, the tenant's default program (a tenant with none never reaches here: programContext answers 409 program_required).
+ * Jobs are stamped with it and every read and write below stays inside it.
  */
 async function scopeOf(req: Request): Promise<ProgramScope> {
   const tenantId = req.tenantId!;
-  return { tenantId, programId: req.programId ?? (await ensureDefaultProgram(tenantId)).id };
+  return { tenantId, programId: req.programId! };
 }
 
 const reviewerName = (req: Request): string => req.user?.name || req.user?.email || 'Compliance reviewer';

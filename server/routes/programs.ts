@@ -2,14 +2,15 @@ import { Router, Request, Response } from 'express';
 import {
   ProgramError,
   type ProgramErrorCode,
+  adoptLegacyRowsOnce,
   archiveProgram,
   createProgram,
   deleteProgram,
-  ensureDefaultProgram,
   getProgram,
   getProgramMetrics,
   listPrograms,
   listProgramEvents,
+  setTenantDefaultProgram,
   setVmTargetProgram,
   unarchiveProgram,
   updateProgram,
@@ -17,6 +18,7 @@ import {
   type ProgramPatch,
 } from '../programs';
 import { changeProgramAssets, getProgramBoundary, listAssetMemberships, parseAssetChange } from '../programAssets';
+import { getUserDefaultProgramId } from '../userProgramDefaults';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { ensureActiveTenant } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
@@ -36,11 +38,11 @@ const STATUS_BY_CODE: Record<ProgramErrorCode, number> = {
   framework_immutable: 400,
   framework_not_enabled: 403,
   program_not_found: 404,
+  program_required: 409,
   program_name_taken: 409,
   program_limit: 409,
   program_archived: 409,
   scoping_conflict: 409,
-  program_is_default: 409,
   program_not_empty: 409,
   invalid_scoping: 400,
   invalid_vm_target: 400,
@@ -64,15 +66,17 @@ const idOf = (req: Request): string => String(req.params.id);
 
 /**
  * GET /api/v1/tenants/:tenantId/programs[?includeArchived=true]
- * The tenant's programs, the default first, each with its metrics ({ documented, total, evidence, openPoam }).
+ * The tenant's programs, the organization default first, each with its metrics ({ documented, total, evidence, openPoam }) and `isMyDefault`
+ * (the signed-in user's personal default). A tenant with no program gets an empty list: nothing is created here.
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
   const tenantId = req.tenantId!;
   try {
-    await ensureDefaultProgram(tenantId);
+    await adoptLegacyRowsOnce(tenantId);
     const programs = await listPrograms(tenantId, { includeArchived: req.query.includeArchived === 'true' });
-    const withMetrics = await Promise.all(programs.map(async (p) => ({ ...p, metrics: await getProgramMetrics(p) })));
+    const mine = await getUserDefaultProgramId(tenantId, req.user?.uid ?? '');
+    const withMetrics = await Promise.all(programs.map(async (p) => ({ ...p, isMyDefault: p.id === mine, metrics: await getProgramMetrics(p) })));
     res.json({ tenantId, totalCount: withMetrics.length, programs: withMetrics });
   } catch (err: unknown) {
     fail(res, err, 'list the programs');
@@ -88,7 +92,6 @@ router.get('/asset-memberships', async (req: Request, res: Response): Promise<vo
   if (!ensureActiveTenant(req, res)) return;
   const tenantId = req.tenantId!;
   try {
-    await ensureDefaultProgram(tenantId);
     res.json({ memberships: await listAssetMemberships(tenantId) });
   } catch (err: unknown) {
     fail(res, err, 'list the asset memberships');
@@ -180,6 +183,22 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
+ * PUT /api/v1/tenants/:tenantId/programs/:id/default
+ * Makes the program the organization default (the fallback landing program of everyone who has no personal default). 200 { program }.
+ * Owner / MSP admin only (the write guard of this router). 404 program_not_found, 409 program_archived.
+ */
+router.put('/:id/default', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const program = await setTenantDefaultProgram(req.tenantId!, idOf(req));
+    console.log(`[Programs API] ${req.user?.uid} set program ${program.id} as the default in ${req.tenantId}`);
+    res.json({ program });
+  } catch (err: unknown) {
+    fail(res, err, 'set the default program');
+  }
+});
+
+/**
  * PUT /api/v1/tenants/:tenantId/programs/:id/vm-target
  * Makes the program the tenant's VM target (the program that receives vulnerability-management snapshots and POA&M items); the flag of
  * the previous target is cleared. 200 { program, previousId, openPoamInPrevious }: existing data stays in the previous target, and
@@ -245,7 +264,10 @@ router.get('/:id/events', async (req: Request, res: Response): Promise<void> => 
   }
 });
 
-/** POST /api/v1/tenants/:tenantId/programs/:id/archive: reads stay possible, writes are refused. The default program cannot be archived. */
+/**
+ * POST /api/v1/tenants/:tenantId/programs/:id/archive: reads stay possible, writes are refused. Archiving the default program makes the
+ * oldest active one the default; archiving the last active program leaves the tenant with none. Not the VM target (409 program_is_vm_target).
+ */
 router.post('/:id/archive', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
   try {
@@ -267,8 +289,8 @@ router.post('/:id/unarchive', async (req: Request, res: Response): Promise<void>
 
 /**
  * DELETE /api/v1/tenants/:tenantId/programs/:id
- * 204. Never the default program (409 program_is_default) and never one that holds evidence, SSP imports or POA&M items
- * (409 program_not_empty, with the counts): archive those instead.
+ * 204. Never one that holds evidence, SSP imports or POA&M items (409 program_not_empty, with the counts): archive those instead.
+ * Deleting the default program makes the oldest active one the default.
  */
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;

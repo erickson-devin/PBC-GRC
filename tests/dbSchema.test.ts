@@ -529,6 +529,20 @@ assert(
 const afterSm = smHeadingAt < 0 ? '' : TABLES_SQL.slice(smHeadingAt);
 assert(afterSm !== '' && !afterSm.includes('NOT VALID') && !afterSm.includes('SET NOT NULL'), 'SM-D6: no NOT VALID check and no SET NOT NULL after the SSP metadata heading');
 
+console.log('\n--- per-user default program (user_program_defaults) ---');
+const updAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS user_program_defaults (');
+const updBlock = updAt < 0 ? '' : TABLES_SQL.slice(updAt, TABLES_SQL.indexOf('\n  );', updAt));
+assert(updAt > smAt && updBlock.includes('tenant_id VARCHAR(64) NOT NULL') && updBlock.includes('user_id VARCHAR(128) NOT NULL') && updBlock.includes('program_id VARCHAR(64) NOT NULL') && updBlock.includes('updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()'), 'UPD1: user_program_defaults is created after program_ssp_metadata with NOT NULL tenant, user and program');
+assert(updBlock.includes('CONSTRAINT pk_user_program_defaults PRIMARY KEY (tenant_id, user_id)'), 'UPD2: one default per user and tenant (primary key)');
+assert(updBlock.includes('FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE'), 'UPD3: composite foreign key to programs, cascading with the program');
+assert(!updBlock.includes('tenant_users'), 'UPD4: no foreign key to tenant_users (a platform admin may have no membership row)');
+assert(
+  RLS_TENANT_TABLES.some((r) => r.table === 'user_program_defaults' && r.tenantColumn === 'tenant_id') &&
+    !(RLS_PROGRAM_TABLES as readonly string[]).includes('user_program_defaults') &&
+    !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes('user_program_defaults'),
+  'UPD5: a tenant table (tenant RLS), not a program table and not backfilled'
+);
+
 const initAt = dbSrc.indexOf('export async function initDb(');
 const verAt = dbSrc.indexOf('assertSupportedPostgresVersion(ver.rows', initAt);
 const roleAt = dbSrc.indexOf('assessDatabaseRole(', initAt);

@@ -1,5 +1,6 @@
 import './testEnv';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { __expireInvitationForTests, hashInviteToken } from '../server/invitations';
 import { inviteRateLimiter } from '../server/routes/invites';
 
@@ -51,6 +52,7 @@ async function run() {
 
   const owner = person('u_inv_owner');
   const tenantId = (await call('POST', '/tenants', owner, undefined, { name: 'Invite Org' })).body?.tenant?.id as string;
+  await firstProgram(tenantId); // a tenant starts with no program
   const otherOwner = person('u_inv_other');
   const otherTenant = (await call('POST', '/tenants', otherOwner, undefined, { name: 'Other Org' })).body?.tenant?.id as string;
 

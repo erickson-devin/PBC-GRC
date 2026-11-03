@@ -47,7 +47,7 @@ async function run() {
   const assessor = person('u_ps_assessor');
   const viewer = person('u_ps_viewer');
 
-  console.log('--- Setup: two tenants, a default program each ---');
+  console.log('--- Setup: two tenants (no program yet) ---');
   const mk = async (name: string) =>
     (await call('POST', '/tenants', owner, undefined, { name, primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5'] })).body?.tenant?.id as string;
   const T = await mk('Scoping T');
@@ -60,9 +60,12 @@ async function run() {
 
   console.log('\n--- 1-9: creating programs ---');
   const list1 = await progs(T);
-  const programs1 = (list1.body?.programs ?? []) as Json[];
-  const DEFAULT = programs1[0]?.id as string;
-  assert(list1.status === 200 && programs1.length === 1 && programs1[0].isDefault === true && programs1[0].frameworkId === 'CMMC_L2' && programs1[0].baseline === null && ID_PATTERN.test(DEFAULT), '1 GET /programs: the one default program, on the tenant\'s primary framework CMMC_L2', list1.body);
+  const list1b = await progs(T);
+  assert(list1.status === 200 && list1.body?.totalCount === 0 && (list1.body?.programs ?? []).length === 0 && list1b.body?.totalCount === 0, '1 GET /programs of a new tenant: totalCount 0, twice (nothing is created)', [list1.body, list1b.body]);
+  const first = await newProgram(T, { name: 'Default Boundary', frameworkId: 'CMMC_L2' });
+  const DEFAULT = first.body?.program?.id as string;
+  assert(first.status === 201 && first.body?.program?.isDefault === true && first.body.program.frameworkId === 'CMMC_L2' && first.body.program.baseline === null && ID_PATTERN.test(DEFAULT), '1 POST the first program: 201 and it is the default', first.body);
+  assert((await call('GET', '/controls?framework=CMMC_L2', owner, T)).status === 200, '1 and a request with no x-program-id header now resolves to it (GET /controls 200)');
   const a = await newProgram(T, { name: 'Boundary A', frameworkId: 'CMMC_L2' });
   const A = a.body?.program?.id as string;
   const b = await newProgram(T, { name: 'Boundary B', frameworkId: 'CMMC_L2' });
@@ -139,10 +142,11 @@ async function run() {
   const uploadArchived = await call('POST', '/evidence/upload-url', owner, T, { controlId: AC1, fileName: 'x.txt', fileHash: 'c'.repeat(64) }, A);
   const readArchived = await ctl(T, A);
   assert(writeArchived.status === 409 && writeArchived.body?.code === 'program_archived' && uploadArchived.status === 409 && readArchived.status === 200, '19 an archived program: PUT and upload -> 409 program_archived, GET -> 200', [writeArchived.body, uploadArchived.status, readArchived.status]);
-  const archDefault = await call('POST', `/tenants/${T}/programs/${DEFAULT}/archive`, owner, T);
-  assert(archDefault.status === 409 && archDefault.body?.code === 'program_is_default', '20 archive the default program -> 409 program_is_default', archDefault.body);
-  const delDefault = await call('DELETE', `/tenants/${T}/programs/${DEFAULT}`, owner, T);
-  assert(delDefault.status === 409 && delDefault.body?.code === 'program_is_default', '21 delete the default program -> 409 program_is_default', delDefault.body);
+  const viewerDefault = await call('PUT', `/tenants/${T}/programs/${B}/default`, viewer, T);
+  const assessorDefault = await call('PUT', `/tenants/${T}/programs/${B}/default`, assessor, T);
+  assert(viewerDefault.status === 403 && assessorDefault.status === 403 && ((await progs(T)).body?.programs ?? []).find((p: Json) => p.isDefault)?.id === DEFAULT, '20 PUT /programs/:id/default as a VIEWER or an ASSESSOR -> 403, the default is unchanged', [viewerDefault.status, assessorDefault.status]);
+  const defaultArchivedA = await call('PUT', `/tenants/${T}/programs/${A}/default`, owner, T);
+  assert(defaultArchivedA.status === 409 && defaultArchivedA.body?.code === 'program_archived', '21 an archived program cannot be made the default -> 409 program_archived', defaultArchivedA.body);
   const delA = await call('DELETE', `/tenants/${T}/programs/${A}`, owner, T);
   assert(delA.status === 409 && delA.body?.code === 'program_not_empty' && delA.body?.evidence === 1, '22 delete A (it holds evidence) -> 409 program_not_empty with the counts', delA.body);
   const delC = await call('DELETE', `/tenants/${T}/programs/${C}`, owner, T);
@@ -246,6 +250,42 @@ async function run() {
   assert(c14.status === 200 && JSON.stringify(c14.body?.program?.scoping) === JSON.stringify({ noMobileDevices: true }), 'C14 a matching expectedScoping -> 200 and the change is saved', [c14.status, c14.body]);
   const c15 = await call('PUT', `/tenants/${T}/programs/${CF}`, owner, T, { scoping: {}, expectedScoping: 'x' });
   assert(c15.status === 400 && c15.body?.code === 'invalid_scoping', 'C15 an expectedScoping that is not an object -> 400 invalid_scoping', [c15.status, c15.body]);
+
+  console.log('\n--- N1-N12: no program yet, and the default moves ---');
+  const T3 = await mk('Scoping T3');
+  await call('POST', `/tenants/${T3}/members`, owner, T3, { userId: 'u_ps_viewer', email: 'u_ps_viewer@test.mil', role: 'VIEWER' });
+  const t3Empty = await progs(T3);
+  const t3EmptyAgain = await progs(T3);
+  assert(t3Empty.body?.totalCount === 0 && t3EmptyAgain.body?.totalCount === 0, 'N1 a new tenant lists no programs, twice', [t3Empty.body, t3EmptyAgain.body]);
+  const noProgram = async (p: string, method = 'GET', body?: unknown) => {
+    const r = await call(method, p, owner, T3, body);
+    return r.status === 409 && r.body?.code === 'program_required';
+  };
+  assert(
+    (await noProgram('/controls?framework=CMMC_L2')) && (await noProgram(`/controls/${AC1}`, 'PUT', { implementationNotes: 'x' })) && (await noProgram('/evidence')) && (await noProgram(`/tenants/${T3}/ssp-imports/capabilities`)),
+    'N2 with no program, GET /controls, PUT /controls/:id, GET /evidence and GET ssp-imports/capabilities -> 409 program_required'
+  );
+  const t3Sources = await call('GET', `/tenants/${T3}/vm/sources`, owner, T3);
+  assert(t3Sources.status === 200, 'N3 GET vm/sources still works with no program (tenant-wide)', t3Sources.status);
+  const t3a = await newProgram(T3, { name: 'T3 first', frameworkId: 'CMMC_L2' });
+  const T3A = t3a.body?.program?.id as string;
+  const t3b = await newProgram(T3, { name: 'T3 second', frameworkId: 'CMMC_L2' });
+  const T3B = t3b.body?.program?.id as string;
+  assert(t3a.status === 201 && t3a.body?.program?.isDefault === true && t3b.body?.program?.isDefault === false, 'N4 the first program is the default, the second is not', [t3a.body?.program?.isDefault, t3b.body?.program?.isDefault]);
+  assert((await call('GET', '/controls?framework=CMMC_L2', owner, T3)).status === 200, 'N5 header-less GET /controls is 200 once a program exists');
+  const moved = await call('PUT', `/tenants/${T3}/programs/${T3B}/default`, owner, T3);
+  const afterMove = ((await progs(T3)).body?.programs ?? []) as Json[];
+  assert(moved.status === 200 && moved.body?.program?.isDefault === true && afterMove.find((p) => p.isDefault)?.id === T3B && afterMove.filter((p) => p.isDefault).length === 1, 'N6 the owner moves the default (PUT /programs/:id/default -> 200)', [moved.status, afterMove.map((p) => p.isDefault)]);
+  assert((await call('PUT', `/tenants/${T3}/programs/${T3A}/default`, viewer, T3)).status === 403, 'N7 a VIEWER cannot move it (403)');
+  assert((await call('PUT', `/tenants/${T3}/programs/${t2Program}/default`, owner, T3)).status === 404, "N7 another tenant's program -> 404");
+  const archT3B = await call('POST', `/tenants/${T3}/programs/${T3B}/archive`, owner, T3);
+  const afterArchive = ((await progs(T3)).body?.programs ?? []) as Json[];
+  assert(archT3B.status === 200 && archT3B.body?.program?.isDefault === false && afterArchive.length === 1 && afterArchive[0].id === T3A && afterArchive[0].isDefault === true, 'N8 archiving the default (two programs) -> 200 and the other becomes the default', [archT3B.body, afterArchive.map((p) => p.id)]);
+  assert(afterArchive.every((p) => typeof p.createdAt === 'string' && p.createdAt !== ''), 'N9 every listed program carries createdAt');
+  const archT3A = await call('POST', `/tenants/${T3}/programs/${T3A}/archive`, owner, T3);
+  assert(archT3A.status === 200 && archT3A.body?.program?.isDefault === false && (await noProgram('/controls?framework=CMMC_L2')), 'N10 archiving the last active program -> 200, and a header-less request is 409 program_required');
+  const unarchT3B = await call('POST', `/tenants/${T3}/programs/${T3B}/unarchive`, owner, T3);
+  assert(unarchT3B.status === 200 && unarchT3B.body?.program?.isDefault === true && (await call('GET', '/controls?framework=CMMC_L2', owner, T3)).status === 200, 'N11 unarchiving with no active default makes that program the default');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

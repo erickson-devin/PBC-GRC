@@ -175,8 +175,10 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     const configScans = normalizeConfiguration(payload);
 
     const now = new Date().toISOString();
-    // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the default program when none is set, decision 6).
-    const programId = (await resolveVmTargetProgram(tenantId)).program.id;
+    // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the organization default when none is
+    // set and it is a CMMC program). With no such program the findings are still normalized and the POA&M step is skipped: the first run after
+    // a target exists plans every overdue open finding.
+    const programId = (await resolveVmTargetProgram(tenantId))?.program.id;
     // The legacy bare-kind agent id key ("wazuh") can be rewritten to this source's key only when it is the tenant's one source of that kind.
     const sameKind = (await listSources(tenantId)).filter((s) => s.kind === kind);
     const soleOfKind = sameKind.length === 1 && sameKind[0].id === run.sourceId;
@@ -259,7 +261,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       checkpoint();
 
       let poam = 0;
-      if (isPoamAutocreateEnabled()) {
+      if (programId && isPoamAutocreateEnabled()) {
         const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client, programId);
         const drafts = planPoamItems(overdue, linked, now);
         await insertPoamItems(tenantId, drafts, client, programId);

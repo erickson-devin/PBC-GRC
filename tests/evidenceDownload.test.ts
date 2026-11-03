@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { resolveTenantLocalPath } from '../server/evidence/storage';
 import { queryWithProgram } from '../server/db';
 
@@ -58,6 +59,7 @@ async function run() {
   console.log('--- Setup: a tenant with a VIEWER member ---');
   const T = (await call('POST', '/tenants', owner, undefined, { name: 'Evidence Download T', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5'] })).body?.tenant?.id as string;
   assert(Boolean(T), 'tenant created', T);
+  await firstProgram(T, 'CMMC_L2'); // a tenant starts with no program: the first one is its organization default
   await call('POST', `/tenants/${T}/members`, owner, T, { userId: 'u_ed_viewer', email: 'u_ed_viewer@test.mil', role: 'VIEWER' });
 
   console.log('\n--- D1: upload ---');

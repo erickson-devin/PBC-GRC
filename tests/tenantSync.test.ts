@@ -4,6 +4,7 @@ import path from 'path';
 // Framework (program) settings are decided by platform administrators: this test's actor is listed as one.
 process.env.PLATFORM_ADMIN_EMAILS = 'u_sync_owner@test.mil';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import {
   applyRoleSync,
   isValidCageCode,
@@ -229,6 +230,8 @@ async function contractTests() {
   const analyst = person('u_sync_analyst');
   const t1 = ((await call('POST', '/tenants', owner, undefined, { name: 'Sync Org One' })).json as any).tenant.id as string;
   const t2 = ((await call('POST', '/tenants', owner, undefined, { name: 'Sync Org Two', primaryFramework: 'CMMC_L2' })).json as any).tenant.id as string;
+  await firstProgram(t1); // a tenant starts with no program
+  await firstProgram(t2, 'CMMC_L2');
   await call('POST', `/tenants/${t1}/members`, owner, t1, { userId: 'u_sync_analyst', email: 'analyst@test.mil', role: 'ASSESSOR' });
 
   const fetchMerged = async (token: string, cache: Tenant[] = []) => {

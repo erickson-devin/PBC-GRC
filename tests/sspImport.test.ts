@@ -5,12 +5,14 @@ import fs from 'fs';
 import path from 'path';
 import { makeDocx, makePdf } from './sspFixtures';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { chunkDocument } from '../server/ssp/chunk';
 import { mapDocumentToControls, reflowPdfLines } from '../server/ssp/controlMapper';
 import { classifyChildExit, detectDocumentKind, extractDocument, ExtractionError } from '../server/ssp/extract';
 import { extractWith } from '../server/ssp/extractCore';
 import { getFrameworkControls } from '../src/data/frameworks';
-import { ensureDefaultProgram, createProgram } from '../server/programs';
+import { createProgram } from '../server/programs';
+import { firstProgram } from './programFixture';
 
 /**
  * SSP import, Phase 1: upload, extraction, chunking, regex control mapping, the staging area, and the review/commit rules.
@@ -314,6 +316,10 @@ async function apiTests() {
   }
   const otherTenant = (await call('POST', '/tenants', stranger, undefined, { name: 'Other Org' })).body?.tenant?.id as string;
   const l2tenant = (await call('POST', '/tenants', l2owner, undefined, { name: 'L2 Org', primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L1', 'CMMC_L2'] })).body?.tenant?.id as string;
+  // a tenant starts with no program: the first one is its organization default
+  await firstProgram(tenant);
+  await firstProgram(otherTenant);
+  await firstProgram(l2tenant, 'CMMC_L2');
   const root = (t: string) => `/tenants/${t}/ssp-imports`;
 
   console.log('\n--- Access and capabilities ---');
@@ -457,7 +463,7 @@ async function programTests() {
   const owner = person('u_ssp_progowner');
   const tenant = (await call('POST', '/tenants', owner, undefined, { name: 'Program SSP Org' })).body?.tenant?.id as string;
   const root = `/tenants/${tenant}/ssp-imports`;
-  const def = await ensureDefaultProgram(tenant);
+  const def = await firstProgram(tenant);
   const progA = await createProgram(tenant, { name: 'Boundary A', frameworkId: 'CMMC_L1' }, 'u_ssp_progowner');
   const progB = await createProgram(tenant, { name: 'Boundary B', frameworkId: 'CMMC_L1' }, 'u_ssp_progowner');
   const A = progA.id;

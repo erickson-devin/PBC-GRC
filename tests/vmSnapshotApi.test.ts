@@ -11,7 +11,8 @@ import { __resetVmSnapshotLimiterForTests, __setVmSnapshotFaultForTests, latestS
 import { __runVmSchedulerTickForTests, startVmScheduler, stopVmScheduler } from '../server/vm/scheduler';
 import { VM_NOTES_BEGIN, VM_NOTES_END } from '../server/vm/snapshot';
 import { listControlAssessmentEvents, readControlAssessments } from '../server/controlAssessments';
-import { createProgram, ensureDefaultProgram } from '../server/programs';
+import { createProgram } from '../server/programs';
+import { firstProgram } from './programFixture';
 import { queryWithProgram } from '../server/db';
 import { readTenantFile } from '../server/evidence/storage';
 import { insertPoamItems, loadSnapshotFindings, markRunNormalized } from '../server/vm/findingsStore';
@@ -139,6 +140,10 @@ async function run() {
   const N = await mkTenant(owner3, 'Snap N');
   const S = await mkTenant(owner4, 'Snap S');
   assert(Boolean(L1 && L2 && N && S), 'four tenants created (L1 default program, L2 CMMC Level 2 by an administrator, N without a source, S)', { L1, L2, N, S });
+  // a tenant starts with no program: the first one is its organization default, and the VM target while none is flagged
+  const l1Program = await firstProgram(L1);
+  const l2Program = await firstProgram(L2, 'CMMC_L2');
+  await firstProgram(S);
   await call('POST', `/tenants/${L1}/members`, owner1, L1, { userId: 'u_snap_v', email: 'u_snap_v@test.mil', role: 'VIEWER' });
 
   const tokenRes = await call('POST', `/tenants/${L1}/vm/tokens`, owner1, L1, { name: 'snap-ingest' }, HTTPS);
@@ -222,7 +227,7 @@ async function run() {
   assert(si2?.status === 'MET', 'A08 the status is still MET', si2?.status);
   assert((await snapshotRowsOf(L1, owner1)).length === 16, 'A08 sixteen snapshot rows in total after two snapshots', (await snapshotRowsOf(L1, owner1)).length);
 
-  const live1 = await readControlAssessments({ tenantId: L1, programId: (await ensureDefaultProgram(L1)).id });
+  const live1 = await readControlAssessments({ tenantId: L1, programId: l1Program.id });
   assert(!live1.has('RA.L2-3.11.2') && !live1.has('RA.L2-3.11.3'), 'A09 a Level 1 tenant gets no control row on RA.L2-3.11.2 or RA.L2-3.11.3');
   assert(String(live1.get('SI.L1-3.14.1')?.notes).includes(VM_NOTES_BEGIN), 'A09 only SI.L1-3.14.1 carries the block');
 
@@ -237,7 +242,7 @@ async function run() {
     snap3,
   );
   assert((await snapshotRowsOf(L2, admin)).length === 14, 'A10 fourteen snapshot rows (8 base + 6 inherited from SI.L1-3.14.1)', (await snapshotRowsOf(L2, admin)).length);
-  const live3 = await readControlAssessments({ tenantId: L2, programId: (await ensureDefaultProgram(L2)).id });
+  const live3 = await readControlAssessments({ tenantId: L2, programId: l2Program.id });
   assert(live3.get('RA.L2-3.11.2')?.status === 'NOT_MET', 'A10 RA.L2-3.11.2 is still NOT_MET', live3.get('RA.L2-3.11.2'));
   assert(live3.get('CA.L2-3.12.3')?.status === 'NOT_STARTED' && String(live3.get('CA.L2-3.12.3')?.notes).includes(VM_NOTES_BEGIN), 'A10 the created CA.L2-3.12.3 row is NOT_STARTED and carries the block', live3.get('CA.L2-3.12.3'));
 
@@ -346,7 +351,7 @@ async function run() {
   assert(post25b.status === 201 && rep25b.snapshotId === post25b.body?.snapshot?.id && rep25b.criteria?.sourcesWithinInterval?.met === true, 'A25 a NORMALIZED run after it makes criterion 1 met again', rep25b.criteria?.sourcesWithinInterval);
 
   console.log('\n--- A26: the snapshot belongs to the default program only ---');
-  const defaultL1 = await ensureDefaultProgram(L1);
+  const defaultL1 = l1Program;
   const programB = await createProgram(L1, { name: 'Snap L1 second program', frameworkId: 'CMMC_L1' }, 'u_snap_o1');
   const scopeDefault = { tenantId: L1, programId: defaultL1.id };
   const scopeB = { tenantId: L1, programId: programB.id };
@@ -425,7 +430,7 @@ async function run() {
   assert(setDefault.status === 200 && post27i.status === 201 && evDefaultAfter27i > evDefaultBefore27i && evBAfter27i === evBBefore27i, 'A27i moving the target back to the default program sends the next snapshot there and none to the second program', [setDefault.status, post27i.status, evDefaultBefore27i, evDefaultAfter27i, evBBefore27i, evBAfter27i]);
 
   console.log('\n--- A28: a failed snapshot leaves nothing behind (#56) ---');
-  const scopeL2 = { tenantId: L2, programId: (await ensureDefaultProgram(L2)).id };
+  const scopeL2 = { tenantId: L2, programId: l2Program.id };
   const snapDirL2 = path.join(VM_TEST_VAULT, 'tenants', L2, 'vm', 'snapshots');
   const fileCountL2 = () => (fs.existsSync(snapDirL2) ? fs.readdirSync(snapDirL2).length : 0);
   const stateL2 = async () => {
@@ -483,6 +488,20 @@ async function run() {
   const item29 = latest29.body?.report?.sources?.items?.[0] as Json;
   assert(item29?.lastRunAt !== null && item29?.lastNormalizedAt === null, 'A29 the report shows the received time and no normalized time', item29);
   assert(String(latest29.body?.report?.criteria?.sourcesWithinInterval?.reason).includes('l2-src (never reported)'), 'A29 criterion 1 calls the received-only source "never reported"', latest29.body?.report?.criteria?.sourcesWithinInterval);
+
+  console.log('\n--- A30: a tenant with no program has no VM target ---');
+  const NP = await mkTenant(owner1, 'Snap NP');
+  await recordReceivedRun(NP, dummyRun('np-src'));
+  __resetVmSnapshotLimiterForTests();
+  const post30 = await snapshotPost(NP, owner1);
+  assert(post30.status === 409 && post30.body?.error === 'vm_no_program', 'A30 POST /vm/snapshot with no program -> 409 vm_no_program', post30.body);
+  const tick30 = await __runVmSchedulerTickForTests({ onlyTenantIds: [NP] });
+  assert(tick30.errors === 0 && !tick30.snapshots.includes(NP) && (await latestSnapshotAt(NP)) === null, 'A30 the scheduler skips the tenant silently: no error, no snapshot', tick30);
+  assert((await call('GET', `/tenants/${NP}/vm/snapshots`, owner1, NP)).body?.totalCount === 0 && (await call('GET', `/tenants/${NP}/vm/sources`, owner1, NP)).status === 200, 'A30 the snapshot list is empty and the sources still list');
+  await firstProgram(NP);
+  __resetVmSnapshotLimiterForTests();
+  const post30b = await snapshotPost(NP, owner1);
+  assert(post30b.status === 201, 'A30 once a CMMC program exists (the organization default) the snapshot is taken', post30b.body);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

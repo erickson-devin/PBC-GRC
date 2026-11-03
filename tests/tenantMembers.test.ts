@@ -1,5 +1,6 @@
 import './testEnv';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 
 /**
  * tenant_users writer: POST /api/v1/tenants/:tenantId/members inserts / updates membership rows, and those rows
@@ -46,6 +47,8 @@ function shutdown(code: number) {
 
 async function run() {
   await new Promise((r) => setTimeout(r, 500));
+  await firstProgram(T_A); // a tenant starts with no program
+  await firstProgram(T_B);
 
   console.log('--- Insert / update ---');
   const empty = await call('GET', `/tenants/${T_A}/members`, owner, T_A);

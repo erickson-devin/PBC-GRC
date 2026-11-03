@@ -3,6 +3,7 @@ import './localAuthEnv';
 import crypto from 'crypto';
 import fs from 'fs';
 import app, { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import {
   LOCAL_TOKEN_AUDIENCE,
   LOCAL_TOKEN_ISSUER,
@@ -218,6 +219,7 @@ async function run() {
   const created = await call('POST', '/tenants', { token: annToken, body: { name: 'Enclave Systems', primaryFramework: 'CMMC_L2' } });
   const tenantId: string = created.body?.tenant?.id;
   assert(created.status === 201 && created.body?.role === 'TENANT_OWNER', 'a local user bootstraps a tenant and becomes its owner');
+  await firstProgram(tenantId); // a tenant starts with no program
   assert((await call('GET', '/controls', { token: annToken, tenant: tenantId })).status === 200, 'GET /controls with the local token + x-tenant-id');
   assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: annToken, tenant: tenantId, body: { status: 'MET', implementationNotes: 'local auth' } })).status === 200, 'owner can write (role read from tenant_users)');
 

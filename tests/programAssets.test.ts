@@ -2,6 +2,7 @@ import './testEnv';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 
 /**
  * Boundary asset membership over HTTP (issue #26): which assets of the tenant's inventory a program declares inside its boundary.
@@ -63,10 +64,9 @@ async function run() {
   const a1 = (await call('POST', `/tenants/${T}/assets`, owner, T, { hostName: HOST, cmmcAssetCategory: 'CUI_ASSET' })).body?.asset?.id as string;
   const a2 = (await call('POST', `/tenants/${T}/assets`, owner, T, { hostName: 'member-host-2', cmmcAssetCategory: 'SECURITY_PROTECTION' })).body?.asset?.id as string;
   const r1 = (await call('POST', `/tenants/${R}/assets`, rival, R, { hostName: 'rival-host-1', cmmcAssetCategory: 'CUI_ASSET' })).body?.asset?.id as string;
-  const progs = await call('GET', `/tenants/${T}/programs`, owner, T);
-  const DEF = progs.body?.programs?.find((p: Json) => p.isDefault)?.id as string;
+  const DEF = (await firstProgram(T)).id; // a tenant starts with no program: the first one is its organization default
   const P2 = (await call('POST', `/tenants/${T}/programs`, owner, T, { name: 'Second boundary', frameworkId: 'CMMC_L1' })).body?.program?.id as string;
-  const RP = (await call('GET', `/tenants/${R}/programs`, rival, R)).body?.programs?.[0]?.id as string;
+  const RP = (await firstProgram(R)).id;
   assert(Boolean(T && R && a1 && a2 && r1 && DEF && P2 && RP), 'setup: tenants, assets and programs exist', { T, R, a1, a2, r1, DEF, P2, RP });
   const assetsUrl = (tenant: string, program: string) => `/tenants/${tenant}/programs/${program}/assets`;
 

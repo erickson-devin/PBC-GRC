@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { makeDocx } from './sspFixtures';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { __drainVmWorkerForTests } from '../server/vm/worker';
 import { recordReceivedRun } from '../server/vm/store';
 import { __resetVmSnapshotLimiterForTests } from '../server/vm/snapshotWriter';
@@ -164,6 +165,11 @@ async function run() {
   const T3 = await mkTenant(owner3, 'Hist T3');
   const T4 = await mkTenant(admin, 'Hist T4', { primaryFramework: 'CMMC_L2', enabledFrameworks: ['CMMC_L1', 'CMMC_L2'] });
   assert(Boolean(T1 && T2 && T3 && T4) && new Set([T1, T2, T3, T4]).size === 4, 'four tenants created (T1-T3 Level 1, T4 Level 2 by an administrator)', { T1, T2, T3, T4 });
+  // a tenant starts with no program: each one's first program is its organization default
+  await firstProgram(T1);
+  await firstProgram(T2);
+  await firstProgram(T3);
+  await firstProgram(T4, 'CMMC_L2');
   await call('POST', `/tenants/${T1}/members`, owner1, T1, { userId: 'u_hist_v', email: 'u_hist_v@test.mil', role: 'VIEWER' });
   await recordReceivedRun(T1, dummyRun('hist-t1'));
   await recordReceivedRun(T4, dummyRun('hist-t4'));

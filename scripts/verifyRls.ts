@@ -1377,6 +1377,17 @@ async function verifyProgramIsolation() {
     const smCascade = await queryWithProgram(smRaceScope, 'SELECT 1 FROM program_ssp_metadata WHERE program_id = $1', [smRaceProgram.id]);
     check(smCascade.rows.length === 0, '8l. program_ssp_metadata: deleting a program removes its row through the cascade', 'saw ' + smCascade.rows.length);
 
+    // 8m. per-user default program: tenant isolation of user_program_defaults (ids only, no program policy)
+    await queryWithTenant(TENANT_X, 'INSERT INTO user_program_defaults (tenant_id, user_id, program_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_u1', programA]);
+    const updSeenByX = await queryWithTenant(TENANT_X, 'SELECT 1 FROM user_program_defaults WHERE tenant_id = $1 AND user_id = $2', [TENANT_X, 'rls_verify_u1']);
+    const updSeenByY = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM user_program_defaults WHERE tenant_id = $1', [TENANT_X]);
+    check(updSeenByX.rows.length === 1 && updSeenByY.rows.length === 0, "8m. user_program_defaults: tenant X sees its own row, tenant Y sees none of X's", 'X ' + updSeenByX.rows.length + ', Y ' + updSeenByY.rows.length);
+    check(
+      await rejectsWith(TENANT_Y, 'INSERT INTO user_program_defaults (tenant_id, user_id, program_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_u2', programA], { code: '42501' }),
+      "8m. user_program_defaults: tenant Y cannot insert a row into tenant X (WITH CHECK, 42501)", lastRejection
+    );
+    await queryWithTenant(TENANT_X, "DELETE FROM user_program_defaults WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {

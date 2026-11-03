@@ -5,6 +5,7 @@
 
 import './testEnv';
 import app, { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import http from 'http';
 
 const TEST_PORT = 8080;
@@ -93,6 +94,9 @@ function assert(condition: boolean, message: string) {
 }
 
 async function runMultiFrameworkTests() {
+  // a tenant starts with no program: the first one is its organization default
+  await firstProgram('tenant-alpha');
+  await firstProgram('tenant-beta');
   console.log('================================================================');
   console.log('🧪 RUNNING MULTI-FRAMEWORK & EVIDENCE INHERITANCE TEST SUITE');
   console.log('================================================================\n');

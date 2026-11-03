@@ -39,13 +39,17 @@ const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = aw
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
 const { runVmSnapshot, latestSnapshotAt, __setVmSnapshotFaultForTests } = await import('../server/vm/snapshotWriter');
 const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
-const { ensureDefaultProgram } = await import('../server/programs');
+const { createProgram, listPrograms } = await import('../server/programs');
 const { VM_NOTES_BEGIN } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
 
-// The control history and answers are program-scoped: the VM snapshot writes into the tenant's default program.
-const scopeOf = async (tenantId: string) => ({ tenantId, programId: (await ensureDefaultProgram(tenantId)).id });
+// The control history and answers are program-scoped: the VM snapshot writes into the tenant's VM target (its first program, the organization default).
+// A tenant starts with no program: the first scopeOf call creates it.
+const scopeOf = async (tenantId: string) => {
+  const existing = (await listPrograms(tenantId))[0] ?? (await createProgram(tenantId, { name: 'VM Verify Boundary', frameworkId: 'CMMC_L2' }, 'vm_verify'));
+  return { tenantId, programId: existing.id };
+};
 
 let failures = 0;
 function check(ok: boolean, message: string, detail?: string) {
@@ -587,7 +591,7 @@ async function main() {
       await inProgram("DELETE FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = 'system:vm-snapshot'", [t]).catch(() => undefined);
       await inProgram('DELETE FROM control_assessment_events WHERE tenant_id = $1', [t]).catch(() => undefined);
       await inProgram("DELETE FROM control_assessments WHERE tenant_id = $1 AND control_id IN ('RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1', 'CA.L2-3.12.3')", [t]).catch(() => undefined);
-      await queryWithTenant(t, 'DELETE FROM programs WHERE tenant_id = $1', [t]).catch(() => undefined); // the default program ensureDefaultProgram created
+      await queryWithTenant(t, 'DELETE FROM programs WHERE tenant_id = $1', [t]).catch(() => undefined); // the program scopeOf created
       fs.rmSync(path.join(localStorageRoot(), 'tenants', t, 'vm', 'snapshots'), { recursive: true, force: true });
     }
     await pool.query("DELETE FROM vm_vulns WHERE vuln_id LIKE 'VM-VERIFY-%' OR vuln_id LIKE 'CVE-2099-%'").catch(() => undefined);

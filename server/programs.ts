@@ -5,6 +5,7 @@ import { PROGRAM_FRAMEWORK_IDS } from './schema';
 import { readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
 import { __deleteProgramObjectivesForMemory, cloneObjectives } from './controlObjectives';
 import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
+import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
 import { getFrameworkControls } from '../src/data/frameworks';
@@ -15,8 +16,9 @@ import type { ProgramScoping } from '../src/types/program';
 
 /**
  * Programs: a tenant's authorization boundaries (an ATO effort or project). Each program has one framework and, for NIST SP 800-53,
- * one baseline; control answers, evidence, SSP imports and POA&M items belong to exactly one program. Every tenant has a default
- * program, created lazily from the tenant's primary framework, which also adopts the rows written before programs existed.
+ * one baseline; control answers, evidence, SSP imports and POA&M items belong to exactly one program. A tenant starts with NO program:
+ * the first one created becomes the organization default (`is_default`, a movable fallback that also adopts the rows written before
+ * programs existed). Each user may pick a personal default on top of it (userProgramDefaults.ts).
  *
  * This is the data layer: PostgreSQL (the tenant RLS context is set on every statement) or process memory when DB_MODE=memory.
  * The HTTP routes are in routes/programs.ts and the request scoping in middleware/programContext.ts.
@@ -59,8 +61,8 @@ export type ProgramErrorCode =
   | 'invalid_baseline'
   | 'program_name_taken'
   | 'program_limit'
-  | 'program_is_default'
   | 'program_not_found'
+  | 'program_required'
   | 'program_archived'
   | 'framework_immutable'
   | 'program_not_empty'
@@ -150,9 +152,17 @@ export function __resetProgramsForTests(): void {
   memoryPrograms.clear();
   memoryProgramEvents.length = 0;
   migratedTenants.clear();
+  __resetUserProgramDefaultsForTests();
 }
 
 const isMemory = (): boolean => getDbMode() === 'memory';
+
+let lastMemoryCreatedMs = 0;
+/** Memory only: a creation time that is later than every earlier one, so "the oldest program" is never a tie broken by a random id. */
+function nextMemoryCreatedAt(): string {
+  lastMemoryCreatedMs = Math.max(Date.now(), lastMemoryCreatedMs + 1);
+  return new Date(lastMemoryCreatedMs).toISOString();
+}
 const iso = (v: unknown): string => new Date(v as string).toISOString();
 const FRAMEWORK_ALIASES: Record<string, string> = { 'nist-800-53-r5': 'NIST_800_53_REV5' };
 
@@ -264,7 +274,10 @@ function defaultFramework(primary: unknown): { frameworkId: string; baseline: Pr
   return { frameworkId, baseline: frameworkId === 'NIST_800_53_REV5' ? 'MODERATE' : null };
 }
 
-/** Finds the tenant's default program or creates it (idempotent, safe against a concurrent creator). Does not migrate. */
+/**
+ * Finds the tenant's default program or creates the legacy one (idempotent, safe against a concurrent creator). Does not migrate.
+ * Only the operator backfill (migrateTenantToPrograms) may create it: a request never does.
+ */
 async function resolveDefaultProgram(tenantId: string): Promise<Program> {
   if (isMemory()) {
     const existing = [...memoryPrograms.values()].find((p) => p.tenantId === tenantId && p.isDefault);
@@ -310,18 +323,23 @@ async function selectOrCreateDefault(q: Query, tenantId: string): Promise<Progra
   return rowToProgram(again.rows[0]);
 }
 
+/** The tenant's organization default program (the active one flagged `is_default`), or null when it has none. Never creates a program. */
+export async function getTenantDefaultProgram(tenantId: string): Promise<Program | null> {
+  if (isMemory()) return [...memoryPrograms.values()].find((p) => p.tenantId === tenantId && p.isDefault && p.archivedAt === null) ?? null;
+  const res = await queryWithTenant(tenantId, 'SELECT * FROM programs WHERE tenant_id = $1 AND is_default AND archived_at IS NULL', [tenantId]);
+  return res.rows[0] ? rowToProgram(res.rows[0]) : null;
+}
+
 /**
- * The tenant's default program, created on first use ('Default Authorization Boundary', from the tenant's primary framework, CMMC_L1
- * without one, baseline MODERATE for NIST). The first call per tenant and process also adopts the tenant's legacy rows
- * (migrateTenantToPrograms).
+ * The first call per tenant and process, when the tenant has a default program: gives the rows written before programs existed (no
+ * program_id) to that program (migrateTenantToPrograms). Without a default there is nothing to give them to, and nothing is done.
+ * Run it before the default moves (archive, delete, change): the row policy maps a row with no program to the default program.
  */
-export async function ensureDefaultProgram(tenantId: string): Promise<Program> {
-  const program = await resolveDefaultProgram(tenantId);
-  if (!migratedTenants.has(tenantId)) {
-    await migrateTenantToPrograms(tenantId);
-    migratedTenants.add(tenantId);
-  }
-  return program;
+export async function adoptLegacyRowsOnce(tenantId: string): Promise<void> {
+  if (migratedTenants.has(tenantId)) return;
+  if (!(await getTenantDefaultProgram(tenantId))) return;
+  await migrateTenantToPrograms(tenantId);
+  migratedTenants.add(tenantId);
 }
 
 /**
@@ -390,7 +408,8 @@ async function isNameTaken(tenantId: string, name: string, exceptId?: string): P
  * Creates a program. The framework must be one the tenant has enabled (a tenant with no tenant record, the development fallback, is not
  * restricted); the baseline applies to NIST SP 800-53 only (LOW, MODERATE or HIGH, MODERATE when omitted); names are unique per tenant
  * ignoring case; a tenant holds at most 50 programs. The seed is blank, or a clone of another program of the tenant (cloneProgramContent;
- * `cloner` is who the copied rows are recorded under in the history, the requesting user).
+ * `cloner` is who the copied rows are recorded under in the history, the requesting user). The first program of a tenant (or the first
+ * one when no active default is left) becomes the organization default.
  */
 export async function createProgram(tenantId: string, input: NewProgramInput, createdBy: string | null, cloner?: ControlChangeActor): Promise<Program> {
   const name = validName(input.name);
@@ -421,7 +440,6 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   const cloneFrom = input.seed?.cloneFrom;
   if (cloneFrom !== undefined && cloneFrom !== null && typeof cloneFrom !== 'string') throw new ProgramError('program_not_found', 'Program to clone from not found');
 
-  await ensureDefaultProgram(tenantId);
   // The source must be a program of this tenant (another tenant's id is as unknown as a made-up one)
   const source = cloneFrom ? await requireProgram(tenantId, cloneFrom) : null;
   if (await isNameTaken(tenantId, name)) throw nameTaken();
@@ -435,32 +453,43 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   const who: ProgramActor = { actor: by ?? cloner?.actor ?? 'System', userId: cloner?.userId ?? null };
   let program: Program;
   if (isMemory()) {
-    const now = new Date().toISOString();
+    const now = nextMemoryCreatedAt();
+    // decided and stored with no await in between: two concurrent creations cannot both become the default
+    const isDefault = ![...memoryPrograms.values()].some((p) => p.tenantId === tenantId && p.isDefault && p.archivedAt === null);
     program = {
       id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary,
-      scoping, vmTarget: false, isDefault: false, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
+      scoping, vmTarget: false, isDefault, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
     };
     memoryPrograms.set(program.id, program);
     pushMemoryEvent(tenantId, program.id, 'scoping_set', who, null, scoping);
   } else {
-    try {
-      // the program and its first event in one transaction: a program never exists without the record of how it was scoped
-      program = await inTenantTx(tenantId, async (q) => {
+    // the program and its first event in one transaction: a program never exists without the record of how it was scoped.
+    // It is the default when the tenant has no active default yet; a concurrent first creation loses on unq_programs_default and retries as a plain program.
+    const insert = (mayBeDefault: boolean): Promise<Program> =>
+      inTenantTx(tenantId, async (q) => {
         const res = await q(
-          `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, privacy_baseline, system_boundary_summary, scoping, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+          `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, privacy_baseline, system_boundary_summary, scoping, created_by, is_default)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::boolean AND NOT EXISTS (SELECT 1 FROM programs WHERE tenant_id = $1 AND is_default))
            RETURNING *`,
-          [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, JSON.stringify(scoping), by]
+          [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, JSON.stringify(scoping), by, mayBeDefault]
         );
         const created = rowToProgram(res.rows[0]);
         await insertEventTx(q, tenantId, created.id, 'scoping_set', who, null, scoping);
         return created;
       });
+    try {
+      try {
+        program = await insert(true);
+      } catch (err) {
+        if ((err as { code?: string; constraint?: string })?.code !== '23505' || (err as { constraint?: string }).constraint !== 'unq_programs_default') throw err;
+        program = await insert(false);
+      }
     } catch (err) {
       if ((err as { code?: string })?.code === '23505') throw nameTaken();
       throw err;
     }
   }
+  if (program.isDefault) await adoptLegacyRowsOnce(tenantId); // a first program takes over the rows written before programs existed
   if (source) {
     try {
       await cloneProgramContent(source, program, cloner ?? { source: 'clone', actor: by ?? 'System', userId: null });
@@ -622,29 +651,67 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
   }
 }
 
+/** The program that takes over as the organization default when there is none: the oldest active one (ties by id), or null. */
+const successorOf = (programs: Program[]): Program | null =>
+  programs.filter((p) => p.archivedAt === null).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0] ?? null;
+
+/** Memory: when the tenant has no active default, the oldest active program becomes it. No await: callers rely on it being atomic. */
+function promoteSuccessorInMemory(tenantId: string): void {
+  const programs = [...memoryPrograms.values()].filter((p) => p.tenantId === tenantId);
+  if (programs.some((p) => p.isDefault && p.archivedAt === null)) return;
+  const next = successorOf(programs);
+  if (next) memoryPrograms.set(next.id, { ...next, isDefault: true, updatedAt: new Date().toISOString() });
+}
+
+/** PostgreSQL, inside a tenant transaction that holds the program rows locked: the same promotion as promoteSuccessorInMemory. */
+async function promoteSuccessorTx(q: Query, tenantId: string): Promise<void> {
+  const programs = (await q('SELECT * FROM programs WHERE tenant_id = $1', [tenantId])).rows.map(rowToProgram);
+  if (programs.some((p) => p.isDefault && p.archivedAt === null)) return;
+  const next = successorOf(programs);
+  if (next) await q('UPDATE programs SET is_default = TRUE, updated_at = NOW() WHERE tenant_id = $1 AND id = $2', [tenantId, next.id]);
+}
+
 async function setArchived(tenantId: string, id: string, archived: boolean): Promise<Program> {
   const current = await requireProgram(tenantId, id);
-  if (current.isDefault) throw new ProgramError('program_is_default', 'The default program cannot be archived');
   if (archived && current.vmTarget) throw new ProgramError('program_is_vm_target', 'The VM target program cannot be archived: choose another target first');
   if ((current.archivedAt !== null) === archived) return current;
+  await adoptLegacyRowsOnce(tenantId); // before the default can move: the legacy rows follow the default program
   if (isMemory()) {
+    const fresh = memoryPrograms.get(id) ?? current; // no await from here on: the whole change is atomic
     const now = new Date().toISOString();
-    const next: Program = { ...current, archivedAt: archived ? now : null, updatedAt: now };
+    if (archived) {
+      // is_default is cleared in the same step (an archived program is never the default), then the oldest active program takes over
+      memoryPrograms.set(id, { ...fresh, archivedAt: now, isDefault: false, updatedAt: now });
+      promoteSuccessorInMemory(tenantId);
+      return memoryPrograms.get(id) as Program;
+    }
+    const hasDefault = [...memoryPrograms.values()].some((p) => p.tenantId === tenantId && p.isDefault && p.archivedAt === null);
+    const next: Program = { ...fresh, archivedAt: null, isDefault: !hasDefault, updatedAt: now };
     memoryPrograms.set(id, next);
     return next;
   }
-  const res = await queryWithTenant(
-    tenantId,
-    `UPDATE programs SET archived_at = ${archived ? 'NOW()' : 'NULL'}, updated_at = NOW()
-      WHERE tenant_id = $1 AND id = $2 AND NOT is_default
-      RETURNING *`,
-    [tenantId, id]
-  );
-  if (!res.rows[0]) throw new ProgramError('program_not_found', 'Program not found');
-  return rowToProgram(res.rows[0]);
+  return inTenantTx(tenantId, async (q) => {
+    const rows = (await q('SELECT * FROM programs WHERE tenant_id = $1 FOR UPDATE', [tenantId])).rows.map(rowToProgram);
+    const locked = rows.find((p) => p.id === id);
+    if (!locked) throw new ProgramError('program_not_found', 'Program not found');
+    if ((locked.archivedAt !== null) === archived) return locked;
+    if (archived) {
+      // clear is_default in the same UPDATE (CHECK programs_default_not_archived), then promote: the unique index allows one default
+      await q('UPDATE programs SET archived_at = NOW(), is_default = FALSE, updated_at = NOW() WHERE tenant_id = $1 AND id = $2', [tenantId, id]);
+      await promoteSuccessorTx(q, tenantId);
+      return rowToProgram((await q('SELECT * FROM programs WHERE tenant_id = $1 AND id = $2', [tenantId, id])).rows[0]);
+    }
+    const hasDefault = rows.some((p) => p.isDefault && p.archivedAt === null);
+    const res = await q('UPDATE programs SET archived_at = NULL, is_default = $3, updated_at = NOW() WHERE tenant_id = $1 AND id = $2 RETURNING *', [tenantId, id, !hasDefault]);
+    return rowToProgram(res.rows[0]);
+  });
 }
 
-/** Archive is the normal way to retire a program: its data stays readable and takes no writes. The default program cannot be archived. */
+/**
+ * Archive is the normal way to retire a program: its data stays readable and takes no writes. Archiving the default program (or the last
+ * active one) is allowed: the oldest active program takes over as the default, or the tenant is left with none. Unarchiving a program
+ * when no active default exists makes it the default.
+ */
 export const archiveProgram = (tenantId: string, id: string): Promise<Program> => setArchived(tenantId, id, true);
 export const unarchiveProgram = (tenantId: string, id: string): Promise<Program> => setArchived(tenantId, id, false);
 
@@ -669,12 +736,12 @@ export async function countProgramUsage(scope: ProgramScope): Promise<ProgramUsa
 }
 
 /**
- * Deletes a program that holds nothing: never the default program, never one with evidence, SSP imports or POA&M items (the foreign
- * keys are RESTRICT for those as well). Its control answers go with it; the history events stay as invisible history.
+ * Deletes a program that holds nothing: never one with evidence, SSP imports or POA&M items (the foreign keys are RESTRICT for those
+ * as well). Its control answers go with it; the history events stay as invisible history. Deleting the default program promotes the
+ * oldest active one (or leaves the tenant with none); the users' personal defaults pointing at it go with it.
  */
 export async function deleteProgram(tenantId: string, id: string): Promise<void> {
   const current = await requireProgram(tenantId, id);
-  if (current.isDefault) throw new ProgramError('program_is_default', 'The default program cannot be deleted');
   if (current.vmTarget) throw new ProgramError('program_is_vm_target', 'The VM target program cannot be deleted: choose another target first');
   const usage = await countProgramUsage({ tenantId, programId: id });
   if (usage.evidence + usage.imports + usage.poam > 0) {
@@ -685,28 +752,69 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     await queryWithProgram({ tenantId, programId: id }, 'DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2', [tenantId, id]);
     __deleteProgramObjectivesForMemory({ tenantId, programId: id });
     __deleteProgramSspMetadataForMemory({ tenantId, programId: id });
+    __deleteUserDefaultsForProgramMemory(tenantId, id);
     memoryPrograms.delete(id);
+    promoteSuccessorInMemory(tenantId);
     return;
   }
+  await adoptLegacyRowsOnce(tenantId);
   try {
-    await queryWithTenant(tenantId, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2 AND NOT is_default', [tenantId, id]);
+    await inTenantTx(tenantId, async (q) => {
+      await q('SELECT id FROM programs WHERE tenant_id = $1 FOR UPDATE', [tenantId]);
+      await q('DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [tenantId, id]); // user_program_defaults cascades
+      await promoteSuccessorTx(q, tenantId);
+    });
   } catch (err) {
     if ((err as { code?: string })?.code === '23503') throw new ProgramError('program_not_empty', 'The program still holds evidence, SSP imports or POA&M items', { ...usage });
     throw err;
   }
 }
 
+/**
+ * Makes a program the organization default (the fallback landing program; one per tenant). The program must exist (program_not_found)
+ * and not be archived (program_archived). Choosing the program that already is the default changes nothing.
+ */
+export async function setTenantDefaultProgram(tenantId: string, id: string): Promise<Program> {
+  const chosen = await requireProgram(tenantId, id);
+  if (chosen.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be the default');
+  if (chosen.isDefault) return chosen;
+  await adoptLegacyRowsOnce(tenantId); // the legacy rows follow the default program: they go to the old one before it moves
+  if (isMemory()) {
+    const fresh = memoryPrograms.get(id) ?? chosen; // no await from here on: the move is atomic
+    if (fresh.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be the default');
+    const now = new Date().toISOString();
+    for (const p of [...memoryPrograms.values()]) if (p.tenantId === tenantId && p.isDefault && p.id !== id) memoryPrograms.set(p.id, { ...p, isDefault: false, updatedAt: now });
+    const next: Program = { ...fresh, isDefault: true, updatedAt: now };
+    memoryPrograms.set(id, next);
+    return next;
+  }
+  return inTenantTx(tenantId, async (q) => {
+    const rows = (await q('SELECT * FROM programs WHERE tenant_id = $1 FOR UPDATE', [tenantId])).rows.map(rowToProgram);
+    const locked = rows.find((p) => p.id === id);
+    if (!locked) throw new ProgramError('program_not_found', 'Program not found');
+    if (locked.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be the default');
+    // clear first: the unique index allows one default per tenant
+    await q('UPDATE programs SET is_default = FALSE, updated_at = NOW() WHERE tenant_id = $1 AND is_default AND id <> $2', [tenantId, id]);
+    const res = await q('UPDATE programs SET is_default = TRUE, updated_at = NOW() WHERE tenant_id = $1 AND id = $2 RETURNING *', [tenantId, id]);
+    return rowToProgram(res.rows[0]);
+  });
+}
+
 /** Frameworks whose programs can receive vulnerability-management snapshots (the snapshot control set is CMMC). */
 const VM_TARGET_FRAMEWORKS: readonly string[] = ['CMMC_L1', 'CMMC_L2'];
 
 /**
- * The program that receives the tenant's vulnerability-management data: the active program flagged `vmTarget`, else the default program
- * (`explicit: false`). Creates the default program and adopts the legacy rows on first use, like ensureDefaultProgram.
+ * The program that receives the tenant's vulnerability-management data: the active program flagged `vmTarget` (`explicit: true`), else
+ * the organization default (`explicit: false`) but only when that is a CMMC Level 1 / Level 2 program. Null when neither exists (no
+ * program yet, or the default is another framework and none is flagged): the data is then kept tenant-wide and nothing is written to a
+ * program. Adopts the legacy rows on first use. Never creates a program.
  */
-export async function resolveVmTargetProgram(tenantId: string): Promise<{ program: Program; explicit: boolean }> {
-  const fallback = await ensureDefaultProgram(tenantId);
+export async function resolveVmTargetProgram(tenantId: string): Promise<{ program: Program; explicit: boolean } | null> {
+  await adoptLegacyRowsOnce(tenantId);
   const target = (await listPrograms(tenantId)).find((p) => p.vmTarget);
-  return target ? { program: target, explicit: true } : { program: fallback, explicit: false };
+  if (target) return { program: target, explicit: true };
+  const fallback = await getTenantDefaultProgram(tenantId);
+  return fallback && VM_TARGET_FRAMEWORKS.includes(fallback.frameworkId) ? { program: fallback, explicit: false } : null;
 }
 
 /**
@@ -715,7 +823,7 @@ export async function resolveVmTargetProgram(tenantId: string): Promise<{ progra
  * evidence, notes and POA&M items stay in the previous target: `openPoamInPrevious` counts that program's open items, so the caller can
  * warn. Records `vm_target_set` in the new target and `vm_target_cleared` in the program that lost the flag. Choosing the program that
  * already is the target changes and records nothing. `previousId` is the program that received the data until now (the default
- * program when no target was set), null only when that is the program chosen.
+ * program when no target was set), null when that is the program chosen or when there was no target at all.
  */
 export async function setVmTargetProgram(
   tenantId: string,
@@ -728,7 +836,7 @@ export async function setVmTargetProgram(
     throw new ProgramError('invalid_vm_target', 'Only a CMMC Level 1 or Level 2 program can be the VM target');
   }
   const before = await resolveVmTargetProgram(tenantId);
-  const previousId = before.program.id === id ? null : before.program.id;
+  const previousId = !before || before.program.id === id ? null : before.program.id;
   let program: Program;
   if (isMemory()) {
     if (chosen.vmTarget) return { program: chosen, previousId: null, openPoamInPrevious: 0 };

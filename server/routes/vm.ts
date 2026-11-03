@@ -52,6 +52,10 @@ function sendError(res: Response, err: unknown, fallback: string): void {
       res.status(409).json({ error: 'vm_no_sources' });
       return;
     }
+    if (err.code === 'no_program') {
+      res.status(409).json({ error: 'vm_no_program' });
+      return;
+    }
     if (err.code === 'requires_local_storage') {
       res.status(503).json({ error: 'vm_requires_local_storage' });
       return;
@@ -331,6 +335,11 @@ router.get('/config/suggestions', async (req: Request, res: Response): Promise<v
   try {
     const program = req.program ?? (req.programId ? await getProgram(tenantId, req.programId) : null);
     if (!program) {
+      // no program header and no default: the tenant has no program yet
+      if (!req.programId) {
+        res.status(409).json({ error: 'This tenant has no program yet: create one first', code: 'program_required' });
+        return;
+      }
       res.status(404).json({ error: 'Program not found', code: 'program_not_found' });
       return;
     }

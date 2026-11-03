@@ -1,5 +1,6 @@
 import './testEnv';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { canRoleWrite, WRITE_ROLES } from '../src/utils/roles';
 import type { TenantRole } from '../src/types/tenant';
 
@@ -54,6 +55,10 @@ function shutdown(code: number) {
 
 async function run() {
   await new Promise((r) => setTimeout(r, 500));
+
+  // a tenant starts with no program: the first one is its organization default
+  await firstProgram(TENANT);
+  await firstProgram('tenant_other');
 
   console.log('--- Shared role helper ---');
   assert(WRITE_ROLES.length === 2, 'exactly two roles can write');

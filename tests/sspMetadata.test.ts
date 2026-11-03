@@ -1,5 +1,6 @@
 import './testEnv';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { readSspMetadata } from '../server/sspMetadata';
 import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES, SSP_METADATA_MAX_CHARS, validateSspMetadata } from '../src/types/sspMetadata';
 import { STACK_PROFILE_MAX_BYTES, validateStackProfile } from '../src/data/stackProfileSchema';
@@ -98,7 +99,7 @@ async function run() {
   const R = await mk(rival, 'SSP Meta R');
   await call('POST', `/tenants/${T}/members`, owner, T, { userId: 'u_sm_viewer', email: 'u_sm_viewer@test.mil', role: 'VIEWER' });
   await call('POST', `/tenants/${T}/members`, owner, T, { userId: 'u_sm_assessor', email: 'u_sm_assessor@test.mil', role: 'ASSESSOR' });
-  const DEF = (await call('GET', `/tenants/${T}/programs`, owner, T)).body?.programs?.find((p: Json) => p.isDefault)?.id as string;
+  const DEF = (await firstProgram(T)).id; // a tenant starts with no program: the first one is its organization default
   const newProgram = async (name: string) => (await call('POST', `/tenants/${T}/programs`, owner, T, { name, frameworkId: 'CMMC_L1' })).body?.program?.id as string;
   const P2 = await newProgram('SSP second');
   const P3 = await newProgram('SSP third');

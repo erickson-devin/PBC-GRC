@@ -18,6 +18,8 @@ import { isPlatformAdmin, platformAdminEmails } from '../server/auth/platformAdm
 import { frameworksDefiningControl } from '../server/middleware/frameworkGuard';
 import { DEFAULT_PRIMARY_FRAMEWORK, frameworkLabel, frameworkPolicySummary } from '../src/data/tenantFrameworkPolicy';
 import { getTenantFrameworkPolicy } from '../server/db';
+import { programFrameworkControls } from '../src/data/programScope';
+import type { OverlayFilters } from '../src/types/framework';
 import fs from 'fs';
 import path from 'path';
 
@@ -111,12 +113,17 @@ async function apiTests() {
   const mine = async (t: string) => ((await call('GET', '/tenants', t)).body?.tenants ?? []) as Json[];
   assert(!JSON.stringify(await mine(admin)).match(/licen|annual|price/i), 'the tenant list carries no license tier either');
 
-  console.log('\n--- The default program of a new tenant ---');
+  console.log('\n--- A new tenant has no program; the first one created is the default ---');
   const l2Programs = await call('GET', `/tenants/${l2Id}/programs`, admin, l2Id);
-  const l2List = (l2Programs.body?.programs ?? []) as Json[];
-  assert(l2Programs.status === 200 && l2List.length === 1 && l2List[0].isDefault === true && l2List[0].frameworkId === 'CMMC_L2' && l2List[0].baseline === null, 'a tenant created with CMMC Level 2 as its primary framework has one default program on CMMC_L2', l2Programs.body);
-  const nistList = ((await call('GET', `/tenants/${nistId}/programs`, admin, nistId)).body?.programs ?? []) as Json[];
-  assert(nistList.length === 1 && nistList[0].frameworkId === 'NIST_800_53_REV5' && nistList[0].baseline === 'MODERATE', 'and a NIST-primary tenant has a MODERATE default program', nistList);
+  assert(l2Programs.status === 200 && l2Programs.body?.totalCount === 0 && (l2Programs.body?.programs ?? []).length === 0, 'a tenant created with CMMC Level 2 as its primary framework has no program yet', l2Programs.body);
+  const nistEmpty = await call('GET', `/tenants/${nistId}/programs`, admin, nistId);
+  assert(nistEmpty.status === 200 && nistEmpty.body?.totalCount === 0, 'and neither has a NIST-primary tenant', nistEmpty.body);
+  const l2First = await call('POST', `/tenants/${l2Id}/programs`, admin, l2Id, { name: 'L2 Boundary', frameworkId: 'CMMC_L2' });
+  assert(l2First.status === 201 && l2First.body?.program.isDefault === true && l2First.body.program.frameworkId === 'CMMC_L2' && l2First.body.program.baseline === null, 'POST a CMMC_L2 program -> 201 and it is the default', l2First.body);
+  const nistFirst = await call('POST', `/tenants/${nistId}/programs`, admin, nistId, { name: 'Nist Boundary', frameworkId: 'NIST_800_53_REV5' });
+  assert(nistFirst.status === 201 && nistFirst.body?.program.isDefault === true && nistFirst.body.program.baseline === 'MODERATE', 'POST a NIST program with no baseline -> 201, MODERATE, the default', nistFirst.body);
+  const l1First = await call('POST', `/tenants/${l1Id}/programs`, owner, l1Id, { name: 'L1 Boundary', frameworkId: 'CMMC_L1' });
+  assert(l1First.status === 201 && l1First.body?.program.isDefault === true, 'a self-service CMMC_L1 tenant creates its first program the same way', l1First.body);
 
   console.log('\n--- The privacy baseline of a program (issue #20) ---');
   const privPost = await call('POST', `/tenants/${nistId}/programs`, admin, nistId, { name: 'Moderate plus privacy', frameworkId: 'NIST_800_53_REV5', baseline: 'MODERATE', privacyBaseline: true });
@@ -131,7 +138,8 @@ async function apiTests() {
   assert(privSame.status === 200 && privSame.body?.program.privacyBaseline === true, 'PUT with the same value is accepted', privSame.body);
   const privList = ((await call('GET', `/tenants/${nistId}/programs`, admin, nistId)).body?.programs ?? []) as Json[];
   assert(privList.find((p) => p.id === privPost.body?.program.id)?.metrics.total === 340, 'GET /programs: metrics.total of a MODERATE + privacy program is 340', privList.map((p) => p.metrics));
-  assert(privList.find((p) => p.isDefault)?.privacyBaseline === false && privList.find((p) => p.isDefault)?.metrics.total === 287, 'while the default MODERATE program has no privacy baseline (287)');
+  const plainModerateTotal = programFrameworkControls({ framework: 'NIST_800_53_REV5', baseline: 'MODERATE' }, {} as OverlayFilters).length;
+  assert(privList.find((p) => p.isDefault)?.privacyBaseline === false && privList.find((p) => p.isDefault)?.metrics.total === plainModerateTotal, 'while the default MODERATE program has no privacy baseline (its total is the plain MODERATE control count)', [plainModerateTotal, privList.map((p) => p.metrics)]);
 
   console.log('\n--- Changing a program ---');
   const ownerTok = owner; // owner of l1Id

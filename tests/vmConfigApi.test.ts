@@ -7,7 +7,8 @@ import { vmIngestRateLimiter, vmTokenRateLimiter } from '../server/routes/vmInge
 import { __drainVmWorkerForTests } from '../server/vm/worker';
 import { listControlAssessmentEvents, readControlAssessments } from '../server/controlAssessments';
 import { changeProgramAssets } from '../server/programAssets';
-import { createProgram, ensureDefaultProgram } from '../server/programs';
+import { createProgram } from '../server/programs';
+import { firstProgram } from './programFixture';
 import { createAgentReportedAsset, listAgentAssetCandidates } from '../server/assets';
 
 /**
@@ -138,6 +139,7 @@ async function run() {
   const T2 = await mkTenant(owner2, 'Cfg Other');
   const T3 = await mkTenant(owner3, 'Cfg Mixed');
   const T4 = await mkTenant(owner4, 'Cfg Scap Only');
+  const defaultProgram1 = await firstProgram(T1, 'CMMC_L2'); // a tenant starts with no program: the first one is its organization default
   assert(Boolean(T1 && T2 && T3 && T4), 'four tenants created (T1 is CMMC Level 2)', { T1, T2, T3, T4 });
   await call('POST', `/tenants/${T1}/members`, admin, T1, { userId: 'u_cfg_viewer', email: 'u_cfg_viewer@test.mil', role: 'VIEWER' });
   const tokenOf = async (owner: string, tenant: string) => (await call('POST', `/tenants/${tenant}/vm/tokens`, owner, tenant, { name: 'cfg-ingest' }, HTTPS)).body?.token as string;
@@ -189,7 +191,6 @@ async function run() {
   assert(sug?.boundary?.declared === false && sug.boundary.inScope === 1 && sug.boundary.evaluated === 1 && sugControl?.assets?.unconfirmed === 1 && sug.unmappedRuleCount === 1, 'A4 the whole inventory is the boundary; the new host is unconfirmed; one rule is unmapped', [sug?.boundary, sugControl?.assets, sug?.unmappedRuleCount]);
   assert(Array.isArray(sugControl?.failingAssetIds) && sugControl.failingAssetIds.length === 1 && !JSON.stringify(sug).includes(CFG_HOST) && !JSON.stringify(sug).includes(CFG_IP), 'A4 suggestions name assets by id only');
 
-  const defaultProgram1 = await ensureDefaultProgram(T1);
   const controlsRes = await call('GET', '/controls?framework=CMMC_L2', admin, T1);
   const control = ((controlsRes.body?.controls ?? []) as Json[]).find((c) => c.id === 'AC.L1-3.1.1');
   const events = await listControlAssessmentEvents({ tenantId: T1, programId: defaultProgram1.id }, 'AC.L1-3.1.1', 50);

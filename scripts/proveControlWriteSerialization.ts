@@ -26,7 +26,7 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 const { randomBytes } = await import('crypto');
 const { pool, initDb, queryWithTenant, queryWithProgram, checkDatabaseConnection } = await import('../server/db');
 const { writeControlAssessment, readControlAssessments, listControlAssessmentEvents, checkExpectedUpdatedAt, notesDigest } = await import('../server/controlAssessments');
-const { ensureDefaultProgram } = await import('../server/programs');
+const { createProgram, listPrograms } = await import('../server/programs');
 type ControlAssessment = import('../server/controlAssessments').ControlAssessment;
 type PoolClient = import('pg').PoolClient;
 
@@ -74,7 +74,9 @@ try {
     `INSERT INTO tenants (id, name, system_name, system_owner) VALUES ($1, $2, 'sys', 'owner') ON CONFLICT (id) DO NOTHING`,
     [TENANT, TENANT]
   );
-  scope = { tenantId: TENANT, programId: (await ensureDefaultProgram(TENANT)).id };
+  // a tenant starts with no program: the scratch tenant's first one (the organization default)
+  const program = (await listPrograms(TENANT))[0] ?? (await createProgram(TENANT, { name: 'Serialization Proof Boundary', frameworkId: 'CMMC_L1' }, 'prove_serialization'));
+  scope = { tenantId: TENANT, programId: program.id };
   const s = scope;
   console.log(`scratch tenant ${TENANT}, program ${s.programId}, control ${CONTROL}`);
 

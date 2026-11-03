@@ -2,6 +2,7 @@ import './testEnv';
 import { SSP_TEST_VAULT } from './sspEnv';
 import fs from 'fs';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { __resetOllamaCacheForTests } from '../server/ssp/ollama';
 import { NIST_800_53_CONTROLS } from '../src/data/frameworks/nist80053Controls';
 import { getFrameworkControls } from '../src/data/frameworks';
@@ -233,6 +234,8 @@ async function apiTests() {
   const owner = person('u_n53_owner');
   const nist = (await call('POST', '/tenants', owner, undefined, { name: 'Federal Org', primaryFramework: F, enabledFrameworks: ['CMMC_L2'] })).body?.tenant?.id as string;
   const l1 = (await call('POST', '/tenants', person('u_n53_other'), undefined, { name: 'Level 1 Org' })).body?.tenant?.id as string;
+  await firstProgram(nist, F); // a tenant starts with no program
+  await firstProgram(l1);
   const docx = await makeDocx(DOC);
 
   console.log('\n--- An SP 800-53 import through the API ---');

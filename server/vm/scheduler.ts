@@ -1,7 +1,7 @@
 import { errorMessage } from '../../src/utils/errors';
 import { enumerateSchedulerSources, setSourceStaleSince } from './store';
 import type { SchedulerSourceRow } from './store';
-import { latestSnapshotAt, runVmSnapshot } from './snapshotWriter';
+import { VmSnapshotError, latestSnapshotAt, runVmSnapshot } from './snapshotWriter';
 import { getVmSnapshotConfig, planStalenessChanges, snapshotDue } from './snapshot';
 
 /**
@@ -59,8 +59,13 @@ export async function runVmSchedulerTick(opts: { now?: Date; onlyTenantIds?: str
           else result.staleSet += 1;
         }
         if (snapshotDue(await latestSnapshotAt(tenantId), now.getTime(), cfg.snapshotIntervalHours)) {
-          await runVmSnapshot(tenantId, { now, trigger: 'scheduler' });
-          result.snapshots.push(tenantId);
+          try {
+            await runVmSnapshot(tenantId, { now, trigger: 'scheduler' });
+            result.snapshots.push(tenantId);
+          } catch (err: unknown) {
+            // no program to receive the snapshot yet (no VM target and no CMMC organization default): not an error, the next tick looks again
+            if (!(err instanceof VmSnapshotError && err.code === 'no_program')) throw err;
+          }
         }
       } catch (err: unknown) {
         console.error('[VM Scheduler] tenant ' + tenantId + ':', errorMessage(err));

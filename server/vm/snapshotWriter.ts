@@ -33,7 +33,7 @@ import { VM_CONFIG_ONLY_SOURCE_KINDS } from '../../src/types/vm';
  * delimited block of each control's implementation notes. A control's status is never changed here.
  */
 
-export type VmSnapshotErrorCode = 'in_progress' | 'requires_local_storage' | 'no_sources' | 'integrity';
+export type VmSnapshotErrorCode = 'in_progress' | 'requires_local_storage' | 'no_sources' | 'no_program' | 'integrity';
 
 export class VmSnapshotError extends Error {
   constructor(public readonly code: VmSnapshotErrorCode, message?: string) {
@@ -56,7 +56,9 @@ export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnap
   const assets = await listAssets(tenantId);
   // AssetRecord has no last_vuln_seen_at: join the candidate list by id.
   const seen = new Map((await listAgentAssetCandidates(tenantId)).map((c) => [c.id, c.lastVulnSeenAt]));
-  const { findings, kevVulnIds, poam } = await loadSnapshotFindings(tenantId, programId ?? (await resolveVmTargetProgram(tenantId)).program.id);
+  const targetId = programId ?? (await resolveVmTargetProgram(tenantId))?.program.id;
+  // no program to hold POA&M items: nothing to evaluate (writeVmSnapshot refuses before it gets here)
+  const { findings, kevVulnIds, poam } = targetId ? await loadSnapshotFindings(tenantId, targetId) : { findings: [], kevVulnIds: [], poam: [] };
   return {
     snapshotId,
     tenantId,
@@ -330,9 +332,9 @@ export async function runVmSnapshot(
     const now = opts.now ?? new Date();
     const cfg = getVmSnapshotConfig();
     const snapshotId = newSnapshotId(now.getTime());
-    // Snapshot evidence and notes belong to the tenant's VM target program (the default program when none is set, decision 6).
+    // Snapshot evidence and notes belong to the tenant's VM target program (the organization default when none is set and it is a CMMC program).
     // Only an explicit target decides the control list; without one the allow-list's control set stays as it was.
-    let target: { program: { id: string; frameworkId: string }; explicit: boolean };
+    let target: { program: { id: string; frameworkId: string }; explicit: boolean } | null;
     if (opts.programId) {
       const chosen = await getProgram(tenantId, opts.programId);
       if (!chosen) throw new Error('VM snapshot program not found');
@@ -340,6 +342,7 @@ export async function runVmSnapshot(
     } else {
       target = await resolveVmTargetProgram(tenantId);
     }
+    if (!target) throw new VmSnapshotError('no_program');
     const programId = target.program.id;
     const input = await loadSnapshotInput(tenantId, now, cfg, snapshotId, programId);
     const report = computeSnapshot(input);
@@ -414,9 +417,11 @@ const SNAPSHOT_FILE = /^(vmsnap_[A-Za-z0-9_-]+)\.(json|md)$/;
 
 /** The snapshot evidence rows of a tenant (base rows only), newest first. The memory store ignores WHERE, so filter here too. */
 async function snapshotRows(tenantId: string): Promise<SnapshotRow[]> {
-  // evidence_metadata is program-scoped: the snapshot evidence lives in the tenant's VM target program (the default when none is set)
+  // evidence_metadata is program-scoped: the snapshot evidence lives in the tenant's VM target program (none: no snapshot exists)
+  const targetId = (await resolveVmTargetProgram(tenantId))?.program.id;
+  if (!targetId) return [];
   const res = await queryWithProgram(
-    { tenantId, programId: (await resolveVmTargetProgram(tenantId)).program.id },
+    { tenantId, programId: targetId },
     'SELECT id, control_id, file_name, gcs_path, file_hash, sync_status, uploaded_by, uploaded_at FROM evidence_metadata WHERE tenant_id = $1 AND uploaded_by = $2 ORDER BY uploaded_at DESC',
     [tenantId, VM_SNAPSHOT_ACTOR],
   );

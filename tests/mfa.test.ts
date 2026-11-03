@@ -4,6 +4,7 @@ import fs from 'fs';
 import util from 'util';
 import { spawnSync } from 'child_process';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 import { signLocalToken, signMfaPendingToken, verifyLocalToken } from '../server/auth/localAuth';
 import { accountLogRef } from '../server/auth/loginThrottle';
 import { base32Decode, buildOtpauthUri, generateTotp } from '../server/auth/totp';
@@ -856,6 +857,7 @@ async function run() {
     { id: 'tenant-mfa-21', name: 'Org 21', systemName: 'Enclave 21', systemOwner: 'Owner', enabledFrameworks: ['CMMC_L1'], primaryFramework: 'CMMC_L1' },
     { userId: owner21.id, email: owner21.email, name: 'Owner' }
   );
+  await firstProgram('tenant-mfa-21'); // a tenant starts with no program
   const invite = async (email: string, role: 'ASSESSOR' | 'TENANT_OWNER') =>
     (await createInvitation('tenant-mfa-21', { email, role, createdBy: owner21.email, createdByUserId: owner21.id, expiresInDays: 14 })).token;
   const register = (token: string, name: string) => call('POST', '/auth/register-with-invite', { body: { token, password: PW, name } });

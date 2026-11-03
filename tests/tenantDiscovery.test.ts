@@ -2,6 +2,7 @@ import './testEnv';
 // Framework (program) settings are decided by platform administrators: this test's actor is listed as one.
 process.env.PLATFORM_ADMIN_EMAILS = 'u_alice@test.mil';
 import { server } from '../server/index';
+import { firstProgram } from './programFixture';
 
 /**
  * GET /api/v1/tenants ("list my tenants"): each user sees exactly the tenants they belong to, with their own role
@@ -66,6 +67,10 @@ async function run() {
   const t2 = (await call('POST', '/tenants', alice, undefined, { name: 'Alpha Systems', primaryFramework: 'CMMC_L2' })).body?.tenant?.id as string;
   const t3 = (await call('POST', '/tenants', bob, undefined, { name: 'Bob Industries' })).body?.tenant?.id as string;
   assert(Boolean(t1 && t2 && t3), 'three tenants created');
+  // a tenant starts with no program: the first one is its organization default (reading a tenant needs one)
+  await firstProgram(t1);
+  await firstProgram(t2, 'CMMC_L2');
+  await firstProgram(t3);
   assert((await call('POST', `/tenants/${t1}/members`, alice, t1, { userId: 'u_bob', email: 'bob@test.mil', role: 'ASSESSOR' })).status === 201, 'alice invites bob to her first tenant as ASSESSOR');
 
   console.log('\n--- Each user sees only their own tenants ---');

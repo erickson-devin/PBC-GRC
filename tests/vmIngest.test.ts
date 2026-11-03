@@ -14,7 +14,7 @@ import { __drainVmWorkerForTests, __resumeVmWorkerForTests, __setVmWorkerFaultFo
 import { markRunInterrupted, recordReceivedRun, updateRun } from '../server/vm/store';
 import { VM_SHUTDOWN_MESSAGE } from '../server/shutdown';
 import { countOpenPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
-import { ensureDefaultProgram } from '../server/programs';
+import { firstProgram } from './programFixture';
 import { createAgentReportedAsset, listAgentAssetCandidates } from '../server/assets';
 
 /**
@@ -552,14 +552,23 @@ async function run() {
   assert(re3.status === 202 && faultyAgain.status === 'NORMALIZED' && faultyAgain.error === null, 'after clearing the fault, reprocessing the run -> NORMALIZED', faultyAgain);
   assert((await findingsOf(A, ownerA, `?assetId=${faultAsset}`)).length === 2, 'and adds no duplicate findings');
 
-  console.log('\n--- Automatic POA&M items belong to the default program ---');
+  console.log('\n--- Automatic POA&M items belong to the VM target program; with no program the findings are kept and the POA&M step is skipped ---');
   const poamPayload = payloadOf({ label: 'poam-src', agents: ['p1'] });
   poamPayload.hosts[0].findings = [{ vuln_id: 'CVE-2024-0003', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }];
+  // the tenant has no program yet: nothing can receive a POA&M item
+  const noProgramIngest = await ingest(tokenA, Buffer.from(JSON.stringify(poamPayload)));
+  await __drainVmWorkerForTests();
+  const noProgramRun = await runById((noProgramIngest.body as Json)?.run_id);
+  const noProgramAsset = await assetIdByName('host-p1');
+  const noProgramFindings = noProgramAsset ? await findingsOf(A, ownerA, `?assetId=${noProgramAsset}`) : [];
+  assert(noProgramIngest.status === 202 && noProgramRun.status === 'NORMALIZED' && noProgramRun.error === null && noProgramFindings.length > 0, 'with no program an ingest is accepted and the run is NORMALIZED with its findings stored tenant-wide', [noProgramIngest.status, noProgramRun.status, noProgramFindings.length]);
+  const defaultA = await firstProgram(A);
+  assert((await loadSnapshotFindings(A, defaultA.id)).poam.length === 0, 'and no POA&M item exists for the program created afterwards');
+  poamPayload.collected_at = '2026-10-18T13:00:00Z';
   const poamIngest = await ingest(tokenA, Buffer.from(JSON.stringify(poamPayload)));
   await __drainVmWorkerForTests();
-  const defaultA = await ensureDefaultProgram(A);
   const poamItems = (await loadSnapshotFindings(A, defaultA.id)).poam;
-  assert(poamIngest.status === 202 && poamItems.length >= 1, 'an overdue finding creates an automatic POA&M item', [poamIngest.status, poamItems.length]);
+  assert(poamIngest.status === 202 && poamItems.length >= 1, 'the first run after a program exists plans the overdue finding it skipped: an automatic POA&M item', [poamIngest.status, poamItems.length]);
   assert(poamItems.every((p) => p.programId === defaultA.id), "every automatic POA&M item carries the tenant's default program id", poamItems.map((p) => p.programId));
   assert((await countOpenPoamItems({ tenantId: A, programId: defaultA.id })) === poamItems.filter((p) => p.status === 'OPEN' || p.status === 'IN_PROGRESS').length, 'the default program counts those items as its open POA&M');
 
