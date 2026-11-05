@@ -1,4 +1,6 @@
 import './testEnv';
+import fs from 'fs';
+import path from 'path';
 import { __resetMemoryTenantsForTests, __seedLegacyRowForTests, createTenantWithOwner, queryWithProgram, queryWithTenant } from '../server/db';
 import { listControlAssessmentEvents } from '../server/controlAssessments';
 import {
@@ -425,6 +427,10 @@ async function main() {
   );
   const srcEv = await listControlAssessmentEvents({ tenantId: 't-clone-src', programId: dClone.id }, 'AC.L1-3.1.1', 10);
   assert(!srcEv.some((e) => e.source === 'clone'), 'C1: the source program has no clone event', srcEv);
+
+  // PostgreSQL-only path (memory mode never runs the SQL): the create INSERT must not reuse $1 inside the default subquery (42P08 in CI)
+  const programsSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'programs.ts'), 'utf8');
+  assert(programsSrc.includes('WHERE tenant_id = $11 AND is_default') && !programsSrc.includes('NOT EXISTS (SELECT 1 FROM programs WHERE tenant_id = $1 AND is_default)'), 'P42P08: the first-default subquery of createProgram takes the tenant id as its own parameter');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

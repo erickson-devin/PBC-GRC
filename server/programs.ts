@@ -465,13 +465,14 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
   } else {
     // the program and its first event in one transaction: a program never exists without the record of how it was scoped.
     // It is the default when the tenant has no active default yet; a concurrent first creation loses on unq_programs_default and retries as a plain program.
+    // The subquery takes the tenant id as its own parameter ($11): reusing $1 there fails on PostgreSQL (42P08, text versus character varying).
     const insert = (mayBeDefault: boolean): Promise<Program> =>
       inTenantTx(tenantId, async (q) => {
         const res = await q(
           `INSERT INTO programs (tenant_id, name, description, framework_id, baseline, privacy_baseline, system_boundary_summary, scoping, created_by, is_default)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::boolean AND NOT EXISTS (SELECT 1 FROM programs WHERE tenant_id = $1 AND is_default))
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::boolean AND NOT EXISTS (SELECT 1 FROM programs WHERE tenant_id = $11 AND is_default))
            RETURNING *`,
-          [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, JSON.stringify(scoping), by, mayBeDefault]
+          [tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary, JSON.stringify(scoping), by, mayBeDefault, tenantId]
         );
         const created = rowToProgram(res.rows[0]);
         await insertEventTx(q, tenantId, created.id, 'scoping_set', who, null, scoping);
