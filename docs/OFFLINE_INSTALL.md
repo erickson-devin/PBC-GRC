@@ -17,13 +17,13 @@ private, log in to the registry first with a read-only token: `docker login ghcr
 
 ```bash
 git clone https://github.com/erickson-devin/PBC-GRC.git && cd PBC-GRC
-git checkout v0.3.0
-scripts/build-offline-bundle.sh --tag v0.3.0
+git checkout v0.3.1
+scripts/build-offline-bundle.sh --tag v0.3.1
 ```
 
 Options: `--with-ai` adds the pinned Ollama image; `--ollama-models /path/to/models` also adds a model store (the folder
 mounted at `/root/.ollama` on a machine where `ollama pull llama3.2:3b` has run); `--no-exporter` leaves out the scanner
-exporter; `--out DIR` chooses the output folder (default `./offline-bundle-v0.3.0`).
+exporter; `--out DIR` chooses the output folder (default `./offline-bundle-v0.3.1`).
 
 The script refuses to run when the checkout's `package.json` version differs from `--tag` or the release files have local
 changes, so the compose files always match the images. It writes:
