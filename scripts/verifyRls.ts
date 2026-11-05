@@ -18,7 +18,7 @@
  *   7b. account events (issue #40) and sessions (issue #163): local_sessions and local_account_events are global tables without row security; the sessions foreign key cascades, the sid / revoke-reason CHECKs refuse bad rows, a revoke changes exactly one row, and pruning removes only sessions that expired more than a day ago; the event table is append-only for the application role (UPDATE, DELETE and TRUNCATE refused with 42501), refuses an "@" in details and an action outside the list, and only the retention sweep can delete (the test event is backdated about 4000 days so no real event matches).
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
-export {};
+import type { PoolClient } from 'pg';
 
 process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: this script must hit the real DB
 
@@ -548,7 +548,7 @@ async function main() {
 
     console.log('\n--- 3d. Retention sweep policy (programs, app.event_retention) ---');
     // the daily history sweep lists every program under this SELECT-only GUC, then deletes under each program's own tenant and program settings
-    const underRetention = async <T>(fn: (c: Awaited<ReturnType<typeof pool.connect>>) => Promise<T>): Promise<T> => {
+    const underRetention = async <T>(fn: (c: PoolClient) => Promise<T>): Promise<T> => {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -1382,10 +1382,13 @@ async function verifyProgramIsolation() {
     const updSeenByX = await queryWithTenant(TENANT_X, 'SELECT 1 FROM user_program_defaults WHERE tenant_id = $1 AND user_id = $2', [TENANT_X, 'rls_verify_u1']);
     const updSeenByY = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM user_program_defaults WHERE tenant_id = $1', [TENANT_X]);
     check(updSeenByX.rows.length === 1 && updSeenByY.rows.length === 0, "8m. user_program_defaults: tenant X sees its own row, tenant Y sees none of X's", 'X ' + updSeenByX.rows.length + ', Y ' + updSeenByY.rows.length);
-    check(
-      await rejectsWith(TENANT_Y, 'INSERT INTO user_program_defaults (tenant_id, user_id, program_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_u2', programA], { code: '42501' }),
-      "8m. user_program_defaults: tenant Y cannot insert a row into tenant X (WITH CHECK, 42501)", lastRejection
-    );
+    let updRejection = 'no error';
+    try {
+      await queryWithTenant(TENANT_Y, 'INSERT INTO user_program_defaults (tenant_id, user_id, program_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_u2', programA]);
+    } catch (err) {
+      updRejection = 'code ' + (err as { code?: string }).code;
+    }
+    check(updRejection === 'code 42501', "8m. user_program_defaults: tenant Y cannot insert a row into tenant X (WITH CHECK, 42501)", updRejection);
     await queryWithTenant(TENANT_X, "DELETE FROM user_program_defaults WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
 
     await verifyUpgrade();

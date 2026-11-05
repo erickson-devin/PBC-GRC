@@ -328,6 +328,9 @@ async function main() {
     check(gucUpdated === 0, 'with the scheduler setting on, an UPDATE of vm_sources changes no row (the policy is SELECT-only)', String(gucUpdated));
 
     // f, g. A tick two days ahead marks the worker source stale and snapshots tenant X.
+    // A tenant starts with no program and the tick skips such a tenant (no VM target), so both tenants get their first program first.
+    await scopeOf(TENANT_X);
+    await scopeOf(TENANT_Y);
     const workerSource = async () => (await listSources(TENANT_X)).find((s) => s.label === 'vm_verify_worker');
     const tick = await runVmSchedulerTick({ now: new Date(Date.now() + 2 * 86_400_000), onlyTenantIds: [TENANT_X, TENANT_Y] });
     check(tick.skipped === false && tick.errors === 0, 'a scheduler tick two days ahead runs without errors', JSON.stringify(tick));
