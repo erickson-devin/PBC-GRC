@@ -662,6 +662,11 @@ assert(buildJob.indexOf('load: true') > -1 && buildJob.indexOf('load: true') < b
 const pushStep = buildSteps.find((s) => s.includes('id: build')) ?? '';
 assert(pushStep.includes('push: true') && pushStep.includes("if: steps.smoke.outcome == 'success'"), 'push runs only after the smoke test passed (#156)');
 
+// the operator scripts (the live PostgreSQL checks) run only against a real database in CI: the typecheck gate must cover them so an undefined identifier fails early
+const tsconfigText = fs.readFileSync(path.join(root, 'tsconfig.json'), 'utf8').replace(/\r\n/g, '\n');
+const tsconfigInclude = tsconfigText.match(/"include"\s*:\s*\[([^\]]*)\]/)?.[1] ?? '';
+assert(/"scripts"/.test(tsconfigInclude), 'tsconfig.json includes scripts/, so npm run typecheck covers the operator scripts', tsconfigInclude);
+
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
 console.log('================================================================\n');
