@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from .config import redact
+from .diagnose import classify
 from .errors import WazuhReadError
 from .transport import make_session
 
@@ -99,11 +100,13 @@ class IndexerReader:
                 url, auth=self.auth, verify=self.verify, timeout=(10, self.timeout), allow_redirects=False, **kwargs
             )
         except requests.RequestException as err:
-            raise WazuhReadError(
-                f"indexer {what} failed: {type(err).__name__}: {redact(str(err), [self.password or ''])}"
-            ) from None
+            message = f"indexer {what} failed: {type(err).__name__}: {redact(str(err), [self.password or ''])}"
+            _code, hint = classify(err, "indexer", self.url)
+            raise WazuhReadError(message + (f"; hint: {hint}" if hint else "")) from None
         if resp.status_code >= 300:
-            raise WazuhReadError(f"indexer {what} returned HTTP {resp.status_code}")
+            message = f"indexer {what} returned HTTP {resp.status_code}"
+            _code, hint = classify(resp.status_code, "indexer", self.url)
+            raise WazuhReadError(message + (f"; hint: {hint}" if hint else ""))
         return resp
 
     @staticmethod

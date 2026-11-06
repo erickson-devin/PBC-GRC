@@ -386,3 +386,130 @@ def test_vendor_sample_process_dry_run(source):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["chunks"][0]["payload"]["source"]["kind"] == source.upper()
+
+
+# ------------------------------------------------------------------------------------------------ --version and check
+
+def test_version_flag(capsys):
+    from pbc_vm_exporter import __version__
+    code, _, _ = run(["--version"])
+    assert code == 0
+    assert capsys.readouterr().out.strip() == f"pbc-vm-exporter {__version__}"
+
+
+def test_positional_arguments_are_still_refused():
+    code, _, err = run(["bogus"])
+    assert code == 2 and "positional" in err
+    code, _, err = run(["check", "bogus"])
+    assert code == 2 and "positional" in err
+
+
+CHECK_ENV = {**ENV, "WAZUH_INDEXER_URL": "https://wazuh:9200", "WAZUH_INDEXER_USER": "reader", "WAZUH_INDEXER_PASSWORD": "pw-secret!"}
+WHOAMI = {
+    "token": {"name": "wazuh-prod", "prefix": "pbcvm_AbCd", "expires_at": None},
+    "scopes": ["vm:ingest"],
+    "contract_sha256": hashlib.sha256(SERVER_SCHEMA.read_bytes()).hexdigest(),
+    "limits": {"max_bytes": 33554432},
+    "features": ["whoami"],
+}
+INDEXER_OK = {"hits": {"total": {"value": 42, "relation": "eq"}, "hits": []}}
+
+
+def fake_check_session(monkeypatch, whoami=(200, WHOAMI), indexer=(200, INDEXER_OK)):
+    from conftest import FakeSession
+
+    def handler(method, url, kwargs):
+        if url.endswith("/api/v1/vm/whoami"):
+            return whoami
+        if "/_search" in url:
+            return indexer
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    session = FakeSession(handler=handler)
+    monkeypatch.setattr(cli, "make_session", lambda *a, **k: session)
+    return session
+
+
+def test_check_all_green_is_exit_0_and_never_prints_the_token(monkeypatch):
+    session = fake_check_session(monkeypatch)
+    code, out, err = run(["check"], CHECK_ENV)
+    assert code == 0, out + err
+    assert "[PASS] 1. configuration loads" in out and "42 documents" in out and "wazuh-prod" in out
+    assert "[FAIL]" not in out and "0 failed" in out
+    assert TOKEN not in out and TOKEN not in err and "pw-secret!" not in out
+    assert session.calls[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
+    assert [c["method"] for c in session.calls] == ["GET", "POST"]
+
+
+def test_check_whoami_401_is_a_failure(monkeypatch):
+    fake_check_session(monkeypatch, whoami=(401, {"error": "Invalid or expired service token"}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 5
+    assert "[FAIL]" in out and "hint:" in out and "revoked" in out
+
+
+def test_check_insecure_transport_is_explained(monkeypatch):
+    fake_check_session(monkeypatch, whoami=(403, {"error": "requires HTTPS", "code": "vm_insecure_transport"}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 5 and "TRUST_PROXY" in out
+
+
+def test_check_whoami_404_is_skipped_not_failed(monkeypatch):
+    fake_check_session(monkeypatch, whoami=(404, {"error": "not found"}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 0, out
+    assert "[SKIP]" in out and "server too old for check" in out
+
+
+def test_check_contract_mismatch_is_exit_4(monkeypatch):
+    fake_check_session(monkeypatch, whoami=(200, {**WHOAMI, "contract_sha256": "0" * 64}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 4 and "contract" in out
+
+
+def test_check_size_limit_is_compared(monkeypatch):
+    fake_check_session(monkeypatch, whoami=(200, {**WHOAMI, "limits": {"max_bytes": 1048576}}))
+    code, out, _ = run(["check"], {**CHECK_ENV, "EXPORT_MAX_BYTES": "2097152"})
+    assert code == 5 and "EXPORT_MAX_BYTES" in out
+
+
+def test_check_indexer_401_carries_the_hint(monkeypatch):
+    fake_check_session(monkeypatch, indexer=(401, {}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 3 and "internal users" in out and "pw-secret!" not in out
+
+
+def test_check_indexer_unreachable_is_exit_3(monkeypatch):
+    import requests
+    fake_check_session(monkeypatch, indexer=requests.ConnectionError("Connection refused"))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 3 and "network.host" in out
+
+
+def test_check_auto_mode_without_manager_settings_says_use_indexer_mode(monkeypatch):
+    fake_check_session(monkeypatch)
+    code, out, _ = run(["check"], {**CHECK_ENV, "WAZUH_MODE": "auto"})
+    assert code == 2 and "WAZUH_MODE=indexer" in out
+
+
+def test_check_config_error_is_exit_2():
+    code, out, _ = run(["check"], {"PBC_URL": "https://g"})
+    assert code == 2 and "[FAIL]" in out and "PBC_SERVICE_TOKEN" in out
+
+
+def test_check_notes_an_unneeded_insecure_flag(monkeypatch):
+    fake_check_session(monkeypatch)
+    code, out, _ = run(["check"], {**CHECK_ENV, "PBC_ALLOW_INSECURE_TRANSPORT": "true"})
+    assert code == 0 and "[NOTE]" in out and "not needed" in out
+
+
+def test_insecure_warning_only_when_a_url_is_plain_http(caplog):
+    import logging
+    from pbc_vm_exporter.config import load_config
+    base = {**ENV, "PBC_ALLOW_INSECURE_TRANSPORT": "true"}
+    with caplog.at_level(logging.WARNING):
+        load_config(base, None, mode_override=None, dry_run=False, sample=False)
+    assert not any("PBC_ALLOW_INSECURE_TRANSPORT" in r.getMessage() for r in caplog.records)
+    with caplog.at_level(logging.WARNING):
+        load_config({**base, "PBC_URL": "http://grc.local"}, None, mode_override=None, dry_run=False, sample=False)
+    assert any("PBC_ALLOW_INSECURE_TRANSPORT" in r.getMessage() for r in caplog.records)

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { KeyRound, Copy, Check, AlertTriangle, CheckCircle2, Clock, Ban } from 'lucide-react';
 import { ApiClient } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
+import { ExporterSetupPanel } from './ExporterSetupPanel';
 import { copyText } from '../../utils/clipboard';
 import {
   VM_TOKENS_COPY, VM_TOKEN_DEFAULT_DAYS, VM_TOKEN_MAX_DAYS, VM_TOKEN_MIN_DAYS, VM_TOKEN_NAME_MAX,
@@ -18,6 +19,8 @@ import type { VmServiceToken } from '../../types/vm';
 interface VmServiceTokensSectionProps {
   tenantId: string;
   tenantName: string;
+  /** Called with true while the one-time reveal (and the exporter setup under it) is open, so the parent does not show a second setup panel. */
+  onRevealChange?: (revealing: boolean) => void;
 }
 
 const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700';
@@ -33,7 +36,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleDateString([], { year: 'n
 
 type ListState = { status: 'loading' | 'ready' | 'error'; tokens: VmServiceToken[]; message: string | null };
 
-export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ tenantId }) => {
+export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ tenantId, onRevealChange }) => {
   const [list, setList] = useState<ListState>({ status: 'loading', tokens: [], message: null });
   const [name, setName] = useState('');
   const [days, setDays] = useState(String(VM_TOKEN_DEFAULT_DAYS));
@@ -82,6 +85,12 @@ export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ 
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => { if (newToken) tokenInputRef.current?.focus(); }, [newToken]);
+
+  const revealing = newToken !== null;
+  useEffect(() => {
+    onRevealChange?.(revealing);
+    return () => onRevealChange?.(false);
+  }, [revealing, onRevealChange]);
 
   useEffect(() => { if (confirmId) confirmRef.current?.focus(); }, [confirmId]);
 
@@ -211,6 +220,7 @@ export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ 
           <p role="status" aria-live="polite" className={copyState === 'failed' ? 'text-amber-200' : 'text-slate-400'}>
             {copyState === 'copied' ? VM_TOKENS_COPY.copied : copyState === 'failed' ? VM_TOKENS_COPY.copyFailed : ''}
           </p>
+          <ExporterSetupPanel />
           <div className="flex justify-end">
             <button
               ref={doneRef}

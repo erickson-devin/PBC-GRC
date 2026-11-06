@@ -26,7 +26,7 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmServiceToken } from '../types/vm';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmRun, VmServiceToken, VmSource } from '../types/vm';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -785,6 +785,20 @@ export const ApiClient = {
     const data = await authedJson<{ token?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/tokens/${encodeURIComponent(tokenId)}/revoke`, { tenantId, body: {} });
     if (!data?.token || typeof data.token !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
     return data.token as VmServiceToken;
+  },
+
+  /** GET /api/v1/tenants/:id/vm/sources: the scanners that have pushed (or been configured), tenant-wide. */
+  async listVmSources(tenantId: string): Promise<VmSource[]> {
+    const data = await authedJson<{ sources?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/sources`, { tenantId });
+    if (!Array.isArray(data?.sources)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.sources as VmSource[];
+  },
+
+  /** GET /api/v1/tenants/:id/vm/runs?limit= (1 to 500): received runs, newest first, tenant-wide. The storage path is never served. */
+  async listVmRuns(tenantId: string, limit: number): Promise<VmRun[]> {
+    const data = await authedJson<{ runs?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/runs?limit=${encodeURIComponent(String(Math.min(500, Math.max(1, Math.trunc(limit) || 1))))}`, { tenantId });
+    if (!Array.isArray(data?.runs)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.runs as VmRun[];
   },
 
   /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */

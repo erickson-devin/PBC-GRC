@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
 import {
   X,
   Key,
@@ -6,12 +6,13 @@ import {
   Lock,
   ShieldCheck,
   Clock,
-  Terminal,
   Server,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { VM_TOKENS_COPY } from '../../data/telemetry/vmTokensView';
 import { VmServiceTokensSection } from './VmServiceTokensSection';
+import { ConnectedScannersPanel } from './ConnectedScannersPanel';
+import { ExporterSetupPanel } from './ExporterSetupPanel';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface ApiTokensModalProps {
@@ -26,13 +27,9 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
   const { currentTenant, canEdit } = useTenant();
   const serverBacked = Boolean(currentTenant.serverBacked);
   const tokensHeadingId = useId();
+  const [revealing, setRevealing] = useState(false);
 
   if (!isOpen) return null;
-
-  const curlExample = `curl -X POST "${window.location.origin}/api/v1/vm/ingest" \\
-  -H "Authorization: Bearer <SERVICE_TOKEN>" \\
-  -H "Content-Type: application/json" \\
-  -d @findings.json`;
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
@@ -85,7 +82,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
 
           {/* VM service tokens */}
           {serverBacked && canEdit ? (
-            <VmServiceTokensSection key={currentTenant.id} tenantId={currentTenant.id} tenantName={currentTenant.name} />
+            <VmServiceTokensSection key={currentTenant.id} tenantId={currentTenant.id} tenantName={currentTenant.name} onRevealChange={setRevealing} />
           ) : (
             <section aria-labelledby={tokensHeadingId} className="space-y-2 text-xs pt-4 border-t border-slate-800">
               <h3 id={tokensHeadingId} className="text-sm font-bold text-white flex items-center gap-1.5">
@@ -98,16 +95,16 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </section>
           )}
 
-          {/* cURL Usage snippet */}
-          <div className="space-y-2 text-xs">
-            <span className="text-slate-300 font-semibold flex items-center gap-1.5">
-              <Terminal className="w-3.5 h-3.5 text-brand-400" />
-              Service token authorization header
-            </span>
-            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-brand-300 overflow-x-auto whitespace-pre">
-              {curlExample}
-            </div>
-          </div>
+          {/* Connected scanners (read-only; any member of a server-backed organization) */}
+          {serverBacked && <ConnectedScannersPanel key={`scanners-${currentTenant.id}`} tenantId={currentTenant.id} />}
+
+          {/* Exporter setup: the env file and commands. The token is never part of this text. Hidden while the new-token reveal shows its own copy. */}
+          {serverBacked && canEdit && !revealing && <ExporterSetupPanel />}
+
+          {/* Direct API use */}
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Calling the API without the exporter: send the token in the header <code className="text-cyan-400">{'-H "Authorization: Bearer <SERVICE_TOKEN>"'}</code> with a JSON body (see the vulnerability-management guide).
+          </p>
 
           {/* Multi-tenant note */}
           <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 text-xs text-slate-400 flex items-start gap-2">

@@ -267,8 +267,6 @@ def load_config(
         return v if v is not None else None
 
     allow_insecure = is_truthy(get("PBC_ALLOW_INSECURE_TRANSPORT"))
-    if allow_insecure:
-        log.warning("PBC_ALLOW_INSECURE_TRANSPORT is set: plain http is allowed (development only)")
 
     vendor = source in VENDOR_SOURCES  # the Wazuh settings mean nothing to a vendor source: do not validate them
     mode = "auto" if vendor else (mode_override or get("WAZUH_MODE") or "auto").strip().lower()
@@ -300,7 +298,7 @@ def load_config(
     action1 = _action1_settings(get, allow_insecure) if source == "action1" and not sample else None
     sentinelone = _sentinelone_settings(get, allow_insecure) if source == "sentinelone" and not sample else None
 
-    return Config(
+    config = Config(
         pbc_url=pbc_url,
         pbc_token=token,
         pbc_verify=_ca("PBC_CA_BUNDLE", get("PBC_CA_BUNDLE")),
@@ -322,6 +320,15 @@ def load_config(
         action1=action1,
         sentinelone=sentinelone,
     )
+    # The flag only matters for a plain http URL: when every URL is https, `pbc-vm-exporter check` reports it as unneeded.
+    plain_urls = [config.pbc_url, config.api_url, config.indexer_url]
+    if action1 is not None:
+        plain_urls.append(action1.base_url)
+    if sentinelone is not None:
+        plain_urls.append(sentinelone.console_url)
+    if allow_insecure and any(u and u.lower().startswith("http://") for u in plain_urls):
+        log.warning("PBC_ALLOW_INSECURE_TRANSPORT is set: plain http is allowed (development only)")
+    return config
 
 
 _PATTERNS = (

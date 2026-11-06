@@ -16,16 +16,21 @@ import sys
 from pathlib import Path
 from typing import Mapping, Sequence, TextIO
 
+import requests
+
+from . import __version__
 from .action1 import Action1Reader, group_action1, load_action1_sample
 from .adapter import build_config_payloads, build_payloads, encode_payload
 from .client import IngestClient
 from .config import SOURCES, VENDOR_SOURCES, Config, RedactingFilter, load_config, redact
 from .detect import resolve_mode
+from .diagnose import classify, insecure_flag_note
 from .errors import (
     Action1ReadError, ConfigError, ExporterError, PayloadValidationError, ScanFileError, SentinelOneReadError,
     WazuhReadError,
 )
 from .sentinelone import SentinelOneReader, group_sentinelone, load_sentinelone_sample
+from .transport import make_session
 from .validate import contract_sha256, validate_payload
 from .wazuh_api import ApiReader
 from .wazuh_indexer import IndexerReader, group_documents
@@ -57,9 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="pbc-vm-exporter",
         description="Reads vulnerability state from Wazuh, Action1 or SentinelOne (or XCCDF / ARF result files) and pushes "
         "it to PBC-GRC. Configuration comes from the environment or an env file; there is no option for a token or "
-        "password.",
+        "password. Run `pbc-vm-exporter check` to test the connections (PBC-GRC, Wazuh) without sending anything.",
         allow_abbrev=False,
     )
+    parser.add_argument("--version", action="version", version=f"pbc-vm-exporter {__version__}")
     parser.add_argument("--dry-run", action="store_true", help="build and validate the payloads, print them, send nothing")
     parser.add_argument("--env-file", metavar="PATH", help="KEY=value file (default: ./.env if present)")
     parser.add_argument(
@@ -240,6 +246,187 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
     return 0
 
 
+WHOAMI_PATH = "/api/v1/vm/whoami"
+EMPTY_INDEX_HINT = (
+    "the index is empty: vulnerability detection may be off in Wazuh, or WAZUH_INDEXER_INDEX names the wrong index "
+    "(a run would stop with zero hosts)"
+)
+
+
+def build_check_parser() -> argparse.ArgumentParser:
+    parser = _Parser(
+        prog="pbc-vm-exporter check",
+        description="Tests the configuration, PBC-GRC (reachable, token, contract, size limit) and Wazuh (indexer and, "
+        "where used, manager API). Sends no vulnerability data. Exit 0 when nothing failed.",
+        allow_abbrev=False,
+    )
+    parser.add_argument("--env-file", metavar="PATH", help="KEY=value file (default: ./.env if present)")
+    parser.add_argument("--mode", choices=("auto", "indexer", "api"), help="Wazuh reader (overrides WAZUH_MODE)")
+    parser.add_argument("--source", choices=SOURCES, default="wazuh", help="source to check (default wazuh)")
+    return parser
+
+
+def _body(resp: object) -> dict:
+    try:
+        data = resp.json()  # type: ignore[attr-defined]
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _short(value: object, limit: int = 64) -> str:
+    return " ".join(str(value).split())[:limit]
+
+
+def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, flt: RedactingFilter) -> int:
+    """Step by step connection test. Prints PASS / FAIL / SKIP / NOTE lines with a hint; no secret and no payload."""
+    counts = {"PASS": 0, "FAIL": 0, "SKIP": 0, "NOTE": 0}
+    failures: list[int] = []
+    number = 0
+
+    def emit(state: str, title: str, detail: str = "", hint: str = "", code: int = 1) -> None:
+        nonlocal number
+        number += 1
+        counts[state] += 1
+        line = f"[{state}] {number}. {title}" + (f": {detail}" if detail else "")
+        stdout.write(redact(" ".join(line.split()), flt.secrets) + "\n")
+        if hint:
+            stdout.write(redact("       hint: " + hint, flt.secrets) + "\n")
+        if state == "FAIL":
+            failures.append(code)
+
+    def finish() -> int:
+        stdout.write(f"check: {counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped\n")
+        return failures[0] if failures else 0
+
+    try:
+        cfg = load_config(
+            environ, args.env_file, mode_override=args.mode, dry_run=False, sample=False, source=args.source
+        )
+    except ConfigError as err:
+        flt.secrets = []
+        emit("FAIL", "configuration loads", str(err), code=2)
+        return finish()
+    flt.secrets = cfg.secrets()
+    emit("PASS", "configuration loads", f"source {args.source}")
+
+    # PBC-GRC: reachable, token valid, same contract, size limit.
+    assert cfg.pbc_url is not None and cfg.pbc_token is not None
+    session = make_session()
+    try:
+        resp = session.get(
+            cfg.pbc_url + WHOAMI_PATH, headers={"Authorization": f"Bearer {cfg.pbc_token}", "Accept": "application/json"},
+            timeout=(10, cfg.timeout), verify=cfg.pbc_verify, allow_redirects=False,
+        )
+    except requests.RequestException as err:
+        code, hint = classify(err, "pbc", cfg.pbc_url)
+        emit("FAIL", "PBC-GRC is reachable", f"{type(err).__name__} ({code})", hint, 6)
+        resp = None
+    if resp is not None:
+        status = resp.status_code
+        data = _body(resp)
+        if status == 200:
+            token = data.get("token") if isinstance(data.get("token"), dict) else {}
+            expires = token.get("expires_at")
+            emit(
+                "PASS", "PBC-GRC is reachable and the token is valid",
+                f"token '{_short(token.get('name', ''))}' ({_short(token.get('prefix', ''))}), "
+                f"expires {_short(expires) if expires else 'never'}",
+            )
+            server_sha = data.get("contract_sha256")
+            if not isinstance(server_sha, str):
+                emit("SKIP", "contract matches the server", "the server did not report its contract hash")
+            elif server_sha == contract_sha256():
+                emit("PASS", "contract matches the server")
+            else:
+                emit(
+                    "FAIL", "contract matches the server", "the server's ingest contract differs from this exporter's",
+                    "upgrade the exporter or the server so both match (--print-contract-sha256 shows this exporter's)", 4,
+                )
+            limits = data.get("limits") if isinstance(data.get("limits"), dict) else {}
+            max_bytes = limits.get("max_bytes")
+            if not isinstance(max_bytes, int) or isinstance(max_bytes, bool):
+                emit("SKIP", "payload size limit", "the server did not report its limit")
+            elif cfg.max_bytes <= max_bytes:
+                emit("PASS", "payload size limit", f"EXPORT_MAX_BYTES {cfg.max_bytes} <= server {max_bytes}")
+            else:
+                emit(
+                    "FAIL", "payload size limit", f"EXPORT_MAX_BYTES {cfg.max_bytes} > server {max_bytes}",
+                    "lower EXPORT_MAX_BYTES, or raise VM_INGEST_MAX_BYTES on the server", 5,
+                )
+        elif status == 404:
+            emit("SKIP", "PBC-GRC token and contract", "server too old for check (it has no whoami endpoint)")
+        elif 300 <= status < 400:
+            emit("FAIL", "PBC-GRC is reachable", f"HTTP {status}", "redirect refused; set PBC_URL to the final https URL", 5)
+        elif status in (401, 403) or 400 <= status < 500:
+            server_code = data.get("code") if isinstance(data.get("code"), str) else ""
+            code, hint = classify(f"HTTP {status} {server_code}", "pbc", cfg.pbc_url)
+            emit("FAIL", "PBC-GRC accepts the token", f"HTTP {status} ({code})", hint, 5)
+        else:
+            emit("FAIL", "PBC-GRC is reachable", f"HTTP {status}", "retry later; check the server log", 6)
+
+    # Wazuh: only for the wazuh source.
+    urls: list[str | None] = [cfg.pbc_url, cfg.api_url, cfg.indexer_url]
+    if cfg.action1 is not None:
+        urls.append(cfg.action1.base_url)
+    if cfg.sentinelone is not None:
+        urls.append(cfg.sentinelone.console_url)
+    if args.source != "wazuh":
+        emit("SKIP", "Wazuh checks", f"not used by --source {args.source}")
+    else:
+        mode = cfg.wazuh_mode
+        if mode == "api":
+            emit("SKIP", "Wazuh indexer", "api mode does not use it")
+        elif not cfg.indexer_url:
+            if mode == "indexer":
+                emit("FAIL", "Wazuh indexer", "WAZUH_INDEXER_URL is required for indexer mode", code=2)
+            else:
+                emit("SKIP", "Wazuh indexer", "WAZUH_INDEXER_URL is not set")
+        else:
+            reader = IndexerReader(
+                cfg.indexer_url, cfg.indexer_user, cfg.indexer_password, cfg.wazuh_verify, cfg.timeout,
+                index=cfg.indexer_index, session=session,
+            )
+            try:
+                found = reader._call(
+                    "post", f"{reader.url}/{reader.index}/_search", "search", json={"size": 0, "track_total_hits": True}
+                )
+                total = _body(found).get("hits", {}).get("total")
+                count = total.get("value") if isinstance(total, dict) else total
+                if not isinstance(count, int) or isinstance(count, bool):
+                    emit("FAIL", "Wazuh indexer", "an unexpected response body", code=3)
+                elif count == 0:
+                    emit("FAIL", "Wazuh indexer", "reachable, 0 documents", EMPTY_INDEX_HINT, 3)
+                else:
+                    emit("PASS", "Wazuh indexer", f"reachable, {count} documents")
+            except WazuhReadError as err:
+                emit("FAIL", "Wazuh indexer", str(err), code=3)
+        if mode == "indexer":
+            emit("SKIP", "Wazuh manager API", "not needed in indexer mode")
+        elif not cfg.api_url:
+            emit(
+                "FAIL", "Wazuh manager API", "WAZUH_API_URL is required for this mode",
+                "set WAZUH_MODE=indexer to read the indexer only; auto and api modes also need WAZUH_API_URL, "
+                "WAZUH_API_USER and WAZUH_API_PASSWORD", 2,
+            )
+        else:
+            try:
+                ApiReader(
+                    cfg.api_url, cfg.api_user, cfg.api_password, cfg.wazuh_verify, cfg.timeout, session=session
+                ).authenticate()
+                emit("PASS", "Wazuh manager API", "authenticated")
+            except WazuhReadError as err:
+                code, hint = classify(str(err), "manager", cfg.api_url)
+                emit("FAIL", "Wazuh manager API", str(err), hint, 3)
+
+    note = insecure_flag_note(cfg.allow_insecure, urls)
+    if note is not None:
+        emit("NOTE", "PBC_ALLOW_INSECURE_TRANSPORT", "set but not needed", note[1])
+    elif cfg.allow_insecure:
+        emit("NOTE", "PBC_ALLOW_INSECURE_TRANSPORT", "in use for a plain http URL (development only)")
+    return finish()
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -262,6 +449,21 @@ def main(
     log.addHandler(handler)
     log.setLevel(logging.INFO)
     try:
+        arglist = list(sys.argv[1:] if argv is None else argv)
+        if arglist and arglist[0] == "check":  # the one subcommand; anything else positional is still refused below
+            try:
+                check_args, check_extras = build_check_parser().parse_known_args(arglist[1:])
+                if check_extras:
+                    names = [e.split("=", 1)[0] for e in check_extras if e.startswith("-")]
+                    raise _UsageError(
+                        "unrecognized option(s): " + (", ".join(names) or "(positional arguments are not accepted)")
+                    )
+            except _UsageError as err:
+                fail(str(err))
+                return 2
+            except SystemExit as err:  # --help
+                return err.code if isinstance(err.code, int) else 0
+            return _run_check(check_args, environ, stdout, flt)
         try:
             args, extras = build_parser().parse_known_args(argv)
             if extras:

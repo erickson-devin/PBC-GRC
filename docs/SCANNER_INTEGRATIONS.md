@@ -40,7 +40,10 @@ what the first live run must confirm.
    * **Token name**: what will use it, e.g. `Wazuh exporter on scan-host-01`. Owners and admins can see the name.
    * **Expires after**: the screen proposes 90 days; the go-live checklist says 90 to 180. Put the expiry in your calendar.
 4. Press **Create token**. The value (`pbcvm_` + 43 characters) is shown **once**. Copy it straight into the exporter's env
-   file (section 2.3 or 3). Then press **I have stored the token**. The server keeps only a hash; if the value is lost,
+   file (section 2.3 or 3). The screen then shows **Set up the exporter**: pick the scanner, check the PBC-GRC address
+   (it defaults to the address you are using now; change it to the one the exporter host uses), copy or download the
+   generated settings file and paste the token into it. The token is never part of the generated text. Then press
+   **I have stored the token**. The server keeps only a hash; if the value is lost,
    revoke the token and create a new one.
 5. One token per scanner host. A token belongs to one organization and can only push scan results (`vm:ingest`).
 6. **Rotation**: create the new token, update the exporter's env file, run the exporter once, then **Revoke** the old one
@@ -59,20 +62,32 @@ address. It needs Python 3.11 and nothing else from the internet after install. 
 ```bash
 sudo mkdir -p /opt/pbc-vm-exporter && cd /opt/pbc-vm-exporter
 # copy exporters/pbc-vm-exporter/ from the repository here (or git clone the repo and cd into that folder)
-python3 -m venv .venv && .venv/bin/pip install .
+python3 -m venv .venv && .venv/bin/python -m pip install .
 ```
 
 ### 2.2 Wazuh side: a read-only account
 
 * **Wazuh 4.8 and later** (the normal case): the exporter reads the indexer index `wazuh-states-vulnerabilities-*`.
   Create an indexer (OpenSearch) user with a **read-only role limited to that index pattern**. That user's name and
-  password go into `WAZUH_INDEXER_USER` / `WAZUH_INDEXER_PASSWORD`.
+  password go into `WAZUH_INDEXER_USER` / `WAZUH_INDEXER_PASSWORD`. **Port 9200 is the indexer, and the exporter reads
+  the indexer. Port 55000 is the Wazuh manager API, a different service with different users.** A user created in the
+  Wazuh dashboard's API / RBAC settings exists only in the manager and is refused by the indexer with HTTP 401. Create
+  the indexer user in the OpenSearch security plugin instead: Wazuh dashboard, Indexer management, Security, Internal
+  users (create the user), Roles (a role with the cluster permission `cluster_composite_ops_ro` and the index
+  permission `read` on `wazuh-states-vulnerabilities-*`), then map the role to the user under Role mappings. Menu names
+  differ between Wazuh versions: verify on your install.
+* The indexer must be reachable from the exporter host. By default it may listen on `127.0.0.1` only: in
+  `/etc/wazuh-indexer/opensearch.yml` set `network.host` to a list such as `[127.0.0.1, <LAN IP>]`, restart
+  `wazuh-indexer`, and open port 9200 for the exporter host in the firewall.
 * **Wazuh 4.7 and earlier**: the exporter reads `/agents` and `/vulnerability/{id}` from the manager API. Create a
   read-only API user; its name and password go into `WAZUH_API_USER` / `WAZUH_API_PASSWORD`.
 * `WAZUH_MODE=auto` (the default) asks the manager API for the version and picks the mode, so in auto mode the
   **manager API user is needed as well** even on 4.8+. Set `WAZUH_MODE=indexer` explicitly to need only the indexer user.
 * Wazuh's certificates: the exporter verifies TLS and cannot be told not to. Point `WAZUH_CA_BUNDLE` at Wazuh's root CA
-  (`root-ca.pem` in its certificates directory) and reach Wazuh by a name its certificate covers.
+  (`/etc/wazuh-indexer/certs/root-ca.pem` on the Wazuh host) and reach Wazuh by a name its certificate covers: the
+  default certificate may list only `127.0.0.1`, and a connection to another IP then fails with "IP address mismatch".
+  Check the names with `openssl s_client -connect <host>:9200 </dev/null | openssl x509 -noout -text` (Subject Alternative
+  Name) and reissue the certificate with the IP or name you use if it is missing.
 
 ### 2.3 The env file (this is where the credentials go)
 
@@ -84,7 +99,8 @@ install -d -m 0750 -o root -g pbc-vm-exporter /etc/pbc-vm-exporter
 install -m 0600 -o pbc-vm-exporter -g pbc-vm-exporter /dev/null /etc/pbc-vm-exporter/env
 ```
 
-Contents of `/etc/pbc-vm-exporter/env` (`KEY=value` lines, no inline comments, no quotes needed):
+Contents of `/etc/pbc-vm-exporter/env` (`KEY=value` lines; a comment goes on its own line, never after a value; quotes
+around a value are optional and one matching pair is stripped):
 
 ```
 # PBC-GRC (section 1)
@@ -93,7 +109,8 @@ PBC_SERVICE_TOKEN=pbcvm_...................................................
 PBC_SOURCE_LABEL=wazuh-hq
 PBC_CA_BUNDLE=/etc/pbc-vm-exporter/pbc-ca.pem
 
-# Wazuh 4.8+ (indexer)
+# Wazuh 4.8+ (indexer). 9200 is the Wazuh indexer, which the exporter reads; 55000 is the Wazuh manager API.
+# WAZUH_MODE=auto (the default) also needs WAZUH_API_URL, WAZUH_API_USER and WAZUH_API_PASSWORD.
 WAZUH_MODE=indexer
 WAZUH_INDEXER_URL=https://wazuh-indexer.example.mil:9200
 WAZUH_INDEXER_USER=pbc-readonly
@@ -115,23 +132,40 @@ Rules that matter:
 * There is no command-line option for a token or password, by design. The env file (mode 0600, owned by the service
   account) is the only place.
 * `PBC_ALLOW_INSECURE_TRANSPORT` exists for development only. Leave it unset in production; the server refuses tokens over
-  plain HTTP anyway.
+  plain HTTP anyway. The exporter warns about it only when some URL is plain `http`; `check` reports it as unneeded
+  when every URL is `https`.
 
 ### 2.4 First run
 
 ```bash
 cd /opt/pbc-vm-exporter
 # 1. offline check of the install (no network, no credentials needed)
+.venv/bin/pbc-vm-exporter --version
 .venv/bin/python -m pbc_vm_exporter --dry-run --sample
-# 2. read Wazuh for real but send nothing: prints what would be pushed as JSON
+# 2. test every connection and credential, sending nothing
+sudo -u pbc-vm-exporter .venv/bin/pbc-vm-exporter check --env-file /etc/pbc-vm-exporter/env
+# 3. read Wazuh for real but send nothing: prints what would be pushed as JSON
 sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env --dry-run
-# 3. the first live push
+# 4. the first live push
 sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env
 ```
+
+`check` prints one PASS, FAIL, SKIP or NOTE line per step, with a hint under each failure (the table in section 2.7): the
+configuration loads; PBC-GRC is reachable and the token is valid (its name, display prefix and expiry are printed, never the
+token); the exporter's contract equals the server's; `EXPORT_MAX_BYTES` is within the server's limit; the Wazuh indexer
+answers and has documents; with `WAZUH_MODE=auto` or `api`, the manager API authenticates; and whether
+`PBC_ALLOW_INSECURE_TRANSPORT` is needed. It exits 0 when nothing failed, otherwise with the exit code of the failing area
+(2 configuration, 3 Wazuh, 4 contract, 5 PBC-GRC refused, 6 PBC-GRC unreachable). Against an older server without the
+`whoami` endpoint the PBC-GRC step is SKIPped ("server too old for check"), not failed. `check` accepts `--env-file`,
+`--source` and `--mode`; it never sends scan data.
 
 Exit codes: 0 pushed; 2 configuration error (read the message, nothing was sent); 3 the scanner could not be read; the
 README section 11 lists the rest, and section 12 maps server HTTP statuses to causes (401 = token wrong or revoked,
 403 `vm_insecure_transport` = plain HTTP, 413 = lower `EXPORT_MAX_BYTES`).
+
+The server side of `check` is `GET /api/v1/vm/whoami`, authenticated by the same service token and over HTTPS like the
+ingest endpoint (so it counts as use of the token). It answers `token` (name, prefix, expiry), `scopes`, `contract_sha256`
+(of `server/vm/ingest.schema.json`), `limits.max_bytes` and `features`. It never returns the tenant id or the token hash.
 
 **Known caveat (issue #68).** The Wazuh field names the exporter reads were written from knowledge of Wazuh 4.x, not
 verified against a running manager. If the dry run in step 2 shows zero hosts or empty findings while Wazuh clearly has
@@ -152,6 +186,25 @@ Daily is the expected interval (the server flags a source as stale when its newe
 The README section 8 has the exact systemd service and timer; the service runs as the dedicated user with
 `EnvironmentFile=/etc/pbc-vm-exporter/env`. On Windows, Task Scheduler as a low-privilege service account with the token
 in that account's user environment and **no secrets in the task arguments**.
+
+### 2.7 Troubleshooting
+
+When a connection fails, the exporter (and `check`) appends a `hint:` to the error. The same table:
+
+| Symptom (the error text contains) | Fix |
+| --- | --- |
+| Connection refused (WinError 10061) to the Wazuh indexer | nothing is listening at that address: on the Wazuh host the indexer may be bound to 127.0.0.1 only; set network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, `<LAN IP>`]) and restart wazuh-indexer, or check the firewall for port 9200 |
+| Connection timed out | the connection timed out: a firewall is probably dropping traffic from this host to that address and port (indexer 9200, manager API 55000, PBC-GRC 443); open the port from this host |
+| getaddrinfo failed, Name or service not known | the host name does not resolve from this machine: check the spelling, DNS, or use the IP address |
+| unable to get local issuer certificate, self-signed certificate | set WAZUH_CA_BUNDLE to the indexer root CA (/etc/wazuh-indexer/certs/root-ca.pem on the Wazuh host); for the PBC-GRC certificate set PBC_CA_BUNDLE to its CA |
+| IP address mismatch, Hostname mismatch, doesn't match | the certificate does not cover the host name or IP in the URL: use a name the certificate lists (check with openssl s_client ... \| openssl x509 -noout -text, Subject Alternative Name), or reissue it with that IP |
+| Indexer returned HTTP 401 | the indexer (port 9200) uses its own internal users from the OpenSearch security plugin, not Wazuh manager API users; create the user with the security plugin (see docs/SCANNER_INTEGRATIONS.md) |
+| Indexer returned HTTP 403 | the user is known but its role lacks read access on the vulnerability index: map a role with read on wazuh-states-vulnerabilities-* to this user in the indexer security plugin |
+| Indexer returned HTTP 404 (index_not_found) | index_not_found: vulnerability detection is probably off in Wazuh, or WAZUH_INDEXER_INDEX is the wrong index name |
+| WAZUH_INDEXER_URL ends in :55000, or WAZUH_API_URL ends in :9200 | port 9200 is the Wazuh indexer, which the exporter reads; port 55000 is the Wazuh manager API: point WAZUH_INDEXER_URL at 9200 and set WAZUH_MODE=indexer |
+| PBC-GRC answers HTTP 403 vm_insecure_transport | PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy terminates TLS (vm_insecure_transport) |
+| PBC-GRC answers HTTP 401 | the service token is wrong, expired or revoked: create a new one in PBC-GRC (API tokens) and paste it |
+| Warning: PBC_ALLOW_INSECURE_TRANSPORT is set | PBC_ALLOW_INSECURE_TRANSPORT is set but every URL is https: remove it, it only silences a safety check |
 
 ## 3. Configuration results from any SCAP scanner (supported today)
 
