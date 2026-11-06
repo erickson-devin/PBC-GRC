@@ -3,11 +3,11 @@
 import type { EnclaveStackProfile } from '../types/tenant';
 
 export const STACK_PROFILE_ENUMS = {
-  identityProvider: ['ENTRA_ID_GOV', 'ENTRA_ID_COMMERCIAL', 'OKTA', 'ACTIVE_DIRECTORY'],
-  edrSolution: ['CROWDSTRIKE_FALCON', 'DEFENDER_FOR_ENDPOINT', 'SENTINELONE', 'GENERIC_AV'],
-  infrastructure: ['AZURE_GOV', 'AWS_GOVCLOUD', 'ON_PREM_RHEL', 'HYBRID_CLOUD'],
-  mdmSolution: ['INTUNE', 'JAMF', 'WORKSPACE_ONE', 'MANUAL_GPO'],
-  siemSolution: ['SENTINEL', 'SPLUNK_GOV', 'ELASTIC', 'LOCAL_AUDITD'],
+  identityProvider: ['ENTRA_ID_GOV', 'ENTRA_ID_COMMERCIAL', 'OKTA', 'ACTIVE_DIRECTORY', 'CUSTOM'],
+  edrSolution: ['CROWDSTRIKE_FALCON', 'DEFENDER_FOR_ENDPOINT', 'SENTINELONE', 'GENERIC_AV', 'CUSTOM'],
+  infrastructure: ['AZURE_GOV', 'AWS_GOVCLOUD', 'ON_PREM_RHEL', 'HYBRID_CLOUD', 'CUSTOM'],
+  mdmSolution: ['INTUNE', 'JAMF', 'WORKSPACE_ONE', 'MANUAL_GPO', 'CUSTOM'],
+  siemSolution: ['SENTINEL', 'SPLUNK_GOV', 'ELASTIC', 'LOCAL_AUDITD', 'CUSTOM'],
 } as const;
 
 export const STACK_PROFILE_ENUM_KEYS = Object.keys(STACK_PROFILE_ENUMS) as Array<keyof typeof STACK_PROFILE_ENUMS>;
@@ -16,7 +16,10 @@ export const STACK_PROFILE_MAX_BYTES = 16384;
 export const STACK_PROFILE_MAX_PARAMS = 50;
 export const STACK_PROFILE_MAX_PARAM_CHARS = 1000;
 
+export const STACK_PROFILE_MAX_LABEL_CHARS = 120;
+
 const ODP_KEY = /^[A-Z0-9_]{1,64}$/;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 export type StackProfileValidation =
   | { ok: true; value: EnclaveStackProfile }
@@ -27,7 +30,7 @@ export function validateStackProfile(raw: unknown): StackProfileValidation {
     return { ok: false, error: 'stackProfile must be an object' };
   }
   const input = raw as Record<string, unknown>;
-  const allowed = new Set<string>([...STACK_PROFILE_ENUM_KEYS, 'odpParams']);
+  const allowed = new Set<string>([...STACK_PROFILE_ENUM_KEYS, 'odpParams', 'customLabels']);
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) return { ok: false, error: 'Unknown stackProfile field' };
   }
@@ -55,6 +58,28 @@ export function validateStackProfile(raw: unknown): StackProfileValidation {
       odp[k] = v;
     }
     value.odpParams = odp;
+  }
+  // A label names the product behind a CUSTOM choice: required for each CUSTOM step, rejected for any other
+  const rawLabels = input.customLabels;
+  if (rawLabels !== undefined) {
+    if (typeof rawLabels !== 'object' || rawLabels === null || Array.isArray(rawLabels)) {
+      return { ok: false, error: 'customLabels must be an object' };
+    }
+    const labels: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawLabels as Record<string, unknown>)) {
+      if (!(STACK_PROFILE_ENUM_KEYS as readonly string[]).includes(k)) return { ok: false, error: 'Invalid customLabels key' };
+      if (value[k] !== 'CUSTOM') return { ok: false, error: 'customLabels is only allowed for a CUSTOM choice' };
+      if (typeof v !== 'string' || v.length < 1 || v.length > STACK_PROFILE_MAX_LABEL_CHARS || CONTROL_CHARS.test(v)) {
+        return { ok: false, error: 'Invalid customLabels value' };
+      }
+      labels[k] = v;
+    }
+    value.customLabels = labels;
+  }
+  for (const key of STACK_PROFILE_ENUM_KEYS) {
+    if (value[key] === 'CUSTOM' && !(value.customLabels as Record<string, string> | undefined)?.[key]) {
+      return { ok: false, error: `Missing customLabels for ${key}` };
+    }
   }
   if (new TextEncoder().encode(JSON.stringify(value)).length > STACK_PROFILE_MAX_BYTES) {
     return { ok: false, error: 'stackProfile is too large' };

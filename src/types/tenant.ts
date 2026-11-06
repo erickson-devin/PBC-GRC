@@ -7,12 +7,14 @@ export type SamStatus = 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'NOT_REGISTERED';
 export type AuthProviderType = 'password';
 
 export interface EnclaveStackProfile {
-  identityProvider: 'ENTRA_ID_GOV' | 'ENTRA_ID_COMMERCIAL' | 'OKTA' | 'ACTIVE_DIRECTORY';
-  edrSolution: 'CROWDSTRIKE_FALCON' | 'DEFENDER_FOR_ENDPOINT' | 'SENTINELONE' | 'GENERIC_AV';
-  infrastructure: 'AZURE_GOV' | 'AWS_GOVCLOUD' | 'ON_PREM_RHEL' | 'HYBRID_CLOUD';
-  mdmSolution: 'INTUNE' | 'JAMF' | 'WORKSPACE_ONE' | 'MANUAL_GPO';
-  siemSolution: 'SENTINEL' | 'SPLUNK_GOV' | 'ELASTIC' | 'LOCAL_AUDITD';
+  identityProvider: 'ENTRA_ID_GOV' | 'ENTRA_ID_COMMERCIAL' | 'OKTA' | 'ACTIVE_DIRECTORY' | 'CUSTOM';
+  edrSolution: 'CROWDSTRIKE_FALCON' | 'DEFENDER_FOR_ENDPOINT' | 'SENTINELONE' | 'GENERIC_AV' | 'CUSTOM';
+  infrastructure: 'AZURE_GOV' | 'AWS_GOVCLOUD' | 'ON_PREM_RHEL' | 'HYBRID_CLOUD' | 'CUSTOM';
+  mdmSolution: 'INTUNE' | 'JAMF' | 'WORKSPACE_ONE' | 'MANUAL_GPO' | 'CUSTOM';
+  siemSolution: 'SENTINEL' | 'SPLUNK_GOV' | 'ELASTIC' | 'LOCAL_AUDITD' | 'CUSTOM';
   odpParams?: Record<string, string>;
+  /** The product or approach name for each step set to CUSTOM (required then, rejected otherwise). */
+  customLabels?: Partial<Record<'identityProvider' | 'edrSolution' | 'infrastructure' | 'mdmSolution' | 'siemSolution', string>>;
 }
 
 export interface Tenant {
