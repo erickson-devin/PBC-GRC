@@ -1,6 +1,8 @@
 import hashlib
 import io
 import json
+import logging
+import stat
 import subprocess
 import sys
 
@@ -40,7 +42,7 @@ def test_dry_run_sample_prints_valid_chunks():
         assert hashlib.sha256(encode_payload(chunk["payload"])).hexdigest() == chunk["sha256"]
         assert chunk["bytes"] == len(encode_payload(chunk["payload"]))
     assert doc["contract_sha256"] == hashlib.sha256(SERVER_SCHEMA.read_bytes()).hexdigest()
-    assert doc["dropped_rows"] == 1 and doc["skipped_hosts"] == []
+    assert doc["dropped_rows"] == 1 and doc["skipped_hosts"] == 0
 
 
 def test_print_contract_sha256():
@@ -162,14 +164,41 @@ def test_success_is_exit_0_and_sends_the_validated_bytes(monkeypatch):
     assert len(sent) == 1 and validate_payload(json.loads(sent[0])) is None
 
 
-def test_partial_export_is_exit_7_and_names_the_skipped_agents(monkeypatch):
-    big = {"agent_id": "999", "rows": [
-        {"vuln_id": f"CVE-2024-{i:04d}", "severity": "Low"} for i in range(1, 5002)
-    ]}
-    monkeypatch.setattr(cli, "read_hosts", lambda cfg: RAW + [big])
+BIG = {"agent_id": "999", "rows": [
+    {"vuln_id": f"CVE-2024-{i:04d}", "severity": "Low"} for i in range(1, 5002)
+]}
+
+
+def test_partial_export_is_exit_7_with_a_count_only(monkeypatch, caplog):
+    # #219: the Wazuh path, like the vendor readers, never names a skipped agent in the log or on stderr
+    caplog.set_level(logging.WARNING)
+    monkeypatch.setattr(cli, "read_hosts", lambda cfg: RAW + [BIG])
     monkeypatch.setattr(cli, "IngestClient", lambda *a, **k: type("C", (), {"send_all": lambda self, b, m: []})())
-    code, _, err = run([], ENV)
-    assert code == 7 and "999" in err
+    code, out, err = run([], ENV)
+    assert code == 7 and "999" not in err and "1 host(s) skipped" in err and "--skipped-report" in err
+    assert "999" not in caplog.text and "1 host(s) skipped whole" in caplog.text
+    assert out == ""
+
+
+def test_skipped_report_holds_the_agent_ids_owner_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "read_hosts", lambda cfg: RAW + [BIG])
+    monkeypatch.setattr(cli, "IngestClient", lambda *a, **k: type("C", (), {"send_all": lambda self, b, m: []})())
+    report = tmp_path / "skipped.txt"
+    code, _, err = run(["--skipped-report", str(report)], ENV)
+    assert code == 7 and "999" not in err and str(report) in err
+    assert report.read_text(encoding="utf-8") == "999\n"
+    if sys.platform != "win32":
+        assert stat.S_IMODE(report.stat().st_mode) == 0o600
+    # a complete export writes no report
+    report.unlink()
+    monkeypatch.setattr(cli, "read_hosts", lambda cfg: RAW)
+    assert run(["--skipped-report", str(report)], ENV)[0] == 0 and not report.exists()
+
+
+def test_dry_run_skipped_hosts_is_a_count_for_wazuh(monkeypatch):
+    monkeypatch.setattr(cli, "read_hosts", lambda cfg: RAW + [BIG])
+    code, out, _ = run(["--dry-run"], ENV)
+    assert code == 0 and json.loads(out)["skipped_hosts"] == 1 and "999" not in out
 
 
 def test_unexpected_error_is_exit_1_one_line(monkeypatch):
