@@ -16,9 +16,10 @@ A push-model exporter. It runs inside the enclave next to Wazuh (or anywhere tha
 Python 3.11 or later and `requests`.
 
 ```
-python -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"          # Windows: .venv\Scripts\python.exe
+python3 -m venv .venv && .venv/bin/python -m pip install .          # Windows: .venv\Scripts\python.exe -m pip install .
 ```
+
+For development (tests) install with `.venv/bin/python -m pip install -e ".[dev]"` instead. `pbc-vm-exporter --version` prints the installed version.
 
 Offline or air-gapped hosts: on a connected machine run `pip download -d wheelhouse "requests>=2.31" setuptools`, copy the folder over, then `pip install --no-index --find-links wheelhouse -e .` (add `--no-build-isolation` if setuptools is already present).
 
@@ -40,11 +41,11 @@ Everything comes from the environment or from an env file (`--env-file PATH`, de
 | `PBC_SERVICE_TOKEN` | yes (not for `--dry-run`) | Service token, `pbcvm_` plus 43 characters |
 | `PBC_SOURCE_LABEL` | yes (not for `--sample`) | Source label, 1 to 128 characters, no control characters. No default: keep it stable (see Limitations) |
 | `PBC_CA_BUNDLE` | no | CA bundle file for PBC-GRC's certificate |
-| `PBC_ALLOW_INSECURE_TRANSPORT` | no | `true`, `1`, `yes` or `on` allows plain `http://`. Development only; logs a warning |
-| `WAZUH_MODE` | no | `auto` (default), `indexer` or `api`. `--mode` wins |
-| `WAZUH_INDEXER_URL`, `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD` | indexer mode | Wazuh indexer (Wazuh 4.8 and later) |
+| `PBC_ALLOW_INSECURE_TRANSPORT` | no | `true`, `1`, `yes` or `on` allows plain `http://`. Development only; logs a warning only when some URL is plain `http` (`check` reports it as unneeded when every URL is `https`) |
+| `WAZUH_MODE` | no | `auto` (default), `indexer` or `api`. `--mode` wins. Use `indexer` unless the manager API is also configured: `auto` and `api` need `WAZUH_API_*` |
+| `WAZUH_INDEXER_URL`, `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD` | indexer mode | Wazuh indexer, port 9200 (Wazuh 4.8 and later). The user is an indexer (OpenSearch security plugin) user, not a manager API user |
 | `WAZUH_INDEXER_INDEX` | no | Default `wazuh-states-vulnerabilities-*` |
-| `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD` | api and auto mode | Wazuh manager API (4.7 and earlier; also used by `auto` to read the version) |
+| `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD` | api and auto mode | Wazuh manager API, port 55000 (4.7 and earlier; also used by `auto` to read the version) |
 | `WAZUH_CA_BUNDLE` | no | CA bundle file for the Wazuh certificates |
 | `ACTION1_BASE_URL` | `--source action1` | The full Action1 API root, for example `https://app.action1.com/api/3.0` (North America) or `https://app.eu.action1.com/api/3.0` (Europe) |
 | `ACTION1_CLIENT_ID`, `ACTION1_CLIENT_SECRET` | `--source action1` | OAuth client credentials of an Action1 API key (secret 1 to 1024 characters; never logged) |
@@ -62,9 +63,26 @@ Everything comes from the environment or from an env file (`--env-file PATH`, de
 
 URLs must be `https` (the two proxy URLs may be `http`) and must not contain credentials, a query or a fragment. The Action1 and SentinelOne variables are required only by their own `--source` and not at all with `--sample`; `WAZUH_MODE` and `WAZUH_INDEXER_INDEX` are not read for those sources. A number that is not a positive integer falls back to the default with a warning; a number outside its range is clamped.
 
-Env file format: `KEY=value`, an optional `export ` prefix, full-line `#` comments, blank lines. There are no inline comments (a `#` inside a password survives), one pair of matching outer quotes is stripped, and there is no interpolation. A malformed line is reported by number only; its content is never echoed.
+Env file format: `KEY=value`, an optional `export ` prefix, full-line `#` comments, blank lines. A comment goes on its own line: there are no inline comments (a `#` inside a password survives). Quotes around a value are optional and one pair of matching outer quotes is stripped. There is no interpolation. A malformed line is reported by number only; its content is never echoed.
 
 A run splits a large fleet across several POSTs by hosts, findings and bytes. A host is never split between two POSTs and never shortened.
+
+## 3a. Checking the setup (`check`) and the version
+
+```
+pbc-vm-exporter --version
+pbc-vm-exporter check --env-file /etc/pbc-vm-exporter/env
+```
+
+`check` (the only subcommand; it accepts `--env-file`, `--source` and `--mode`) tests the setup step by step and sends no scan data. It prints a PASS, FAIL, SKIP or NOTE line per step with a hint under each failure:
+
+1. the configuration loads;
+2. PBC-GRC: `GET {PBC_URL}/api/v1/vm/whoami` with the token: reachable, the token is valid (its name, display prefix and expiry are printed, never the token), the server's contract hash equals this exporter's (`--print-contract-sha256`), and `EXPORT_MAX_BYTES` is within the server's limit. A server without that endpoint answers 404: the step is SKIPped ("server too old for check"), not failed;
+3. the Wazuh indexer (indexer and auto mode): `POST {WAZUH_INDEXER_URL}/{index}/_search` with `size` 0, and its document count;
+4. the Wazuh manager API (auto and api mode): authentication;
+5. a NOTE when `PBC_ALLOW_INSECURE_TRANSPORT` is set but every URL is `https`.
+
+Exit 0 when nothing failed, otherwise the exit code of the first failing area (section 11: 2 configuration, 3 Wazuh, 4 contract, 5 PBC-GRC refused, 6 PBC-GRC unreachable). Any other argument that is not an option is refused with exit 2.
 
 ## 4. Choosing a mode
 
@@ -230,7 +248,26 @@ First live run, confirm: the base path and the `ApiToken` header; the `/agents` 
 
 Retries: 429 honours `Retry-After` (capped at 60 s); 500, 502, 503 and 504 and connection errors are tried 3 times with 2 s then 4 s pauses; other 4xx are not retried. A retry resends the same bytes, so a lost 202 is answered with `200 {"duplicate": true}`. Chunks are sent one after another with a 2.5 s pause (the server allows 30 per minute) and the run stops at the first failure.
 
-## 12. Troubleshooting by server status
+## 12. Troubleshooting
+
+When a Wazuh or PBC-GRC connection fails, the exporter (and `check`) appends a `hint:` to the error. The same table:
+
+| Symptom (the error text contains) | Fix |
+| --- | --- |
+| Connection refused (WinError 10061) to the Wazuh indexer | nothing is listening at that address: on the Wazuh host the indexer may be bound to 127.0.0.1 only; set network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, `<LAN IP>`]) and restart wazuh-indexer, or check the firewall for port 9200 |
+| Connection timed out | the connection timed out: a firewall is probably dropping traffic from this host to that address and port (indexer 9200, manager API 55000, PBC-GRC 443); open the port from this host |
+| getaddrinfo failed, Name or service not known | the host name does not resolve from this machine: check the spelling, DNS, or use the IP address |
+| unable to get local issuer certificate, self-signed certificate | set WAZUH_CA_BUNDLE to the indexer root CA (/etc/wazuh-indexer/certs/root-ca.pem on the Wazuh host); for the PBC-GRC certificate set PBC_CA_BUNDLE to its CA |
+| IP address mismatch, Hostname mismatch, doesn't match | the certificate does not cover the host name or IP in the URL: use a name the certificate lists (check with openssl s_client ... \| openssl x509 -noout -text, Subject Alternative Name), or reissue it with that IP |
+| Indexer returned HTTP 401 | the indexer (port 9200) uses its own internal users from the OpenSearch security plugin, not Wazuh manager API users; create the user with the security plugin (see docs/SCANNER_INTEGRATIONS.md) |
+| Indexer returned HTTP 403 | the user is known but its role lacks read access on the vulnerability index: map a role with read on wazuh-states-vulnerabilities-* to this user in the indexer security plugin |
+| Indexer returned HTTP 404 (index_not_found) | index_not_found: vulnerability detection is probably off in Wazuh, or WAZUH_INDEXER_INDEX is the wrong index name |
+| WAZUH_INDEXER_URL ends in :55000, or WAZUH_API_URL ends in :9200 | port 9200 is the Wazuh indexer, which the exporter reads; port 55000 is the Wazuh manager API: point WAZUH_INDEXER_URL at 9200 and set WAZUH_MODE=indexer |
+| PBC-GRC answers HTTP 403 vm_insecure_transport | PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy terminates TLS (vm_insecure_transport) |
+| PBC-GRC answers HTTP 401 | the service token is wrong, expired or revoked: create a new one in PBC-GRC (API tokens) and paste it |
+| Warning: PBC_ALLOW_INSECURE_TRANSPORT is set | PBC_ALLOW_INSECURE_TRANSPORT is set but every URL is https: remove it, it only silences a safety check |
+
+### By server status
 
 * 400: the path names the offending field. This indicates an exporter bug: file an issue.
 * 401: the token is wrong, expired or revoked.

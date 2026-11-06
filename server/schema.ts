@@ -110,7 +110,7 @@ const vmConfigSeverityList = VM_CONFIG_SEVERITIES.map((s) => `'${s}'`).join(', '
 export const PROGRAM_FRAMEWORK_IDS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'] as const;
 const programFrameworkList = PROGRAM_FRAMEWORK_IDS.map((f) => `'${f}'`).join(', ');
 const sspMetadataFieldList = SSP_METADATA_FIELDS.map((f) => `'${f}'`).join(', ');
-const stackProfileKeyList = [...STACK_PROFILE_ENUM_KEYS, 'odpParams'].map((k) => `'${k}'`).join(', ');
+const stackProfileKeyList = [...STACK_PROFILE_ENUM_KEYS, 'odpParams', 'customLabels'].map((k) => `'${k}'`).join(', ');
 
 /** Tables and columns (idempotent). */
 export const TABLES_SQL = `

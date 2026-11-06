@@ -4,8 +4,10 @@ import {
   __resetOllamaCacheForTests,
   assertAllowedBaseUrl,
   getOllamaConfig,
+  aiFallbackWarning,
   hasModel,
   isLocalHost,
+  publicAiReason,
   type OllamaConfig,
 } from '../server/ssp/ollama';
 import fs from 'fs';
@@ -80,6 +82,11 @@ async function run() {
   assert((await rejects(new OllamaClient(cfg({ baseUrl: 'https://api.openai.com' })).ensureReady()))?.code === 'unreachable' || true, 'a blocked host is reported through getStatus');
   const blockedStatus = await new OllamaClient(cfg({ baseUrl: 'https://api.openai.com' })).getStatus(true);
   assert(!blockedStatus.reachable && blockedStatus.code === 'blocked_host', 'a blocked host is never contacted and is reported as blocked_host', blockedStatus);
+  assert(!/http|11434|ollama:/i.test(publicAiReason('unreachable')) && !/http|11434|ollama:/i.test(publicAiReason('blocked_host')), 'the user-facing reasons never name the AI service address');
+  const wDown = aiFallbackWarning(new OllamaError('unreachable', 'Cannot reach Ollama at http://ollama:11434.'));
+  assert(/AI analysis could not be completed/.test(wDown) && !wDown.includes('ollama:11434'), 'the fallback warning for an unreachable service names no host', wDown);
+  assert(aiFallbackWarning(new OllamaError('timeout', 'Ollama did not answer within 240 s.')).includes('240 s'), 'the fallback warning keeps a host-free reason such as a timeout');
+  assert(/failed unexpectedly/.test(aiFallbackWarning(new Error('boom'))), 'the fallback warning for a non-Ollama error is generic');
   const before = fake.chats.length;
   await new OllamaClient(cfg()).getStatus();
   fake.models = ['something-else:1b'];

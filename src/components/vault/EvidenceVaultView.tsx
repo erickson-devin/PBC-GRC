@@ -22,6 +22,7 @@ import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks';
 import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
+import { evidenceCoverage } from '../../data/evidenceCoverage';
 import { ApiClient } from '../../services/apiClient';
 import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
 import { ConfirmDiscardLocalCopyDialog } from './ConfirmDiscardLocalCopyDialog';
@@ -52,7 +53,7 @@ export const EvidenceVaultView: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedDomain, setSelectedDomain] = useState<string>('ALL');
-  const [targetControlId, setTargetControlId] = useState<string>(() => frameworkControls[0]?.id || 'AC.L1-3.1.1');
+  const [targetControlId, setTargetControlId] = useState<string>(() => frameworkControls[0]?.id || '');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -90,10 +91,34 @@ export const EvidenceVaultView: React.FC = () => {
     return state.evidenceIndex.reduce((acc, curr) => acc + curr.fileSize, 0);
   }, [state.evidenceIndex]);
 
-  const coveredControlsCount = useMemo(() => {
-    const set = new Set(state.evidenceIndex.map((e) => e.controlId));
-    return set.size;
-  }, [state.evidenceIndex]);
+  // Only evidence on a control of this program counts, out of the program's own controls
+  const coverage = useMemo(
+    () => evidenceCoverage(state.evidenceIndex, frameworkControls.map((c) => c.id)),
+    [state.evidenceIndex, frameworkControls]
+  );
+
+  // Pickers: controls grouped by domain in registry order; a control of an unknown domain goes under "Other"
+  const controlGroups = useMemo(() => {
+    const domains = currentFrameworkDef.domains || {};
+    const groups: Array<{ key: string; label: string; controls: typeof frameworkControls }> = [];
+    for (const [code, info] of Object.entries(domains)) {
+      const controls = frameworkControls.filter((c) => c.domain === code);
+      if (controls.length > 0) groups.push({ key: code, label: `${code} - ${info.name}`, controls });
+    }
+    const other = frameworkControls.filter((c) => !(c.domain in domains));
+    if (other.length > 0) groups.push({ key: '__other', label: 'Other', controls: other });
+    return groups;
+  }, [frameworkControls, currentFrameworkDef]);
+
+  const controlOptionGroups = controlGroups.map((g) => (
+    <optgroup key={g.key} label={g.label}>
+      {g.controls.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.id} - {c.title}
+        </option>
+      ))}
+    </optgroup>
+  ));
 
   // Filtered evidence items
   const filteredItems = useMemo(() => {
@@ -223,8 +248,8 @@ export const EvidenceVaultView: React.FC = () => {
 
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Control Coverage</span>
-          <p className="text-3xl font-extrabold text-brand-400 font-mono mt-1">{coveredControlsCount} / 17</p>
-          <p className="text-xs text-slate-400 mt-1">Practices backed by audit artifacts</p>
+          <p className="text-3xl font-extrabold text-brand-400 font-mono mt-1">{coverage.covered} / {coverage.total}</p>
+          <p className="text-xs text-slate-400 mt-1">{coverage.total === 0 ? 'No controls loaded for this program yet' : 'Controls backed by audit artifacts'}</p>
         </div>
 
         <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800">
@@ -272,7 +297,7 @@ export const EvidenceVaultView: React.FC = () => {
                       onChange={(e) => setControlChoice(prev => ({ ...prev, [copy.key]: e.target.value }))}
                       className="w-full sm:w-64 text-xs rounded-xl px-3 py-2 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500">
                       <option value="" disabled>Choose a control</option>
-                      {frameworkControls.map(c => <option key={c.id} value={c.id}>{c.id} - {c.title}</option>)}
+                      {controlOptionGroups}
                     </select>
                     <button type="button" disabled={busy || !chosen || Boolean(activeProgram?.archived)} onClick={() => void handleUploadLocal(copy, chosen)}
                       className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
@@ -305,16 +330,15 @@ export const EvidenceVaultView: React.FC = () => {
           <div className="flex flex-col sm:flex-row items-center gap-3">
             {/* Target Control Select */}
             <div className="w-full sm:w-80">
+              <label htmlFor="vault-upload-control" className="sr-only">Control the uploaded files support</label>
               <select
+                id="vault-upload-control"
                 value={targetControlId}
+                disabled={frameworkControls.length === 0}
                 onChange={(e) => setTargetControlId(e.target.value)}
-                className="w-full text-xs font-medium rounded-xl px-3 py-2.5 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500"
+                className="w-full text-xs font-medium rounded-xl px-3 py-2.5 bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-brand-500 disabled:opacity-50"
               >
-                {frameworkControls.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.id} - {c.title}
-                  </option>
-                ))}
+                {controlOptionGroups}
               </select>
             </div>
 
@@ -329,8 +353,8 @@ export const EvidenceVaultView: React.FC = () => {
 
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
+              disabled={isUploading || !targetControlId}
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20"
             >
               <Upload className="w-4 h-4" />
               <span>{isUploading ? 'Computing SHA-256 & Uploading...' : 'Choose Files to Upload'}</span>
@@ -362,8 +386,10 @@ export const EvidenceVaultView: React.FC = () => {
           {/* Domain Chips */}
           <div className="flex items-center gap-1.5 flex-wrap w-full sm:w-auto justify-end">
             <button
+              type="button"
+              aria-pressed={selectedDomain === 'ALL'}
               onClick={() => setSelectedDomain('ALL')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 ${
                 selectedDomain === 'ALL'
                   ? 'bg-brand-600 text-white'
                   : 'bg-slate-800 text-slate-400 hover:text-white'
@@ -374,8 +400,10 @@ export const EvidenceVaultView: React.FC = () => {
             {availableDomains.map((d) => (
               <button
                 key={d.code}
+                type="button"
+                aria-pressed={selectedDomain === d.code}
                 onClick={() => setSelectedDomain(d.code)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 ${
                   selectedDomain === d.code
                     ? 'bg-brand-600 text-white'
                     : 'bg-slate-800 text-slate-400 hover:text-white'

@@ -4,13 +4,16 @@ import express, { Router, Request, Response, NextFunction } from 'express';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { serviceTokenMiddleware } from '../middleware/serviceTokenMiddleware';
 import { validateIngestPayload, vmIngestMaxBytes } from '../vm/ingestSchema';
+import { listVmTokens } from '../vm/tokens';
 import { findRunBySha, recordReceivedRun, VmStoreError } from '../vm/store';
 import { enqueueVmRun, recoverStaleRuns } from '../vm/worker';
 import { isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
+import { fileURLToPath } from 'url';
 
 /**
  * Scanner push endpoint (mounted at /api/v1/vm), authenticated by a service token, never a user session.
+ *  - GET /whoami: what the exporter's `check` command asks (token name, scopes, contract hash, size limit). No tenant id, no hash.
  *  - POST /ingest: the exact request bytes are hashed, stored under the tenant's vault and recorded as a RECEIVED run.
  * The global JSON parser skips this path (server/index.ts): the body is read here as raw bytes with its own size limit.
  */
@@ -22,6 +25,12 @@ export const vmTokenRateLimiter = createRateLimiter({
   max: 30,
   key: (req) => 'token:' + (req.serviceToken?.id ?? '-'),
 });
+
+/** sha256 of the exact bytes of the ingest contract, computed once: an exporter compares it with its vendored copy. */
+const CONTRACT_SHA256 = crypto
+  .createHash('sha256')
+  .update(fs.readFileSync(fileURLToPath(new URL('../vm/ingest.schema.json', import.meta.url))))
+  .digest('hex');
 
 const JSON_CONTENT_TYPE = /^application\/json\s*(;|$)/i;
 
@@ -132,6 +141,30 @@ function requireSecureTransport(req: Request, res: Response, next: NextFunction)
   }
   next();
 }
+
+/** The caller's own token record (it authenticated moments ago, so it exists); never the hash or the tenant id. */
+async function whoamiHandler(req: Request, res: Response): Promise<void> {
+  const caller = req.serviceToken!;
+  try {
+    const record = (await listVmTokens(caller.tenantId)).find((t) => t.id === caller.id);
+    if (!record) {
+      res.status(401).json({ error: 'Unauthorized: invalid service token' });
+      return;
+    }
+    res.status(200).json({
+      token: { name: record.name, prefix: record.tokenPrefix, expires_at: record.expiresAt },
+      scopes: caller.scopes,
+      contract_sha256: CONTRACT_SHA256,
+      limits: { max_bytes: vmIngestMaxBytes() },
+      features: ['whoami'],
+    });
+  } catch (err: unknown) {
+    console.error('[VM Ingest] whoami failed:', errorMessage(err));
+    res.status(500).json({ error: 'Failed to read the service token' });
+  }
+}
+
+router.get('/whoami', vmIngestRateLimiter, serviceTokenMiddleware('vm:ingest'), requireSecureTransport, vmTokenRateLimiter, whoamiHandler);
 
 router.post(
   '/ingest',

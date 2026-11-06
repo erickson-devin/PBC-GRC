@@ -300,13 +300,13 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     <div className={embedded ? 'bg-slate-900 border border-slate-800 rounded-3xl w-full flex flex-col shadow-2xl overflow-hidden' : 'bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-6xl h-[92vh] flex flex-col shadow-2xl overflow-hidden'}>
         
         {/* Modal Top Bar */}
-        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-brand-500/20 text-white">
+        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-4 bg-slate-950/60 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-brand-500/20 text-white shrink-0">
               <FileText className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <DialogTitle as="h2" className="text-lg font-extrabold text-white tracking-tight">
                   Compliance Documentation & Artifact Export Center
                 </DialogTitle>
@@ -322,7 +322,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
           <button aria-label="Close"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-xl transition-colors"
+            className="p-2 text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-xl transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>

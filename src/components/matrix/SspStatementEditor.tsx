@@ -4,6 +4,9 @@ import { parseParameterTags, resolveParameters } from '../../data/frameworks/par
 import { parametersOfItem, parseItemNotes, setItemNote, setItemParameterValue, setOverviewNote, statementItems, type StatementItem } from '../../data/frameworks/narrativeItems';
 import type { ControlParameter, FrameworkControlDefinition } from '../../types/framework';
 import { OdpPanel } from './OdpPanel';
+import { AiOffNotice } from '../common/AiOffNotice';
+import { useAiAssistStatus, useIsAiAdmin } from '../../hooks/useAiAssistStatus';
+import { aiAvailability, aiNoticeCopy } from '../../data/aiAvailabilityView';
 
 interface Props {
   control: FrameworkControlDefinition;
@@ -63,6 +66,8 @@ export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, t
   const itemized = useMemo(() => statementItems(control.statement), [control.statement]);
   const params = useMemo(() => resolveParameters(control), [control]);
   const parsed = useMemo(() => parseItemNotes(notes), [notes]);
+  const aiStatus = useAiAssistStatus(tenantId, canEdit && itemized !== null);
+  const isAdmin = useIsAiAdmin();
   if (!itemized) return null;
   const order = itemized.items.map((i) => i.label);
   const answered = itemized.items.filter((i) => (parsed.items[i.label] ?? '').trim() !== '').length;
@@ -100,6 +105,7 @@ export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, t
           </span>
         </div>
         {itemized.intro && <p className="text-sm text-slate-300">{itemized.intro}</p>}
+        <AiOffNotice copy={aiNoticeCopy(aiAvailability(aiStatus, canEdit), 'assist')} showAdminHint={isAdmin} />
 
         <ol className="space-y-3">
           {itemized.items.map((item) => {
@@ -123,6 +129,7 @@ export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, t
                 {itemParams.length > 0 && (
                   <OdpPanel
                     bare
+                    aiNotice={false}
                     control={control}
                     notes={notes}
                     canEdit={canEdit}
@@ -155,7 +162,7 @@ export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, t
       </section>
 
       {/* tags and vague wording the author typed into the text above */}
-      <OdpPanel control={control} notes={notes} canEdit={canEdit} tenantId={tenantId} onNotesChange={onNotesChange} narrativeOnly />
+      <OdpPanel control={control} notes={notes} canEdit={canEdit} tenantId={tenantId} onNotesChange={onNotesChange} narrativeOnly aiNotice={false} />
     </div>
   );
 };

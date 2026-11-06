@@ -521,6 +521,7 @@ const spLine = spAt < 0 ? '' : TABLES_SQL.slice(spAt, TABLES_SQL.indexOf('\n', s
 assert(
   TABLES_SQL.includes('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS stack_profile JSONB;') &&
     spLine.includes("'identityProvider', 'edrSolution', 'infrastructure', 'mdmSolution', 'siemSolution', 'odpParams'") &&
+    spLine.includes("'odpParams', 'customLabels'") &&
     spLine.includes('<= 16384') &&
     TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS tenants_stack_profile_check') > 0 &&
     TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS tenants_stack_profile_check') < spAt,

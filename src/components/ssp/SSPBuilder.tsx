@@ -95,13 +95,13 @@ export const SSPBuilder: React.FC = () => {
     <div className="space-y-6 animate-fadeIn">
       {/* Top Action Toolbar (Hidden during print) */}
       <div className="no-print bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="p-2 rounded-xl bg-brand-500/20 text-brand-300">
               <FileText className="w-5 h-5" />
             </span>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-xl font-bold text-white tracking-tight">
                   System Security Plan (SSP) Generator
                 </h2>

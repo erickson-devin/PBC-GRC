@@ -23,35 +23,18 @@ import {
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { EnclaveStackProfile } from '../../types/tenant';
+import { stackValueLabel, type StackKey } from '../../data/stackDraftView';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../../hooks/useFipsModules';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { MarkdownPreview } from '../common/MarkdownPreview';
 import { copyToClipboard } from '../../utils/clipboard';
 import { PROGRAM_TEXT_MAX } from '../../data/programSync';
 import { errorMessage } from '../../utils/errors';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
 import { unsavedProgramFields } from '../../services/unsavedText';
 import { frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
-const DEFAULT_STACK: EnclaveStackProfile = {
-  identityProvider: 'ENTRA_ID_COMMERCIAL',
-  edrSolution: 'DEFENDER_FOR_ENDPOINT',
-  infrastructure: 'AZURE_GOV',
-  mdmSolution: 'INTUNE',
-  siemSolution: 'SENTINEL',
-  odpParams: {
-    INACTIVITY_TIMEOUT: '15 minutes',
-    LOCKOUT_LIMIT: '3 consecutive invalid logon attempts',
-    LOCKOUT_DURATION: '30 minutes or until administrator unlock',
-    AUDIT_RETENTION_PERIOD: '365 calendar days (1 year)',
-    CRITICAL_PATCH_SLA: '14 calendar days',
-    HIGH_PATCH_SLA: '30 calendar days',
-    ACCESS_REVIEW_CADENCE: 'Quarterly (every 90 days)',
-    BACKUP_CADENCE: 'Daily incremental with weekly full offsite replication',
-    LOG_REVIEW_FREQUENCY: 'Weekly automated alert review with monthly manual audit',
-  },
-};
-
 export const EnclaveSettings: React.FC = () => {
   const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework, activeProgram, updateProgram, canManagePrograms } = useTenant();
   const cryptoModules = useFipsModules();
@@ -87,17 +70,8 @@ export const EnclaveSettings: React.FC = () => {
     }
   };
 
-  const stack: EnclaveStackProfile = {
-    identityProvider: currentTenant.stackProfile?.identityProvider || DEFAULT_STACK.identityProvider,
-    edrSolution: currentTenant.stackProfile?.edrSolution || DEFAULT_STACK.edrSolution,
-    infrastructure: currentTenant.stackProfile?.infrastructure || DEFAULT_STACK.infrastructure,
-    mdmSolution: currentTenant.stackProfile?.mdmSolution || DEFAULT_STACK.mdmSolution,
-    siemSolution: currentTenant.stackProfile?.siemSolution || DEFAULT_STACK.siemSolution,
-    odpParams: {
-      ...DEFAULT_STACK.odpParams,
-      ...(currentTenant.stackProfile?.odpParams || {}),
-    },
-  };
+  // What the tenant saved, nothing else: an unset choice reads "Not set" rather than an invented default
+  const stack: Partial<EnclaveStackProfile> = currentTenant.stackProfile || {};
 
   const handleDownloadPolicy = (code: string, title: string) => {
     const markdown = generateFamilyPolicyDocument(currentTenant, code, title, activeFramework, cryptoModules);
@@ -280,11 +254,20 @@ export const EnclaveSettings: React.FC = () => {
     }
   };
 
-  const identityInfo = getIdentityDetails(stack.identityProvider);
-  const edrInfo = getEdrDetails(stack.edrSolution);
-  const cloudInfo = getCloudDetails(stack.infrastructure);
-  const mdmInfo = getMdmDetails(stack.mdmSolution);
-  const siemInfo = getSiemDetails(stack.siemSolution);
+  const NOT_SET_DETAILS = { name: 'Not set', badge: 'Not set', desc: 'Nothing is recorded yet. Use the wizard to choose one.' };
+  // A custom choice shows the name the organization typed in the wizard; nothing about it is invented.
+  const details = (key: StackKey, value: string | undefined, known: (id: string) => { name: string; badge: string; desc: string }) => {
+    if (!value) return NOT_SET_DETAILS;
+    if (value === 'CUSTOM') {
+      return { name: stackValueLabel(key, value, stack.customLabels) ?? 'Custom solution', badge: 'Custom solution', desc: 'Recorded by the organization in the stack survey.' };
+    }
+    return known(value);
+  };
+  const identityInfo = details('identityProvider', stack.identityProvider, getIdentityDetails);
+  const edrInfo = details('edrSolution', stack.edrSolution, getEdrDetails);
+  const cloudInfo = details('infrastructure', stack.infrastructure, getCloudDetails);
+  const mdmInfo = details('mdmSolution', stack.mdmSolution, getMdmDetails);
+  const siemInfo = details('siemSolution', stack.siemSolution, getSiemDetails);
 
   const odpList = [
     { key: 'INACTIVITY_TIMEOUT', label: 'Session Inactivity Lock', control: 'AC-11 / 3.1.10' },
@@ -302,7 +285,7 @@ export const EnclaveSettings: React.FC = () => {
     <div className="space-y-6 animate-fadeIn">
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-xl font-bold text-white tracking-tight">Enclave Boundary & Tech Stack Configuration</h2>
             <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
@@ -479,7 +462,7 @@ export const EnclaveSettings: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {odpList.map((item) => {
-            const val = stack.odpParams?.[item.key] || DEFAULT_STACK.odpParams?.[item.key] || 'Not Defined';
+            const val = stack.odpParams?.[item.key] || '';
             return (
               <div key={item.key} className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
@@ -488,7 +471,11 @@ export const EnclaveSettings: React.FC = () => {
                     {item.control}
                   </span>
                 </div>
-                <div className="text-xs font-mono font-bold text-white">{val}</div>
+                {val ? (
+                  <div className="text-xs font-mono font-bold text-white">{val}</div>
+                ) : (
+                  <div className="text-xs text-slate-400 italic">Not set</div>
+                )}
               </div>
             );
           })}
@@ -542,7 +529,7 @@ export const EnclaveSettings: React.FC = () => {
               controlId: 'AC-1',
               mapping: 'NIST SP 800-53 AC-1 / NIST SP 800-171 3.1',
               desc: 'Authorizes accounts, inactive session locks, multi-factor enforcement, and remote access boundaries.',
-              tags: [identityInfo.name, `Lockout: ${stack.odpParams?.LOCKOUT_LIMIT || '3 attempts'}`, `Inactivity: ${stack.odpParams?.INACTIVITY_TIMEOUT || '15 min'}`],
+              tags: [identityInfo.name, `Lockout: ${stack.odpParams?.LOCKOUT_LIMIT || 'Not set'}`, `Inactivity: ${stack.odpParams?.INACTIVITY_TIMEOUT || 'Not set'}`],
             },
             {
               code: 'IA',
@@ -558,7 +545,7 @@ export const EnclaveSettings: React.FC = () => {
               controlId: 'SI-1',
               mapping: 'NIST SP 800-53 SI-1 / NIST SP 800-171 3.14',
               desc: 'Mandates flaw remediation SLAs, automated malware detection, endpoint telemetry, and firmware verification.',
-              tags: [edrInfo.name, `Critical: ${stack.odpParams?.CRITICAL_PATCH_SLA || '14 days'}`, `High: ${stack.odpParams?.HIGH_PATCH_SLA || '30 days'}`],
+              tags: [edrInfo.name, `Critical: ${stack.odpParams?.CRITICAL_PATCH_SLA || 'Not set'}`, `High: ${stack.odpParams?.HIGH_PATCH_SLA || 'Not set'}`],
             },
             {
               code: 'AU',
@@ -566,7 +553,7 @@ export const EnclaveSettings: React.FC = () => {
               controlId: 'AU-1',
               mapping: 'NIST SP 800-53 AU-1 / NIST SP 800-171 3.3',
               desc: 'Establishes central log ingestion, immutable retention periods, log review frequency, and timestamp synchronization.',
-              tags: [siemInfo.name, `Retention: ${stack.odpParams?.AUDIT_RETENTION_PERIOD || '365 days'}`, `Review: ${stack.odpParams?.LOG_REVIEW_FREQUENCY || 'Weekly'}`],
+              tags: [siemInfo.name, `Retention: ${stack.odpParams?.AUDIT_RETENTION_PERIOD || 'Not set'}`, `Review: ${stack.odpParams?.LOG_REVIEW_FREQUENCY || 'Not set'}`],
             },
             {
               code: 'CM',
@@ -790,91 +777,7 @@ export const EnclaveSettings: React.FC = () => {
                     {markdown}
                   </pre>
                 ) : (
-                  <div className="space-y-4 max-w-3xl mx-auto">
-                    {markdown.split('\n\n').map((block, idx) => {
-                      const trimmed = block.trim();
-                      if (trimmed.startsWith('# ')) {
-                        return (
-                          <h1 key={idx} className="text-xl font-bold text-white border-b border-slate-800 pb-2 pt-2">
-                            {trimmed.replace('# ', '')}
-                          </h1>
-                        );
-                      }
-                      if (trimmed.startsWith('## ')) {
-                        return (
-                          <h2 key={idx} className="text-base font-bold text-cyan-300 border-b border-slate-800/60 pb-1 pt-3">
-                            {trimmed.replace('## ', '')}
-                          </h2>
-                        );
-                      }
-                      if (trimmed.startsWith('### ')) {
-                        return (
-                          <h3 key={idx} className="text-sm font-bold text-indigo-300 pt-2">
-                            {trimmed.replace('### ', '')}
-                          </h3>
-                        );
-                      }
-                      if (trimmed.startsWith('> ')) {
-                        return (
-                          <blockquote
-                            key={idx}
-                            className="p-3 rounded-xl bg-indigo-950/30 border-l-4 border-indigo-500 text-xs text-indigo-200 leading-relaxed font-mono"
-                          >
-                            {trimmed.replace(/> /g, '')}
-                          </blockquote>
-                        );
-                      }
-                      if (trimmed.startsWith('|')) {
-                        const rows = trimmed.split('\n').filter((r) => !r.includes('---'));
-                        return (
-                          <div key={idx} className="overflow-x-auto my-3">
-                            <table className="w-full text-xs text-left border-collapse border border-slate-800 rounded-xl overflow-hidden">
-                              <tbody>
-                                {rows.map((row, rIdx) => {
-                                  const cols = row
-                                    .split('|')
-                                    .filter((_, i, arr) => i > 0 && i < arr.length - 1)
-                                    .map((c) => c.trim());
-                                  const isHeader = rIdx === 0;
-                                  return (
-                                    <tr
-                                      key={rIdx}
-                                      className={
-                                        isHeader
-                                          ? 'bg-slate-900 text-cyan-300 font-bold border-b border-slate-800'
-                                          : 'border-b border-slate-800/60 hover:bg-slate-900/50'
-                                      }
-                                    >
-                                      {cols.map((col, cIdx) => (
-                                        <td key={cIdx} className="p-2.5 font-mono text-xs">
-                                          {col}
-                                        </td>
-                                      ))}
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        );
-                      }
-                      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-                        const items = trimmed.split('\n');
-                        return (
-                          <ul key={idx} className="list-disc pl-5 space-y-1 text-xs text-slate-300 leading-relaxed">
-                            {items.map((item, iIdx) => (
-                              <li key={iIdx}>{item.replace(/^[-*]\s+/, '')}</li>
-                            ))}
-                          </ul>
-                        );
-                      }
-                      return (
-                        <p key={idx} className="text-xs text-slate-300 leading-relaxed">
-                          {trimmed}
-                        </p>
-                      );
-                    })}
-                  </div>
+                  <MarkdownPreview markdown={markdown} headingOffset={1} className="space-y-4 max-w-3xl mx-auto" />
                 )}
               </div>
 

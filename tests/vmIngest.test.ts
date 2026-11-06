@@ -673,6 +673,37 @@ async function run() {
   assert(insecureOk.status === 202, 'VM_ALLOW_INSECURE_TOKENS=true allows ingest without the header (202)', insecureOk.body);
   await __drainVmWorkerForTests();
 
+  console.log('\n--- GET /vm/whoami (exporter check) ---');
+  const whoamiRaw = async (token: string | null, plainHttp = false) => {
+    resetLimiters();
+    const h: Record<string, string> = { ...(plainHttp ? {} : HTTPS) };
+    if (token) h.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${BASE}/vm/whoami`, { method: 'GET', headers: h });
+    const text = await res.text();
+    let parsed: Json | null = null;
+    try { parsed = JSON.parse(text) as Json; } catch { parsed = null; }
+    return { status: res.status, body: parsed, text };
+  };
+  const contractBytes = fs.readFileSync(path.join(process.cwd(), 'server', 'vm', 'ingest.schema.json'));
+  const whoamiToken = (await createToken(ownerA, A, { name: 'whoami-probe' })).body as Json;
+  assert(((await listTokens(ownerA, A)).find((t) => t.id === whoamiToken.record.id)?.lastUsedAt ?? null) === null, 'a fresh token has never been used');
+  const who = await whoamiRaw(whoamiToken.token);
+  assert(who.status === 200, 'a valid token -> 200 on GET /vm/whoami', who.body);
+  assert(who.body?.contract_sha256 === crypto.createHash('sha256').update(contractBytes).digest('hex'), 'contract_sha256 is the sha256 of the bytes of server/vm/ingest.schema.json', who.body);
+  assert(who.body?.token?.name === 'whoami-probe' && who.body?.token?.prefix === whoamiToken.token.slice(0, 12) && typeof who.body?.token?.expires_at === 'string', 'the token name, display prefix and expiry are returned', who.body?.token);
+  assert(JSON.stringify(who.body?.scopes) === '["vm:ingest"]' && who.body?.limits?.max_bytes === vmIngestMaxBytes() && JSON.stringify(who.body?.features) === '["whoami"]', 'scopes, the ingest max bytes and the feature list are returned', who.body);
+  assert(!who.text.includes(whoamiToken.token) && !who.text.includes(sha256Hex(whoamiToken.token)) && !who.text.includes(A), 'the answer carries neither the token, its hash nor the tenant id', who.text);
+  assert(Boolean((await listTokens(ownerA, A)).find((t) => t.id === whoamiToken.record.id)?.lastUsedAt), 'whoami counts as token use (lastUsedAt is set)');
+  const whoRevoked = await whoamiRaw(revokedToken.token);
+  assert(whoRevoked.status === 401 && whoRevoked.text === texts[0], 'a revoked token -> the same constant 401 body as ingest', whoRevoked.text);
+  assert((await whoamiRaw(null)).status === 401, 'no token -> 401');
+  const whoPlain = await whoamiRaw(whoamiToken.token, true);
+  assert(whoPlain.status === 403 && whoPlain.body?.code === 'vm_insecure_transport', 'over plain HTTP without the insecure override -> 403 vm_insecure_transport', whoPlain.body);
+  process.env.VM_ALLOW_INSECURE_TOKENS = 'true';
+  const whoInsecure = await whoamiRaw(whoamiToken.token, true);
+  delete process.env.VM_ALLOW_INSECURE_TOKENS;
+  assert(whoInsecure.status === 200, 'VM_ALLOW_INSECURE_TOKENS=true allows whoami over plain HTTP (200)', whoInsecure.body);
+
   console.log('\n--- Shutdown: draining the worker (#147) ---');
   const storedRun = async (label: string, agent: string): Promise<string> => {
     const id = crypto.randomUUID();

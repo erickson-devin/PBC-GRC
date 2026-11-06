@@ -61,16 +61,16 @@ export function generatePolicyDocument(
   );
 
   let markdown = `# ${familyTitle} (${normFamily}) - ${frameworkTitle}\n\n`;
-  markdown += `**Organization:** ${orgName}\n`;
-  markdown += `**System Name:** ${systemName}\n`;
-  markdown += `**Framework Scope:** ${frameworkTitle} (${activeFramework})\n`;
-  markdown += `**Date:** ${new Date().toISOString().split('T')[0]}\n`;
-  markdown += `**System Owner:** ${systemOwner}\n\n`;
+  markdown += `- **Organization:** ${orgName}\n`;
+  markdown += `- **System Name:** ${systemName}\n`;
+  markdown += `- **Framework Scope:** ${frameworkTitle} (${activeFramework})\n`;
+  markdown += `- **Date:** ${new Date().toISOString().split('T')[0]}\n`;
+  markdown += `- **System Owner:** ${systemOwner}\n\n`;
 
-  markdown += `## 1. Purpose\n`;
+  markdown += `## 1. Purpose\n\n`;
   markdown += `The purpose of this policy is to establish the requirements for the ${familyTitle} family of controls ${frameworkCitation}\n\n`;
 
-  markdown += `## 2. Scope\n`;
+  markdown += `## 2. Scope\n\n`;
   markdown += `This policy applies to all systems, networks, and personnel operating within ${theSystem} boundary.\n\n`;
 
   markdown += `## 3. Policy Statements\n\n`;

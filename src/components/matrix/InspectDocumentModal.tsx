@@ -45,6 +45,8 @@ import { SspStatementEditor, hasStatementItems } from './SspStatementEditor';
 import { ImportAnalysisPanel } from './ImportAnalysisPanel';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
+import { NO_STACK_PROFILE_RECORDED } from '../../data/reports/documentDefaults';
+import { stackValueLabel } from '../../data/stackDraftView';
 import { useFipsModules } from '../../hooks/useFipsModules';
 import { NIST_800_171A_REGISTRY } from '../../data/frameworks/assessmentObjectives';
 import { ErrorBoundary } from '../common/ErrorBoundary';
@@ -1069,19 +1071,19 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center gap-2 flex-wrap text-xs text-slate-400">
                 <span className="font-semibold text-slate-300">Active Enclave Telemetry Stack:</span>
                 <span className="badge px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900/60 font-mono text-xs">
-                  IAM: {currentTenant.stackProfile?.identityProvider || 'ENTRA_ID_COMMERCIAL'}
+                  IAM: {stackValueLabel('identityProvider', currentTenant.stackProfile?.identityProvider, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900/60 font-mono text-xs">
-                  EDR: {currentTenant.stackProfile?.edrSolution || 'DEFENDER_FOR_ENDPOINT'}
+                  EDR: {stackValueLabel('edrSolution', currentTenant.stackProfile?.edrSolution, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-900/60 font-mono text-xs">
-                  Infra: {currentTenant.stackProfile?.infrastructure || 'AZURE_GOV'}
+                  Infra: {stackValueLabel('infrastructure', currentTenant.stackProfile?.infrastructure, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900/60 font-mono text-xs">
-                  MDM: {currentTenant.stackProfile?.mdmSolution || 'INTUNE'}
+                  MDM: {stackValueLabel('mdmSolution', currentTenant.stackProfile?.mdmSolution, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-900/60 font-mono text-xs">
-                  SIEM: {currentTenant.stackProfile?.siemSolution || 'SENTINEL'}
+                  SIEM: {stackValueLabel('siemSolution', currentTenant.stackProfile?.siemSolution, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
               </div>
 
@@ -1172,19 +1174,10 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
                           <div className="space-y-2.5 pt-1">
                             {ctrl.objectives.map((obj) => {
-                              const narrative = getCascadedObjectiveNarrative(
-                                ctrl.controlNumber,
-                                obj.letter,
-                                currentTenant.stackProfile || {
-                                  identityProvider: 'ENTRA_ID_COMMERCIAL',
-                                  edrSolution: 'DEFENDER_FOR_ENDPOINT',
-                                  infrastructure: 'AZURE_GOV',
-                                  mdmSolution: 'INTUNE',
-                                  siemSolution: 'SENTINEL',
-                                  odpParams: {},
-                                },
-                                cryptoModules
-                              );
+                              // No stack recorded: say so instead of inventing one
+                              const narrative = currentTenant.stackProfile
+                                ? getCascadedObjectiveNarrative(ctrl.controlNumber, obj.letter, currentTenant.stackProfile, cryptoModules)
+                                : NO_STACK_PROFILE_RECORDED;
                               return (
                                 <div key={obj.letter} className="text-xs bg-slate-950/70 p-3 rounded-lg border border-slate-800/60 space-y-1.5">
                                   <div className="font-semibold text-cyan-200">

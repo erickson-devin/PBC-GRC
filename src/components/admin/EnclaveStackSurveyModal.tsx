@@ -17,6 +17,19 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { EnclaveStackProfile } from '../../types/tenant';
+import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
+import {
+  DEFAULT_ODP_PARAMS,
+  StackDraft,
+  StackKey,
+  chosenStepCount,
+  draftFromSaved,
+  draftToProfile,
+  isDraftComplete,
+  odpSummaryLabel,
+  stackValueLabel,
+} from '../../data/stackDraftView';
+import { STACK_PROFILE_MAX_LABEL_CHARS } from '../../data/stackProfileSchema';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
@@ -27,18 +40,6 @@ interface EnclaveStackSurveyModalProps {
 }
 
 type WizardTab = 'identity' | 'edr' | 'cloud' | 'mdm' | 'siem' | 'odp';
-
-const DEFAULT_ODP_PARAMS: Record<string, string> = {
-  INACTIVITY_TIMEOUT: '15 minutes',
-  LOCKOUT_LIMIT: '3 consecutive invalid logon attempts',
-  LOCKOUT_DURATION: '30 minutes or until administrator unlock',
-  AUDIT_RETENTION_PERIOD: '365 calendar days (1 year)',
-  CRITICAL_PATCH_SLA: '14 calendar days',
-  HIGH_PATCH_SLA: '30 calendar days',
-  ACCESS_REVIEW_CADENCE: 'Quarterly (every 90 days)',
-  BACKUP_CADENCE: 'Daily incremental with weekly full offsite replication',
-  LOG_REVIEW_FREQUENCY: 'Weekly automated alert review with monthly manual audit',
-};
 
 interface StackOption<T extends string> {
   id: T;
@@ -54,57 +55,93 @@ function stackOptions<T extends string>(options: StackOption<T>[]): StackOption<
   return options;
 }
 
-const DEFAULT_STACK: EnclaveStackProfile = {
+/** Recommended choices: only ever applied when the user asks for them ("Fill unset steps"), never silently. */
+const DEFAULT_STACK = {
   identityProvider: 'ENTRA_ID_COMMERCIAL',
   edrSolution: 'DEFENDER_FOR_ENDPOINT',
   infrastructure: 'AZURE_GOV',
   mdmSolution: 'INTUNE',
   siemSolution: 'SENTINEL',
-  odpParams: DEFAULT_ODP_PARAMS,
-};
+} as const;
+
+/** The fifth card of every step: a product or approach the list does not name. Nothing about it is invented in the narratives. */
+const CustomOptionCard: React.FC<{
+  selected: boolean;
+  label: string;
+  inputId: string;
+  onSelect: () => void;
+  onLabelChange: (value: string) => void;
+}> = ({ selected, label, inputId, onSelect, onLabelChange }) => (
+  <div
+    className={`w-full text-left p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+      selected
+        ? 'bg-cyan-950/40 border-cyan-500/60 shadow-lg shadow-cyan-950/50 ring-1 ring-cyan-500/30'
+        : 'bg-slate-850/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/40'
+    }`}
+  >
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      tabIndex={selected ? 0 : -1}
+      onClick={onSelect}
+      className="w-full text-left cursor-pointer flex items-start justify-between gap-2 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+    >
+      <div>
+        <span className="text-sm font-bold text-white block">Custom solution</span>
+        <p className="text-xs text-slate-300 leading-relaxed mt-1">
+          Use a product or approach that is not listed. Its name is recorded; no tool-specific wording is written for it.
+        </p>
+      </div>
+      <div
+        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+          selected ? 'bg-cyan-400 text-slate-950' : 'border border-slate-700'
+        }`}
+      >
+        {selected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+      </div>
+    </button>
+    {selected && (
+      <div className="space-y-1">
+        <label htmlFor={inputId} className="text-xs font-semibold text-slate-300">
+          Product or approach name (required)
+        </label>
+        <input
+          id={inputId}
+          type="text"
+          value={label}
+          maxLength={STACK_PROFILE_MAX_LABEL_CHARS}
+          onChange={(e) => onLabelChange(e.target.value)}
+          placeholder="e.g. Keycloak + YubiKey"
+          className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-colors"
+        />
+      </div>
+    )}
+  </div>
+);
 
 export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = ({
   isOpen,
   onClose,
   onSaved,
 }) => {
-  const { currentTenant, updateStackProfile, canEdit } = useTenant();
+  const { currentTenant, updateStackProfile, canEdit, activeFramework, activeProgram } = useTenant();
 
   const [activeTab, setActiveTab] = useState<WizardTab>('identity');
   const [isSaving, setIsSaving] = useState(false);
   const [successNotice, setSuccessNotice] = useState(false);
 
-  // Initialize from tenant's existing profile or default
-  const [stack, setStack] = useState<EnclaveStackProfile>(() => {
-    return {
-      identityProvider: currentTenant.stackProfile?.identityProvider || DEFAULT_STACK.identityProvider,
-      edrSolution: currentTenant.stackProfile?.edrSolution || DEFAULT_STACK.edrSolution,
-      infrastructure: currentTenant.stackProfile?.infrastructure || DEFAULT_STACK.infrastructure,
-      mdmSolution: currentTenant.stackProfile?.mdmSolution || DEFAULT_STACK.mdmSolution,
-      siemSolution: currentTenant.stackProfile?.siemSolution || DEFAULT_STACK.siemSolution,
-      odpParams: {
-        ...DEFAULT_ODP_PARAMS,
-        ...(currentTenant.stackProfile?.odpParams || {}),
-      },
-    };
-  });
+  // The draft starts from the saved profile only: a step nobody chose stays unset, so nothing is shown or saved as if chosen
+  const [stack, setStack] = useState<StackDraft>(() => draftFromSaved(currentTenant.stackProfile));
 
-  // Keep in sync when currentTenant changes
+  // Start from the saved profile every time the wizard opens or the tenant changes (even when there is no profile):
+  // cancelled edits and another tenant's choices never carry over
   useEffect(() => {
-    if (currentTenant.stackProfile) {
-      setStack({
-        identityProvider: currentTenant.stackProfile.identityProvider,
-        edrSolution: currentTenant.stackProfile.edrSolution,
-        infrastructure: currentTenant.stackProfile.infrastructure,
-        mdmSolution: currentTenant.stackProfile.mdmSolution,
-        siemSolution: currentTenant.stackProfile.siemSolution,
-        odpParams: {
-          ...DEFAULT_ODP_PARAMS,
-          ...(currentTenant.stackProfile.odpParams || {}),
-        },
-      });
-    }
-  }, [currentTenant.id, currentTenant.stackProfile]);
+    if (!isOpen) return;
+    setStack(draftFromSaved(currentTenant.stackProfile));
+    setActiveTab('identity');
+    setSuccessNotice(false);
+  }, [isOpen, currentTenant.id]);
 
   if (!isOpen) return null;
 
@@ -118,26 +155,54 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
     }));
   };
 
-  const handleResetOdpDefaults = () => {
+  const handleClearOdp = () => {
+    setStack((prev) => ({ ...prev, odpParams: {} }));
+  };
+
+  // Applies the recommended choice to the steps that are still unset; steps the user already chose are left alone
+  const handleFillUnset = () => {
     setStack((prev) => ({
       ...prev,
-      odpParams: { ...DEFAULT_ODP_PARAMS },
+      identityProvider: prev.identityProvider ?? DEFAULT_STACK.identityProvider,
+      edrSolution: prev.edrSolution ?? DEFAULT_STACK.edrSolution,
+      infrastructure: prev.infrastructure ?? DEFAULT_STACK.infrastructure,
+      mdmSolution: prev.mdmSolution ?? DEFAULT_STACK.mdmSolution,
+      siemSolution: prev.siemSolution ?? DEFAULT_STACK.siemSolution,
     }));
   };
+
+  const chosen = chosenStepCount(stack);
+  const complete = isDraftComplete(stack);
+  const tenantName = currentTenant.name;
+  const programName = activeProgram?.name ?? 'the default program';
+  const isNist80053 = activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5';
+
+  let saveNote: string;
+  if (!canEdit) {
+    saveNote = 'You have read-only access, so the technology stack cannot be changed.';
+  } else if (!complete) {
+    saveNote = `Choose a technology on each step to save (${chosen} of 5 chosen).`;
+  } else if (isNist80053) {
+    saveNote = `Saving updates the technology stack for ${tenantName} (all programs). ${programName} uses NIST SP 800-53, so no objective narratives are generated.`;
+  } else {
+    saveNote = `Saving updates the technology stack for ${tenantName} (all programs) and writes stack-based text into the empty objective narratives of ${programName} (${frameworkLabel(activeFramework)}). Narratives someone already wrote are not changed.`;
+  }
 
   const handleSaveAndCascade = async () => {
     if (!canEdit) {
       alert('Read-Only mode: You do not have permissions to modify enclave configuration.');
       return;
     }
+    const profile = draftToProfile(stack);
+    if (!profile) return;
 
     setIsSaving(true);
     try {
-      // 1. Update TenantContext (which also updates tenant and cascades to objectives storage)
-      updateStackProfile(stack);
+      // Update TenantContext: saves the profile for the tenant and fills the empty narratives of the active program
+      updateStackProfile(profile);
 
       if (onSaved) {
-        onSaved(stack);
+        onSaved(profile);
       }
 
       setSuccessNotice(true);
@@ -152,78 +217,15 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
     }
   };
 
-  const tabs: { id: WizardTab; label: string; icon: React.ElementType; valueLabel: string }[] = [
-    {
-      id: 'identity',
-      label: 'Identity (IAM)',
-      icon: KeyRound,
-      valueLabel:
-        stack.identityProvider === 'ENTRA_ID_GOV'
-          ? 'Entra ID Gov'
-          : stack.identityProvider === 'ENTRA_ID_COMMERCIAL'
-          ? 'Entra ID Commercial'
-          : stack.identityProvider === 'OKTA'
-          ? 'Okta'
-          : 'Active Directory',
-    },
-    {
-      id: 'edr',
-      label: 'EDR & Protection',
-      icon: ShieldAlert,
-      valueLabel:
-        stack.edrSolution === 'CROWDSTRIKE_FALCON'
-          ? 'CrowdStrike'
-          : stack.edrSolution === 'DEFENDER_FOR_ENDPOINT'
-          ? 'Defender Plan 2'
-          : stack.edrSolution === 'SENTINELONE'
-          ? 'SentinelOne'
-          : 'Commercial AV',
-    },
-    {
-      id: 'cloud',
-      label: 'Cloud & Infrastructure',
-      icon: Cloud,
-      valueLabel:
-        stack.infrastructure === 'AZURE_GOV'
-          ? 'Azure Gov'
-          : stack.infrastructure === 'AWS_GOVCLOUD'
-          ? 'AWS GovCloud'
-          : stack.infrastructure === 'HYBRID_CLOUD'
-          ? 'Hybrid Cloud'
-          : 'Air-Gapped RHEL',
-    },
-    {
-      id: 'mdm',
-      label: 'MDM & Fleets',
-      icon: Smartphone,
-      valueLabel:
-        stack.mdmSolution === 'INTUNE'
-          ? 'Intune'
-          : stack.mdmSolution === 'JAMF'
-          ? 'Jamf Pro'
-          : stack.mdmSolution === 'WORKSPACE_ONE'
-          ? 'Workspace ONE'
-          : 'Manual GPO',
-    },
-    {
-      id: 'siem',
-      label: 'SIEM & Logging',
-      icon: Activity,
-      valueLabel:
-        stack.siemSolution === 'SENTINEL'
-          ? 'Sentinel'
-          : stack.siemSolution === 'SPLUNK_GOV'
-          ? 'Splunk Gov'
-          : stack.siemSolution === 'ELASTIC'
-          ? 'Elastic'
-          : 'Syslog / Auditd',
-    },
-    {
-      id: 'odp',
-      label: 'ODP Parameters',
-      icon: Sliders,
-      valueLabel: `${Object.keys(stack.odpParams || {}).length} Parameters`,
-    },
+  const stepLabel = (key: StackKey) => stackValueLabel(key, stack[key], stack.customLabels);
+
+  const tabs: { id: WizardTab; label: string; icon: React.ElementType; valueLabel: string | null }[] = [
+    { id: 'identity', label: 'Identity (IAM)', icon: KeyRound, valueLabel: stepLabel('identityProvider') },
+    { id: 'edr', label: 'EDR & Protection', icon: ShieldAlert, valueLabel: stepLabel('edrSolution') },
+    { id: 'cloud', label: 'Cloud & Infrastructure', icon: Cloud, valueLabel: stepLabel('infrastructure') },
+    { id: 'mdm', label: 'MDM & Fleets', icon: Smartphone, valueLabel: stepLabel('mdmSolution') },
+    { id: 'siem', label: 'SIEM & Logging', icon: Activity, valueLabel: stepLabel('siemSolution') },
+    { id: 'odp', label: 'ODP Parameters', icon: Sliders, valueLabel: odpSummaryLabel(stack.odpParams) },
   ];
 
   const currentTabIndex = tabs.findIndex((t) => t.id === activeTab);
@@ -256,9 +258,11 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
           </div>
 
           <button
+            type="button"
             onClick={onClose}
             className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
             title="Close modal"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -272,6 +276,8 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
             return (
               <button
                 key={tab.id}
+                type="button"
+                aria-current={isActive ? 'step' : undefined}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                   isActive
@@ -288,7 +294,11 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                 </div>
                 <Icon className="w-3.5 h-3.5" />
                 <span>{tab.label}</span>
-                <span className="text-xs text-slate-400 hidden md:inline font-mono">({tab.valueLabel})</span>
+                {tab.valueLabel === null ? (
+                  <span className="text-xs text-slate-400 hidden md:inline italic">(not set)</span>
+                ) : (
+                  <span className="text-xs text-slate-400 hidden md:inline font-mono">({tab.valueLabel})</span>
+                )}
               </button>
             );
           })}
@@ -343,10 +353,10 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Self-hosted Windows Server Active Directory domain controllers with Kerberos, LDAP, and smart card (PIV/CAC) authentication.',
                     features: ['Local Domain Controllers', 'Kerberos & PIV/CAC Smartcard', 'On-Premises Group Policy (GPO)'],
                   },
-                ]).map((opt) => {
+                ]).map((opt, optIdx) => {
                   const isSelected = stack.identityProvider === opt.id;
                   return (
-                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected || (!stack.identityProvider && optIdx === 0) ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, identityProvider: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -390,6 +400,13 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     </button>
                   );
                 })}
+                <CustomOptionCard
+                  selected={stack.identityProvider === 'CUSTOM'}
+                  label={stack.customLabels.identityProvider ?? ''}
+                  inputId="stack-custom-identityProvider"
+                  onSelect={() => setStack((prev) => ({ ...prev, identityProvider: 'CUSTOM' }))}
+                  onLabelChange={(v) => setStack((prev) => ({ ...prev, customLabels: { ...prev.customLabels, identityProvider: v } }))}
+                />
               </div>
             </div>
           )}
@@ -441,10 +458,10 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Traditional signature-based antivirus protection with daily virus definition updates, host firewall, and real-time disk scanning.',
                     features: ['Daily Signature Definitions', 'Real-Time File Scanning', 'Host Perimeter Firewall'],
                   },
-                ]).map((opt) => {
+                ]).map((opt, optIdx) => {
                   const isSelected = stack.edrSolution === opt.id;
                   return (
-                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected || (!stack.edrSolution && optIdx === 0) ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, edrSolution: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -488,6 +505,13 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     </button>
                   );
                 })}
+                <CustomOptionCard
+                  selected={stack.edrSolution === 'CUSTOM'}
+                  label={stack.customLabels.edrSolution ?? ''}
+                  inputId="stack-custom-edrSolution"
+                  onSelect={() => setStack((prev) => ({ ...prev, edrSolution: 'CUSTOM' }))}
+                  onLabelChange={(v) => setStack((prev) => ({ ...prev, customLabels: { ...prev.customLabels, edrSolution: v } }))}
+                />
               </div>
             </div>
           )}
@@ -539,10 +563,10 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Physically separated and air-gapped facility datacenter running Red Hat Enterprise Linux 8/9 STIG baselines and VMware vSphere.',
                     features: ['Complete Network Isolation', 'OpenSCAP DISA STIG Automated', 'Physical Security Perimeter (PE)'],
                   },
-                ]).map((opt) => {
+                ]).map((opt, optIdx) => {
                   const isSelected = stack.infrastructure === opt.id;
                   return (
-                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected || (!stack.infrastructure && optIdx === 0) ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, infrastructure: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -586,6 +610,13 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     </button>
                   );
                 })}
+                <CustomOptionCard
+                  selected={stack.infrastructure === 'CUSTOM'}
+                  label={stack.customLabels.infrastructure ?? ''}
+                  inputId="stack-custom-infrastructure"
+                  onSelect={() => setStack((prev) => ({ ...prev, infrastructure: 'CUSTOM' }))}
+                  onLabelChange={(v) => setStack((prev) => ({ ...prev, customLabels: { ...prev.customLabels, infrastructure: v } }))}
+                />
               </div>
             </div>
           )}
@@ -637,10 +668,10 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Traditional Active Directory Domain Group Policy Objects (GPOs), physical USB device port locking, and local administrative controls.',
                     features: ['AD GPO Security Baselines', 'USB Mass Storage Block Policies', 'Air-Gapped Fleet Custody'],
                   },
-                ]).map((opt) => {
+                ]).map((opt, optIdx) => {
                   const isSelected = stack.mdmSolution === opt.id;
                   return (
-                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected || (!stack.mdmSolution && optIdx === 0) ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, mdmSolution: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -684,6 +715,13 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     </button>
                   );
                 })}
+                <CustomOptionCard
+                  selected={stack.mdmSolution === 'CUSTOM'}
+                  label={stack.customLabels.mdmSolution ?? ''}
+                  inputId="stack-custom-mdmSolution"
+                  onSelect={() => setStack((prev) => ({ ...prev, mdmSolution: 'CUSTOM' }))}
+                  onLabelChange={(v) => setStack((prev) => ({ ...prev, customLabels: { ...prev.customLabels, mdmSolution: v } }))}
+                />
               </div>
             </div>
           )}
@@ -735,10 +773,10 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     desc: 'Encrypted syslog forwarders (rsyslog / auditd) sending logs to a dedicated, write-once immutable storage server inside the air-gap enclave.',
                     features: ['Write-Once Read-Many (WORM)', 'TLS Encrypted Syslog Stream', 'Local SHA-256 Checksums'],
                   },
-                ]).map((opt) => {
+                ]).map((opt, optIdx) => {
                   const isSelected = stack.siemSolution === opt.id;
                   return (
-                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected ? 0 : -1}
+                    <button type="button" role="radio" aria-checked={isSelected} tabIndex={isSelected || (!stack.siemSolution && optIdx === 0) ? 0 : -1}
                       key={opt.id}
                       onClick={() => setStack((prev) => ({ ...prev, siemSolution: opt.id }))}
                       className={`w-full text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
@@ -782,6 +820,13 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     </button>
                   );
                 })}
+                <CustomOptionCard
+                  selected={stack.siemSolution === 'CUSTOM'}
+                  label={stack.customLabels.siemSolution ?? ''}
+                  inputId="stack-custom-siemSolution"
+                  onSelect={() => setStack((prev) => ({ ...prev, siemSolution: 'CUSTOM' }))}
+                  onLabelChange={(v) => setStack((prev) => ({ ...prev, customLabels: { ...prev.customLabels, siemSolution: v } }))}
+                />
               </div>
             </div>
           )}
@@ -797,16 +842,17 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                   </h4>
                   <p className="text-xs text-slate-400 mt-1">
                     Standardize organizational timeouts, patch SLAs, and audit retention cadences per NIST SP 800-53 Rev. 5 & 800-171.
+                    The grey text in each field is a suggestion only: nothing is saved until you type a value or choose "Use default". A field left empty keeps the wording of the objective template.
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={handleResetOdpDefaults}
+                  onClick={handleClearOdp}
                   className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Restore Standard DoD Defaults</span>
+                  <span>Clear all values</span>
                 </button>
               </div>
 
@@ -867,26 +913,38 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
                     helper: 'Frequency of automated alert queries and manual security lead sign-offs.',
                   },
                 ].map((item) => {
-                  const currentValue = stack.odpParams?.[item.key] || DEFAULT_ODP_PARAMS[item.key] || '';
+                  const currentValue = stack.odpParams[item.key] ?? '';
                   return (
                     <div
                       key={item.key}
                       className="p-4 rounded-2xl bg-slate-850/80 border border-slate-800 space-y-2"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <label className="text-xs font-bold text-white">{item.label}</label>
+                        <label htmlFor={`odp-${item.key}`} className="text-xs font-bold text-white">{item.label}</label>
                         <span className="badge text-xs font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-900/60">
                           {item.controlRef}
                         </span>
                       </div>
                       <p className="text-xs text-slate-400">{item.helper}</p>
-                      <input
-                        type="text"
-                        value={currentValue}
-                        onChange={(e) => handleOdpChange(item.key, e.target.value)}
-                        placeholder={`e.g. ${DEFAULT_ODP_PARAMS[item.key]}`}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 font-mono transition-colors"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          id={`odp-${item.key}`}
+                          type="text"
+                          value={currentValue}
+                          maxLength={1000}
+                          onChange={(e) => handleOdpChange(item.key, e.target.value)}
+                          placeholder={`e.g. ${DEFAULT_ODP_PARAMS[item.key]}`}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 font-mono transition-colors"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleOdpChange(item.key, DEFAULT_ODP_PARAMS[item.key])}
+                          aria-label={`Use default for ${item.label}`}
+                          className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                        >
+                          Use default
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -895,24 +953,41 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
           )}
         </div>
 
-        {/* Selected Stack Quick-Pills Ribbon */}
+        {/* Selected Stack Quick-Pills Ribbon: only what has been chosen; an unset step says so */}
         <div className="px-6 py-2.5 bg-slate-950 border-t border-slate-800/80 flex items-center gap-2 overflow-x-auto text-xs font-mono text-slate-400 shrink-0">
-          <span className="text-slate-400 font-sans font-semibold text-xs">Active Profile:</span>
-          <span className="px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/40">
-            IAM: {tabs[0].valueLabel}
-          </span>
-          <span className="px-2 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/40">
-            EDR: {tabs[1].valueLabel}
-          </span>
-          <span className="px-2 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/40">
-            Cloud: {tabs[2].valueLabel}
-          </span>
-          <span className="px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/40">
-            MDM: {tabs[3].valueLabel}
-          </span>
-          <span className="px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-800/40">
-            SIEM: {tabs[4].valueLabel}
-          </span>
+          <span className="text-slate-400 font-sans font-semibold text-xs">Selected stack:</span>
+          {[
+            { label: 'IAM', index: 0, chip: 'bg-cyan-950/60 text-cyan-300 border border-cyan-800/40' },
+            { label: 'EDR', index: 1, chip: 'bg-indigo-950/60 text-indigo-300 border border-indigo-800/40' },
+            { label: 'Cloud', index: 2, chip: 'bg-blue-950/60 text-blue-300 border border-blue-800/40' },
+            { label: 'MDM', index: 3, chip: 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/40' },
+            { label: 'SIEM', index: 4, chip: 'bg-purple-950/60 text-purple-300 border border-purple-800/40' },
+          ].map((pill) => {
+            const value = tabs[pill.index].valueLabel;
+            return value === null ? (
+              <span key={pill.label} className="px-2 py-0.5 rounded border border-dashed border-slate-700 text-slate-400">
+                {pill.label}: not set
+              </span>
+            ) : (
+              <span key={pill.label} className={`px-2 py-0.5 rounded ${pill.chip}`}>
+                {pill.label}: {value}
+              </span>
+            );
+          })}
+        </div>
+
+        {/* What saving does, and what is still missing */}
+        <div className="px-6 py-2.5 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between gap-3 flex-wrap shrink-0">
+          <p id="stack-save-note" className="text-xs text-slate-300 leading-relaxed">{saveNote}</p>
+          {canEdit && !complete && (
+            <button
+              type="button"
+              onClick={handleFillUnset}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+            >
+              Fill unset steps with recommended choices
+            </button>
+          )}
         </div>
 
         {/* Footer Actions */}
@@ -942,9 +1017,9 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             {successNotice && (
-              <div className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
+              <div role="status" className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Stack Saved & Objectives Cascaded!</span>
+                <span>Stack saved.</span>
               </div>
             )}
 
@@ -959,11 +1034,12 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
             <button
               type="button"
               onClick={handleSaveAndCascade}
-              disabled={isSaving}
-              className="btn-primary px-5 py-2.5 rounded-xl text-xs flex items-center gap-2"
+              disabled={isSaving || !complete || !canEdit}
+              aria-describedby="stack-save-note"
+              className="btn-primary px-5 py-2.5 rounded-xl text-xs flex items-center gap-2 disabled:opacity-50"
             >
               <Sparkles className="w-4 h-4 text-cyan-200" />
-              <span>{isSaving ? 'Cascading to Objectives...' : 'Save Stack & Cascade to All Objectives'}</span>
+              <span>{isSaving ? 'Saving...' : isNist80053 ? 'Save stack' : 'Save stack & fill empty narratives'}</span>
             </button>
           </div>
         </div>

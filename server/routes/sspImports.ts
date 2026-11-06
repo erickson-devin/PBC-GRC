@@ -8,7 +8,7 @@ import { ensureActiveTenant } from './tenantGuards';
 import { commitReviewedSuggestions } from '../ssp/commit';
 import { MAX_UPLOAD_BYTES, detectDocumentKind } from '../ssp/extract';
 import { deleteUploadedPolicy, readUploadedPolicy, saveUploadedPolicy } from '../ssp/policyVault';
-import { OllamaClient } from '../ssp/ollama';
+import { OllamaClient, publicAiReason } from '../ssp/ollama';
 import { ANALYZER_ID, aiAnalyzerId, cancelJob, enqueueImport, hashLiveControl, isJobActive, readLiveControls, recoverStaleJobs } from '../ssp/runner';
 import { trackSspJob } from '../shutdown';
 import { createJob, deleteJob, getJob, getStaged, listJobs, listStaged, newId, updateStaged } from '../ssp/store';
@@ -73,7 +73,7 @@ router.get('/capabilities', async (req: Request, res: Response): Promise<void> =
     analyzer: ANALYZER_ID,
     /** The local language model can be used for an import right now. */
     ai: aiAvailable,
-    aiStatus: { enabled: ai.enabled, available: aiAvailable, model: ai.model, ...(aiAvailable ? {} : { reason: ai.reason ?? 'The AI analysis is not available.' }) },
+    aiStatus: { enabled: ai.enabled, available: aiAvailable, model: ai.model, ...(aiAvailable ? {} : { reason: publicAiReason(ai.code, ai.reason), code: ai.code }) },
     maxUploadBytes: MAX_UPLOAD_BYTES,
     acceptedTypes: ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
     frameworks: SSP_IMPORT_FRAMEWORKS.filter((f) => enabled.includes(f)),
@@ -150,7 +150,8 @@ router.post('/', (req: Request, res: Response): void => {
       if (analysis === 'ai') {
         const status = await ollama.getStatus(true);
         if (!status.enabled || !status.reachable || !status.modelPresent) {
-          res.status(409).json({ error: `The AI analysis is not available: ${status.reason ?? 'unknown reason'}`, code: 'ai_unavailable', reason: status.code });
+          console.warn(`[SSP Import] AI unavailable: ${status.reason ?? 'unknown reason'}`);
+          res.status(409).json({ error: `The AI analysis is not available: ${publicAiReason(status.code, status.reason)}`, code: 'ai_unavailable', reason: status.code });
           return;
         }
       }

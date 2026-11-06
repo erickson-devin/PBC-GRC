@@ -99,6 +99,22 @@ assert.ok(nist80053Policy.includes('NIST SP 800-53 Policy'), 'Should include NIS
 assert.ok(nist80053Policy.includes('NIST SP 800-53 Rev. 5'), 'Should cite NIST SP 800-53 Rev. 5');
 console.log('✅ Dynamic framework citations and control scoping verified for CMMC_L1, CMMC_L2, and NIST_800_53_REV5.');
 
+// Test 6: a custom solution and a profile without ODP values compile without inventing a product
+console.log('\n--- Test 6: Custom Solution & Missing ODP Values ---');
+const customStack: EnclaveStackProfile = {
+  identityProvider: 'CUSTOM',
+  edrSolution: 'CUSTOM',
+  infrastructure: 'CUSTOM',
+  mdmSolution: 'CUSTOM',
+  siemSolution: 'CUSTOM',
+  customLabels: { identityProvider: 'Keycloak', edrSolution: 'Wazuh', infrastructure: 'Colo rack', mdmSolution: 'Ansible', siemSolution: 'Graylog' },
+};
+for (const [controlId, letter] of [['3.1.1', 'a'], ['3.14.2', 'a'], ['3.3.1', 'a']] as const) {
+  const text = getCascadedObjectiveNarrative(controlId, letter, customStack);
+  assert.ok(typeof text === 'string' && text.length > 0, `A custom stack without ODP values compiles ${controlId}[${letter}]`);
+}
+console.log('✅ A CUSTOM stack with no odpParams compiles without error.');
+
 console.log('\n================================================================');
 console.log('🎉 ALL ENCLAVE STACK & LIVING POLICY TESTS PASSED (5/5)!');
 console.log('================================================================');

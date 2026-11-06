@@ -27,7 +27,7 @@ import {
 import { ReportMetadata, ReportSection } from '../src/types/report';
 import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED, NOT_RECORDED, NO_MILESTONES_RECORDED, NO_CUECS_RECORDED, NO_STACK_PROFILE_RECORDED, NO_FAMILY_IMPLEMENTATION_RECORDED, UNSIGNED_ATTESTATION_NOTE } from '../src/data/reports/documentDefaults';
 import { getExportGaps } from '../src/data/reports/exportReadiness';
-import { createDefaultSspMetadata, scrubInventedMetadata } from '../src/services/storageService';
+import { createDefaultSspMetadata, scrubInventedMetadata, buildSspMarkdown, createInitialState } from '../src/services/storageService';
 import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import { getObjectivesForControl } from '../src/data/frameworks/assessmentObjectives';
@@ -499,6 +499,17 @@ async function runArtifactGeneratorTests() {
     const stackTenant = { ...blankTenant, name: 'Acme', systemName: 'Enclave', systemOwner: 'Owner', stackProfile: { identityProvider: 'OKTA', edrSolution: 'GENERIC_AV', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'MANUAL_GPO', siemSolution: 'LOCAL_AUDITD' } } as Tenant;
     const zzPolicy = generatePolicyDocument(stackTenant, 'ZZ', 'Zeta', 'NIST_800_53_REV5');
     assert(zzPolicy.includes('### ZZ-1') && zzPolicy.includes(NO_FAMILY_IMPLEMENTATION_RECORDED) && !zzPolicy.includes('continuously enforced'), 'S200-3 a family without catalog controls states no implementation and no continuous enforcement');
+
+    // Markdown must keep a blank line after every heading and list the metadata as bullets, so any renderer reads it the same
+    const headingsHaveBlankLine = (md: string) => {
+      const mdLines = md.split('\n');
+      return mdLines.every((l, i) => !/^#{1,6} /.test(l) || mdLines[i + 1] === '');
+    };
+    assert(headingsHaveBlankLine(zzPolicy) && headingsHaveBlankLine(blankPolicy) && blankPolicy.includes('- **Organization:** '), 'S200-4 every policy heading is followed by an empty line and the metadata is a bullet list');
+    const sspMdState = createInitialState({ ...stackTenant, primaryFramework: 'CMMC_L1' } as Tenant, 'CMMC_L1');
+    const sspMdControls = getFrameworkControls('CMMC_L1');
+    const sspMd = buildSspMarkdown(sspMdState, sspMdControls, 'CMMC_L1');
+    assert(headingsHaveBlankLine(sspMd) && sspMd.includes('- **Organization:** ') && sspMd.split('\n### ').length - 1 === sspMdControls.length, 'S200-5 the SSP Markdown has a blank line after every heading, bulleted metadata and one section per control');
 
     const attestDocs = [fullSsp, poamDoc, soc2Doc, hipaaDoc];
     const SUFFIXES_197 = ['(Signature on Record)', '(Attested)', '(Approved)', '(Concurred)', '(Signed)', '(Verified)'];

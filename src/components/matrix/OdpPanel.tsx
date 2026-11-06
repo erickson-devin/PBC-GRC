@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Sparkles, Undo2, SlidersHorizontal, Loader2 } from 'lucide-react';
 import { ApiClient } from '../../services/apiClient';
+import { useAiAssistStatus, useIsAiAdmin } from '../../hooks/useAiAssistStatus';
+import { AiOffNotice } from '../common/AiOffNotice';
+import { AI_BUTTON_CHECKING_TITLE, aiAvailability, aiErrorForUser, aiNoticeCopy } from '../../data/aiAvailabilityView';
 import { findVagueWording, isParameterOpen, parameterValue, parseParameterTags, replaceSentence, replaceTag, resolveParameters, setParameterValue } from '../../data/frameworks/parameters';
 import type { ControlParameter, FrameworkControlDefinition } from '../../types/framework';
-import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../../types/aiAssist';
+import type { WordingSuggestionRequest, WordingSuggestions } from '../../types/aiAssist';
 
 interface Props {
   control: FrameworkControlDefinition;
@@ -22,18 +25,8 @@ interface Props {
   placeValue?: (notes: string, p: ControlParameter, value: string) => string;
   /** No frame and heading: the panel sits inside something that has its own. */
   bare?: boolean;
-}
-
-// One status request per tenant for all panels on the page (an SSP with twelve items would otherwise ask twelve times)
-const statusCache = new Map<string, Promise<AiAssistStatus>>();
-function loadStatus(tenantId: string): Promise<AiAssistStatus> {
-  let p = statusCache.get(tenantId);
-  if (!p) {
-    p = ApiClient.aiAssistStatus(tenantId).catch((): AiAssistStatus => ({ enabled: false, available: false, model: '', canUse: false, reason: 'The AI helper status could not be read.' }));
-    statusCache.set(tenantId, p);
-    setTimeout(() => statusCache.delete(tenantId), 30_000); // the model may be started or stopped meanwhile
-  }
-  return p;
+  /** Show the "AI is off / unavailable" notice in this panel (default: unless `bare`, whose parent shows it once). */
+  aiNotice?: boolean;
 }
 
 type Suggestion = { state: 'loading' } | { state: 'error'; message: string } | { state: 'done'; result: WordingSuggestions };
@@ -53,12 +46,11 @@ function tagSentence(notes: string, p: ControlParameter): string | undefined {
   return (notes.slice(from, p.start) + `<<${p.prompt}>>` + notes.slice(p.end, to)).replace(/\s+/g, ' ').trim();
 }
 
-export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange, params, narrativeOnly, placeValue, bare }) => {
+export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange, params, narrativeOnly, placeValue, bare, aiNotice = !bare }) => {
   const catalogParams = useMemo(() => (narrativeOnly ? [] : params ?? resolveParameters(control)), [control, params, narrativeOnly]);
   const scoped = params !== undefined;
   const tagParams = useMemo(() => (scoped ? [] : parseParameterTags(notes, `${control.id}:notes`, 'NOTES')), [notes, control.id, scoped]);
   const vague = useMemo(() => (scoped ? [] : findVagueWording(notes)), [notes, scoped]);
-  const [status, setStatus] = useState<AiAssistStatus | null>(null);
   const [suggestions, setSuggestions] = useState<Record<string, Suggestion>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [undo, setUndo] = useState<{ before: string; after: string } | null>(null);
@@ -66,14 +58,8 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
 
   const hasAnything = catalogParams.length + tagParams.length + vague.length > 0;
 
-  useEffect(() => {
-    if (!canEdit || !hasAnything || status) return;
-    let alive = true;
-    loadStatus(tenantId).then((s) => alive && setStatus(s));
-    return () => {
-      alive = false;
-    };
-  }, [canEdit, hasAnything, status, tenantId]);
+  const status = useAiAssistStatus(tenantId, canEdit && hasAnything);
+  const isAdmin = useIsAiAdmin();
 
   if (!hasAnything) return null;
 
@@ -93,12 +79,13 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
       const result = await ApiClient.suggestParameterWording(tenantId, body);
       setSuggestions((s) => ({ ...s, [key]: { state: 'done', result } }));
     } catch (e) {
-      setSuggestions((s) => ({ ...s, [key]: { state: 'error', message: e instanceof Error ? e.message : 'The AI helper failed.' } }));
+      setSuggestions((s) => ({ ...s, [key]: { state: 'error', message: aiErrorForUser(e instanceof Error ? e.message : undefined) } }));
     }
   };
 
-  const aiReady = canEdit && status?.available && status.canUse;
-  const aiHint = !canEdit ? undefined : !status ? 'Checking the AI helper…' : !status.available ? status.reason ?? 'The AI helper is not available.' : !status.canUse ? 'Your role cannot use the AI helper.' : undefined;
+  const availability = aiAvailability(status, canEdit);
+  const aiReady = availability === 'ready';
+  const showSuggest = availability === 'ready' || availability === 'checking';
 
   const suggestionList = (key: string, onUse: (text: string) => void, useLabel: string) => {
     const s = suggestions[key];
@@ -115,9 +102,10 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
     return (
       <ul className="space-y-1.5" aria-label="Suggested wording">
         {s.result.options.map((o) => (
-          <li key={o.text} className="flex items-start justify-between gap-3 rounded-lg bg-slate-800/70 border border-slate-700 p-2">
+          <li key={o.text} className="flex items-start justify-between gap-3 rounded-lg border border-dashed border-violet-500/50 bg-violet-950/20 p-2">
             <div className="min-w-0 text-xs">
-              <p className="text-slate-100 break-words">{o.text}</p>
+              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300">AI draft, unverified</span>
+              <p className="text-slate-100 break-words mt-1">{o.text}</p>
               {o.note && <p className="text-slate-400 mt-0.5">{o.note}</p>}
             </div>
             <button type="button" onClick={() => onUse(o.text)} className="shrink-0 px-2 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/40 text-cyan-200 text-xs font-semibold hover:bg-cyan-500/25">
@@ -125,7 +113,7 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
             </button>
           </li>
         ))}
-        <li className="text-[11px] text-slate-500 list-none">AI suggestion from {s.result.model}: check it before using it. Nothing is saved until you save the narrative.</li>
+        <li className="text-[11px] text-slate-400 list-none">AI suggestion from {s.result.model}: check it before using it. Nothing is saved until you save the narrative.</li>
       </ul>
     );
   };
@@ -134,9 +122,9 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
     <button
       type="button"
       disabled={!aiReady || suggestions[key]?.state === 'loading'}
-      title={aiHint}
+      title={availability === 'checking' ? AI_BUTTON_CHECKING_TITLE : undefined}
       onClick={() => ask(key, body)}
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-500/40 bg-violet-500/10 text-violet-200 text-xs font-semibold hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-500/40 bg-violet-500/10 text-violet-200 text-xs font-semibold hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
     >
       <Sparkles className="w-3.5 h-3.5" aria-hidden="true" /> Suggest Parameter Wording
     </button>
@@ -159,7 +147,7 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-800 border border-slate-600 text-slate-300">{p.kind === 'SELECTION' ? 'Selection' : 'Assignment'}</span>
             <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${open ? 'bg-amber-500/10 border-amber-500/40 text-amber-300' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'}`}>{open ? 'Open' : 'Set'}</span>
           </div>
-          {canEdit && suggestButton(key, body)}
+          {showSuggest && suggestButton(key, body)}
         </div>
         {p.kind === 'SELECTION' && p.choices?.length ? (
           <div className="flex flex-wrap gap-1.5" role="group" aria-label={`${p.label} choices`}>
@@ -216,7 +204,8 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
       </div>
       {(expanded || bare) && (
         <>
-          {!bare && <p className="text-xs text-slate-400">An assessor must be able to test every value. Fill in the blanks below with explicit values. {aiHint && <span className="text-slate-500">{aiHint}</span>}</p>}
+          {!bare && <p className="text-xs text-slate-400">An assessor must be able to test every value. Fill in the blanks below with explicit values.</p>}
+          {aiNotice && <AiOffNotice copy={aiNoticeCopy(availability, 'assist')} showAdminHint={isAdmin} />}
           {(catalogParams.length > 0 || tagParams.length > 0) && <ul className="space-y-2">{[...catalogParams, ...tagParams].map(paramRow)}</ul>}
           {vague.length > 0 && (
             <div className="space-y-2">
@@ -229,7 +218,7 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
                       <p className="text-xs text-slate-100 break-words">“{v.sentence}”</p>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-xs text-slate-400">Hard to test: {v.terms.join(', ')}</span>
-                        {canEdit && suggestButton(key, { controlId: control.id, sentence: v.sentence })}
+                        {showSuggest && suggestButton(key, { controlId: control.id, sentence: v.sentence })}
                       </div>
                       {suggestionList(key, (text) => { if (!apply(replaceSentence(notes, v, text))) setSuggestions((s) => ({ ...s, [key]: { state: 'error', message: 'The narrative changed since. Ask again.' } })); }, 'Replace in narrative')}
                     </li>
