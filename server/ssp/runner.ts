@@ -7,7 +7,7 @@ import { analyzeDocumentWithAi } from './analyze';
 import { chunkDocument } from './chunk';
 import { ANALYZER_ID, mapDocumentToControls } from './controlMapper';
 import { ExtractionError, detectDocumentKind, extractDocument } from './extract';
-import { OllamaClient, OllamaError } from './ollama';
+import { OllamaClient, OllamaError, aiFallbackWarning } from './ollama';
 import { privacyCoverage } from './privacyCoverage';
 import { readUploadedPolicy } from './policyVault';
 import { getJob, replaceStaged, updateJob } from './store';
@@ -153,10 +153,9 @@ async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
       } catch (err: unknown) {
         if (err instanceof OllamaError && err.code === 'cancelled') throw err;
         // The AI analysis could not be completed: the rule-based result is still worth having, and the reviewer is told why
-        const reason = err instanceof OllamaError ? err.message : 'It failed unexpectedly.';
         console.warn(`[SSP Import] ${jobId}: AI analysis not used: ${errorMessage(err)}`);
         analyzer = ANALYZER_ID;
-        progress = { ...progress, warning: `The AI analysis could not be completed (${reason}) so these are the rule-based results.` };
+        progress = { ...progress, warning: aiFallbackWarning(err) };
       }
     }
 

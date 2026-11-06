@@ -85,6 +85,35 @@ export function assertAllowedBaseUrl(config: Pick<OllamaConfig, 'baseUrl' | 'all
   return url;
 }
 
+/**
+ * What an end user may be told about why the AI cannot be used. The internal reason (which names the Ollama host) goes to the
+ * server log only: a host name or address must never reach a response body (issue #191).
+ */
+export function publicAiReason(code?: OllamaErrorCode, internalReason?: string): string {
+  switch (code) {
+    case 'disabled':
+      return 'The AI analysis is switched off on this server.';
+    case 'unreachable':
+      return 'The local AI service cannot be reached. An administrator can find the details in the server log.';
+    case 'blocked_host':
+      return 'The configured AI service address is not allowed (documents are only sent to this machine or a private network). An administrator can find the details in the server log.';
+    case 'model_missing':
+      // names the model, never the host, and the "ollama pull" hint is useful
+      return internalReason ?? 'The configured model is not installed on the local AI service. An administrator can load it first with "ollama pull".';
+    default:
+      return 'The AI analysis is not available.';
+  }
+}
+
+/** The note stored on an import that fell back to the rule-based results: safe to show to any member. */
+export function aiFallbackWarning(err: unknown): string {
+  let detail = 'It failed unexpectedly.';
+  if (err instanceof OllamaError) {
+    detail = err.code === 'unreachable' || err.code === 'blocked_host' || err.code === 'disabled' ? publicAiReason(err.code) : err.message;
+  }
+  return `The AI analysis could not be completed (${detail}) so these are the rule-based results.`;
+}
+
 export interface OllamaStatus {
   enabled: boolean;
   reachable: boolean;

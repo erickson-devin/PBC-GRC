@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Layers, X } from 'lucide-react';
+import { Info, Layers, X } from 'lucide-react';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { useTenant } from '../../context/TenantContext';
@@ -250,6 +250,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   disabled={isSaving}
                   className={inputClass}
                   {...errorProps('framework')}
+                  aria-describedby={[shown('framework') ? `${fieldId('framework')}-error` : '', needsFramework && frameworkOptions.length > 0 ? `${fieldId('framework')}-hint` : ''].filter(Boolean).join(' ') || undefined}
                 >
                   <option value="">{frameworkOptions.length === 0 ? 'No framework enabled' : 'Choose a framework'}</option>
                   {frameworkOptions.map((f) => (
@@ -262,7 +263,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                 {isEdit ? 'Fixed when the program was created.' : 'Cannot be changed after creation.'}
               </p>
               {needsFramework && frameworkOptions.length > 0 && (
-                <p id={`${fieldId('framework')}-hint`} className="mt-1 text-xs text-amber-300">Choose a framework to continue.</p>
+                <p id={`${fieldId('framework')}-hint`} className="mt-1 text-xs text-slate-300 flex items-center gap-1"><Info className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" /> Choose a framework to continue.</p>
               )}
             </div>
 

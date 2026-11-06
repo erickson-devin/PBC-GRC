@@ -8,6 +8,8 @@ export interface AiAssistStatus {
   /** Whether the signed-in role may ask for suggestions. */
   canUse: boolean;
   reason?: string;
+  /** Machine-readable cause when unavailable (disabled, unreachable, model_missing, blocked_host). */
+  code?: string;
 }
 
 export type WordingSuggestionRequest =

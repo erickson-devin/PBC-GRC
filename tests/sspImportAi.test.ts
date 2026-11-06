@@ -114,11 +114,13 @@ async function main() {
   process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:1';
   reset();
   const refusedDown = await upload(owner, tenant, docx, { framework: 'CMMC_L1', analysis: 'ai' });
-  assert(refusedDown.status === 409 && /Cannot reach Ollama/.test(refusedDown.body?.error), 'an unreachable Ollama is refused up front too');
+  assert(refusedDown.status === 409 && refusedDown.body?.code === 'ai_unavailable' && refusedDown.body?.reason === 'unreachable' && !String(refusedDown.body?.error).includes('127.0.0.1'), 'an unreachable Ollama is refused up front too, without naming its address', refusedDown.body);
+  const capDown = (await call('GET', `${root}/capabilities`, owner, tenant)).body as Json;
+  assert(capDown.aiStatus.code === 'unreachable' && !String(capDown.aiStatus.reason).includes('127.0.0.1'), 'capabilities: the unreachable reason is a plain sentence without the address', capDown.aiStatus);
   process.env.OLLAMA_BASE_URL = 'https://api.openai.com';
   reset();
   const refusedPublic = await upload(owner, tenant, docx, { framework: 'CMMC_L1', analysis: 'ai' });
-  assert(refusedPublic.status === 409 && /not on this machine/.test(refusedPublic.body?.error), 'a base URL pointing at a public host is refused: documents never leave the machine / private network');
+  assert(refusedPublic.status === 409 && /not allowed/.test(refusedPublic.body?.error) && !String(refusedPublic.body?.error).includes('api.openai.com'),'a base URL pointing at a public host is refused: documents never leave the machine / private network');
   process.env.OLLAMA_BASE_URL = fake.url;
   reset();
 

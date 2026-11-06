@@ -11,6 +11,9 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { AiOffNotice } from '../common/AiOffNotice';
+import { aiErrorForUser, aiNoticeCopy } from '../../data/aiAvailabilityView';
+import { isCrossReferenceOnly } from '../../utils/sspImportHints';
 import { ApiClient } from '../../services/apiClient';
 import { getFrameworkControls } from '../../data/frameworks';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
@@ -133,7 +136,8 @@ const StateBadge: React.FC<{ state: SspReviewState }> = ({ state }) => (
 );
 
 export const SspImportView: React.FC = () => {
-  const { currentTenant, currentRole, refreshLiveData, activeProgram } = useTenant();
+  const { currentTenant, currentRole, refreshLiveData, activeProgram, isSuperAdmin, canManagePrograms } = useTenant();
+  const isAdmin = isSuperAdmin || canManagePrograms;
   const tenantId = currentTenant.id;
   // Jobs, detail and the commit belong to the active program; the request's framework field stays, the UI pins it to the program
   const programId = activeProgram?.id ?? null;
@@ -459,9 +463,9 @@ export const SspImportView: React.FC = () => {
                 Also read it with the local AI model <span className="font-mono text-cyan-300">{caps.aiStatus.model}</span>. Slower (minutes for a long document), and it can find controls the document describes without naming them. Every quotation it gives is checked against the document.
               </span>
             </label>
-          ) : caps.aiStatus.enabled ? (
-            <p role="note" className="mt-3 text-xs text-amber-200">The AI analysis is unavailable right now: {caps.aiStatus.reason} Rule-based matching still works.</p>
-          ) : null}
+          ) : (
+            <AiOffNotice className="mt-3" copy={aiNoticeCopy(caps.aiStatus.enabled ? 'unavailable' : 'off', 'import')} showAdminHint={isAdmin} />
+          )}
           <p className="text-xs text-slate-400 mt-2" aria-live="polite">
             {uploading ? 'Uploading…' : 'The original is kept in the evidence vault under policies/uploaded. Scanned documents (images of text) cannot be read yet.'}
           </p>
@@ -544,7 +548,7 @@ export const SspImportView: React.FC = () => {
                 )}
                 {detail.job.stageProgress.warning && (
                   <p role="note" className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm">
-                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" /> {detail.job.stageProgress.warning}
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" /> {aiErrorForUser(detail.job.stageProgress.warning)}
                   </p>
                 )}
                 {detail.job.stageProgress.ai && (
@@ -621,8 +625,13 @@ export const SspImportView: React.FC = () => {
                           <select id={ids.filter} value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="px-2.5 py-1.5 text-sm bg-slate-900 border border-slate-700 rounded-lg text-white">
                             {FILTERS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
                           </select>
-                          <span className="text-xs text-slate-500">{visible.length} of {staged.length}</span>
+                          <span className="text-xs text-slate-400">{visible.length} of {staged.length}</span>
                         </div>
+                        {isCrossReferenceOnly(staged) && (
+                          <p role="note" className="text-xs text-slate-300 p-3 rounded-xl bg-slate-900 border border-slate-800">
+                            Only cross-references were found: the document mentions controls but has no section per control. If your control headings are numbered automatically in Word, save the document as PDF and import that, or run the AI analysis.
+                          </p>
+                        )}
 
                         {staged.length === 0 ? (
                           <p className="text-sm text-slate-400">No control identifiers were found in this document, so there is nothing to review.</p>
@@ -637,8 +646,8 @@ export const SspImportView: React.FC = () => {
                                       <StateBadge state={s.reviewState} />
                                     </span>
                                     <span className="block text-xs text-slate-400 truncate">{CONTROL_TITLES.get(s.controlId)}</span>
-                                    <span className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-                                      {Math.round(s.confidence * 100)}% match · {s.origin === 'AI' ? 'AI' : 'rules'}
+                                    <span className="mt-0.5 flex items-center gap-2 text-xs text-slate-400">
+                                      {Math.round(s.confidence * 100)}% match · {s.origin === 'AI' ? <span className="px-1 py-0.5 rounded border border-violet-500/40 bg-violet-500/10 text-violet-200">AI</span> : 'rules'}
                                       {(s.changedSinceStaged || s.reviewState === 'CONFLICT') && <AlertTriangle className="w-3 h-3 text-amber-400" aria-label="The control changed since this was staged" />}
                                     </span>
                                   </button>

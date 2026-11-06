@@ -230,7 +230,7 @@ export interface SspCapabilities {
   analyzer: string;
   /** The local language model can be used for an import right now. */
   ai: boolean;
-  aiStatus: { enabled: boolean; available: boolean; model: string; reason?: string };
+  aiStatus: { enabled: boolean; available: boolean; model: string; reason?: string; code?: string };
   maxUploadBytes: number;
   acceptedTypes: string[];
   /** The supported frameworks that are part of this tenant's assessment program. */

@@ -215,11 +215,14 @@ async function apiTests() {
   assert(missing.status === 503 && missing.body?.code === 'ai_unavailable' && /not installed/.test(missing.body?.error), 'model not installed: 503 with the reason');
   process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:1';
   reset();
-  assert((await ask(owner, { controlId: 'AC.L1-3.1.1', sentence: SENT })).status === 503, 'Ollama unreachable: 503');
+  const down = await ask(owner, { controlId: 'AC.L1-3.1.1', sentence: SENT });
+  assert(down.status === 503 && down.body?.code === 'ai_unavailable' && !String(down.body?.error).includes('127.0.0.1'), 'Ollama unreachable: 503, without the address', down.body);
+  const stDown = await call('GET', `${root}/status`, owner, l2);
+  assert(stDown.body?.code === 'unreachable' && !String(stDown.body?.reason).includes('127.0.0.1'), 'status while unreachable: a plain reason without the address', stDown.body);
   process.env.OLLAMA_BASE_URL = 'https://api.openai.com';
   reset();
   const blocked = await ask(owner, { controlId: 'AC.L1-3.1.1', sentence: SENT });
-  assert(blocked.status === 503 && fake.chats.length === 0, 'a public host is never contacted: the local-network guard applies here too');
+  assert(blocked.status === 503 && fake.chats.length === 0 && !String(blocked.body?.error).includes('api.openai.com'),'a public host is never contacted: the local-network guard applies here too');
   process.env.OLLAMA_BASE_URL = fake.url;
   process.env.SSP_AI_ENABLED = 'false';
   reset();

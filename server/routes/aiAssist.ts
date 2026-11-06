@@ -4,7 +4,7 @@ import { NIST_800_171A_REGISTRY, normalizeControlNumber } from '../../src/data/f
 import { findVagueWording, resolveParameters } from '../../src/data/frameworks/parameters';
 import type { ComplianceFramework, ControlParameter, FrameworkControlDefinition } from '../../src/types/framework';
 import { frameworksDefiningControl, ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
-import { OllamaClient, OllamaError } from '../ssp/ollama';
+import { OllamaClient, OllamaError, publicAiReason } from '../ssp/ollama';
 import { WordingError, suggestWording, type WordingRequest } from '../ssp/parameterWording';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { ensureActiveTenant } from './tenantGuards';
@@ -46,7 +46,7 @@ router.use((req: Request, res: Response, next) => {
 router.get('/status', async (req: Request, res: Response): Promise<void> => {
   const s = await new OllamaClient().getStatus();
   const available = s.enabled && s.reachable && s.modelPresent;
-  res.json({ enabled: s.enabled, available, model: s.model, canUse: canRoleWrite(req.tenantRole), ...(available ? {} : { reason: s.reason ?? 'The AI helper is not available.' }) });
+  res.json({ enabled: s.enabled, available, model: s.model, canUse: canRoleWrite(req.tenantRole), ...(available ? {} : { reason: publicAiReason(s.code, s.reason), code: s.code }) });
 });
 
 function findControl(controlId: string): FrameworkControlDefinition | null {
@@ -181,7 +181,10 @@ router.post('/parameter-wording', async (req: Request, res: Response): Promise<v
       if (err.code === 'cancelled') return;
       if (err.code === 'timeout') res.status(504).json({ error: 'The model took too long. Try again.', code: 'ai_timeout' });
       else if (err.code === 'bad_response' || err.code === 'truncated') res.status(502).json({ error: 'The model did not give a usable answer. Try again.', code: 'ai_bad_answer' });
-      else res.status(503).json({ error: `The AI helper is not available: ${err.message}`, code: 'ai_unavailable' });
+      else {
+        console.warn(`[AI Assist] AI unavailable: ${err.message}`);
+        res.status(503).json({ error: `The AI helper is not available: ${publicAiReason(err.code, err.message)}`, code: 'ai_unavailable' });
+      }
       return;
     }
     if (err instanceof WordingError) {
