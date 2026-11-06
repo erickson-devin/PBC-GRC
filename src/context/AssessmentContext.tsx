@@ -1802,8 +1802,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Action: Export JSON
   const exportAssessmentJSON = useCallback(() => {
-    StorageService.exportJSON(state);
-  }, [state]);
+    StorageService.exportJSON(state, activeFramework);
+  }, [state, activeFramework]);
 
   // Action: Export Markdown
   const exportAssessmentMarkdown = useCallback(() => {

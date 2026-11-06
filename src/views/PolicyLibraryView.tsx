@@ -18,12 +18,14 @@ import {
   Scroll,
 } from 'lucide-react';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
+import { MarkdownPreview } from '../components/common/MarkdownPreview';
 import { useTenant } from '../context/TenantContext';
 import { useAssessment } from '../context/AssessmentContext';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../hooks/useFipsModules';
 
 import { copyToClipboard } from '../utils/clipboard';
+import { stackValueLabel, type StackKey } from '../data/stackDraftView';
 export interface PolicyFamilyItem {
   code: string;
   name: string;
@@ -271,26 +273,21 @@ const PolicyLibraryViewContent: React.FC = () => {
     setSelectedControlId(controlId);
   };
 
-  const formatTechName = (val?: string) => {
-    if (!val) return 'Default Baseline';
-    return val
-      .replace(/_/g, ' ')
-      .toLowerCase()
-      .replace(/\b\w/g, (c) => c.toUpperCase());
-  };
+  const formatTechName = (key: StackKey, val?: string) =>
+    stackValueLabel(key, val, stack?.customLabels) ?? 'Not set';
 
   return (
     <div className="space-y-6 animate-fadeIn">
       {/* ── Page Header & Enclave Tech Stack Banner ── */}
       <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-6">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-1">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1 basis-[22rem] space-y-1">
             <div className="flex items-center gap-3 flex-wrap">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 text-cyan-400 flex items-center justify-center border border-cyan-500/30">
                 <Scroll className="w-5 h-5 text-cyan-400" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                <h1 className="text-xl font-bold text-white tracking-tight flex flex-wrap items-center gap-2">
                   <span>Living Policy Library</span>
                   <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800 font-bold">
                     {activeFamilies.length} FAMILIES
@@ -311,13 +308,15 @@ const PolicyLibraryViewContent: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0 max-w-full">
             <button
+              type="button"
               onClick={() => setIsStackSurveyModalOpen(true)}
               disabled={!canEdit}
-              className="btn-primary px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 shrink-0"
+              title={canEdit ? undefined : 'Read-only: only an editor can change the enclave stack.'}
+              className="btn-primary px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 shrink-0 max-w-full text-left"
             >
-              <Sparkles className="w-4 h-4 text-cyan-200" />
+              <Sparkles className="w-4 h-4 text-cyan-200" aria-hidden="true" />
               <span>Configure Enclave Stack & ODP Wizard</span>
             </button>
           </div>
@@ -325,9 +324,9 @@ const PolicyLibraryViewContent: React.FC = () => {
 
         {/* Enclave Architecture & ODP Summary Strip */}
         <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-3">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-400 border-b border-slate-800/60 pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-400 border-b border-slate-800/60 pb-2">
             <span className="flex items-center gap-2 text-cyan-300">
-              <Layers className="w-4 h-4" />
+              <Layers className="w-4 h-4" aria-hidden="true" />
               <span>Active Enclave Architectural Profile</span>
             </span>
             <span className="font-mono text-xs text-slate-400">
@@ -341,45 +340,65 @@ const PolicyLibraryViewContent: React.FC = () => {
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <KeyRound className="w-3 h-3 text-cyan-400" /> Identity (IAM)
               </span>
-              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
-                {formatTechName(stack?.identityProvider)}
-              </span>
+              {stack?.identityProvider ? (
+                <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
+                  {formatTechName('identityProvider', stack.identityProvider)}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400 italic block mt-0.5">Not set</span>
+              )}
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <ShieldAlert className="w-3 h-3 text-indigo-400" /> EDR / XDR
               </span>
-              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
-                {formatTechName(stack?.edrSolution)}
-              </span>
+              {stack?.edrSolution ? (
+                <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
+                  {formatTechName('edrSolution', stack.edrSolution)}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400 italic block mt-0.5">Not set</span>
+              )}
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Cloud className="w-3 h-3 text-blue-400" /> Cloud Boundary
               </span>
-              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
-                {formatTechName(stack?.infrastructure)}
-              </span>
+              {stack?.infrastructure ? (
+                <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
+                  {formatTechName('infrastructure', stack.infrastructure)}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400 italic block mt-0.5">Not set</span>
+              )}
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Smartphone className="w-3 h-3 text-emerald-400" /> MDM / Fleets
               </span>
-              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
-                {formatTechName(stack?.mdmSolution)}
-              </span>
+              {stack?.mdmSolution ? (
+                <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
+                  {formatTechName('mdmSolution', stack.mdmSolution)}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400 italic block mt-0.5">Not set</span>
+              )}
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Activity className="w-3 h-3 text-purple-400" /> SIEM / Logs
               </span>
-              <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
-                {formatTechName(stack?.siemSolution)}
-              </span>
+              {stack?.siemSolution ? (
+                <span className="font-mono font-bold text-white text-xs truncate block mt-0.5">
+                  {formatTechName('siemSolution', stack.siemSolution)}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400 italic block mt-0.5">Not set</span>
+              )}
             </div>
 
             <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
@@ -387,7 +406,7 @@ const PolicyLibraryViewContent: React.FC = () => {
                 <Sliders className="w-3 h-3 text-amber-400" /> Inactivity Lock
               </span>
               <span className="font-mono font-bold text-amber-300 text-xs truncate block mt-0.5">
-                {stack?.odpParams?.INACTIVITY_TIMEOUT || '15 min'}
+                {stack?.odpParams?.INACTIVITY_TIMEOUT || 'Not set'}
               </span>
             </div>
           </div>
@@ -488,8 +507,10 @@ const PolicyLibraryViewContent: React.FC = () => {
               {/* Formatted / Raw Toggle */}
               <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
                 <button
+                  type="button"
+                  aria-pressed={viewMode === 'formatted'}
                   onClick={() => setViewMode('formatted')}
-                  className={`px-3 py-1 rounded-lg transition-colors font-semibold ${
+                  className={`px-3 py-1 rounded-lg transition-colors font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                     viewMode === 'formatted'
                       ? 'bg-cyan-500 text-white shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
@@ -498,8 +519,10 @@ const PolicyLibraryViewContent: React.FC = () => {
                   Formatted
                 </button>
                 <button
+                  type="button"
+                  aria-pressed={viewMode === 'raw'}
                   onClick={() => setViewMode('raw')}
-                  className={`px-3 py-1 rounded-lg transition-colors font-semibold ${
+                  className={`px-3 py-1 rounded-lg transition-colors font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                     viewMode === 'raw'
                       ? 'bg-cyan-500 text-white shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
@@ -511,8 +534,10 @@ const PolicyLibraryViewContent: React.FC = () => {
 
               {/* Re-Compile */}
               <button
+                type="button"
                 onClick={handleRecompile}
-                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                aria-label="Re-Compile from Enclave Stack"
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
                 title="Re-Compile from Enclave Stack"
               >
                 <RefreshCw className={`w-4 h-4 ${recompileNotice ? 'animate-spin motion-reduce:animate-none text-cyan-400' : ''}`} />
@@ -520,8 +545,10 @@ const PolicyLibraryViewContent: React.FC = () => {
 
               {/* Copy */}
               <button
+                type="button"
                 onClick={handleCopy}
-                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+                aria-label="Copy Markdown to Clipboard"
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
                 title="Copy Markdown to Clipboard"
               >
                 {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
@@ -529,8 +556,10 @@ const PolicyLibraryViewContent: React.FC = () => {
 
               {/* Export */}
               <button
+                type="button"
                 onClick={handleExport}
-                className="px-3.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                aria-label="Download Markdown Document"
+                className="px-3.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
                 title="Download Markdown Document"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -539,8 +568,10 @@ const PolicyLibraryViewContent: React.FC = () => {
 
               {/* Inspect in Matrix */}
               <button
+                type="button"
                 onClick={() => handleInspectControl(selectedFamily.controlId)}
-                className="px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                aria-label="Inspect in Control Matrix"
+                className="px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
                 title="Inspect in Control Matrix"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
@@ -564,92 +595,7 @@ const PolicyLibraryViewContent: React.FC = () => {
                 {markdown}
               </pre>
             ) : (
-              <div className="space-y-4 max-w-3xl mx-auto">
-                {markdown.split('\n\n').map((block, idx) => {
-                  const trimmed = block.trim();
-                  if (!trimmed) return null;
-                  if (trimmed.startsWith('# ')) {
-                    return (
-                      <h1 key={idx} className="text-xl font-bold text-white border-b border-slate-800 pb-2 pt-2">
-                        {trimmed.replace('# ', '')}
-                      </h1>
-                    );
-                  }
-                  if (trimmed.startsWith('## ')) {
-                    return (
-                      <h2 key={idx} className="text-base font-bold text-cyan-300 border-b border-slate-800/60 pb-1 pt-3">
-                        {trimmed.replace('## ', '')}
-                      </h2>
-                    );
-                  }
-                  if (trimmed.startsWith('### ')) {
-                    return (
-                      <h3 key={idx} className="text-sm font-bold text-indigo-300 pt-2">
-                        {trimmed.replace('### ', '')}
-                      </h3>
-                    );
-                  }
-                  if (trimmed.startsWith('> ')) {
-                    return (
-                      <blockquote
-                        key={idx}
-                        className="p-3 rounded-xl bg-indigo-950/30 border-l-4 border-indigo-500 text-xs text-indigo-200 leading-relaxed font-mono"
-                      >
-                        {trimmed.replace(/> /g, '')}
-                      </blockquote>
-                    );
-                  }
-                  if (trimmed.startsWith('|')) {
-                    const rows = trimmed.split('\n').filter((r) => !r.includes('---'));
-                    return (
-                      <div key={idx} className="overflow-x-auto my-3">
-                        <table className="w-full text-xs text-left border-collapse border border-slate-800 rounded-xl overflow-hidden">
-                          <tbody>
-                            {rows.map((row, rIdx) => {
-                              const cols = row
-                                .split('|')
-                                .filter((_, i, arr) => i > 0 && i < arr.length - 1)
-                                .map((c) => c.trim());
-                              const isHeader = rIdx === 0;
-                              return (
-                                <tr
-                                  key={rIdx}
-                                  className={
-                                    isHeader
-                                      ? 'bg-slate-900 text-cyan-300 font-bold border-b border-slate-800'
-                                      : 'border-b border-slate-800/60 hover:bg-slate-900/50'
-                                  }
-                                >
-                                  {cols.map((col, cIdx) => (
-                                    <td key={cIdx} className="p-2.5 font-mono text-xs">
-                                      {col}
-                                    </td>
-                                  ))}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    );
-                  }
-                  if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-                    const items = trimmed.split('\n');
-                    return (
-                      <ul key={idx} className="list-disc pl-5 space-y-1 text-xs text-slate-300 leading-relaxed">
-                        {items.map((item, iIdx) => (
-                          <li key={iIdx}>{item.replace(/^[-*]\s+/, '')}</li>
-                        ))}
-                      </ul>
-                    );
-                  }
-                  return (
-                    <p key={idx} className="text-xs text-slate-300 leading-relaxed">
-                      {trimmed}
-                    </p>
-                  );
-                })}
-              </div>
+              <MarkdownPreview markdown={markdown} headingOffset={2} className="space-y-4 max-w-3xl mx-auto" />
             )}
           </div>
         </div>

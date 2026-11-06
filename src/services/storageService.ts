@@ -89,6 +89,61 @@ export function createInitialState(tenant: Tenant, frameworkOverride?: Complianc
   };
 }
 
+/**
+ * The Markdown SSP of the active framework. Pure: exportMarkdown only downloads the result.
+ */
+export function buildSspMarkdown(
+  state: AssessmentState,
+  controls: FrameworkControlDefinition[] | undefined,
+  framework: ComplianceFramework = 'CMMC_L1'
+): string {
+  const meta = state.sspMetadata;
+  const fwTitle = framework === 'CMMC_L1' ? 'CMMC LEVEL 1' : framework.replace(/_/g, ' ');
+  let md = `# SYSTEM SECURITY PLAN (SSP) - ${fwTitle.toUpperCase()}\n\n`;
+  md += `- **Document Version:** ${meta.version || '1.0.0'}\n`;
+  md += `- **Organization:** ${meta.organizationName}\n`;
+  md += `- **CAGE Code:** ${meta.cageCode || 'N/A'}\n`;
+  md += `- **SAM.gov Status:** ${meta.samStatus || 'Active'}\n`;
+  md += `- **System Name:** ${meta.systemName}\n`;
+  md += `- **System Owner:** ${meta.systemOwner}\n`;
+  md += `- **Lead Assessor:** ${meta.authorName}\n`;
+  md += `- **Assessment Date:** ${meta.assessmentDate}\n`;
+  md += `- **Evidence vault (local):** \`tenants/${state.tenantId}/\`\n\n`;
+  md += `## 1. System Scope & Boundary Description\n\n${meta.systemBoundaryScope}\n\n`;
+  md += `## 2. Operating Environment & Cloud Service Providers (CSPs)\n\n`;
+  md += `- **Environment:** ${meta.systemEnvironment}\n`;
+  md += `- **Authorized CSPs:** ${meta.cloudServiceProviders}\n\n`;
+
+  const activeControls: FrameworkControlDefinition[] =
+    controls && controls.length > 0 ? controls : getFrameworkControls(framework);
+  md += `## 3. ${activeControls.length} Controls Security Requirements Matrix\n\n`;
+
+  for (const ctrl of activeControls) {
+    const cState = state.controls[ctrl.id];
+    const ctrlEvidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
+    const authority = ctrl.authorityReference || '';
+    md += `### ${ctrl.id}: ${ctrl.title}\n\n`;
+    if (authority) md += `- **Authority Reference:** ${authority}\n`;
+    md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
+    md += `- **Evaluation Status:** **${cState?.status || 'NOT_STARTED'}**\n`;
+    md += `- **Responsible Role:** ${cState?.responsibleRole || NOT_RECORDED}\n`;
+    md += `\n**Implementation Statement:**\n\n`;
+    md += `${cState?.implementationNotes || '_No implementation narrative provided._'}\n\n`;
+
+    if (ctrlEvidence.length > 0) {
+      md += `**Audit Evidence Artifacts:**\n\n`;
+      ctrlEvidence.forEach(e => {
+        md += `- **${e.name}** (${Math.round(e.fileSize / 1024)} KB) | SHA-256: \`${e.fileHash || 'N/A'}\`\n`;
+      });
+    } else {
+      md += `_No evidence files attached._\n`;
+    }
+    md += `\n---\n\n`;
+  }
+
+  return md;
+}
+
 export const StorageService = {
   /**
    * The cache key of one tenant's assessment. `segment` names a program other than the default one: that program's cache is
@@ -216,14 +271,14 @@ export const StorageService = {
   /**
    * Export single tenant assessment to JSON
    */
-  exportJSON(state: AssessmentState): void {
+  exportJSON(state: AssessmentState, framework: ComplianceFramework = 'CMMC_L1'): void {
     const jsonStr = JSON.stringify(state, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     const orgSlug = (state.sspMetadata.organizationName || 'Tenant').replace(/[^a-zA-Z0-9]/g, '_');
-    a.download = `CMMC_L1_${orgSlug}_${state.sspMetadata.cageCode || 'CAGE'}_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `${framework}_${orgSlug}_${state.sspMetadata.cageCode || 'CAGE'}_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -238,49 +293,8 @@ export const StorageService = {
     controls?: FrameworkControlDefinition[],
     framework: ComplianceFramework = 'CMMC_L1'
   ): void {
+    const md = buildSspMarkdown(state, controls, framework);
     const meta = state.sspMetadata;
-    const fwTitle = framework === 'CMMC_L1' ? 'CMMC LEVEL 1' : framework.replace(/_/g, ' ');
-    let md = `# SYSTEM SECURITY PLAN (SSP) - ${fwTitle.toUpperCase()}\n\n`;
-    md += `**Document Version:** ${meta.version || '1.0.0'}\n`;
-    md += `**Organization:** ${meta.organizationName}\n`;
-    md += `**CAGE Code:** ${meta.cageCode || 'N/A'}\n`;
-    md += `**SAM.gov Status:** ${meta.samStatus || 'Active'}\n`;
-    md += `**System Name:** ${meta.systemName}\n`;
-    md += `**System Owner:** ${meta.systemOwner}\n`;
-    md += `**Lead Assessor:** ${meta.authorName}\n`;
-    md += `**Assessment Date:** ${meta.assessmentDate}\n`;
-    md += `**Evidence vault (local):** \`tenants/${state.tenantId}/\`\n\n`;
-    md += `## 1. System Scope & Boundary Description\n${meta.systemBoundaryScope}\n\n`;
-    md += `## 2. Operating Environment & Cloud Service Providers (CSPs)\n`;
-    md += `- **Environment:** ${meta.systemEnvironment}\n`;
-    md += `- **Authorized CSPs:** ${meta.cloudServiceProviders}\n\n`;
-
-    const activeControls: FrameworkControlDefinition[] =
-      controls && controls.length > 0 ? controls : getFrameworkControls(framework);
-    md += `## 3. ${activeControls.length} Controls Security Requirements Matrix\n\n`;
-
-    for (const ctrl of activeControls) {
-      const cState = state.controls[ctrl.id];
-      const ctrlEvidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
-      const authority = ctrl.authorityReference || '';
-      md += `### ${ctrl.id}: ${ctrl.title}\n`;
-      if (authority) md += `- **Authority Reference:** ${authority}\n`;
-      md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
-      md += `- **Evaluation Status:** **${cState?.status || 'NOT_STARTED'}**\n`;
-      md += `- **Responsible Role:** ${cState?.responsibleRole || NOT_RECORDED}\n`;
-      md += `\n**Implementation Statement:**\n`;
-      md += `${cState?.implementationNotes || '_No implementation narrative provided._'}\n\n`;
-
-      if (ctrlEvidence.length > 0) {
-        md += `**Audit Evidence Artifacts:**\n`;
-        ctrlEvidence.forEach(e => {
-          md += `- **${e.name}** (${Math.round(e.fileSize / 1024)} KB) | SHA-256: \`${e.fileHash || 'N/A'}\`\n`;
-        });
-      } else {
-        md += `_No evidence files attached._\n`;
-      }
-      md += `\n---\n\n`;
-    }
 
     const blob = new Blob([md], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
