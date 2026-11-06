@@ -385,7 +385,7 @@ differs. The dry run against a real tenant prints what would be pushed; compare 
   whole and the run ends with exit 7 ("partial export"). Its findings stay as they were.
 * **Inventory is not collected yet.** Installed software, patch age and a patch SLA are issue #105 phase 2; this phase
   reports findings only.
-* The Wazuh path still names agent ids in its warnings; the new readers log counts only.
+* Every source logs counts only, never agent ids; a partial export (exit 7) lists the skipped ids only in the file named with `--skipped-report PATH`.
 
 ## 5. Where everything is, in one table
 

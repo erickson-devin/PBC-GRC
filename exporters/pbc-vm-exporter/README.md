@@ -178,8 +178,9 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 * `--dry-run` builds and validates the payloads, prints one JSON document to stdout and sends nothing: `{"contract_sha256", "chunks": [{"sha256", "bytes", "hosts", "findings", "payload"}], "skipped_hosts", "dropped_rows"}`. The `sha256` is that of the real bytes that would be sent. The output goes through redaction.
 * `--sample` (requires `--dry-run`) uses the bundled synthetic Wazuh data (`samples/indexer_sample.json`, fake hostnames and public CVE ids) and needs no Wazuh or PBC-GRC configuration. It can never reach a tenant.
 * `--print-contract-sha256` prints the contract hash and exits.
-* `--sample --source action1` and `--sample --source sentinelone` (require `--dry-run`) use the bundled synthetic data (`samples/action1_sample.json`, `samples/sentinelone_sample.json`: `*.example` hostnames, documentation addresses, public CVE ids). `skipped_hosts` is a count for these sources.
-* `--sample --source xccdf` (requires `--dry-run`) uses the bundled synthetic XCCDF file (`samples/xccdf_sample.xml`, documentation addresses only). The dry-run document then has `"results"` (rule results in the chunk) next to `"findings"` (always 0) and `"skipped_hosts"` is a count.
+* `--sample --source action1` and `--sample --source sentinelone` (require `--dry-run`) use the bundled synthetic data (`samples/action1_sample.json`, `samples/sentinelone_sample.json`: `*.example` hostnames, documentation addresses, public CVE ids).
+* `--sample --source xccdf` (requires `--dry-run`) uses the bundled synthetic XCCDF file (`samples/xccdf_sample.xml`, documentation addresses only). The dry-run document then has `"results"` (rule results in the chunk) next to `"findings"` (always 0).
+* `--skipped-report PATH`: on a partial export (exit code 7) the skipped agent ids are written to this file, one per line, created owner-only (0600 on POSIX; on Windows it takes the folder's ACL). Without it nothing names the skipped hosts: the log, stderr and the dry-run document (`"skipped_hosts"` is a count for every source) carry counts only. The file is written only when a host was skipped.
 
 ## 10a. Configuration results from XCCDF / ARF files (`--source xccdf`)
 
@@ -243,7 +244,7 @@ First live run, confirm: the base path and the `ApiToken` header; the `/agents` 
 | 4 | A payload does not satisfy the contract (nothing is sent) |
 | 5 | Rejected by PBC-GRC (400, 401, 403, 409, 413, 415, 503 `vm_requires_local_storage`, redirects, other 4xx) |
 | 6 | Transport failure after retries, or the server acknowledged different bytes (sha256 mismatch) |
-| 7 | Partial: every POST succeeded but one or more hosts were skipped (over 5000 findings, or too large for the byte budget). With `--source wazuh` the skipped agent ids are printed on stderr; with `--source action1` or `sentinelone` only the number of skipped hosts is |
+| 7 | Partial: every POST succeeded but one or more hosts were skipped (over 5000 findings, or too large for the byte budget). stderr carries the number of skipped hosts; their agent ids go only to the file named with `--skipped-report PATH` |
 | 130 | Interrupted |
 
 Retries: 429 honours `Retry-After` (capped at 60 s); 500, 502, 503 and 504 and connection errors are tried 3 times with 2 s then 4 s pauses; other 4xx are not retried. A retry resends the same bytes, so a lost 202 is answered with `200 {"duplicate": true}`. Chunks are sent one after another with a 2.5 s pause (the server allows 30 per minute) and the run stops at the first failure.
@@ -291,4 +292,4 @@ When a Wazuh or PBC-GRC connection fails, the exporter (and `check`) appends a `
 * Action1 and SentinelOne export only hosts that have findings (see above), and an Action1 patch is a finding keyed by CVE (or KB id), not an installed-software inventory.
 * A host with more than 5000 findings (a developer machine in SentinelOne, for example) is skipped whole with exit code 7; the number of skipped hosts is on stderr.
 * SentinelOne host names are often short while Wazuh names are FQDNs; the same machine in both sources can appear as two assets until the names agree (the agent id and MAC match first).
-* The Wazuh path still names skipped agent ids in its log and exit-7 message; the Action1 and SentinelOne paths do not.
+* Logs and stderr never name an agent id for any source; the skipped ids of a partial export are available only through `--skipped-report PATH`.

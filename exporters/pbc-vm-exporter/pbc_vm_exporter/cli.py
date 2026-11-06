@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--input", metavar="PATH", action="append", default=[],
         help="XCCDF 1.1/1.2 or ARF result file, or a directory of *.xml files (repeatable; --source xccdf only)",
     )
+    parser.add_argument(
+        "--skipped-report", metavar="PATH",
+        help="on a partial export (exit 7) write the skipped agent ids to this file, one per line, owner-only; "
+        "the log and stderr carry counts only",
+    )
     parser.add_argument("--print-contract-sha256", action="store_true", help="print the sha256 of the vendored contract")
     parser.add_argument("--sample", action="store_true", help="use the bundled synthetic data (requires --dry-run)")
     return parser
@@ -100,6 +105,20 @@ def read_sentinelone_hosts(cfg: Config) -> list[dict]:
     """Reads the canonical raw hosts from SentinelOne (every error is a SentinelOneReadError, never a partial list)."""
     assert cfg.sentinelone is not None
     return SentinelOneReader(cfg.sentinelone, cfg.timeout).fetch_hosts()
+
+
+def _report_skipped(args: argparse.Namespace, skipped: list[str], stderr: TextIO) -> None:
+    """Exit-7 reporting: a count on stderr, the agent ids only in the file the operator named with --skipped-report
+    (one per line, created owner-only: 0600 on POSIX; on Windows the file takes the folder's ACL)."""
+    if not skipped:
+        return
+    if args.skipped_report:
+        fd = os.open(args.skipped_report, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("".join(f"{agent_id}\n" for agent_id in skipped))
+        stderr.write(f"partial export: {len(skipped)} host(s) skipped (agent ids written to {args.skipped_report})\n")
+    else:
+        stderr.write(f"partial export: {len(skipped)} host(s) skipped (--skipped-report PATH lists the agent ids)\n")
 
 
 def _run_xccdf(args: argparse.Namespace, cfg: Config, stdout: TextIO, stderr: TextIO) -> int:
@@ -143,7 +162,7 @@ def _run_xccdf(args: argparse.Namespace, cfg: Config, stdout: TextIO, stderr: Te
     client = IngestClient(cfg.pbc_url, cfg.pbc_token, cfg.pbc_verify, cfg.timeout)
     client.send_all(bodies, metas)
     if skipped:
-        stderr.write(f"partial export: {len(skipped)} host(s) skipped\n")
+        _report_skipped(args, skipped, stderr)
         return 7
     return 0
 
@@ -176,7 +195,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
     if args.source == "xccdf":
         return _run_xccdf(args, cfg, stdout, stderr)
 
-    vendor = args.source in VENDOR_SOURCES  # vendor cloud sources: logs and exit-7 stderr carry counts, never ids
+    vendor = args.source in VENDOR_SOURCES  # vendor cloud sources: their own error types and zero-host messages
     if args.source == "action1":
         raw_hosts = group_action1(load_action1_sample(ACTION1_SAMPLE_PATH)) if args.sample else read_action1_hosts(cfg)
     elif args.source == "sentinelone":
@@ -197,7 +216,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
     label = cfg.source_label or f"sample-{args.source}"
     payloads, stats = build_payloads(
         raw_hosts, label=label, kind=KINDS[args.source], max_hosts=cfg.max_hosts, max_findings=cfg.max_findings,
-        max_bytes=cfg.max_bytes, name_hosts=not vendor,
+        max_bytes=cfg.max_bytes, name_hosts=False,  # every source: the log carries counts, never agent ids (#219)
     )
     # Validate exactly the bytes that would go on the wire, and only then send anything.
     bodies = [encode_payload(p) for p in payloads]
@@ -215,10 +234,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
         for body, p in zip(bodies, payloads)
     ]
     if stats.skipped_hosts:
-        if vendor:
-            log.warning("%d host(s) skipped whole", len(stats.skipped_hosts))
-        else:
-            log.warning("%d host(s) skipped whole: %s", len(stats.skipped_hosts), ", ".join(stats.skipped_hosts))
+        log.warning("%d host(s) skipped whole", len(stats.skipped_hosts))
     if stats.dropped_rows:
         log.warning("%d row(s) dropped (unusable vulnerability id)", stats.dropped_rows)
     if not payloads:
@@ -228,7 +244,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
         out = {
             "contract_sha256": contract_sha256(),
             "chunks": [dict(meta, payload=p) for meta, p in zip(metas, payloads)],
-            "skipped_hosts": len(stats.skipped_hosts) if vendor else stats.skipped_hosts,
+            "skipped_hosts": len(stats.skipped_hosts),
             "dropped_rows": stats.dropped_rows,
         }
         stdout.write(redact(json.dumps(out, indent=2), cfg.secrets()) + "\n")
@@ -238,10 +254,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
     client = IngestClient(cfg.pbc_url, cfg.pbc_token, cfg.pbc_verify, cfg.timeout)
     client.send_all(bodies, metas)
     if stats.skipped_hosts:
-        if vendor:
-            stderr.write(f"partial export: {len(stats.skipped_hosts)} host(s) skipped\n")
-        else:
-            stderr.write("partial export: skipped agent ids: " + ", ".join(stats.skipped_hosts) + "\n")
+        _report_skipped(args, stats.skipped_hosts, stderr)
         return 7
     return 0
 
