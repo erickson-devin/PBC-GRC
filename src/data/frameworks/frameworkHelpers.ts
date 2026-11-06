@@ -72,7 +72,7 @@ export function getFrameworkGuidanceText(framework: ComplianceFramework): Framew
         authority: 'NIST SP 800-171 Rev 2 / DFARS 252.204-7012',
         standardRef: 'NIST SP 800-171 Rev 2',
         poamPermitted: true,
-        poamPolicyText: 'Time-bounded POA&Ms (180-day remediation) are permitted for select 1-point and 3-point controls under DoD rules.',
+        poamPolicyText: 'A Conditional Level 2 status needs a score of at least 88 of 110; only 1-point requirements may be open on the POA&M (plus SC.L2-3.13.11 when encryption is used but not FIPS-validated). AC.L2-3.1.20, AC.L2-3.1.22, CA.L2-3.12.4, PE.L2-3.10.3, PE.L2-3.10.4 and PE.L2-3.10.5 may never be on it. Close out within 180 days (32 CFR 170.21).',
         scopeDescription: 'Advanced safeguarding of Controlled Unclassified Information (CUI).',
         inProgressGuidance: 'CMMC Level 2 mandates satisfying 110 requirements across 14 security domains. Target SPRS score is +110.',
         sprsReadyGuidance: 'All 110 NIST SP 800-171 practices are documented and MET. Baseline score of +110 achieved for C3PAO assessment readiness.',

@@ -248,7 +248,7 @@ export const CMMC_LEVEL_2_CONTROLS: FrameworkControlDefinition[] = [
   },
   {
     id: 'AC.L2-3.1.10',
-    title: 'Concurrent Session Control',
+    title: 'Session Lock',
     framework: 'CMMC_L2',
     domain: 'AC',
     domainName: 'Access Control',
@@ -262,7 +262,7 @@ export const CMMC_LEVEL_2_CONTROLS: FrameworkControlDefinition[] = [
   },
   {
     id: 'AC.L2-3.1.11',
-    title: 'Session Lock Activation',
+    title: 'Session Termination',
     framework: 'CMMC_L2',
     domain: 'AC',
     domainName: 'Access Control',

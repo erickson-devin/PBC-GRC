@@ -32,6 +32,7 @@ export type RefStyle = 'cmmc' | 'nist53';
 /** How far into a line a control reference may start and still make it a section anchor. */
 const ANCHOR_WINDOW = 40;
 const GENERIC_HEADING_MAX = 100;
+const STATUS_CELL_RE = /^(?:NOT\s+|PARTIALLY\s+)?(?:IMPLEMENTED|APPLICABLE|MET)$|^(?:PLANNED|INHERITED|YES|NO|NONE|N\/A|TBD)$/;
 const NUMBERED_HEADING_RE = /^\d+(?:\.\d+){0,3}[.)]?\s+[A-Z][^.!?]*$/;
 
 /**
@@ -39,6 +40,18 @@ const NUMBERED_HEADING_RE = /^\d+(?:\.\d+){0,3}[.)]?\s+[A-Z][^.!?]*$/;
  * "Control" or "NIST SP 800-171". A number in the middle of a sentence is a mention, not a section.
  */
 export const NIST_ANCHOR_PREFIX_RE = /^[\s|•*-]*(?:(?:control|requirement|practice|nist(?:\s+sp)?\s*800-171)\s*[:#-]?\s*)?$/i;
+
+/**
+ * A wider prefix, used only for a short line that does not end like a sentence: extra bullets, "Security Requirement ID:",
+ * "NIST SP 800-171 Rev. 2", a family code ("AC", "AC-", "AC.L2 ") or a family name ("Access Control") before the number.
+ */
+const FAMILY_CODES = 'AC|AT|AU|CM|IA|IR|MA|MP|PS|PE|RA|CA|SC|SI';
+const FAMILY_NAMES =
+  'Access Control|Awareness and Training|Audit and Accountability|Configuration Management|Identification and Authentication|Incident Response|Maintenance|Media Protection|Personnel Security|Physical Protection|Risk Assessment|Security Assessment|System and Communications Protection|System and Information Integrity';
+const NIST_ANCHOR_PREFIX_WIDE_RE = new RegExp(
+  `^[\\s|•*\\-·▪◦●■□☐☑☒✓✔>]*(?:(?:(?:security\\s+)?(?:requirement|control|practice)(?:\\s+(?:id|no\\.?|number|#))?\\s*[:#-]?\\s*|(?:nist\\s+)?(?:sp\\s+)?800-171(?:\\s+r(?:ev\\.?)?\\s?2)?\\s*[:#-]?\\s*|(?:${FAMILY_CODES})(?:[.\\- ]?L[12])?[.\\- ]?\\s*|(?:${FAMILY_NAMES})\\s*[:#-]?\\s*)[\\s|•*\\-·▪◦●■□☐☑☒✓✔>:]*)*$`,
+  'i'
+);
 
 /** The same for a bare SP 800-53 identifier: bullets, table pipes, or a label such as "Control" or "NIST SP 800-53". */
 export const NIST53_ANCHOR_PREFIX_RE = /^[\s|•*-]*(?:(?:control|enhancement|requirement|nist(?:\s+sp)?\s*800-53)\s*[:#-]?\s*)?$/i;
@@ -50,11 +63,12 @@ export function isAnchorRef(foldedLine: string, ref: { kind: 'CMMC' | 'NIST' | '
     const line = foldedLine.trim();
     return NIST53_ANCHOR_PREFIX_RE.test(foldedLine.slice(0, ref.index)) || (ref.index <= ANCHOR_WINDOW && line.length <= GENERIC_HEADING_MAX && !/[.;!?]$/.test(line));
   }
-  const labelled = NIST_ANCHOR_PREFIX_RE.test(foldedLine.slice(0, ref.index));
+  const line = foldedLine.trim();
+  const before = foldedLine.slice(0, ref.index);
+  const labelled = NIST_ANCHOR_PREFIX_RE.test(before) || (line.length <= GENERIC_HEADING_MAX && !/[.;!?]$/.test(line) && NIST_ANCHOR_PREFIX_WIDE_RE.test(before));
   if (ref.kind === 'NIST') return labelled;
   // A CMMC identifier is explicit enough to anchor a heading that puts the title first ("Authorized Access (AC.L1-3.1.1)"),
   // but not a sentence that merely refers to it ("See also AC.L2-3.1.5 for least privilege.")
-  const line = foldedLine.trim();
   return labelled || (ref.index <= ANCHOR_WINDOW && line.length <= GENERIC_HEADING_MAX && !/[.;!?]$/.test(line));
 }
 
@@ -76,6 +90,7 @@ export function isAnchorLine(foldedLine: string, style: RefStyle = 'cmmc'): bool
 function isGenericHeading(foldedLine: string): boolean {
   const line = foldedLine.trim();
   if (line.length < 4 || line.length > GENERIC_HEADING_MAX) return false;
+  if (STATUS_CELL_RE.test(line)) return false; // an ALL-CAPS status cell ("IMPLEMENTED") is not a section heading
   if (NUMBERED_HEADING_RE.test(line)) return true;
   // ALL CAPS line of letters (not a sentence)
   return /^[A-Z][A-Z0-9 &/,\-()]{3,}$/.test(line) && !/[a-z]/.test(line);

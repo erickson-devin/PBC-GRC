@@ -47,11 +47,32 @@ async function extractPdf(input: CoreInput): Promise<ExtractedDocument> {
   return { text: text.trimEnd(), pages, pageCount: doc.numPages };
 }
 
+/** mammoth's raw-text conversion (lib/raw-text.js), plus a line break element as "\n". */
+function elementToText(element: any): string {
+  if (element.type === 'text') return element.value;
+  if (element.type === 'tab') return '\t';
+  if (element.type === 'break') return '\n';
+  const tail = element.type === 'paragraph' ? '\n\n' : '';
+  return (element.children || []).map(elementToText).join('') + tail;
+}
+
 async function extractDocx(input: CoreInput): Promise<ExtractedDocument> {
   // A .docx is a zip: refuse an archive with an absurd number of entries before handing it to the parser
   const zip = await JSZip.loadAsync(input.data);
   if (Object.keys(zip.files).length > input.maxZipEntries) throw new Error('too_many_entries');
-  const { value } = await mammoth.extractRawText({ buffer: Buffer.from(input.data) });
+  // Same as mammoth.extractRawText, except a line break (Shift+Enter, page break) becomes "\n" instead of vanishing: without
+  // it "AC.L2-3.1.1<br>Title" would read "AC.L2-3.1.1Title". The document is emptied after reading, so no HTML or image work is done.
+  let value = '';
+  await mammoth.convertToHtml(
+    { buffer: Buffer.from(input.data) },
+    {
+      externalFileAccess: false,
+      transformDocument: (doc) => {
+        value = elementToText(doc);
+        return { ...doc, children: [] };
+      },
+    } as Parameters<typeof mammoth.convertToHtml>[1]
+  );
   const text = value.replace(/\r\n/g, '\n').trim();
   if (text.length > input.maxChars) throw new Error('too_much_text');
   return { text, pages: [], pageCount: 0 };
