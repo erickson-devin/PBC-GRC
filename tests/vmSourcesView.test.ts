@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { CONNECTED_SCANNERS_COPY, SOURCE_STATE_LABEL, latestRunBySource, sourceStatus } from '../src/data/telemetry/vmSourcesView';
+import { CONNECTED_SCANNERS_COPY, PUSH_ERROR_TEXT, SOURCE_STATE_LABEL, latestRunBySource, pushSummary, sourceStatus } from '../src/data/telemetry/vmSourcesView';
+import { VM_PUSH_ERROR_CODES } from '../src/types/vm';
 
 /**
  * Connected scanners (field test 0.3.1): the pure status of one VM source (never / ok / stale / failed), plus source checks that the client
@@ -72,6 +73,19 @@ function main() {
   assert(CONNECTED_SCANNERS_COPY.empty === 'No scanner has pushed yet. Set up the exporter below.', 'the empty state text');
   assert(Object.values(SOURCE_STATE_LABEL).every((l) => l.length > 0), 'every state has a label');
 
+  console.log('\n--- push summary ---');
+  const noPush = pushSummary({ lastPushAt: null, lastPushStatus: null, lastPushErrorCode: null });
+  assert(noPush.state === 'never' && noPush.at === null && noPush.text === 'No push yet', 'no push yet', noPush);
+  const okPush = pushSummary({ lastPushAt: '2026-11-01T00:00:00.000Z', lastPushStatus: 'ok', lastPushErrorCode: null });
+  assert(okPush.state === 'ok' && okPush.text === 'Accepted' && okPush.at === '2026-11-01T00:00:00.000Z', 'an accepted push', okPush);
+  for (const code of VM_PUSH_ERROR_CODES) {
+    const r = pushSummary({ lastPushAt: '2026-11-01T00:00:00.000Z', lastPushStatus: 'error', lastPushErrorCode: code });
+    assert(r.state === 'refused' && r.text === PUSH_ERROR_TEXT[code] && r.text.length > 0, `refused push text for ${code}`, r);
+  }
+  assert(JSON.stringify(Object.keys(PUSH_ERROR_TEXT).sort()) === JSON.stringify([...VM_PUSH_ERROR_CODES].sort()), 'PUSH_ERROR_TEXT covers exactly the error codes');
+  const bogus = pushSummary({ lastPushAt: '2026-11-01T00:00:00.000Z', lastPushStatus: 'error', lastPushErrorCode: 'bogus' as never });
+  assert(bogus.state === 'refused' && bogus.text === 'Refused.', 'an unknown code falls back to Refused.', bogus);
+
   console.log('\n--- source checks ---');
   const helper = read('src/data/telemetry/vmSourcesView.ts');
   const nonTypeImports = helper.split('\n').filter((l) => /^import /.test(l) && !/^import type /.test(l));
@@ -80,6 +94,11 @@ function main() {
   assert(/async listVmSources\(tenantId: string\)/.test(api) && /async listVmRuns\(tenantId: string, limit: number\)/.test(api), 'listVmSources(tenantId) and listVmRuns(tenantId, limit)');
   assert(!/(listVmSources|listVmRuns)\([^)]*programId/.test(api), 'the new methods take no programId');
   assert(api.includes('/vm/sources`') && api.includes('/vm/runs?limit='), 'the methods call the tenant sources and runs endpoints');
+  const panel = read('src/components/auth/ConnectedScannersPanel.tsx').replace(/\r\n/g, '\n');
+  assert(/canManageTokens[\s\S]*ApiClient\.listVmTokens\(tenantId\)/.test(panel), 'the panel loads the tokens only for canManageTokens');
+  assert(panel.includes('pushSummary('), 'the panel renders pushSummary');
+  assert(!/console\.|dangerouslySetInnerHTML|localStorage|sessionStorage/.test(panel), 'the panel has no logging, storage or raw HTML');
+  assert(read('src/components/auth/ApiTokensModal.tsx').includes('canManageTokens={canEdit}'), 'the modal passes canManageTokens={canEdit}');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

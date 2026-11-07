@@ -66,7 +66,10 @@ boundary and scope, system environment, cloud service providers, version, princi
 * Deleting a program removes its record. Cloning a program does not copy it, and resetting an assessment in the browser does not touch it.
 * Downgrading to a build that predates `serviceCommitments` fails the re-added shape CHECK once a program has saved that field: clear it first with
   `UPDATE program_ssp_metadata SET metadata = metadata - 'serviceCommitments'`.
-* The tenant's stack profile is stored on the tenant (`tenants.stack_profile`, set with `PATCH /api/v1/tenants/:id`).
+* The enclave stack profile lives on the program (`programs.stack_profile`, issue #230): set it with `PUT /api/v1/tenants/:tenantId/programs/:id`
+  and `{ stackProfile }` (a validated object, `null` to clear it; absent leaves it; a bad profile is `400 invalid_stack_profile`). A program
+  without a profile of its own falls back to the tenant's (`tenants.stack_profile`, set with `PATCH /api/v1/tenants/:id`). Each change is
+  recorded as `stack_profile_changed` (field names with a SHA-256 and the length, never the values).
 
 ## Boundary assets per program
 

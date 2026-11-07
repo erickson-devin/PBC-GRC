@@ -2,6 +2,7 @@ import { CompiledDocument, MachineReadablePackage, POAMEntry } from '../../types
 import { AssessmentState } from '../../types/cmmc';
 import { computeSha256 } from '../audit/cryptoUtils';
 import { NOT_RECORDED } from './documentDefaults';
+import { generateInventoryCsv, isInventoryDocumentType } from './inventoryDocuments';
 
 export { computeSha256 };
 
@@ -473,7 +474,7 @@ export function generatePrintableHtml(
           </div>
         </div>
 
-        <div class="executive-score-box">
+        ${isInventoryDocumentType(doc.documentType) ? '' : `<div class="executive-score-box">
           <div>
             <div class="score-title">Assessment Compliance Readiness Posture</div>
             <div style="font-size: 8.5pt; color: #475569; margin-top: 2px;">
@@ -481,7 +482,7 @@ export function generatePrintableHtml(
             </div>
           </div>
           <div class="score-metric">${metrics.completionPercentage}% MET</div>
-        </div>
+        </div>`}
       </div>
 
       <!-- Formal Attestation Signature Block -->
@@ -716,6 +717,7 @@ export async function generateMachineReadablePackage(
     controls: controlMap,
     evidenceIndex: evidenceList,
     poamEntries: doc.poamEntries || [],
+    ...(doc.inventory ? { inventory: doc.inventory } : {}),
   };
 
   const canonicalString = canonicalJson(rawPayload);
@@ -802,6 +804,23 @@ export function downloadPoamCsv(poamEntries: POAMEntry[], systemName: string = '
   const safeName = systemName.toLowerCase().replace(/[^a-z0-9]/g, '_');
   a.href = url;
   a.download = `${safeName}_poam_matrix_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Downloads the Hardware or Software Inventory table as a CSV spreadsheet.
+ */
+export function downloadInventoryCsv(doc: CompiledDocument): void {
+  const csv = generateInventoryCsv(doc);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safeName = (doc.metadata.systemName || 'system').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  a.href = url;
+  a.download = `${safeName}_${doc.documentType.toLowerCase()}_${new Date().toISOString().split('T')[0]}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

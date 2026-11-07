@@ -1,4 +1,5 @@
 import type { ComplianceFramework, OverlayFilters } from './framework';
+import type { EnclaveStackProfile } from './tenant';
 
 /** NIST SP 800-53 baseline of a program, as the server holds it (upper case). Privacy is not a value; it is the separate `privacyBaseline` add-on. */
 export type ProgramBaseline = 'LOW' | 'MODERATE' | 'HIGH';
@@ -28,6 +29,8 @@ export interface Program {
   isDefault: boolean;
   /** The signed-in user's own landing program (their choice, next sign-in); absent from servers that predate it. */
   isMyDefault?: boolean;
+  /** The enclave technology stack of this program. null: the tenant's profile applies. */
+  stackProfile: EnclaveStackProfile | null;
   archived: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -67,4 +70,6 @@ export interface ProgramUpdate {
   scoping?: Partial<OverlayFilters>;
   /** The overlays the caller last saw: the server answers 409 scoping_conflict when they have changed since. */
   expectedScoping?: Partial<OverlayFilters>;
+  /** The program's enclave stack profile; null clears it (the tenant's profile applies again). */
+  stackProfile?: EnclaveStackProfile | null;
 }

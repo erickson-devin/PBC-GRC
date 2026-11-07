@@ -1,4 +1,4 @@
-"""Command line entry point.
+"""Command line entry point. Subcommands: `check` (test the connections) and `init` (create the env file).
 
 Sources: wazuh (default), xccdf (XCCDF / ARF files), action1 and sentinelone (vendor cloud APIs).
 
@@ -29,6 +29,7 @@ from .errors import (
     Action1ReadError, ConfigError, ExporterError, PayloadValidationError, ScanFileError, SentinelOneReadError,
     WazuhReadError,
 )
+from .init import build_init_parser, run_init
 from .sentinelone import SentinelOneReader, group_sentinelone, load_sentinelone_sample
 from .transport import make_session
 from .validate import contract_sha256, validate_payload
@@ -62,7 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="pbc-vm-exporter",
         description="Reads vulnerability state from Wazuh, Action1 or SentinelOne (or XCCDF / ARF result files) and pushes "
         "it to PBC-GRC. Configuration comes from the environment or an env file; there is no option for a token or "
-        "password. Run `pbc-vm-exporter check` to test the connections (PBC-GRC, Wazuh) without sending anything.",
+        "password. Run `pbc-vm-exporter init` to create the env file and `pbc-vm-exporter check` to test the connections "
+        "(PBC-GRC, Wazuh) without sending anything.",
         allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=f"pbc-vm-exporter {__version__}")
@@ -477,6 +479,20 @@ def main(
             except SystemExit as err:  # --help
                 return err.code if isinstance(err.code, int) else 0
             return _run_check(check_args, environ, stdout, flt)
+        if arglist and arglist[0] == "init":  # the other subcommand: creates the env file
+            try:
+                init_args, init_extras = build_init_parser().parse_known_args(arglist[1:])
+                if init_extras:
+                    names = [e.split("=", 1)[0] for e in init_extras if e.startswith("-")]
+                    raise _UsageError(
+                        "unrecognized option(s): " + (", ".join(names) or "(positional arguments are not accepted)")
+                    )
+            except _UsageError as err:
+                fail(str(err))
+                return 2
+            except SystemExit as err:  # --help
+                return err.code if isinstance(err.code, int) else 0
+            return run_init(init_args, stdout, stderr, flt)
         try:
             args, extras = build_parser().parse_known_args(argv)
             if extras:

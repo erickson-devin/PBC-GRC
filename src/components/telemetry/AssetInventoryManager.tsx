@@ -50,6 +50,7 @@ import { boundaryAssets, membershipLabels } from '../../data/programAssets';
 import { BoundaryChangePlan, BoundaryFilter, boundaryBlockMessage, boundaryEditBlock, boundaryErrorMessage, emptyTableMessage, matchesBoundaryFilter, planBoundaryChange, rowChangeNeedsConfirm, summaryCaption } from '../../data/boundaryView';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { hardwareMatches, hardwareSummary } from '../../data/telemetry/hardwareDetails';
 
 const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700';
 
@@ -140,9 +141,11 @@ export const AssetInventoryManager: React.FC = () => {
     if (editingAsset) {
       // Only what the form owns: scan results and discovery data may have changed on the server since it opened
       const { hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner } = assetData;
+      const { manufacturer, model, serialNumber, location } = assetData;
       const { fipsValidationStatus, fipsCertificateNumber, fipsModuleName, fipsStandard } = assetData;
       await backend.update(editingAsset.id, {
         hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner,
+        manufacturer, model, serialNumber, location,
         fipsValidationStatus, fipsCertificateNumber, fipsModuleName, fipsStandard,
       });
       showNotification(`✓ Asset ${assetData.hostName} updated.`);
@@ -248,6 +251,7 @@ export const AssetInventoryManager: React.FC = () => {
       a.ipAddress.includes(searchQuery) ||
       a.notes.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (a.owner ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      hardwareMatches(a, searchQuery) ||
       (a.macAddress && a.macAddress.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesCategory =
@@ -568,7 +572,7 @@ export const AssetInventoryManager: React.FC = () => {
             aria-label="Search assets"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search by name, IP, MAC, owner, or notes..."
+            placeholder="Search by name, IP, MAC, serial, owner, or notes..."
             className="w-full bg-slate-800/80 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
           />
         </div>
@@ -689,6 +693,7 @@ export const AssetInventoryManager: React.FC = () => {
             ) : (
               filteredAssets.map(asset => {
                 const cfg = assetConfigSummary(scanState.byAsset.get(asset.id));
+                const hw = hardwareSummary(asset);
                 const view = assetScanView({ serverBacked, status: scanState.status, truncated, summary: cfg });
                 return (
                   <tr
@@ -719,6 +724,11 @@ export const AssetInventoryManager: React.FC = () => {
                           </div>
                           {asset.owner && (
                             <p className="text-xs text-slate-300 mt-0.5">Owner: {asset.owner}</p>
+                          )}
+                          {hw && (
+                            <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xs" title={hw}>
+                              <span className="sr-only">Hardware: </span>{hw}
+                            </p>
                           )}
                           {asset.fipsValidationStatus === 'VALIDATED' && asset.fipsCertificateNumber && (
                             <p className="text-xs text-emerald-300 mt-0.5" data-testid="fips-badge">
@@ -992,7 +1002,7 @@ export const AssetInventoryManager: React.FC = () => {
               Paste or inspect your CSV records below. Header line expected:
               <br />
               <code className="text-cyan-400 font-mono text-xs">
-                hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes,owner
+                hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes,owner,manufacturer,model,serialNumber,location
               </code>
             </p>
 
@@ -1018,10 +1028,10 @@ export const AssetInventoryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setCsvContent(`hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes
-WS-FIN-01,10.0.50.41,win11,CUI_ASSET,00:50:56:A1:01,Finance CUI processing workstation
-NODE-STORAGE-01,10.0.50.60,rhel9,CUI_ASSET,52:54:00:88:22,Encrypted backup storage cluster
-BASTION-01,10.0.50.10,ubuntu2204,SECURITY_PROTECTION,00:50:56:B2:11,SSH jump host for administrative enclave`);
+                  setCsvContent(`hostName,ipAddress,osProfile,cmmcAssetCategory,macAddress,notes,manufacturer,model,serialNumber,location
+WS-FIN-01,10.0.50.41,win11,CUI_ASSET,00:50:56:A1:01,Finance CUI processing workstation,Dell,OptiPlex 7010,7XK2L93,HQ finance
+NODE-STORAGE-01,10.0.50.60,rhel9,CUI_ASSET,52:54:00:88:22,Encrypted backup storage cluster,Dell,PowerEdge R650,5MN8Q41,HQ server room rack 4
+BASTION-01,10.0.50.10,ubuntu2204,SECURITY_PROTECTION,00:50:56:B2:11,SSH jump host for administrative enclave,Supermicro,SYS-510T,S1B7742,HQ server room rack 2`);
                 }}
                 className="text-xs text-cyan-400 hover:underline"
               >

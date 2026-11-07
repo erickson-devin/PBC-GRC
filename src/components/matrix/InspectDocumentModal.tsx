@@ -29,6 +29,7 @@ import { ControlStatus, EvidenceItem } from '../../types/cmmc';
 import { ComplianceFramework } from '../../types/framework';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { withEffectiveStack } from '../../data/effectiveStackProfile';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { storagePathLabel } from '../../data/audit/storageDriver';
 import {
@@ -84,6 +85,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
   const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram } = useTenant();
   const storageConfig = useStorageConfig(currentTenant);
+  // #230: the active program's stack profile, else the organization's
+  const stackTenant = React.useMemo(() => withEffectiveStack(currentTenant, activeProgram), [currentTenant, activeProgram]);
 
   // Primary active tab defaults to 'objectives' as specified
   const [activeTab, setActiveTab] = useState<
@@ -190,8 +193,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
   const compiledPolicyMarkdown = React.useMemo(() => {
     if (!isPolicyControl || !currentTenant || !familyPrefix) return '';
-    return generateFamilyPolicyDocument(currentTenant, familyPrefix, familyTitle, activeFramework, cryptoModules);
-  }, [isPolicyControl, currentTenant, familyPrefix, familyTitle, activeFramework, recompileCount, cryptoModules]);
+    return generateFamilyPolicyDocument(stackTenant, familyPrefix, familyTitle, activeFramework, cryptoModules);
+  }, [isPolicyControl, currentTenant, stackTenant, familyPrefix, familyTitle, activeFramework, recompileCount, cryptoModules]);
 
   // Guard return ONLY AFTER all useState, useContext, useMemo, and useEffect hooks have been unconditionally initialized
   if (!activeId || !control) return null;
@@ -1071,19 +1074,19 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center gap-2 flex-wrap text-xs text-slate-400">
                 <span className="font-semibold text-slate-300">Active Enclave Telemetry Stack:</span>
                 <span className="badge px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-900/60 font-mono text-xs">
-                  IAM: {stackValueLabel('identityProvider', currentTenant.stackProfile?.identityProvider, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
+                  IAM: {stackValueLabel('identityProvider', stackTenant.stackProfile?.identityProvider, stackTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-900/60 font-mono text-xs">
-                  EDR: {stackValueLabel('edrSolution', currentTenant.stackProfile?.edrSolution, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
+                  EDR: {stackValueLabel('edrSolution', stackTenant.stackProfile?.edrSolution, stackTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-900/60 font-mono text-xs">
-                  Infra: {stackValueLabel('infrastructure', currentTenant.stackProfile?.infrastructure, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
+                  Infra: {stackValueLabel('infrastructure', stackTenant.stackProfile?.infrastructure, stackTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-900/60 font-mono text-xs">
-                  MDM: {stackValueLabel('mdmSolution', currentTenant.stackProfile?.mdmSolution, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
+                  MDM: {stackValueLabel('mdmSolution', stackTenant.stackProfile?.mdmSolution, stackTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
                 <span className="badge px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-900/60 font-mono text-xs">
-                  SIEM: {stackValueLabel('siemSolution', currentTenant.stackProfile?.siemSolution, currentTenant.stackProfile?.customLabels) ?? 'Not set'}
+                  SIEM: {stackValueLabel('siemSolution', stackTenant.stackProfile?.siemSolution, stackTenant.stackProfile?.customLabels) ?? 'Not set'}
                 </span>
               </div>
 
@@ -1175,8 +1178,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                           <div className="space-y-2.5 pt-1">
                             {ctrl.objectives.map((obj) => {
                               // No stack recorded: say so instead of inventing one
-                              const narrative = currentTenant.stackProfile
-                                ? getCascadedObjectiveNarrative(ctrl.controlNumber, obj.letter, currentTenant.stackProfile, cryptoModules)
+                              const narrative = stackTenant.stackProfile
+                                ? getCascadedObjectiveNarrative(ctrl.controlNumber, obj.letter, stackTenant.stackProfile, cryptoModules)
                                 : NO_STACK_PROFILE_RECORDED;
                               return (
                                 <div key={obj.letter} className="text-xs bg-slate-950/70 p-3 rounded-lg border border-slate-800/60 space-y-1.5">

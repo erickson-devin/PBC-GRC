@@ -19,6 +19,7 @@ import { invalidateMfaRequirement } from '../auth/mfaEnforcement';
 import { ensureActiveTenant } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
+import tenantSoftwareRouter from './software';
 import sspImportsRouter from './sspImports';
 import aiAssistRouter from './aiAssist';
 import vmRouter from './vm';
@@ -229,6 +230,7 @@ router.use(requireWriteRole);
 // Invitations: /api/v1/tenants/:tenantId/invites (create / list / revoke / resend / extend / edit)
 router.use('/:tenantId/invites', tenantInvitesRouter);
 router.use('/:tenantId/assets', tenantAssetsRouter);
+router.use('/:tenantId/software', tenantSoftwareRouter);
 // SSP imports resolve the program from x-program-id (409 program_required when the tenant has none); the VM module only optionally (most of it
 // is tenant-wide); the programs API itself (it works on archived programs and names them in the URL) and ai-assist do not.
 router.use('/:tenantId/programs', programsRouter);

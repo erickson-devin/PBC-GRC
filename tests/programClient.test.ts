@@ -349,6 +349,17 @@ async function headers() {
     const putBody = JSON.parse(String(calls[0].init.body)) as Record<string, string>;
     assert(calls[0].init.method === 'PUT' && putBody.name === 'New' && putBody.systemBoundarySummary === 'S' && !('framework' in putBody) && !('baseline' in putBody), 'H8d updateProgram sends only the editable fields', putBody);
 
+    // #230: the program carries the enclave stack profile
+    const fullStack = { identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC', odpParams: { A_1: '1' } };
+    stub(200, { program: { id: 'p1', framework: 'CMMC_L2' } });
+    await ApiClient.updateProgram('t1', 'p1', { stackProfile: fullStack as never });
+    const stackPut = JSON.parse(String(calls[0].init.body)) as { stackProfile?: { identityProvider?: string } };
+    assert(stackPut.stackProfile?.identityProvider === 'OKTA', 'C-H1 updateProgram sends the stackProfile', stackPut);
+    await ApiClient.updateProgram('t1', 'p1', { name: 'New' });
+    assert(!('stackProfile' in (JSON.parse(String(calls[1].init.body)) as Record<string, unknown>)), 'C-H1b an edit without stackProfile does not send it');
+    await ApiClient.updateProgram('t1', 'p1', { stackProfile: null });
+    assert((JSON.parse(String(calls[2].init.body)) as Record<string, unknown>).stackProfile === null, 'C-H1c a null stackProfile is sent (clears it)');
+
     stub(200, { ok: true });
     await ApiClient.setMyDefaultProgram('t1', 'p1');
     assert(calls[0].url === '/api/v1/me/default-program' && calls[0].init.method === 'PUT' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === undefined && calls[0].init.body === '{"programId":"p1"}', 'H11 setMyDefaultProgram is PUT /api/v1/me/default-program with x-tenant-id, no x-program-id', calls[0]);
@@ -683,6 +694,16 @@ async function main() {
   assert(/StorageService\.listProgramKeys\(tenantId\)/.test(tenantCtx) && /listProgramKeys\(params\.tenantId\)/.test(read('src/data/storage/offboardingEngine.ts')), 'T6o deleteTenant and the offboarding purge remove the program caches');
   const stackBody = tenantCtx.slice(tenantCtx.indexOf('const updateStackProfile = useCallback'), tenantCtx.indexOf('const suspendTenant = useCallback'));
   assert(!/localStorage|saveAssessment/.test(stackBody) && /scopeNow\(currentTenant\.id\)/.test(stackBody) && /getFrameworkControls\(activeFramework/.test(stackBody), 'T6p updateStackProfile writes no browser storage and cascades only to the active program\'s framework controls');
+
+  // #230: the enclave stack profile belongs to the program, falling back to the tenant's
+  const stackRaw = { identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC', odpParams: { A_1: '1' } };
+  assert(parseProgramList({ programs: [{ id: 's1', framework: 'CMMC_L2', stackProfile: stackRaw }] })[0]?.stackProfile?.identityProvider === 'OKTA', 'C-P1 the parser reads stackProfile');
+  assert(parseProgramList({ programs: [{ id: 's1', framework: 'CMMC_L2', stack_profile: stackRaw }] })[0]?.stackProfile?.identityProvider === 'OKTA', 'C-P2 the parser reads snake_case stack_profile');
+  assert(parseProgramList({ programs: [{ id: 's1', framework: 'CMMC_L2', stackProfile: { ...stackRaw, identityProvider: 'NOPE' } }] })[0]?.stackProfile === null && parseProgramList({ programs: [{ id: 's1', framework: 'CMMC_L2' }] })[0]?.stackProfile === null, 'C-P3 an invalid or missing stackProfile parses to null');
+  const stackFn = tenantCtx.slice(tenantCtx.indexOf('const updateStackProfile = useCallback'));
+  const stackFnBody = stackFn.slice(0, stackFn.indexOf('useCallback', 40));
+  assert(stackFnBody.includes('updateProgram(activeProgram.id, { stackProfile: profile })') && stackFnBody.includes('void updateTenant(currentTenant.id, { stackProfile: profile })'), 'C-T4 updateStackProfile saves to the active program, else to the tenant');
+  assert(!/localStorage\.setItem\([^;]*JSON\.stringify\([^;]*programs/.test(tenantCtx), 'C-T5 the programs are never written to browser storage');
 
   // The objective status writer saves the rolled-up control status (otherwise the next live merge reverts it)
   const statusBody = assessCtx.slice(assessCtx.indexOf('const updateObjectiveStatus = useCallback'), assessCtx.indexOf('const updateObjectiveNarrative = useCallback'));

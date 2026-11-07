@@ -103,6 +103,17 @@ function main() {
   const nonTypeImports = helper.split('\n').filter((l) => /^import /.test(l) && !/^import type /.test(l));
   assert(nonTypeImports.length === 0 && !/react|console\.|localStorage|sessionStorage|fetch\(/.test(helper.replace(/\/\*[\s\S]*?\*\//, '')), 'the helper module is pure');
 
+  console.log('--- pbc-vm-exporter init emits the same keys ---');
+  const initSrc = read('exporters/pbc-vm-exporter/pbc_vm_exporter/init.py');
+  for (const wazuhMode of [undefined, 'api'] as const) {
+    const text = buildExporterEnv({ source: 'wazuh', pbcUrl: 'https://g', label: 'x', wazuhMode });
+    const keys = text.split('\n').filter((l) => l !== '' && !l.startsWith('#')).map((l) => l.slice(0, l.indexOf('=')));
+    const missing = keys.filter((k) => !initSrc.includes(`${k}=`));
+    assert(keys.length >= 6 && missing.length === 0, `init.py emits every key of the in-app wazuh ${wazuhMode ?? 'indexer'} env text`, missing);
+  }
+  assert(initSrc.includes('WAZUH_MODE=indexer') && initSrc.includes('O_EXCL') && initSrc.includes('0o600'), 'init.py writes WAZUH_MODE=indexer and creates the file exclusively at 0600');
+  assert(!/\bprint\(/.test(initSrc), 'init.py never calls print(');
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   process.exit(passed === total ? 0 : 1);

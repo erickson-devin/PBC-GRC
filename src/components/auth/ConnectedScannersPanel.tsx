@@ -3,17 +3,20 @@ import { Radar, CheckCircle2, Clock, AlertTriangle, CircleDashed } from 'lucide-
 import { ApiClient } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
 import {
-  CONNECTED_SCANNERS_COPY, SOURCE_STATE_LABEL, latestRunBySource, sourceStatus,
+  CONNECTED_SCANNERS_COPY, SOURCE_STATE_LABEL, latestRunBySource, pushSummary, sourceStatus,
 } from '../../data/telemetry/vmSourcesView';
+import { tokenPrefixLabel } from '../../data/telemetry/vmTokensView';
 import type { SourceState } from '../../data/telemetry/vmSourcesView';
-import type { VmRun, VmSource } from '../../types/vm';
+import type { VmRun, VmServiceToken, VmSource } from '../../types/vm';
 
 /**
  * Connected scanners: the VM sources of this organization with their latest status (never / ok / stale / failed), last push, counts and
- * exporter version. Read-only. A failed load shows fixed text, never the server's message. Names and errors are rendered as text.
+ * exporter version. Read-only. For owners and admins (`canManageTokens`) it also lists each service token's last push outcome. A failed load shows fixed text, never the server's message. Names and errors are rendered as text.
  */
 interface ConnectedScannersPanelProps {
   tenantId: string;
+  /** Owners and admins only: also show each service token's last push outcome. */
+  canManageTokens?: boolean;
 }
 
 const STATE_STYLE: Record<SourceState, { cls: string; Icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' }> }> = {
@@ -26,8 +29,10 @@ const fmtDateTime = (iso: string) => new Date(iso).toLocaleString([], { year: 'n
 
 type LoadState = { status: 'loading' | 'ready' | 'error'; sources: VmSource[]; runs: VmRun[] };
 
-export const ConnectedScannersPanel: React.FC<ConnectedScannersPanelProps> = ({ tenantId }) => {
+export const ConnectedScannersPanel: React.FC<ConnectedScannersPanelProps> = ({ tenantId, canManageTokens = false }) => {
   const [state, setState] = useState<LoadState>({ status: 'loading', sources: [], runs: [] });
+  const [tokens, setTokens] = useState<VmServiceToken[]>([]);
+  const [tokensError, setTokensError] = useState(false);
   const headingId = useId();
 
   const load = useCallback(async () => {
@@ -42,8 +47,19 @@ export const ConnectedScannersPanel: React.FC<ConnectedScannersPanelProps> = ({ 
 
   useEffect(() => { void load(); }, [load]);
 
+  // The tokens load on their own, so a failure here never hides the sources.
+  useEffect(() => {
+    if (!canManageTokens) { setTokens([]); setTokensError(false); return; }
+    let cancelled = false;
+    ApiClient.listVmTokens(tenantId)
+      .then((list) => { if (!cancelled) { setTokens(list); setTokensError(false); } })
+      .catch(() => { if (!cancelled) { setTokens([]); setTokensError(true); } });
+    return () => { cancelled = true; };
+  }, [tenantId, canManageTokens]);
+
   const now = Date.now();
   const latest = latestRunBySource(state.runs);
+  const pushedTokens = tokens.filter((t) => t.lastPushAt);
 
   return (
     <section aria-labelledby={headingId} className="space-y-2 text-xs pt-4 border-t border-slate-800">
@@ -90,6 +106,30 @@ export const ConnectedScannersPanel: React.FC<ConnectedScannersPanelProps> = ({ 
             );
           })}
         </ul>
+      )}
+      {canManageTokens && (tokensError || pushedTokens.length > 0) && (
+        <div className="space-y-2 pt-2">
+          <h4 className="text-xs font-bold text-slate-200">{CONNECTED_SCANNERS_COPY.tokensHeading}</h4>
+          {tokensError && <ErrorNotice message={CONNECTED_SCANNERS_COPY.tokensLoadError} />}
+          {pushedTokens.length > 0 && (
+            <ul className="space-y-2">
+              {pushedTokens.map((t) => {
+                const summary = pushSummary(t);
+                return (
+                  <li key={t.id} className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-1">
+                    <p className="font-semibold text-white break-words">
+                      {t.name} <span className="font-mono text-slate-400 font-normal">{tokenPrefixLabel(t.tokenPrefix)}</span>
+                    </p>
+                    <p className="text-slate-300">
+                      Last push: {summary.at && <time dateTime={summary.at}>{fmtDateTime(summary.at)}</time>}
+                    </p>
+                    <p className={`break-words ${summary.state === 'refused' ? 'text-rose-300' : 'text-emerald-300'}`}>{summary.text}</p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
     </section>
   );

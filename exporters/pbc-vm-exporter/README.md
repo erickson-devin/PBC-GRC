@@ -42,7 +42,7 @@ Everything comes from the environment or from an env file (`--env-file PATH`, de
 | `PBC_SOURCE_LABEL` | yes (not for `--sample`) | Source label, 1 to 128 characters, no control characters. No default: keep it stable (see Limitations) |
 | `PBC_CA_BUNDLE` | no | CA bundle file for PBC-GRC's certificate |
 | `PBC_ALLOW_INSECURE_TRANSPORT` | no | `true`, `1`, `yes` or `on` allows plain `http://`. Development only; logs a warning only when some URL is plain `http` (`check` reports it as unneeded when every URL is `https`) |
-| `WAZUH_MODE` | no | `auto` (default), `indexer` or `api`. `--mode` wins. Use `indexer` unless the manager API is also configured: `auto` and `api` need `WAZUH_API_*` |
+| `WAZUH_MODE` | no | `auto` (default), `indexer` or `api`. `--mode` wins. Use `indexer` unless the manager API is also configured: `auto` and `api` need `WAZUH_API_*`. `init` and the in-app setup write `indexer` (or `api`), not `auto` |
 | `WAZUH_INDEXER_URL`, `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD` | indexer mode | Wazuh indexer, port 9200 (Wazuh 4.8 and later). The user is an indexer (OpenSearch security plugin) user, not a manager API user |
 | `WAZUH_INDEXER_INDEX` | no | Default `wazuh-states-vulnerabilities-*` |
 | `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD` | api and auto mode | Wazuh manager API, port 55000 (4.7 and earlier; also used by `auto` to read the version) |
@@ -67,14 +67,20 @@ Env file format: `KEY=value`, an optional `export ` prefix, full-line `#` commen
 
 A run splits a large fleet across several POSTs by hosts, findings and bytes. A host is never split between two POSTs and never shortened.
 
-## 3a. Checking the setup (`check`) and the version
+## 3a. Creating the env file (`init`), checking the setup (`check`) and the version
+
+```
+pbc-vm-exporter init --env-file /etc/pbc-vm-exporter/env
+```
+
+`init` asks for the PBC-GRC URL (https), the source label (Enter for `wazuh-prod`), an optional PBC-GRC CA bundle, the service token, then the Wazuh indexer URL, user, password and an optional Wazuh CA bundle (`--mode api` asks for the manager API URL, user and password instead). The token and passwords are typed at a prompt without echo and are never printed; there is no option for them. An empty token leaves `PBC_SERVICE_TOKEN=` to fill in later. It writes `WAZUH_MODE=indexer` (or `api`), never overwrites an existing file (exit 2) and creates the file with mode `0600`. Windows does not apply that mode: `init` prints the `icacls` command that restricts the file to the exporter account. The folder must be writable by the account that runs it. Then run `check`.
 
 ```
 pbc-vm-exporter --version
 pbc-vm-exporter check --env-file /etc/pbc-vm-exporter/env
 ```
 
-`check` (the only subcommand; it accepts `--env-file`, `--source` and `--mode`) tests the setup step by step and sends no scan data. It prints a PASS, FAIL, SKIP or NOTE line per step with a hint under each failure:
+`check` (one of the two subcommands, `check` and `init`; it accepts `--env-file`, `--source` and `--mode`) tests the setup step by step and sends no scan data. It prints a PASS, FAIL, SKIP or NOTE line per step with a hint under each failure:
 
 1. the configuration loads;
 2. PBC-GRC: `GET {PBC_URL}/api/v1/vm/whoami` with the token: reachable, the token is valid (its name, display prefix and expiry are printed, never the token), the server's contract hash equals this exporter's (`--print-contract-sha256`), and `EXPORT_MAX_BYTES` is within the server's limit. A server without that endpoint answers 404: the step is SKIPped ("server too old for check"), not failed;
@@ -106,7 +112,7 @@ A TENANT_OWNER or MSP_ADMIN creates it over HTTPS in the app (profile menu, "API
 
 ## 7. Exporter-host security
 
-* The token lives only in the environment or in an env file at mode `0600` owned by the service account (or root). There is no `--token` flag, because command-line arguments are visible to other users (`ps`, `/proc`) and end up in shell history. The exporter warns when an env file is readable by group or others (`chmod 600`).
+* The token lives only in the environment or in an env file at mode `0600` owned by the service account (or root). There is no `--token` flag, because command-line arguments are visible to other users (`ps`, `/proc`) and end up in shell history. The exporter warns when an env file is readable by group or others (`chmod 600`). `pbc-vm-exporter init` creates the file at mode `0600` and reads the token and passwords without echo.
 * The exporter host is inside the CUI enclave, so the organization's patching, hardening and logging requirements apply to it like any other enclave host.
 * Logs are redacted (tokens, bearer values, JWTs, URL credentials, configured passwords), but `--dry-run` output contains hostnames and the CVE inventory. Treat it as CUI and do not paste it outside the enclave. The exporter never writes a payload to disk.
 * Revoke the token when the exporter is decommissioned (`POST /api/v1/tenants/:tenantId/vm/tokens/:id/revoke`).

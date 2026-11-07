@@ -13,6 +13,7 @@ export const toAssetInput = (a: EnclaveAsset): AssetInput => ({
   sourceOrigin: isMachineAssetOrigin(a.sourceOrigin) ? 'MANUAL_ENTRY' : a.sourceOrigin,
   discoveryStatus: a.discoveryStatus, accretionMetadata: a.accretionMetadata, lastScannedAt: a.lastScannedAt,
   complianceScore: a.complianceScore, notes: a.notes, owner: a.owner ?? '',
+  manufacturer: a.manufacturer ?? '', model: a.model ?? '', serialNumber: a.serialNumber ?? '', location: a.location ?? '',
   fipsValidationStatus: a.fipsValidationStatus, fipsCertificateNumber: a.fipsCertificateNumber,
   fipsModuleName: a.fipsModuleName, fipsStandard: a.fipsStandard,
 });

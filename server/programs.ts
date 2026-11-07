@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode, getTenantFrameworkPolicy, pool, queryWithProgram, queryWithTenant, type ProgramScope, type SqlParam } from './db';
 import { PROGRAM_FRAMEWORK_IDS } from './schema';
-import { readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
+import { notesDigest, readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
 import { __deleteProgramObjectivesForMemory, cloneObjectives } from './controlObjectives';
 import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
@@ -13,6 +13,8 @@ import { getEquivalentControlIds } from '../src/data/frameworks/controlMappings'
 import { PROGRAM_SCOPING_KEYS, normalizeProgramScoping, programFrameworkControls, scopingToOverlays } from '../src/data/programScope';
 import type { ComplianceFramework, OverlayFilters } from '../src/types/framework';
 import type { ProgramScoping } from '../src/types/program';
+import type { EnclaveStackProfile } from '../src/types/tenant';
+import { STACK_PROFILE_ENUM_KEYS, validateStackProfile } from '../src/data/stackProfileSchema';
 
 /**
  * Programs: a tenant's authorization boundaries (an ATO effort or project). Each program has one framework and, for NIST SP 800-53,
@@ -48,6 +50,8 @@ export interface Program {
   scoping: ProgramScoping;
   /** The tenant's VM target: receives the vulnerability-management snapshots and POA&M items. At most one per tenant, CMMC_L1 / CMMC_L2 only. */
   vmTarget: boolean;
+  /** The program's own enclave stack profile (issue #230); null means the tenant's profile applies. */
+  stackProfile: EnclaveStackProfile | null;
   isDefault: boolean;
   archivedAt: string | null;
   createdBy: string | null;
@@ -69,6 +73,7 @@ export type ProgramErrorCode =
   | 'invalid_scoping'
   | 'scoping_conflict'
   | 'invalid_vm_target'
+  | 'invalid_stack_profile'
   | 'invalid_asset_ids'
   | 'unknown_assets'
   | 'program_is_vm_target'
@@ -115,6 +120,8 @@ export interface ProgramPatch {
   scoping?: unknown;
   /** The overlays the client last saw; a mismatch is scoping_conflict and nothing is written. Absent skips the check. */
   expectedScoping?: unknown;
+  /** Mutable: replaces the program's stack profile as a whole (validated); null clears it (the tenant's applies). Absent leaves it. */
+  stackProfile?: unknown;
 }
 
 /** Who made a change, as the program events record it. */
@@ -123,7 +130,7 @@ export interface ProgramActor {
   userId: string | null;
 }
 
-export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared' | 'assets_changed' | 'ssp_metadata_changed';
+export type ProgramEventKind = 'scoping_set' | 'scoping_changed' | 'vm_target_set' | 'vm_target_cleared' | 'assets_changed' | 'ssp_metadata_changed' | 'stack_profile_changed';
 
 /** One entry of a program's history. Holds booleans and ids only (never a name or a description), so it carries no CUI. */
 export interface ProgramEvent {
@@ -184,6 +191,32 @@ function scopingFromRow(raw: unknown): ProgramScoping {
 
 const sameScoping = (a: ProgramScoping, b: ProgramScoping): boolean => PROGRAM_SCOPING_KEYS.every((k) => Boolean(a[k]) === Boolean(b[k]));
 
+/** JSON with the keys sorted at every level, so two profiles that differ only in key order compare (and digest) the same. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (v !== null && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v) ?? 'null';
+}
+
+const sameStackProfile = (a: EnclaveStackProfile | null, b: EnclaveStackProfile | null): boolean => canonicalJson(a) === canonicalJson(b);
+
+/** The profile fields that differ, with the digest of the value on each side (null when absent). Never the values: customLabels and odpParams are free text. */
+function stackProfileDigests(before: EnclaveStackProfile | null, after: EnclaveStackProfile | null): { oldValue: Record<string, unknown> | null; newValue: Record<string, unknown> } {
+  const oldFields: Record<string, unknown> = {};
+  const newFields: Record<string, unknown> = {};
+  for (const key of [...STACK_PROFILE_ENUM_KEYS, 'odpParams', 'customLabels'] as const) {
+    const b = (before as Record<string, unknown> | null)?.[key];
+    const a = (after as Record<string, unknown> | null)?.[key];
+    if (canonicalJson(b) === canonicalJson(a)) continue;
+    oldFields[key] = b === undefined ? null : notesDigest(canonicalJson(b));
+    newFields[key] = a === undefined ? null : notesDigest(canonicalJson(a));
+  }
+  return { oldValue: before ? { fields: oldFields } : null, newValue: { fields: newFields } };
+}
+
 function rowToProgram(r: pg.QueryResultRow): Program {
   return {
     id: r.id,
@@ -196,6 +229,7 @@ function rowToProgram(r: pg.QueryResultRow): Program {
     systemBoundarySummary: r.system_boundary_summary ?? '',
     scoping: scopingFromRow(r.scoping),
     vmTarget: r.vm_target === true,
+    stackProfile: (r.stack_profile ?? null) as EnclaveStackProfile | null,
     isDefault: Boolean(r.is_default),
     archivedAt: r.archived_at ? iso(r.archived_at) : null,
     createdBy: r.created_by ?? null,
@@ -295,6 +329,7 @@ async function resolveDefaultProgram(tenantId: string): Promise<Program> {
       systemBoundarySummary: '',
       scoping: {},
       vmTarget: false,
+      stackProfile: null,
       isDefault: true,
       archivedAt: null,
       createdBy: null,
@@ -458,7 +493,7 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
     const isDefault = ![...memoryPrograms.values()].some((p) => p.tenantId === tenantId && p.isDefault && p.archivedAt === null);
     program = {
       id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary,
-      scoping, vmTarget: false, isDefault, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
+      scoping, vmTarget: false, stackProfile: null, isDefault, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
     };
     memoryPrograms.set(program.id, program);
     pushMemoryEvent(tenantId, program.id, 'scoping_set', who, null, scoping);
@@ -586,9 +621,10 @@ async function requireProgram(tenantId: string, id: string): Promise<Program> {
 }
 
 /**
- * Edits the name, description, boundary summary and scoping. The framework and the baseline cannot change; an archived program takes no
+ * Edits the name, description, boundary summary, scoping and stack profile. The framework and the baseline cannot change; an archived program takes no
  * writes. A scoping that differs from the stored one records a `scoping_changed` event (old and new switches, `who`); one that does not
- * records nothing.
+ * records nothing. A stack profile (validated, or null to clear) that differs records a `stack_profile_changed` event holding digests of the
+ * changed fields, never the values.
  */
 export async function updateProgram(tenantId: string, id: string, patch: ProgramPatch, who: ProgramActor = { actor: 'System', userId: null }): Promise<Program> {
   const current = await requireProgram(tenantId, id);
@@ -604,6 +640,15 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
     const check = normalizeProgramScoping(patch.expectedScoping, current);
     if (!check.ok) throw new ProgramError('invalid_scoping', check.error);
     expected = check.value;
+  }
+  let wantedProfile: EnclaveStackProfile | null | undefined; // undefined: leave the profile as it is
+  if (patch.stackProfile !== undefined) {
+    if (patch.stackProfile === null) wantedProfile = null;
+    else {
+      const check = validateStackProfile(patch.stackProfile);
+      if (!check.ok) throw new ProgramError('invalid_stack_profile', 'Invalid stackProfile');
+      wantedProfile = check.value;
+    }
   }
   if (patch.frameworkId !== undefined && programFramework(patch.frameworkId) !== current.frameworkId) {
     throw new ProgramError('framework_immutable', 'The framework of a program cannot be changed after creation');
@@ -624,9 +669,14 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
     const fresh = memoryPrograms.get(id) ?? current; // no await between this read and the set: the compare-and-write is atomic
     if (expected && !sameScoping(fresh.scoping, expected)) throw new ProgramError('scoping_conflict', 'The overlays of this program changed meanwhile');
     const scoping = wantedScoping ?? fresh.scoping;
-    const next: Program = { ...fresh, name, description, systemBoundarySummary: summary, scoping, updatedAt: new Date().toISOString() };
+    const stackProfile = wantedProfile === undefined ? fresh.stackProfile : wantedProfile;
+    const next: Program = { ...fresh, name, description, systemBoundarySummary: summary, scoping, stackProfile, updatedAt: new Date().toISOString() };
     memoryPrograms.set(id, next);
     if (!sameScoping(fresh.scoping, scoping)) pushMemoryEvent(tenantId, id, 'scoping_changed', who, fresh.scoping, scoping);
+    if (!sameStackProfile(fresh.stackProfile, stackProfile)) {
+      const digests = stackProfileDigests(fresh.stackProfile, stackProfile);
+      pushMemoryEvent(tenantId, id, 'stack_profile_changed', who, digests.oldValue, digests.newValue);
+    }
     return next;
   }
   try {
@@ -637,13 +687,18 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
       if (before.archivedAt) throw new ProgramError('program_archived', 'An archived program cannot be edited');
       if (expected && !sameScoping(before.scoping, expected)) throw new ProgramError('scoping_conflict', 'The overlays of this program changed meanwhile');
       const scoping = wantedScoping ?? before.scoping;
+      const stackProfile = wantedProfile === undefined ? before.stackProfile : wantedProfile;
       const res = await q(
-        `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, scoping = $6::jsonb, updated_at = NOW()
+        `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, scoping = $6::jsonb, stack_profile = $7::jsonb, updated_at = NOW()
           WHERE tenant_id = $1 AND id = $2
           RETURNING *`,
-        [tenantId, id, name, description, summary, JSON.stringify(scoping)]
+        [tenantId, id, name, description, summary, JSON.stringify(scoping), stackProfile === null ? null : JSON.stringify(stackProfile)]
       );
       if (!sameScoping(before.scoping, scoping)) await insertEventTx(q, tenantId, id, 'scoping_changed', who, before.scoping, scoping);
+      if (!sameStackProfile(before.stackProfile, stackProfile)) {
+        const digests = stackProfileDigests(before.stackProfile, stackProfile);
+        await insertEventTx(q, tenantId, id, 'stack_profile_changed', who, digests.oldValue, digests.newValue);
+      }
       return rowToProgram(res.rows[0]);
     });
   } catch (err) {

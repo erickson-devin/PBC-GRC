@@ -103,6 +103,9 @@ async function main() {
   const t1 = toAssetInput({ id: 'x', tenantId: 't', isManuallyAdded: true, hostName: 'h', owner: undefined } as any) as unknown as Record<string, unknown>;
   assert(!('id' in t1) && !('tenantId' in t1) && !('isManuallyAdded' in t1) && t1.owner === '' && t1.hostName === 'h', 'T1 toAssetInput drops ids and defaults the owner', t1);
 
+  const t1b = toAssetInput({ id: 'x', tenantId: 't', isManuallyAdded: true, hostName: 'h', serialNumber: 'SN' } as any) as unknown as Record<string, unknown>;
+  assert(t1b.serialNumber === 'SN' && t1b.location === '' && t1b.manufacturer === '' && t1b.model === '', 'T1b toAssetInput carries the hardware fields and defaults absent ones to empty', t1b);
+
   const originOf = (o: string) => toAssetInput({ id: 'x', tenantId: 't', isManuallyAdded: true, hostName: 'h', sourceOrigin: o } as any).sourceOrigin;
   assert(originOf('PHOTON_AGENT') === 'MANUAL_ENTRY' && originOf('AGENT_REPORT') === 'MANUAL_ENTRY', 'S60-16 machine origins held in the browser are sent as MANUAL_ENTRY');
   assert(originOf('CSV_IMPORT') === 'CSV_IMPORT' && originOf('ACCRETION_DISCOVERY') === 'ACCRETION_DISCOVERY' && originOf('MANUAL_ENTRY') === 'MANUAL_ENTRY', 'S60-17 human origins pass through unchanged');

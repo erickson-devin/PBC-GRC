@@ -24,6 +24,12 @@ export type VmTokenScope = (typeof VM_TOKEN_SCOPES)[number];
 export const VM_RUN_STATUSES = ['RECEIVED', 'NORMALIZING', 'NORMALIZED', 'FAILED'] as const;
 export type VmRunStatus = (typeof VM_RUN_STATUSES)[number];
 
+/** Outcome of a token's most recent ingest push. Fixed codes only: never a message (a validation message can name payload content). */
+export const VM_PUSH_STATUSES = ['ok', 'error'] as const;
+export type VmPushStatus = (typeof VM_PUSH_STATUSES)[number];
+export const VM_PUSH_ERROR_CODES = ['validation', 'kind_mismatch', 'too_large', 'media_type', 'insecure', 'storage'] as const;
+export type VmPushErrorCode = (typeof VM_PUSH_ERROR_CODES)[number];
+
 export const VM_SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'] as const;
 export type VmSeverity = (typeof VM_SEVERITIES)[number];
 
@@ -57,6 +63,9 @@ export interface VmServiceToken {
   createdAt: string;
   expiresAt: string;
   lastUsedAt: string | null;
+  lastPushAt: string | null;
+  lastPushStatus: VmPushStatus | null;
+  lastPushErrorCode: VmPushErrorCode | null;
   revokedAt: string | null;
 }
 
@@ -80,6 +89,8 @@ export interface VmRun {
   id: string;
   tenantId: string;
   sourceId: string;
+  /** The service token that pushed this run; null for runs recorded before #231. */
+  tokenId: string | null;
   receivedAt: string;
   collectedAt: string | null;
   exporterName: string;

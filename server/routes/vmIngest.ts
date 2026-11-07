@@ -4,11 +4,12 @@ import express, { Router, Request, Response, NextFunction } from 'express';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { serviceTokenMiddleware } from '../middleware/serviceTokenMiddleware';
 import { validateIngestPayload, vmIngestMaxBytes } from '../vm/ingestSchema';
-import { listVmTokens } from '../vm/tokens';
+import { listVmTokens, recordVmTokenPush } from '../vm/tokens';
 import { findRunBySha, recordReceivedRun, VmStoreError } from '../vm/store';
 import { enqueueVmRun, recoverStaleRuns } from '../vm/worker';
 import { isLocalStorageConfigured, writeTenantFile } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
+import type { VmPushErrorCode } from '../../src/types/vm';
 import { fileURLToPath } from 'url';
 
 /**
@@ -34,17 +35,31 @@ const CONTRACT_SHA256 = crypto
 
 const JSON_CONTENT_TYPE = /^application\/json\s*(;|$)/i;
 
+/** Records the token's latest push outcome (fixed code only). Never fails the request and never logs the tenant, the token id or the body. */
+async function notePush(req: Request, code: VmPushErrorCode | null): Promise<void> {
+  const t = req.serviceToken;
+  if (!t) return;
+  try {
+    await recordVmTokenPush(t.tenantId, t.id, code);
+  } catch (err: unknown) {
+    console.error('[VM Ingest] could not record the push outcome:', errorMessage(err));
+  }
+}
+
 async function ingestHandler(req: Request, res: Response): Promise<void> {
   if (!JSON_CONTENT_TYPE.test(req.headers['content-type'] ?? '')) {
+    await notePush(req, 'media_type');
     res.status(415).json({ error: 'unsupported_media_type' });
     return;
   }
   if (!isLocalStorageConfigured()) {
+    await notePush(req, 'storage');
     res.status(503).json({ error: 'vm_requires_local_storage' });
     return;
   }
   const body: unknown = req.body;
   if (!Buffer.isBuffer(body) || body.length === 0) {
+    await notePush(req, 'validation');
     res.status(400).json({ error: '$: request body is required' });
     return;
   }
@@ -56,11 +71,13 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
   try {
     const existing = await findRunBySha(tenantId, sha256);
     if (existing) {
+      await notePush(req, null);
       res.status(200).json({ run_id: existing.id, status: existing.status, sha256, duplicate: true });
       return;
     }
   } catch (err: unknown) {
     console.error('[VM Ingest] lookup failed:', errorMessage(err));
+    await notePush(req, 'storage');
     res.status(500).json({ error: 'Failed to record the payload' });
     return;
   }
@@ -69,11 +86,13 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
   try {
     parsed = JSON.parse(body.toString('utf8'));
   } catch {
+    await notePush(req, 'validation');
     res.status(400).json({ error: '$: body is not valid JSON' });
     return;
   }
   const validation = validateIngestPayload(parsed);
   if (!validation.ok) {
+    await notePush(req, 'validation');
     res.status(400).json({ error: validation.error });
     return;
   }
@@ -85,6 +104,7 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
     stored = await writeTenantFile(tenantId, 'vm/runs/' + runId + '.json', body, { exclusive: true });
   } catch (err: unknown) {
     console.error('[VM Ingest] could not store the payload:', errorMessage(err));
+    await notePush(req, 'storage');
     res.status(500).json({ error: 'Failed to store the payload' });
     return;
   }
@@ -103,10 +123,12 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
       rawPath: stored.absPath,
       rawSha256: sha256,
       rawBytes: stored.size,
+      tokenId: req.serviceToken!.id,
     });
     console.log(`[VM Ingest] ${actor} -> run ${run.id} in ${tenantId}: ${run.hostCount} hosts, ${run.findingCount} findings, ${run.configResultCount} configuration results`);
     enqueueVmRun(tenantId, run.id);
     void recoverStaleRuns(tenantId);
+    await notePush(req, null);
     res.status(202).json({ run_id: run.id, status: 'RECEIVED', sha256 });
   } catch (err: unknown) {
     await fs.promises.rm(stored.absPath, { force: true }).catch(() => undefined);
@@ -115,20 +137,24 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
       try {
         const winner = await findRunBySha(tenantId, sha256);
         if (winner) {
+          await notePush(req, null);
           res.status(200).json({ run_id: winner.id, status: winner.status, sha256, duplicate: true });
           return;
         }
       } catch (lookupErr: unknown) {
         console.error('[VM Ingest] lookup failed:', errorMessage(lookupErr));
       }
+      await notePush(req, 'storage');
       res.status(500).json({ error: 'Failed to record the payload' });
       return;
     }
     if (err instanceof VmStoreError && err.code === 'source_kind_mismatch') {
+      await notePush(req, 'kind_mismatch');
       res.status(409).json({ error: 'vm_source_kind_mismatch' });
       return;
     }
     console.error('[VM Ingest] could not record the run:', errorMessage(err));
+    await notePush(req, 'storage');
     res.status(500).json({ error: 'Failed to record the payload' });
   }
 }
@@ -136,6 +162,16 @@ async function ingestHandler(req: Request, res: Response): Promise<void> {
 /** The service token is a bearer secret: refuse it over plain HTTP, the same rule as token creation (vm.ts). Runs after authentication, so a missing token is still a 401. */
 function requireSecureTransport(req: Request, res: Response, next: NextFunction): void {
   if (!req.secure && process.env.VM_ALLOW_INSECURE_TOKENS !== 'true') {
+    res.status(403).json({ error: 'The ingest endpoint requires HTTPS', code: 'vm_insecure_transport' });
+    return;
+  }
+  next();
+}
+
+/** Same check for the ingest route, which also records the refusal on the token (the whoami route has no push to record). */
+async function requireSecureIngestTransport(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!req.secure && process.env.VM_ALLOW_INSECURE_TOKENS !== 'true') {
+    await notePush(req, 'insecure');
     res.status(403).json({ error: 'The ingest endpoint requires HTTPS', code: 'vm_insecure_transport' });
     return;
   }
@@ -170,18 +206,20 @@ router.post(
   '/ingest',
   vmIngestRateLimiter,
   serviceTokenMiddleware('vm:ingest'),
-  requireSecureTransport,
+  requireSecureIngestTransport,
   vmTokenRateLimiter,
   express.raw({ type: 'application/json', limit: vmIngestMaxBytes(), inflate: false }),
   ingestHandler,
 );
 
-router.use((err: { type?: string }, _req: Request, res: Response, next: NextFunction): void => {
+router.use(async (err: { type?: string }, req: Request, res: Response, next: NextFunction): Promise<void> => {
   if (err?.type === 'entity.too.large') {
+    await notePush(req, 'too_large');
     res.status(413).json({ error: 'payload_too_large' });
     return;
   }
   if (err?.type === 'encoding.unsupported') {
+    await notePush(req, 'media_type');
     res.status(415).json({ error: 'unsupported_content_encoding' });
     return;
   }

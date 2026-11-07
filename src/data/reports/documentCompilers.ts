@@ -13,6 +13,7 @@ import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
 import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
 import { sprsAppliesTo } from './sprsCompiler';
+import { compileHardwareInventory, compileSoftwareInventory, InventoryInput } from './inventoryDocuments';
 
 import {
   NO_CSP_RECORDED,
@@ -777,7 +778,8 @@ export function compileReportDocument(
   metadata: ReportMetadata,
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  evidence: EvidenceItem[] = []
+  evidence: EvidenceItem[] = [],
+  inventory?: InventoryInput
 ): CompiledDocument {
   switch (documentType) {
     case 'NIST_SP_800_18_SSP':
@@ -788,6 +790,10 @@ export function compileReportDocument(
       return compileSoc2SystemDescription(metadata, controls, controlStates, evidence);
     case 'HIPAA_SECURITY_ASSESSMENT':
       return compileHipaaAssessment(metadata, controls, controlStates, evidence);
+    case 'HARDWARE_INVENTORY':
+      return compileHardwareInventory(metadata, inventory, calculateSummaryMetrics(controls, controlStates));
+    case 'SOFTWARE_INVENTORY':
+      return compileSoftwareInventory(metadata, inventory, calculateSummaryMetrics(controls, controlStates));
     default:
       return compileNistSSP(metadata, controls, controlStates, evidence);
   }

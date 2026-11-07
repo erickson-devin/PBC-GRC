@@ -26,6 +26,7 @@ import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
 import { AssetInventoryManager } from './components/telemetry/AssetInventoryManager';
+import { SoftwareInventoryPanel } from './components/telemetry/SoftwareInventoryPanel';
 import { ConfigurationResultsView } from './components/telemetry/ConfigurationResultsView';
 import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
@@ -300,6 +301,7 @@ const AppContent: React.FC = () => {
                       </span>
                     </div>
                     <AssetInventoryManager />
+                    <SoftwareInventoryPanel />
                   </div>
                 )}
                 {activeTab === 'ssp' && <SSPBuilder />}

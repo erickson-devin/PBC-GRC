@@ -1377,6 +1377,30 @@ async function verifyProgramIsolation() {
     const smCascade = await queryWithProgram(smRaceScope, 'SELECT 1 FROM program_ssp_metadata WHERE program_id = $1', [smRaceProgram.id]);
     check(smCascade.rows.length === 0, '8l. program_ssp_metadata: deleting a program removes its row through the cascade', 'saw ' + smCascade.rows.length);
 
+    // 8n. programs.stack_profile (issue #230): rides the programs tenant policy; the CHECK pins the keys and the size like the tenant's
+    const spProfile = JSON.stringify({ identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC' });
+    const spSetX = await queryWithTenant(TENANT_X, 'UPDATE programs SET stack_profile = $3::jsonb WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA, spProfile]);
+    const spSeenY = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM programs WHERE id = $1 AND stack_profile IS NOT NULL', [programA]);
+    const spSetY = await queryWithTenant(TENANT_Y, 'UPDATE programs SET stack_profile = $3::jsonb WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA, spProfile]);
+    check((spSetX.rowCount ?? 0) === 1 && spSeenY.rows.length === 0 && (spSetY.rowCount ?? 0) === 0, "8n. programs.stack_profile: tenant X writes its program's profile; tenant Y neither sees it nor updates it", 'X ' + spSetX.rowCount + ', Y sees ' + spSeenY.rows.length + ' updates ' + spSetY.rowCount);
+    const spReadX = await queryWithTenant(TENANT_X, 'SELECT stack_profile FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA]);
+    check(spReadX.rows[0]?.stack_profile?.identityProvider === 'OKTA', '8n. programs.stack_profile: tenant X reads the profile back', JSON.stringify(spReadX.rows[0]?.stack_profile ?? null));
+    let spBad = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, 'UPDATE programs SET stack_profile = $3::jsonb WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA, '{"x":1}']);
+    } catch (err) {
+      spBad = String((err as { code?: string }).code) + ' ' + String((err as { constraint?: string }).constraint);
+    }
+    check(spBad === '23514 programs_stack_profile_check', '8n. programs: a stack profile with an unknown key is refused (23514, programs_stack_profile_check)', spBad);
+    // through the store: a changed profile records a digest-only stack_profile_changed event under program A's scope, invisible under B's
+    const { updateProgram: updateSpProgram } = await import('../server/programs');
+    await updateSpProgram(TENANT_X, programA, { stackProfile: { ...JSON.parse(spProfile), identityProvider: 'ENTRA_ID_GOV' } }, { actor: 'rls_verify_actor', userId: null });
+    const spEvA = await queryWithProgram(scopeA, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'stack_profile_changed'", [programA]);
+    const spEvB = await queryWithProgram(scopeB, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'stack_profile_changed'", [programA]);
+    check(spEvA.rows.length === 1 && spEvB.rows.length === 0, '8n. program_events: a stack_profile_changed event is visible under program A and not under program B', 'A ' + spEvA.rows.length + ', B ' + spEvB.rows.length);
+    await queryWithTenant(TENANT_X, 'UPDATE programs SET stack_profile = NULL WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA]).catch(() => undefined);
+    await queryWithProgram(scopeA, "DELETE FROM program_events WHERE program_id = $1 AND kind = 'stack_profile_changed'", [programA]).catch(() => undefined);
+
     // 8m. per-user default program: tenant isolation of user_program_defaults (ids only, no program policy)
     await queryWithTenant(TENANT_X, 'INSERT INTO user_program_defaults (tenant_id, user_id, program_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_u1', programA]);
     const updSeenByX = await queryWithTenant(TENANT_X, 'SELECT 1 FROM user_program_defaults WHERE tenant_id = $1 AND user_id = $2', [TENANT_X, 'rls_verify_u1']);
@@ -1391,9 +1415,35 @@ async function verifyProgramIsolation() {
     check(updRejection === 'code 42501', "8m. user_program_defaults: tenant Y cannot insert a row into tenant X (WITH CHECK, 42501)", updRejection);
     await queryWithTenant(TENANT_X, "DELETE FROM user_program_defaults WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
 
+    // 8o. software_items (issue #229): tenant isolation, and the composite nullable foreign key to enclave_assets
+    const swAssetX = (await queryWithTenant(TENANT_X, "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, 'rls_verify_sw_asset_x', 'CUI_ASSET') RETURNING id", [TENANT_X])).rows[0]?.id;
+    const swAssetY = (await queryWithTenant(TENANT_Y, "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, 'rls_verify_sw_asset_y', 'CUI_ASSET') RETURNING id", [TENANT_Y])).rows[0]?.id;
+    await queryWithTenant(TENANT_X, 'INSERT INTO software_items (tenant_id, name, asset_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_sw_x', swAssetX]);
+    const swSeenX = await queryWithTenant(TENANT_X, "SELECT 1 FROM software_items WHERE tenant_id = $1 AND name LIKE 'rls_verify_%'", [TENANT_X]);
+    const swSeenY = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM software_items WHERE tenant_id = $1', [TENANT_X]);
+    check(swSeenX.rows.length === 1 && swSeenY.rows.length === 0, "8o. software_items: tenant X sees its own entry, tenant Y sees none of X's", 'X ' + swSeenX.rows.length + ', Y ' + swSeenY.rows.length);
+    let swRejection = 'no error';
+    try {
+      await queryWithTenant(TENANT_Y, 'INSERT INTO software_items (tenant_id, name) VALUES ($1, $2)', [TENANT_X, 'rls_verify_sw_evil']);
+    } catch (err) {
+      swRejection = 'code ' + (err as { code?: string }).code;
+    }
+    check(swRejection === 'code 42501', '8o. software_items: tenant Y cannot insert an entry into tenant X (WITH CHECK, 42501)', swRejection);
+    let swForeign = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, 'INSERT INTO software_items (tenant_id, name, asset_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_sw_foreign', swAssetY]);
+    } catch (err) {
+      swForeign = 'code ' + (err as { code?: string }).code;
+    }
+    check(swForeign === 'code 23503', "8o. software_items: an entry cannot link another tenant's asset (composite foreign key, 23503)", swForeign);
+    await queryWithTenant(TENANT_X, 'DELETE FROM enclave_assets WHERE tenant_id = $1 AND id = $2', [TENANT_X, swAssetX]);
+    const swAfterDelete = await queryWithTenant(TENANT_X, "SELECT asset_id FROM software_items WHERE tenant_id = $1 AND name = 'rls_verify_sw_x'", [TENANT_X]);
+    check(swAfterDelete.rows.length === 1 && swAfterDelete.rows[0].asset_id === null, '8o. software_items: deleting the linked asset keeps the entry and sets asset_id to NULL', JSON.stringify(swAfterDelete.rows));
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM software_items WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined); // the membership rows cascade with their asset
     }
     // the history has no foreign key, so a program's delete does not remove its events

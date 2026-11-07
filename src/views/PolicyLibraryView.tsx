@@ -6,7 +6,7 @@ import {
   Check,
   RefreshCw,
   Search,
-  ExternalLink,
+  BookOpen,
   Layers,
   KeyRound,
   ShieldAlert,
@@ -20,7 +20,8 @@ import {
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { MarkdownPreview } from '../components/common/MarkdownPreview';
 import { useTenant } from '../context/TenantContext';
-import { useAssessment } from '../context/AssessmentContext';
+import { withEffectiveStack } from '../data/effectiveStackProfile';
+import { PolicyControlReferenceDialog } from '../components/matrix/PolicyControlReferenceDialog';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../hooks/useFipsModules';
 
@@ -181,9 +182,9 @@ const CMMC_L1_FAMILIES = ['AC', 'IA', 'MP', 'PE', 'SC', 'SI'];
 const CMMC_L2_FAMILIES = ['AC', 'AT', 'AU', 'CA', 'CM', 'IA', 'IR', 'MA', 'MP', 'PE', 'PS', 'RA', 'SC', 'SI'];
 
 const PolicyLibraryViewContent: React.FC = () => {
-  const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework } = useTenant();
+  const { currentTenant, setIsStackSurveyModalOpen, canEdit, activeFramework, activeProgram } = useTenant();
   const cryptoModules = useFipsModules();
-  const { setActiveTab, setSelectedControlId } = useAssessment();
+  const [referenceControlId, setReferenceControlId] = useState<string | null>(null);
 
   const activeFamilies = useMemo(() => {
     const norm = (activeFramework || '').toUpperCase();
@@ -211,7 +212,9 @@ const PolicyLibraryViewContent: React.FC = () => {
   const [recompileCount, setRecompileCount] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted');
 
-  const stack = currentTenant.stackProfile;
+  // #230: the active program's stack profile, else the organization's
+  const stackTenant = useMemo(() => withEffectiveStack(currentTenant, activeProgram), [currentTenant, activeProgram]);
+  const stack = stackTenant.stackProfile;
 
   const selectedFamily = useMemo(() => {
     return (
@@ -222,13 +225,13 @@ const PolicyLibraryViewContent: React.FC = () => {
   // Generate living policy markdown on the fly
   const markdown = useMemo(() => {
     return generateFamilyPolicyDocument(
-      currentTenant,
+      stackTenant,
       selectedFamily.code,
       `${selectedFamily.name} Policy`,
       activeFramework,
       cryptoModules
     );
-  }, [currentTenant, selectedFamily, activeFramework, recompileCount, cryptoModules]);
+  }, [stackTenant, selectedFamily, activeFramework, recompileCount, cryptoModules]);
 
   const filteredFamilies = useMemo(() => {
     if (!searchQuery.trim()) return activeFamilies;
@@ -265,12 +268,6 @@ const PolicyLibraryViewContent: React.FC = () => {
     setRecompileCount((c) => c + 1);
     setRecompileNotice(true);
     setTimeout(() => setRecompileNotice(false), 2500);
-  };
-
-  const handleInspectControl = (controlId: string) => {
-    setActiveFramework('NIST_800_53_REV5');
-    setActiveTab('matrix');
-    setSelectedControlId(controlId);
   };
 
   const formatTechName = (key: StackKey, val?: string) =>
@@ -566,15 +563,16 @@ const PolicyLibraryViewContent: React.FC = () => {
                 <span>Export .MD</span>
               </button>
 
-              {/* Inspect in Matrix */}
+              {/* SP 800-53 reference (read-only, never switches the program) */}
               <button
                 type="button"
-                onClick={() => handleInspectControl(selectedFamily.controlId)}
-                aria-label="Inspect in Control Matrix"
+                onClick={() => setReferenceControlId(selectedFamily.controlId)}
+                aria-haspopup="dialog"
+                aria-label={`View SP 800-53 ${selectedFamily.controlId} reference`}
                 className="px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                title="Inspect in Control Matrix"
+                title={`View SP 800-53 ${selectedFamily.controlId} reference (read-only)`}
               >
-                <ExternalLink className="w-3.5 h-3.5" />
+                <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>{selectedFamily.controlId}</span>
               </button>
             </div>
@@ -600,6 +598,7 @@ const PolicyLibraryViewContent: React.FC = () => {
           </div>
         </div>
       </div>
+      {referenceControlId && <PolicyControlReferenceDialog controlId={referenceControlId} onClose={() => setReferenceControlId(null)} />}
     </div>
   );
 };

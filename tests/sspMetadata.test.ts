@@ -9,7 +9,7 @@ import { STACK_PROFILE_MAX_BYTES, validateStackProfile } from '../src/data/stack
  * SSP metadata over HTTP (issue #84): GET/PUT /api/v1/ssp-metadata, one row per program (x-program-id), written by TENANT_OWNER / MSP_ADMIN,
  * read by every role. Covers the stale-write rule (expectedUpdatedAt required, 409 stale_write with only the stamp), the field validation (a 400
  * names the field, never the value), program isolation and the archive rule, the cascade of a program delete, the first-writer race, the
- * digest-only history event, the tenant stack profile on PATCH /tenants/:id, and that no console line carries the text.
+ * digest-only history event, the tenant stack profile on PATCH /tenants/:id, the program's own stack profile on PUT .../programs/:id (issue #230), and that no console line carries the text.
  * Runs against the in-memory store. Boots the server on port 8080: run it alone.
  */
 let passed = 0;
@@ -244,6 +244,46 @@ async function run() {
     scChanged.length === 1 && /^[0-9a-f]{64}$/.test(scField?.sha256 ?? '') && scField?.length === SC_MARK.length && !JSON.stringify(scEvents).includes(SC_MARK),
     'SM-SC3 the history event carries a sha256 and the length of serviceCommitments, never the text',
     scChanged.map((e) => e.newValue?.fields)
+  );
+
+  // SM-PS: the program's own stack profile (issue #230): PUT /tenants/:tenantId/programs/:id { stackProfile }, the tenant's profile stays the fallback
+  const P6 = await newProgram('SSP stack');
+  const custom = { ...goodProfile, identityProvider: 'CUSTOM', customLabels: { identityProvider: MARK } };
+  const putProfile = (token: string, tenant: string, program: string, stackProfile: unknown) => call('PUT', `/tenants/${tenant}/programs/${program}`, token, tenant, { stackProfile });
+  const ps1 = await putProfile(owner, T, P6, custom);
+  const ps1List = ((await call('GET', `/tenants/${T}/programs`, owner, T)).body?.programs ?? []) as Json[];
+  const ps1Tenant = ((await call('GET', '/tenants', owner)).body?.tenants ?? []).find((t: Json) => t.id === T);
+  assert(
+    ps1.status === 200 && ps1.body?.program?.stackProfile?.customLabels?.identityProvider === MARK &&
+      ps1List.find((p) => p.id === P6)?.stackProfile?.identityProvider === 'CUSTOM' && ps1List.find((p) => p.id === DEF)?.stackProfile === null && ps1Tenant?.stackProfile?.identityProvider === 'OKTA',
+    'SM-PS1 owner PUT { stackProfile } -> 200, the program lists it, the default program stays null and the tenant profile is untouched',
+    [ps1.status, ps1List.map((p) => p.stackProfile?.identityProvider ?? null)]
+  );
+  const ps2 = [
+    await putProfile(owner, T, P6, { ...goodProfile, identityProvider: 'NOPE' }),
+    await putProfile(owner, T, P6, { ...goodProfile, extra: 'x' }),
+    await putProfile(owner, T, P6, { ...goodProfile, odpParams: { AC: 5 } }),
+    await putProfile(viewer, T, P6, goodProfile),
+    await putProfile(assessor, T, P6, goodProfile),
+  ];
+  const ps2Still = (((await call('GET', `/tenants/${T}/programs`, owner, T)).body?.programs ?? []) as Json[]).find((p) => p.id === P6);
+  assert(
+    JSON.stringify(ps2.map((r) => r.status)) === JSON.stringify([400, 400, 400, 403, 403]) && ps2.slice(0, 3).every((r) => r.body?.code === 'invalid_stack_profile') && ps2Still?.stackProfile?.identityProvider === 'CUSTOM',
+    'SM-PS2 a bad enum, an unknown key, a numeric odp value -> 400 invalid_stack_profile; a viewer and an assessor -> 403; the stored profile is unchanged',
+    ps2.map((r) => [r.status, r.body?.code])
+  );
+  const ps3 = await putProfile(rival, R, P6, goodProfile);
+  assert(ps3.status === 404 && ps3.body?.code === 'program_not_found', 'SM-PS3 another tenant cannot set it -> 404 program_not_found', [ps3.status, ps3.body]);
+  const ps4 = await putProfile(owner, T, P2, goodProfile);
+  assert(ps4.status === 409 && ps4.body?.code === 'program_archived', 'SM-PS4 an archived program -> 409 program_archived', [ps4.status, ps4.body]);
+  const ps5a = await putProfile(owner, T, P6, goodProfile);
+  const ps5b = await putProfile(owner, T, P6, null);
+  const ps5Events = ((await call('GET', `/tenants/${T}/programs/${P6}/events`, owner, T)).body?.events ?? []) as Json[];
+  assert(
+    ps5a.status === 200 && ps5b.status === 200 && ps5b.body?.program?.stackProfile === null &&
+      ps5Events.filter((e) => e.kind === 'stack_profile_changed').length === 3 && !JSON.stringify(ps5Events).includes(MARK),
+    'SM-PS5 setting another profile and then null -> 200 each; the history has exactly three stack_profile_changed events (SM-PS1 included; digests only, no value)',
+    [ps5a.status, ps5b.status, ps5Events.map((e) => e.kind)]
   );
 
   console.log = origLog;

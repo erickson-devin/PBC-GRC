@@ -5,7 +5,7 @@ import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { OBJECTIVE_CHANGE_SOURCES, OBJECTIVE_STATUSES } from '../src/types/controlObjectives';
 import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES } from '../src/types/sspMetadata';
 import { STACK_PROFILE_ENUM_KEYS, STACK_PROFILE_MAX_BYTES } from '../src/data/stackProfileSchema';
-import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
+import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_PUSH_ERROR_CODES, VM_PUSH_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -47,6 +47,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_assets', tenantColumn: 'tenant_id' },
   { table: 'program_ssp_metadata', tenantColumn: 'tenant_id' },
   { table: 'user_program_defaults', tenantColumn: 'tenant_id' },
+  { table: 'software_items', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -98,6 +99,8 @@ const objectiveStatusList = OBJECTIVE_STATUSES.map((s) => `'${s}'`).join(', ');
 const objectiveChangeSourceList = OBJECTIVE_CHANGE_SOURCES.map((s) => `'${s}'`).join(', ');
 const vmSourceKindList =VM_SOURCE_KINDS.map((k) => `'${k}'`).join(', ');
 const vmScopeList = VM_TOKEN_SCOPES.map((s) => `'${s}'`).join(', ');
+const vmPushStatusList = VM_PUSH_STATUSES.map((s) => `'${s}'`).join(', ');
+const vmPushErrorCodeList = VM_PUSH_ERROR_CODES.map((s) => `'${s}'`).join(', ');
 const vmRunStatusList = VM_RUN_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
 const vmFindingStatusList = VM_FINDING_STATUSES.map((s) => `'${s}'`).join(', ');
@@ -284,6 +287,11 @@ export const TABLES_SQL = `
   ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_certificate_number VARCHAR(16);
   ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_module_name VARCHAR(255);
   ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_standard VARCHAR(8);
+  -- Optional hardware details (issue #229): free text, blank when unknown.
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS manufacturer VARCHAR(255) NOT NULL DEFAULT '';
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS model VARCHAR(255) NOT NULL DEFAULT '';
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS serial_number VARCHAR(128) NOT NULL DEFAULT '';
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS location VARCHAR(255) NOT NULL DEFAULT '';
   ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_status_check;
   ALTER TABLE enclave_assets ADD CONSTRAINT enclave_assets_fips_status_check CHECK (fips_validation_status IS NULL OR fips_validation_status IN (${fipsStatusList}));
   ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_standard_check;
@@ -423,6 +431,13 @@ export const TABLES_SQL = `
       CONSTRAINT vm_service_tokens_scopes_check CHECK (cardinality(scopes) > 0 AND scopes <@ ARRAY[${vmScopeList}]::text[])
   );
   CREATE INDEX IF NOT EXISTS idx_vm_service_tokens_tenant ON vm_service_tokens(tenant_id);
+  ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS last_push_at TIMESTAMPTZ;
+  ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS last_push_status VARCHAR(16);
+  ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS last_push_error_code VARCHAR(32);
+  ALTER TABLE vm_service_tokens DROP CONSTRAINT IF EXISTS vm_service_tokens_push_status_check;
+  ALTER TABLE vm_service_tokens ADD CONSTRAINT vm_service_tokens_push_status_check CHECK (last_push_status IN (${vmPushStatusList}));
+  ALTER TABLE vm_service_tokens DROP CONSTRAINT IF EXISTS vm_service_tokens_push_error_code_check;
+  ALTER TABLE vm_service_tokens ADD CONSTRAINT vm_service_tokens_push_error_code_check CHECK (last_push_error_code IN (${vmPushErrorCodeList}));
 
   CREATE TABLE IF NOT EXISTS vm_sources (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -471,6 +486,7 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vm_runs_status ON vm_runs (tenant_id, status);
   ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT;
   ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS config_result_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS token_id VARCHAR(64);
 
   -- Staleness is measured from the newest NORMALIZED run (issue #59), not from receipt. The column is added once and backfilled from
   -- vm_runs in the same step; a re-run finds the column and skips. The scheduler setting only lets this block LIST the tenants; each
@@ -733,6 +749,10 @@ export const TABLES_SQL = `
   ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_vm_target_check;
   ALTER TABLE programs ADD CONSTRAINT programs_vm_target_check CHECK (NOT vm_target OR (archived_at IS NULL AND framework_id IN ('CMMC_L1', 'CMMC_L2')));
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_vm_target ON programs (tenant_id) WHERE vm_target;
+  -- The program's own enclave stack profile (issue #230); NULL means the tenant's profile applies. Same keys and size as the tenant CHECK.
+  ALTER TABLE programs ADD COLUMN IF NOT EXISTS stack_profile JSONB;
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_stack_profile_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_stack_profile_check CHECK (stack_profile IS NULL OR (jsonb_typeof(stack_profile) = 'object' AND (stack_profile - ARRAY[${stackProfileKeyList}]) = '{}'::jsonb AND octet_length(stack_profile::text) <= ${STACK_PROFILE_MAX_BYTES}));
   -- One default program per tenant, and program names are unique per tenant ignoring case.
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default;
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name));
@@ -864,7 +884,7 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   ALTER TABLE program_events DROP CONSTRAINT IF EXISTS program_events_kind_check;
-  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed'));
+  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed', 'stack_profile_changed'));
   CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);
 
   -- Boundary asset membership (issue #26): the assets a program declares inside its boundary. Assets stay tenant-wide
@@ -977,6 +997,26 @@ export const TABLES_SQL = `
       CONSTRAINT pk_user_program_defaults PRIMARY KEY (tenant_id, user_id),
       CONSTRAINT fk_user_program_defaults_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
   );
+
+  -- Software inventory (CM.L2-3.4.1 / 3.4.8, issue #229): manual entries, tenant-wide like enclave_assets. Name, vendor and notes may be CUI: never logged.
+  CREATE TABLE IF NOT EXISTS software_items (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      version VARCHAR(128) NOT NULL DEFAULT '',
+      vendor VARCHAR(255) NOT NULL DEFAULT '',
+      approved BOOLEAN,
+      asset_id VARCHAR(64),
+      notes TEXT NOT NULL DEFAULT '',
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT software_items_name_check CHECK (length(btrim(name)) > 0),
+      CONSTRAINT fk_software_items_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE SET NULL (asset_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_software_items_tenant ON software_items (tenant_id, lower(name));
+  CREATE INDEX IF NOT EXISTS idx_software_items_asset ON software_items (tenant_id, asset_id);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

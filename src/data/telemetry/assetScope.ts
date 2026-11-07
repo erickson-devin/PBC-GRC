@@ -172,6 +172,10 @@ export function parseServerAssets(raw: unknown): EnclaveAsset[] {
       complianceScore: typeof a.complianceScore === 'number' ? a.complianceScore : null,
       notes: String(a.notes ?? ''),
       owner: String(a.owner ?? ''),
+      manufacturer: String(a.manufacturer ?? ''),
+      model: String(a.model ?? ''),
+      serialNumber: String(a.serialNumber ?? ''),
+      location: String(a.location ?? ''),
       fipsValidationStatus: isFipsStatus(a.fipsValidationStatus) ? a.fipsValidationStatus : null,
       fipsCertificateNumber: typeof a.fipsCertificateNumber === 'string' ? a.fipsCertificateNumber : null,
       fipsModuleName: typeof a.fipsModuleName === 'string' ? a.fipsModuleName : null,
@@ -189,7 +193,7 @@ export interface CsvParseResult {
 }
 
 /**
- * Parses an asset CSV (header: hostName, ipAddress, osProfile, cmmcAssetCategory, macAddress, notes[, owner]).
+ * Parses an asset CSV (header: hostName, ipAddress, osProfile, cmmcAssetCategory, macAddress, notes[, owner][, manufacturer, model, serialNumber, location]).
  * Columns are found by name, in any order. A row with a missing or unrecognised CMMC category is reported and skipped:
  * a scoping decision is never defaulted silently (an asset wrongly left in, or out of, scope changes the boundary).
  */
@@ -211,6 +215,11 @@ export function parseAssetsCsv(csv: string): CsvParseResult {
   const catIdx = find(/category|cmmc|scope/);
   const ownerIdx = find(/owner/);
   const notesIdx = find(/note|desc/);
+  // Hardware columns (#229): a key is sent only when its column exists, so older CSVs produce the same request bodies
+  const mfgIdx = find(/^(manufacturer|make)/);
+  const modelIdx = find(/^model/);
+  const serialIdx = find(/^serial/);
+  const locIdx = find(/^(location|site)/);
   if (catIdx < 0) {
     result.errors.push('The CSV has no cmmcAssetCategory column. Every asset needs an explicit CMMC category.');
     return result;
@@ -245,6 +254,10 @@ export function parseAssetsCsv(csv: string): CsvParseResult {
       owner: (ownerIdx >= 0 ? row[ownerIdx] : '') || '',
       notes: (notesIdx >= 0 ? row[notesIdx] : '') || 'Imported via CSV bulk onboarding',
       sourceOrigin: 'CSV_IMPORT',
+      ...(mfgIdx >= 0 ? { manufacturer: row[mfgIdx] || '' } : {}),
+      ...(modelIdx >= 0 ? { model: row[modelIdx] || '' } : {}),
+      ...(serialIdx >= 0 ? { serialNumber: row[serialIdx] || '' } : {}),
+      ...(locIdx >= 0 ? { location: row[locIdx] || '' } : {}),
     });
   }
   return result;
