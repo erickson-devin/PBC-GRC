@@ -7,6 +7,8 @@ import {
   VM_FINDING_STATUSES,
   VM_HUMAN_DECISIONS,
   VM_POAM_STATUSES,
+  VM_PUSH_ERROR_CODES,
+  VM_PUSH_STATUSES,
   VM_RUN_STATUSES,
   VM_SEVERITIES,
   VM_SOURCE_KINDS,
@@ -100,6 +102,18 @@ assert(tokens.includes('CONSTRAINT unq_vm_service_token_hash UNIQUE (token_hash)
 assert(tokens.includes('token_prefix VARCHAR(16)'), 'a non-secret display prefix is stored');
 assert(tokens.includes('scopes TEXT[] NOT NULL') && tokens.includes("'vm:ingest'"), 'scopes are required and limited to vm:ingest');
 assert(tokens.includes('expires_at TIMESTAMPTZ NOT NULL') && tokens.includes('last_used_at TIMESTAMPTZ') && tokens.includes('revoked_at TIMESTAMPTZ'), 'expiry (required), last-used and revocation columns exist');
+for (const col of ['last_push_at TIMESTAMPTZ', 'last_push_status VARCHAR(16)', 'last_push_error_code VARCHAR(32)']) {
+  const stmt = `ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS ${col}`;
+  assert(TABLES_SQL.indexOf(stmt) > at('vm_service_tokens'), `the push outcome column is added idempotently: ${col}`);
+}
+for (const name of ['vm_service_tokens_push_status_check', 'vm_service_tokens_push_error_code_check']) {
+  const drop = TABLES_SQL.indexOf(`DROP CONSTRAINT IF EXISTS ${name}`);
+  assert(drop > 0 && TABLES_SQL.indexOf(`ADD CONSTRAINT ${name}`) > drop, `${name} is dropped then re-added`);
+}
+assert(same(parseEnum(TABLES_SQL, 'vm_service_tokens_push_status_check'), VM_PUSH_STATUSES), 'push status list equals VM_PUSH_STATUSES');
+assert(same(parseEnum(TABLES_SQL, 'vm_service_tokens_push_error_code_check'), VM_PUSH_ERROR_CODES), 'push error code list equals VM_PUSH_ERROR_CODES');
+assert(same(VM_PUSH_ERROR_CODES, ['validation', 'kind_mismatch', 'too_large', 'media_type', 'insecure', 'storage']), 'the push error codes are the fixed set');
+assert(!/last_push_(message|error)\b(?!_code)/.test(TABLES_SQL), 'no push message is ever stored (a validation message can echo payload content)');
 
 console.log('\n--- vm_sources ---');
 const sources = block('vm_sources');
@@ -119,6 +133,7 @@ assert(same(parseEnum(runs, 'vm_runs_status_check'), VM_RUN_STATUSES), 'run stat
 assert(runs.includes('raw_sha256 VARCHAR(64) NOT NULL') && runs.includes('raw_path TEXT NOT NULL'), 'raw path and hash are required');
 assert(runs.includes('CONSTRAINT unq_vm_runs_raw_sha256 UNIQUE (tenant_id, raw_sha256)'), 'a payload is accepted once per tenant');
 assert(runs.includes('FOREIGN KEY (tenant_id, source_id) REFERENCES vm_sources (tenant_id, id)'), 'run -> source key is composite');
+assert(TABLES_SQL.indexOf('ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS token_id VARCHAR(64)') > at('vm_runs'), 'the pushing token id is added to vm_runs idempotently (no foreign key: tokens are deleted by cleanup scripts)');
 
 console.log('\n--- vm_findings ---');
 const findings = block('vm_findings');

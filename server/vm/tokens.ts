@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode, pool } from '../db';
-import type { VmServiceToken, VmTokenScope } from '../../src/types/vm';
+import type { VmPushErrorCode, VmPushStatus, VmServiceToken, VmTokenScope } from '../../src/types/vm';
 
 /**
  * Vulnerability-management service tokens: the machine credential a scanner exporter presents to push results.
@@ -72,7 +72,7 @@ export function __expireVmTokenForTests(id: string): void {
 
 // ------------------------------------------------------------------------------------------------ PostgreSQL helpers
 
-const RECORD_COLUMNS = 'id, tenant_id, name, token_prefix, scopes, created_by, created_by_user_id, created_at, expires_at, last_used_at, revoked_at';
+const RECORD_COLUMNS = 'id, tenant_id, name, token_prefix, scopes, created_by, created_by_user_id, created_at, expires_at, last_used_at, last_push_at, last_push_status, last_push_error_code, revoked_at';
 
 function rowToRecord(row: pg.QueryResultRow): VmServiceToken {
   const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
@@ -87,6 +87,9 @@ function rowToRecord(row: pg.QueryResultRow): VmServiceToken {
     createdAt: iso(row.created_at) as string,
     expiresAt: iso(row.expires_at) as string,
     lastUsedAt: iso(row.last_used_at),
+    lastPushAt: iso(row.last_push_at),
+    lastPushStatus: (row.last_push_status as VmPushStatus | null) ?? null,
+    lastPushErrorCode: (row.last_push_error_code as VmPushErrorCode | null) ?? null,
     revokedAt: iso(row.revoked_at),
   };
 }
@@ -141,7 +144,8 @@ export async function createVmToken(tenantId: string, input: NewVmToken): Promis
       id: `vmt_${crypto.randomBytes(8).toString('hex')}`,
       tenantId, name: input.name, tokenPrefix, scopes: [...input.scopes],
       createdBy: input.createdBy, createdByUserId: input.createdByUserId,
-      createdAt: new Date().toISOString(), expiresAt, lastUsedAt: null, revokedAt: null, tokenHash,
+      createdAt: new Date().toISOString(), expiresAt, lastUsedAt: null,
+      lastPushAt: null, lastPushStatus: null, lastPushErrorCode: null, revokedAt: null, tokenHash,
     };
     memoryTokens.set(record.id, record);
     return { token, record: toRecord(record) };
@@ -195,6 +199,24 @@ export async function revokeVmToken(tenantId: string, id: string): Promise<VmSer
     if (res.rows.length === 0) throw new VmTokenError('not_found', 'Service token not found');
     return rowToRecord(res.rows[0]);
   });
+}
+
+/** One UPDATE per push outcome: code null => status 'ok'. Callers never let it fail a request (see notePush in routes/vmIngest.ts). */
+export async function recordVmTokenPush(tenantId: string, tokenId: string, code: VmPushErrorCode | null): Promise<void> {
+  if (isMemory()) {
+    const m = memoryTokens.get(tokenId);
+    if (m && m.tenantId === tenantId) {
+      m.lastPushAt = new Date().toISOString();
+      m.lastPushStatus = code ? 'error' : 'ok';
+      m.lastPushErrorCode = code;
+    }
+    return;
+  }
+  await inTenantTx(tenantId, (c) =>
+    c.query('UPDATE vm_service_tokens SET last_push_at = NOW(), last_push_status = $3, last_push_error_code = $4 WHERE id = $1 AND tenant_id = $2', [
+      tokenId, tenantId, code ? 'error' : 'ok', code,
+    ])
+  );
 }
 
 // ------------------------------------------------------------------------------------------------ authentication (token holder)

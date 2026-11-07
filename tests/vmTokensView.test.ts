@@ -31,7 +31,7 @@ const occurrences = (text: string, needle: string): number => text.split(needle)
 const now = Date.parse('2026-11-01T00:00:00Z');
 const tok = (over: Partial<VmServiceToken>): VmServiceToken => ({
   id: 't1', tenantId: 'ten', name: 'Exporter', tokenPrefix: 'pbcvm_abc123', scopes: ['vm:ingest'], createdBy: 'Ann (ann@x)', createdByUserId: null,
-  createdAt: '2026-10-01T00:00:00Z', expiresAt: '2027-01-01T00:00:00Z', lastUsedAt: null, revokedAt: null, ...over,
+  createdAt: '2026-10-01T00:00:00Z', expiresAt: '2027-01-01T00:00:00Z', lastUsedAt: null, lastPushAt: null, lastPushStatus: null, lastPushErrorCode: null, revokedAt: null, ...over,
 });
 
 function main() {

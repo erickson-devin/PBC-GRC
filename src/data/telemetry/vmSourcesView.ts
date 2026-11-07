@@ -1,4 +1,4 @@
-import type { VmRun, VmSource } from '../../types/vm';
+import type { VmPushErrorCode, VmRun, VmServiceToken, VmSource } from '../../types/vm';
 
 /**
  * Connected scanners (field test 0.3.1): the pure status of one VM source for the ConnectedScannersPanel. Type imports only: no react,
@@ -72,4 +72,31 @@ export const CONNECTED_SCANNERS_COPY = {
   empty: 'No scanner has pushed yet. Set up the exporter below.',
   never: 'Never',
   retry: 'Retry',
+  tokensHeading: 'Pushes by service token',
+  tokensLoadError: 'The service tokens could not be loaded.',
 } as const;
+
+/** Fixed text for each reason the server refused a push (field test follow-up, #231). The server's own message is never shown. */
+export const PUSH_ERROR_TEXT: Record<VmPushErrorCode, string> = {
+  validation: 'Refused: the payload did not match the ingest contract. Run `pbc-vm-exporter check` and a dry run.',
+  kind_mismatch: 'Refused: this source label already belongs to a different scanner type. Use a new PBC_SOURCE_LABEL.',
+  too_large: 'Refused: the payload was larger than the server allows. Lower EXPORT_MAX_BYTES on the exporter.',
+  media_type: 'Refused: the request was not uncompressed JSON. Push with pbc-vm-exporter.',
+  insecure: 'Refused: the token was sent over plain HTTP. Push to the HTTPS address.',
+  storage: 'The server could not store the push. Check the server log and storage, then push again.',
+};
+export const PUSH_UNKNOWN_TEXT = 'Refused.';
+
+export interface PushSummary {
+  state: 'never' | 'ok' | 'refused';
+  at: string | null;
+  text: string;
+}
+
+/** The last push outcome of one service token: never pushed, accepted, or refused with a fixed reason. */
+export function pushSummary(t: Pick<VmServiceToken, 'lastPushAt' | 'lastPushStatus' | 'lastPushErrorCode'>): PushSummary {
+  if (!t.lastPushAt) return { state: 'never', at: null, text: 'No push yet' };
+  if (t.lastPushStatus === 'ok') return { state: 'ok', at: t.lastPushAt, text: 'Accepted' };
+  const known = t.lastPushErrorCode ? PUSH_ERROR_TEXT[t.lastPushErrorCode] : undefined;
+  return { state: 'refused', at: t.lastPushAt, text: known ?? PUSH_UNKNOWN_TEXT };
+}

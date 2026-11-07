@@ -99,6 +99,10 @@ install -d -m 0750 -o root -g pbc-vm-exporter /etc/pbc-vm-exporter
 install -m 0600 -o pbc-vm-exporter -g pbc-vm-exporter /dev/null /etc/pbc-vm-exporter/env
 ```
 
+Or create the file interactively: `sudo -u pbc-vm-exporter .venv/bin/pbc-vm-exporter init --env-file /etc/pbc-vm-exporter/env`
+(the folder must be writable by that account, otherwise run it as root and then `chown` the file to `pbc-vm-exporter`;
+`init` never overwrites an existing file, so skip the `install ... /dev/null` line above in that case).
+
 Contents of `/etc/pbc-vm-exporter/env` (`KEY=value` lines; a comment goes on its own line, never after a value; quotes
 around a value are optional and one matching pair is stripped):
 
@@ -139,6 +143,8 @@ Rules that matter:
 
 ```bash
 cd /opt/pbc-vm-exporter
+# 0. (optional) create the env file by answering prompts instead of editing it; it never overwrites a file
+#    sudo -u pbc-vm-exporter .venv/bin/pbc-vm-exporter init --env-file /etc/pbc-vm-exporter/env
 # 1. offline check of the install (no network, no credentials needed)
 .venv/bin/pbc-vm-exporter --version
 .venv/bin/python -m pbc_vm_exporter --dry-run --sample

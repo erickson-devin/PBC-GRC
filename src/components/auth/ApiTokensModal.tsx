@@ -96,7 +96,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
           )}
 
           {/* Connected scanners (read-only; any member of a server-backed organization) */}
-          {serverBacked && <ConnectedScannersPanel key={`scanners-${currentTenant.id}`} tenantId={currentTenant.id} />}
+          {serverBacked && <ConnectedScannersPanel key={`scanners-${currentTenant.id}`} tenantId={currentTenant.id} canManageTokens={canEdit} />}
 
           {/* Exporter setup: the env file and commands. The token is never part of this text. Hidden while the new-token reveal shows its own copy. */}
           {serverBacked && canEdit && !revealing && <ExporterSetupPanel />}

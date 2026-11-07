@@ -5,7 +5,7 @@ import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { OBJECTIVE_CHANGE_SOURCES, OBJECTIVE_STATUSES } from '../src/types/controlObjectives';
 import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES } from '../src/types/sspMetadata';
 import { STACK_PROFILE_ENUM_KEYS, STACK_PROFILE_MAX_BYTES } from '../src/data/stackProfileSchema';
-import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
+import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_PUSH_ERROR_CODES, VM_PUSH_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -98,6 +98,8 @@ const objectiveStatusList = OBJECTIVE_STATUSES.map((s) => `'${s}'`).join(', ');
 const objectiveChangeSourceList = OBJECTIVE_CHANGE_SOURCES.map((s) => `'${s}'`).join(', ');
 const vmSourceKindList =VM_SOURCE_KINDS.map((k) => `'${k}'`).join(', ');
 const vmScopeList = VM_TOKEN_SCOPES.map((s) => `'${s}'`).join(', ');
+const vmPushStatusList = VM_PUSH_STATUSES.map((s) => `'${s}'`).join(', ');
+const vmPushErrorCodeList = VM_PUSH_ERROR_CODES.map((s) => `'${s}'`).join(', ');
 const vmRunStatusList = VM_RUN_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
 const vmFindingStatusList = VM_FINDING_STATUSES.map((s) => `'${s}'`).join(', ');
@@ -423,6 +425,13 @@ export const TABLES_SQL = `
       CONSTRAINT vm_service_tokens_scopes_check CHECK (cardinality(scopes) > 0 AND scopes <@ ARRAY[${vmScopeList}]::text[])
   );
   CREATE INDEX IF NOT EXISTS idx_vm_service_tokens_tenant ON vm_service_tokens(tenant_id);
+  ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS last_push_at TIMESTAMPTZ;
+  ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS last_push_status VARCHAR(16);
+  ALTER TABLE vm_service_tokens ADD COLUMN IF NOT EXISTS last_push_error_code VARCHAR(32);
+  ALTER TABLE vm_service_tokens DROP CONSTRAINT IF EXISTS vm_service_tokens_push_status_check;
+  ALTER TABLE vm_service_tokens ADD CONSTRAINT vm_service_tokens_push_status_check CHECK (last_push_status IN (${vmPushStatusList}));
+  ALTER TABLE vm_service_tokens DROP CONSTRAINT IF EXISTS vm_service_tokens_push_error_code_check;
+  ALTER TABLE vm_service_tokens ADD CONSTRAINT vm_service_tokens_push_error_code_check CHECK (last_push_error_code IN (${vmPushErrorCodeList}));
 
   CREATE TABLE IF NOT EXISTS vm_sources (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -471,6 +480,7 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_vm_runs_status ON vm_runs (tenant_id, status);
   ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS warning TEXT;
   ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS config_result_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS token_id VARCHAR(64);
 
   -- Staleness is measured from the newest NORMALIZED run (issue #59), not from receipt. The column is added once and backfilled from
   -- vm_runs in the same step; a re-run finds the column and skips. The scheduler setting only lets this block LIST the tenants; each

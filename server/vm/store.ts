@@ -69,6 +69,7 @@ function rowToRun(r: pg.QueryResultRow): VmRun {
     id: r.id,
     tenantId: r.tenant_id,
     sourceId: r.source_id,
+    tokenId: r.token_id ?? null,
     receivedAt: iso(r.received_at) as string,
     collectedAt: iso(r.collected_at),
     exporterName: r.exporter_name,
@@ -101,6 +102,8 @@ export interface ReceivedRunInput {
   rawPath: string;
   rawSha256: string;
   rawBytes: number;
+  /** The service token that pushed the run (ingest route); optional for other callers. */
+  tokenId?: string | null;
 }
 
 export interface RunPatch {
@@ -158,6 +161,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
       id: input.id,
       tenantId,
       sourceId: source.id,
+      tokenId: input.tokenId ?? null,
       receivedAt: now,
       collectedAt: iso(input.collectedAt),
       exporterName: input.exporterName,
@@ -196,8 +200,8 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
     try {
       const inserted = await client.query(
         `INSERT INTO vm_runs (id, tenant_id, source_id, collected_at, exporter_name, exporter_version, host_count, finding_count,
-                              config_result_count, raw_path, raw_sha256, raw_bytes, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'RECEIVED')
+                              config_result_count, raw_path, raw_sha256, raw_bytes, token_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'RECEIVED')
          RETURNING *`,
         [
           input.id,
@@ -212,6 +216,7 @@ export async function recordReceivedRun(tenantId: string, input: ReceivedRunInpu
           input.rawPath,
           input.rawSha256,
           input.rawBytes,
+          input.tokenId ?? null,
         ],
       );
       runRow = inserted.rows[0];

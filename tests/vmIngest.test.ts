@@ -175,6 +175,7 @@ async function run() {
   assert(first.status === 201 && VM_TOKEN_PATTERN.test(tokenA), 'with the header the owner creates a token (201, pbcvm_ + 43 characters)', first.body);
   assert(tokenARecord.name === 'ingest-main' && JSON.stringify(tokenARecord.scopes) === '["vm:ingest"]' && tokenARecord.tokenPrefix === tokenA.slice(0, 12) && tokenARecord.revokedAt === null && tokenARecord.lastUsedAt === null, 'name trimmed, default scope vm:ingest, display prefix, never used', tokenARecord);
   assert(tokenARecord.createdByUserId === 'u_vm_owner_a' && String(tokenARecord.createdBy).includes('u_vm_owner_a'), 'createdBy / createdByUserId identify the creator', tokenARecord);
+  assert(tokenARecord.lastPushAt === null && tokenARecord.lastPushStatus === null && tokenARecord.lastPushErrorCode === null, 'a new token has no push outcome yet (#231)', tokenARecord);
   assert(!JSON.stringify(tokenARecord).includes(tokenA) && !('tokenHash' in tokenARecord) && !('token_hash' in tokenARecord), 'the record carries neither the token nor a hash');
 
   app.set('trust proxy', false);
@@ -313,6 +314,10 @@ async function run() {
   assert(src.lastNormalizedAt === stat.receivedAt, 'the source lastNormalizedAt is the received time of its normalized run (#59)', { lastNormalizedAt: src.lastNormalizedAt, receivedAt: stat.receivedAt });
   const used = (await listTokens(ownerA, A)).find((t) => t.id === tokenARecord.id);
   assert(Boolean(used?.lastUsedAt), 'lastUsedAt is set after the first ingest', used);
+  const pushOf = async () => (await listTokens(ownerA, A)).find((t) => t.id === tokenARecord.id) as Json;
+  const pushAfterOk = await pushOf();
+  assert(pushAfterOk.lastPushStatus === 'ok' && pushAfterOk.lastPushErrorCode === null && Boolean(pushAfterOk.lastPushAt), 'after an accepted push: lastPushStatus ok, no error code, lastPushAt set (#231)', pushAfterOk);
+  assert(stat.tokenId === tokenARecord.id, 'the run records the token that pushed it (#231)', stat);
   assert((await call('GET', `/tenants/${A}/vm/runs?limit=1`, ownerA, A)).body?.runs.length === 1, '?limit=1 returns one run');
   assert((await call('GET', `/tenants/${A}/vm/runs?limit=0`, ownerA, A)).status === 400 && (await call('GET', `/tenants/${A}/vm/runs?limit=501`, ownerA, A)).status === 400, '?limit outside 1..500 -> 400');
   assert((await call('GET', `/tenants/${A}/vm/runs`, viewer, A)).status === 200 && (await call('GET', `/tenants/${A}/vm/sources`, viewer, A)).status === 200, 'a VIEWER can read runs and sources (200)');
@@ -344,6 +349,8 @@ async function run() {
   const mismatch = await ingest(tokenA, bytesOf({ label: 'wazuh-main', kind: 'NMAP', agents: ['010'] }));
   assert(mismatch.status === 409 && mismatch.body?.error === 'vm_source_kind_mismatch', 'the same label with another kind -> 409 vm_source_kind_mismatch', mismatch.body);
   assert(runFiles(A).length === filesPreMismatch, 'a kind mismatch leaves no file behind');
+  const pushMismatch = await pushOf();
+  assert(pushMismatch.lastPushStatus === 'error' && pushMismatch.lastPushErrorCode === 'kind_mismatch', 'a kind mismatch is recorded as error / kind_mismatch (#231)', pushMismatch);
   const tokenB = (await createToken(ownerB, B, { name: 'b-ingest' })).body?.token as string;
   const bRun = await ingest(tokenB, body1);
   assert(bRun.status === 202 && bRun.body?.sha256 === expectedSha && bRun.body?.run_id !== ok.body?.run_id, 'tenant B can ingest the same bytes (202, its own run)', bRun.body);
@@ -380,25 +387,38 @@ async function run() {
   const empty = await ingestRaw(tokenA, Buffer.alloc(0));
   assert(empty.status === 400 && empty.body?.error === '$: request body is required', 'an empty body -> 400 $: request body is required', empty.body);
   assert(runFiles(A).length === filesPre400, 'no 400 case leaves a file behind');
+  const pushValidation = await ingest(tokenA, Buffer.from(JSON.stringify(payloadOf({ extra: { extra: 1 } }))));
+  const pushAfter400 = await pushOf();
+  assert(pushValidation.status === 400 && pushAfter400.lastPushStatus === 'error' && pushAfter400.lastPushErrorCode === 'validation', 'a rejected payload is recorded as error / validation (#231)', pushAfter400);
+  const pushJson = JSON.stringify(await listTokens(ownerA, A));
+  assert(!pushJson.includes(tokenA) && !pushJson.includes(sha256Hex(tokenA)) && !/token_?hash/i.test(pushJson) && !pushJson.includes('unknown field'), 'the token list carries no secret, hash or validation message (#231)');
 
   console.log('\n--- Ingest: size, media type, storage ---');
   const big = Buffer.alloc(300_000, 0x20);
   const tooBig = await ingest(tokenA, big);
   assert(tooBig.status === 413 && tooBig.body?.error === 'payload_too_large', 'a 300 000 byte body (limit 262 144) -> 413 payload_too_large', tooBig.body);
+  assert((await pushOf()).lastPushErrorCode === 'too_large', 'an oversized body is recorded as too_large (#231)');
   const bigNoToken = await ingest(null, big);
   assert(bigNoToken.status === 401, 'the same body without a token -> 401 (the token is checked before the body is read)', bigNoToken.body);
   const plain = await ingestRaw(tokenA, bytesOf(), { 'Content-Type': 'text/plain' });
   assert(plain.status === 415, 'text/plain -> 415', plain.body);
+  assert((await pushOf()).lastPushErrorCode === 'media_type', 'a wrong content type is recorded as media_type (#231)');
   const noType = await ingestRaw(tokenA, bytesOf(), {});
   assert(noType.status === 415, 'no content type -> 415', noType.body);
+  const mediaReset = await ingest(tokenA, bytesOf({ label: 'media-reset', agents: ['m1'] }));
+  assert(mediaReset.status === 202 && (await pushOf()).lastPushStatus === 'ok', 'a valid push in between records ok again (#231)', mediaReset.body);
   const gz = await ingestRaw(tokenA, bytesOf({ label: 'gz-src' }), { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' });
   assert(gz.status === 415 && gz.body?.error === 'unsupported_content_encoding', 'Content-Encoding: gzip -> 415 unsupported_content_encoding', gz.body);
+  assert((await pushOf()).lastPushErrorCode === 'media_type', 'an unsupported content encoding is recorded as media_type (#231)');
   process.env.STORAGE_PROVIDER = 'gcs';
   const noStore = await ingest(tokenA, bytesOf({ label: 'gcs-src', agents: ['g1'] }));
   process.env.STORAGE_PROVIDER = 'local';
   assert(noStore.status === 503 && noStore.body?.error === 'vm_requires_local_storage', 'a non-local STORAGE_PROVIDER at runtime (gcs) -> 503 vm_requires_local_storage', noStore.body);
+  assert((await pushOf()).lastPushErrorCode === 'storage', 'a storage refusal is recorded as storage (#231)');
   const afterGcs = await ingest(tokenA, bytesOf({ label: 'gcs-src', agents: ['g1'] }));
   assert(afterGcs.status === 202, 'and local storage works again afterwards (202)', afterGcs.body);
+  const pushAfterGcs = await pushOf();
+  assert(pushAfterGcs.lastPushStatus === 'ok' && pushAfterGcs.lastPushErrorCode === null, 'and the next push records ok with no error code (#231)', pushAfterGcs);
 
   console.log('\n--- Cross-tenant reads ---');
   const bRuns = ((await call('GET', `/tenants/${B}/vm/runs`, ownerB, B)).body?.runs ?? []) as Json[];
@@ -663,6 +683,7 @@ async function run() {
   const jsonType = { 'Content-Type': 'application/json' };
   const plain403 = await ingestRaw(tokenA, tlsBytes, jsonType, false, true);
   assert(plain403.status === 403 && plain403.body?.code === 'vm_insecure_transport', 'a valid token without X-Forwarded-Proto -> 403 vm_insecure_transport', plain403.body);
+  assert((await pushOf()).lastPushErrorCode === 'insecure', 'a refused plain-HTTP push is recorded as insecure (#231)');
   const plain401 = await ingestRaw(null, tlsBytes, jsonType, false, true);
   assert(plain401.status === 401, 'without a token the answer is still 401, whatever the transport', plain401.body);
   const tls202 = await ingestRaw(tokenA, tlsBytes, jsonType);
@@ -703,6 +724,8 @@ async function run() {
   const whoInsecure = await whoamiRaw(whoamiToken.token, true);
   delete process.env.VM_ALLOW_INSECURE_TOKENS;
   assert(whoInsecure.status === 200, 'VM_ALLOW_INSECURE_TOKENS=true allows whoami over plain HTTP (200)', whoInsecure.body);
+  const whoamiPush = (await listTokens(ownerA, A)).find((t) => t.id === whoamiToken.record.id) as Json;
+  assert(whoamiPush.lastPushAt === null && whoamiPush.lastPushStatus === null, 'whoami is not a push: no push outcome recorded (#231)', whoamiPush);
 
   console.log('\n--- Shutdown: draining the worker (#147) ---');
   const storedRun = async (label: string, agent: string): Promise<string> => {
@@ -718,6 +741,7 @@ async function run() {
   assert(activeVmRuns().some((r) => r.id === drainA && r.tenantId === A), 'an enqueued run is listed as active with its tenant (V147-1)', activeVmRuns());
   await __drainVmWorkerForTests();
   assert(!activeVmRuns().some((r) => r.id === drainA) && (await runById(drainA)).status === 'NORMALIZED', 'after the drain it is no longer active and is NORMALIZED');
+  assert((await runById(drainA)).tokenId === null, 'a run recorded without a token has tokenId null (#231)');
 
   const drainB = await storedRun('drain-src', 'd2');
   enqueueVmRun(A, drainB);
