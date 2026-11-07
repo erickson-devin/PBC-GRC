@@ -20,6 +20,7 @@ import {
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { MarkdownPreview } from '../components/common/MarkdownPreview';
 import { useTenant } from '../context/TenantContext';
+import { withEffectiveStack } from '../data/effectiveStackProfile';
 import { PolicyControlReferenceDialog } from '../components/matrix/PolicyControlReferenceDialog';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../hooks/useFipsModules';
@@ -181,7 +182,7 @@ const CMMC_L1_FAMILIES = ['AC', 'IA', 'MP', 'PE', 'SC', 'SI'];
 const CMMC_L2_FAMILIES = ['AC', 'AT', 'AU', 'CA', 'CM', 'IA', 'IR', 'MA', 'MP', 'PE', 'PS', 'RA', 'SC', 'SI'];
 
 const PolicyLibraryViewContent: React.FC = () => {
-  const { currentTenant, setIsStackSurveyModalOpen, canEdit, activeFramework } = useTenant();
+  const { currentTenant, setIsStackSurveyModalOpen, canEdit, activeFramework, activeProgram } = useTenant();
   const cryptoModules = useFipsModules();
   const [referenceControlId, setReferenceControlId] = useState<string | null>(null);
 
@@ -211,7 +212,9 @@ const PolicyLibraryViewContent: React.FC = () => {
   const [recompileCount, setRecompileCount] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted');
 
-  const stack = currentTenant.stackProfile;
+  // #230: the active program's stack profile, else the organization's
+  const stackTenant = useMemo(() => withEffectiveStack(currentTenant, activeProgram), [currentTenant, activeProgram]);
+  const stack = stackTenant.stackProfile;
 
   const selectedFamily = useMemo(() => {
     return (
@@ -222,13 +225,13 @@ const PolicyLibraryViewContent: React.FC = () => {
   // Generate living policy markdown on the fly
   const markdown = useMemo(() => {
     return generateFamilyPolicyDocument(
-      currentTenant,
+      stackTenant,
       selectedFamily.code,
       `${selectedFamily.name} Policy`,
       activeFramework,
       cryptoModules
     );
-  }, [currentTenant, selectedFamily, activeFramework, recompileCount, cryptoModules]);
+  }, [stackTenant, selectedFamily, activeFramework, recompileCount, cryptoModules]);
 
   const filteredFamilies = useMemo(() => {
     if (!searchQuery.trim()) return activeFamilies;

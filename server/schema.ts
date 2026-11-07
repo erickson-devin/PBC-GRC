@@ -733,6 +733,10 @@ export const TABLES_SQL = `
   ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_vm_target_check;
   ALTER TABLE programs ADD CONSTRAINT programs_vm_target_check CHECK (NOT vm_target OR (archived_at IS NULL AND framework_id IN ('CMMC_L1', 'CMMC_L2')));
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_vm_target ON programs (tenant_id) WHERE vm_target;
+  -- The program's own enclave stack profile (issue #230); NULL means the tenant's profile applies. Same keys and size as the tenant CHECK.
+  ALTER TABLE programs ADD COLUMN IF NOT EXISTS stack_profile JSONB;
+  ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_stack_profile_check;
+  ALTER TABLE programs ADD CONSTRAINT programs_stack_profile_check CHECK (stack_profile IS NULL OR (jsonb_typeof(stack_profile) = 'object' AND (stack_profile - ARRAY[${stackProfileKeyList}]) = '{}'::jsonb AND octet_length(stack_profile::text) <= ${STACK_PROFILE_MAX_BYTES}));
   -- One default program per tenant, and program names are unique per tenant ignoring case.
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default;
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name));
@@ -864,7 +868,7 @@ export const TABLES_SQL = `
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   ALTER TABLE program_events DROP CONSTRAINT IF EXISTS program_events_kind_check;
-  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed'));
+  ALTER TABLE program_events ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed', 'stack_profile_changed'));
   CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);
 
   -- Boundary asset membership (issue #26): the assets a program declares inside its boundary. Assets stay tenant-wide

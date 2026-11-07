@@ -347,6 +347,11 @@ The release that moves SSP details to the server (issue #84) adds the table `pro
 the server itself. Each browser sends the SSP details, boundary text and stack profile it holds once, the first time an owner or
 MSP administrator opens the organization after the upgrade.
 
+The stack profile of a program (issue #230) is the column `programs.stack_profile` (JSONB, null by default), added the same way with
+`programs_stack_profile_check` (the same keys and 16 384-byte limit as the tenant's). Nothing is copied from the tenant at boot (row
+security hides the rows from the boot session): a program with no profile of its own falls back to the tenant's, and the program's
+own is set from the application.
+
 Once a table has no row without a program, startup also finalizes its `program_id` column (the NOT VALID check is validated,
 the column becomes NOT NULL and the check is dropped). This never blocks the boot: if a table still has rows that no tenant has
 adopted yet, startup logs a warning such as `evidence_metadata: rows without a program remain; program_id stays nullable until

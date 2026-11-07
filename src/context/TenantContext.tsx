@@ -1704,7 +1704,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [updateTenant]);
 
   const updateStackProfile = useCallback((profile: EnclaveStackProfile) => {
-    void updateTenant(currentTenant.id, { stackProfile: profile }).catch(() => undefined); // already logged and re-synced by updateTenant
+    if (activeProgram) {
+      // #230: the profile belongs to the active program; the tenant's stays the fallback of programs without one
+      void updateProgram(activeProgram.id, { stackProfile: profile }).catch((e: unknown) => {
+        console.warn('[Stack profile] Could not save the stack profile to the program:', errorMessage(e));
+      });
+    } else {
+      void updateTenant(currentTenant.id, { stackProfile: profile }).catch(() => undefined); // already logged and re-synced by updateTenant
+    }
 
     // Cascade tailored stack narratives to the objectives of the active program's framework, filling only the empty ones: a narrative
     // somebody wrote is never overwritten. (SP 800-53 programs have their own objective ids and no stack templates: nothing to cascade.)
@@ -1723,7 +1730,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateLiveObjectivesBulk(items).catch((e: unknown) => {
       console.warn('[Stack cascade] Could not save the generated objective narratives:', errorMessage(e));
     });
-  }, [currentTenant.id, currentTenant.serverBacked, canEdit, activeFramework, activeBaselineTier, activeOverlayFilters, liveObjectives, liveScopeKey, scopeNow, updateLiveObjectivesBulk, updateTenant]);
+  }, [currentTenant.id, currentTenant.serverBacked, canEdit, activeFramework, activeBaselineTier, activeOverlayFilters, liveObjectives, liveScopeKey, scopeNow, updateLiveObjectivesBulk, updateTenant, activeProgram, updateProgram]);
 
   const suspendTenant = useCallback((tenantId: string, suspend?: boolean) => {
     setLiveTenants(prev =>

@@ -604,7 +604,7 @@ export const ApiClient = {
     return program;
   },
 
-  /** PUT /api/v1/tenants/:id/programs/:programId: name, description and boundary summary. */
+  /** PUT /api/v1/tenants/:id/programs/:programId: name, description, boundary summary, overlays and enclave stack profile (null clears it). */
   async updateProgram(tenantId: string, programId: string, updates: ProgramUpdate): Promise<Program> {
     const body: Record<string, unknown> = {};
     if (updates.name !== undefined) body.name = updates.name;
@@ -612,6 +612,7 @@ export const ApiClient = {
     if (updates.boundarySummary !== undefined) body.systemBoundarySummary = updates.boundarySummary;
     if (updates.scoping !== undefined) body.scoping = updates.scoping;
     if (updates.expectedScoping !== undefined) body.expectedScoping = updates.expectedScoping;
+    if (updates.stackProfile !== undefined) body.stackProfile = updates.stackProfile;
     const program = parseProgramResponse(await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId, body }));
     if (!program) throw new ApiError(502, 'The server sent back a program this version of the app does not understand.');
     return program;

@@ -16,6 +16,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { effectiveStackProfile } from '../../data/effectiveStackProfile';
 import { EnclaveStackProfile } from '../../types/tenant';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import {
@@ -132,16 +133,16 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
   const [successNotice, setSuccessNotice] = useState(false);
 
   // The draft starts from the saved profile only: a step nobody chose stays unset, so nothing is shown or saved as if chosen
-  const [stack, setStack] = useState<StackDraft>(() => draftFromSaved(currentTenant.stackProfile));
+  const [stack, setStack] = useState<StackDraft>(() => draftFromSaved(effectiveStackProfile(currentTenant, activeProgram)));
 
   // Start from the saved profile every time the wizard opens or the tenant changes (even when there is no profile):
   // cancelled edits and another tenant's choices never carry over
   useEffect(() => {
     if (!isOpen) return;
-    setStack(draftFromSaved(currentTenant.stackProfile));
+    setStack(draftFromSaved(effectiveStackProfile(currentTenant, activeProgram)));
     setActiveTab('identity');
     setSuccessNotice(false);
-  }, [isOpen, currentTenant.id]);
+  }, [isOpen, currentTenant.id, activeProgram?.id]);
 
   if (!isOpen) return null;
 
@@ -183,9 +184,13 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
   } else if (!complete) {
     saveNote = `Choose a technology on each step to save (${chosen} of 5 chosen).`;
   } else if (isNist80053) {
-    saveNote = `Saving updates the technology stack for ${tenantName} (all programs). ${programName} uses NIST SP 800-53, so no objective narratives are generated.`;
+    saveNote = activeProgram
+      ? `Saved for ${programName}. Other programs keep their own profile or the organization default. ${programName} uses NIST SP 800-53, so no objective narratives are generated.`
+      : `Saving updates the technology stack for ${tenantName} (all programs). ${programName} uses NIST SP 800-53, so no objective narratives are generated.`;
   } else {
-    saveNote = `Saving updates the technology stack for ${tenantName} (all programs) and writes stack-based text into the empty objective narratives of ${programName} (${frameworkLabel(activeFramework)}). Narratives someone already wrote are not changed.`;
+    saveNote = activeProgram
+      ? `Saved for ${programName}. Other programs keep their own profile or the organization default. Stack-based text is written into the empty objective narratives of ${programName} (${frameworkLabel(activeFramework)}). Narratives someone already wrote are not changed.`
+      : `Saving updates the technology stack for ${tenantName} (all programs) and writes stack-based text into the empty objective narratives of ${programName} (${frameworkLabel(activeFramework)}). Narratives someone already wrote are not changed.`;
   }
 
   const handleSaveAndCascade = async () => {
@@ -198,7 +203,7 @@ export const EnclaveStackSurveyModal: React.FC<EnclaveStackSurveyModalProps> = (
 
     setIsSaving(true);
     try {
-      // Update TenantContext: saves the profile for the tenant and fills the empty narratives of the active program
+      // Update TenantContext: saves the profile for the active program (the tenant without one) and fills the empty narratives of the active program
       updateStackProfile(profile);
 
       if (onSaved) {

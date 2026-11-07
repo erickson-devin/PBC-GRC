@@ -2,6 +2,8 @@ import { PROGRAM_FRAMEWORKS } from './tenantFrameworkPolicy';
 import type { ComplianceFramework } from '../types/framework';
 import type { Program, ProgramBaseline, ProgramInput, ProgramMetrics, ProgramScoping } from '../types/program';
 import { normalizeProgramScoping } from './programScope';
+import { validateStackProfile } from './stackProfileSchema';
+import type { EnclaveStackProfile } from '../types/tenant';
 
 /**
  * Programs as the client reads them: the server's list and metrics bodies, the active-program choice, the scope keys that keep one
@@ -18,6 +20,13 @@ const BASELINES: readonly ProgramBaseline[] = ['LOW', 'MODERATE', 'HIGH'];
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = (v: unknown): string => (typeof v === 'string' ? v : '');
 const count = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+
+/** A stack profile that passes the server's own validation, else null: never trusted unchecked. */
+function validProfile(v: unknown): EnclaveStackProfile | null {
+  if (v === null || v === undefined) return null;
+  const checked = validateStackProfile(v);
+  return checked.ok ? checked.value : null;
+}
 
 /** The canonical framework id, or null when it is not one a program may carry. */
 export function normalizeProgramFramework(value: unknown): ComplianceFramework | null {
@@ -60,6 +69,7 @@ function parseProgram(raw: unknown): Program | null {
     vmTarget: (raw.vmTarget ?? raw.vm_target) === true,
     isDefault: (raw.isDefault ?? raw.is_default) === true,
     isMyDefault: (raw.isMyDefault ?? raw.is_my_default) === true,
+    stackProfile: validProfile(raw.stackProfile ?? raw.stack_profile),
     archived: raw.archived === true || (typeof archivedAt === 'string' && archivedAt !== ''),
   };
   const createdAt = raw.createdAt ?? raw.created_at;

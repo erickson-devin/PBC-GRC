@@ -1377,6 +1377,30 @@ async function verifyProgramIsolation() {
     const smCascade = await queryWithProgram(smRaceScope, 'SELECT 1 FROM program_ssp_metadata WHERE program_id = $1', [smRaceProgram.id]);
     check(smCascade.rows.length === 0, '8l. program_ssp_metadata: deleting a program removes its row through the cascade', 'saw ' + smCascade.rows.length);
 
+    // 8n. programs.stack_profile (issue #230): rides the programs tenant policy; the CHECK pins the keys and the size like the tenant's
+    const spProfile = JSON.stringify({ identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC' });
+    const spSetX = await queryWithTenant(TENANT_X, 'UPDATE programs SET stack_profile = $3::jsonb WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA, spProfile]);
+    const spSeenY = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM programs WHERE id = $1 AND stack_profile IS NOT NULL', [programA]);
+    const spSetY = await queryWithTenant(TENANT_Y, 'UPDATE programs SET stack_profile = $3::jsonb WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA, spProfile]);
+    check((spSetX.rowCount ?? 0) === 1 && spSeenY.rows.length === 0 && (spSetY.rowCount ?? 0) === 0, "8n. programs.stack_profile: tenant X writes its program's profile; tenant Y neither sees it nor updates it", 'X ' + spSetX.rowCount + ', Y sees ' + spSeenY.rows.length + ' updates ' + spSetY.rowCount);
+    const spReadX = await queryWithTenant(TENANT_X, 'SELECT stack_profile FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA]);
+    check(spReadX.rows[0]?.stack_profile?.identityProvider === 'OKTA', '8n. programs.stack_profile: tenant X reads the profile back', JSON.stringify(spReadX.rows[0]?.stack_profile ?? null));
+    let spBad = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, 'UPDATE programs SET stack_profile = $3::jsonb WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA, '{"x":1}']);
+    } catch (err) {
+      spBad = String((err as { code?: string }).code) + ' ' + String((err as { constraint?: string }).constraint);
+    }
+    check(spBad === '23514 programs_stack_profile_check', '8n. programs: a stack profile with an unknown key is refused (23514, programs_stack_profile_check)', spBad);
+    // through the store: a changed profile records a digest-only stack_profile_changed event under program A's scope, invisible under B's
+    const { updateProgram: updateSpProgram } = await import('../server/programs');
+    await updateSpProgram(TENANT_X, programA, { stackProfile: { ...JSON.parse(spProfile), identityProvider: 'ENTRA_ID_GOV' } }, { actor: 'rls_verify_actor', userId: null });
+    const spEvA = await queryWithProgram(scopeA, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'stack_profile_changed'", [programA]);
+    const spEvB = await queryWithProgram(scopeB, "SELECT 1 FROM program_events WHERE program_id = $1 AND kind = 'stack_profile_changed'", [programA]);
+    check(spEvA.rows.length === 1 && spEvB.rows.length === 0, '8n. program_events: a stack_profile_changed event is visible under program A and not under program B', 'A ' + spEvA.rows.length + ', B ' + spEvB.rows.length);
+    await queryWithTenant(TENANT_X, 'UPDATE programs SET stack_profile = NULL WHERE tenant_id = $1 AND id = $2', [TENANT_X, programA]).catch(() => undefined);
+    await queryWithProgram(scopeA, "DELETE FROM program_events WHERE program_id = $1 AND kind = 'stack_profile_changed'", [programA]).catch(() => undefined);
+
     // 8m. per-user default program: tenant isolation of user_program_defaults (ids only, no program policy)
     await queryWithTenant(TENANT_X, 'INSERT INTO user_program_defaults (tenant_id, user_id, program_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_u1', programA]);
     const updSeenByX = await queryWithTenant(TENANT_X, 'SELECT 1 FROM user_program_defaults WHERE tenant_id = $1 AND user_id = $2', [TENANT_X, 'rls_verify_u1']);

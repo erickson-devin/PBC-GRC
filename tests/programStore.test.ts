@@ -378,6 +378,42 @@ async function main() {
   await archiveProgram('t-cf', cfArchived.id);
   assert((await codeOf(updateProgram('t-cf', cfArchived.id, { scoping: {}, expectedScoping: { noMobileDevices: true } }, who))) === 'program_archived', 'SC6: an archived program is program_archived, not scoping_conflict');
 
+  console.log('\n--- stack profile (issue #230) ---');
+  await mkTenant('t-sp', 'CMMC_L2', ['CMMC_L2']);
+  const spD = await createProgram('t-sp', { name: 'SP Default', frameworkId: 'CMMC_L2' }, 'u');
+  const spP = await createProgram('t-sp', { name: 'SP P', frameworkId: 'CMMC_L2' }, 'u');
+  const spFull = { identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC', odpParams: { A_1: '1', B_2: '2' } };
+  const spEv = async () => (await listProgramEvents({ tenantId: 't-sp', programId: spP.id })).filter((e) => e.kind === 'stack_profile_changed');
+  assert(spD.stackProfile === null && spP.stackProfile === null, 'SP1: a new program has no stack profile of its own (the tenant\'s applies)', [spD.stackProfile, spP.stackProfile]);
+  const sp2 = await updateProgram('t-sp', spP.id, { stackProfile: spFull }, who);
+  assert(sp2.stackProfile?.identityProvider === 'OKTA' && (await getProgram('t-sp', spP.id))?.stackProfile?.identityProvider === 'OKTA' && (await getProgram('t-sp', spD.id))?.stackProfile === null, 'SP2: updating one program sets its profile and leaves the other null', sp2.stackProfile);
+  const sp3 = await spEv();
+  const sp3Fields = (sp3[0]?.newValue as { fields?: Record<string, { sha256?: unknown; length?: unknown }> } | undefined)?.fields ?? {};
+  assert(
+    sp3.length === 1 && sp3[0].oldValue === null &&
+      JSON.stringify(Object.keys(sp3Fields).sort()) === JSON.stringify(['edrSolution', 'identityProvider', 'infrastructure', 'mdmSolution', 'odpParams', 'siemSolution']) &&
+      Object.values(sp3Fields).every((d) => typeof d.sha256 === 'string' && /^[0-9a-f]{64}$/.test(d.sha256) && typeof d.length === 'number') &&
+      !JSON.stringify(sp3).includes('OKTA'),
+    'SP3: one stack_profile_changed event with a digest per field and no value in it', sp3
+  );
+  await updateProgram('t-sp', spP.id, { stackProfile: { ...spFull, odpParams: { B_2: '2', A_1: '1' } } }, who);
+  assert((await spEv()).length === 1, 'SP4: the same profile with its parameters in another order records nothing');
+  for (const bad of [{ ...spFull, identityProvider: 'NOPE' }, [], 'x']) {
+    assert((await codeOf(updateProgram('t-sp', spP.id, { stackProfile: bad }, who))) === 'invalid_stack_profile', 'SP5: an invalid profile -> invalid_stack_profile', bad);
+  }
+  assert((await getProgram('t-sp', spP.id))?.stackProfile?.identityProvider === 'OKTA' && (await getProgram('t-sp', spP.id))?.stackProfile?.edrSolution === 'SENTINELONE' && (await spEv()).length === 1, 'SP5: nothing was written (profile unchanged, no new event)');
+  const sp6 = await updateProgram('t-sp', spP.id, { name: 'SP P renamed' }, who);
+  assert(sp6.stackProfile?.identityProvider === 'OKTA' && (await spEv()).length === 1, 'SP6: a rename without stackProfile keeps the profile and records nothing');
+  const sp7 = await updateProgram('t-sp', spP.id, { stackProfile: null }, who);
+  const sp7Ev = await spEv();
+  const sp7Fields = (sp7Ev[0]?.newValue as { fields?: Record<string, unknown> } | undefined)?.fields ?? {};
+  assert(sp7.stackProfile === null && sp7Ev.length === 2 && Object.keys(sp7Fields).length === 6 && Object.values(sp7Fields).every((d) => d === null), 'SP7: null clears the profile and records an event whose new fields are all null', sp7Ev[0]);
+  const spArchived = await createProgram('t-sp', { name: 'SP archived', frameworkId: 'CMMC_L2' }, 'u');
+  await archiveProgram('t-sp', spArchived.id);
+  assert((await codeOf(updateProgram('t-sp', spArchived.id, { stackProfile: spFull }, who))) === 'program_archived', 'SP8: an archived program takes no profile -> program_archived');
+  await mkTenant('t-sp2', 'CMMC_L2', ['CMMC_L2']);
+  assert((await codeOf(updateProgram('t-sp2', spP.id, { stackProfile: spFull }, who))) === 'program_not_found', 'SP9: another tenant cannot set it -> program_not_found');
+
   console.log('\n--- the VM target (issue #21) ---');
   await mkTenant('t-vm', 'CMMC_L2', ['CMMC_L2', 'NIST_800_53_REV5']);
   const dVm = await createProgram('t-vm', { name: 'VM Default', frameworkId: 'CMMC_L2' }, 'u');

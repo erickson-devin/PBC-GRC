@@ -11,7 +11,8 @@ import {
   type StackDraft,
 } from '../src/data/stackDraftView';
 import { STACK_PROFILE_ENUMS, STACK_PROFILE_ENUM_KEYS, validateStackProfile } from '../src/data/stackProfileSchema';
-import type { EnclaveStackProfile } from '../src/types/tenant';
+import type { EnclaveStackProfile, Tenant } from '../src/types/tenant';
+import { effectiveStackProfile, withEffectiveStack } from '../src/data/effectiveStackProfile';
 
 /** The Enclave Stack Survey draft: nothing is chosen for the user, a custom solution carries its own label. Pure, plus source checks. */
 let passed = 0;
@@ -92,6 +93,22 @@ assert(modal.includes('draftFromSaved(') && modal.includes('isDraftComplete(') &
 const inspect = read('src/components/matrix/InspectDocumentModal.tsx');
 assert(!inspect.includes("|| 'ENTRA_ID_COMMERCIAL'") && !inspect.includes("|| 'DEFENDER_FOR_ENDPOINT'"), 'the document inspector invents no stack');
 assert(inspect.includes('NO_STACK_PROFILE_RECORDED'), 'the document inspector says so when no stack is recorded');
+
+// #230: the program's stack profile, else the tenant's
+const okta = { identityProvider: 'OKTA', edrSolution: 'SENTINELONE', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'JAMF', siemSolution: 'ELASTIC' } as unknown as EnclaveStackProfile;
+const entra = { ...okta, identityProvider: 'ENTRA_ID_GOV' } as unknown as EnclaveStackProfile;
+const orgTenant = { stackProfile: okta } as Tenant;
+assert(effectiveStackProfile(orgTenant, null) === okta, 'E1 no program: the tenant profile');
+assert(effectiveStackProfile(orgTenant, { stackProfile: null }) === okta, 'E2 a program without one: the tenant profile');
+assert(effectiveStackProfile(orgTenant, { stackProfile: entra })?.identityProvider === 'ENTRA_ID_GOV', 'E3 the program profile wins');
+assert(effectiveStackProfile({} as Tenant, { stackProfile: null }) === undefined, 'E4 neither: undefined');
+assert(withEffectiveStack(orgTenant, null) === orgTenant, 'E5 the same object when nothing changes');
+const merged = withEffectiveStack(orgTenant, { stackProfile: entra });
+assert(merged.stackProfile?.identityProvider === 'ENTRA_ID_GOV' && orgTenant.stackProfile === okta && merged !== orgTenant, 'E6 a copy carries the program profile; the tenant is not mutated');
+const settingsSrc = read('src/components/settings/EnclaveSettings.tsx');
+const policyViewSrc = read('src/views/PolicyLibraryView.tsx');
+assert([policyViewSrc, settingsSrc, inspect].every(s => s.includes('withEffectiveStack(')) && modal.includes('effectiveStackProfile('), 'E7 the four consumers read the effective profile');
+assert(!policyViewSrc.includes('currentTenant.stackProfile') && !inspect.includes('currentTenant.stackProfile'), 'E7b the policy view and the document inspector never read the tenant profile directly');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

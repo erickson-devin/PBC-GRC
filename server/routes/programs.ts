@@ -46,6 +46,7 @@ const STATUS_BY_CODE: Record<ProgramErrorCode, number> = {
   program_not_empty: 409,
   invalid_scoping: 400,
   invalid_vm_target: 400,
+  invalid_stack_profile: 400,
   invalid_asset_ids: 400,
   unknown_assets: 400,
   program_is_vm_target: 409,
@@ -141,7 +142,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * PUT /api/v1/tenants/:tenantId/programs/:id
- * Body: any of { name, description, systemBoundarySummary, scoping, expectedScoping }. frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
+ * Body: any of { name, description, systemBoundarySummary, scoping, expectedScoping, stackProfile }. stackProfile is the program's own enclave stack profile (a validated object, or null to fall back to the tenant's; 400 invalid_stack_profile). frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
  * expectedScoping is the overlays the client last saw: when the stored ones differ the answer is 409 scoping_conflict and nothing is written.
  */
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
@@ -173,6 +174,7 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     }
     patch.expectedScoping = b.expectedScoping;
   }
+  if (b.stackProfile !== undefined) patch.stackProfile = b.stackProfile;
   const who = req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor';
   try {
     const program = await updateProgram(tenantId, idOf(req), patch, { actor: who, userId: req.user?.uid ?? null });

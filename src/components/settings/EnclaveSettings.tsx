@@ -21,6 +21,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { withEffectiveStack } from '../../data/effectiveStackProfile';
 import { useAssessment } from '../../context/AssessmentContext';
 import { PolicyControlReferenceDialog } from '../matrix/PolicyControlReferenceDialog';
 import { EnclaveStackProfile } from '../../types/tenant';
@@ -72,11 +73,13 @@ export const EnclaveSettings: React.FC = () => {
     }
   };
 
-  // What the tenant saved, nothing else: an unset choice reads "Not set" rather than an invented default
-  const stack: Partial<EnclaveStackProfile> = currentTenant.stackProfile || {};
+  // The active program's profile, else the organization's (#230); an unset choice reads "Not set" rather than an invented default
+  const stackTenant = React.useMemo(() => withEffectiveStack(currentTenant, activeProgram), [currentTenant, activeProgram]);
+  const stack: Partial<EnclaveStackProfile> = stackTenant.stackProfile || {};
+  const stackInherited = Boolean(activeProgram && activeProgram.stackProfile === null && currentTenant.stackProfile);
 
   const handleDownloadPolicy = (code: string, title: string) => {
-    const markdown = generateFamilyPolicyDocument(currentTenant, code, title, activeFramework, cryptoModules);
+    const markdown = generateFamilyPolicyDocument(stackTenant, code, title, activeFramework, cryptoModules);
     const filename = `${code}_Family_Living_Policy_${currentTenant.cageCode || 'Enclave'}.md`;
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -314,6 +317,7 @@ export const EnclaveSettings: React.FC = () => {
             <div>
               <h3 className="text-base font-bold text-white">Active Enclave Technology Stack</h3>
               <p className="text-xs text-slate-400">Core architectural components managing the {currentTenant.systemName} boundary</p>
+              {stackInherited && <p className="text-xs text-slate-400">Inherited from the organization profile</p>}
             </div>
           </div>
 
@@ -695,7 +699,7 @@ export const EnclaveSettings: React.FC = () => {
 
       {/* Interactive Policy Document Reader Modal */}
       {previewingPolicy && (() => {
-        const markdown = generateFamilyPolicyDocument(currentTenant, previewingPolicy.code, previewingPolicy.title, activeFramework, cryptoModules);
+        const markdown = generateFamilyPolicyDocument(stackTenant, previewingPolicy.code, previewingPolicy.title, activeFramework, cryptoModules);
         return (
           <DialogOverlay onClose={() => setPreviewingPolicy(null)} className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
             <div className="w-full max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-fadeIn">

@@ -233,9 +233,9 @@ assert(peAt > objectivesAt && programEvents !== '', 'P1: program_events is creat
 assert(!/FOREIGN KEY|REFERENCES/.test(programEvents) && /program_id VARCHAR\(64\) NOT NULL/.test(programEvents), 'P1: program_events has no foreign key (the history outlives the program) and a NOT NULL program_id');
 assert(!/^\s+(name|description|notes|narrative)\s/m.test(programEvents) && /old_value JSONB,/.test(programEvents) && /new_value JSONB NOT NULL/.test(programEvents), 'P1: program_events holds JSON values only, no name, description, notes or narrative column');
 assert(
-  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed'))") &&
+  TABLES_SQL.includes("ADD CONSTRAINT program_events_kind_check CHECK (kind IN ('scoping_set', 'scoping_changed', 'vm_target_set', 'vm_target_cleared', 'assets_changed', 'ssp_metadata_changed', 'stack_profile_changed'))") &&
     TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS program_events_kind_check') < TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check'),
-  'P1: the event kind CHECK lists the six kinds (SSP metadata included), dropped before it is added'
+  'P1: the event kind CHECK lists the seven kinds (SSP metadata and stack profile included), dropped before it is added'
 );
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);'), 'P1: program_events is indexed by program and time');
 assert(RLS_TENANT_TABLES.some((r) => r.table === 'program_events' && r.tenantColumn === 'tenant_id') && !PROGRAM_BACKFILL_TABLES.includes('program_events' as never), 'P1: program_events is a tenant and program RLS table but is not backfilled');
@@ -527,8 +527,19 @@ assert(
     TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS tenants_stack_profile_check') < spAt,
   'SM-D5: tenants.stack_profile is a JSONB column with a key and size CHECK, dropped before it is added'
 );
+const pLineAt = TABLES_SQL.indexOf('ALTER TABLE programs ADD CONSTRAINT programs_stack_profile_check');
+const pLine = pLineAt < 0 ? '' : TABLES_SQL.slice(pLineAt, TABLES_SQL.indexOf('\n', pLineAt));
+const tLine = spAt < 0 ? '' : 'ALTER TABLE tenants ' + spLine;
+assert(
+  TABLES_SQL.includes('ALTER TABLE programs ADD COLUMN IF NOT EXISTS stack_profile JSONB;') && !programsBlock.includes('stack_profile') &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS programs_stack_profile_check') > 0 &&
+    TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS programs_stack_profile_check') < pLineAt &&
+    pLine !== '' && pLine.trimEnd() === tLine.trimEnd().replace('ALTER TABLE tenants', 'ALTER TABLE programs').replace('tenants_stack_profile_check', 'programs_stack_profile_check'),
+  'SM-D7: programs.stack_profile (issue #230) is a JSONB column added after the CREATE TABLE, with the tenant CHECK (same keys and byte limit), dropped before it is added'
+);
 const afterSm = smHeadingAt < 0 ? '' : TABLES_SQL.slice(smHeadingAt);
 assert(afterSm !== '' && !afterSm.includes('NOT VALID') && !afterSm.includes('SET NOT NULL'), 'SM-D6: no NOT VALID check and no SET NOT NULL after the SSP metadata heading');
+assert(!TABLES_SQL.includes('SET stack_profile'), 'SM-D8: no boot-time UPDATE of stack_profile (tenants and programs are FORCE RLS, so it would see no rows)');
 
 console.log('\n--- per-user default program (user_program_defaults) ---');
 const updAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS user_program_defaults (');
