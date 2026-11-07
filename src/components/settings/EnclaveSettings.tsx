@@ -18,10 +18,11 @@ import {
   Copy,
   Check,
   X,
-  ExternalLink,
+  BookOpen,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
+import { PolicyControlReferenceDialog } from '../matrix/PolicyControlReferenceDialog';
 import { EnclaveStackProfile } from '../../types/tenant';
 import { stackValueLabel, type StackKey } from '../../data/stackDraftView';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
@@ -36,9 +37,10 @@ import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
 import { unsavedProgramFields } from '../../services/unsavedText';
 import { frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 export const EnclaveSettings: React.FC = () => {
-  const { currentTenant, setIsStackSurveyModalOpen, canEdit, setActiveFramework, activeFramework, activeProgram, updateProgram, canManagePrograms } = useTenant();
+  const { currentTenant, setIsStackSurveyModalOpen, canEdit, activeFramework, activeProgram, updateProgram, canManagePrograms } = useTenant();
   const cryptoModules = useFipsModules();
-  const { setActiveTab, setSelectedControlId } = useAssessment();
+  const { setActiveTab } = useAssessment();
+  const [referenceControlId, setReferenceControlId] = useState<string | null>(null);
 
   const [previewingPolicy, setPreviewingPolicy] = useState<{ code: string; title: string } | null>(null);
   const [copiedPolicy, setCopiedPolicy] = useState<boolean>(false);
@@ -91,12 +93,6 @@ export const EnclaveSettings: React.FC = () => {
     copyToClipboard(markdown);
     setCopiedPolicy(true);
     setTimeout(() => setCopiedPolicy(false), 2000);
-  };
-
-  const handleInspectControl = (controlId: string) => {
-    setActiveFramework('NIST_800_53_REV5');
-    setActiveTab('matrix');
-    setSelectedControlId(controlId);
   };
 
   const getIdentityDetails = (id: string) => {
@@ -625,11 +621,14 @@ export const EnclaveSettings: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() => handleInspectControl(policy.controlId)}
-                  title="Inspect control in NIST SP 800-53 Matrix"
+                  type="button"
+                  onClick={() => setReferenceControlId(policy.controlId)}
+                  aria-haspopup="dialog"
+                  aria-label={`View SP 800-53 ${policy.controlId} reference`}
+                  title={`View SP 800-53 ${policy.controlId} reference (read-only)`}
                   className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-indigo-200 border border-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
                   <span className="hidden sm:inline">{policy.controlId}</span>
                 </button>
               </div>
@@ -788,14 +787,13 @@ export const EnclaveSettings: React.FC = () => {
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      setPreviewingPolicy(null);
-                      handleInspectControl(previewingPolicy.code === 'AC' ? 'AC-1' : `${previewingPolicy.code}-1`);
-                    }}
+                    type="button"
+                    onClick={() => setReferenceControlId(`${previewingPolicy.code}-1`)}
+                    aria-haspopup="dialog"
                     className="px-4 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-bold flex items-center gap-1.5 transition-colors"
                   >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Inspect Control in Matrix</span>
+                    <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>View SP 800-53 {previewingPolicy.code}-1 Reference</span>
                   </button>
                   <button
                     onClick={() => setPreviewingPolicy(null)}
@@ -809,6 +807,7 @@ export const EnclaveSettings: React.FC = () => {
           </DialogOverlay>
         );
       })()}
+      {referenceControlId && <PolicyControlReferenceDialog controlId={referenceControlId} onClose={() => setReferenceControlId(null)} />}
     </div>
   );
 };
