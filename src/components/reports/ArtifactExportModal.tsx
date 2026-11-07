@@ -18,10 +18,14 @@ import {
   Check,
   Server,
   Info,
+  HardDrive,
+  Package,
 } from 'lucide-react';
 import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
+import { useSoftwareItems } from '../../hooks/useSoftwareItems';
+import { softwareExportLine } from '../../data/softwareInventoryView';
 import { collectFipsModules } from '../../data/telemetry/fipsValidation';
 import { useProgramAssets } from '../../hooks/useProgramAssets';
 import { boundaryAssets } from '../../data/programAssets';
@@ -43,7 +47,9 @@ import {
   downloadHtmlDocument,
   downloadJsonPackage,
   downloadPoamCsv,
+  downloadInventoryCsv,
 } from '../../data/reports/reportExporters';
+import { isInventoryDocumentType } from '../../data/reports/inventoryDocuments';
 import { getExportGaps } from '../../data/reports/exportReadiness';
 import {
   calculateSprsScore,
@@ -106,6 +112,18 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   // Active View Tab: 'preview' | 'metadata' | 'poam' | 'sprs'
   const [activeTab, setActiveTab] = useState<'preview' | 'metadata' | 'poam' | 'sprs'>('preview');
+
+  // The inventory documents have no POA&M or SPRS / eMASS view: leave those tabs if one is selected
+  const isInventoryDoc = isInventoryDocumentType(selectedDocType);
+  // The tenant's software entries (server-backed organizations): tenant-wide ones, and those on an asset in the boundary
+  const software = useSoftwareItems({ enabled: isOpen && selectedDocType === 'SOFTWARE_INVENTORY' });
+  const softwareInScope = useMemo(() => {
+    const ids = new Set(boundaryList.map((a) => a.id));
+    return software.items.filter((item) => item.assetId === null || ids.has(item.assetId));
+  }, [software.items, boundaryList]);
+  useEffect(() => {
+    if (isInventoryDoc && (activeTab === 'poam' || activeTab === 'sprs')) setActiveTab('preview');
+  }, [isInventoryDoc, activeTab]);
 
   // Compute live DoD SPRS scoring metrics (CMMC Level 2 only)
   const sprsResult = useMemo(() => {
@@ -211,9 +229,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       },
       frameworkControls,
       state.controls,
-      state.evidenceIndex
+      state.evidenceIndex,
+      scopeUnavailable ? undefined : { assets: boundaryList, software: softwareInScope }
     );
-  }, [selectedDocType, formData, assetScope, cryptoModules, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex]);
+  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex]);
 
   // Export readiness (#151, B-1): advisory only, exports stay allowed. Labels are fixed text; values are never echoed.
   const metaIdBase = useId();
@@ -292,6 +311,20 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       icon: Layers,
       badge: '45 CFR §164',
       desc: 'Evaluates Administrative (§164.308), Physical (§164.310), and Technical (§164.312) ePHI safeguards.',
+    },
+    {
+      id: 'HARDWARE_INVENTORY',
+      label: 'Hardware Inventory',
+      icon: HardDrive,
+      badge: 'CM.L2-3.4.1',
+      desc: 'Every asset in the program boundary with recorded hardware details (CM.L2-3.4.1).',
+    },
+    {
+      id: 'SOFTWARE_INVENTORY',
+      label: 'Software Inventory',
+      icon: Package,
+      badge: 'CM.L2-3.4.8',
+      desc: "Manual software entries plus each asset's operating system, with approval state (CM.L2-3.4.8).",
     },
   ];
 
@@ -381,39 +414,43 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <Edit3 className="w-3.5 h-3.5" />
               <span>Boundary Metadata</span>
             </button>
-            <button
-              onClick={() => setActiveTab('poam')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTab === 'poam'
-                  ? 'bg-brand-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-              <span>POA&M Table ({compiledDoc.poamEntries?.length || 0})</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('sprs')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTab === 'sprs'
-                  ? 'bg-cyan-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-300" />
-              <span>{sprsApplies ? 'SPRS / eMASS' : 'eMASS'}</span>
-              {sprsApplies && sprsResult && (
-                <span className={`badge text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
-                  sprsResult.score === null
-                    ? 'bg-amber-500/20 text-amber-300'
-                    : sprsResult.score >= 0
-                    ? 'bg-emerald-500/20 text-emerald-300'
-                    : 'bg-rose-500/20 text-rose-300'
-                }`}>
-                  {formatSprsScore(sprsResult)}
-                </span>
-              )}
-            </button>
+            {!isInventoryDoc && (
+              <>
+              <button
+                onClick={() => setActiveTab('poam')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                  activeTab === 'poam'
+                    ? 'bg-brand-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                <span>POA&M Table ({compiledDoc.poamEntries?.length || 0})</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('sprs')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                  activeTab === 'sprs'
+                    ? 'bg-cyan-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-300" />
+                <span>{sprsApplies ? 'SPRS / eMASS' : 'eMASS'}</span>
+                {sprsApplies && sprsResult && (
+                  <span className={`badge text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
+                    sprsResult.score === null
+                      ? 'bg-amber-500/20 text-amber-300'
+                      : sprsResult.score >= 0
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : 'bg-rose-500/20 text-rose-300'
+                  }`}>
+                    {formatSprsScore(sprsResult)}
+                  </span>
+                )}
+              </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -476,8 +513,15 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   <Server className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
                   <span>{boundaryLine}</span>
                 </p>
+                {selectedDocType === 'SOFTWARE_INVENTORY' && (
+                  <p data-testid="software-inventory-scope" aria-live="polite" className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300">
+                    <Package className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>{softwareExportLine({ supported: software.supported, loading: software.loading, error: Boolean(software.error), count: softwareInScope.length })}</span>
+                  </p>
+                )}
 
                 {/* Executive Posture Score Box */}
+                {!isInventoryDocumentType(selectedDocType) && (
                 <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between flex-wrap gap-3">
                   <div>
                     <div className="text-sm font-bold text-emerald-300">
@@ -491,6 +535,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     {compiledDoc.summaryMetrics.completionPercentage}%
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Sections Breakdown */}
@@ -1185,6 +1230,18 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
                 <span className="hidden md:inline">Export POA&M (CSV)</span>
+              </button>
+            )}
+
+            {/* Download inventory CSV */}
+            {isInventoryDocumentType(selectedDocType) && (
+              <button
+                onClick={() => downloadInventoryCsv(compiledDoc)}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                title="Download the inventory table (.csv)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                <span className="hidden md:inline">Download CSV</span>
               </button>
             )}
 

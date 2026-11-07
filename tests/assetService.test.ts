@@ -71,6 +71,15 @@ function pureTests() {
   assert(noCat.assets.length === 0 && /no cmmcAssetCategory column/.test(noCat.errors[0]), 'a CSV without a category column imports nothing (never silently CUI)');
   assert(parseAssetsCsv('hostName').assets.length === 0 && parseAssetsCsv('').errors.length === 1, 'an empty CSV is an error');
 
+  // #229: hand-recorded hardware fields
+  const hwCsv = parseAssetsCsv('hostName,cmmcAssetCategory,manufacturer,model,serialNumber,location\nH1,CUI_ASSET,Acme,M1,SN-1,Rack 4').assets[0];
+  assert(hwCsv.manufacturer === 'Acme' && hwCsv.model === 'M1' && hwCsv.serialNumber === 'SN-1' && hwCsv.location === 'Rack 4', 'C1 CSV hardware columns are parsed');
+  const hwAlias = parseAssetsCsv('hostName,cmmcAssetCategory,serial,site\nH1,CUI_ASSET,SN-2,HQ').assets[0];
+  assert(hwAlias.serialNumber === 'SN-2' && hwAlias.location === 'HQ', 'C2 "serial" and "site" headers map to serialNumber and location');
+  assert(!('manufacturer' in parseAssetsCsv('hostName,cmmcAssetCategory\nH1,CUI_ASSET').assets[0]), 'C3 a CSV without hardware columns sends no hardware keys');
+  const hwServer = parseServerAssets([{ id: 'a', hostName: 'h', cmmcAssetCategory: 'CUI_ASSET', serialNumber: 'SN-1' }])[0];
+  assert(hwServer.serialNumber === 'SN-1' && hwServer.location === '' && hwServer.manufacturer === '' && hwServer.model === '', 'C4 the server response parser reads hardware fields and defaults them to empty');
+
   console.log('\n--- Discovery endpoint URL ---');
   assert(discoveryEndpointUrl('http://grc.local:3000', 't1') === 'http://grc.local:3000/api/v1/tenants/t1/assets/discovery', 'the URL is built from the install origin');
   assert(discoveryEndpointUrl('https://10.0.0.5/', 'a b') === 'https://10.0.0.5/api/v1/tenants/a%20b/assets/discovery', 'a trailing slash is dropped and the tenant id is encoded');

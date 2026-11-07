@@ -7,7 +7,9 @@ export type ReportDocumentType =
   | 'NIST_SP_800_18_SSP'
   | 'POAM'
   | 'SOC_2_SYSTEM_DESCRIPTION'
-  | 'HIPAA_SECURITY_ASSESSMENT';
+  | 'HIPAA_SECURITY_ASSESSMENT'
+  | 'HARDWARE_INVENTORY'
+  | 'SOFTWARE_INVENTORY';
 
 export type SystemOperationalStatus =
   | 'Operational'
@@ -108,6 +110,35 @@ export interface DocumentSummaryMetrics {
   domainStats: Record<string, DomainStat>;
 }
 
+/** The Hardware / Software Inventory rows, as structured data (issue #229). Optional so other packages keep their checksums. */
+export interface InventoryPackageSection {
+  kind: 'HARDWARE_INVENTORY' | 'SOFTWARE_INVENTORY';
+  hardware?: Array<{
+    assetId: string;
+    hostName: string;
+    cmmcAssetCategory: string;
+    manufacturer: string;
+    model: string;
+    serialNumber: string;
+    location: string;
+    owner: string;
+    osProfile: string;
+    ipAddress: string;
+    macAddress: string;
+    discoveryStatus: string;
+  }>;
+  software?: Array<{
+    id: string | null;
+    name: string;
+    version: string;
+    vendor: string;
+    approved: boolean | null;
+    assetId: string | null;
+    hostName: string | null;
+    source: 'MANUAL' | 'ASSET_OS';
+  }>;
+}
+
 export interface CompiledDocument {
   documentType: ReportDocumentType;
   title: string;
@@ -118,6 +149,7 @@ export interface CompiledDocument {
   sections: ReportSection[];
   summaryMetrics: DocumentSummaryMetrics;
   poamEntries?: POAMEntry[];
+  inventory?: InventoryPackageSection;
 }
 
 export interface MachineReadablePackage {
@@ -148,4 +180,5 @@ export interface MachineReadablePackage {
     gcsPath?: string;
   }[];
   poamEntries?: POAMEntry[];
+  inventory?: InventoryPackageSection;
 }

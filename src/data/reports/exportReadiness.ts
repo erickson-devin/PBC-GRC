@@ -24,6 +24,8 @@ const REQUIRED: Record<ReportDocumentType, (keyof ReportMetadata)[]> = {
   SOC_2_SYSTEM_DESCRIPTION: ['organizationName', 'systemName', 'systemOwner', 'boundaryDescription'],
   POAM: ['systemName', 'organizationName', 'systemOwner'],
   HIPAA_SECURITY_ASSESSMENT: ['organizationName', 'systemName', 'systemOwner', 'boundaryDescription'],
+  HARDWARE_INVENTORY: ['systemName', 'organizationName', 'systemOwner'],
+  SOFTWARE_INVENTORY: ['systemName', 'organizationName', 'systemOwner'],
 };
 
 const ADVISORY: Partial<Record<ReportDocumentType, (keyof ReportMetadata)[]>> = {

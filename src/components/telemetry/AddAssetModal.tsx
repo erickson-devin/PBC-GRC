@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import {
   X,
   Server,
@@ -26,6 +26,7 @@ import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
+import { HARDWARE_LIMITS } from '../../data/telemetry/hardwareDetails';
 interface AddAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -50,6 +51,13 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   const [status, setStatus] = useState<EnclaveAssetStatus>('NEVER_SCANNED');
   const [notes, setNotes] = useState('');
   const [owner, setOwner] = useState('');
+  const [manufacturer, setManufacturer] = useState('');
+  const [model, setModel] = useState('');
+  const [serialNumber, setSerialNumber] = useState('');
+  const [location, setLocation] = useState('');
+  const idBase = useId();
+  const hwId = (f: string) => `${idBase}-hw-${f}`;
+  const hwHelpId = `${idBase}-hw-help`;
   const [fipsStatus, setFipsStatus] = useState<FipsValidationStatus | ''>('');
   const [fipsStandard, setFipsStandard] = useState<FipsStandard | ''>('');
   const [fipsCert, setFipsCert] = useState('');
@@ -67,6 +75,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setStatus(initialAsset.status);
       setNotes(initialAsset.notes || '');
       setOwner(initialAsset.owner || '');
+      setManufacturer(initialAsset.manufacturer || '');
+      setModel(initialAsset.model || '');
+      setSerialNumber(initialAsset.serialNumber || '');
+      setLocation(initialAsset.location || '');
       setFipsStatus(initialAsset.fipsValidationStatus || '');
       setFipsStandard(initialAsset.fipsStandard || '');
       setFipsCert(initialAsset.fipsCertificateNumber || '');
@@ -80,6 +92,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setStatus('NEVER_SCANNED');
       setNotes('');
       setOwner('');
+      setManufacturer('');
+      setModel('');
+      setSerialNumber('');
+      setLocation('');
       setFipsStatus('');
       setFipsStandard('');
       setFipsCert('');
@@ -132,6 +148,10 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
         complianceScore: initialAsset?.complianceScore !== undefined ? initialAsset.complianceScore : null,
         notes: notes.trim(),
         owner: owner.trim(),
+        manufacturer: manufacturer.trim(),
+        model: model.trim(),
+        serialNumber: serialNumber.trim(),
+        location: location.trim(),
         ...fips.fields,
         isManuallyAdded: true,
       });
@@ -382,6 +402,67 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
               className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
             />
           </div>
+
+          {/* Hardware details (#229): optional, hand-recorded; exported in the Hardware Inventory */}
+          <fieldset className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 space-y-3" aria-describedby={hwHelpId}>
+            <legend className="px-1.5 text-xs font-bold text-cyan-300">Hardware details <span className="font-normal text-slate-400">(Optional)</span></legend>
+            <p id={hwHelpId} className="text-xs text-slate-400">For the hardware inventory (NIST SP 800-171 3.4.1). The manufacturer, model, serial number and location appear in the exported Hardware Inventory.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor={hwId('manufacturer')} className="block font-semibold text-slate-300 mb-1.5">Manufacturer</label>
+              <input
+                id={hwId('manufacturer')}
+                type="text"
+                value={manufacturer}
+                onChange={e => setManufacturer(e.target.value)}
+                maxLength={HARDWARE_LIMITS.manufacturer}
+                autoComplete="off"
+                placeholder="e.g. Dell"
+                className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+            <div>
+              <label htmlFor={hwId('model')} className="block font-semibold text-slate-300 mb-1.5">Model</label>
+              <input
+                id={hwId('model')}
+                type="text"
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                maxLength={HARDWARE_LIMITS.model}
+                autoComplete="off"
+                placeholder="e.g. PowerEdge R650"
+                className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+            <div>
+              <label htmlFor={hwId('serialNumber')} className="block font-semibold text-slate-300 mb-1.5">Serial number</label>
+              <input
+                id={hwId('serialNumber')}
+                type="text"
+                value={serialNumber}
+                onChange={e => setSerialNumber(e.target.value)}
+                maxLength={HARDWARE_LIMITS.serialNumber}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="e.g. 7XK2L93"
+                className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
+              />
+            </div>
+            <div>
+              <label htmlFor={hwId('location')} className="block font-semibold text-slate-300 mb-1.5">Location</label>
+              <input
+                id={hwId('location')}
+                type="text"
+                value={location}
+                onChange={e => setLocation(e.target.value)}
+                maxLength={HARDWARE_LIMITS.location}
+                autoComplete="off"
+                placeholder="e.g. HQ, server room 2, rack 4"
+                className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+            </div>
+          </fieldset>
 
           {/* Administrative Notes */}
           <div>

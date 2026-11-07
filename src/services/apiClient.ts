@@ -31,6 +31,8 @@ import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../ty
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
+import type { SoftwareItem, SoftwareItemInput } from '../types/software';
+import { parseServerSoftwareItems } from '../data/telemetry/softwareItems';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 import { SESSION_MARKER_HEADER, SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
 import { tabSessionState, tabSessionPin } from './tabSession';
@@ -40,6 +42,12 @@ function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
   if (!asset) throw new ApiError(502, 'The server sent back an asset this version of the app does not understand.');
   return asset;
+}
+
+function requireSoftwareItem(raw: unknown): SoftwareItem {
+  const [item] = parseServerSoftwareItems([raw]);
+  if (!item) throw new ApiError(502, 'The server sent back a software entry this version of the app does not understand.');
+  return item;
 }
 
 /**
@@ -707,6 +715,29 @@ export const ApiClient = {
   /** DELETE /api/v1/tenants/:id/assets/:assetId. */
   async deleteAsset(tenantId: string, assetId: string, sessionRef?: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(assetId)}`, { sessionRef, tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/software: the tenant's software inventory (any member; shared by every program). */
+  async listSoftwareItems(tenantId: string, sessionRef?: string): Promise<SoftwareItem[]> {
+    const data = await authedJson<{ items?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/software`, { sessionRef, tenantId });
+    return parseServerSoftwareItems(data?.items);
+  },
+
+  /** POST /api/v1/tenants/:id/software (owner / MSP admin). */
+  async createSoftwareItem(tenantId: string, input: SoftwareItemInput, sessionRef?: string): Promise<SoftwareItem> {
+    const data = await authedJson<{ item?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/software`, { sessionRef, tenantId, body: input });
+    return requireSoftwareItem(data?.item);
+  },
+
+  /** PUT /api/v1/tenants/:id/software/:itemId. Only the fields given change. */
+  async updateSoftwareItem(tenantId: string, itemId: string, patch: SoftwareItemInput, sessionRef?: string): Promise<SoftwareItem> {
+    const data = await authedJson<{ item?: unknown }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/software/${encodeURIComponent(itemId)}`, { sessionRef, tenantId, body: patch });
+    return requireSoftwareItem(data?.item);
+  },
+
+  /** DELETE /api/v1/tenants/:id/software/:itemId. */
+  async deleteSoftwareItem(tenantId: string, itemId: string, sessionRef?: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/software/${encodeURIComponent(itemId)}`, { sessionRef, tenantId });
   },
 
   /** POST /api/v1/tenants/:id/assets/bulk: up to 500 at a time; rows whose name already exists come back in `skipped`. */

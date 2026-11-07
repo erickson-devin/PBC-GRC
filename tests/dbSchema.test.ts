@@ -555,6 +555,17 @@ assert(
   'UPD5: a tenant table (tenant RLS), not a program table and not backfilled'
 );
 
+console.log('\n--- software inventory (software_items) ---');
+const swAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS software_items (');
+const swBlock = swAt < 0 ? '' : TABLES_SQL.slice(swAt, TABLES_SQL.indexOf('\n  );', swAt));
+assert(swAt > updAt && swBlock.includes('tenant_id VARCHAR(64) NOT NULL') && swBlock.includes('name VARCHAR(255) NOT NULL'), 'SW-D1: software_items is created after user_program_defaults with NOT NULL tenant and name');
+assert(
+  RLS_TENANT_TABLES.some((r) => r.table === 'software_items' && r.tenantColumn === 'tenant_id') &&
+    !(RLS_PROGRAM_TABLES as readonly string[]).includes('software_items') &&
+    !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes('software_items'),
+  'SW-D2: a tenant table (tenant RLS), not a program table and not backfilled'
+);
+
 const initAt = dbSrc.indexOf('export async function initDb(');
 const verAt = dbSrc.indexOf('assertSupportedPostgresVersion(ver.rows', initAt);
 const roleAt = dbSrc.indexOf('assessDatabaseRole(', initAt);

@@ -53,6 +53,10 @@ export interface AssetFields extends FipsFields {
   notes: string;
   cmmcAssetCategory: CmmcAssetCategory;
   owner: string;
+  manufacturer: string;
+  model: string;
+  serialNumber: string;
+  location: string;
   ipAddress: string;
   macAddress: string;
   osProfile: string;
@@ -111,6 +115,19 @@ export function validateAssetInput(body: unknown, partial: boolean): Validation<
   const owner = text(body, 'owner', 255, 'Owner');
   if (!owner.ok) return owner;
   if (owner.value !== undefined) out.owner = owner.value;
+
+  const manufacturer = text(body, 'manufacturer', 255, 'Manufacturer');
+  if (!manufacturer.ok) return manufacturer;
+  if (manufacturer.value !== undefined) out.manufacturer = manufacturer.value;
+  const model = text(body, 'model', 255, 'Model');
+  if (!model.ok) return model;
+  if (model.value !== undefined) out.model = model.value;
+  const serialNumber = text(body, 'serialNumber', 128, 'Serial number');
+  if (!serialNumber.ok) return serialNumber;
+  if (serialNumber.value !== undefined) out.serialNumber = serialNumber.value;
+  const location = text(body, 'location', 255, 'Location');
+  if (!location.ok) return location;
+  if (location.value !== undefined) out.location = location.value;
 
   if (body.cmmcAssetCategory !== undefined) {
     if (!isCmmcAssetCategory(body.cmmcAssetCategory)) {
@@ -234,6 +251,10 @@ const withDefaults = (f: Partial<AssetFields>): AssetFields => ({
   notes: f.notes ?? '',
   cmmcAssetCategory: f.cmmcAssetCategory as CmmcAssetCategory,
   owner: f.owner ?? '',
+  manufacturer: f.manufacturer ?? '',
+  model: f.model ?? '',
+  serialNumber: f.serialNumber ?? '',
+  location: f.location ?? '',
   ipAddress: f.ipAddress ?? '',
   macAddress: f.macAddress ?? '',
   osProfile: f.osProfile ?? 'custom',
@@ -251,7 +272,7 @@ const withDefaults = (f: Partial<AssetFields>): AssetFields => ({
 
 // ------------------------------------------------------------------------------------------------ record shape
 
-export type AssetRecord = EnclaveAsset & { owner: string; createdAt: string; updatedAt: string } & FipsFields;
+export type AssetRecord = EnclaveAsset & { owner: string; manufacturer: string; model: string; serialNumber: string; location: string; createdAt: string; updatedAt: string } & FipsFields;
 
 interface MemoryAsset extends AssetFields {
   id: string;
@@ -282,6 +303,10 @@ const toRecord = (m: MemoryAsset): AssetRecord => ({
   complianceScore: m.complianceScore,
   notes: m.notes,
   owner: m.owner,
+  manufacturer: m.manufacturer,
+  model: m.model,
+  serialNumber: m.serialNumber,
+  location: m.location,
   fipsValidationStatus: m.fipsValidationStatus,
   fipsCertificateNumber: m.fipsCertificateNumber,
   fipsModuleName: m.fipsModuleName,
@@ -300,6 +325,10 @@ function rowToRecord(row: pg.QueryResultRow): AssetRecord {
     notes: row.description ?? '',
     cmmcAssetCategory: row.cmmc_category,
     owner: row.owner ?? '',
+    manufacturer: row.manufacturer ?? '',
+    model: row.model ?? '',
+    serialNumber: row.serial_number ?? '',
+    location: row.location ?? '',
     fipsValidationStatus: row.fips_validation_status ?? null,
     fipsCertificateNumber: row.fips_certificate_number ?? null,
     fipsModuleName: row.fips_module_name ?? null,
@@ -352,13 +381,15 @@ const duplicate = (name: string): AssetError => new AssetError('duplicate', `An 
 const INSERT_SQL = `INSERT INTO enclave_assets
   (tenant_id, asset_name, description, cmmc_category, owner, ip_address, mac_address, os_profile, status, source_origin,
    discovery_status, accretion_metadata, last_scanned_at, compliance_score, created_by, updated_by,
-   fips_validation_status, fips_certificate_number, fips_module_name, fips_standard)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17,$18,$19) RETURNING *`;
+   fips_validation_status, fips_certificate_number, fips_module_name, fips_standard,
+   manufacturer, model, serial_number, location)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING *`;
 
 const insertParams = (tenantId: string, f: AssetFields, actor: string): unknown[] => [
   tenantId, f.hostName, f.notes, f.cmmcAssetCategory, f.owner, f.ipAddress, f.macAddress, f.osProfile, f.status,
   f.sourceOrigin, f.discoveryStatus, f.accretionMetadata ? JSON.stringify(f.accretionMetadata) : null,
   f.lastScannedAt, f.complianceScore, actor, f.fipsValidationStatus, f.fipsCertificateNumber, f.fipsModuleName, f.fipsStandard,
+  f.manufacturer, f.model, f.serialNumber, f.location,
 ];
 
 // ------------------------------------------------------------------------------------------------ operations
@@ -430,7 +461,8 @@ export async function updateAsset(tenantId: string, id: string, patch: Partial<A
     macAddress: 'mac_address', osProfile: 'os_profile', status: 'status', sourceOrigin: 'source_origin',
     discoveryStatus: 'discovery_status', accretionMetadata: 'accretion_metadata', lastScannedAt: 'last_scanned_at',
     complianceScore: 'compliance_score', fipsValidationStatus: 'fips_validation_status', fipsCertificateNumber: 'fips_certificate_number',
-    fipsModuleName: 'fips_module_name', fipsStandard: 'fips_standard',
+    fipsModuleName: 'fips_module_name', fipsStandard: 'fips_standard', manufacturer: 'manufacturer', model: 'model',
+    serialNumber: 'serial_number', location: 'location',
   };
   return inTenantTx(tenantId, async (client) => {
     // Lock the stored row so the FIPS rules are checked against what will actually be there

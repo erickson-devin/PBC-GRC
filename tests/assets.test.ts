@@ -82,6 +82,12 @@ function schemaTests() {
   const logLines = routeSrc.split('\n').filter((l) => /console\.\w+\(/.test(l));
   assert(logLines.length > 0 && !logLines.some((l) => /hostName/.test(l)), 'no console line of the assets routes contains hostName', logLines);
   assert(!logLines.some((l) => /ipAddress|macAddress|notes/.test(l)), 'no console line of the assets routes contains ipAddress, macAddress or notes', logLines);
+
+  // Optional hardware details (issue #229)
+  for (const col of ['manufacturer VARCHAR(255)', 'model VARCHAR(255)', 'serial_number VARCHAR(128)', 'location VARCHAR(255)']) {
+    assert(block.includes(`ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS ${col} NOT NULL DEFAULT '';`), `A1 older databases get the hardware column: ${col}`);
+  }
+  assert(!logLines.some((l) => /serialNumber|location|manufacturer/.test(l)), 'A9 no console line of the assets routes contains serialNumber, location or manufacturer', logLines);
 }
 
 function validationTests() {
@@ -99,6 +105,14 @@ function validationTests() {
   assert(!ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', status: 'BROKEN' }).ok, 'status must be a known value');
   assert(!ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', owner: 7 }).ok, 'owner must be text');
   assert(!ok('nope').ok && !ok(null).ok && !ok([]).ok, 'the body must be an object');
+  const hw = ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', manufacturer: '  Acme ', model: 'X1', serialNumber: 'SN-1', location: 'Rack 4' });
+  assert(hw.ok && hw.value.manufacturer === 'Acme' && hw.value.model === 'X1' && hw.value.serialNumber === 'SN-1' && hw.value.location === 'Rack 4', 'A2 the four hardware fields are accepted and trimmed', hw);
+  const longSerial = ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', serialNumber: 'x'.repeat(129) });
+  assert(!longSerial.ok && longSerial.error === 'Serial number must be at most 128 characters', 'A3 a serial number over 128 characters is refused', longSerial);
+  const badLocation = ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', location: 'Rack\u0007' });
+  assert(!badLocation.ok && /control characters/.test(badLocation.error), 'A4 control characters in the location are refused', badLocation);
+  const badMaker = ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', manufacturer: 5 });
+  assert(!badMaker.ok && badMaker.error === 'Manufacturer must be text', 'A5 the manufacturer must be text', badMaker);
   const aliased = ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', description: 'via alias' });
   assert(aliased.ok && aliased.value.notes === 'via alias', 'description is accepted as an alias of notes');
   const partial = ok({ owner: 'Ops' }, true);
@@ -314,12 +328,34 @@ async function originTests() {
   assert(r15.status === 200 && r15.body?.asset?.notes === 'checked', 'S60-15 PUT with the stored machine origin is a no-op and the other fields update', r15);
 }
 
+/** Issue #229: optional hardware details on an asset. */
+async function hardwareTests() {
+  console.log('\n--- Hardware details (#229) ---');
+  const owner = person('u_as_hw');
+  const tenant = (await call('POST', '/tenants', owner, undefined, { name: 'Hardware Org' })).body?.tenant?.id as string;
+  const path = `/tenants/${tenant}/assets`;
+
+  const made = await call('POST', path, owner, tenant, { hostName: 'HW-1', cmmcAssetCategory: 'CUI_ASSET', manufacturer: 'Acme', model: 'M-9', serialNumber: 'SN-1', location: 'Rack 4' });
+  const id = made.body?.asset?.id as string;
+  assert(made.status === 201 && made.body?.asset?.serialNumber === 'SN-1' && made.body?.asset?.manufacturer === 'Acme' && made.body?.asset?.model === 'M-9' && made.body?.asset?.location === 'Rack 4', 'A6 create returns the hardware fields', made.body);
+  const upd = await call('PUT', `${path}/${id}`, owner, tenant, { location: 'Rack 9' });
+  assert(upd.status === 200 && upd.body?.asset?.location === 'Rack 9' && upd.body?.asset?.serialNumber === 'SN-1', 'A6 PUT changes the location and leaves the serial number', upd.body);
+
+  const plain = await call('POST', path, owner, tenant, { hostName: 'HW-2', cmmcAssetCategory: 'CUI_ASSET' });
+  const pa = plain.body?.asset;
+  assert(plain.status === 201 && pa?.manufacturer === '' && pa?.model === '' && pa?.serialNumber === '' && pa?.location === '', 'A7 an asset created without them has blank hardware fields', plain.body);
+
+  const bulk = await call('POST', `${path}/bulk`, owner, tenant, { assets: [{ hostName: 'HW-3', cmmcAssetCategory: 'CUI_ASSET', model: 'M1' }] });
+  assert(bulk.status === 201 && bulk.body?.created?.[0]?.model === 'M1', 'A8 bulk import carries the model', bulk.body);
+}
+
 async function run() {
   schemaTests();
   validationTests();
   scopeTests();
   await apiTests();
   await originTests();
+  await hardwareTests();
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

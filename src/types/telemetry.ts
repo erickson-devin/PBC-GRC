@@ -105,6 +105,14 @@ export interface EnclaveAsset {
   notes: string;
   /** Person or team accountable for the asset */
   owner?: string;
+  /** Hardware manufacturer, as recorded by hand (issue #229) */
+  manufacturer?: string;
+  /** Hardware model, as recorded by hand */
+  model?: string;
+  /** Serial number; included in the exported Hardware Inventory */
+  serialNumber?: string;
+  /** Physical location (site, building, rack): free text */
+  location?: string;
   /** Cryptographic module validation (Security Protection and CUI assets only), see data/telemetry/fipsValidation.ts */
   fipsValidationStatus?: FipsValidationStatus | null;
   /** CMVP certificate number, digits only */

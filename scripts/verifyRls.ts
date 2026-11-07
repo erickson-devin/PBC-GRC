@@ -1415,9 +1415,35 @@ async function verifyProgramIsolation() {
     check(updRejection === 'code 42501', "8m. user_program_defaults: tenant Y cannot insert a row into tenant X (WITH CHECK, 42501)", updRejection);
     await queryWithTenant(TENANT_X, "DELETE FROM user_program_defaults WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
 
+    // 8o. software_items (issue #229): tenant isolation, and the composite nullable foreign key to enclave_assets
+    const swAssetX = (await queryWithTenant(TENANT_X, "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, 'rls_verify_sw_asset_x', 'CUI_ASSET') RETURNING id", [TENANT_X])).rows[0]?.id;
+    const swAssetY = (await queryWithTenant(TENANT_Y, "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, 'rls_verify_sw_asset_y', 'CUI_ASSET') RETURNING id", [TENANT_Y])).rows[0]?.id;
+    await queryWithTenant(TENANT_X, 'INSERT INTO software_items (tenant_id, name, asset_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_sw_x', swAssetX]);
+    const swSeenX = await queryWithTenant(TENANT_X, "SELECT 1 FROM software_items WHERE tenant_id = $1 AND name LIKE 'rls_verify_%'", [TENANT_X]);
+    const swSeenY = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM software_items WHERE tenant_id = $1', [TENANT_X]);
+    check(swSeenX.rows.length === 1 && swSeenY.rows.length === 0, "8o. software_items: tenant X sees its own entry, tenant Y sees none of X's", 'X ' + swSeenX.rows.length + ', Y ' + swSeenY.rows.length);
+    let swRejection = 'no error';
+    try {
+      await queryWithTenant(TENANT_Y, 'INSERT INTO software_items (tenant_id, name) VALUES ($1, $2)', [TENANT_X, 'rls_verify_sw_evil']);
+    } catch (err) {
+      swRejection = 'code ' + (err as { code?: string }).code;
+    }
+    check(swRejection === 'code 42501', '8o. software_items: tenant Y cannot insert an entry into tenant X (WITH CHECK, 42501)', swRejection);
+    let swForeign = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, 'INSERT INTO software_items (tenant_id, name, asset_id) VALUES ($1, $2, $3)', [TENANT_X, 'rls_verify_sw_foreign', swAssetY]);
+    } catch (err) {
+      swForeign = 'code ' + (err as { code?: string }).code;
+    }
+    check(swForeign === 'code 23503', "8o. software_items: an entry cannot link another tenant's asset (composite foreign key, 23503)", swForeign);
+    await queryWithTenant(TENANT_X, 'DELETE FROM enclave_assets WHERE tenant_id = $1 AND id = $2', [TENANT_X, swAssetX]);
+    const swAfterDelete = await queryWithTenant(TENANT_X, "SELECT asset_id FROM software_items WHERE tenant_id = $1 AND name = 'rls_verify_sw_x'", [TENANT_X]);
+    check(swAfterDelete.rows.length === 1 && swAfterDelete.rows[0].asset_id === null, '8o. software_items: deleting the linked asset keeps the entry and sets asset_id to NULL', JSON.stringify(swAfterDelete.rows));
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM software_items WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined); // the membership rows cascade with their asset
     }
     // the history has no foreign key, so a program's delete does not remove its events

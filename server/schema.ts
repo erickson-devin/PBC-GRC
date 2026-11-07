@@ -47,6 +47,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_assets', tenantColumn: 'tenant_id' },
   { table: 'program_ssp_metadata', tenantColumn: 'tenant_id' },
   { table: 'user_program_defaults', tenantColumn: 'tenant_id' },
+  { table: 'software_items', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -286,6 +287,11 @@ export const TABLES_SQL = `
   ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_certificate_number VARCHAR(16);
   ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_module_name VARCHAR(255);
   ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS fips_standard VARCHAR(8);
+  -- Optional hardware details (issue #229): free text, blank when unknown.
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS manufacturer VARCHAR(255) NOT NULL DEFAULT '';
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS model VARCHAR(255) NOT NULL DEFAULT '';
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS serial_number VARCHAR(128) NOT NULL DEFAULT '';
+  ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS location VARCHAR(255) NOT NULL DEFAULT '';
   ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_status_check;
   ALTER TABLE enclave_assets ADD CONSTRAINT enclave_assets_fips_status_check CHECK (fips_validation_status IS NULL OR fips_validation_status IN (${fipsStatusList}));
   ALTER TABLE enclave_assets DROP CONSTRAINT IF EXISTS enclave_assets_fips_standard_check;
@@ -991,6 +997,26 @@ export const TABLES_SQL = `
       CONSTRAINT pk_user_program_defaults PRIMARY KEY (tenant_id, user_id),
       CONSTRAINT fk_user_program_defaults_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
   );
+
+  -- Software inventory (CM.L2-3.4.1 / 3.4.8, issue #229): manual entries, tenant-wide like enclave_assets. Name, vendor and notes may be CUI: never logged.
+  CREATE TABLE IF NOT EXISTS software_items (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      version VARCHAR(128) NOT NULL DEFAULT '',
+      vendor VARCHAR(255) NOT NULL DEFAULT '',
+      approved BOOLEAN,
+      asset_id VARCHAR(64),
+      notes TEXT NOT NULL DEFAULT '',
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT software_items_name_check CHECK (length(btrim(name)) > 0),
+      CONSTRAINT fk_software_items_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE SET NULL (asset_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_software_items_tenant ON software_items (tenant_id, lower(name));
+  CREATE INDEX IF NOT EXISTS idx_software_items_asset ON software_items (tenant_id, asset_id);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
