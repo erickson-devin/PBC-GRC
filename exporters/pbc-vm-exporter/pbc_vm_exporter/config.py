@@ -21,6 +21,7 @@ ENV_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 MODES = ("auto", "indexer", "api")
 DEFAULT_INDEX = "wazuh-states-vulnerabilities-*"
 TRUTHY = ("true", "1", "yes", "on")
+FALSY = ("false", "0", "no", "off")
 SOURCES = ("wazuh", "xccdf", "action1", "sentinelone")
 VENDOR_SOURCES = ("action1", "sentinelone")
 ORG_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}\Z")
@@ -74,6 +75,7 @@ class Config:
     allow_insecure: bool
     action1: Action1Settings | None = None
     sentinelone: SentinelOneSettings | None = None
+    send_inventory: str = "auto"  # auto (when the server supports it), true or false; Wazuh indexer mode only
 
     def secrets(self) -> list[str]:
         found = [self.pbc_token, self.api_password, self.indexer_password]
@@ -199,6 +201,17 @@ def _plain_value(get, name: str, low: int, high: int, *, no_space: bool) -> str:
     return value
 
 
+def _send_inventory_setting(raw: str | None) -> str:
+    value = (raw or "").strip().lower()
+    if value in ("", "auto"):
+        return "auto"
+    if value in TRUTHY:
+        return "true"
+    if value in FALSY:
+        return "false"
+    raise ConfigError("PBC_SEND_INVENTORY must be auto, true or false")
+
+
 def _action1_settings(get, allow_insecure: bool) -> Action1Settings:
     base = _check_url("ACTION1_BASE_URL", get("ACTION1_BASE_URL"), allow_insecure)
     if base is None:
@@ -319,6 +332,7 @@ def load_config(
         allow_insecure=allow_insecure,
         action1=action1,
         sentinelone=sentinelone,
+        send_inventory=_send_inventory_setting(get("PBC_SEND_INVENTORY")),
     )
     # The flag only matters for a plain http URL: when every URL is https, `pbc-vm-exporter check` reports it as unneeded.
     plain_urls = [config.pbc_url, config.api_url, config.indexer_url]

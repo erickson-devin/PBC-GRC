@@ -1,0 +1,47 @@
+[
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "package": {
+      "hotfix": {
+        "name": "KB1000001"
+      }
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "package": {
+      "hotfix": {
+        "name": "KB1000002"
+      }
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "package": {
+      "hotfix": {
+        "name": "KB1000001"
+      }
+    }
+  }
+]

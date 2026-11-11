@@ -1,0 +1,45 @@
+[
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "host": {
+      "architecture": "x86_64",
+      "hostname": "inv-web-01",
+      "os": {
+        "name": "Ubuntu",
+        "version": "22.04.4 LTS",
+        "platform": "ubuntu",
+        "kernel": {
+          "release": "5.15.0-fixture"
+        }
+      }
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "host": {
+      "architecture": "aarch64",
+      "os": {
+        "name": "Microsoft Windows 11 Pro",
+        "version": "10.0.22631",
+        "platform": "windows",
+        "kernel": {
+          "release": "10.0.22631.1"
+        }
+      }
+    }
+  }
+]

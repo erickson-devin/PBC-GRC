@@ -20,7 +20,7 @@ import requests
 
 from . import __version__
 from .action1 import Action1Reader, group_action1, load_action1_sample
-from .adapter import build_config_payloads, build_payloads, encode_payload
+from .adapter import build_config_payloads, build_payloads, encode_payload, normalize_agent_id
 from .client import IngestClient
 from .config import SOURCES, VENDOR_SOURCES, Config, RedactingFilter, load_config, redact
 from .detect import resolve_mode
@@ -34,7 +34,7 @@ from .sentinelone import SentinelOneReader, group_sentinelone, load_sentinelone_
 from .transport import make_session
 from .validate import contract_sha256, validate_payload
 from .wazuh_api import ApiReader
-from .wazuh_indexer import IndexerReader, group_documents
+from .wazuh_indexer import INVENTORY_KINDS, IndexerReader, group_documents, group_inventory
 from .xccdf import expand_inputs, read_xccdf
 
 log = logging.getLogger("pbc_vm_exporter")
@@ -43,6 +43,7 @@ SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "indexer_sample.json
 XCCDF_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "xccdf_sample.xml"
 ACTION1_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "action1_sample.json"
 SENTINELONE_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "sentinelone_sample.json"
+INVENTORY_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "indexer_inventory_sample.json"
 
 KINDS = {"wazuh": "WAZUH", "action1": "ACTION1", "sentinelone": "SENTINELONE"}
 VENDOR_NAMES = {"action1": "Action1", "sentinelone": "SentinelOne"}
@@ -95,6 +96,75 @@ def build_parser() -> argparse.ArgumentParser:
 def load_sample_hosts() -> list[dict]:
     data = json.loads(SAMPLE_PATH.read_text(encoding="utf-8"))
     return group_documents([h["_source"] for h in data["hits"]["hits"]])
+
+
+def load_sample_inventory() -> dict[str, dict]:
+    data = json.loads(INVENTORY_SAMPLE_PATH.read_text(encoding="utf-8"))
+    return group_inventory({kind: data.get(kind) or [] for kind in INVENTORY_KINDS})
+
+
+def should_send_inventory(setting: str, features: Sequence[str] | None) -> bool:
+    """`true` and `false` are absolute; `auto` follows what the server advertises (`features` is None when there is no
+    server to ask, a dry run, and auto then includes the inventory so the output shows what a real run would send)."""
+    if setting == "true":
+        return True
+    if setting == "false":
+        return False
+    return features is None or "inventory" in features
+
+
+def read_inventory(cfg: Config) -> dict[str, dict]:
+    """Host inventory from the Wazuh indexer (every error is a WazuhReadError, never a partial result)."""
+    if not cfg.indexer_url:
+        raise ConfigError("WAZUH_INDEXER_URL is required to read the inventory")
+    return IndexerReader(
+        cfg.indexer_url, cfg.indexer_user, cfg.indexer_password, cfg.wazuh_verify, cfg.timeout, index=cfg.indexer_index,
+    ).fetch_inventory()
+
+
+def wants_inventory(args: argparse.Namespace, cfg: Config) -> bool:
+    """Whether this run reads and sends the Wazuh host inventory. The server is asked (whoami) only for `auto`."""
+    if cfg.send_inventory == "false":
+        return False
+    if args.sample:
+        return True
+    if cfg.wazuh_mode == "api":
+        log.info("host inventory is read from the Wazuh indexer: skipped in api mode")
+        return False
+    if not cfg.indexer_url:
+        return False
+    if args.dry_run:
+        return should_send_inventory(cfg.send_inventory, None)
+    if cfg.send_inventory == "auto":
+        assert cfg.pbc_url is not None and cfg.pbc_token is not None
+        features = IngestClient(cfg.pbc_url, cfg.pbc_token, cfg.pbc_verify, cfg.timeout).features()
+        if not should_send_inventory("auto", features):
+            log.info("this PBC-GRC does not advertise host inventory: sending vulnerabilities only "
+                     "(PBC_SEND_INVENTORY=true forces it)")
+            return False
+        return True
+    return True
+
+
+def attach_inventory(raw_hosts: list[dict], inventory: dict[str, dict]) -> list[dict]:
+    """Adds each host's inventory to its raw host; an agent that only the inventory knows becomes an inventory-only host
+    (no findings key, so it never takes part in closure). The input list and its hosts are not changed."""
+    out: list[dict] = []
+    known: set[str] = set()
+    for raw in raw_hosts:
+        agent = normalize_agent_id(raw.get("agent_id"))
+        if agent is not None:
+            known.add(agent)
+        inv = inventory.get(agent) if agent is not None else None
+        out.append(dict(raw, inventory=inv) if inv else raw)
+    for agent in sorted(inventory):
+        if normalize_agent_id(agent) is None or agent in known:
+            continue
+        out.append({
+            "agent_id": agent, "hostname": inventory[agent].get("agent_name"), "rows": [],
+            "inventory": inventory[agent], "inventory_only": True,
+        })
+    return out
 
 
 def read_action1_hosts(cfg: Config) -> list[dict]:
@@ -198,6 +268,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
         return _run_xccdf(args, cfg, stdout, stderr)
 
     vendor = args.source in VENDOR_SOURCES  # vendor cloud sources: their own error types and zero-host messages
+    send_inventory = args.source == "wazuh" and wants_inventory(args, cfg)
     if args.source == "action1":
         raw_hosts = group_action1(load_action1_sample(ACTION1_SAMPLE_PATH)) if args.sample else read_action1_hosts(cfg)
     elif args.source == "sentinelone":
@@ -214,6 +285,13 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
                 "(an empty export would hide a read failure)"
             )
         raise WazuhReadError("Wazuh returned zero hosts; nothing was sent (an empty export would hide a read failure)")
+    if send_inventory:
+        try:
+            inventory = load_sample_inventory() if args.sample else read_inventory(cfg)
+        except WazuhReadError:  # the inventory is optional: counts only, and the vulnerabilities still go out
+            log.warning("the Wazuh host inventory could not be read: sending vulnerabilities only")
+            inventory = {}
+        raw_hosts = attach_inventory(raw_hosts, inventory)
 
     label = cfg.source_label or f"sample-{args.source}"
     payloads, stats = build_payloads(
@@ -231,10 +309,21 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
             "sha256": hashlib.sha256(body).hexdigest(),
             "bytes": len(body),
             "hosts": len(p["hosts"]),
-            "findings": sum(len(h["findings"]) for h in p["hosts"]),
+            "findings": sum(len(h.get("findings", [])) for h in p["hosts"]),
+            **({"software": sum(len(h.get("software", [])) for h in p["hosts"])} if send_inventory else {}),
         }
         for body, p in zip(bodies, payloads)
     ]
+    if send_inventory:
+        sent = [h for p in payloads for h in p["hosts"]]
+        log.info(
+            "inventory: %d host(s) with hardware, %d host(s) with software (%d items), %d inventory-only host(s)",
+            sum("hardware" in h for h in sent), sum("software" in h for h in sent),
+            sum(len(h.get("software", [])) for h in sent), sum("findings" not in h for h in sent),
+        )
+        if stats.software_overflow_hosts:
+            log.warning("%d host(s) have more than 10000 software items: their software list was not sent",
+                        stats.software_overflow_hosts)
     if stats.skipped_hosts:
         log.warning("%d host(s) skipped whole", len(stats.skipped_hosts))
     if stats.dropped_rows:
@@ -298,6 +387,7 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
     counts = {"PASS": 0, "FAIL": 0, "SKIP": 0, "NOTE": 0}
     failures: list[int] = []
     number = 0
+    server_inventory = False  # the server advertises inventory support (whoami features)
 
     def emit(state: str, title: str, detail: str = "", hint: str = "", code: int = 1) -> None:
         nonlocal number
@@ -358,6 +448,17 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
                     "FAIL", "contract matches the server", "the server's ingest contract differs from this exporter's",
                     "upgrade the exporter or the server so both match (--print-contract-sha256 shows this exporter's)", 4,
                 )
+            if args.source == "wazuh" and cfg.send_inventory != "false" and cfg.wazuh_mode != "api":
+                features = data.get("features")
+                if isinstance(features, list) and "inventory" in features:
+                    server_inventory = True
+                    emit("PASS", "PBC-GRC accepts inventory")
+                else:
+                    emit(
+                        "NOTE", "PBC-GRC accepts inventory", "the server does not advertise it",
+                        "upgrade PBC-GRC to send host hardware and software; until then only vulnerabilities are "
+                        "sent (PBC_SEND_INVENTORY=false silences this)",
+                    )
             limits = data.get("limits") if isinstance(data.get("limits"), dict) else {}
             max_bytes = limits.get("max_bytes")
             if not isinstance(max_bytes, int) or isinstance(max_bytes, bool):
@@ -416,6 +517,24 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
                     emit("PASS", "Wazuh indexer", f"reachable, {count} documents")
             except WazuhReadError as err:
                 emit("FAIL", "Wazuh indexer", str(err), code=3)
+            if cfg.send_inventory == "true" or (cfg.send_inventory == "auto" and server_inventory):
+                try:
+                    hosts_with_inventory = reader.count_inventory_hosts()
+                    if hosts_with_inventory is None:
+                        emit("NOTE", "Wazuh inventory indices", "an unexpected response body")
+                    elif hosts_with_inventory == 0:
+                        emit(
+                            "NOTE", "Wazuh inventory indices", "wazuh-states-inventory-system-* has 0 documents",
+                            "needs Wazuh 4.14 or later with the inventory modules enabled and an indexer role with read "
+                            "on wazuh-states-inventory-*; until then only vulnerabilities are sent",
+                        )
+                    else:
+                        emit("PASS", "Wazuh inventory indices", f"{hosts_with_inventory} system documents")
+                except WazuhReadError as err:
+                    emit(
+                        "NOTE", "Wazuh inventory indices", str(err),
+                        "grant the indexer user read on wazuh-states-inventory-* to send host inventory",
+                    )
         if mode == "indexer":
             emit("SKIP", "Wazuh manager API", "not needed in indexer mode")
         elif not cfg.api_url:

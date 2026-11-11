@@ -1,0 +1,72 @@
+[
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "package": {
+      "name": "fixture-lib",
+      "version": "1.0",
+      "vendor": "Fixture Vendor",
+      "architecture": "amd64",
+      "type": "deb",
+      "size": 0,
+      "installed": "2024-05-01T10:00:00.000Z"
+    }
+  },
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "package": {
+      "name": "fixture-lib",
+      "version": "1.0",
+      "vendor": "Other Vendor",
+      "architecture": "amd64",
+      "type": "deb"
+    }
+  },
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "package": {
+      "name": "fixture-tool",
+      "version": "2.1",
+      "architecture": "all",
+      "type": "deb"
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "package": {
+      "name": "Fixture Suite",
+      "version": "9.9.9",
+      "vendor": "Fixture Software, Inc.",
+      "architecture": "x86_64",
+      "type": "win",
+      "installed": "not a date"
+    }
+  }
+]

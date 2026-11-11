@@ -19,9 +19,14 @@ from .transport import make_session
 log = logging.getLogger(__name__)
 
 INGEST_PATH = "/api/v1/vm/ingest"
+WHOAMI_PATH = "/api/v1/vm/whoami"
 RETRY_AFTER_CAP = 60
 RETRY_AFTER_DEFAULT = 5
 RETRYABLE_STATUSES = (500, 502, 503, 504)
+INVENTORY_HINT = (
+    "this PBC-GRC does not accept host inventory (hardware, software): upgrade the server, or set "
+    "PBC_SEND_INVENTORY=false"
+)
 REJECTED_STATUSES = (400, 401, 403, 409, 413, 415)
 
 HINTS = {
@@ -72,12 +77,30 @@ class IngestClient:
         self.max_attempts = max_attempts
         self.pause_seconds = pause_seconds
 
+    def features(self) -> list[str]:
+        """What this PBC-GRC says it accepts (`features` of GET whoami). An old server (404), an odd body or a transport
+        problem is an empty list: the caller then sends what every server accepts."""
+        try:
+            resp = self.session.get(
+                self.base_url + WHOAMI_PATH,
+                headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json"},
+                timeout=(10, self.timeout), verify=self.verify, allow_redirects=False,
+            )
+        except requests.RequestException:
+            return []
+        if resp.status_code != 200:
+            return []
+        listed = _json(resp).get("features")
+        return [f for f in listed if isinstance(f, str)] if isinstance(listed, list) else []
+
     def _reject(self, status: int, data: dict) -> RejectedError:
         message = f"PBC-GRC rejected the request (HTTP {status})"
         error = _server_error(data)
         if error:
             message += f": {error}"
         hint = HINTS.get(status)
+        if status == 400 and (".hardware" in error or ".software" in error):
+            hint = INVENTORY_HINT
         if hint:
             message += f" - {hint}"
         return RejectedError(message)
@@ -156,9 +179,10 @@ class IngestClient:
             result = self.post_payload(body)
             results.append(result)
             meta = metas[i] if i < len(metas) else {}
+            software = f" software={meta['software']}" if meta.get("software") is not None else ""
             log.info(
-                "chunk %d/%d: %d%s run_id=%s sha256=%s hosts=%s findings=%s bytes=%s",
+                "chunk %d/%d: %d%s run_id=%s sha256=%s hosts=%s findings=%s%s bytes=%s",
                 i + 1, total, result.http_status, " duplicate" if result.duplicate else "", result.run_id,
-                result.sha256, meta.get("hosts"), meta.get("findings"), len(body),
+                result.sha256, meta.get("hosts"), meta.get("findings"), software, len(body),
             )
         return results
