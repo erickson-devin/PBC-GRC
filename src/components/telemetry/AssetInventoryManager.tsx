@@ -23,6 +23,7 @@ import {
   PlusCircle,
   MinusCircle,
   ListChecks,
+  Radar,
 } from 'lucide-react';
 import {
   EnclaveAsset,
@@ -51,6 +52,9 @@ import { BoundaryChangePlan, BoundaryFilter, boundaryBlockMessage, boundaryEditB
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { hardwareMatches, hardwareSummary } from '../../data/telemetry/hardwareDetails';
+import { assetEditPatch } from '../../data/telemetry/observedInventoryView';
+import { osProfileSelectValue } from '../../data/telemetry/osProfile';
+import { AssetScannerDataDialog } from './AssetScannerDataDialog';
 
 const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700';
 
@@ -71,6 +75,7 @@ export const AssetInventoryManager: React.FC = () => {
   const [isAccretionModalOpen, setIsAccretionModalOpen] = useState(false);
   const [classifyingAsset, setClassifyingAsset] = useState<EnclaveAsset | null>(null);
   const [pendingDelete, setPendingDelete] = useState<EnclaveAsset | null>(null);
+  const [scannerAsset, setScannerAsset] = useState<EnclaveAsset | null>(null);
   const [csvContent, setCsvContent] = useState('');
   const [csvIssues, setCsvIssues] = useState<string[]>([]);
   const [notification, setNotification] = useState<string | null>(null);
@@ -112,6 +117,7 @@ export const AssetInventoryManager: React.FC = () => {
   useEffect(() => {
     scanTenantRef.current = tenantId;
     setScanState({ status: 'idle', byAsset: new Map(), shown: 0, total: 0 });
+    setScannerAsset(null);
     void loadScans();
   }, [tenantId, serverBacked, loadScans]);
   const truncated = scanState.status === 'ready' && scanState.total > scanState.shown;
@@ -139,16 +145,14 @@ export const AssetInventoryManager: React.FC = () => {
   // CRUD Handlers (the modal shows the error when a save fails, and stays open)
   const handleSaveAsset = async (assetData: Omit<EnclaveAsset, 'id'>) => {
     if (editingAsset) {
-      // Only what the form owns: scan results and discovery data may have changed on the server since it opened
-      const { hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner } = assetData;
-      const { manufacturer, model, serialNumber, location } = assetData;
-      const { fipsValidationStatus, fipsCertificateNumber, fipsModuleName, fipsStandard } = assetData;
-      await backend.update(editingAsset.id, {
-        hostName, ipAddress, macAddress, osProfile, cmmcAssetCategory, status, notes, owner,
-        manufacturer, model, serialNumber, location,
-        fipsValidationStatus, fipsCertificateNumber, fipsModuleName, fipsStandard,
-      });
-      showNotification(`✓ Asset ${assetData.hostName} updated.`);
+      // Only what the person changed: scan results, discovery data and fields the form cannot show may have changed on the server since it opened
+      const patch = assetEditPatch(editingAsset, assetData);
+      if (Object.keys(patch).length === 0) {
+        showNotification(`No changes to ${assetData.hostName}.`);
+      } else {
+        await backend.update(editingAsset.id, patch);
+        showNotification(`✓ Asset ${assetData.hostName} updated.`);
+      }
     } else {
       await backend.create(assetData);
       showNotification(showBoundary && boundary.declared ? `✓ Asset ${assetData.hostName} registered to the inventory. It is not in ${programName} until you add it.` : `✓ Asset ${assetData.hostName} registered to the inventory.`);
@@ -261,7 +265,7 @@ export const AssetInventoryManager: React.FC = () => {
         ? a.discoveryStatus === 'UNCONFIRMED_DISCOVERY'
         : a.cmmcAssetCategory === selectedCategory;
 
-    const matchesOs = selectedOs === 'ALL' || a.osProfile === selectedOs;
+    const matchesOs = selectedOs === 'ALL' || osProfileSelectValue(a.osProfile) === selectedOs;
 
     const matchesBoundary = matchesBoundaryFilter(a.id, boundaryFilter, boundary.activeIds);
 
@@ -499,10 +503,10 @@ export const AssetInventoryManager: React.FC = () => {
             </div>
             <div>
               <p className="text-xs font-bold text-amber-200">
-                Accretion discovered {unconfirmedAssets.length} new {unconfirmedAssets.length === 1 ? 'endpoint' : 'endpoints'}. Click to review and assign CMMC scope categories.
+                {unconfirmedAssets.length} discovered {unconfirmedAssets.length === 1 ? 'endpoint needs' : 'endpoints need'} a CMMC category. Click to review them.
               </p>
               <p className="text-xs text-amber-300/80 mt-0.5">
-                Passive sensor detected active network MAC addresses in the enclave subnet. Until an administrator assigns a CMMC category they are excluded from the SSP boundary counts.
+                They were added by a network sensor or a scanner agent. Until an administrator assigns a CMMC category they are excluded from the SSP boundary counts.
               </p>
             </div>
           </div>
@@ -611,6 +615,7 @@ export const AssetInventoryManager: React.FC = () => {
             <option value="win2022">Windows Server</option>
             <option value="win11">Windows 11</option>
             <option value="cisco_ios">Cisco IOS</option>
+            <option value="custom">Custom / other</option>
           </select>
           <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
@@ -750,7 +755,12 @@ export const AssetInventoryManager: React.FC = () => {
                     {/* IP & MAC */}
                     <td className="py-3 px-3">
                       <div className="font-mono text-slate-200 text-xs">
-                        {asset.ipAddress}
+                        {asset.ipAddress.trim() !== '' ? asset.ipAddress : (
+                          <>
+                            <span aria-hidden="true" className="text-slate-400">—</span>
+                            <span className="sr-only">No IP address recorded</span>
+                          </>
+                        )}
                       </div>
                       <div className="font-mono text-xs text-slate-400">
                         {asset.macAddress}
@@ -894,6 +904,18 @@ export const AssetInventoryManager: React.FC = () => {
                     {/* Actions Menu */}
                     <td className="py-3 px-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {/* What the scanners report: open to every role, read-only (server-backed organizations only) */}
+                        {serverBacked && (
+                          <button
+                            type="button"
+                            onClick={() => setScannerAsset(asset)}
+                            className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 border border-slate-700 transition-colors"
+                            title="Scanner data"
+                            aria-label={`Scanner data for ${asset.hostName}`}
+                          >
+                            <Radar className="w-3.5 h-3.5" aria-hidden="true" />
+                          </button>
+                        )}
                         {canEdit && pendingDelete?.id === asset.id ? (
                           <div className="flex items-center gap-1.5" role="group" aria-label={`Confirm removing ${asset.hostName}`}>
                             <span className="text-xs text-rose-300">Remove {asset.hostName}?</span>
@@ -968,7 +990,18 @@ export const AssetInventoryManager: React.FC = () => {
         onSave={handleSaveAsset}
         initialAsset={editingAsset}
         tenantId={currentTenant.id}
+        serverBacked={serverBacked}
       />
+
+      {/* ─── Scanner data (host inventory and installed software, read-only) ─── */}
+      {scannerAsset && (
+        <AssetScannerDataDialog
+          asset={scannerAsset}
+          tenantId={tenantId}
+          canEdit={canEdit}
+          onClose={() => setScannerAsset(null)}
+        />
+      )}
 
       {/* ─── Accretion Webhook & API Key Modal ─── */}
       <AccretionIntegrationModal

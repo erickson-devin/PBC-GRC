@@ -38,8 +38,8 @@ console.log('--- limits and wiring ---');
 assert(JSON.stringify(HARDWARE_LIMITS) === JSON.stringify({ manufacturer: 255, model: 255, serialNumber: 128, location: 255 }), 'HW9 the limits match the server');
 const manager = read('src/components/telemetry/AssetInventoryManager.tsx');
 const saveStart = manager.indexOf('const handleSaveAsset');
-const updateCall = manager.slice(manager.indexOf('backend.update(', saveStart), manager.indexOf('backend.update(', saveStart) + 400);
-assert(manager.includes('hardwareSummary(asset)') && updateCall.includes('serialNumber, location'), 'HW10 the row shows the summary and an edit keeps the hardware fields');
+const saveBody = manager.slice(saveStart, manager.indexOf('const handleDeleteAsset', saveStart));
+assert(manager.includes('hardwareSummary(asset)') && saveBody.includes('assetEditPatch(editingAsset, assetData)') && saveBody.includes('backend.update(editingAsset.id, patch)'), 'HW10 the row shows the summary and an edit sends only the fields that changed (the hardware fields among them)');
 assert(read('src/components/telemetry/AddAssetModal.tsx').includes('serialNumber: serialNumber.trim()'), 'HW10b the form sends the trimmed serial number');
 
 console.log('--- CSV and server parsing ---');
