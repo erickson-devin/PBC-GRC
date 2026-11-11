@@ -40,6 +40,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_poam_items', tenantColumn: 'tenant_id' },
   { table: 'vm_config_scans', tenantColumn: 'tenant_id' },
   { table: 'vm_config_results', tenantColumn: 'tenant_id' },
+  { table: 'vm_host_inventory', tenantColumn: 'tenant_id' },
+  { table: 'vm_host_software', tenantColumn: 'tenant_id' },
   { table: 'programs', tenantColumn: 'tenant_id' },
   { table: 'control_objectives', tenantColumn: 'tenant_id' },
   { table: 'control_objective_events', tenantColumn: 'tenant_id' },
@@ -663,6 +665,55 @@ export const TABLES_SQL = `
       CONSTRAINT vm_config_results_result_check CHECK (result IN (${vmConfigResultList})),
       CONSTRAINT vm_config_results_severity_check CHECK (severity IS NULL OR severity IN (${vmConfigSeverityList}))
   );
+
+  -- Host inventory (issue #229 phase 2): the CURRENT view one source has of one host, replaced on every run that reports it. Tenant-wide like
+  -- every VM table. last_run_id carries no foreign key: pruning a run must not delete the inventory it last reported.
+  CREATE TABLE IF NOT EXISTS vm_host_inventory (
+      tenant_id VARCHAR(64) NOT NULL,
+      asset_id VARCHAR(64) NOT NULL,
+      source_id VARCHAR(64) NOT NULL,
+      agent_id VARCHAR(128) NOT NULL DEFAULT '',
+      hostname VARCHAR(255) NOT NULL DEFAULT '',
+      ip_address VARCHAR(64) NOT NULL DEFAULT '',
+      mac_address VARCHAR(32) NOT NULL DEFAULT '',
+      os_name VARCHAR(128) NOT NULL DEFAULT '',
+      os_version VARCHAR(64) NOT NULL DEFAULT '',
+      os_platform VARCHAR(32) NOT NULL DEFAULT '',
+      os_kernel VARCHAR(128) NOT NULL DEFAULT '',
+      architecture VARCHAR(32) NOT NULL DEFAULT '',
+      cpu_name VARCHAR(255) NOT NULL DEFAULT '',
+      cpu_cores INTEGER,
+      cpu_mhz INTEGER,
+      memory_bytes BIGINT,
+      serial_number VARCHAR(128) NOT NULL DEFAULT '',
+      hardware_reported BOOLEAN NOT NULL DEFAULT false,
+      software_reported BOOLEAN NOT NULL DEFAULT false,
+      software_count INTEGER NOT NULL DEFAULT 0,
+      collected_at TIMESTAMPTZ NOT NULL,
+      first_seen_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL,
+      last_run_id VARCHAR(64) NOT NULL,
+      PRIMARY KEY (tenant_id, asset_id, source_id),
+      CONSTRAINT fk_vm_host_inventory_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_vm_host_inventory_source FOREIGN KEY (tenant_id, source_id) REFERENCES vm_sources (tenant_id, id)
+  );
+  -- The packages a source reports for a host (the scanner's view; software_items stays the manual list).
+  CREATE TABLE IF NOT EXISTS vm_host_software (
+      tenant_id VARCHAR(64) NOT NULL,
+      asset_id VARCHAR(64) NOT NULL,
+      source_id VARCHAR(64) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      version VARCHAR(128) NOT NULL DEFAULT '',
+      architecture VARCHAR(32) NOT NULL DEFAULT '',
+      vendor VARCHAR(255) NOT NULL DEFAULT '',
+      type VARCHAR(32) NOT NULL DEFAULT '',
+      installed_at TIMESTAMPTZ,
+      first_seen_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (tenant_id, asset_id, source_id, name, version, architecture),
+      CONSTRAINT fk_vm_host_software_host FOREIGN KEY (tenant_id, asset_id, source_id) REFERENCES vm_host_inventory (tenant_id, asset_id, source_id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_host_software_name ON vm_host_software (tenant_id, lower(name));
 
   -- Platform administrators created through the first-time setup wizard (the operators of this installation; see
   -- server/platformSetup.ts). Global, not tenant-bound.

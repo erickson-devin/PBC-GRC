@@ -57,7 +57,7 @@ function parseEnum(body: string, constraintName: string): string[] {
 }
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items', 'vm_config_scans', 'vm_config_results'];
+const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items', 'vm_config_scans', 'vm_config_results', 'vm_host_inventory', 'vm_host_software'];
 const ALL_TABLES = [...TENANT_TABLES, 'vm_vulns'];
 const NL = String.fromCharCode(10);
 const at = (t: string) => TABLES_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${t}`);
@@ -199,6 +199,21 @@ assert(same(severityValues, VM_CONFIG_SEVERITIES), 'severity list equals VM_CONF
 assert(!configScans.includes('program_id') && !configResults.includes('program_id'), 'configuration results are tenant-wide: no program_id');
 assert(TABLES_SQL.includes('ALTER TABLE vm_runs ADD COLUMN IF NOT EXISTS config_result_count INTEGER NOT NULL DEFAULT 0'), 'vm_runs.config_result_count is added idempotently');
 assert(at('vm_runs') < at('vm_config_scans') && at('vm_config_scans') < at('vm_config_results') && at('vm_config_results') < TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_admins'), 'the configuration tables sit in the VM block, after vm_runs');
+
+console.log('\n--- vm_host_inventory, vm_host_software (issue #229) ---');
+const hostInv = block('vm_host_inventory');
+const hostSw = block('vm_host_software');
+assert(hostInv.includes('PRIMARY KEY (tenant_id, asset_id, source_id)'), 'vm_host_inventory: one row per asset and source (primary key)');
+assert(hostInv.includes('CONSTRAINT fk_vm_host_inventory_asset FOREIGN KEY (tenant_id, asset_id) REFERENCES enclave_assets (tenant_id, id) ON DELETE CASCADE'), 'vm_host_inventory goes with its asset (composite key, cascade)');
+assert(hostInv.includes('CONSTRAINT fk_vm_host_inventory_source FOREIGN KEY (tenant_id, source_id) REFERENCES vm_sources (tenant_id, id)'), 'vm_host_inventory: composite key to the source');
+assert((hostInv.match(/FOREIGN KEY \(tenant_id, /g) || []).length === 2 && !/_id VARCHAR\(64\)[^,\n]*REFERENCES/.test(hostInv), 'vm_host_inventory has exactly two foreign keys, both composite on tenant_id');
+assert(/last_run_id VARCHAR\(64\) NOT NULL,/.test(hostInv) && !/last_run_id[^\n]*REFERENCES/.test(hostInv), 'vm_host_inventory.last_run_id has no foreign key (pruning a run keeps the inventory)');
+assert(hostInv.includes('memory_bytes BIGINT,') && hostInv.includes('cpu_cores INTEGER,') && hostInv.includes('cpu_mhz INTEGER,'), 'vm_host_inventory: nullable numbers, memory as BIGINT');
+assert(hostSw.includes('PRIMARY KEY (tenant_id, asset_id, source_id, name, version, architecture)'), 'vm_host_software: one row per package, version and architecture (primary key)');
+assert(hostSw.includes('FOREIGN KEY (tenant_id, asset_id, source_id) REFERENCES vm_host_inventory (tenant_id, asset_id, source_id) ON DELETE CASCADE'), 'vm_host_software goes with its host view (composite key, cascade)');
+assert(TABLES_SQL.includes('idx_vm_host_software_name ON vm_host_software (tenant_id, lower(name))'), 'vm_host_software is indexed by lower-case name');
+assert(!hostInv.includes('program_id') && !hostSw.includes('program_id'), 'the inventory is tenant-wide: no program_id');
+assert(at('vm_config_results') < at('vm_host_inventory') && at('vm_host_inventory') < at('vm_host_software') && at('vm_host_software') < TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_admins'), 'the inventory tables sit in the VM block, after vm_config_results');
 
 console.log('\n--- enclave_assets additions and ordering ---');
 assert(TABLES_SQL.includes("ALTER TABLE enclave_assets ADD COLUMN IF NOT EXISTS agent_ids JSONB NOT NULL DEFAULT '{}'::jsonb"), 'enclave_assets.agent_ids is added');

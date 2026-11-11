@@ -26,7 +26,8 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmRun, VmServiceToken, VmSource } from '../types/vm';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmObservedHost, VmObservedSoftware, VmRun, VmServiceToken, VmSource } from '../types/vm';
+import { parseObservedHosts, parseObservedSoftware } from '../data/telemetry/observedInventory';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -791,6 +792,22 @@ export const ApiClient = {
     const qs = q.toString();
     const data = await authedJson<{ totalCount?: unknown; results?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/scans/${encodeURIComponent(scanId)}/results${qs ? `?${qs}` : ''}`, { tenantId });
     return { totalCount: typeof data?.totalCount === 'number' ? data.totalCount : 0, results: Array.isArray(data?.results) ? (data.results as VmConfigRuleResultRow[]) : [] };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/assets/:assetId/inventory: what each scanner currently reports about the asset. Tenant-wide; never cached in the browser. */
+  async getObservedInventory(tenantId: string, assetId: string): Promise<{ observed: VmObservedHost[] }> {
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/assets/${encodeURIComponent(assetId)}/inventory`, { tenantId });
+    return { observed: parseObservedHosts(data) };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/assets/:assetId/software: the packages the scanners report for the asset, by name. Tenant-wide; never cached in the browser. */
+  async listObservedSoftware(tenantId: string, assetId: string, options?: { sourceId?: string; limit?: number }): Promise<{ totalCount: number; items: VmObservedSoftware[] }> {
+    const q = new URLSearchParams();
+    if (options?.sourceId) q.set('sourceId', options.sourceId);
+    if (options?.limit !== undefined) q.set('limit', String(options.limit));
+    const qs = q.toString();
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/assets/${encodeURIComponent(assetId)}/software${qs ? `?${qs}` : ''}`, { tenantId });
+    return parseObservedSoftware(data);
   },
 
   /** GET /api/v1/tenants/:id/vm/config/suggestions for the program (x-program-id): computed on read, never written to a control. */

@@ -4,7 +4,8 @@ import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store
 import { listFindings } from '../vm/findingsStore';
 import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults } from '../vm/configStore';
 import { computeConfigSuggestions } from '../vm/configSuggestions';
-import { listAssets } from '../assets';
+import { getObservedHosts, listObservedSoftware } from '../vm/inventoryStore';
+import { getAsset, listAssets } from '../assets';
 import { getProgram } from '../programs';
 import { getProgramBoundary } from '../programAssets';
 import { frameworksDefiningControl } from '../middleware/frameworkGuard';
@@ -256,6 +257,54 @@ function limitParam(raw: unknown, fallback: number, max: number): number | null 
   const n = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
   return Number.isInteger(n) && n >= 1 && n <= max ? n : null;
 }
+
+/** An asset id from the path that exists in the tenant, else a 404 is sent and null returned. */
+async function assetOr404(req: Request, res: Response): Promise<string | null> {
+  const assetId = String(req.params.assetId);
+  if (!TOKEN_ID_PATTERN.test(assetId) || !(await getAsset(req.tenantId!, assetId))) {
+    res.status(404).json({ error: 'Asset not found' });
+    return null;
+  }
+  return assetId;
+}
+
+/**
+ * GET .../vm/assets/:assetId/inventory: what each source currently reports about the asset (hardware, addresses, operating system), most
+ * recently seen first (docs/VULNERABILITY_MANAGEMENT.md, section 5.6). Open to every role, like /findings. Read only: the asset itself is untouched.
+ */
+router.get('/assets/:assetId/inventory', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const assetId = await assetOr404(req, res);
+    if (assetId === null) return;
+    res.json({ tenantId: req.tenantId, assetId, observed: await getObservedHosts(req.tenantId!, assetId) });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to read the host inventory');
+  }
+});
+
+/** GET .../vm/assets/:assetId/software?sourceId=&limit=: the packages the sources report for the asset, by name then version (default 1000, up to 10000). */
+router.get('/assets/:assetId/software', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const { sourceId } = req.query;
+  if (sourceId !== undefined && (typeof sourceId !== 'string' || !TOKEN_ID_PATTERN.test(sourceId))) {
+    res.status(400).json({ error: 'Invalid sourceId' });
+    return;
+  }
+  const limit = limitParam(req.query.limit, 1000, 10000);
+  if (limit === null) {
+    res.status(400).json({ error: 'Invalid limit: between 1 and 10000' });
+    return;
+  }
+  try {
+    const assetId = await assetOr404(req, res);
+    if (assetId === null) return;
+    const { totalCount, items } = await listObservedSoftware(req.tenantId!, assetId, { sourceId: sourceId as string | undefined, limit });
+    res.json({ tenantId: req.tenantId, assetId, totalCount, items });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the installed software');
+  }
+});
 
 /**
  * GET .../vm/config/scans?assetId=&latest=&limit=: configuration scans, newest first (issue #103). Open to every role, like /findings.

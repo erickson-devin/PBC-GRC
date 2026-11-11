@@ -229,3 +229,41 @@ export interface VmConfigSuggestionsResponse {
   controls: VmConfigSuggestion[];
   unmappedRuleCount: number;
 }
+
+/** One source's current view of a host (GET /vm/assets/:assetId/inventory). Timestamps are ISO strings; BIGINT memory is a number. */
+export interface VmObservedHost {
+  sourceId: string;
+  sourceKind: VmSourceKind;
+  sourceLabel: string;
+  hostname: string;
+  ipAddress: string;
+  macAddress: string;
+  os: { name: string; version: string; platform: string; kernel: string };
+  /** Null when the source never reported hardware for this host. */
+  hardware: {
+    architecture: string;
+    cpuName: string;
+    cpuCores: number | null;
+    cpuMhz: number | null;
+    memoryBytes: number | null;
+    serialNumber: string;
+  } | null;
+  softwareReported: boolean;
+  softwareCount: number;
+  collectedAt: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/** One installed package a source reported for a host (GET /vm/assets/:assetId/software). */
+export interface VmObservedSoftware {
+  sourceId: string;
+  name: string;
+  version: string;
+  vendor: string;
+  architecture: string;
+  type: string;
+  installedAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}

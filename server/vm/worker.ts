@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { countAssets, createAgentReportedAsset, listAgentAssetCandidates, MAX_ASSETS_PER_TENANT, migrateLegacyAgentKeys, recordAgentReport } from '../assets';
+import { countAssets, createAgentReportedAsset, fillBlankAgentFields, listAgentAssetCandidates, MAX_ASSETS_PER_TENANT, migrateLegacyAgentKeys, readAgentFillState, recordAgentReport } from '../assets';
 import { localStorageRoot, resolveTenantLocalPath } from '../evidence/storage';
 import { errorMessage } from '../../src/utils/errors';
 import { resolveVmTargetProgram } from '../programs';
@@ -25,6 +25,8 @@ import {
   withVmTenantTx,
 } from './findingsStore';
 import { replaceRunConfigScans, type ConfigScanDraft } from './configStore';
+import { normalizeInventory, planBlankFills } from './inventory';
+import { replaceHostInventory, type HostInventoryDraft } from './inventoryStore';
 import { VM_SHUTDOWN_MESSAGE } from '../shutdown';
 import { validateIngestPayload } from './ingestSchema';
 import { getRun, listSources, listUnfinishedRuns, updateRun } from './store';
@@ -128,6 +130,7 @@ interface RunSummary {
   sightings: number;
   poam: number;
   configResults: number;
+  softwareItems: number;
 }
 
 async function processRun(tenantId: string, runId: string): Promise<void> {
@@ -173,6 +176,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
     // Every host is normalized for identity (a configuration-only host comes out with no findings); its configuration is read separately.
     const hosts = (normalize ?? normalizeFindings)(payload);
     const configScans = normalizeConfiguration(payload);
+    const inventory = normalizeInventory(payload);
 
     const now = new Date().toISOString();
     // The scanner data is tenant-wide; the automatic POA&M items belong to the tenant's VM target program (the organization default when none is
@@ -256,6 +260,19 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         if (assetId) for (const scan of scans) scanDrafts.push({ assetId, scan });
       }
       const configResults = await replaceRunConfigScans(tenantId, run, scanDrafts, client);
+      // The inventory a host reported replaces this source's earlier view of it; blank fields of a scanner-created asset are filled, never a person's.
+      const inventoryDrafts: HostInventoryDraft[] = [];
+      for (const host of hosts) {
+        const inv = inventory.get(host.agentId);
+        const assetId = assetOf.get(host.agentId);
+        if (inv && assetId) inventoryDrafts.push({ assetId, agentId: host.agentId, hostname: host.hostname, inv });
+      }
+      const softwareItems = await replaceHostInventory(tenantId, run, run.collectedAt ?? run.receivedAt, inventoryDrafts, client);
+      for (const d of inventoryDrafts) {
+        const state = await readAgentFillState(tenantId, d.assetId, pgClient);
+        if (!state) continue;
+        await fillBlankAgentFields(tenantId, d.assetId, planBlankFills(state, d.inv), VM_WORKER_ACTOR, pgClient);
+      }
       if (faultForTests === 'after_save') throw new Error('fault injected for tests');
       if (faultForTests === 'interrupt_after_save') controllers.get(runId)?.controller.abort();
       checkpoint();
@@ -270,11 +287,11 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
 
       const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;
       await markRunNormalized(tenantId, run, now, warning, client);
-      return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam, configResults };
+      return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam, configResults, softwareItems };
     }, programId);
 
     console.log(
-      `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M, ${summary.configResults} configuration results)`,
+      `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M, ${summary.configResults} configuration results, ${summary.softwareItems} software items)`,
     );
   } catch (err: unknown) {
     // The transaction (if any) rolled back; the run's status is written on its own.
@@ -289,7 +306,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       return;
     }
     console.error('[VM Worker]', errorMessage(err));
-    console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (0/0/0 findings, 0 sightings, 0 POA&M, 0 configuration results)`);
+    console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (0/0/0 findings, 0 sightings, 0 POA&M, 0 configuration results, 0 software items)`);
     await fail(tenantId, runId, GENERIC);
   }
 }

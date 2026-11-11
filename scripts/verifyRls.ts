@@ -514,6 +514,69 @@ async function main() {
     const resultCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_config_results WHERE scan_id = $1', [scanIdX3]);
     check(scanCascade.rows.length === 0 && resultCascade.rows.length === 0, 'vm_config_scans and vm_config_results: rows go with their run (ON DELETE CASCADE)', `saw ${scanCascade.rows.length} scans, ${resultCascade.rows.length} results`);
 
+    // 14. vm_host_inventory and vm_host_software: the current view one source has of a host, and its packages (issue #229 phase 2)
+    const insertInventory =
+      "INSERT INTO vm_host_inventory (tenant_id, asset_id, source_id, collected_at, first_seen_at, last_seen_at, last_run_id) VALUES ($1, $2, $3, NOW(), NOW(), NOW(), 'rls_verify')";
+    let inventoryOk = false;
+    try {
+      await queryWithTenant(TENANT_X, insertInventory, [TENANT_X, assetIdX, srcIdX]);
+      inventoryOk = true;
+    } catch {
+      inventoryOk = false;
+    }
+    check(inventoryOk, 'vm_host_inventory: tenant X can record a host view for its own asset and source');
+    check(
+      await rejectsWith(TENANT_X, insertInventory, [TENANT_X, assetIdY, srcIdX], { code: '23503', constraint: 'fk_vm_host_inventory_asset' }),
+      "vm_host_inventory: a row naming tenant Y's asset is refused (composite foreign key)", lastRejection
+    );
+    check(
+      await rejectsWith(TENANT_X, insertInventory, [TENANT_X, assetIdX, srcIdY], { code: '23503', constraint: 'fk_vm_host_inventory_source' }),
+      "vm_host_inventory: a row naming tenant Y's source is refused (composite foreign key)", lastRejection
+    );
+    const inventoryStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_host_inventory WHERE tenant_id = $1', [TENANT_X]);
+    check(inventoryStolen.rows.length === 0, 'vm_host_inventory: tenant Y cannot read tenant X rows even by naming the tenant');
+    const inventoryNoCtx = await pool.query('SELECT 1 FROM vm_host_inventory WHERE asset_id = $1', [assetIdX]);
+    check(inventoryNoCtx.rowCount === 0, 'vm_host_inventory: no tenant context => zero rows visible', `saw ${inventoryNoCtx.rowCount}`);
+    check(
+      await rejectsWith(TENANT_X, insertInventory, [TENANT_Y, assetIdX, srcIdX], { code: '42501' }),
+      'vm_host_inventory: tenant X cannot insert a row for tenant Y (WITH CHECK)', lastRejection
+    );
+    const insertSoftware =
+      "INSERT INTO vm_host_software (tenant_id, asset_id, source_id, name, version, architecture, first_seen_at, last_seen_at) VALUES ($1, $2, $3, 'rls_verify_pkg', '1', 'x', NOW(), NOW())";
+    let softwareOk = false;
+    try {
+      await queryWithTenant(TENANT_X, insertSoftware, [TENANT_X, assetIdX, srcIdX]);
+      softwareOk = true;
+    } catch {
+      softwareOk = false;
+    }
+    check(softwareOk, 'vm_host_software: tenant X can record a package for its own host view');
+    check(
+      await rejectsWith(TENANT_X, insertSoftware, [TENANT_X, assetIdY, srcIdX], { code: '23503', constraint: 'fk_vm_host_software_host' }),
+      "vm_host_software: a package naming tenant Y's host view is refused (composite foreign key)", lastRejection
+    );
+    const softwareStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_host_software WHERE tenant_id = $1', [TENANT_X]);
+    check(softwareStolen.rows.length === 0, 'vm_host_software: tenant Y cannot read tenant X rows even by naming the tenant');
+    const softwareNoCtx = await pool.query('SELECT 1 FROM vm_host_software WHERE asset_id = $1', [assetIdX]);
+    check(softwareNoCtx.rowCount === 0, 'vm_host_software: no tenant context => zero rows visible', `saw ${softwareNoCtx.rowCount}`);
+    check(
+      await rejectsWith(TENANT_X, insertSoftware, [TENANT_Y, assetIdX, srcIdX], { code: '42501' }),
+      'vm_host_software: tenant X cannot insert a row for tenant Y (WITH CHECK)', lastRejection
+    );
+    // A throwaway asset proves the cascade without disturbing the rows the later blocks use.
+    const cascadeAsset = await queryWithTenant(
+      TENANT_X,
+      "INSERT INTO enclave_assets (tenant_id, asset_name, cmmc_category) VALUES ($1, 'rls_verify_inventory_cascade', 'CONTRACTOR_RISK') RETURNING id",
+      [TENANT_X]
+    );
+    const cascadeAssetId = cascadeAsset.rows[0]?.id;
+    await queryWithTenant(TENANT_X, insertInventory, [TENANT_X, cascadeAssetId, srcIdX]);
+    await queryWithTenant(TENANT_X, insertSoftware, [TENANT_X, cascadeAssetId, srcIdX]);
+    await queryWithTenant(TENANT_X, 'DELETE FROM enclave_assets WHERE id = $1', [cascadeAssetId]);
+    const invCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_host_inventory WHERE asset_id = $1', [cascadeAssetId]);
+    const swCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_host_software WHERE asset_id = $1', [cascadeAssetId]);
+    check(invCascade.rows.length === 0 && swCascade.rows.length === 0, 'vm_host_inventory and vm_host_software: rows go with their asset (ON DELETE CASCADE)', `saw ${invCascade.rows.length} hosts, ${swCascade.rows.length} packages`);
+
     console.log('\n--- 3c. Control assessment history ---');
     // control_assessment_events is program-scoped: every insert and read below runs in the program of its tenant (both settings)
     const programX = await mkProgram(TENANT_X, 'rls_verify_events_x', true);
@@ -629,6 +692,7 @@ async function main() {
       await queryWithTenant(t, "DELETE FROM vm_findings WHERE vuln_id LIKE 'RLS-VERIFY-%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_run_assets WHERE run_id IN (SELECT id FROM vm_runs WHERE raw_path = 'rls_verify')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_config_scans WHERE run_id IN (SELECT id FROM vm_runs WHERE raw_path = 'rls_verify')", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_host_inventory WHERE last_run_id = 'rls_verify'", []).catch(() => undefined); // its packages go with it
       await queryWithTenant(t, "DELETE FROM vm_runs WHERE raw_path = 'rls_verify'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_sources WHERE label LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_service_tokens WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);

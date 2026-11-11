@@ -48,7 +48,24 @@ export const INGEST_LIMITS = {
   benchmarkVersionMax: 64,
   benchmarkTitleMax: 255,
   xccdfIdMax: 255,
+  maxSoftwarePerHost: 10000,
+  maxTotalSoftware: 200000,
+  osPlatformMax: 32,
+  osKernelMax: 128,
+  architectureMax: 32,
+  cpuNameMax: 255,
+  cpuCoresMax: 4096,
+  cpuMhzMax: 1000000,
+  memoryBytesMax: 9007199254740991,
+  serialNumberMax: 128,
+  softwareNameMax: 255,
+  softwareVersionMax: 128,
+  softwareVendorMax: 255,
+  softwareTypeMax: 32,
 } as const;
+
+/** What GET /vm/whoami advertises: 'inventory' means the server accepts host.hardware and host.software. */
+export const VM_INGEST_FEATURES = ['whoami', 'inventory'] as const;
 
 const RE = {
   line: new RegExp(INGEST_PATTERN_SOURCES.line),
@@ -94,6 +111,30 @@ export const ingestOsSchema = z
   .object({
     name: line(INGEST_LIMITS.osNameMax).optional(),
     version: line(INGEST_LIMITS.osVersionMax).optional(),
+    platform: line(INGEST_LIMITS.osPlatformMax).optional(),
+    kernel: line(INGEST_LIMITS.osKernelMax).optional(),
+  })
+  .strict();
+
+export const ingestHardwareSchema = z
+  .object({
+    architecture: line(INGEST_LIMITS.architectureMax).optional(),
+    cpu_name: line(INGEST_LIMITS.cpuNameMax).optional(),
+    cpu_cores: z.number().int().min(0).max(INGEST_LIMITS.cpuCoresMax).optional(),
+    cpu_mhz: z.number().int().min(0).max(INGEST_LIMITS.cpuMhzMax).optional(),
+    memory_bytes: z.number().int().min(0).max(INGEST_LIMITS.memoryBytesMax).optional(),
+    serial_number: line(INGEST_LIMITS.serialNumberMax).optional(),
+  })
+  .strict();
+
+export const ingestSoftwareItemSchema = z
+  .object({
+    name: z.string().min(1).max(INGEST_LIMITS.softwareNameMax).regex(RE.line),
+    version: line(INGEST_LIMITS.softwareVersionMax).optional(),
+    vendor: line(INGEST_LIMITS.softwareVendorMax).optional(),
+    architecture: line(INGEST_LIMITS.architectureMax).optional(),
+    type: line(INGEST_LIMITS.softwareTypeMax).optional(),
+    installed_at: dateTime.optional(),
   })
   .strict();
 
@@ -167,6 +208,8 @@ export const ingestHostSchema = z
     os: ingestOsSchema.optional(),
     findings: z.array(ingestFindingSchema).max(INGEST_LIMITS.maxFindingsPerHost).optional(),
     configuration: z.array(ingestConfigScanSchema).max(INGEST_LIMITS.maxConfigScansPerHost).optional(),
+    hardware: ingestHardwareSchema.optional(),
+    software: z.array(ingestSoftwareItemSchema).max(INGEST_LIMITS.maxSoftwarePerHost).optional(),
   })
   .strict();
 
@@ -225,11 +268,11 @@ export function validateIngestPayload(raw: unknown): Validation<IngestPayload> {
     seen.set(id, j);
   }
 
-  // A host reports findings, configuration results or both (a configuration-only host has no findings key).
+  // A host reports findings, configuration results, inventory or a combination (a host without findings has no findings key).
   for (let j = 0; j < payload.hosts.length; j++) {
     const host = payload.hosts[j];
-    if (host.findings === undefined && host.configuration === undefined) {
-      return { ok: false, error: `$.hosts[${j}].findings: required (a host reports findings, configuration results or both)` };
+    if (host.findings === undefined && host.configuration === undefined && host.hardware === undefined && host.software === undefined) {
+      return { ok: false, error: `$.hosts[${j}].findings: required (a host reports findings, configuration results, inventory or a combination)` };
     }
   }
 
@@ -239,6 +282,12 @@ export function validateIngestPayload(raw: unknown): Validation<IngestPayload> {
   }
   if (totalResults > INGEST_LIMITS.maxTotalConfigResults) {
     return { ok: false, error: `$.hosts: at most ${INGEST_LIMITS.maxTotalConfigResults} configuration results in total` };
+  }
+
+  let totalSoftware = 0;
+  for (const host of payload.hosts) totalSoftware += host.software?.length ?? 0;
+  if (totalSoftware > INGEST_LIMITS.maxTotalSoftware) {
+    return { ok: false, error: `$.hosts: at most ${INGEST_LIMITS.maxTotalSoftware} software items in total` };
   }
 
   for (let j = 0; j < payload.hosts.length; j++) {
