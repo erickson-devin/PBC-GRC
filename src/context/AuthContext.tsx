@@ -23,6 +23,7 @@ import { errorMessage } from '../utils/errors';
 import { buildUserProfile } from '../utils/userProfile';
 import { SESSION_VERIFY_TIMEOUT_MS, initialSessionCheck, nextSessionCheck, type SessionCheck } from '../data/sessionVerification';
 import { reconcileRescuedTextOnSignIn, rescueUnsavedText } from '../services/unsavedText';
+import { resetSystemUseNoticeAck } from '../services/systemUseNoticeAck';
 
 /** A sign-in that is not finished: the person still has to enter a code ('verify') or enrol an authenticator ('enrol'). Lives in React state only. */
 export interface MfaChallenge {
@@ -535,6 +536,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     pinTabSession(null);
+    resetSystemUseNoticeAck(); // the next sign-in shows the system use notice again
     void ApiClient.signOut();
     resetForSignOut();
     setSessionCheck((c) => nextSessionCheck(c, { type: 'signedOut' }));
@@ -600,7 +602,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return (await resumeFromLock(result)) ? 'ok' : 'failed';
     } catch (err: unknown) {
-      setAuthError(errorMessage(err) || 'Authentication failed. Please verify your credentials.');
+      // The notice was changed while this screen was locked (the acknowledged version is sent with the password): a fixed message, no new screen
+      const reason = err instanceof ApiError ? err.reason : undefined;
+      setAuthError(
+        reason === 'system_use_notice_changed' || reason === 'system_use_ack_required'
+          ? 'The system use notice has changed. Sign out and sign in again to read the updated notice.'
+          : errorMessage(err) || 'Authentication failed. Please verify your credentials.'
+      );
       return err instanceof ApiError && err.status === 0 ? 'offline' : 'failed';
     }
   }, [resumeFromLock]);

@@ -2,6 +2,7 @@ import { CompiledDocument, MachineReadablePackage, POAMEntry } from '../../types
 import { AssessmentState } from '../../types/cmmc';
 import { computeSha256 } from '../audit/cryptoUtils';
 import { NOT_RECORDED } from './documentDefaults';
+import { csvCell } from './csv';
 import { generateInventoryCsv, isInventoryDocumentType } from './inventoryDocuments';
 
 export { computeSha256 };
@@ -21,6 +22,49 @@ function escapeHtml(str: string | number | undefined | null): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+export type StatusBadgeClass = 'status-met' | 'status-in-progress' | 'status-not-met' | 'status-not-started';
+
+const STATUS_BADGES: Record<string, StatusBadgeClass> = {
+  'MET': 'status-met',
+  'Met (self-assessed)': 'status-met',
+  'Compliant / Implemented': 'status-met',
+  'Compliant': 'status-met',
+  'Fully Compliant': 'status-met',
+  'All controls met': 'status-met',
+  'Implemented': 'status-met',
+  'IN_PROGRESS': 'status-in-progress',
+  'In progress': 'status-in-progress',
+  'Remediation Underway': 'status-in-progress',
+  'Planned / In Progress': 'status-in-progress',
+  'NOT_MET': 'status-not-met',
+  'Not met': 'status-not-met',
+  'Deficiency / Gap': 'status-not-met',
+  'Deficiency Remediation Needed': 'status-not-met',
+  'Not Implemented': 'status-not-met',
+  // Neutral (grey): a state, not a verdict
+  'NOT_STARTED': 'status-not-started',
+  'Not started': 'status-not-started',
+  'In Scope': 'status-not-started',
+  '100% SPRS Ready': 'status-not-started',
+  'Action Required': 'status-not-started',
+  'Optimal': 'status-not-started',
+  'OPEN': 'status-not-started',
+  'DELAYED': 'status-not-started',
+  'PENDING': 'status-not-started',
+  'COMPLETED': 'status-not-started',
+};
+
+/**
+ * Badge colour for a status cell: an exact, case-sensitive match against the values the compilers emit.
+ * Anything else (for example NON_COMPLIANT or UNMET) returns null and renders as plain text, never as a wrong colour.
+ */
+export function statusBadgeClass(text: string): StatusBadgeClass | null {
+  if (Object.prototype.hasOwnProperty.call(STATUS_BADGES, text)) return STATUS_BADGES[text];
+  if (/^\d+ Deficiencies$/.test(text)) return 'status-not-met';
+  if (/^\d+ Open$/.test(text)) return 'status-not-started';
+  return null;
 }
 
 /**
@@ -378,24 +422,10 @@ export function generatePrintableHtml(
   // Helper to format table cells with status badges
   const renderCell = (val: string | number, headerName: string): string => {
     const text = String(val ?? '');
-    const headerLower = headerName.toLowerCase();
 
-    if (headerLower.includes('status') || headerLower.includes('operating status') || headerLower.includes('compliance posture')) {
-      const upper = text.toUpperCase();
-      // Negative statuses first: 'NOT_MET' contains 'MET'
-      if (upper.includes('NOT_MET') || upper.includes('NOT MET') || upper.includes('DEFICIENCY') || upper.includes('GAP') || upper.includes('EXCEPTION')) {
-        return `<span class="status-badge status-not-met">${escapeHtml(text)}</span>`;
-      }
-      if (upper.includes('NOT_STARTED') || upper.includes('NOT STARTED')) {
-        return `<span class="status-badge status-not-started">${escapeHtml(text)}</span>`;
-      }
-      if (upper.includes('PROGRESS') || upper.includes('UNDERWAY') || upper.includes('TESTING')) {
-        return `<span class="status-badge status-in-progress">${escapeHtml(text)}</span>`;
-      }
-      if (upper.includes('MET') || upper.includes('EFFECTIVELY') || upper.includes('COMPLIANT')) {
-        return `<span class="status-badge status-met">${escapeHtml(text)}</span>`;
-      }
-      return `<span class="status-badge status-not-started">${escapeHtml(text)}</span>`;
+    if (/status|compliance posture/i.test(headerName)) {
+      const cls = statusBadgeClass(text);
+      if (cls) return `<span class="status-badge ${cls}">${escapeHtml(text)}</span>`;
     }
 
     if (text.startsWith('POAM-') || text.startsWith('AC.') || text.startsWith('CC') || text.startsWith('164.')) {
@@ -767,25 +797,19 @@ export function generatePoamCsv(poamEntries: POAMEntry[]): string {
     'Remediation Action Plan',
   ];
 
-  const escapeCsv = (val: string | number | undefined | null): string => {
-    if (val === undefined || val === null) return '""';
-    const text = String(val).replace(/"/g, '""');
-    return `"${text}"`;
-  };
-
   let csv = headers.map(h => `"${h}"`).join(',') + '\r\n';
 
   for (const entry of poamEntries) {
     const row = [
-      escapeCsv(entry.weaknessId),
-      escapeCsv(entry.controlId),
-      escapeCsv(entry.controlTitle),
-      escapeCsv(entry.weaknessDescription),
-      escapeCsv(entry.status),
-      escapeCsv(entry.scheduledCompletionDate),
-      escapeCsv(entry.responsibleRole),
-      escapeCsv(entry.requiredResources),
-      escapeCsv(entry.remediationPlan),
+      csvCell(entry.weaknessId),
+      csvCell(entry.controlId),
+      csvCell(entry.controlTitle),
+      csvCell(entry.weaknessDescription),
+      csvCell(entry.status),
+      csvCell(entry.scheduledCompletionDate),
+      csvCell(entry.responsibleRole),
+      csvCell(entry.requiredResources),
+      csvCell(entry.remediationPlan),
     ];
     csv += row.join(',') + '\r\n';
   }

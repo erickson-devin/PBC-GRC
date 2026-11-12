@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 
 import { ApiClient, ApiError } from '../src/services/apiClient';
-import { coalesceSaveFailure, controlSaveFailureMessage, isStaleWriteError, revertFailedControlFields, staleWriteMessage } from '../src/data/controlSave';
+import { clearNotesNotSaved, coalesceSaveFailure, controlSaveFailureMessage, isStaleWriteError, markNotesNotSaved, retryableNotes, revertFailedControlFields, staleWriteMessage, type NotesNotSaved } from '../src/data/controlSave';
 import {
   applyImportResult,
   cascadeFill,
@@ -523,6 +523,20 @@ function controlSaveFailures() {
   assert(/!notesEditable/.test(status) && /!notesEditable/.test(role), 'F17 status and role changes are refused when the notes are not editable (offline / not loaded)');
   const loop = slice(assess, 'const IMPORT_PUT_CAP', 'return true;');
   assert(/saveControl\(id, update\)/.test(loop) && /'unreachable'\) break/.test(loop) && /controls to the server/.test(loop), 'F18 the import stops sending when the server is unreachable and reports how many controls were saved');
+
+  // #78: which controls' notes are not on the server, and why
+  const archivedErr = Object.assign(new ApiError(409, 'archived'), { reason: 'program_archived' });
+  assert(markNotesNotSaved({}, 'AC.L1-1', new ApiError(500, 'Server error'))['AC.L1-1'] === 'failed' && markNotesNotSaved({}, 'AC.L1-1', new ApiError(0, 'Cannot reach the server'))['AC.L1-1'] === 'failed', 'F19 a failed notes save marks the control failed (a 500 and an unreachable server)');
+  assert(markNotesNotSaved({}, 'AC.L1-1', staleErr)['AC.L1-1'] === 'stale' && markNotesNotSaved({}, 'AC.L1-1', archivedErr)['AC.L1-1'] === 'archived', 'F20 a stale write is marked stale and an archived program is marked archived');
+  const marked: NotesNotSaved = { 'AC.L1-1': 'failed' };
+  assert(markNotesNotSaved(marked, 'AC.L1-1', new ApiError(401, 'Session expired')) === marked && markNotesNotSaved(marked, 'AC.L1-1', new ApiError(500, 'again')) === marked, 'F21 a 401, or the same reason again, returns the same reference');
+  assert(clearNotesNotSaved(marked, 'absent') === marked && Object.keys(clearNotesNotSaved(marked, 'AC.L1-1')).length === 0 && marked['AC.L1-1'] === 'failed', 'F22 clearing an unmarked control changes nothing; clearing a marked one removes only its key');
+  assert(JSON.stringify(retryableNotes({ b: 'failed', a: 'stale', c: 'failed', d: 'archived' })) === JSON.stringify(['b', 'c']), 'F23 only failed notes can be retried, in order');
+  assert(/markNotesNotSaved\(/.test(save) && /clearNotesNotSaved\(/.test(save), 'F24 saveControl marks a failed notes save and clears the mark on success');
+  const retry = slice(assess, 'const retryUnsavedNotes = useCallback', '// Action: Update Control Status');
+  assert(/retryableNotes\(/.test(retry) && /saveControl\(id, \{ implementationNotes:/.test(retry) && /'unreachable'\) break/.test(retry) && !/console\./.test(retry) && !/alert\(/.test(retry), 'F25 the retry resends only the retryable notes (current text), stops when the server is unreachable, and neither alerts nor logs');
+  const markerSrc = [read('src/components/dashboard/ControlCard.tsx'), read('src/components/matrix/InspectDocumentModal.tsx')];
+  assert(markerSrc.every((s) => s.includes('NOTES_NOT_SAVED_DETAIL[') && s.includes('aria-describedby={notesNotSavedReason ? notesNotSavedId : undefined}')) && banner.includes('retryUnsavedNotes(') && banner.includes('aria-busy={retrying}'), 'F26 the control card and the inspect modal show the Not saved marker; the banner offers Retry');
 }
 
 async function main() {

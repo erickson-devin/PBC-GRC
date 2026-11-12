@@ -19,7 +19,7 @@ import { previewKind, PreviewKind } from '../../services/evidenceBlobScrub';
 import { findControlDefinition } from '../../data/frameworks';
 
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 const EvidencePreviewModalContent: React.FC = () => {
   const { previewEvidence, setPreviewEvidence } = useAssessment();
   const { currentTenant, activeProgram } = useTenant();
@@ -35,6 +35,7 @@ const EvidencePreviewModalContent: React.FC = () => {
   const [hasBlob, setHasBlob] = useState<boolean>(false);
   const [loadFailed, setLoadFailed] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<boolean>(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -124,9 +125,12 @@ const EvidencePreviewModalContent: React.FC = () => {
 
   const handleCopyHash = () => {
     if (!previewEvidence.fileHash) return;
-    copyToClipboard(previewEvidence.fileHash);
-    setCopiedHash(true);
-    setTimeout(() => setCopiedHash(false), 2000);
+    void copyText(previewEvidence.fileHash).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
+      setCopiedHash(true);
+      setTimeout(() => setCopiedHash(false), 2000);
+    });
   };
 
   return (
@@ -186,6 +190,7 @@ const EvidencePreviewModalContent: React.FC = () => {
                 >
                   {copiedHash ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                 </button>
+                <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
               </div>
             )}
           </div>

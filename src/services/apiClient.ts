@@ -26,8 +26,9 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmObservedHost, VmObservedSoftware, VmRun, VmServiceToken, VmSource } from '../types/vm';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedSoftware, VmRun, VmServiceToken, VmSeverity, VmSource } from '../types/vm';
 import { parseObservedHosts, parseObservedSoftware } from '../data/telemetry/observedInventory';
+import { parseVmFindings } from '../data/telemetry/vmFindingsView';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -37,6 +38,8 @@ import { parseServerSoftwareItems } from '../data/telemetry/softwareItems';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 import { SESSION_MARKER_HEADER, SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
 import { tabSessionState, tabSessionPin } from './tabSession';
+import { acknowledgedSystemUseNotice } from './systemUseNoticeAck';
+import { parseSystemUseNotice, type SystemUseNotice } from '../data/systemUseNotice';
 import { isTabLocked, parseIdleSeconds } from './idleLock';
 
 function requireAsset(raw: unknown): EnclaveAsset {
@@ -358,6 +361,28 @@ const parseAccountEvent = (raw: unknown): AccountEvent | null => {
     action: raw.action,
     tenantId: typeof raw.tenantId === 'string' ? raw.tenantId : null,
     details: isRecord(raw.details) ? raw.details : {},
+  };
+};
+
+/** The system use notice as a platform administrator edits it (issue #256). */
+export interface PlatformSystemUseNotice extends SystemUseNotice {
+  updatedAt: string | null;
+  updatedByUserId: string | null;
+  defaultText: string;
+  maxLength: number;
+}
+
+const parsePlatformSystemUseNotice = (data: unknown): PlatformSystemUseNotice => {
+  const base = parseSystemUseNotice(data);
+  if (!base || !isRecord(data) || typeof data.defaultText !== 'string' || typeof data.maxLength !== 'number') {
+    throw new ApiError(502, 'The server sent back a system use notice this version of the app does not understand.');
+  }
+  return {
+    ...base,
+    updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null,
+    updatedByUserId: typeof data.updatedByUserId === 'string' ? data.updatedByUserId : null,
+    defaultText: data.defaultText,
+    maxLength: data.maxLength,
   };
 };
 
@@ -810,6 +835,18 @@ export const ApiClient = {
     return parseObservedSoftware(data);
   },
 
+  /** GET /api/v1/tenants/:id/vm/findings: vulnerability findings, tenant-wide (every role reads), most severe first. totalCount is the number returned: the server does not count past `limit` (max 1000). */
+  async listVmFindings(tenantId: string, options?: { assetId?: string; severity?: VmSeverity; status?: VmFindingStatus; limit?: number }): Promise<{ totalCount: number; findings: VmFinding[] }> {
+    const q = new URLSearchParams();
+    if (options?.assetId) q.set('assetId', options.assetId);
+    if (options?.severity) q.set('severity', options.severity);
+    if (options?.status) q.set('status', options.status);
+    if (options?.limit !== undefined) q.set('limit', String(options.limit));
+    const qs = q.toString();
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/findings${qs ? `?${qs}` : ''}`, { tenantId });
+    return parseVmFindings(data);
+  },
+
   /** GET /api/v1/tenants/:id/vm/config/suggestions for the program (x-program-id): computed on read, never written to a control. */
   async getConfigSuggestions(tenantId: string, programId?: string | null): Promise<VmConfigSuggestionsResponse> {
     return authedJson<VmConfigSuggestionsResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/suggestions`, { tenantId, programId });
@@ -919,13 +956,15 @@ export const ApiClient = {
 
   /**
    * POST /api/v1/auth/register-with-invite (air-gapped installs). Creates the account for the INVITED email, consumes
-   * the invitation and signs the person in. 409 `account_exists` means: sign in instead.
+   * the invitation and signs the person in. 409 `account_exists` means: sign in instead. `systemUseAck` (the notice version read
+   * on the sign-up screen) defaults to the one acknowledged in this tab; the server requires it while the system use notice is on.
    */
-  async registerWithInvite(input: { token: string; password: string; name?: string }): Promise<RegisterOutcome> {
+  async registerWithInvite(input: { token: string; password: string; name?: string; systemUseAck?: number }): Promise<RegisterOutcome> {
+    const systemUseAck = input.systemUseAck ?? acknowledgedSystemUseNotice() ?? undefined;
     const res = await apiFetch(`${API_BASE_URL}/api/v1/auth/register-with-invite`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(systemUseAck === undefined ? input : { ...input, systemUseAck }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
@@ -1036,13 +1075,15 @@ export const ApiClient = {
    * POST /api/v1/auth/login  (air-gapped installs, AUTH_MODE=local)
    * Resolves a session, or `{ kind: 'mfa' }` when a second step (a code, or enrolling a factor) comes next.
    * Throws an ApiError carrying the server's message (e.g. invalid credentials, account locked).
+   * `systemUseAck` is the system use notice version the person read (issue #256); it defaults to the one acknowledged in this tab
+   * (memory only), which is also what the session lock screen's password sign-in sends. Left out of the body when there is none.
    */
-  async localLogin(email: string, password: string): Promise<LocalLoginResult> {
+  async localLogin(email: string, password: string, systemUseAck: number | undefined = acknowledgedSystemUseNotice() ?? undefined): Promise<LocalLoginResult> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       cache: 'no-store',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(systemUseAck === undefined ? { email, password } : { email, password, systemUseAck }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -1161,6 +1202,23 @@ export const ApiClient = {
     const events = Array.isArray(data?.events) ? data.events.map(parseAccountEvent).filter((e): e is AccountEvent => e !== null) : [];
     const next = data?.nextBefore;
     return { events, nextBefore: typeof next === 'string' || typeof next === 'number' ? String(next) : null };
+  },
+
+  /** GET /api/v1/auth/system-use-notice: the notice shown before sign-in, { enabled, text, version }. Needs no session; throws when the answer is not understood. */
+  async getSystemUseNotice(): Promise<SystemUseNotice> {
+    const notice = parseSystemUseNotice(await accountJson<unknown>('GET', '/auth/system-use-notice', { anonymous: true }));
+    if (!notice) throw new ApiError(502, 'The server sent back a system use notice this version of the app does not understand.');
+    return notice;
+  },
+
+  /** GET /api/v1/platform/system-use-notice (platform administrators): the notice with its editing details. */
+  async getPlatformSystemUseNotice(): Promise<PlatformSystemUseNotice> {
+    return parsePlatformSystemUseNotice(await accountJson<unknown>('GET', '/platform/system-use-notice'));
+  },
+
+  /** PUT /api/v1/platform/system-use-notice (platform administrators, needs a fresh authenticator `code`): saves the notice and returns it. */
+  async updatePlatformSystemUseNotice(input: { enabled: boolean; text: string; code: string }): Promise<PlatformSystemUseNotice> {
+    return parsePlatformSystemUseNotice(await accountJson<unknown>('PUT', '/platform/system-use-notice', { body: input }));
   },
 
   /** GET /api/v1/auth/config: how long a session may sit idle, in seconds (0 = no limit), so the browser locks after the same period. Needs no session. */

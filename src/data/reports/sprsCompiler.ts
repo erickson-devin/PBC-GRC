@@ -15,6 +15,7 @@ import { ControlState, SSPMetadata } from '../../types/cmmc';
 import { ReportMetadata, POAMEntry } from '../../types/report';
 import { SprsScoreResult } from '../../types/audit';
 import { NOT_RECORDED, recordedRole } from './documentDefaults';
+import { csvCell } from './csv';
 
 export const SPRS_MAX_SCORE = 110;
 export const SPRS_MIN_SCORE = -203;
@@ -229,12 +230,6 @@ export function generateEmassControlMatrixCsv(
     'POA&M Scheduled Date',
   ];
 
-  const escapeCsv = (val: string | number | undefined | null): string => {
-    if (val === undefined || val === null) return '""';
-    const text = String(val).replace(/"/g, '""');
-    return `"${text}"`;
-  };
-
   let csv = headers.map(h => `"${h}"`).join(',') + '\r\n';
   const sprsApplies = sprsAppliesTo(metadata.framework);
   const mapsTo171 = metadata.framework === 'CMMC_L1' || metadata.framework === 'CMMC_L2';
@@ -254,19 +249,19 @@ export function generateEmassControlMatrixCsv(
     const evalDate = state?.lastUpdated ? state.lastUpdated.split('T')[0] : metadata.assessmentDate || new Date().toISOString().split('T')[0];
 
     const row = [
-      escapeCsv(metadata.systemName || NOT_RECORDED),
-      escapeCsv(metadata.cageCode || 'N/A'),
-      escapeCsv(ctrl.id),
-      escapeCsv(mapsTo171 ? nistId : 'N/A'),
-      escapeCsv(ctrl.title),
-      escapeCsv(ctrl.domain),
-      escapeCsv(emassStatus),
-      escapeCsv(!sprsApplies ? 'N/A' : status === 'MET' || weight === 0 ? 0 : -weight),
-      escapeCsv(narrative),
-      escapeCsv(role),
-      escapeCsv(evalDate),
-      escapeCsv(state?.tags ? state.tags.join('; ') : 'Self-Assessment Narrative'),
-      escapeCsv(status !== 'MET' ? NOT_RECORDED : 'N/A'),
+      csvCell(metadata.systemName || NOT_RECORDED),
+      csvCell(metadata.cageCode || 'N/A'),
+      csvCell(ctrl.id),
+      csvCell(mapsTo171 ? nistId : 'N/A'),
+      csvCell(ctrl.title),
+      csvCell(ctrl.domain),
+      csvCell(emassStatus),
+      csvCell(!sprsApplies ? 'N/A' : status === 'MET' || weight === 0 ? 0 : -weight),
+      csvCell(narrative),
+      csvCell(role),
+      csvCell(evalDate),
+      csvCell(state?.tags ? state.tags.join('; ') : 'Self-Assessment Narrative'),
+      csvCell(status !== 'MET' ? NOT_RECORDED : 'N/A'),
     ];
 
     csv += row.join(',') + '\r\n';

@@ -23,6 +23,9 @@ export const DEFAULT_LABELS: Record<ExporterSource, string> = {
   sentinelone: 'sentinelone-prod',
 };
 
+/** Written after PBC_URL when the URL is plain http; the same line init.py writes. */
+export const INSECURE_HTTP_COMMENT = '# Development only: allows the plain http PBC_URL above (PBC-GRC must also set VM_ALLOW_INSECURE_TOKENS=true).';
+
 export const EXPORTER_ENV_FILENAME = 'pbc-vm-exporter.env';
 export const DEFAULT_ENV_PATH = './pbc-vm-exporter.env';
 
@@ -38,6 +41,9 @@ const oneLine = (raw: string): string => raw.replace(/[\u0000-\u001f\u007f]/g, '
 
 /** The URL as written to the file: one line, no trailing slashes. */
 export const cleanPbcUrl = (raw: string): string => oneLine(raw).replace(/\/+$/, '');
+
+/** True when the URL, as it would be written to the file, starts with http:// (any case). */
+export const isPlainHttp = (url: string): boolean => /^http:\/\//i.test(cleanPbcUrl(url));
 
 export const cleanLabel = (raw: string, source: ExporterSource): string => oneLine(raw) || DEFAULT_LABELS[source];
 
@@ -67,7 +73,7 @@ function wazuhLines(mode: WazuhMode): string[] {
     '# WAZUH_MODE=auto would also need WAZUH_API_URL, WAZUH_API_USER and WAZUH_API_PASSWORD.',
     'WAZUH_MODE=indexer',
     'WAZUH_INDEXER_URL=https://wazuh.example.local:9200',
-    '# An indexer user from the OpenSearch security plugin (not a Wazuh manager API user) with read on the vulnerability index.',
+    '# An indexer user from the OpenSearch security plugin (not a Wazuh manager API user) with read on wazuh-states-vulnerabilities-* and wazuh-states-inventory-*.',
     'WAZUH_INDEXER_USER=',
     'WAZUH_INDEXER_PASSWORD=',
     ...common,
@@ -112,6 +118,7 @@ export function buildExporterEnv(input: ExporterEnvInput): string {
     '',
     '# The address this exporter host uses to reach PBC-GRC (https).',
     `PBC_URL=${cleanPbcUrl(input.pbcUrl)}`,
+    ...(isPlainHttp(input.pbcUrl) ? [INSECURE_HTTP_COMMENT, 'PBC_ALLOW_INSECURE_TRANSPORT=true'] : []),
     '# Paste the token you copied; it is shown once.',
     'PBC_SERVICE_TOKEN=',
     '# A stable name for this source: a new label is a new source.',
@@ -126,6 +133,9 @@ export function buildExporterEnv(input: ExporterEnvInput): string {
 
 /** Run inside the exporters/pbc-vm-exporter folder. */
 export const installCommand = (): string => 'python3 -m venv .venv && .venv/bin/python -m pip install .';
+
+/** Run on Windows (PowerShell) to restrict the env file to the exporter account; the same command init prints. */
+export const windowsAclCommand = (file: string): string => 'icacls "' + file + '" /inheritance:r /grant:r "$($env:USERNAME):F"';
 
 const sourceArgs = (source: ExporterSource): string => (source === 'wazuh' ? '' : ` --source ${source}`);
 const xccdfInput = (source: ExporterSource): string => (source === 'xccdf' ? ' --input /path/to/results' : '');
@@ -147,10 +157,11 @@ export const runCommand = (envPath: string, source: ExporterSource = 'wazuh'): s
 
 export const EXPORTER_SETUP_COPY = {
   heading: 'Set up the exporter',
-  intro: 'The exporter reads your scanner and pushes the results here with a service token. Fill in the three fields, copy the settings into an env file on the exporter host, paste the token you copied, then run the commands in order.',
+  intro: 'The exporter reads your scanner and pushes the results here with a service token. Fill in the fields, copy the settings into an env file on the exporter host (or run pbc-vm-exporter init there and answer its prompts), paste the token you copied, then run the commands in order.',
   sourceLabel: 'Scanner',
   urlLabel: 'PBC-GRC URL',
   urlHelp: 'The address the exporter host uses to reach this app.',
+  httpNote: 'Plain http is for development only: the settings allow it, and PBC-GRC must also run with VM_ALLOW_INSECURE_TOKENS=true.',
   labelLabel: 'Source label',
   labelHelp: 'A stable name for this scanner. A new label is a new source.',
   modeLabel: 'Wazuh reader',
@@ -168,6 +179,7 @@ export const EXPORTER_SETUP_COPY = {
   stepCheck: '2. Check the connections',
   stepDryRun: '3. Dry run (sends nothing)',
   stepRun: '4. Run',
+  stepWindowsAcl: 'Windows: restrict the file (PowerShell)',
   troubleshooting: 'Troubleshooting',
 } as const;
 
@@ -175,11 +187,15 @@ export const EXPORTER_SETUP_COPY = {
 export const TROUBLESHOOTING: Array<{ symptom: string; fix: string }> = [
   {
     symptom: 'Connection refused (WinError 10061) to the Wazuh indexer',
-    fix: 'nothing is listening at that address: on the Wazuh host the indexer may be bound to 127.0.0.1 only; set network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, <LAN IP>]) and restart wazuh-indexer, or check the firewall for port 9200',
+    fix: 'nothing is listening at that address: a Wazuh all-in-one install binds the indexer to 127.0.0.1:9200 only. Easiest: run the exporter on the Wazuh host with WAZUH_INDEXER_URL=https://127.0.0.1:9200; or keep it here, open an SSH tunnel (ssh -N -L 9200:127.0.0.1:9200 <user>@<wazuh-host>) and use WAZUH_INDEXER_URL=https://127.0.0.1:9200; last resort: set network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, <LAN IP>]), restart wazuh-indexer and open port 9200 in the firewall (the indexer certificate must then list that LAN IP). Otherwise check the firewall for port 9200',
   },
   {
     symptom: 'Connection timed out',
     fix: 'the connection timed out: a firewall is probably dropping traffic from this host to that address and port (indexer 9200, manager API 55000, PBC-GRC 443); open the port from this host',
+  },
+  {
+    symptom: 'ReadTimeout, read timed out',
+    fix: 'the server accepted the connection but did not answer in time: raise EXPORT_TIMEOUT_SECONDS',
   },
   {
     symptom: 'getaddrinfo failed, Name or service not known',
@@ -194,28 +210,68 @@ export const TROUBLESHOOTING: Array<{ symptom: string; fix: string }> = [
     fix: 'the certificate does not cover the host name or IP in the URL: use a name the certificate lists (check with openssl s_client ... | openssl x509 -noout -text, Subject Alternative Name), or reissue it with that IP',
   },
   {
+    symptom: 'certificate has expired, certificate is not yet valid',
+    fix: "the certificate is expired or not yet valid: check this host's clock (timedatectl / w32tm /query /status) and the certificate's validity dates",
+  },
+  {
+    symptom: 'SSLError (plain_http_port), wrong version number',
+    fix: 'the server at that address speaks plain http, not https: use the HTTPS address of the TLS proxy (development installs: http:// with PBC_ALLOW_INSECURE_TRANSPORT=true on the exporter and VM_ALLOW_INSECURE_TOKENS=true on PBC-GRC)',
+  },
+  {
     symptom: 'Indexer returned HTTP 401',
     fix: 'the indexer (port 9200) uses its own internal users from the OpenSearch security plugin, not Wazuh manager API users; create the user with the security plugin (see docs/SCANNER_INTEGRATIONS.md)',
   },
   {
     symptom: 'Indexer returned HTTP 403',
-    fix: 'the user is known but its role lacks read access on the vulnerability index: map a role with read on wazuh-states-vulnerabilities-* to this user in the indexer security plugin',
+    fix: "the user is known but none of its roles allows read on the indices the exporter reads: give a role the index permission read on wazuh-states-vulnerabilities-* and wazuh-states-inventory-* (and the cluster permission cluster_composite_ops_ro), then add this user under that role's Mapped users (Indexer management, Security, Roles); typing the role name into the user's Backend roles field does not grant it",
+  },
+  {
+    symptom: 'NOTE: indexer roles of this user',
+    fix: 'these are the roles the indexer applied to this user; if none of them has read on wazuh-states-vulnerabilities-* and wazuh-states-inventory-*, map one under Roles, Mapped users',
   },
   {
     symptom: 'Indexer returned HTTP 404 (index_not_found)',
     fix: 'index_not_found: vulnerability detection is probably off in Wazuh, or WAZUH_INDEXER_INDEX is the wrong index name',
   },
   {
-    symptom: 'WAZUH_INDEXER_URL ends in :55000, or WAZUH_API_URL ends in :9200',
-    fix: 'port 9200 is the Wazuh indexer, which the exporter reads; port 55000 is the Wazuh manager API: point WAZUH_INDEXER_URL at 9200 and set WAZUH_MODE=indexer',
+    symptom: 'Indexer returned HTTP 302 (any 3xx)',
+    fix: 'the indexer never redirects: WAZUH_INDEXER_URL probably points at the Wazuh dashboard (port 443); the indexer is port 9200',
+  },
+  {
+    symptom: 'Wazuh indexer: reachable, 0 documents',
+    fix: 'the index is empty: vulnerability detection may be off in Wazuh, or WAZUH_INDEXER_INDEX names the wrong index (a run would stop with zero hosts); before Wazuh 4.8 there is no such index: use WAZUH_MODE=api',
+  },
+  {
+    symptom: 'WAZUH_INDEXER_URL ends in :55000',
+    fix: 'WAZUH_INDEXER_URL points at port 55000, which is the Wazuh manager API; the exporter reads the indexer on port 9200',
+  },
+  {
+    symptom: 'WAZUH_API_URL ends in :9200',
+    fix: 'WAZUH_API_URL points at port 9200, which is the Wazuh indexer; the manager API listens on port 55000',
+  },
+  {
+    symptom: 'WAZUH_API_URL is required for this mode',
+    fix: 'set WAZUH_MODE=indexer to read the indexer only; auto and api modes also need WAZUH_API_URL, WAZUH_API_USER and WAZUH_API_PASSWORD',
   },
   {
     symptom: 'PBC-GRC answers HTTP 403 vm_insecure_transport',
-    fix: 'PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy terminates TLS (vm_insecure_transport)',
+    fix: 'PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy terminates TLS (vm_insecure_transport); for a development install over plain http set VM_ALLOW_INSECURE_TOKENS=true on PBC-GRC and PBC_ALLOW_INSECURE_TRANSPORT=true here',
   },
   {
     symptom: 'PBC-GRC answers HTTP 401',
     fix: 'the service token is wrong, expired or revoked: create a new one in PBC-GRC (API tokens) and paste it',
+  },
+  {
+    symptom: 'PBC-GRC answers HTTP 403 insufficient_scope',
+    fix: 'the token lacks the vm:ingest scope (insufficient_scope)',
+  },
+  {
+    symptom: 'PBC-GRC is reachable: HTTP 302 (any 3xx)',
+    fix: 'redirect refused; set PBC_URL to the final https URL',
+  },
+  {
+    symptom: "contract matches the server: the server's ingest contract differs",
+    fix: "upgrade the exporter or the server so both match (--print-contract-sha256 shows this exporter's)",
   },
   {
     symptom: 'Warning: PBC_ALLOW_INSECURE_TRANSPORT is set',

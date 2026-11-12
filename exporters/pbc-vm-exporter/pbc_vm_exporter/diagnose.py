@@ -11,11 +11,16 @@ TARGETS = ("indexer", "manager", "pbc")
 
 _CA_VARIABLE = {"indexer": "WAZUH_CA_BUNDLE", "manager": "WAZUH_CA_BUNDLE", "pbc": "PBC_CA_BUNDLE"}
 _STATUS_RE = re.compile(r"HTTP (\d{3})")
+_ROLE_RE = re.compile(r"[A-Za-z0-9_.:@/ -]{1,64}\Z")
+MAX_ROLES = 20
 
 HINT_REFUSED_INDEXER = (
-    "nothing is listening at that address: on the Wazuh host the indexer may be bound to 127.0.0.1 only; set "
-    "network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, <LAN IP>]) and restart "
-    "wazuh-indexer, or check the firewall for port 9200"
+    "nothing is listening at that address: a Wazuh all-in-one install binds the indexer to 127.0.0.1:9200 only. "
+    "Easiest: run the exporter on the Wazuh host with WAZUH_INDEXER_URL=https://127.0.0.1:9200; or keep it here, "
+    "open an SSH tunnel (ssh -N -L 9200:127.0.0.1:9200 <user>@<wazuh-host>) and use "
+    "WAZUH_INDEXER_URL=https://127.0.0.1:9200; last resort: set network.host in /etc/wazuh-indexer/opensearch.yml "
+    "(a list such as [127.0.0.1, <LAN IP>]), restart wazuh-indexer and open port 9200 in the firewall (the indexer "
+    "certificate must then list that LAN IP). Otherwise check the firewall for port 9200"
 )
 HINT_REFUSED_MANAGER = (
     "nothing is listening at that address: check WAZUH_API_URL (the manager API listens on port 55000) and the firewall"
@@ -39,8 +44,27 @@ HINT_INDEXER_401 = (
     "users; create the user with the security plugin (see docs/SCANNER_INTEGRATIONS.md)"
 )
 HINT_INDEXER_403 = (
-    "the user is known but its role lacks read access on the vulnerability index: map a role with read on "
-    "wazuh-states-vulnerabilities-* to this user in the indexer security plugin"
+    "the user is known but none of its roles allows read on the indices the exporter reads: give a role the index "
+    "permission read on wazuh-states-vulnerabilities-* and wazuh-states-inventory-* (and the cluster permission "
+    "cluster_composite_ops_ro), then add this user under that role's Mapped users (Indexer management, Security, "
+    "Roles); typing the role name into the user's Backend roles field does not grant it"
+)
+HINT_INDEXER_ROLES = (
+    "these are the roles the indexer applied to this user; if none of them has read on "
+    "wazuh-states-vulnerabilities-* and wazuh-states-inventory-*, map one under Roles, Mapped users"
+)
+HINT_INDEXER_REDIRECT = (
+    "the indexer never redirects: WAZUH_INDEXER_URL probably points at the Wazuh dashboard (port 443); the indexer "
+    "is port 9200"
+)
+HINT_PLAIN_HTTP_PORT = (
+    "the server at that address speaks plain http, not https: use the HTTPS address of the TLS proxy (development "
+    "installs: http:// with PBC_ALLOW_INSECURE_TRANSPORT=true on the exporter and VM_ALLOW_INSECURE_TOKENS=true on "
+    "PBC-GRC)"
+)
+HINT_CERT_TIME = (
+    "the certificate is expired or not yet valid: check this host's clock (timedatectl / w32tm /query /status) and "
+    "the certificate's validity dates"
 )
 HINT_INDEXER_404 = (
     "index_not_found: vulnerability detection is probably off in Wazuh, or WAZUH_INDEXER_INDEX is the wrong index name"
@@ -56,7 +80,8 @@ HINT_PORT_MANAGER = (
 )
 HINT_PBC_INSECURE = (
     "PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy "
-    "terminates TLS (vm_insecure_transport)"
+    "terminates TLS (vm_insecure_transport); for a development install over plain http set "
+    "VM_ALLOW_INSECURE_TOKENS=true on PBC-GRC and PBC_ALLOW_INSECURE_TRANSPORT=true here"
 )
 HINT_PBC_401 = "the service token is wrong, expired or revoked: create a new one in PBC-GRC (API tokens) and paste it"
 HINT_PBC_403 = "the token lacks the vm:ingest scope (insufficient_scope)"
@@ -119,6 +144,8 @@ def classify(exc_or_status: object, target: str, url: str | None = None) -> tupl
             if target == "pbc":
                 return "insufficient_scope", HINT_PBC_403
             return "forbidden", "the manager API user is known but not allowed: check its Wazuh RBAC role"
+        if 300 <= status <= 399 and target == "indexer":
+            return "indexer_redirect", HINT_INDEXER_REDIRECT
         if status == 404:
             if target == "indexer":
                 return "index_not_found", HINT_INDEXER_404
@@ -127,6 +154,10 @@ def classify(exc_or_status: object, target: str, url: str | None = None) -> tupl
 
     if "ReadTimeout" in text or "read timed out" in low:
         return "read_timeout", HINT_READ_TIMEOUT
+    if "wrong version number" in low:
+        return "plain_http_port", HINT_PLAIN_HTTP_PORT
+    if "certificate has expired" in low or "certificate is not yet valid" in low:
+        return "cert_time", HINT_CERT_TIME
     if "IP address mismatch" in text or "Hostname mismatch" in text or "doesn't match" in text:
         return "san_mismatch", HINT_SAN_MISMATCH
     if "unable to get local issuer" in low or "self-signed certificate" in low or "self signed certificate" in low:
@@ -139,6 +170,18 @@ def classify(exc_or_status: object, target: str, url: str | None = None) -> tupl
     if "ConnectTimeout" in text or "timed out" in low:
         return "timeout", HINT_TIMEOUT
     return "unknown", ""
+
+
+def indexer_roles(data: object) -> list[str]:
+    """The role names from an authinfo response: a sorted, de-duplicated list of plain names (at most 20).
+
+    Reads only data["roles"]; never the user name, the backend roles, the tenants or the attributes.
+    """
+    roles = data.get("roles") if isinstance(data, dict) else None
+    if not isinstance(roles, list):
+        return []
+    kept = {r for r in roles if isinstance(r, str) and _ROLE_RE.fullmatch(r)}
+    return sorted(kept)[:MAX_ROLES]
 
 
 def insecure_flag_note(allow_insecure: bool, urls: Iterable[str | None]) -> tuple[str, str] | None:

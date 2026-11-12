@@ -65,3 +65,33 @@ export interface ControlSaveFailure {
 export function coalesceSaveFailure(prev: ControlSaveFailure | null | undefined, message: string): ControlSaveFailure {
   return { message, count: (prev?.count ?? 0) + 1 };
 }
+
+export type NotesNotSavedReason = 'failed' | 'stale' | 'archived';
+export type NotesNotSaved = Readonly<Record<string, NotesNotSavedReason>>;
+
+/** Records why a control's notes did not reach the server. A 401 changes nothing (the session rescue keeps the text). Same reference when unchanged. */
+export function markNotesNotSaved(prev: NotesNotSaved, controlId: string, err: unknown): NotesNotSaved {
+  const e = err as { name?: unknown; status?: unknown; reason?: unknown } | null;
+  if (e && e.name === 'ApiError' && e.status === 401) return prev;
+  const reason: NotesNotSavedReason = isStaleWriteError(err) ? 'stale' : e?.reason === 'program_archived' ? 'archived' : 'failed';
+  return prev[controlId] === reason ? prev : { ...prev, [controlId]: reason };
+}
+
+/** Forgets a control's marker once its notes are saved. Same reference when the control was not marked. */
+export function clearNotesNotSaved(prev: NotesNotSaved, controlId: string): NotesNotSaved {
+  if (!(controlId in prev)) return prev;
+  const next = { ...prev };
+  delete next[controlId];
+  return next;
+}
+
+/** Controls whose notes a retry can send (a stale or archived refusal cannot be retried). */
+export function retryableNotes(map: NotesNotSaved): string[] {
+  return Object.keys(map).filter((id) => map[id] === 'failed').sort();
+}
+
+export const NOTES_NOT_SAVED_DETAIL: Record<NotesNotSavedReason, string> = {
+  failed: 'Your text is still here. Retry, or keep typing to save again.',
+  stale: 'Someone else saved this control. Copy your text, then reload the page.',
+  archived: 'This program is archived and read-only. Copy your text if you need it.',
+};

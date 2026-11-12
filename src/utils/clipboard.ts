@@ -51,3 +51,6 @@ export async function copyText(text: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Fixed text for a refused copy. Never includes the text that was being copied. */
+export const COPY_FAILED_MESSAGE = 'Not copied: the browser blocked the clipboard.';

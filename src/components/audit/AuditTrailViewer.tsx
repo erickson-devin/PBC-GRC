@@ -22,7 +22,7 @@ import {
 } from '../../data/audit/auditLogger';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard as copyText } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 export const AuditTrailViewer: React.FC = () => {
   const { currentTenant, programs } = useTenant();
 
@@ -30,6 +30,7 @@ export const AuditTrailViewer: React.FC = () => {
   const [verification, setVerification] = useState<AuditVerificationResult | null>(null);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
 
   // Filter States
@@ -79,10 +80,13 @@ export const AuditTrailViewer: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const copyToClipboard = (text: string) => {
-    copyText(text).catch((err) => console.warn('Clipboard write failed:', err));
-    setCopiedHash(text);
-    setTimeout(() => setCopiedHash(null), 2000);
+  const handleCopyHash = (text: string) => {
+    void copyText(text).then((ok) => {
+      if (!ok) { setCopyFailedKey(text); return; }
+      setCopyFailedKey(null);
+      setCopiedHash(text);
+      setTimeout(() => setCopiedHash(null), 2000);
+    });
   };
 
   // Filtered entries
@@ -135,6 +139,7 @@ export const AuditTrailViewer: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fadeIn pb-12">
+      <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-800 shadow-xl">
         <div className="space-y-1">
@@ -385,7 +390,7 @@ export const AuditTrailViewer: React.FC = () => {
                           {entry.sha256Hash.substring(0, 8)}...{entry.sha256Hash.substring(58)}
                         </span>
                         <button
-                          onClick={() => copyToClipboard(entry.sha256Hash)}
+                          onClick={() => handleCopyHash(entry.sha256Hash)}
                           className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-300 transition-colors"
                           title="Copy Full SHA-256 Hash"
                         >
@@ -395,6 +400,7 @@ export const AuditTrailViewer: React.FC = () => {
                             <Copy className="w-3.5 h-3.5" />
                           )}
                         </button>
+                        {copyFailedKey === entry.sha256Hash && <span aria-hidden="true" className="text-xs text-amber-300">Not copied</span>}
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right">

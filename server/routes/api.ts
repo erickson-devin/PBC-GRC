@@ -19,6 +19,7 @@ import { listStoredPlatformAdminEmails } from '../platformSetup';
 import setupRouter from './setup';
 import platformUsersRouter from './platformUsers';
 import platformAccountEventsRouter from './platformAccountEvents';
+import platformSystemUseNoticeRouter from './platformSystemUseNotice';
 
 const router = Router();
 
@@ -75,6 +76,8 @@ router.get('/platform/admins', authOnlyMiddleware, async (req, res) => {
 router.use('/platform/users', authOnlyMiddleware, platformUsersRouter);
 // The account event log (password and MFA changes, disable / enable, role changes, sign-out): read-only, platform administrators only
 router.use('/platform/account-events', authOnlyMiddleware, platformAccountEventsRouter);
+// The system use notice shown before sign-in (issue #256): platform administrators only, edits need the step-up code
+router.use('/platform/system-use-notice', authOnlyMiddleware, platformSystemUseNoticeRouter);
 
 // Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
 // tenants they belong to, or creates one and becomes its first TENANT_OWNER.

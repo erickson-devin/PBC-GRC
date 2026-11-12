@@ -54,7 +54,8 @@ import { previewInvitation, redeemInvitation } from '../invitations';
 import { accountLogRef, createLoginThrottle, loginAccountKey } from '../auth/loginThrottle';
 import { clearSessionCookie, issueSession, readSessionCookie, rejectCrossSite } from '../auth/session';
 import { adoptSession, revokeSession } from '../auth/sessionStore';
-import { recordAccountEventBestEffort, type AccountEventInput } from '../auth/accountEvents';
+import { recordAccountEvent, recordAccountEventBestEffort, type AccountEventInput } from '../auth/accountEvents';
+import { checkSystemUseAck, getSystemUseNotice } from '../auth/systemUseNotice';
 import { SESSION_REVOKED, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -67,6 +68,22 @@ const router = Router();
  */
 router.get('/config', (_req: Request, res: Response): void => {
   res.json({ mode: 'local', sessionIdleSeconds: getSessionIdleMinutes() * 60 });
+});
+
+/**
+ * GET /api/v1/auth/system-use-notice   (public)
+ * The system use notification shown before sign-in (issue #256): { enabled, text, version } and nothing else. `version` is 0 until a
+ * platform administrator first saves it. While enabled, /login and /register-with-invite need `systemUseAck` equal to this version.
+ */
+router.get('/system-use-notice', async (_req: Request, res: Response): Promise<void> => {
+  noStore(res);
+  try {
+    const { enabled, text, version } = await getSystemUseNotice();
+    res.json({ enabled, text, version });
+  } catch {
+    console.error('[SystemUse] Reading the notice failed');
+    res.status(500).json({ error: 'The system use notice could not be read' });
+  }
 });
 
 // ---- per-IP throttle (in addition to per-account lockout) -------------------------------------
@@ -189,7 +206,8 @@ function requireSession(req: Request, res: Response): Promise<boolean> {
 
 /**
  * POST /api/v1/auth/login   (public)
- * Body: { email, password }. Sets a short-lived HS256 JWT (carrying `sub`, `email` and `name`) as the HttpOnly pbc_session cookie,
+ * Body: { email, password, systemUseAck? }. While the system use notice is enabled, `systemUseAck` must be its current version
+ * (400 system_use_ack_required, 409 system_use_notice_changed), checked before the account lookup. Sets a short-lived HS256 JWT (carrying `sub`, `email` and `name`) as the HttpOnly pbc_session cookie,
  * which authMiddleware verifies with the local secret; the body carries no token. The failure response is identical for an unknown
  * email, a wrong password and a disabled account, and a hash is compared in every case, so neither the
  * message nor the timing reveals which emails exist. Accounts lock for 15 minutes after 5 consecutive failures.
@@ -213,6 +231,12 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
   const accountKey = loginAccountKey(email);
   try {
+    // Before the account lookup: the answer says nothing about which emails exist and counts toward no lockout
+    const ack = await checkSystemUseAck(req.body?.systemUseAck);
+    if (!ack.ok) {
+      res.status(ack.status).json(ack.body);
+      return;
+    }
     const user = await findLocalUserByEmail(email);
 
     // Real accounts lock in the store; every address (real or not) also locks in memory, so the answer never tells them apart.
@@ -234,6 +258,10 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       return;
     }
     loginThrottle.clearAccount(accountKey);
+    // The acknowledgement is the AC-8 record, so it is written before any second step or session, and a failed write stops the sign-in.
+    if (ack.version !== null) {
+      await recordAccountEvent({ actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'system_use_acknowledged', details: { via: 'sign_in', noticeVersion: String(ack.version) } });
+    }
 
     // Step one succeeded. When a second step follows, the failure counter is NOT reset here: otherwise someone who holds
     // the password could reset it between guesses at the code. The final step resets it.
@@ -260,7 +288,8 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * POST /api/v1/auth/register-with-invite   (public)
- * Body: { token, name?, password }. How a brand-new person gets an account on an air-gapped install: holding the
+ * Body: { token, name?, password, systemUseAck? } (the acknowledgement is required while the system use notice is enabled, as for /login).
+ * How a brand-new person gets an account on an air-gapped install: holding the
  * invitation token proves they received it at the invited address, so the account is created for THAT email, the
  * invitation is consumed, and they are signed in, in one step. If an account for the email already exists they are
  * told to sign in instead (409 account_exists), and nothing is consumed. An address listed in PLATFORM_ADMIN_EMAILS is refused
@@ -286,6 +315,12 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
   }
 
   try {
+    // Before the invitation is read, so a missing or stale acknowledgement consumes nothing
+    const ack = await checkSystemUseAck(req.body?.systemUseAck);
+    if (!ack.ok) {
+      res.status(ack.status).json(ack.body);
+      return;
+    }
     const invite = await previewInvitation(token);
     if (!invite) {
       res.status(404).json({ error: 'Invitation not found' });
@@ -335,6 +370,9 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
 
     console.log('[Auth] Registered account ' + accountLogRef(user.email) + ' via invitation into ' + result.tenantId + ' as ' + result.role);
     await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'role_changed', scopeTenantId: result.tenantId, details: { newRole: result.role, via: 'invitation_registration' } });
+    if (ack.version !== null) {
+      await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: user.id, targetUserId: user.id, action: 'system_use_acknowledged', details: { via: 'invitation_registration', noticeVersion: String(ack.version) } });
+    }
     // The invited role may make this account subject to MFA_REQUIRED (privileged): then they enrol before they get a session.
     if (await resolveMfaRequired(user)) {
       noStore(res);

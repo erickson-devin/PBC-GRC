@@ -24,7 +24,7 @@ from .adapter import build_config_payloads, build_payloads, encode_payload, norm
 from .client import IngestClient
 from .config import SOURCES, VENDOR_SOURCES, Config, RedactingFilter, load_config, redact
 from .detect import resolve_mode
-from .diagnose import classify, insecure_flag_note
+from .diagnose import HINT_INDEXER_REDIRECT, HINT_INDEXER_ROLES, classify, insecure_flag_note
 from .errors import (
     Action1ReadError, ConfigError, ExporterError, PayloadValidationError, ScanFileError, SentinelOneReadError,
     WazuhReadError,
@@ -353,7 +353,7 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
 WHOAMI_PATH = "/api/v1/vm/whoami"
 EMPTY_INDEX_HINT = (
     "the index is empty: vulnerability detection may be off in Wazuh, or WAZUH_INDEXER_INDEX names the wrong index "
-    "(a run would stop with zero hosts)"
+    "(a run would stop with zero hosts); before Wazuh 4.8 there is no such index: use WAZUH_MODE=api"
 )
 
 
@@ -388,6 +388,7 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
     failures: list[int] = []
     number = 0
     server_inventory = False  # the server advertises inventory support (whoami features)
+    role_problem = False  # the indexer refused a read (403) or answered 0 documents: show the roles it applied
 
     def emit(state: str, title: str, detail: str = "", hint: str = "", code: int = 1) -> None:
         nonlocal number
@@ -510,12 +511,14 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
                 total = _body(found).get("hits", {}).get("total")
                 count = total.get("value") if isinstance(total, dict) else total
                 if not isinstance(count, int) or isinstance(count, bool):
-                    emit("FAIL", "Wazuh indexer", "an unexpected response body", code=3)
+                    emit("FAIL", "Wazuh indexer", "an unexpected response body", HINT_INDEXER_REDIRECT, 3)
                 elif count == 0:
+                    role_problem = True  # a cluster that does not fail on forbidden reports a missing permission as 0
                     emit("FAIL", "Wazuh indexer", "reachable, 0 documents", EMPTY_INDEX_HINT, 3)
                 else:
                     emit("PASS", "Wazuh indexer", f"reachable, {count} documents")
             except WazuhReadError as err:
+                role_problem = classify(str(err), "indexer", cfg.indexer_url)[0] == "indexer_role"
                 emit("FAIL", "Wazuh indexer", str(err), code=3)
             if cfg.send_inventory == "true" or (cfg.send_inventory == "auto" and server_inventory):
                 try:
@@ -531,10 +534,19 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
                     else:
                         emit("PASS", "Wazuh inventory indices", f"{hosts_with_inventory} system documents")
                 except WazuhReadError as err:
+                    if classify(str(err), "indexer", cfg.indexer_url)[0] == "indexer_role":
+                        role_problem = True
                     emit(
                         "NOTE", "Wazuh inventory indices", str(err),
                         "grant the indexer user read on wazuh-states-inventory-* to send host inventory",
                     )
+            if role_problem:
+                roles = reader.authinfo_roles()
+                emit(
+                    "NOTE", "indexer roles of this user",
+                    "could not be read (GET /_plugins/_security/authinfo)" if roles is None else ", ".join(roles) or "none",
+                    HINT_INDEXER_ROLES,
+                )
         if mode == "indexer":
             emit("SKIP", "Wazuh manager API", "not needed in indexer mode")
         elif not cfg.api_url:

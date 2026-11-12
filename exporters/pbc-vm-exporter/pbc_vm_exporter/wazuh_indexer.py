@@ -16,7 +16,7 @@ from typing import Any
 import requests
 
 from .config import redact
-from .diagnose import classify
+from .diagnose import classify, indexer_roles
 from .errors import WazuhReadError
 from .transport import make_session
 
@@ -233,6 +233,9 @@ def group_inventory(docs: dict[str, list]) -> dict[str, dict]:
     return out
 
 
+AUTHINFO_PATH = "/_plugins/_security/authinfo"
+
+
 class IndexerReader:
     def __init__(
         self, url: str, user: str | None, password: str | None, verify: bool | str, timeout: int,
@@ -318,6 +321,14 @@ class IndexerReader:
             }
             docs[kind] = self._scroll(INVENTORY_INDICES[kind], body, lenient=True)
         return group_inventory(docs)
+
+    def authinfo_roles(self) -> list[str] | None:
+        """The role names the indexer applied to this user, or None when they cannot be read."""
+        try:
+            resp = self._call("get", f"{self.url}{AUTHINFO_PATH}", "authinfo")
+            return indexer_roles(resp.json())
+        except (WazuhReadError, ValueError):
+            return None
 
     def count_inventory_hosts(self) -> int | None:
         """Number of system inventory documents (one per agent), or None when the response is not understood."""

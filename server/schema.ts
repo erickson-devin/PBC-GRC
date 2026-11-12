@@ -571,6 +571,8 @@ export const TABLES_SQL = `
       CONSTRAINT vm_findings_decision_check CHECK (status NOT IN ('RISK_ACCEPTED', 'FALSE_POSITIVE') OR (justification IS NOT NULL AND btrim(justification) <> '' AND decided_by IS NOT NULL AND decided_at IS NOT NULL)),
       CONSTRAINT vm_findings_seen_check CHECK (last_seen_at >= first_seen_at)
   );
+  ALTER TABLE vm_findings ADD COLUMN IF NOT EXISTS affected_packages JSONB NOT NULL DEFAULT '[]'::jsonb;
+  ALTER TABLE vm_findings ADD COLUMN IF NOT EXISTS affected_package_count INTEGER NOT NULL DEFAULT 0;
   CREATE INDEX IF NOT EXISTS idx_vm_findings_tenant_status ON vm_findings (tenant_id, status, severity);
   CREATE INDEX IF NOT EXISTS idx_vm_findings_asset ON vm_findings (tenant_id, asset_id);
   CREATE INDEX IF NOT EXISTS idx_vm_findings_vuln ON vm_findings (vuln_id);
@@ -998,7 +1000,7 @@ export const TABLES_SQL = `
       scope_tenant_id VARCHAR(64),
       details JSONB NOT NULL DEFAULT '{}'::jsonb,
       CONSTRAINT local_account_events_actor_check CHECK (actor_kind IN ('user', 'admin', 'cli', 'system')),
-      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed')),
+      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated')),
       CONSTRAINT local_account_events_details_check CHECK (jsonb_typeof(details) = 'object' AND octet_length(details::text) <= 2048 AND position('@' in details::text) = 0)
   );
   CREATE INDEX IF NOT EXISTS idx_local_account_events_at ON local_account_events (id DESC);
@@ -1021,6 +1023,34 @@ export const TABLES_SQL = `
   DROP TRIGGER IF EXISTS trg_local_account_events_no_truncate ON local_account_events;
   CREATE TRIGGER trg_local_account_events_no_truncate BEFORE TRUNCATE ON local_account_events
       FOR EACH STATEMENT EXECUTE FUNCTION local_account_events_guard();
+
+  -- The action list grows with the product (issue #256 added the system use notice actions): replace the check on an existing database.
+  -- It runs only while the stored check lacks the newest action, so the trail is read once, not at every start.
+  DO $$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+       WHERE conrelid = 'local_account_events'::regclass AND conname = 'local_account_events_action_check'
+         AND pg_get_constraintdef(oid) LIKE '%system_use_notice_updated%'
+    ) THEN
+      ALTER TABLE local_account_events DROP CONSTRAINT IF EXISTS local_account_events_action_check;
+      ALTER TABLE local_account_events ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated'));
+    END IF;
+  END $$;
+
+  -- System use notification (issue #256): the notice shown before sign-in, one platform-wide row (id is pinned to 1). Global like
+  -- platform_setup (no tenant column, no row security): it must be readable before anyone signs in. No row means off. The text is public by
+  -- design but is never logged; account events carry only the version.
+  CREATE TABLE IF NOT EXISTS platform_system_use_notice (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      notice_text TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by_user_id VARCHAR(64),
+      CONSTRAINT platform_system_use_notice_singleton CHECK (id = 1),
+      CONSTRAINT platform_system_use_notice_text_check CHECK (char_length(notice_text) BETWEEN 1 AND 4000)
+  );
 
   -- SSP metadata (issue #84): one row per program holding the SSP text fields (system name, environment, boundary and cloud
   -- service providers). The text is CUI: it is never logged and never written to program_events (digests only). Keys, value type and size

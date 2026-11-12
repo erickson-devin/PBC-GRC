@@ -107,6 +107,10 @@ export function rowToFinding(r: pg.QueryResultRow): VmFinding {
     packageName: r.package_name ?? '',
     packageVersion: r.package_version ?? '',
     fixedVersion: r.fixed_version ?? null,
+    affectedPackages: Array.isArray(r.affected_packages)
+      ? r.affected_packages.map((p: { name?: unknown; version?: unknown; fixedVersion?: string | null }) => ({ name: String(p.name ?? ''), version: String(p.version ?? ''), fixedVersion: p.fixedVersion ?? null }))
+      : [],
+    affectedPackageCount: Number(r.affected_package_count ?? 0),
     justification: r.justification ?? null,
     decidedBy: r.decided_by ?? null,
     decidedByUserId: r.decided_by_user_id ?? null,
@@ -306,12 +310,12 @@ export async function insertMissingVulns(vulnIds: string[], client: pg.PoolClien
 
 const FINDING_COLUMNS = [
   'id', 'tenant_id', 'asset_id', 'vuln_id', 'status', 'severity', 'first_seen_at', 'last_seen_at', 'resolved_at', 'resolved_run_id',
-  'sla_due_at', 'package_name', 'package_version', 'fixed_version', 'justification', 'decided_by', 'decided_by_user_id', 'decided_at',
+  'sla_due_at', 'package_name', 'package_version', 'fixed_version', 'affected_packages', 'affected_package_count', 'justification', 'decided_by', 'decided_by_user_id', 'decided_at',
 ];
 
 const findingValues = (f: VmFinding): unknown[] => [
   f.id, f.tenantId, f.assetId, f.vulnId, f.status, f.severity, f.firstSeenAt, f.lastSeenAt, f.resolvedAt, f.resolvedRunId,
-  f.slaDueAt, f.packageName, f.packageVersion, f.fixedVersion, f.justification, f.decidedBy, f.decidedByUserId, f.decidedAt,
+  f.slaDueAt, f.packageName, f.packageVersion, f.fixedVersion, JSON.stringify(f.affectedPackages), f.affectedPackageCount, f.justification, f.decidedBy, f.decidedByUserId, f.decidedAt,
 ];
 
 /** Builds `($1,$2,...),($n,...)` placeholders for `rows` rows of `width` columns. */
@@ -339,10 +343,11 @@ export async function saveFindings(tenantId: string, result: ApplyRunResult, cli
     await c.query(
       `UPDATE vm_findings AS f SET status = u.status, severity = u.severity, first_seen_at = u.first_seen_at, last_seen_at = u.last_seen_at,
               resolved_at = u.resolved_at, resolved_run_id = u.resolved_run_id, sla_due_at = u.sla_due_at, package_name = u.package_name,
-              package_version = u.package_version, fixed_version = u.fixed_version
+              package_version = u.package_version, fixed_version = u.fixed_version,
+              affected_packages = u.affected_packages::jsonb, affected_package_count = u.affected_package_count
        FROM unnest($2::text[], $3::text[], $4::text[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[], $8::text[], $9::timestamptz[],
-                   $10::text[], $11::text[], $12::text[])
-            AS u(id, status, severity, first_seen_at, last_seen_at, resolved_at, resolved_run_id, sla_due_at, package_name, package_version, fixed_version)
+                   $10::text[], $11::text[], $12::text[], $13::text[], $14::int[])
+            AS u(id, status, severity, first_seen_at, last_seen_at, resolved_at, resolved_run_id, sla_due_at, package_name, package_version, fixed_version, affected_packages, affected_package_count)
        WHERE f.tenant_id = $1 AND f.id = u.id`,
       [
         tenantId,
@@ -357,6 +362,8 @@ export async function saveFindings(tenantId: string, result: ApplyRunResult, cli
         part.map((f) => f.packageName),
         part.map((f) => f.packageVersion),
         part.map((f) => f.fixedVersion),
+        part.map((f) => JSON.stringify(f.affectedPackages)),
+        part.map((f) => f.affectedPackageCount),
       ],
     );
   }

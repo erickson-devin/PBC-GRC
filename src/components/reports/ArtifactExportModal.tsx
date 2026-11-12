@@ -247,7 +247,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   }, []);
   useEffect(() => {
     if (activeTab !== 'metadata' || !pendingFocusField) return;
-    const target = document.getElementById(metaId(pendingFocusField)) ?? document.getElementById(metaHeadingId);
+    const target = (canEdit ? document.getElementById(metaId(pendingFocusField)) : null) ?? document.getElementById(metaHeadingId);
     target?.focus();
     setPendingFocusField(null);
   }, [activeTab, pendingFocusField, metaIdBase]);
@@ -664,7 +664,9 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     System Boundary & Governance Specification
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Modifications made here dynamically update the active audit document, live preview, and official cover page.
+                    {canEdit
+                      ? 'Modifications made here dynamically update the active audit document, live preview, and official cover page.'
+                      : 'Read-only: these values come from the program and its SSP metadata. Only an owner or MSP admin can change them.'}
                   </p>
                 </div>
 
@@ -687,10 +689,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('systemName')}
+                    disabled={!canEdit}
                     type="text"
                     value={formData.systemName}
                     onChange={(e) => setFormData({ ...formData, systemName: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="e.g. Defense Contracting Information Network (DCIN)"
                   />
                 </div>
@@ -702,10 +705,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('organizationName')}
+                    disabled={!canEdit}
                     type="text"
                     value={formData.organizationName}
                     onChange={(e) => setFormData({ ...formData, organizationName: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="e.g. Vanguard Defense Systems, LLC"
                   />
                 </div>
@@ -717,10 +721,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('systemOwner')}
+                    disabled={!canEdit}
                     type="text"
                     value={formData.systemOwner}
                     onChange={(e) => setFormData({ ...formData, systemOwner: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="e.g. Alex Mercer, CMMC CCA (CISO)"
                   />
                 </div>
@@ -732,10 +737,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('primaryAssessor')}
+                    disabled={!canEdit}
                     type="text"
                     value={formData.primaryAssessor}
                     onChange={(e) => setFormData({ ...formData, primaryAssessor: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="e.g. Lead Certified C3PAO Assessor"
                   />
                 </div>
@@ -747,10 +753,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('cageCode')}
+                    disabled={!canEdit}
                     type="text"
                     value={formData.cageCode}
                     onChange={(e) => setFormData({ ...formData, cageCode: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono uppercase focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono uppercase focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="e.g. 8K3R1"
                   />
                 </div>
@@ -762,10 +769,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('samStatus')}
+                    disabled={!canEdit}
                     type="text"
                     value={formData.samStatus}
                     onChange={(e) => setFormData({ ...formData, samStatus: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="e.g. Active"
                   />
                 </div>
@@ -777,9 +785,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <select
                     id={metaId('operationalStatus')}
+                    disabled={!canEdit}
                     value={formData.operationalStatus}
                     onChange={(e) => setFormData({ ...formData, operationalStatus: e.target.value as SystemOperationalStatus })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="Operational">Operational (Live Production)</option>
                     <option value="Under Development">Under Development / Assessment</option>
@@ -795,9 +804,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <select
                     id={metaId('classificationLevel')}
+                    disabled={!canEdit}
                     value={formData.classificationLevel}
                     onChange={(e) => setFormData({ ...formData, classificationLevel: e.target.value as DocumentClassificationLevel })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="UNCLASSIFIED // CUI">UNCLASSIFIED // CUI (Fed/DoD Standard)</option>
                     <option value="CONFIDENTIAL">CONFIDENTIAL (SOC 2 / Corporate Standard)</option>
@@ -813,10 +823,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <input
                     id={metaId('assessmentDate')}
+                    disabled={!canEdit}
                     type="date"
                     value={formData.assessmentDate}
                     onChange={(e) => setFormData({ ...formData, assessmentDate: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -828,10 +839,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 </label>
                 <textarea
                   id={metaId('boundaryDescription')}
+                  disabled={!canEdit}
                   rows={4}
                   value={formData.boundaryDescription}
                   onChange={(e) => setFormData({ ...formData, boundaryDescription: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none leading-relaxed"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none leading-relaxed disabled:opacity-60 disabled:cursor-not-allowed"
                   placeholder="Detail all corporate endpoints, cloud tenants, subnets, firewalls, and data repositories that store, process, or transmit sensitive contract information..."
                 />
               </div>
@@ -843,10 +855,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 </label>
                 <input
                   id={metaId('cloudServiceProviders')}
+                  disabled={!canEdit}
                   type="text"
                   value={formData.cloudServiceProviders}
                   onChange={(e) => setFormData({ ...formData, cloudServiceProviders: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
                   placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
                 />
               </div>
@@ -859,10 +872,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </label>
                   <textarea
                     id={metaId('serviceCommitments')}
+                    disabled={!canEdit}
                     rows={4}
                     value={formData.serviceCommitments ?? ''}
                     onChange={(e) => setFormData({ ...formData, serviceCommitments: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none leading-relaxed"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none leading-relaxed disabled:opacity-60 disabled:cursor-not-allowed"
                     placeholder="The commitments made to customers and the system requirements that support them (leave empty if none are recorded)"
                   />
                 </div>
@@ -1192,7 +1206,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <div className="space-y-2 min-w-0">
                 <p>
                   {exportGaps.length === 1 ? '1 value is' : `${exportGaps.length} values are`} not recorded, so this document will print "not recorded" there. Exporting is still allowed.
-                  {canEdit ? ' Select a value to fill it in on Boundary Metadata.' : ' You have read-only access: values entered on Boundary Metadata apply to this export only and are not saved.'}
+                  {canEdit ? ' Select a value to fill it in on Boundary Metadata.' : ' You have read-only access: ask an owner to record these values.'}
                 </p>
                 <ul className="flex flex-wrap gap-1.5" aria-label="Values not recorded">
                   {exportGaps.map((gap) => (

@@ -24,10 +24,12 @@ import {
   RefreshCw,
   FileText,
   Sliders,
+  AlertTriangle,
 } from 'lucide-react';
 import { ControlStatus, EvidenceItem } from '../../types/cmmc';
 import { ComplianceFramework } from '../../types/framework';
 import { useAssessment } from '../../context/AssessmentContext';
+import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 import { useTenant } from '../../context/TenantContext';
 import { withEffectiveStack } from '../../data/effectiveStackProfile';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
@@ -55,7 +57,7 @@ import { EnclaveStackSurveyModal } from '../admin/EnclaveStackSurveyModal';
 
 import { activateOnKey } from '../../utils/a11y';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
 interface InspectDocumentModalProps {
   controlId?: string | null;
@@ -73,6 +75,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     state,
     notesStatus,
     notesEditable,
+    notesNotSaved,
+    retryUnsavedNotes,
     updateControlStatus,
     updateControlNotes,
     flushControlNotes,
@@ -102,6 +106,10 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const [recompileCount, setRecompileCount] = useState<number>(0);
   const [recompileNotice, setRecompileNotice] = useState<boolean>(false);
   const [copiedPolicy, setCopiedPolicy] = useState<boolean>(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
+  const notesNotSavedId = React.useId();
+  const notesTextareaId = React.useId();
   const [policyViewMode, setPolicyViewMode] = useState<'preview' | 'raw'>('preview');
   const [isSurveyModalOpen, setIsSurveyModalOpen] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -200,6 +208,22 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   if (!activeId || !control) return null;
 
   const currentFramework = control.framework || activeFramework;
+
+  // Why this control's notes are not on the server, with a Retry for a plain failure. Never repeats the notes.
+  const notesNotSavedReason = notesNotSaved[control.id];
+  const notesNotSavedMarker = notesNotSavedReason ? (
+    <div id={notesNotSavedId} className="flex flex-wrap items-center gap-2 px-1 text-xs text-amber-300">
+      <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <span className="font-semibold">Not saved</span>
+      <span className="text-amber-200/90">{NOTES_NOT_SAVED_DETAIL[notesNotSavedReason]}</span>
+      {notesNotSavedReason === 'failed' && canEdit && notesEditable && (
+        <button type="button" onClick={() => void retryUnsavedNotes(control.id)}
+          className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+          Retry
+        </button>
+      )}
+    </div>
+  ) : null;
   const currentFrameworkDef = FRAMEWORK_REGISTRY[currentFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
 
   const ctrlState = state.controls[control.id] || {
@@ -263,9 +287,12 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handleCopyPolicyMarkdown = () => {
-    copyToClipboard(compiledPolicyMarkdown);
-    setCopiedPolicy(true);
-    setTimeout(() => setCopiedPolicy(false), 2000);
+    void copyText(compiledPolicyMarkdown).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
+      setCopiedPolicy(true);
+      setTimeout(() => setCopiedPolicy(false), 2000);
+    });
   };
 
   const handleClose = () => {
@@ -328,9 +355,12 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
   const handleCopyHash = (hash?: string) => {
     if (!hash) return;
-    copyToClipboard(hash);
-    setCopiedHash(hash);
-    setTimeout(() => setCopiedHash(null), 2000);
+    void copyText(hash).then((ok) => {
+      if (!ok) { setCopyFailedKey(hash); return; }
+      setCopyFailedKey(null);
+      setCopiedHash(hash);
+      setTimeout(() => setCopiedHash(null), 2000);
+    });
   };
 
   const handleApplyStigNarrative = (rule: StigRule) => {
@@ -371,6 +401,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
 
   return (
     <DialogOverlay onClose={handleClose} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+      <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         {/* ── Top Header ── */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
@@ -609,6 +640,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                     To assess objectives or review an SSP import, use the <button type="button" onClick={() => setActiveTab('objectives')} className="underline text-cyan-300 hover:text-cyan-200">Assessment Objectives</button> tab.
                   </p>
                   <SspStatementEditor control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit && notesEditable} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} onNotesBlur={() => flushControlNotes(control.id)} />
+                  {notesNotSavedMarker}
                   {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
                     <p role="status" className="text-xs text-amber-300">
                       {notesStatus === 'loading'
@@ -620,7 +652,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               ) : (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  <label htmlFor={notesTextareaId} className="text-xs font-semibold uppercase tracking-wider text-slate-300">
                     Compiled SSP Implementation Narrative
                   </label>
                   <span className="text-xs text-slate-400">
@@ -628,6 +660,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   </span>
                 </div>
                 <textarea
+                  id={notesTextareaId}
+                  aria-describedby={notesNotSavedReason ? notesNotSavedId : undefined}
                   rows={8}
                   value={ctrlState.implementationNotes || ''}
                   onChange={(e) => updateControlNotes(control.id, e.target.value)}
@@ -636,6 +670,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   placeholder="Detail your organizational implementation for this requirement across people, processes, and technology..."
                   className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/60 transition-all font-mono leading-relaxed disabled:opacity-60"
                 />
+                {notesNotSavedMarker}
                 {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
                   <p role="status" className="text-xs text-amber-300">
                     {notesStatus === 'loading'
@@ -829,6 +864,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                                 <Copy className="w-4 h-4" />
                               )}
                             </button>
+                          )}
+                          {ev.fileHash && copyFailedKey === ev.fileHash && (
+                            <span aria-hidden="true" className="text-xs text-amber-300">Not copied</span>
                           )}
                           {canEdit && (
                             <button
@@ -1035,6 +1073,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   >
                     {copiedPolicy ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   </button>
+                  <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
                   {/* View Mode Toggle */}
                   <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800">

@@ -910,8 +910,8 @@ export const AssetInventoryManager: React.FC = () => {
                             type="button"
                             onClick={() => setScannerAsset(asset)}
                             className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 border border-slate-700 transition-colors"
-                            title="Scanner data"
-                            aria-label={`Scanner data for ${asset.hostName}`}
+                            title="Scanner data and vulnerabilities"
+                            aria-label={`Scanner data and vulnerabilities for ${asset.hostName}`}
                           >
                             <Radar className="w-3.5 h-3.5" aria-hidden="true" />
                           </button>

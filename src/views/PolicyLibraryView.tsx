@@ -25,7 +25,7 @@ import { PolicyControlReferenceDialog } from '../components/matrix/PolicyControl
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
 import { useFipsModules } from '../hooks/useFipsModules';
 
-import { copyToClipboard } from '../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../utils/clipboard';
 import { stackValueLabel, type StackKey } from '../data/stackDraftView';
 export interface PolicyFamilyItem {
   code: string;
@@ -208,6 +208,7 @@ const PolicyLibraryViewContent: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [recompileNotice, setRecompileNotice] = useState<boolean>(false);
   const [recompileCount, setRecompileCount] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted');
@@ -246,9 +247,12 @@ const PolicyLibraryViewContent: React.FC = () => {
   }, [activeFamilies, searchQuery]);
 
   const handleCopy = () => {
-    copyToClipboard(markdown);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    void copyText(markdown).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   const handleExport = () => {
@@ -550,6 +554,7 @@ const PolicyLibraryViewContent: React.FC = () => {
               >
                 {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               </button>
+              <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
               {/* Export */}
               <button

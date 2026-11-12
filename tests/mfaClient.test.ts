@@ -10,6 +10,9 @@ import { groupSecret } from '../src/components/auth/MfaEnrolmentPanel';
 import { ACCOUNT_EVENTS_PAGE_SIZE, accountEventLabel, accountEventRows, accountEventsErrorText, formatEventTime } from '../src/utils/accountEvents';
 import { showOwnerMfaNotice } from '../src/utils/sessionLock';
 import type { AccountEvent } from '../src/services/apiClient';
+import { accountEventDetails } from '../src/utils/accountEvents';
+import { acknowledgeSystemUseNotice, acknowledgedSystemUseNotice, resetSystemUseNoticeAck } from '../src/services/systemUseNoticeAck';
+import { DEFAULT_SYSTEM_USE_NOTICE, SYSTEM_USE_NOTICE_MAX, noticeGateView, parseSystemUseNotice, validateNoticeDraft, type NoticeLoad } from '../src/data/systemUseNotice';
 
 /**
  * Phase 5.9 client: the sign-in response parser, the plain-language error messages, the second-factor calls (against a stubbed
@@ -359,7 +362,7 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   console.log('\n--- S40 account events / S39 owner notice ---');
   {
     const readUi = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
-    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed'];
+    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated'];
     assert(codes.every((c) => accountEventLabel(c) !== c && !accountEventLabel(c).startsWith('Unrecognised')) && accountEventLabel('password_reset') === 'Password reset by an administrator' && accountEventLabel('x_y') === 'Unrecognised event (x_y)', 'S40-U1 every action code has a plain label; unknown codes are named as unrecognised');
     const ev = (over: Partial<AccountEvent>): AccountEvent => ({ id: '1', at: '2026-01-01T00:00:00Z', actorKind: 'admin', actorUserId: 'u_admin', targetUserId: 'u_t', action: 'account_disabled', tenantId: null, details: {}, ...over });
     const accounts = [{ id: 'u_admin', email: 'admin@x.test' }, { id: 'u_t', email: 't@x.test' }];
@@ -380,6 +383,61 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
     assert(['ApiClient.listAccountEvents(ACCOUNT_EVENTS_PAGE_SIZE, nextBefore)', 'Load older', 'No account events have been recorded yet.', '<caption className="sr-only">', 'scope="col"'].every((s) => panelSrc.includes(s)) && !/dangerouslySetInnerHTML|console\.|errorMessage\(|\.message/.test(panelSrc) && dashSrc.includes('<AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} />'), 'S40-U7 the panel pages, has a captioned table, shows no raw message; the console mounts it');
     assert(showOwnerMfaNotice('privileged', false) && showOwnerMfaNotice('all', false) && !showOwnerMfaNotice('privileged', true) && !showOwnerMfaNotice('off', false) && !showOwnerMfaNotice(null, false), 'S39-U1 the owner notice shows only for a person without two-step verification under privileged or all');
     assert(readUi('src/components/onboarding/OnboardingModal.tsx').includes('<OwnerMfaNotice') && readUi('src/components/layout/TenantSwitcher.tsx').includes('<OwnerMfaNotice') && readUi('src/components/auth/OwnerMfaNotice.tsx').includes('ApiClient.getMfaStatus()') && readUi('src/pages/AcceptInvitePage.tsx').includes('Owners must use two-step verification'), 'S39-U1 the notice is wired into onboarding, the tenant switcher and the invitation page');
+  }
+
+  console.log('\n--- #256 system use notice (client) ---');
+  {
+    const readUi = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
+    const notice = (enabled: boolean, version: number): NoticeLoad => ({ kind: 'loaded', notice: { enabled, text: 'T', version } });
+    assert(noticeGateView({ kind: 'loading' }, null) === 'loading' && noticeGateView({ kind: 'failed' }, 1) === 'failed', 'N1 loading and failed are their own views, whatever was acknowledged');
+    assert(noticeGateView(notice(false, 0), null) === 'form' && noticeGateView(notice(true, 1), null) === 'notice' && noticeGateView(notice(true, 1), 1) === 'form' && noticeGateView(notice(true, 2), 1) === 'notice' && noticeGateView(notice(true, 0), 0) === 'form', 'N1 a disabled notice shows the form; an enabled one needs the current version acknowledged (a stale one shows it again)');
+    assert(parseSystemUseNotice({}) === null && parseSystemUseNotice(null) === null && parseSystemUseNotice({ enabled: true, text: 'x', version: '1' }) === null && parseSystemUseNotice({ enabled: true, text: 'x', version: -1 }) === null && parseSystemUseNotice({ enabled: true, text: 'x', version: 1.5 }) === null, 'N2 a malformed body (missing fields, a string or negative or fractional version) is null');
+    assert(parseSystemUseNotice({ enabled: true, text: '  ', version: 3 })?.text === DEFAULT_SYSTEM_USE_NOTICE && parseSystemUseNotice({ enabled: false, text: '', version: 0 })?.text === '', 'N2 an enabled notice with blank text shows the default text');
+    assert(JSON.stringify(parseSystemUseNotice({ enabled: true, text: 'Hello', version: 2 })) === JSON.stringify({ enabled: true, text: 'Hello', version: 2 }), 'N2 a well-formed body round-trips');
+    assert(DEFAULT_SYSTEM_USE_NOTICE.includes('Controlled Unclassified Information (CUI)') && !DEFAULT_SYSTEM_USE_NOTICE.includes('USG') && DEFAULT_SYSTEM_USE_NOTICE.length < SYSTEM_USE_NOTICE_MAX && SYSTEM_USE_NOTICE_MAX === 4000, 'N2 the default text is the contractor wording and fits the limit');
+    assert(validateNoticeDraft(true, '') !== null && validateNoticeDraft(false, '   ') !== null && validateNoticeDraft(true, 'x'.repeat(SYSTEM_USE_NOTICE_MAX + 1)) === `The notice can be at most ${SYSTEM_USE_NOTICE_MAX} characters.` && validateNoticeDraft(true, 'ok') === null && validateNoticeDraft(false, 'ok') === null && validateNoticeDraft(true, 'a\u0001b') !== null && validateNoticeDraft(true, 'a\r\nb\tc') === null && validateNoticeDraft(true, 'x'.repeat(11), 10) !== null, 'N3 the editor needs text (on or off), at most the limit, without control characters');
+
+    let nerr: unknown;
+    stub(200, { enabled: true, text: 'T', version: 4 });
+    const pub = await ApiClient.getSystemUseNotice();
+    assert(pub.version === 4 && pub.enabled && calls[0].url.endsWith('/api/v1/auth/system-use-notice') && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'X-PBC-Session') === undefined, 'N4 getSystemUseNotice is an anonymous GET of /auth/system-use-notice');
+    stub(200, { enabled: 'yes' });
+    try { await ApiClient.getSystemUseNotice(); } catch (e) { nerr = e; }
+    assert(nerr instanceof ApiError && nerr.status === 502, 'N4 an answer that is not a notice is a 502 ApiError');
+    stub(200, { enabled: true, text: 'T', version: 5, updatedAt: null, updatedByUserId: null, defaultText: 'D', maxLength: 4000 });
+    const saved = await ApiClient.updatePlatformSystemUseNotice({ enabled: true, text: 'T', code: '123456' });
+    assert(calls[0].init.method === 'PUT' && calls[0].url.endsWith('/api/v1/platform/system-use-notice') && JSON.parse(String(calls[0].init.body)).code === '123456' && saved.maxLength === 4000 && saved.defaultText === 'D' && headerOf(calls[0], 'X-PBC-Session') === 'sess', 'N4 the administrator PUT carries the step-up code and the session marker');
+
+    const loginBody = async (): Promise<Record<string, unknown>> => {
+      stub(401, { error: 'x' });
+      try { await ApiClient.localLogin('a@b.test', 'pw'); } catch { /* the body is what is checked */ }
+      return JSON.parse(String(calls[0].init.body));
+    };
+    resetSystemUseNoticeAck();
+    assert(!('systemUseAck' in (await loginBody())), 'N5 without an acknowledgement the sign-in body has no systemUseAck key');
+    acknowledgeSystemUseNotice(3);
+    assert((await loginBody()).systemUseAck === 3 && acknowledgedSystemUseNotice() === 3, 'N5 after acknowledging version 3 the sign-in body carries systemUseAck 3 (also the unlock sign-in, which calls the same method)');
+    stub(401, { error: 'x' });
+    try { await ApiClient.localLogin('a@b.test', 'pw', 7); } catch { /* checked below */ }
+    assert(JSON.parse(String(calls[0].init.body)).systemUseAck === 7, 'N5 an explicit acknowledgement wins');
+    stub(409, { error: 'x', reason: 'system_use_notice_changed' });
+    nerr = undefined;
+    try { await ApiClient.registerWithInvite({ token: 'inv_x', password: 'pw' }); } catch (e) { nerr = e; }
+    assert(JSON.parse(String(calls[0].init.body)).systemUseAck === 3 && (nerr as { reason?: string }).reason === 'system_use_notice_changed', 'N5 registerWithInvite sends the acknowledged version and keeps the server reason');
+    resetSystemUseNoticeAck();
+    assert(acknowledgedSystemUseNotice() === null && !('systemUseAck' in (await loginBody())), 'N5 resetting forgets the acknowledgement');
+    assert(JSON.stringify(accountEventDetails({ noticeVersion: '3', noticeEnabled: true })) === JSON.stringify(['Notice version: 3', 'Notice shown: yes']), 'N5 notice event details read as words');
+
+    const gateSrc = readUi('src/components/auth/SystemUseNoticeGate.tsx');
+    const ackSrc = readUi('src/services/systemUseNoticeAck.ts');
+    const sectionSrc = readUi('src/components/admin/SystemUseNoticeSection.tsx');
+    assert(!/dangerouslySetInnerHTML|console\./.test(gateSrc) && ['whitespace-pre-wrap', 'role="status"', '<ErrorNotice', 'max-h-[50vh]', 'resetSystemUseNoticeAck()'].every((s) => gateSrc.includes(s)), 'N6 the gate renders plain text, logs nothing, announces loading, fails closed with an error and resets the acknowledgement on mount');
+    assert(!/localStorage|sessionStorage|console\./.test(ackSrc), 'N6 the acknowledgement is kept in memory only');
+    assert(readUi('src/components/auth/LoginPage.tsx').includes('<SystemUseNoticeGate>') && readUi('src/components/auth/AuthModal.tsx').includes('<SystemUseNoticeGate>') && readUi('src/pages/AcceptInvitePage.tsx').includes('<SystemUseNoticeGate>'), 'N6 the sign-in page, the sign-in modal and the invitation page wrap their password form in the gate');
+    assert(['htmlFor={textId}', 'Reset to default', '<fieldset disabled={busy}', 'Code from your authenticator app'].every((s) => sectionSrc.includes(s)) && !/dangerouslySetInnerHTML|console\./.test(sectionSrc) && readUi('src/components/admin/SuperAdminDashboard.tsx').includes('<SystemUseNoticeSection />'), 'N6 the editor labels its fields, asks for the step-up code, renders plain text; the console mounts it');
+    const authSrc = readUi('src/context/AuthContext.tsx');
+    const unlockBody = authSrc.slice(authSrc.indexOf('const unlockWithPassword'), authSrc.indexOf('const stayActive'));
+    assert(unlockBody.includes('system_use_notice_changed') && unlockBody.includes('Sign out and sign in again to read the updated notice') && authSrc.slice(authSrc.indexOf('const logout = useCallback'), authSrc.indexOf('const openAuthModal')).includes('resetSystemUseNoticeAck()'), 'N6 the lock screen unlock explains a changed notice, and sign-out forgets the acknowledgement');
   }
 
   console.log('\n================================================================');

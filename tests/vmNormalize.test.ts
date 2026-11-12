@@ -31,7 +31,7 @@ import {
 import { findingsNormalizerFor } from '../server/vm/adapters/registry';
 import { agentKey, kindKey, migrateLegacyAgentIds, normalizeMac, planAssetMatches, type AgentAssetCandidate } from '../server/vm/assetMatch';
 import { validateIngestPayload, type IngestPayload } from '../server/vm/ingestSchema';
-import type { VmFinding, VmRun } from '../src/types/vm';
+import { VM_MAX_AFFECTED_PACKAGES, type VmFinding, type VmRun } from '../src/types/vm';
 
 /**
  * Pure checks (no server, no database): the Wazuh adapter, the finding lifecycle reducer, SLA and POA&M planning, stale run
@@ -81,6 +81,8 @@ const finding = (o: Partial<VmFinding> = {}): VmFinding => ({
   packageName: 'openssl',
   packageVersion: '1.0',
   fixedVersion: '1.1',
+  affectedPackages: [{ name: 'openssl', version: '1.0', fixedVersion: '1.1' }],
+  affectedPackageCount: 1,
   justification: null,
   decidedBy: null,
   decidedByUserId: null,
@@ -221,6 +223,7 @@ const other = (o: Partial<OtherSourceReport> = {}): OtherSourceReport => ({
     'T09 package fields come from the latest sighting',
     next,
   );
+  assert(eq(next.affectedPackages, pk) && next.affectedPackageCount === 1, 'T09 affected package list follows the latest sighting', next);
 }
 {
   const prev = finding();
@@ -306,6 +309,49 @@ for (const [t, status] of [['T14', 'RISK_ACCEPTED'], ['T15', 'FALSE_POSITIVE']] 
   assert(next.severity === 'LOW', 'T19 reopen takes reported severity (CRITICAL -> LOW)', next.severity);
   assert(next.slaDueAt === plus(next.firstSeenAt, 180), 'T19 SLA from new first_seen', next.slaDueAt);
 }
+// ---------- #267: every affected package stays on the finding ----------
+{
+  const O = { name: 'openssl', version: '1.0', fixedVersion: '1.1' };
+  const O3 = { name: 'openssl', version: '3.0', fixedVersion: '3.0.13' };
+  const Z = { name: 'zlib', version: '2.0', fixedVersion: null };
+  let r = apply({ hosts: hostA([nfind({ packages: [Z, O3, O] })]) });
+  const c = r.created[0];
+  assert(r.created.length === 1 && eq(c.affectedPackages, [O, O3, Z]) && c.affectedPackageCount === 3, 'T267-1 three packages sorted by name then version', c);
+  assert(c.packageName === 'openssl' && c.packageVersion === '1.0', 'T267-1 packageName/Version stay the smallest', c);
+
+  const prev = finding({ affectedPackages: [O, Z], affectedPackageCount: 2 });
+  r = apply({ run: runOf('run-2', R2), existing: [prev], sighted: [prev.id], hosts: hostA([nfind({ packages: [Z] })]) });
+  const shrunk = foldRun([prev], r)[0];
+  assert(r.resolved.length === 0 && r.updated.length === 1 && shrunk.status === 'OPEN', 'T267-2 a shrinking list updates, never resolves', r);
+  assert(eq(shrunk.affectedPackages, [Z]) && shrunk.affectedPackageCount === 1 && shrunk.packageName === 'zlib', 'T267-2 list and count follow the run', shrunk);
+
+  r = apply({ run: runOf('run-2', R2), existing: [prev], sighted: [prev.id], hosts: hostA([nfind({ packages: [] })]) });
+  const none = foldRun([prev], r)[0];
+  assert(none.status === 'OPEN' && eq(none.affectedPackages, []) && none.affectedPackageCount === 0 && none.packageName === '', 'T267-3 still reported with no packages -> OPEN, empty list', none);
+
+  const many = Array.from({ length: 52 }, (_, i) => ({ name: 'pkg-' + String(i).padStart(2, '0'), version: '1', fixedVersion: null }));
+  r = apply({ hosts: hostA([nfind({ packages: many })]) });
+  const cap = r.created[0];
+  assert(
+    cap.affectedPackages.length === VM_MAX_AFFECTED_PACKAGES && cap.affectedPackages[0].name === 'pkg-00' && cap.affectedPackages[49].name === 'pkg-49' && cap.affectedPackageCount === 52,
+    'T267-4 list capped at the maximum, count is the true total',
+    { length: cap.affectedPackages.length, count: cap.affectedPackageCount },
+  );
+  assert((r.sightings[0].detail.packages as unknown[]).length === 52, 'T267-4 the sighting keeps all packages', r.sightings[0].detail);
+
+  r = apply({ run: runOf('run-1b', R1), existing: [prev], sighted: [prev.id], hosts: hostA([nfind({ packages: [O, Z] })]) });
+  assert(r.updated.length === 0, 'T267-5 same packages at the same time -> no update', r.updated);
+
+  const newer = finding({ lastSeenAt: R2 });
+  r = apply({ run: runOf('run-1c', R1), existing: [newer], sighted: [newer.id], hosts: hostA([nfind({ packages: [Z] })]) });
+  const ooo = foldRun([newer], r)[0];
+  assert(eq(ooo.affectedPackages, [O]) && ooo.packageName === 'openssl', 'T267-6 out-of-order run leaves the list alone', ooo);
+
+  const ra = finding({ status: 'RISK_ACCEPTED', justification: 'because', decidedBy: 'dev', decidedAt: R1 });
+  r = apply({ run: runOf('run-2', R2), existing: [ra], sighted: [ra.id], hosts: hostA([nfind({ packages: [Z] })]) });
+  const kept = foldRun([ra], r)[0];
+  assert(eq(kept.affectedPackages, [O]) && kept.affectedPackageCount === 1, 'T267-7 RISK_ACCEPTED keeps its list', kept);
+}
 for (const [t, status] of [['T20', 'RISK_ACCEPTED'], ['T21', 'FALSE_POSITIVE']] as const) {
   const prev = finding({ status, severity: 'LOW', justification: 'because', decidedBy: 'dev', decidedAt: R1 });
   const pk = [{ name: 'zlib', version: '2.0', fixedVersion: null }];
@@ -333,6 +379,11 @@ for (const [t, status] of [['T20', 'RISK_ACCEPTED'], ['T21', 'FALSE_POSITIVE']] 
   const r = apply({ hosts: hostA([nfind({ packages: pk })]) });
   assert(r.created.length === 1 && r.sightings.length === 1, 'T23 same CVE in two packages -> one finding, one sighting', r);
   assert(r.created[0].packageName === 'openssl' && r.created[0].packageVersion === '1.0', 'T23 package = smallest name/version', r.created[0]);
+  assert(
+    eq(r.created[0].affectedPackages, [{ name: 'openssl', version: '1.0', fixedVersion: '1.1' }, { name: 'zlib', version: '2.0', fixedVersion: null }]) && r.created[0].affectedPackageCount === 2,
+    'T23 finding keeps both packages, sorted',
+    r.created[0],
+  );
   assert((r.sightings[0].detail.packages as unknown[]).length === 2, 'T23 detail.packages.length is 2', r.sightings[0].detail);
 }
 {
@@ -463,13 +514,20 @@ const cand = (f: Partial<VmFinding> = {}, kev = false): PoamCandidate => ({
   assert(planPoamItems([cand({ status: 'RESOLVED', resolvedAt: R2 })], [{ findingId: 'f-existing', status: 'OPEN', createdAt: R2 }], NOW).length === 0, 'T47 closing later leaves the item as is: no new draft');
   assert(planPoamItems([cand({ slaDueAt: null })], [], NOW).length === 0, 'T48 null sla -> none');
   const w = poamWeakness(cand({ severity: 'HIGH' }));
-  assert(w === 'CVE-2026-0001 on web-01: HIGH severity, first seen 2026-01-01, remediation due 2026-01-31 (overdue).', 'T49 weakness text template', w);
+  assert(w === 'CVE-2026-0001 on web-01: HIGH severity, first seen 2026-01-01, remediation due 2026-01-31 (overdue). Affected packages: openssl 1.0 (fixed in 1.1).', 'T49 weakness text template', w);
   const wk = poamWeakness(cand({ severity: 'CRITICAL' }, true));
   assert(
-    wk === 'CVE-2026-0001 on web-01: CRITICAL severity, known exploited (CISA KEV), first seen 2026-01-01, remediation due 2026-01-31 (overdue).',
+    wk === 'CVE-2026-0001 on web-01: CRITICAL severity, known exploited (CISA KEV), first seen 2026-01-01, remediation due 2026-01-31 (overdue). Affected packages: openssl 1.0 (fixed in 1.1).',
     'T49 weakness text includes the KEV clause',
     wk,
   );
+  const seven = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => ({ name, version: '1', fixedVersion: null }));
+  const w7 = poamWeakness(cand({ affectedPackages: seven, affectedPackageCount: 7 }));
+  assert(w7.endsWith(' Affected packages: a 1, b 1, c 1, d 1, e 1, and 2 more.'), 'T49c weakness lists five packages and the rest as a count', w7);
+  const wl = poamWeakness(cand({ affectedPackages: [], affectedPackageCount: 0 }));
+  assert(wl.endsWith(' Affected packages: openssl 1.0 (fixed in 1.1).'), 'T49d legacy finding without a list falls back to the single package', wl);
+  const wn = poamWeakness(cand({ affectedPackages: [], affectedPackageCount: 0, packageName: '', packageVersion: '', fixedVersion: null }));
+  assert(wn === 'CVE-2026-0001 on web-01: HIGH severity, first seen 2026-01-01, remediation due 2026-01-31 (overdue).', 'T49e no packages -> the plain template', wn);
 }
 
 // ---------- Asset matching ----------

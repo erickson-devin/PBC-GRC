@@ -59,6 +59,10 @@ cookie, the `X-PBC-Session` marker and an `x-tenant-id: <tenantId>` header; body
 On a Linux host (or Windows) **inside the enclave** that can reach both the Wazuh indexer/manager and the PBC-GRC HTTPS
 address. It needs Python 3.11 and nothing else from the internet after install. It is not part of the PBC-GRC image.
 
+Connecting to a Wazuh that someone else administers (customer network, indexer on `127.0.0.1` only)? Follow
+`docs/CONNECT_EXISTING_WAZUH.md`: it has the checklist to send the Wazuh administrator, a reachability test, and the choice
+between running the exporter here (with an SSH tunnel) or on the Wazuh host (`WAZUH_INDEXER_URL=https://127.0.0.1:9200`).
+
 ```bash
 sudo mkdir -p /opt/pbc-vm-exporter && cd /opt/pbc-vm-exporter
 # copy exporters/pbc-vm-exporter/ from the repository here (or git clone the repo and cd into that folder)
@@ -67,27 +71,36 @@ python3 -m venv .venv && .venv/bin/python -m pip install .
 
 ### 2.2 Wazuh side: a read-only account
 
-* **Wazuh 4.8 and later** (the normal case): the exporter reads the indexer index `wazuh-states-vulnerabilities-*`.
-  Create an indexer (OpenSearch) user with a **read-only role limited to that index pattern**. That user's name and
+* **Wazuh 4.8 and later** (the normal case): the exporter reads the indexer index `wazuh-states-vulnerabilities-*`
+  (and, from 4.14, the inventory indices `wazuh-states-inventory-*`).
+  Create an indexer (OpenSearch) user with a **read-only role limited to those index patterns**. That user's name and
   password go into `WAZUH_INDEXER_USER` / `WAZUH_INDEXER_PASSWORD`. **Port 9200 is the indexer, and the exporter reads
   the indexer. Port 55000 is the Wazuh manager API, a different service with different users.** A user created in the
   Wazuh dashboard's API / RBAC settings exists only in the manager and is refused by the indexer with HTTP 401. Create
   the indexer user in the OpenSearch security plugin instead: Wazuh dashboard, Indexer management, Security, Internal
   users (create the user), Roles (a role with the cluster permission `cluster_composite_ops_ro` and the index
-  permission `read` on `wazuh-states-vulnerabilities-*`), then map the role to the user under Role mappings. Menu names
-  differ between Wazuh versions: verify on your install.
-* The indexer must be reachable from the exporter host. By default it may listen on `127.0.0.1` only: in
-  `/etc/wazuh-indexer/opensearch.yml` set `network.host` to a list such as `[127.0.0.1, <LAN IP>]`, restart
-  `wazuh-indexer`, and open port 9200 for the exporter host in the firewall.
+  permission `read` on `wazuh-states-vulnerabilities-*` and `wazuh-states-inventory-*`; one inventory pattern covers all
+  six inventory indices), then open that role, Mapped users, and add the user. **The Backend roles field of the user does
+  not grant the role**: only Mapped users does. Menu names differ between Wazuh versions: verify on your install.
+  If the exporter still gets HTTP 403, `check` prints a NOTE with the roles the indexer applied to the user.
+* The indexer must be reachable from the exporter host. A Wazuh all-in-one install binds the indexer to `127.0.0.1:9200`
+  only. In order of preference: (1) run the exporter on the Wazuh host with `WAZUH_INDEXER_URL=https://127.0.0.1:9200`;
+  (2) keep it on its own host and open an SSH tunnel, `ssh -N -L 9200:127.0.0.1:9200 <user>@<wazuh-host>`, with
+  `WAZUH_INDEXER_URL=https://127.0.0.1:9200`; (3) last resort: in `/etc/wazuh-indexer/opensearch.yml` set `network.host` to
+  a list such as `[127.0.0.1, <LAN IP>]`, restart `wazuh-indexer`, open port 9200 for the exporter host in the firewall
+  (the indexer certificate must then list that LAN IP). See `docs/CONNECT_EXISTING_WAZUH.md`.
 * **Wazuh 4.7 and earlier**: the exporter reads `/agents` and `/vulnerability/{id}` from the manager API. Create a
   read-only API user; its name and password go into `WAZUH_API_USER` / `WAZUH_API_PASSWORD`.
 * `WAZUH_MODE=auto` (the default) asks the manager API for the version and picks the mode, so in auto mode the
   **manager API user is needed as well** even on 4.8+. Set `WAZUH_MODE=indexer` explicitly to need only the indexer user.
 * Wazuh's certificates: the exporter verifies TLS and cannot be told not to. Point `WAZUH_CA_BUNDLE` at Wazuh's root CA
-  (`/etc/wazuh-indexer/certs/root-ca.pem` on the Wazuh host) and reach Wazuh by a name its certificate covers: the
+  (`/etc/wazuh-indexer/certs/root-ca.pem` on the Wazuh host, or from the installer archive
+  `tar -xOf wazuh-install-files.tar wazuh-install-files/root-ca.pem > root-ca.pem`) and reach Wazuh by a name its certificate covers: the
   default certificate may list only `127.0.0.1`, and a connection to another IP then fails with "IP address mismatch".
   Check the names with `openssl s_client -connect <host>:9200 </dev/null | openssl x509 -noout -text` (Subject Alternative
-  Name) and reissue the certificate with the IP or name you use if it is missing.
+  Name) and reissue the certificate with the IP or name you use if it is missing. On Windows test reachability with
+  `curl.exe --ssl-no-revoke --cacert root-ca.pem -u <user> https://<wazuh-host>:9200/_plugins/_security/authinfo` (curl
+  asks for the password; never put it on the command line). The exporter ignores the proxy environment variables.
 
 ### 2.3 The env file (this is where the credentials go)
 
@@ -135,7 +148,7 @@ Rules that matter:
 * `PBC_SOURCE_LABEL` names the **source** in PBC-GRC. Keep it stable forever: a new label is a new source, and the old
   source's findings would be treated as a separate scanner. One label per Wazuh deployment.
 * `PBC_SEND_INVENTORY` controls the host inventory (installed software, hardware, serial number, MAC and address) read
-  from the indexer indices `wazuh-states-inventory-*` (Wazuh 4.14 and later; give the indexer user `read` on them too).
+  from the indexer indices `wazuh-states-inventory-*` (Wazuh 4.14 and later; give the indexer role `read` on that pattern too).
   `auto` (the default) sends it when PBC-GRC advertises support, `true` always sends it, `false` never reads it. If the
   inventory cannot be read the vulnerabilities are still pushed, with a count-only warning. Hosts known only to the
   inventory become unconfirmed assets in PBC-GRC. Details: the exporter README, section 10d.
@@ -144,7 +157,9 @@ Rules that matter:
 * There is no command-line option for a token or password, by design. The env file (mode 0600, owned by the service
   account) is the only place.
 * `PBC_ALLOW_INSECURE_TRANSPORT` exists for development only. Leave it unset in production; the server refuses tokens over
-  plain HTTP anyway. The exporter warns about it only when some URL is plain `http`; `check` reports it as unneeded
+  plain HTTP anyway. A development install served over plain `http://` needs **both** flags: `VM_ALLOW_INSECURE_TOKENS=true`
+  on PBC-GRC and `PBC_ALLOW_INSECURE_TRANSPORT=true` on the exporter (`init` and the in-app settings write the second one
+  when the URL is `http://`). The exporter warns about it only when some URL is plain `http`; `check` reports it as unneeded
   when every URL is `https`.
 
 ### 2.4 First run
@@ -207,17 +222,28 @@ When a connection fails, the exporter (and `check`) appends a `hint:` to the err
 
 | Symptom (the error text contains) | Fix |
 | --- | --- |
-| Connection refused (WinError 10061) to the Wazuh indexer | nothing is listening at that address: on the Wazuh host the indexer may be bound to 127.0.0.1 only; set network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, `<LAN IP>`]) and restart wazuh-indexer, or check the firewall for port 9200 |
+| Connection refused (WinError 10061) to the Wazuh indexer | nothing is listening at that address: a Wazuh all-in-one install binds the indexer to 127.0.0.1:9200 only. Easiest: run the exporter on the Wazuh host with WAZUH_INDEXER_URL=https://127.0.0.1:9200; or keep it here, open an SSH tunnel (ssh -N -L 9200:127.0.0.1:9200 `<user>@<wazuh-host>`) and use WAZUH_INDEXER_URL=https://127.0.0.1:9200; last resort: set network.host in /etc/wazuh-indexer/opensearch.yml (a list such as [127.0.0.1, `<LAN IP>`]), restart wazuh-indexer and open port 9200 in the firewall (the indexer certificate must then list that LAN IP). Otherwise check the firewall for port 9200 |
 | Connection timed out | the connection timed out: a firewall is probably dropping traffic from this host to that address and port (indexer 9200, manager API 55000, PBC-GRC 443); open the port from this host |
+| ReadTimeout, read timed out | the server accepted the connection but did not answer in time: raise EXPORT_TIMEOUT_SECONDS |
 | getaddrinfo failed, Name or service not known | the host name does not resolve from this machine: check the spelling, DNS, or use the IP address |
 | unable to get local issuer certificate, self-signed certificate | set WAZUH_CA_BUNDLE to the indexer root CA (/etc/wazuh-indexer/certs/root-ca.pem on the Wazuh host); for the PBC-GRC certificate set PBC_CA_BUNDLE to its CA |
 | IP address mismatch, Hostname mismatch, doesn't match | the certificate does not cover the host name or IP in the URL: use a name the certificate lists (check with openssl s_client ... \| openssl x509 -noout -text, Subject Alternative Name), or reissue it with that IP |
+| certificate has expired, certificate is not yet valid | the certificate is expired or not yet valid: check this host's clock (timedatectl / w32tm /query /status) and the certificate's validity dates |
+| SSLError (plain_http_port), wrong version number | the server at that address speaks plain http, not https: use the HTTPS address of the TLS proxy (development installs: http:// with PBC_ALLOW_INSECURE_TRANSPORT=true on the exporter and VM_ALLOW_INSECURE_TOKENS=true on PBC-GRC) |
 | Indexer returned HTTP 401 | the indexer (port 9200) uses its own internal users from the OpenSearch security plugin, not Wazuh manager API users; create the user with the security plugin (see docs/SCANNER_INTEGRATIONS.md) |
-| Indexer returned HTTP 403 | the user is known but its role lacks read access on the vulnerability index: map a role with read on wazuh-states-vulnerabilities-* to this user in the indexer security plugin |
+| Indexer returned HTTP 403 | the user is known but none of its roles allows read on the indices the exporter reads: give a role the index permission read on wazuh-states-vulnerabilities-* and wazuh-states-inventory-* (and the cluster permission cluster_composite_ops_ro), then add this user under that role's Mapped users (Indexer management, Security, Roles); typing the role name into the user's Backend roles field does not grant it |
+| NOTE: indexer roles of this user | these are the roles the indexer applied to this user; if none of them has read on wazuh-states-vulnerabilities-* and wazuh-states-inventory-*, map one under Roles, Mapped users |
 | Indexer returned HTTP 404 (index_not_found) | index_not_found: vulnerability detection is probably off in Wazuh, or WAZUH_INDEXER_INDEX is the wrong index name |
-| WAZUH_INDEXER_URL ends in :55000, or WAZUH_API_URL ends in :9200 | port 9200 is the Wazuh indexer, which the exporter reads; port 55000 is the Wazuh manager API: point WAZUH_INDEXER_URL at 9200 and set WAZUH_MODE=indexer |
-| PBC-GRC answers HTTP 403 vm_insecure_transport | PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy terminates TLS (vm_insecure_transport) |
+| Indexer returned HTTP 302 (any 3xx) | the indexer never redirects: WAZUH_INDEXER_URL probably points at the Wazuh dashboard (port 443); the indexer is port 9200 |
+| Wazuh indexer: reachable, 0 documents | the index is empty: vulnerability detection may be off in Wazuh, or WAZUH_INDEXER_INDEX names the wrong index (a run would stop with zero hosts); before Wazuh 4.8 there is no such index: use WAZUH_MODE=api |
+| WAZUH_INDEXER_URL ends in :55000 | WAZUH_INDEXER_URL points at port 55000, which is the Wazuh manager API; the exporter reads the indexer on port 9200 |
+| WAZUH_API_URL ends in :9200 | WAZUH_API_URL points at port 9200, which is the Wazuh indexer; the manager API listens on port 55000 |
+| WAZUH_API_URL is required for this mode | set WAZUH_MODE=indexer to read the indexer only; auto and api modes also need WAZUH_API_URL, WAZUH_API_USER and WAZUH_API_PASSWORD |
+| PBC-GRC answers HTTP 403 vm_insecure_transport | PBC-GRC saw plain http: serve the app over HTTPS, and set TRUST_PROXY on the server when a reverse proxy terminates TLS (vm_insecure_transport); for a development install over plain http set VM_ALLOW_INSECURE_TOKENS=true on PBC-GRC and PBC_ALLOW_INSECURE_TRANSPORT=true here |
 | PBC-GRC answers HTTP 401 | the service token is wrong, expired or revoked: create a new one in PBC-GRC (API tokens) and paste it |
+| PBC-GRC answers HTTP 403 insufficient_scope | the token lacks the vm:ingest scope (insufficient_scope) |
+| PBC-GRC is reachable: HTTP 302 (any 3xx) | redirect refused; set PBC_URL to the final https URL |
+| contract matches the server: the server's ingest contract differs | upgrade the exporter or the server so both match (--print-contract-sha256 shows this exporter's) |
 | Warning: PBC_ALLOW_INSECURE_TRANSPORT is set | PBC_ALLOW_INSECURE_TRANSPORT is set but every URL is https: remove it, it only silences a safety check |
 
 ## 3. Configuration results from any SCAP scanner (supported today)
@@ -412,6 +438,7 @@ differs. The dry run against a real tenant prints what would be pushed; compare 
 | Where the vendor field names live (one-line fixes) | `pbc_vm_exporter/action1.py` (`ACTION1_PATHS`, `ACTION1_FIELDS`), `pbc_vm_exporter/sentinelone.py` (`S1_PATHS`, `S1_FIELDS`) |
 | Source name as PBC-GRC sees it | `PBC_SOURCE_LABEL` in the env file: never change it |
 | Exporter code and README | `exporters/pbc-vm-exporter/` in the repository |
+| Runbook: connect PBC-GRC to a Wazuh someone else administers | `docs/CONNECT_EXISTING_WAZUH.md` |
 | Push interval expectation | daily (server setting `VM_SNAPSHOT_INTERVAL_HOURS` / staleness in `docs/VULNERABILITY_MANAGEMENT.md`) |
 | Server-side ingest limits | `VM_INGEST_MAX_BYTES` in the app's `.env` (default 64 MB) |
 | Design, lifecycle rules, API reference | `docs/VULNERABILITY_MANAGEMENT.md` |

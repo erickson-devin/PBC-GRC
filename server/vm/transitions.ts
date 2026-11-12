@@ -1,3 +1,4 @@
+import { VM_MAX_AFFECTED_PACKAGES } from '../../src/types/vm';
 import type { VmFinding, VmPoamStatus, VmRun, VmSeverity } from '../../src/types/vm';
 import type { NormalizedHost } from './adapters/wazuh';
 
@@ -155,11 +156,14 @@ export function applyRun(input: ApplyRunInput): ApplyRunResult {
     reportedAssets.add(assetId);
     for (const nf of host.findings) {
       vulnIds.add(nf.vulnId);
-      const pkg = [...nf.packages].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : x.version < y.version ? -1 : x.version > y.version ? 1 : 0))[0];
+      const sortedPkgs = [...nf.packages].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : x.version < y.version ? -1 : x.version > y.version ? 1 : 0));
+      const pkg = sortedPkgs[0];
       const pkgFields = {
         packageName: pkg ? pkg.name : '',
         packageVersion: pkg ? pkg.version : '',
         fixedVersion: pkg ? pkg.fixedVersion : null,
+        affectedPackages: sortedPkgs.slice(0, VM_MAX_AFFECTED_PACKAGES).map((p) => ({ name: p.name, version: p.version, fixedVersion: p.fixedVersion })),
+        affectedPackageCount: sortedPkgs.length,
       };
       const isKev = kev.has(nf.vulnId);
       const prev = byKey.get(`${assetId}\u0000${nf.vulnId}`);
@@ -315,7 +319,21 @@ export function poamWeakness(c: PoamCandidate): string {
   const f = c.finding;
   const first = f.firstSeenAt.slice(0, 10);
   const due = (f.slaDueAt ?? '').slice(0, 10);
-  return `${f.vulnId} on ${c.assetName}: ${f.severity} severity${c.kev ? ', known exploited (CISA KEV)' : ''}, first seen ${first}, remediation due ${due} (overdue).`;
+  return `${f.vulnId} on ${c.assetName}: ${f.severity} severity${c.kev ? ', known exploited (CISA KEV)' : ''}, first seen ${first}, remediation due ${due} (overdue).${affectedPackagesText(f)}`;
+}
+
+const POAM_PACKAGES_SHOWN = 5;
+
+/** ' Affected packages: a 1 (fixed in 2), b 1, and N more.', or '' when the finding has no package. */
+function affectedPackagesText(f: VmFinding): string {
+  const list = f.affectedPackages.length > 0
+    ? f.affectedPackages
+    : f.packageName ? [{ name: f.packageName, version: f.packageVersion, fixedVersion: f.fixedVersion }] : [];
+  if (list.length === 0) return '';
+  const shown = list.slice(0, POAM_PACKAGES_SHOWN).map((p) => `${p.name}${p.version ? ' ' + p.version : ''}${p.fixedVersion ? ` (fixed in ${p.fixedVersion})` : ''}`);
+  const total = Math.max(f.affectedPackageCount, list.length);
+  const more = total > POAM_PACKAGES_SHOWN ? `, and ${total - POAM_PACKAGES_SHOWN} more` : '';
+  return ` Affected packages: ${shown.join(', ')}${more}.`;
 }
 
 /**

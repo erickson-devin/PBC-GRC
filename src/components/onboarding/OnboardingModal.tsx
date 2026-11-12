@@ -79,6 +79,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   }, [isOpen, currentTenant, currentUser]);
 
   const summaryHeadingId = useId();
+  const fieldIdBase = useId();
+  const fid = (name: string) => `${fieldIdBase}-${name}`;
   if (!isOpen) return null;
 
   const programsSettled = programsStatus === 'ready' || programsStatus === 'error' || programsStatus === 'unsupported';
@@ -243,10 +245,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
               {/* Organization Name */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor={fid('orgName')} className="block text-xs font-semibold text-slate-300 mb-1">
                   Legal Organization Name <span className="text-rose-400">*</span>
                 </label>
                 <input
+                  id={fid('orgName')}
+                  aria-describedby={fid('orgNameHint')}
                   type="text"
                   required
                   placeholder="e.g. Pitch Black Cyber LLC"
@@ -254,7 +258,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   onChange={(e) => setOrgName(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
-                <p className="mt-1 text-xs text-slate-400">
+                <p id={fid('orgNameHint')} className="mt-1 text-xs text-slate-400">
                   {summary.sprsApplies
                     ? 'This will appear on the cover page of all generated System Security Plans (SSPs) and SPRS score reports.'
                     : 'This will appear on the cover page of all generated System Security Plans (SSPs) and exported reports.'}
@@ -264,10 +268,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               {/* CAGE Code & SAM.gov Status Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label htmlFor={fid('cageCode')} className="block text-xs font-semibold text-slate-300 mb-1">
                     CAGE Code <span className="text-slate-400 font-normal">(Optional)</span>
                   </label>
                   <input
+                    id={fid('cageCode')}
                     type="text"
                     maxLength={5}
                     placeholder="e.g. 9X7B4 or PENDING"
@@ -278,10 +283,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label htmlFor={fid('samStatus')} className="block text-xs font-semibold text-slate-300 mb-1">
                     SAM.gov Registration Status
                   </label>
                   <select
+                    id={fid('samStatus')}
                     value={samStatus}
                     onChange={(e) => setSamStatus(e.target.value as SamStatus)}
                     className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-brand-500 transition-colors"
@@ -296,10 +302,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
               {/* Defense Industry Sector */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor={fid('industry')} className="block text-xs font-semibold text-slate-300 mb-1">
                   Defense Industry Classification
                 </label>
                 <input
+                  id={fid('industry')}
                   type="text"
                   placeholder="e.g. Defense IT & Systems Integration, Aerospace Hardware, C3PAO"
                   value={industry}
@@ -326,10 +333,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
               {/* System Boundary Name */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor={fid('systemName')} className="block text-xs font-semibold text-slate-300 mb-1">
                   System Boundary Name <span className="text-rose-400">*</span>
                 </label>
                 <input
+                  id={fid('systemName')}
+                  aria-describedby={fid('systemNameHint')}
                   type="text"
                   required
                   placeholder="e.g. Corporate IT & CUI Enclave or Operations Boundary"
@@ -337,17 +346,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   onChange={(e) => setSystemName(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors"
                 />
-                <p className="mt-1 text-xs text-slate-400">
+                <p id={fid('systemNameHint')} className="mt-1 text-xs text-slate-400">
                   The primary system or information boundary being assessed under {summary.assessedUnder}.
                 </p>
               </div>
 
               {/* Designated System Owner */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor={fid('systemOwner')} className="block text-xs font-semibold text-slate-300 mb-1">
                   Designated System Owner / Lead Assessor <span className="text-rose-400">*</span>
                 </label>
                 <input
+                  id={fid('systemOwner')}
                   type="text"
                   required
                   placeholder="e.g. Alex Mercer, Director of Security / CISO"
@@ -359,26 +369,29 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
               {/* Boundary Scope Narrative */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor={fid('boundaryScope')} className="block text-xs font-semibold text-slate-300 mb-1">
                   System Boundary Scope Narrative
                 </label>
                 <textarea
+                  id={fid('boundaryScope')}
+                  aria-describedby={fid('boundaryScopeHint')}
                   rows={3}
                   value={boundaryScope}
                   onChange={(e) => setBoundaryScope(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-colors resize-none leading-relaxed"
                 />
-                <p className="mt-1 text-xs text-slate-400">
+                <p id={fid('boundaryScopeHint')} className="mt-1 text-xs text-slate-400">
                   Summarize the technical components, cloud services, and endpoints in-scope for this assessment.
                 </p>
               </div>
 
               {/* Cloud Service Providers (CSPs) */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label htmlFor={fid('cloudProviders')} className="block text-xs font-semibold text-slate-300 mb-1">
                   In-Scope Cloud Service Providers (CSPs)
                 </label>
                 <input
+                  id={fid('cloudProviders')}
                   type="text"
                   placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
                   value={cloudProviders}

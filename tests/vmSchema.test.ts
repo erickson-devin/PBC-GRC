@@ -149,6 +149,8 @@ const decisionCheck = findings.slice(findings.indexOf('vm_findings_decision_chec
 const decisionLine = decisionCheck.split(NL)[0];
 assert(decisionLine.includes("'RISK_ACCEPTED'") && decisionLine.includes("'FALSE_POSITIVE'") && decisionLine.includes('justification IS NOT NULL'), 'a human decision requires a justification');
 assert(findings.includes('vm_findings_seen_check'), 'last_seen_at cannot precede first_seen_at');
+assert(TABLES_SQL.indexOf("ALTER TABLE vm_findings ADD COLUMN IF NOT EXISTS affected_packages JSONB NOT NULL DEFAULT '[]'::jsonb") > at('vm_findings'), 'findings keep every affected package (affected_packages JSONB, #267)');
+assert(TABLES_SQL.indexOf('ALTER TABLE vm_findings ADD COLUMN IF NOT EXISTS affected_package_count INTEGER NOT NULL DEFAULT 0') > at('vm_findings'), 'findings keep the true affected package count (#267)');
 
 console.log('\n--- Human decisions ---');
 assert(!VM_HUMAN_DECISIONS.includes('RESOLVED' as any), 'RESOLVED is not a human decision (closure is machine-confirmed)');
