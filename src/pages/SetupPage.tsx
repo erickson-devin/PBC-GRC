@@ -3,7 +3,7 @@ import { Building2, CheckCircle2, Copy, KeyRound, Mail, ShieldCheck, Users } fro
 import { BrandLogo } from '../components/common/BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import type { SetupResult } from '../services/apiClient';
-import { copyToClipboard } from '../utils/clipboard';
+import { copyText } from '../utils/clipboard';
 import { errorMessage } from '../utils/errors';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
 import type { TenantRole } from '../types/tenant';
@@ -107,11 +107,10 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
 
   const linkFor = (token: string) => `${window.location.origin}/invite?token=${encodeURIComponent(token)}`;
   const copy = async (key: string, text: string) => {
-    try {
-      await copyToClipboard(text);
+    if (await copyText(text)) {
       setCopied(key);
       window.setTimeout(() => setCopied((c) => (c === key ? null : c)), 2000);
-    } catch {
+    } else {
       setError('Could not copy automatically. Select the text and copy it manually.');
     }
   };

@@ -13,7 +13,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { NOT_RECORDED } from '../../data/reports/documentDefaults';
 import { SSP_METADATA_NEED_OWNER_MESSAGE } from '../../data/sspMetadataSync';
 export const SSPBuilder: React.FC = () => {
@@ -34,6 +34,7 @@ export const SSPBuilder: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<'document' | 'form'>('document');
   const [copied, setCopied] = useState<boolean>(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [resolvingConflict, setResolvingConflict] = useState<boolean>(false);
   const [conflictFailed, setConflictFailed] = useState<boolean>(false);
 
@@ -86,9 +87,12 @@ export const SSPBuilder: React.FC = () => {
       }
     }
 
-    copyToClipboard(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    void copyText(text).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   return (
@@ -151,6 +155,7 @@ export const SSPBuilder: React.FC = () => {
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
             <span>{copied ? 'Copied to Clipboard' : 'Copy Plaintext'}</span>
           </button>
+          <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
           <button
             onClick={() => exportAssessmentMarkdown()}

@@ -31,7 +31,7 @@ import { useFipsModules } from '../../hooks/useFipsModules';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { MarkdownPreview } from '../common/MarkdownPreview';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { PROGRAM_TEXT_MAX } from '../../data/programSync';
 import { errorMessage } from '../../utils/errors';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
@@ -45,6 +45,7 @@ export const EnclaveSettings: React.FC = () => {
 
   const [previewingPolicy, setPreviewingPolicy] = useState<{ code: string; title: string } | null>(null);
   const [copiedPolicy, setCopiedPolicy] = useState<boolean>(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [previewMode, setPreviewMode] = useState<'formatted' | 'raw'>('formatted');
 
   // The boundary statement belongs to the active program (owners and MSP admins edit it); a tenant without programs keeps the tenant's text
@@ -93,9 +94,12 @@ export const EnclaveSettings: React.FC = () => {
   };
 
   const handleCopyPolicy = (markdown: string) => {
-    copyToClipboard(markdown);
-    setCopiedPolicy(true);
-    setTimeout(() => setCopiedPolicy(false), 2000);
+    void copyText(markdown).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
+      setCopiedPolicy(true);
+      setTimeout(() => setCopiedPolicy(false), 2000);
+    });
   };
 
   const getIdentityDetails = (id: string) => {
@@ -754,6 +758,7 @@ export const EnclaveSettings: React.FC = () => {
                   >
                     {copiedPolicy ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   </button>
+                  <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
                   <button
                     onClick={() => handleDownloadPolicy(previewingPolicy.code, previewingPolicy.title)}

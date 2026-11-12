@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Receipt,
   Building2,
@@ -16,7 +16,7 @@ import {
 import { Tenant, TenantInvitation } from '../../types/tenant';
 import { frameworkLabel, frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 interface FinanceProvisioningLogProps {
   tenants: Tenant[];
   invitations: TenantInvitation[];
@@ -31,19 +31,30 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
   onEnterEnclave,
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // A link the browser refused to copy, shown in a read-only field so it can be copied by hand
+  const [copyFailedUrl, setCopyFailedUrl] = useState<string | null>(null);
+  const fallbackRef = useRef<HTMLInputElement>(null);
   // 'ALL' or a framework id: show the enclaves whose primary framework is that program
   const [filterProgram, setFilterProgram] = useState<string>('ALL');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACCEPTED' | 'PENDING'>('ALL');
 
   const handleCopy = async (text: string, id: string) => {
-    try {
-      await copyToClipboard(text);
+    setCopyFailedUrl(null);
+    if (await copyText(text)) {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
-    } catch (err) {
-      console.warn('Clipboard write failed:', err);
+    } else {
+      setCopyFailedUrl(text);
     }
   };
+
+  // Put the cursor in the fallback field with the link selected, ready for Ctrl+C
+  useEffect(() => {
+    if (copyFailedUrl) {
+      fallbackRef.current?.focus();
+      fallbackRef.current?.select();
+    }
+  }, [copyFailedUrl]);
 
   // Compile provisioning records by correlating tenants and their onboarding invitations
   const records = useMemo(() => {
@@ -214,6 +225,15 @@ export const FinanceProvisioningLog: React.FC<FinanceProvisioningLogProps> = ({
           </div>
         </div>
       </div>
+
+      {copyFailedUrl && (
+        <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          <p role="alert">The link could not be copied. Select and copy it from the field.</p>
+          <label htmlFor="finance-invite-link-fallback" className="sr-only">Onboarding invitation link</label>
+          <input id="finance-invite-link-fallback" ref={fallbackRef} type="text" readOnly value={copyFailedUrl} onFocus={e => e.currentTarget.select()}
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-cyan-300 select-all focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400" />
+        </div>
+      )}
 
       {/* Audit Table */}
       <div className="border border-slate-800 rounded-xl overflow-x-auto bg-slate-950/60 shadow-inner">

@@ -6,6 +6,7 @@ import { OBJECTIVES_NEED_OWNER_MESSAGE } from '../../data/objectiveSync';
 import { ObjectiveReviewDialog } from '../matrix/ObjectiveReviewDialog';
 import { ErrorNotice } from './ErrorNotice';
 import { errorMessage } from '../../utils/errors';
+import { retryableNotes } from '../../data/controlSave';
 
 /**
  * Persistent (not dismissable) notice for a tenant that exists only in this browser: its implementation notes and objective
@@ -16,14 +17,19 @@ import { errorMessage } from '../../utils/errors';
  * the server does not have (an owner moves them by opening the organization), and mounts the dialog where owners settle conflicts.
  */
 export const BrowserOnlyNotesBanner: React.FC = () => {
-  const { currentTenant, canEdit, migrateLocalTenantToServer } = useTenant();
-  const { objectivesNeedOwner, controlSaveError, dismissControlSaveError } = useAssessment();
+  const { currentTenant, canEdit, activeProgram, migrateLocalTenantToServer } = useTenant();
+  const { objectivesNeedOwner, controlSaveError, dismissControlSaveError, notesNotSaved, retryUnsavedNotes, notesEditable } = useAssessment();
+  const [retrying, setRetrying] = useState(false);
+  const [announce, setAnnounce] = useState('');
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving'>('idle');
   const [error, setError] = useState<string | null>(null);
 
   if (currentTenant.serverBacked) {
+    const retryCount = retryableNotes(notesNotSaved).length;
+    const canRetry = retryCount > 0 && canEdit && notesEditable && !activeProgram?.archived;
     return (
       <>
+        <p role="status" aria-live="polite" className="sr-only">{announce}</p>
         {objectivesNeedOwner && (
           <div
             role="region"
@@ -45,9 +51,31 @@ export const BrowserOnlyNotesBanner: React.FC = () => {
               <span>{controlSaveError.message}</span>
               {controlSaveError.count > 1 && <span> ({controlSaveError.count} changes not saved)</span>}
             </p>
-            <button type="button" onClick={dismissControlSaveError} className="shrink-0 px-2 py-1 text-xs font-semibold text-slate-400 hover:text-white">
-              Dismiss
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {canRetry && (
+                <button
+                  type="button"
+                  disabled={retrying}
+                  aria-busy={retrying}
+                  onClick={async () => {
+                    setRetrying(true);
+                    const r = await retryUnsavedNotes();
+                    setRetrying(false);
+                    if (r.failed === 0) {
+                      setAnnounce(`Saved the notes of ${r.saved} control${r.saved === 1 ? '' : 's'}.`);
+                      document.getElementById('app-main')?.focus();
+                    }
+                  }}
+                  aria-label={`Retry saving the notes of ${retryCount} control${retryCount === 1 ? '' : 's'}`}
+                  className="px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                >
+                  {retrying ? 'Retrying…' : 'Retry'}
+                </button>
+              )}
+              <button type="button" onClick={dismissControlSaveError} className="px-2 py-1 text-xs font-semibold text-slate-400 hover:text-white">
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
         <ObjectiveReviewDialog />

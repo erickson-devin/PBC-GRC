@@ -17,7 +17,7 @@ import { TenantInvitation } from '../../types/tenant';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 interface InviteStaffModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -81,13 +81,11 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
 
   const handleCopy = async () => {
     if (!createdResult?.inviteUrl) return;
-    try {
-      await copyToClipboard(createdResult.inviteUrl);
+    if (await copyText(createdResult.inviteUrl)) {
       setCopyFailed(false);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
-    } catch (err) {
-      console.warn('Clipboard write failed:', err);
+    } else {
       setCopyFailed(true);
       linkInputRef.current?.focus();
       linkInputRef.current?.select();

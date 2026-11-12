@@ -3,7 +3,7 @@
  * Validates Super Admin offboarding export, 3-pass cryptographic wipe, and certificate generation.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import type { Tenant } from '../src/types/tenant';
 import {
@@ -20,7 +20,7 @@ import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetSc
 import { createInitialState } from '../src/services/storageService';
 import { NO_CSP_RECORDED } from '../src/data/reports/documentCompilers';
 import { NOT_RECORDED, NO_BOUNDARY_RECORDED, NO_ASSESSOR_RECORDED } from '../src/data/reports/documentDefaults';
-import { copyText } from '../src/utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../src/utils/clipboard';
 
 // Polyfill minimal localStorage for Node environment if absent
 if (typeof (global as any).localStorage === 'undefined') {
@@ -436,6 +436,40 @@ async function runTests() {
     assert(copied === true, 'S141-8: when the fallback copy succeeds, copyText resolves true');
     assert(refused === false, 'S141-9: when the browser refuses the copy, copyText resolves false');
     assert(logged.length === 0 && !logged.some(l => l.includes('S141-SECRET')), 'S141-10: copyText writes nothing to the console, least of all the text');
+
+    // #189: every copy button reports a refused copy instead of always showing "Copied"
+    const srcNorm = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
+    const reportsFailure = [
+      'src/components/vault/EvidenceVaultView.tsx',
+      'src/components/common/EvidencePreviewModal.tsx',
+      'src/components/ssp/SSPBuilder.tsx',
+      'src/components/common/LegalModal.tsx',
+      'src/components/settings/EnclaveSettings.tsx',
+      'src/views/PolicyLibraryView.tsx',
+      'src/components/stigs/StigAutomationModal.tsx',
+      'src/components/audit/AuditTrailViewer.tsx',
+      'src/components/dashboard/ControlCard.tsx',
+      'src/components/matrix/InspectDocumentModal.tsx',
+    ];
+    for (const rel of reportsFailure) {
+      const s = srcNorm(rel);
+      assert(s.includes('copyText(') && s.includes('COPY_FAILED_MESSAGE') && !s.includes('copyToClipboard') && !s.includes('Clipboard write failed'), `S189-1: ${rel} copies through copyText and reports a refused copy`);
+    }
+    const financeNorm = srcNorm('src/components/admin/FinanceProvisioningLog.tsx');
+    assert(financeNorm.includes('copyText(') && !financeNorm.includes('copyToClipboard') && !financeNorm.includes('Clipboard write failed'), 'S189-1: the finance log copies through copyText and reports a refused copy');
+    for (const rel of ['src/components/settings/InviteStaffModal.tsx', 'src/components/admin/NewTenantModal.tsx', 'src/pages/SetupPage.tsx', 'src/components/auth/MfaEnrolmentPanel.tsx']) {
+      const s = srcNorm(rel);
+      assert(s.includes('copyText(') && !s.includes('copyToClipboard(') && !s.includes('Clipboard write failed'), `S189-2: ${rel} copies through copyText and logs no clipboard failure`);
+    }
+    const bareCallers = (readdirSync(join(process.cwd(), 'src'), { recursive: true }) as string[])
+      .map((p) => String(p).replace(/\\/g, '/'))
+      .filter((p) => /\.tsx?$/.test(p))
+      .filter((p) => readFileSync(join(process.cwd(), 'src', p), 'utf8').includes('copyToClipboard('))
+      .map((p) => 'src/' + p)
+      .sort();
+    assert(JSON.stringify(bareCallers) === JSON.stringify(['src/components/auth/UnsavedTextBanner.tsx', 'src/utils/clipboard.ts']), 'S189-3: only clipboard.ts and the unsaved-text banner (which handles a rejection) call copyToClipboard directly');
+    assert(COPY_FAILED_MESSAGE === 'Not copied: the browser blocked the clipboard.', 'S189-4: the refused-copy message is fixed text');
+    assert(financeNorm.includes('readOnly') && financeNorm.includes('value={copyFailedUrl}') && financeNorm.includes('htmlFor="finance-invite-link-fallback"') && !/console\./.test(financeNorm), 'S189-5: the finance log shows a refused invitation link in a labelled read-only field and logs nothing');
     assert(
       dashSrc2.includes('getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p)') && dialogSrc.includes('declared its assets') && !dialogSrc.includes('Each package states the whole asset inventory'),
       'OB-U5: the handover follows the program\'s declared assets (the dashboard reads them, the chooser says so)'

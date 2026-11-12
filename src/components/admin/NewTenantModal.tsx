@@ -23,7 +23,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 interface NewTenantModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -136,14 +136,12 @@ export const NewTenantModal: React.FC<NewTenantModalProps> = ({
 
   const handleCopyInviteLink = async () => {
     if (!createdResult?.inviteUrl) return;
-    try {
-      await copyToClipboard(createdResult.inviteUrl);
+    if (await copyText(createdResult.inviteUrl)) {
       setCopyFailed(false);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
-    } catch (err) {
+    } else {
       // Never fail silently: leave the whole link selected so Ctrl+C finishes the job
-      console.warn('Clipboard write failed:', err);
       setCopyFailed(true);
       linkInputRef.current?.focus();
       linkInputRef.current?.select();

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Copy, ShieldCheck } from 'lucide-react';
 import { ErrorNotice } from '../common/ErrorNotice';
 import type { MfaEnrolmentStart } from '../../services/apiClient';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText } from '../../utils/clipboard';
 import { errorMessage } from '../../utils/errors';
 
 const inputClass =
@@ -29,12 +29,11 @@ export const RecoveryCodesNotice: React.FC<RecoveryCodesNoticeProps> = ({ codes,
   const [copyError, setCopyError] = useState<string | null>(null);
 
   const copyAll = async () => {
-    try {
-      await copyToClipboard(codes.join('\n'));
+    if (await copyText(codes.join('\n'))) {
       setCopied(true);
       setCopyError(null);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       setCopyError('Could not copy automatically. Select the codes and copy them manually.');
     }
   };
@@ -117,11 +116,10 @@ export const MfaEnrolmentPanel: React.FC<MfaEnrolmentPanelProps> = ({ onStart, o
   }, []);
 
   const copy = async (which: 'uri' | 'secret', text: string) => {
-    try {
-      await copyToClipboard(text);
+    if (await copyText(text)) {
       setCopied(which);
       window.setTimeout(() => setCopied((c) => (c === which ? null : c)), 2000);
-    } catch {
+    } else {
       setError('Could not copy automatically. Select the text and copy it manually.');
     }
   };

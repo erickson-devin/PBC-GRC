@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 export type LegalTab = 'privacy' | 'terms';
 
 interface LegalModalProps {
@@ -29,6 +29,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<LegalTab>(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
+  const [copyFailed, setCopyFailed] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Sync initialTab when modal opens
@@ -165,9 +166,12 @@ Website: https://pitchblackcyber.com`,
   const fullText = currentSections.map((s) => `${s.title}\n\n${s.content}`).join('\n\n---\n\n');
 
   const handleCopy = () => {
-    copyToClipboard(fullText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    void copyText(fullText).then((ok) => {
+      setCopyFailed(!ok);
+      if (!ok) return;
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   const handleDownload = () => {
@@ -303,6 +307,7 @@ Website: https://pitchblackcyber.com`,
             >
               {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
             </button>
+            <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
             <button
               onClick={handleDownload}

@@ -35,7 +35,7 @@ import {
 import { StigProfileId, StigSeverity, StigRule } from '../../types/stig';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 interface StigAutomationModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -55,6 +55,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
   const [onlyMappedToActive, setOnlyMappedToActive] = useState(false);
   const [expandedRuleIds, setExpandedRuleIds] = useState<Record<string, boolean>>({});
   const [copiedSnippetId, setCopiedSnippetId] = useState<string | null>(null);
+  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
   const [activeSnippetTab, setActiveSnippetTab] = useState<Record<string, 'powershell' | 'bash' | 'ansible'>>({});
   const [notification, setNotification] = useState<string | null>(null);
   const [isConfirmingNarrativeFill, setIsConfirmingNarrativeFill] = useState(false);
@@ -127,14 +128,13 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
     setExpandedRuleIds(prev => ({ ...prev, [ruleId]: !prev[ruleId] }));
   };
 
-  const handleCopySnippet = async (id: string, text: string) => {
-    try {
-      await copyToClipboard(text);
+  const handleCopySnippet = (id: string, text: string) => {
+    void copyText(text).then((ok) => {
+      if (!ok) { setCopyFailedKey(id); return; }
+      setCopyFailedKey(null);
       setCopiedSnippetId(id);
       setTimeout(() => setCopiedSnippetId(null), 2000);
-    } catch {
-      // Fallback
-    }
+    });
   };
 
   // Export Playbook (.yml)
@@ -218,6 +218,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+      <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
       {/* Outer Glow Double-Bezel Card */}
       <div className="w-full max-w-6xl p-1 rounded-3xl bg-gradient-to-b from-cyan-500/30 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="p-5 sm:p-7 rounded-[calc(1.5rem-0.125rem)] bg-slate-950/95 border border-slate-800/90 flex flex-col max-h-[calc(94vh-0.5rem)] overflow-hidden space-y-5">
@@ -625,6 +626,7 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                                 )}
                               </div>
 
+                              <div className="flex items-center gap-2">
                               <button
                                 onClick={() => {
                                   const text =
@@ -649,6 +651,8 @@ export const StigAutomationModal: React.FC<StigAutomationModalProps> = ({
                                   </>
                                 )}
                               </button>
+                              {copyFailedKey === rule.id && <span aria-hidden="true" className="text-xs text-amber-300">Not copied</span>}
+                              </div>
                             </div>
 
                             <pre className="p-2.5 rounded-lg bg-slate-900 border border-slate-850 font-mono text-xs text-cyan-200 overflow-x-auto whitespace-pre leading-normal">

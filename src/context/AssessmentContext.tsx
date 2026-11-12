@@ -56,12 +56,16 @@ import {
   type ObjectiveCascadeDetail,
 } from '../data/objectiveSync';
 import {
+  clearNotesNotSaved,
   coalesceSaveFailure,
   controlSaveFailureMessage,
   isStaleWriteError,
+  markNotesNotSaved,
+  retryableNotes,
   revertFailedControlFields,
   staleWriteMessage,
   type ControlSaveFailure,
+  type NotesNotSaved,
 } from '../data/controlSave';
 import { createNotesAutosave, createSaveChain, createStampedSaveChain, newerStamp, notesKey, type NotesDraft } from '../data/notesAutosave';
 import { errorMessage } from '../utils/errors';
@@ -101,6 +105,10 @@ interface AssessmentContextType {
   /** The last control edit the server did not save (status, notes or role), with how many failed since it was dismissed. */
   controlSaveError: ControlSaveFailure | null;
   dismissControlSaveError: () => void;
+  /** Controls whose notes did not reach the server (current program only), and why. Never holds the text. */
+  notesNotSaved: NotesNotSaved;
+  /** Sends again the notes of controls whose save failed (all of them, or just one). */
+  retryUnsavedNotes: (onlyControlId?: string) => Promise<{ saved: number; failed: number }>;
   metrics: ComplianceMetrics;
   frameworkControls: FrameworkControlDefinition[];
   activeTab: NavigationTab;
@@ -405,9 +413,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   programScopeRef.current = programScope;
   const [controlSaveError, setControlSaveError] = useState<ControlSaveFailure | null>(null);
   const dismissControlSaveError = useCallback(() => setControlSaveError(null), []);
+  const [notesNotSaved, setNotesNotSaved] = useState<NotesNotSaved>({});
+  const notesNotSavedRef = useRef(notesNotSaved);
+  notesNotSavedRef.current = notesNotSaved;
   // A notice belongs to the program it was raised in
   useEffect(() => {
     setControlSaveError(null);
+    setNotesNotSaved({});
     serverStampRef.current.clear();
     staleNotesRef.current.clear();
     objectiveSavesRef.current.clear();
@@ -443,9 +455,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         const saved = await updateLiveControl(controlId, sendUpdate, opts?.programId);
         if (saved?.updatedAt) serverStampRef.current.set(key, saved.updatedAt);
+        if (hasNotes && scope === programScopeRef.current) setNotesNotSaved(p => clearNotesNotSaved(p, controlId));
         return 'saved';
       } catch (err: unknown) {
         if (isStaleWriteError(err) && hasNotes) staleNotesRef.current.add(key);
+        if (hasNotes && scope === programScopeRef.current) setNotesNotSaved(p => markNotesNotSaved(p, controlId, err));
         setState(prev => {
           if (programScopeKey(prev.tenantId, prev.programId) !== scope) return prev;
           const local = prev.controls[controlId];
@@ -461,6 +475,21 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
     });
   }, [currentTenant.id, currentTenant.serverBacked, programScope, updateLiveControl]);
+
+  /** Sends again the notes of controls whose save failed (current text, not a copy). Status / role were reverted on failure, so there is nothing else to resend. */
+  const retryUnsavedNotes = useCallback(async (onlyControlId?: string): Promise<{ saved: number; failed: number }> => {
+    if (!canEdit || !notesEditable || activeProgram?.archived) return { saved: 0, failed: 0 };
+    const ids = retryableNotes(notesNotSavedRef.current).filter((id) => !onlyControlId || id === onlyControlId);
+    setControlSaveError(null);
+    let saved = 0;
+    let failed = 0;
+    for (const id of ids) {
+      const outcome = await saveControl(id, { implementationNotes: stateRef.current.controls[id]?.implementationNotes ?? '', updatedBy: currentUser.name });
+      if (outcome === 'saved') saved++; else failed++;
+      if (outcome === 'unreachable') break;
+    }
+    return { saved, failed };
+  }, [canEdit, notesEditable, activeProgram?.archived, saveControl, currentUser.name]);
 
   // Action: Update Control Status with RBAC Check
   const updateControlStatus = useCallback((controlId: string, status: ControlStatus) => {
@@ -1816,6 +1845,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     notesEditable,
     controlSaveError,
     dismissControlSaveError,
+    notesNotSaved,
+    retryUnsavedNotes,
     metrics,
     frameworkControls,
     activeTab,
@@ -1875,6 +1906,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     notesEditable,
     controlSaveError,
     dismissControlSaveError,
+    notesNotSaved,
+    retryUnsavedNotes,
     metrics,
     frameworkControls,
     activeTab,

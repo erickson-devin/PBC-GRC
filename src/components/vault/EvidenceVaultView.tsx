@@ -30,7 +30,7 @@ import { ErrorNotice } from '../common/ErrorNotice';
 import { useLocalEvidenceCopies } from '../../hooks/useLocalEvidenceCopies';
 import type { LocalEvidenceCopy } from '../../services/localEvidenceCopies';
 
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 export const EvidenceVaultView: React.FC = () => {
   const {
     state,
@@ -56,6 +56,7 @@ export const EvidenceVaultView: React.FC = () => {
   const [targetControlId, setTargetControlId] = useState<string>(() => frameworkControls[0]?.id || '');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [pendingDelete, setPendingDelete] = useState<EvidenceItem | null>(null);
@@ -194,9 +195,12 @@ export const EvidenceVaultView: React.FC = () => {
 
   const handleCopyHash = (hash?: string) => {
     if (!hash) return;
-    copyToClipboard(hash);
-    setCopiedHash(hash);
-    setTimeout(() => setCopiedHash(null), 2000);
+    void copyText(hash).then((ok) => {
+      if (!ok) { setCopyFailedKey(hash); return; }
+      setCopyFailedKey(null);
+      setCopiedHash(hash);
+      setTimeout(() => setCopiedHash(null), 2000);
+    });
   };
 
   const getFileIcon = (mimeType: string, filename: string) => {
@@ -214,6 +218,7 @@ export const EvidenceVaultView: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fadeIn">
+      <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -482,15 +487,18 @@ export const EvidenceVaultView: React.FC = () => {
                       {/* SHA-256 Fingerprint */}
                       <td className="py-3 px-4 font-mono text-xs">
                         {item.fileHash ? (
-                          <button
-                            onClick={() => handleCopyHash(item.fileHash)}
-                            title="Copy Full SHA-256 Hash"
-                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700"
-                          >
-                            <Shield className="w-2.5 h-2.5 text-emerald-400" />
-                            <span>{item.fileHash.substring(0, 10)}...</span>
-                            {copiedHash === item.fileHash ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleCopyHash(item.fileHash)}
+                              title="Copy Full SHA-256 Hash"
+                              className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700"
+                            >
+                              <Shield className="w-2.5 h-2.5 text-emerald-400" />
+                              <span>{item.fileHash.substring(0, 10)}...</span>
+                              {copiedHash === item.fileHash ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                            </button>
+                            {copyFailedKey === item.fileHash && <span aria-hidden="true" className="text-xs text-amber-300">Not copied</span>}
+                          </div>
                         ) : (
                           <span className="text-slate-400">Uncalculated</span>
                         )}

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useId } from 'react';
 import {
   Shield,
   CheckCircle2,
@@ -29,7 +29,8 @@ import { OdpPanel } from '../matrix/OdpPanel';
 import { CrosswalkPanel } from '../matrix/CrosswalkPanel';
 
 import { activateOnKey } from '../../utils/a11y';
-import { copyToClipboard } from '../../utils/clipboard';
+import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
+import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 interface ControlCardProps {
   control: FrameworkControlDefinition;
   domainInfo: DomainInfo | FrameworkDomainInfo | any;
@@ -45,6 +46,8 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     state,
     notesStatus,
     notesEditable,
+    notesNotSaved,
+    retryUnsavedNotes,
     updateControlStatus,
     updateControlNotes,
     flushControlNotes,
@@ -66,6 +69,9 @@ export const ControlCard: React.FC<ControlCardProps> = ({
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
+  const notesNotSavedId = useId();
+  const notesNotSavedReason = notesNotSaved[control.id];
   const [quickTemplateNotice, setQuickTemplateNotice] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -179,9 +185,12 @@ export const ControlCard: React.FC<ControlCardProps> = ({
   };
 
   const handleCopyHash = (hash: string) => {
-    copyToClipboard(hash);
-    setCopiedHash(hash);
-    setTimeout(() => setCopiedHash(null), 2000);
+    void copyText(hash).then((ok) => {
+      if (!ok) { setCopyFailedKey(hash); return; }
+      setCopyFailedKey(null);
+      setCopiedHash(hash);
+      setTimeout(() => setCopiedHash(null), 2000);
+    });
   };
 
   const handleOpenDetail = () => {
@@ -200,6 +209,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           : 'hover:border-slate-700 hover:shadow-lg hover:shadow-slate-950/40'
       }`}
     >
+      <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
       {/* Top Header Strip */}
       <div className="p-4 sm:p-5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         
@@ -406,12 +416,26 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             <textarea
               rows={4}
               disabled={!canEdit || !notesEditable}
+              aria-describedby={notesNotSavedReason ? notesNotSavedId : undefined}
               value={notes}
               onChange={(e) => updateControlNotes(control.id, e.target.value)}
               onBlur={() => flushControlNotes(control.id)}
               placeholder={`Describe how ${currentTenant.name} enforces this practice (e.g. policies, technical configurations, endpoint controls)...`}
               className="w-full p-3.5 rounded-xl bg-slate-900 border border-slate-700/80 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs sm:text-sm text-slate-100 placeholder-slate-400 leading-relaxed font-sans transition-all duration-200 disabled:opacity-60 resize-y"
             />
+            {notesNotSavedReason && (
+              <div id={notesNotSavedId} className="flex flex-wrap items-center gap-2 px-1 text-xs text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span className="font-semibold">Not saved</span>
+                <span className="text-amber-200/90">{NOTES_NOT_SAVED_DETAIL[notesNotSavedReason]}</span>
+                {notesNotSavedReason === 'failed' && canEdit && notesEditable && (
+                  <button type="button" onClick={() => void retryUnsavedNotes(control.id)}
+                    className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
             {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
               <p role="status" className="text-xs text-amber-300 px-1">
                 {notesStatus === 'loading'
@@ -523,6 +547,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                       </div>
 
                       {item.fileHash && (
+                        <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           onClick={() => handleCopyHash(item.fileHash!)}
                           title="Copy SHA-256"
@@ -535,6 +560,8 @@ export const ControlCard: React.FC<ControlCardProps> = ({
                           )}
                           <span>{item.fileHash.slice(0, 6)}...</span>
                         </button>
+                        {copyFailedKey === item.fileHash && <span aria-hidden="true" className="text-xs text-amber-300">Not copied</span>}
+                        </div>
                       )}
                     </div>
                   );
