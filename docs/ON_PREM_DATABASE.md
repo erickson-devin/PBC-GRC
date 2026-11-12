@@ -24,7 +24,8 @@ every address shows the **setup wizard** (`/#setup`) instead of the sign-in page
 
 1. your company name (this creates the first tenant),
 2. the application owner's email and password (12+ characters): this account becomes the platform administrator and owns the tenant,
-3. optionally, the email addresses of teammates to invite.
+3. the compliance frameworks the organization is licensed for (CMMC Level 1, CMMC Level 2, NIST SP 800-53 Rev. 5; the first one chosen is the primary; CMMC Level 1 only if none is chosen; SOC 2 and HIPAA, and later changes, are made by a platform administrator),
+4. optionally, the email addresses of teammates to invite.
 
 When it finishes you are signed in, and the wizard shows one invitation link per teammate to copy and hand out (an air-gapped
 server sends no email; the links are shown once, and new ones can be issued later under Team settings).

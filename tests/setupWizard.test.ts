@@ -188,6 +188,55 @@ async function run() {
   const legacy = await call('POST', '/setup', { body: payload() });
   assert(legacy.status === 409 && legacy.body?.code === 'setup_complete', 'and POST /setup is refused (409 setup_complete)', legacy);
 
+  console.log('\n--- Licensed frameworks chosen at setup ---');
+  reset();
+  const tenantOf = async (token: string, id: string) => ((await call('GET', '/tenants', { token })).body?.tenants ?? []).find((t: any) => t.id === id);
+  const badFrameworks: Array<[string, unknown]> = [
+    ['an unknown framework next to a valid one', ['CMMC_L2', 'FEDRAMP_HIGH']],
+    ['SOC 2 (not offered at setup)', ['SOC_2_TYPE_II']],
+    ['an alias of a framework id', ['nist-800-53-r5']],
+    ['a lower-case framework id', ['cmmc_l2']],
+    ['a string instead of a list', 'CMMC_L2'],
+    ['null', null],
+    ['an object instead of a list', { 0: 'CMMC_L2' }],
+    ['a non-string entry', ['CMMC_L2', 42]],
+    ['a null entry', [null]],
+    ['more than 10 entries', Array.from({ length: 11 }, () => 'CMMC_L1')],
+  ];
+  for (const [name, frameworks] of badFrameworks) {
+    const r = await call('POST', '/setup', { body: payload({ frameworks, invites: [] }) });
+    assert(r.status === 400 && r.body?.code === 'invalid_frameworks' && /framework/i.test(r.body?.error ?? ''), `rejected (400 invalid_frameworks): ${name}`, r);
+  }
+  __resetSetupThrottleForTests();
+  assert((await status()).setupRequired === true, 'rejected framework choices leave setup open');
+  assert((await call('POST', '/auth/login', { body: { email: 'ada@acme-defense.mil', password: PASSWORD } })).status === 401, 'and created no account');
+
+  const two = await call('POST', '/setup', { body: payload({ frameworks: ['CMMC_L2', 'NIST_800_53_REV5'], invites: [] }) });
+  assert(two.status === 201, 'two licensed frameworks: setup succeeds (201)', two);
+  const twoTenant = await tenantOf(two.body?.token, two.body?.tenant?.id);
+  assert(twoTenant?.primaryFramework === 'CMMC_L2' && JSON.stringify(twoTenant?.enabledFrameworks) === '["CMMC_L2","NIST_800_53_REV5"]', 'the first one is the primary and both are enabled, in order', twoTenant);
+  const l2Program = await call('POST', `/tenants/${two.body?.tenant?.id}/programs`, { token: two.body?.token, tenant: two.body?.tenant?.id, body: { name: 'L2 Enclave', frameworkId: 'CMMC_L2' } });
+  assert(l2Program.status === 201 && l2Program.body?.program?.frameworkId === 'CMMC_L2', 'a CMMC Level 2 program can be created straight away', l2Program);
+  const hipaaProgram = await call('POST', `/tenants/${two.body?.tenant?.id}/programs`, { token: two.body?.token, tenant: two.body?.tenant?.id, body: { name: 'HIPAA', frameworkId: 'HIPAA_SECURITY' } });
+  assert(hipaaProgram.status === 403 && hipaaProgram.body?.code === 'framework_not_enabled', 'a framework that was not chosen is still refused (403 framework_not_enabled)', hipaaProgram);
+  const late = await call('POST', '/setup', { body: payload({ email: 'late@acme.mil', frameworks: ['bogus'] }) });
+  assert(late.status === 409 && late.body?.code === 'setup_complete', 'once locked, the lock check comes before the framework check (409 setup_complete)', late);
+
+  reset();
+  const l2l1 = await call('POST', '/setup', { body: payload({ frameworks: ['CMMC_L2', 'CMMC_L1'], invites: [] }) });
+  const l2l1Tenant = await tenantOf(l2l1.body?.token, l2l1.body?.tenant?.id);
+  assert(l2l1.status === 201 && l2l1Tenant?.primaryFramework === 'CMMC_L2' && JSON.stringify(l2l1Tenant?.enabledFrameworks) === '["CMMC_L2","CMMC_L1"]', 'CMMC L2 listed before CMMC L1: L2 is primary, both enabled', l2l1Tenant);
+
+  reset();
+  const dup = await call('POST', '/setup', { body: payload({ frameworks: ['NIST_800_53_REV5', 'CMMC_L2', 'NIST_800_53_REV5', 'CMMC_L1'], invites: [] }) });
+  const dupTenant = await tenantOf(dup.body?.token, dup.body?.tenant?.id);
+  assert(dup.status === 201 && dupTenant?.primaryFramework === 'NIST_800_53_REV5' && JSON.stringify(dupTenant?.enabledFrameworks) === '["NIST_800_53_REV5","CMMC_L2","CMMC_L1"]', 'duplicates are dropped, order kept, first is primary', dupTenant);
+
+  reset();
+  const empty = await call('POST', '/setup', { body: payload({ frameworks: [], invites: [] }) });
+  const emptyTenant = await tenantOf(empty.body?.token, empty.body?.tenant?.id);
+  assert(empty.status === 201 && emptyTenant?.primaryFramework === 'CMMC_L1' && JSON.stringify(emptyTenant?.enabledFrameworks) === '["CMMC_L1"]', 'an empty list means CMMC Level 1 only', emptyTenant);
+
   console.log('\n--- With MFA required, the first administrator enrols before getting a session ---');
   reset();
   process.env.MFA_REQUIRED = 'privileged';

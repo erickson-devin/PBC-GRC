@@ -17,6 +17,8 @@ import {
 } from '../platformSetup';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
+import { parseSetupFrameworks, SETUP_FRAMEWORKS } from '../../src/data/tenantFrameworkPolicy';
+import type { ComplianceFramework } from '../../src/types/framework';
 import type { TenantRole } from '../../src/types/tenant';
 
 /**
@@ -78,9 +80,10 @@ interface ParsedSetup {
   password: string;
   inviteRole: TenantRole;
   invites: string[];
+  frameworks: ComplianceFramework[];
 }
 
-function parseBody(body: unknown): { value: ParsedSetup } | { error: string } {
+function parseBody(body: unknown): { value: ParsedSetup } | { error: string; code?: string } {
   const b = (body ?? {}) as Record<string, unknown>;
   const companyName = typeof b.companyName === 'string' ? b.companyName.trim() : '';
   if (!companyName || companyName.length > 200) return { error: 'Company name is required (up to 200 characters)' };
@@ -108,12 +111,15 @@ function parseBody(body: unknown): { value: ParsedSetup } | { error: string } {
     if (!EMAIL_PATTERN.test(e)) return { error: `"${String(item).slice(0, 80)}" is not a valid email address` };
     if (e !== email && !invites.includes(e)) invites.push(e); // the administrator is already a member
   }
-  return { value: { companyName, adminName, email, password, inviteRole: role, invites } };
+  const frameworks = parseSetupFrameworks(b.frameworks);
+  if (!frameworks) return { error: `Choose the licensed frameworks from: ${SETUP_FRAMEWORKS.join(', ')}`, code: 'invalid_frameworks' };
+  return { value: { companyName, adminName, email, password, inviteRole: role, invites, frameworks } };
 }
 
 /**
  * POST /api/v1/setup   (public; open only until the first administrator exists)
- * Body: { companyName, email, password, adminName?, invites?: string[], inviteRole?, setupToken? }.
+ * Body: { companyName, email, password, adminName?, invites?: string[], inviteRole?, frameworks?: string[], setupToken? }.
+ * `frameworks`: absent or empty = CMMC Level 1 only; else ids from SETUP_FRAMEWORKS, the first one primary.
  * Creates, in order: the administrator's local account, the platform-administrator record (which also takes the
  * one-time lock), the primary tenant with the administrator as its TENANT_OWNER, and an invitation per teammate.
  * Responds 201 with a signed-in session for the new administrator (or, when MFA_REQUIRED is not `off`, { mfa: 'enrol', mfaToken }:
@@ -143,7 +149,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     // 3. Validate everything before writing anything
     const parsed = parseBody(req.body);
     if ('error' in parsed) {
-      res.status(400).json({ error: parsed.error });
+      res.status(400).json(parsed.code ? { error: parsed.error, code: parsed.code } : { error: parsed.error });
       return;
     }
     const input = parsed.value;
@@ -191,8 +197,8 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
                 name: orgName,
                 systemName: `${orgName} Enclave`,
                 systemOwner: user.name,
-                enabledFrameworks: ['CMMC_L1'],
-                primaryFramework: 'CMMC_L1',
+                enabledFrameworks: input.frameworks,
+                primaryFramework: input.frameworks[0],
               },
               owner
             )

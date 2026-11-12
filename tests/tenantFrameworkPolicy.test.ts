@@ -16,7 +16,7 @@ installSessionCookieBridge();
 import { server } from '../server/index';
 import { isPlatformAdmin, platformAdminEmails } from '../server/auth/platformAdmin';
 import { frameworksDefiningControl } from '../server/middleware/frameworkGuard';
-import { DEFAULT_PRIMARY_FRAMEWORK, frameworkLabel, frameworkPolicySummary } from '../src/data/tenantFrameworkPolicy';
+import { DEFAULT_PRIMARY_FRAMEWORK, PROGRAM_FRAMEWORKS, SETUP_FRAMEWORKS, frameworkLabel, frameworkPolicySummary, parseSetupFrameworks } from '../src/data/tenantFrameworkPolicy';
 import { getTenantFrameworkPolicy } from '../server/db';
 import { programFrameworkControls } from '../src/data/programScope';
 import type { OverlayFilters } from '../src/types/framework';
@@ -72,6 +72,16 @@ function unitTests() {
   assert(frameworksDefiningControl('AC.L2-3.1.3').has('CMMC_L2') && !frameworksDefiningControl('AC.L2-3.1.3').has('CMMC_L1'), 'a Level 2 requirement is not part of Level 1');
   assert(frameworksDefiningControl('ac-2').has('NIST_800_53_REV5') && frameworksDefiningControl('CC1.1').has('SOC_2_TYPE_II'), 'NIST, SOC 2 (and HIPAA) controls are indexed, case-insensitively');
   assert(frameworksDefiningControl('NOT.A.CONTROL').size === 0, 'an unknown id belongs to no framework');
+
+  console.log('\n--- Frameworks offered at first-time setup ---');
+  const sf = (raw: unknown) => JSON.stringify(parseSetupFrameworks(raw));
+  assert(sf(undefined) === '["CMMC_L1"]' && sf([]) === '["CMMC_L1"]', 'absent or empty: CMMC Level 1 only');
+  assert(sf(['CMMC_L2', 'NIST_800_53_REV5']) === '["CMMC_L2","NIST_800_53_REV5"]', 'a valid list is kept in order (the first is the primary)');
+  assert(sf(['CMMC_L2', 'CMMC_L1', 'CMMC_L2']) === '["CMMC_L2","CMMC_L1"]', 'duplicates are dropped, order kept');
+  const invalidSetup: unknown[] = [null, 'CMMC_L2', { 0: 'CMMC_L2' }, [42], [null], ['CMMC_L2', 'FEDRAMP_HIGH'], ['SOC_2_TYPE_II'], ['HIPAA_SECURITY'], ['nist-800-53-r5'], ['cmmc_l2'], Array(11).fill('CMMC_L1')];
+  assert(invalidSetup.every((raw) => sf(raw) === 'null'), 'anything else is invalid (not a list, non-string, unknown or aliased id, SOC 2, HIPAA, more than 10 entries)');
+  assert(SETUP_FRAMEWORKS.every((f) => PROGRAM_FRAMEWORKS.includes(f)), 'every framework offered at setup is a program framework');
+  assert(SETUP_FRAMEWORKS[0] === DEFAULT_PRIMARY_FRAMEWORK, 'the first offered framework is the default primary');
 }
 
 async function apiTests() {

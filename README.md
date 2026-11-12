@@ -56,7 +56,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Open the app, complete the first-time setup wizard (it creates the first administrator and tenant, then locks itself),
+Open the app, complete the first-time setup wizard (it creates the first administrator and tenant, with the frameworks it is licensed for, then locks itself),
 and put a TLS proxy in front of port 3000 before anyone else uses it. The full procedure, including the settings to check
 and the verification steps, is in [docs/GO_LIVE_CHECKLIST.md](docs/GO_LIVE_CHECKLIST.md); database, identity, paths,
 releases and upgrades are in [docs/ON_PREM_DATABASE.md](docs/ON_PREM_DATABASE.md).

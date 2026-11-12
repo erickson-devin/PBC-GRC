@@ -13,6 +13,27 @@ export const PROGRAM_FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'C
 
 export const DEFAULT_PRIMARY_FRAMEWORK: ComplianceFramework = 'CMMC_L1';
 
+/** The frameworks the first-time setup wizard offers. SOC 2 and HIPAA are enabled later by a platform administrator. */
+export const SETUP_FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5'];
+const MAX_SETUP_FRAMEWORK_ENTRIES = 10;
+
+/**
+ * The frameworks chosen at setup. Absent (undefined) or an empty list: the default, CMMC Level 1 only. Otherwise every entry must
+ * be one of SETUP_FRAMEWORKS (exact id, no aliases); duplicates are dropped, the order kept, and the first entry is the primary.
+ * Null when invalid (not a list, a non-string or unknown entry, more than 10 entries).
+ */
+export function parseSetupFrameworks(raw: unknown): ComplianceFramework[] | null {
+  if (raw === undefined) return [DEFAULT_PRIMARY_FRAMEWORK];
+  if (!Array.isArray(raw) || raw.length > MAX_SETUP_FRAMEWORK_ENTRIES) return null;
+  if (raw.length === 0) return [DEFAULT_PRIMARY_FRAMEWORK];
+  const out: ComplianceFramework[] = [];
+  for (const f of raw) {
+    if (typeof f !== 'string' || !SETUP_FRAMEWORKS.includes(f as ComplianceFramework)) return null;
+    if (!out.includes(f as ComplianceFramework)) out.push(f as ComplianceFramework);
+  }
+  return out;
+}
+
 /** "CMMC Level 2", "NIST SP 800-53 Rev. 5", ... (falls back to the raw id for an unknown framework). */
 export function frameworkLabel(framework: string): string {
   return FRAMEWORK_REGISTRY[framework as ComplianceFramework]?.shortName ?? framework;

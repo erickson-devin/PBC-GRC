@@ -3,6 +3,10 @@ import { Building2, CheckCircle2, Copy, KeyRound, Mail, ShieldCheck, Users } fro
 import { BrandLogo } from '../components/common/BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import type { SetupResult } from '../services/apiClient';
+import { ApiError } from '../services/apiClient';
+import { SETUP_FRAMEWORKS, frameworkLabel } from '../data/tenantFrameworkPolicy';
+import { DEFAULT_SETUP_FRAMEWORKS, SETUP_FRAMEWORKS_REJECTED, SETUP_FRAMEWORKS_REQUIRED, setupFrameworksPayload, setupFrameworksSentence, toggleSetupFramework } from '../data/setupFrameworks';
+import type { ComplianceFramework } from '../types/framework';
 import { copyText } from '../utils/clipboard';
 import { errorMessage } from '../utils/errors';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
@@ -44,9 +48,10 @@ export function parseInviteList(text: string): { emails: string[]; invalid: stri
 
 export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onFinished, onOpenLegal }) => {
   const { completeSetup, mfaChallenge, startEnrolment, confirmEnrolment, finishMfa } = useAuth();
-  const ids = { company: useId(), name: useId(), email: useId(), pw: useId(), pw2: useId(), invites: useId(), role: useId(), token: useId(), err: useId() };
+  const ids = { company: useId(), name: useId(), email: useId(), pw: useId(), pw2: useId(), invites: useId(), role: useId(), token: useId(), fw: useId(), err: useId() };
 
   const [companyName, setCompanyName] = useState('');
+  const [frameworks, setFrameworks] = useState<ComplianceFramework[]>([...DEFAULT_SETUP_FRAMEWORKS]);
   const [adminName, setAdminName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -65,6 +70,7 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
 
   const validate = (): string | null => {
     if (!companyName.trim()) return 'Enter your company name.';
+    if (frameworks.length === 0) return SETUP_FRAMEWORKS_REQUIRED;
     if (!EMAIL_PATTERN.test(email.trim())) return 'Enter a valid email address for the administrator account.';
     if (password.length < MIN_PASSWORD_LENGTH) return `The password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
     if (password !== confirm) return 'The passwords do not match.';
@@ -88,6 +94,7 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
       setResult(
         await completeSetup({
           companyName: companyName.trim(),
+          frameworks: setupFrameworksPayload(frameworks),
           adminName: adminName.trim() || undefined,
           email: email.trim(),
           password,
@@ -99,7 +106,7 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
       setPassword('');
       setConfirm('');
     } catch (err: unknown) {
-      setError(errorMessage(err) || 'Setup failed. Please try again.');
+      setError(err instanceof ApiError && err.reason === 'invalid_frameworks' ? SETUP_FRAMEWORKS_REJECTED : errorMessage(err) || 'Setup failed. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -164,6 +171,38 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
                     <input id={ids.company} className={inputClass} value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Acme Defense LLC" maxLength={200} autoComplete="organization" autoFocus />
                     <p className={hint}>Creates your first tenant, the workspace for your assessment program.</p>
                   </div>
+                  <fieldset aria-describedby={frameworks.length === 0 ? `${ids.fw}-hint ${ids.fw}-err` : `${ids.fw}-hint`}>
+                    <legend className={label}>Compliance frameworks</legend>
+                    <div className="flex flex-wrap gap-2">
+                      {SETUP_FRAMEWORKS.map((f) => {
+                        const checked = frameworks.includes(f);
+                        return (
+                          <label
+                            key={f}
+                            htmlFor={`${ids.fw}-${f}`}
+                            className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-sm cursor-pointer transition-colors ${
+                              checked ? 'bg-brand-500/10 border-brand-500/40 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
+                            }`}
+                          >
+                            <input
+                              id={`${ids.fw}-${f}`}
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setFrameworks((cur) => toggleSetupFramework(cur, f))}
+                              className="h-4 w-4 shrink-0 accent-brand-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/60"
+                            />
+                            {frameworkLabel(f)}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p id={`${ids.fw}-hint`} className={hint}>
+                      Programs in this organization can use the frameworks you tick. A platform administrator can add more later.
+                    </p>
+                    {frameworks.length === 0 && (
+                      <p id={`${ids.fw}-err`} className="text-xs text-amber-300 mt-1">{SETUP_FRAMEWORKS_REQUIRED}</p>
+                    )}
+                  </fieldset>
                 </fieldset>
 
                 <fieldset className="space-y-3">
@@ -257,6 +296,7 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
                     <strong className="text-slate-200">{result.tenant.name}</strong> is ready and you are signed in as{' '}
                     <strong className="text-slate-200">{result.user.email}</strong>. Setup is now closed.
                   </p>
+                  <p className="text-xs text-slate-400">Programs can use {setupFrameworksSentence(frameworks)}.</p>
                 </div>
 
                 {error && (
