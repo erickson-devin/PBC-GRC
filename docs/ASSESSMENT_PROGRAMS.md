@@ -14,8 +14,9 @@ There is no billing and no license tier: what distinguishes tenants is the asses
 ## Who decides: platform administrators
 
 Only **platform administrators** can set a tenant's program, when provisioning it and later. A tenant owner can manage their
-own people and settings but cannot widen their tenant's scope. Anyone else who creates a tenant (the first-run wizard) gets
-the default program, CMMC Level 1, whatever the request says.
+own people and settings but cannot widen their tenant's scope. Anyone else who creates a tenant (self-service, POST /tenants)
+gets the default program, CMMC Level 1, whatever the request says. The first-time setup wizard, whose user becomes the first platform
+administrator, may choose among CMMC Level 1, CMMC Level 2 and NIST SP 800-53.
 
 The first platform administrator is created by the first-time setup wizard (see docs/ON_PREM_DATABASE.md). More can be named in the
 server setting `PLATFORM_ADMIN_EMAILS` (comma-separated, case-insensitive), matched against the verified identity of the

@@ -467,6 +467,8 @@ export interface SetupInput {
   password: string;
   invites?: string[];
   inviteRole?: TenantRole;
+  /** Licensed frameworks, ids from SETUP_FRAMEWORKS; the first is the primary. Omit for CMMC Level 1 only. */
+  frameworks?: ComplianceFramework[];
   setupToken?: string;
 }
 
