@@ -1,11 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Radar, X } from 'lucide-react';
 import type { EnclaveAsset } from '../../types/telemetry';
 import { OBSERVED_COPY } from '../../data/telemetry/observedInventoryView';
+import type { FindingStatusFilter } from '../../data/telemetry/vmFindingsView';
 import { useObservedInventory } from '../../hooks/useObservedInventory';
+import { useVmFindings } from '../../hooks/useVmFindings';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ObservedInventoryPanel } from './ObservedInventoryPanel';
 import { ObservedSoftwareList } from './ObservedSoftwareList';
+import { VmFindingsList } from './VmFindingsList';
 
 interface AssetScannerDataDialogProps {
   asset: EnclaveAsset;
@@ -15,15 +18,17 @@ interface AssetScannerDataDialogProps {
   onClose: () => void;
 }
 
-/** What the scanners report for one asset (host inventory and installed software), read-only, open to every role of a server-backed tenant. */
+/** What the scanners report for one asset (vulnerabilities, host inventory and installed software), read-only, open to every role of a server-backed tenant. */
 export const AssetScannerDataDialog: React.FC<AssetScannerDataDialogProps> = ({ asset, tenantId, canEdit, onClose }) => {
   const inventory = useObservedInventory(tenantId, asset.id, true);
+  const [findingStatus, setFindingStatus] = useState<FindingStatusFilter>('OPEN');
+  const findings = useVmFindings(tenantId, asset.id, findingStatus, true);
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
       <div aria-hidden="true" className="absolute inset-0" onClick={onClose} />
 
-      <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-4xlrounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400">
@@ -35,6 +40,17 @@ export const AssetScannerDataDialog: React.FC<AssetScannerDataDialogProps> = ({ 
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {inventory.status !== 'gone' && (
+          <VmFindingsList
+            status={findings.status}
+            findings={findings.findings}
+            statusFilter={findingStatus}
+            onStatusFilterChange={setFindingStatus}
+            onRetry={findings.reload}
+            scannerReported={inventory.status === 'ready' ? inventory.hosts.length > 0 : null}
+          />
+        )}
 
         <ObservedInventoryPanel
           status={inventory.status}

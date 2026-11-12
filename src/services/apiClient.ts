@@ -26,8 +26,9 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmObservedHost, VmObservedSoftware, VmRun, VmServiceToken, VmSeverity, VmSource } from '../types/vm';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedSoftware, VmRun, VmServiceToken, VmSeverity, VmSource } from '../types/vm';
 import { parseObservedHosts, parseObservedSoftware } from '../data/telemetry/observedInventory';
+import { parseVmFindings } from '../data/telemetry/vmFindingsView';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -832,6 +833,18 @@ export const ApiClient = {
     const qs = q.toString();
     const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/assets/${encodeURIComponent(assetId)}/software${qs ? `?${qs}` : ''}`, { tenantId });
     return parseObservedSoftware(data);
+  },
+
+  /** GET /api/v1/tenants/:id/vm/findings: vulnerability findings, tenant-wide (every role reads), most severe first. totalCount is the number returned: the server does not count past `limit` (max 1000). */
+  async listVmFindings(tenantId: string, options?: { assetId?: string; severity?: VmSeverity; status?: VmFindingStatus; limit?: number }): Promise<{ totalCount: number; findings: VmFinding[] }> {
+    const q = new URLSearchParams();
+    if (options?.assetId) q.set('assetId', options.assetId);
+    if (options?.severity) q.set('severity', options.severity);
+    if (options?.status) q.set('status', options.status);
+    if (options?.limit !== undefined) q.set('limit', String(options.limit));
+    const qs = q.toString();
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/findings${qs ? `?${qs}` : ''}`, { tenantId });
+    return parseVmFindings(data);
   },
 
   /** GET /api/v1/tenants/:id/vm/config/suggestions for the program (x-program-id): computed on read, never written to a control. */
