@@ -392,6 +392,18 @@ async function runTestSuite() {
   assert(onboardingSummary({ framework: 'CMMC_L2', total: 0, met: 0, evidenceCount: 0, loading: false }).readinessText === '0% Met', 'S139-11b: no controls reads 0% Met');
   assert(onboardingSummary({ framework: 'CMMC_L1', total: 17, met: 0, evidenceCount: 1, loading: false }).evidenceText === '1 File' && onboardingSummary({ framework: 'CMMC_L1', total: 17, met: 0, evidenceCount: 0, loading: false }).evidenceText === '0 Files', 'S139-12: evidence count is singular / plural');
 
+  // S153: every onboarding / export form label is bound to its control (#153)
+  const s153Tags = (src: string) => src.match(/<label[^>]*>/g) || [];
+  const s153Names = ['orgName', 'cageCode', 'samStatus', 'industry', 'systemName', 'systemOwner', 'boundaryScope', 'cloudProviders'];
+  const s153Onboarding = s153Tags(onboardingSrc);
+  assert(s153Onboarding.length === 8 && s153Onboarding.every((t) => t.includes("htmlFor={fid('")), 'S153-1: every onboarding label has an htmlFor', s153Onboarding);
+  assert(s153Names.every((n) => onboardingSrc.includes(`htmlFor={fid('${n}')}`) && onboardingSrc.includes(`id={fid('${n}')}`)), 'S153-2: each onboarding field has a matching label htmlFor and control id');
+  const s153ExportSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'reports', 'ArtifactExportModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  const s153Export = s153Tags(s153ExportSrc);
+  assert(s153Export.length > 0 && s153Export.every((t) => t.includes("htmlFor={metaId('")), 'S153-3: every export modal label has an htmlFor', s153Export);
+  const s153Controls = s153ExportSrc.match(/\n[ ]+id=\{metaId\('\w+'\)\}\n[ ]+disabled=\{!canEdit\}/g) || [];
+  assert(s153Controls.length === 12 && s153ExportSrc.includes('Read-only: these values come from the program and its SSP metadata.') && !s153ExportSrc.includes('apply to this export only'), 'S153-4: a read-only user cannot edit the export metadata (all 12 inputs are disabled by canEdit)', String(s153Controls.length));
+
   // 2.6 Official SPRS Assessment Summary
   const sprsSummary = generateSprsAssessmentSummary(CMMC_LEVEL_2_CONTROLS, multiDeficientStates, sampleMeta);
   assert(sprsSummary.sprsSubmissionHeader.platform.includes('Event Horizon: Singularity'), 'SPRS summary includes platform name');
