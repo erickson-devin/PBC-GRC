@@ -678,6 +678,36 @@ async function run() {
   const kindClash = await ingest(tokenA, bytesOf({ label: 's1-main', kind: 'ACTION1', agents: ['a1z'] }));
   assert(kindClash.status === 409 && kindClash.body?.error === 'vm_source_kind_mismatch', 'a SENTINELONE source label reused with kind ACTION1 -> 409 vm_source_kind_mismatch', kindClash.body);
 
+  console.log('\n--- Every affected package stays on the finding (#267) ---');
+  const pkgRun = async (collectedAt: string, packages: Array<Record<string, string>>) => {
+    const res = await ingest(tokenA, Buffer.from(JSON.stringify({
+      ...payloadOf({ label: 'pkg-267', agents: ['p267'] }),
+      collected_at: collectedAt,
+      hosts: [{ agent_id: 'p267', hostname: 'host-p267', findings: packages.map((p) => ({ vuln_id: 'CVE-2024-2670', severity: 'HIGH', package: p })) }],
+    })));
+    await __drainVmWorkerForTests();
+    return res;
+  };
+  const pkgFirst = await pkgRun('2026-10-23T00:00:00Z', [
+    { name: 'openssl', version: '3.0.2', fixed_version: '3.0.13' },
+    { name: 'libssl3', version: '3.0.2', fixed_version: '3.0.13' },
+    { name: 'openssl', version: '3.0.2' },
+  ]);
+  const pkgAsset = await assetIdByName('host-p267');
+  const pkgFindings = await findingsOf(A, ownerA, `?assetId=${pkgAsset}`);
+  assert(
+    pkgFirst.status === 202 && pkgFindings.length === 1 && JSON.stringify(pkgFindings[0].affectedPackages) === JSON.stringify([{ name: 'libssl3', version: '3.0.2', fixedVersion: '3.0.13' }, { name: 'openssl', version: '3.0.2', fixedVersion: '3.0.13' }]) && pkgFindings[0].affectedPackageCount === 2 && pkgFindings[0].packageName === 'libssl3',
+    'one CVE on a host with two packages: one finding listing both, sorted, duplicates merged',
+    pkgFindings,
+  );
+  const pkgSecond = await pkgRun('2026-10-23T01:00:00Z', [{ name: 'openssl', version: '3.0.2', fixed_version: '3.0.13' }]);
+  const pkgAfter = await findingsOf(A, ownerA, `?assetId=${pkgAsset}`);
+  assert(
+    pkgSecond.status === 202 && pkgAfter.length === 1 && pkgAfter[0].status === 'OPEN' && JSON.stringify(pkgAfter[0].affectedPackages) === JSON.stringify([{ name: 'openssl', version: '3.0.2', fixedVersion: '3.0.13' }]) && pkgAfter[0].affectedPackageCount === 1,
+    'a later run listing one package shrinks the list; the finding stays OPEN',
+    pkgAfter,
+  );
+
   console.log('\n--- Ingest requires TLS ---');
   const tlsBytes = bytesOf({ label: 'tls-src', agents: ['t1'] });
   const jsonType = { 'Content-Type': 'application/json' };

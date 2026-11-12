@@ -571,6 +571,8 @@ export const TABLES_SQL = `
       CONSTRAINT vm_findings_decision_check CHECK (status NOT IN ('RISK_ACCEPTED', 'FALSE_POSITIVE') OR (justification IS NOT NULL AND btrim(justification) <> '' AND decided_by IS NOT NULL AND decided_at IS NOT NULL)),
       CONSTRAINT vm_findings_seen_check CHECK (last_seen_at >= first_seen_at)
   );
+  ALTER TABLE vm_findings ADD COLUMN IF NOT EXISTS affected_packages JSONB NOT NULL DEFAULT '[]'::jsonb;
+  ALTER TABLE vm_findings ADD COLUMN IF NOT EXISTS affected_package_count INTEGER NOT NULL DEFAULT 0;
   CREATE INDEX IF NOT EXISTS idx_vm_findings_tenant_status ON vm_findings (tenant_id, status, severity);
   CREATE INDEX IF NOT EXISTS idx_vm_findings_asset ON vm_findings (tenant_id, asset_id);
   CREATE INDEX IF NOT EXISTS idx_vm_findings_vuln ON vm_findings (vuln_id);

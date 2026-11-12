@@ -203,7 +203,7 @@ async function main() {
     });
     check(verdict.ok, 'a minimal valid payload is accepted under NODE_ENV=production', verdict.ok ? '' : verdict.error);
     console.log('\n--- 11. Worker end to end ---');
-    const writeRun = async (label: string, collectedAt: string, hosts: Array<{ agent: string; name: string; cves: Array<[string, string]> }>, tenant = TENANT_X) => {
+    const writeRun = async (label: string, collectedAt: string, hosts: Array<{ agent: string; name: string; cves: Array<[string, string] | [string, string, { name: string; version: string; fixed_version: string | null }]> }>, tenant = TENANT_X) => {
       const id = crypto.randomUUID();
       const bytes = Buffer.from(
         JSON.stringify({
@@ -211,7 +211,7 @@ async function main() {
           source: { kind: 'WAZUH', label },
           exporter: { name: 'vm-verify', version: '0.0.0' },
           collected_at: collectedAt,
-          hosts: hosts.map((h) => ({ agent_id: h.agent, hostname: h.name, findings: h.cves.map(([vuln_id, severity]) => ({ vuln_id, severity })) })),
+          hosts: hosts.map((h) => ({ agent_id: h.agent, hostname: h.name, findings: h.cves.map(([vuln_id, severity, pkg]) => ({ vuln_id, severity, ...(pkg ? { package: pkg } : {}) })) })),
         }),
       );
       const file = path.join(localStorageRoot(), 'tenants', tenant, 'vm', 'runs', `${id}.json`);
@@ -576,6 +576,23 @@ async function main() {
     check((await scansOfRun(scapRun2)) === 0 && (await resultsOfRun(scapRun2)) === 0, 'no scan or result of the failed run survived (the transaction rolled back)');
     check((await count("SELECT count(*)::int AS n FROM enclave_assets WHERE tenant_id = $1 AND asset_name = 'vm-verify-cfg-2'", [TENANT_X])) === 0, 'the asset created by the failed run was rolled back too');
     check((await scansOfRun(scapRun1)) === 1, 'the earlier run keeps its scan');
+
+    console.log('\n--- 21. Affected packages (#267) ---');
+    const pkgOf = async () => (await listFindings(TENANT_X, { limit: 100 })).filter((x) => x.vulnId === 'CVE-2099-0005');
+    const pkgRun1 = await writeRun('vm_verify_packages', '2099-05-01T00:00:00Z', [
+      { agent: 'vmv-p', name: 'vm-verify-p1', cves: [['CVE-2099-0005', 'HIGH', { name: 'openssl', version: '3.0.2', fixed_version: '3.0.13' }], ['CVE-2099-0005', 'HIGH', { name: 'libssl3', version: '3.0.2', fixed_version: null }]] },
+    ]);
+    enqueueVmRun(TENANT_X, pkgRun1);
+    await __drainVmWorkerForTests();
+    const pkgInserted = await pkgOf();
+    check(pkgInserted.length === 1 && pkgInserted[0].affectedPackages.length === 2 && pkgInserted[0].affectedPackageCount === 2 && pkgInserted[0].affectedPackages[0].name === 'libssl3', 'INSERT: one finding keeps both packages (jsonb column, count 2)', JSON.stringify(pkgInserted));
+    const pkgRun2 = await writeRun('vm_verify_packages', '2099-05-02T00:00:00Z', [
+      { agent: 'vmv-p', name: 'vm-verify-p1', cves: [['CVE-2099-0005', 'HIGH', { name: 'openssl', version: '3.0.2', fixed_version: '3.0.13' }]] },
+    ]);
+    enqueueVmRun(TENANT_X, pkgRun2);
+    await __drainVmWorkerForTests();
+    const pkgUpdated = await pkgOf();
+    check(pkgUpdated.length === 1 && pkgUpdated[0].status === 'OPEN' && pkgUpdated[0].affectedPackages.length === 1 && pkgUpdated[0].affectedPackageCount === 1 && pkgUpdated[0].affectedPackages[0].name === 'openssl', 'UPDATE: a run with one package shrinks the list and the finding stays OPEN (::jsonb cast)', JSON.stringify(pkgUpdated));
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program

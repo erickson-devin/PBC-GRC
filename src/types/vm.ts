@@ -126,6 +126,15 @@ export interface VmVuln {
   updatedAt: string;
 }
 
+/** Most affected packages a finding stores; the full list stays on each run's sighting. */
+export const VM_MAX_AFFECTED_PACKAGES = 50;
+
+export interface VmAffectedPackage {
+  name: string;
+  version: string;
+  fixedVersion: string | null;
+}
+
 export interface VmFinding {
   id: string;
   tenantId: string;
@@ -141,6 +150,10 @@ export interface VmFinding {
   packageName: string;
   packageVersion: string;
   fixedVersion: string | null;
+  /** Sorted by name then version, at most VM_MAX_AFFECTED_PACKAGES. packageName/Version/fixedVersion are the first entry. */
+  affectedPackages: VmAffectedPackage[];
+  /** True number of affected packages in the latest run, even when the list is capped. */
+  affectedPackageCount: number;
   justification: string | null;
   decidedBy: string | null;
   decidedByUserId: string | null;
