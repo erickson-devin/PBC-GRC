@@ -41,6 +41,7 @@ import { ApiClient, ApiError, type LocalAccount } from '../../services/apiClient
 import { ErrorNotice } from '../common/ErrorNotice';
 import { NewTenantModal } from './NewTenantModal';
 import { AccountEventsPanel } from './AccountEventsPanel';
+import { SystemUseNoticeSection } from './SystemUseNoticeSection';
 import { EditEnclaveModal } from './EditEnclaveModal';
 import { EditInvitationModal } from './EditInvitationModal';
 import { FinanceProvisioningLog } from './FinanceProvisioningLog';
@@ -1110,6 +1111,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
         {/* Section 2c: Account events (read-only, platform administrators) */}
         <AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} />
+
+        {/* Section 2d: System use notice shown before sign-in (issue #256) */}
+        <SystemUseNoticeSection />
 
         {/* Section 3: Pending & Recent Onboarding Invitations */}
         <div className="stitch-card p-6 space-y-4">

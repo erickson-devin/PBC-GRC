@@ -11,6 +11,7 @@ import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { MfaChallengeForm } from './MfaChallengeForm';
 import { MfaEnrolmentPanel } from './MfaEnrolmentPanel';
+import { SystemUseNoticeGate } from './SystemUseNoticeGate';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface AuthModalProps {
@@ -123,6 +124,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
           {/* Local credentials */}
           {!mfaChallenge && (
+          <SystemUseNoticeGate>
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
             <div>
               <label htmlFor={emailId} className="block text-xs font-semibold text-slate-300 mb-1">Work Email</label>
@@ -196,6 +198,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
               </button>
             )}
           </form>
+          </SystemUseNoticeGate>
           )}
 
           {/* Legal Links */}

@@ -18,6 +18,8 @@ export const ACCOUNT_EVENT_LABELS: Record<string, string> = {
   signed_out: 'Signed out',
   session_revoked: 'Session ended by the server',
   step_up_failed: 'Administrator code refused',
+  system_use_acknowledged: 'System use notice acknowledged',
+  system_use_notice_updated: 'System use notice changed',
 };
 
 export function accountEventLabel(action: string): string {
@@ -41,6 +43,8 @@ const DETAIL_KEYS: Array<[string, string]> = [
   ['via', 'Via'],
   ['attempted', 'Attempted'],
   ['mustChangePassword', 'Must change password'],
+  ['noticeVersion', 'Notice version'],
+  ['noticeEnabled', 'Notice shown'],
 ];
 const VIA_TEXT: Record<string, string> = {
   sign_in: 'sign-in',
@@ -61,6 +65,7 @@ const ATTEMPTED_TEXT: Record<string, string> = {
   'reset-mfa': 'reset two-step verification',
   disable: 'disable account',
   enable: 'enable account',
+  'system-use-notice': 'change the system use notice',
 };
 
 function detailValue(key: string, value: string | boolean): string {

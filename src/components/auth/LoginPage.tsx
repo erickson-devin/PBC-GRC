@@ -6,6 +6,7 @@ import { BrandLogo } from '../common/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { MfaChallengeForm } from './MfaChallengeForm';
 import { MfaEnrolmentPanel } from './MfaEnrolmentPanel';
+import { SystemUseNoticeGate } from './SystemUseNoticeGate';
 import { SIGNED_IN_DEFAULT, redirectFromLocation } from '../../utils/appRoute';
 
 interface LoginPageProps {
@@ -122,6 +123,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
             {/* Local credentials */}
             {!mfaChallenge && (
+            <SystemUseNoticeGate>
             <form onSubmit={handlePasswordSubmit} className="space-y-3">
               <div>
                 <label htmlFor={emailId} className="sr-only">Work email</label>
@@ -160,6 +162,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 Sign In
               </button>
             </form>
+            </SystemUseNoticeGate>
             )}
 
           </div>

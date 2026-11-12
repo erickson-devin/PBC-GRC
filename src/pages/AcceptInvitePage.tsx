@@ -21,6 +21,7 @@ import { ErrorNotice } from '../components/common/ErrorNotice';
 import { invitePreviewErrorMessage } from '../utils/invitePreview';
 import { MfaChallengeForm } from '../components/auth/MfaChallengeForm';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
+import { SystemUseNoticeGate } from '../components/auth/SystemUseNoticeGate';
 
 interface AcceptInvitePageProps {
   onSuccessNavigate?: () => void;
@@ -258,6 +259,12 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
       handleClaimSuccess();
     } catch (err: unknown) {
       console.error('Password claim error:', err instanceof Error ? err.name : 'unknown error');
+      const reason = (err as { reason?: string }).reason;
+      if (reason === 'system_use_notice_changed' || reason === 'system_use_ack_required') {
+        setClaimError('The system use notice changed or was not acknowledged. Reload this page, read the notice again and try again.');
+        setIsSubmitting(false);
+        return;
+      }
       setClaimError('The invitation could not be accepted. Try again; if it keeps failing, ask your administrator for a new link.');
       setIsSubmitting(false);
     }
@@ -539,6 +546,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
 
               {/* Set Password Form */}
               {!mfaChallenge && (
+              <SystemUseNoticeGate>
               <form onSubmit={handlePasswordClaim} className="space-y-3.5 animate-fadeIn">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
@@ -628,6 +636,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                   )}
                 </button>
               </form>
+              </SystemUseNoticeGate>
               )}
 
               {/* Footer Terms Notice */}

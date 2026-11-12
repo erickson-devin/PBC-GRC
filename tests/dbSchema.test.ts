@@ -2,6 +2,7 @@ import fs from 'fs';
 import { assertSupportedPostgresVersion, assessDatabaseRole, buildPoolConfig } from '../server/db';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { SSP_METADATA_FIELDS } from '../src/types/sspMetadata';
+import { ACCOUNT_EVENT_ACTIONS } from '../server/auth/accountEvents';
 import { DISCOVERY_POLICIES, PROGRAM_BACKFILL_TABLES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildLegacyProgramRowCountSql, buildProgramIdNotNullSql, buildProgramRlsSql, buildRlsSql, buildSchemaSql, rlsPolicyName, rlsProgramPolicyName } from '../server/schema';
 
 /**
@@ -438,6 +439,24 @@ assert(
   'AE2: the account event table is guarded against UPDATE, DELETE and TRUNCATE'
 );
 assert(!/\b(email|name|password|token)\s+(VARCHAR|TEXT)/i.test(lsBlock) && !/\b(email|name|password|token)\s+(VARCHAR|TEXT)/i.test(aeBlock), 'AE3: neither table has an email, name, password or token column');
+const suAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_system_use_notice (');
+const suBlock = suAt < 0 ? '' : TABLES_SQL.slice(suAt, TABLES_SQL.indexOf('\n  );', suAt));
+assert(
+  suBlock.includes('CONSTRAINT platform_system_use_notice_singleton CHECK (id = 1)') && suBlock.includes('CONSTRAINT platform_system_use_notice_text_check CHECK (char_length(notice_text) BETWEEN 1 AND 4000)') &&
+    !/\btenant_id\b/.test(suBlock) && !RLS_TENANT_TABLES.some((r) => r.table === 'platform_system_use_notice') &&
+    !(RLS_PROGRAM_TABLES as readonly string[]).includes('platform_system_use_notice') && !buildRlsSql().includes('platform_system_use_notice'),
+  'AE4: platform_system_use_notice is one global row (id pinned to 1), text 1 to 4000 characters, no tenant_id, no row security'
+);
+const listOf = (sql: string): string[] => (sql.match(/'([a-z_]+)'/g) ?? []).map((s) => s.slice(1, -1));
+const inlineList = /CONSTRAINT local_account_events_action_check CHECK \(action IN \(([^)]*)\)\)/.exec(aeBlock)?.[1] ?? '';
+const addMatch = /ADD CONSTRAINT local_account_events_action_check CHECK \(action IN \(([^)]*)\)\);/.exec(TABLES_SQL);
+const dropAt = TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS local_account_events_action_check;');
+assert(
+  JSON.stringify(listOf(inlineList)) === JSON.stringify([...ACCOUNT_EVENT_ACTIONS]) && !!addMatch && JSON.stringify(listOf(addMatch[1])) === JSON.stringify([...ACCOUNT_EVENT_ACTIONS]) &&
+    dropAt > 0 && dropAt < (addMatch?.index ?? -1) && TABLES_SQL.slice(0, dropAt).includes("LIKE '%system_use_notice_updated%'"),
+  'AE5: the new-install and the migrated action lists both equal ACCOUNT_EVENT_ACTIONS; the old check is dropped before the new one is added, only while it lacks the newest action',
+  [listOf(inlineList).length, addMatch ? listOf(addMatch[1]).length : null, ACCOUNT_EVENT_ACTIONS.length]
+);
 
 console.log('\n--- Pool configuration ---');
 const url = buildPoolConfig({ DATABASE_URL: 'postgres://app:s3cret@db.internal:6543/grc?sslmode=require' } as NodeJS.ProcessEnv);

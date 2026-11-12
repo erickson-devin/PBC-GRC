@@ -1034,6 +1034,17 @@ async function verifyAccountEvents() {
       'an action outside the closed list is refused (action_check)', lastRejection
     );
 
+    // V30b (issue #256): the migrated action list accepts the system use notice actions, and the notice table is one global row.
+    await recordAccountEvent({ actorKind: 'user', actorUserId: TARGET, targetUserId: TARGET, action: 'system_use_acknowledged', details: { via: 'sign_in', noticeVersion: '1' } });
+    const acked = (await listAccountEvents({ limit: 200 })).filter((e) => e.targetUserId === TARGET && e.action === 'system_use_acknowledged');
+    check(acked.length === 1 && acked[0].details.noticeVersion === '1', 'the action list (migrated or new) accepts system_use_acknowledged', JSON.stringify(acked));
+    const noticeFlags = await pool.query("SELECT relrowsecurity FROM pg_class WHERE relname = 'platform_system_use_notice' AND relkind = 'r'");
+    check(noticeFlags.rows[0]?.relrowsecurity === false, 'platform_system_use_notice: row security is NOT enabled (global table, read before sign-in)', JSON.stringify(noticeFlags.rows));
+    check(
+      await rejects(() => pool.query("INSERT INTO platform_system_use_notice (id, notice_text) VALUES (2, 'rls verify')"), { code: '23514', constraint: 'platform_system_use_notice_singleton' }),
+      'a second platform_system_use_notice row (id 2) is refused (singleton check)', lastRejection
+    );
+
     // V31: the retention sweep is the only way to delete. The test row is backdated far enough (about 11 years) that no real event can match the cutoff.
     await pool.query(
       "INSERT INTO local_account_events (at, actor_kind, target_user_id, action) VALUES (NOW() - INTERVAL '4000 days', 'system', $1, 'session_revoked')",
