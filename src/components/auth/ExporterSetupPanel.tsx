@@ -3,7 +3,7 @@ import { Terminal, Copy, Check, Download, ChevronRight } from 'lucide-react';
 import { copyText } from '../../utils/clipboard';
 import {
   DEFAULT_ENV_PATH, DEFAULT_LABELS, EXPORTER_ENV_FILENAME, EXPORTER_SETUP_COPY, EXPORTER_SOURCES, TROUBLESHOOTING,
-  buildExporterEnv, checkCommand, dryRunCommand, installCommand, runCommand,
+  buildExporterEnv, checkCommand, dryRunCommand, installCommand, isPlainHttp, runCommand, windowsAclCommand,
 } from '../../data/telemetry/exporterSetup';
 import type { ExporterSource, WazuhMode } from '../../data/telemetry/exporterSetup';
 
@@ -98,6 +98,7 @@ export const ExporterSetupPanel: React.FC = () => {
           <label htmlFor={urlId} className={LABEL_CLASS}>{EXPORTER_SETUP_COPY.urlLabel}</label>
           <input id={urlId} type="text" value={pbcUrl} onChange={(e) => setPbcUrl(e.target.value)} autoComplete="off" spellCheck={false} aria-describedby={`${urlId}-help`} className={INPUT_CLASS} />
           <p id={`${urlId}-help`} className="mt-1 text-slate-400">{EXPORTER_SETUP_COPY.urlHelp}</p>
+          {isPlainHttp(pbcUrl) && <p className="mt-1 text-amber-200">{EXPORTER_SETUP_COPY.httpNote}</p>}
         </div>
         <div>
           <label htmlFor={labelId} className={LABEL_CLASS}>{EXPORTER_SETUP_COPY.labelLabel}</label>
@@ -123,6 +124,7 @@ export const ExporterSetupPanel: React.FC = () => {
         <p className="text-slate-300 font-semibold">{EXPORTER_SETUP_COPY.commandsHeading}</p>
         <p className="text-slate-400">{EXPORTER_SETUP_COPY.commandsNote}</p>
         <CommandRow heading={EXPORTER_SETUP_COPY.stepInstall} command={installCommand()} />
+        <CommandRow heading={EXPORTER_SETUP_COPY.stepWindowsAcl} command={windowsAclCommand(EXPORTER_ENV_FILENAME)} />
         <CommandRow heading={EXPORTER_SETUP_COPY.stepCheck} command={checkCommand(DEFAULT_ENV_PATH, source)} />
         <CommandRow heading={EXPORTER_SETUP_COPY.stepDryRun} command={dryRunCommand(DEFAULT_ENV_PATH, source)} />
         <CommandRow heading={EXPORTER_SETUP_COPY.stepRun} command={runCommand(DEFAULT_ENV_PATH, source)} />

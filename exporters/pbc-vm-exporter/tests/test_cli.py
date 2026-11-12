@@ -444,13 +444,22 @@ WHOAMI = {
 INDEXER_OK = {"hits": {"total": {"value": 42, "relation": "eq"}, "hits": []}}
 
 
-def fake_check_session(monkeypatch, whoami=(200, WHOAMI), indexer=(200, INDEXER_OK)):
+AUTHINFO = {"user_name": "reader", "roles": ["own_index"], "backend_roles": ["pbc_ro"]}
+
+
+def fake_check_session(
+    monkeypatch, whoami=(200, WHOAMI), indexer=(200, INDEXER_OK), authinfo=(200, AUTHINFO), inventory=None
+):
     from conftest import FakeSession
 
     def handler(method, url, kwargs):
         if url.endswith("/api/v1/vm/whoami"):
             return whoami
+        if url.endswith("/_plugins/_security/authinfo"):
+            return authinfo
         if "/_search" in url:
+            if inventory is not None and "wazuh-states-inventory" in url:
+                return inventory
             return indexer
         raise AssertionError(f"unexpected request {method} {url}")
 
@@ -468,6 +477,8 @@ def test_check_all_green_is_exit_0_and_never_prints_the_token(monkeypatch):
     assert TOKEN not in out and TOKEN not in err and "pw-secret!" not in out
     assert session.calls[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
     assert [c["method"] for c in session.calls] == ["GET", "POST"]
+    assert not any(c["url"].endswith("/_plugins/_security/authinfo") for c in session.calls)
+    assert "indexer roles of this user" not in out
 
 
 def test_check_whoami_401_is_a_failure(monkeypatch):
@@ -506,6 +517,50 @@ def test_check_indexer_401_carries_the_hint(monkeypatch):
     fake_check_session(monkeypatch, indexer=(401, {}))
     code, out, _ = run(["check"], CHECK_ENV)
     assert code == 3 and "internal users" in out and "pw-secret!" not in out
+
+
+def test_check_indexer_403_lists_the_roles_the_indexer_applied(monkeypatch):
+    session = fake_check_session(monkeypatch, indexer=(403, {}))
+    code, out, err = run(["check"], CHECK_ENV)
+    assert code == 3
+    assert "[NOTE]" in out and "own_index" in out and "Mapped users" in out
+    assert "pbc_ro" not in out and "pw-secret!" not in out + err
+    calls = [c for c in session.calls if c["url"].endswith("/_plugins/_security/authinfo")]
+    assert len(calls) == 1 and calls[0]["method"] == "GET" and calls[0]["auth"] == ("reader", "pw-secret!")
+
+
+def test_check_indexer_403_with_unreadable_authinfo_says_so(monkeypatch):
+    fake_check_session(monkeypatch, indexer=(403, {}), authinfo=(401, {}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 3 and "could not be read" in out and "[NOTE]" in out
+
+
+def test_check_indexer_403_with_no_roles_says_none(monkeypatch):
+    fake_check_session(monkeypatch, indexer=(403, {}), authinfo=(200, {"roles": []}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 3 and "indexer roles of this user: none" in out
+
+
+def test_check_inventory_403_notes_the_roles_and_keeps_exit_0(monkeypatch):
+    fake_check_session(
+        monkeypatch, whoami=(200, {**WHOAMI, "features": ["whoami", "inventory"]}), inventory=(403, {})
+    )
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 0, out
+    assert "[NOTE]" in out and "own_index" in out and "pbc_ro" not in out
+
+
+def test_check_zero_documents_also_shows_the_roles(monkeypatch):
+    fake_check_session(monkeypatch, indexer=(200, {"hits": {"total": {"value": 0, "relation": "eq"}, "hits": []}}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 3 and "0 documents" in out
+    assert "indexer roles of this user: own_index" in out
+
+
+def test_check_indexer_redirect_names_the_dashboard(monkeypatch):
+    fake_check_session(monkeypatch, indexer=(302, {}))
+    code, out, _ = run(["check"], CHECK_ENV)
+    assert code == 3 and "WAZUH_INDEXER_URL probably points at the Wazuh dashboard" in out
 
 
 def test_check_indexer_unreachable_is_exit_3(monkeypatch):

@@ -86,7 +86,10 @@ def test_windows_warns_about_the_acl(monkeypatch, tmp_path):
     out, err = io.StringIO(), io.StringIO()
     code = main(["init", "--env-file", str(p)], environ={}, stdout=out, stderr=err)
     assert code == 0
-    assert "icacls" in err.getvalue()
+    text = err.getvalue()
+    assert "icacls" in text
+    assert 'PowerShell:     icacls "' in text and '/grant:r "$($env:USERNAME):F"' in text
+    assert "Command Prompt: icacls" in text and '"%USERNAME%:F"' in text
 
 
 def test_takes_no_secret_on_argv():
@@ -136,9 +139,92 @@ def test_eof_writes_nothing(monkeypatch, tmp_path):
 
 def test_refuses_an_http_url(monkeypatch, tmp_path):
     p = tmp_path / "x.env"
-    code, out, err = drive(monkeypatch, ["init", "--env-file", str(p)], plain=["http://grc.local"] * 3)
+    code, out, err = drive(monkeypatch, ["init", "--env-file", str(p)], plain=["http://grc.local", "n"] * 3)
     assert code == 2
     assert not p.exists()
+    assert "PBC_URL: too many invalid answers" in err
+
+
+def test_http_yes_writes_both_lines(monkeypatch, tmp_path):
+    p = tmp_path / "x.env"
+    plain = ["http://grc.local", "y", "", "", "https://wazuh:9200", "reader", ""]
+    code, out, err = drive(monkeypatch, ["init", "--env-file", str(p)], plain=plain)
+    assert code == 0, err
+    values = parse_env_file(str(p))
+    assert values["PBC_URL"] == "http://grc.local"
+    assert values["PBC_ALLOW_INSECURE_TRANSPORT"] == "true"
+    lines = p.read_text().splitlines()
+    at = lines.index("PBC_URL=http://grc.local")
+    assert lines[at + 1].startswith("# Development only: allows the plain http PBC_URL above")
+    assert lines[at + 2] == "PBC_ALLOW_INSECURE_TRANSPORT=true"
+    cfg = load_config({}, str(p), mode_override=None, dry_run=False, sample=False)
+    assert cfg.allow_insecure is True
+    assert "VM_ALLOW_INSECURE_TOKENS=true" in out
+
+
+@pytest.mark.parametrize("answer", ["n", ""])
+def test_http_no_reasks(monkeypatch, tmp_path, answer):
+    p = tmp_path / "x.env"
+    plain = ["http://grc.local", answer, "https://grc.local", "", "", "https://wazuh:9200", "reader", ""]
+    code, out, err = drive(monkeypatch, ["init", "--env-file", str(p)], plain=plain)
+    assert code == 0, err
+    assert "PBC_URL: enter an https URL" in err
+    assert parse_env_file(str(p))["PBC_URL"] == "https://grc.local"
+    assert "PBC_ALLOW_INSECURE_TRANSPORT" not in p.read_text()
+    assert "VM_ALLOW_INSECURE_TOKENS" not in out
+
+
+def test_http_enter_is_no(monkeypatch, tmp_path):
+    p = tmp_path / "x.env"
+    plain = ["http://grc.local", "", "https://grc.local", "", "", "https://wazuh:9200", "reader", ""]
+    code, out, err = drive(monkeypatch, ["init", "--env-file", str(p)], plain=plain)
+    assert code == 0, err
+    assert "PBC_ALLOW_INSECURE_TRANSPORT" not in p.read_text()
+
+
+def test_https_never_asks_to_confirm(monkeypatch, tmp_path):
+    p = tmp_path / "x.env"
+    asked = []
+    plain_it = iter(PLAIN)
+
+    def ask(prompt):
+        asked.append(prompt)
+        return next(plain_it)
+
+    secret_it = iter(SECRETS)
+    monkeypatch.setattr(init, "_ask", ask)
+    monkeypatch.setattr(init, "_ask_secret", lambda prompt: next(secret_it))
+    monkeypatch.setattr(init, "_is_windows", lambda: False)
+    out, err = io.StringIO(), io.StringIO()
+    assert main(["init", "--env-file", str(p)], environ={}, stdout=out, stderr=err) == 0
+    assert asked and not any("Allow it?" in a for a in asked)
+
+
+def test_http_with_credentials_refused_without_confirm(monkeypatch, tmp_path):
+    p = tmp_path / "x.env"
+    asked = []
+    plain_it = iter(["http://u:p@grc.local"] * 3)
+
+    def ask(prompt):
+        asked.append(prompt)
+        return next(plain_it)
+
+    monkeypatch.setattr(init, "_ask", ask)
+    monkeypatch.setattr(init, "_ask_secret", lambda prompt: "x")
+    out, err = io.StringIO(), io.StringIO()
+    code = main(["init", "--env-file", str(p)], environ={}, stdout=out, stderr=err)
+    assert code == 2 and not p.exists()
+    assert "must not contain credentials" in err.getvalue()
+    assert not any("Allow it?" in a for a in asked)
+    assert "u:p" not in err.getvalue() + out.getvalue()
+
+
+def test_wazuh_url_stays_https_only(monkeypatch, tmp_path):
+    p = tmp_path / "x.env"
+    plain = ["https://grc.local", "", "", "http://wazuh:9200", "http://wazuh:9200", "http://wazuh:9200"]
+    code, out, err = drive(monkeypatch, ["init", "--env-file", str(p)], plain=plain)
+    assert code == 2 and not p.exists()
+    assert "must use https" in err
 
 
 def test_api_mode(monkeypatch, tmp_path):

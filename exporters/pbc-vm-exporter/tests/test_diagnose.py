@@ -1,7 +1,8 @@
 import requests
 import pytest
 
-from pbc_vm_exporter.diagnose import HINT_REFUSED_INDEXER, classify, insecure_flag_note
+from pbc_vm_exporter.diagnose import HINT_INDEXER_403, HINT_REFUSED_INDEXER, classify, indexer_roles, insecure_flag_note
+from pbc_vm_exporter.wazuh_indexer import DEFAULT_INDEX, INVENTORY_INDICES
 
 INDEXER = "https://wazuh:9200"
 
@@ -32,6 +33,11 @@ CASES = [
     (401, "manager", "https://wazuh:9200", "port_swapped"),
     (RuntimeError("something else"), "indexer", INDEXER, "unknown"),
     (418, "pbc", "https://grc", "http_418"),
+    (requests.exceptions.SSLError("[SSL: WRONG_VERSION_NUMBER] wrong version number"), "pbc", "https://grc", "plain_http_port"),
+    (requests.exceptions.SSLError("certificate verify failed: certificate has expired"), "indexer", INDEXER, "cert_time"),
+    (requests.exceptions.SSLError("certificate verify failed: certificate is not yet valid"), "pbc", "https://grc", "cert_time"),
+    (302, "indexer", INDEXER, "indexer_redirect"),
+    ("indexer search returned HTTP 301", "indexer", INDEXER, "indexer_redirect"),
 ]
 
 
@@ -47,6 +53,31 @@ def test_refused_hint_names_the_bind_address_fix():
     code, hint = classify(requests.ConnectionError("Connection refused"), "indexer", INDEXER)
     assert code == "refused" and hint == HINT_REFUSED_INDEXER
     assert "network.host" in hint and "127.0.0.1" in hint and "9200" in hint
+    assert "ssh -N -L 9200:127.0.0.1:9200" in hint and "WAZUH_INDEXER_URL=https://127.0.0.1:9200" in hint
+    assert "network.host in /etc/wazuh-indexer/opensearch.yml" in hint
+
+
+def test_indexer_roles_keeps_only_role_names():
+    data = {"roles": ["readall", "own_index"], "backend_roles": ["x"], "user_name": "reader"}
+    assert indexer_roles(data) == ["own_index", "readall"]
+    assert indexer_roles({"roles": ["ok", "bad\x1b[31m", 5, "x" * 65]}) == ["ok"]
+    assert indexer_roles({"roles": []}) == []
+    assert indexer_roles({"roles": "own_index"}) == []
+    assert indexer_roles(["own_index"]) == []
+    assert indexer_roles({"roles": ["a", "a", "b\n"]}) == ["a"]
+    assert len(indexer_roles({"roles": [f"r{i}" for i in range(50)]})) == 20
+
+
+def test_indexer_403_hint_names_both_indices_and_the_mapping_step():
+    assert DEFAULT_INDEX in HINT_INDEXER_403
+    assert "wazuh-states-inventory-*" in HINT_INDEXER_403
+    assert "Mapped users" in HINT_INDEXER_403 and "Backend roles" in HINT_INDEXER_403
+
+
+def test_every_inventory_index_matches_the_hinted_pattern():
+    from fnmatch import fnmatch
+    assert INVENTORY_INDICES
+    assert all(fnmatch(index, "wazuh-states-inventory-*") for index in INVENTORY_INDICES.values())
 
 
 def test_hints_never_echo_the_input():
