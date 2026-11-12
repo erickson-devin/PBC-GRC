@@ -36,7 +36,9 @@ import { CMMC_LEVEL_2_CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls
 import { ControlState } from '../src/types/cmmc';
 import { ReportMetadata } from '../src/types/report';
 import { compileNistSSP } from '../src/data/reports/documentCompilers';
-import { generatePrintableHtml } from '../src/data/reports/reportExporters';
+import { generatePrintableHtml, generatePoamCsv } from '../src/data/reports/reportExporters';
+import { csvCell } from '../src/data/reports/csv';
+import type { POAMEntry } from '../src/types/report';
 
 let passCount = 0;
 let failCount = 0;
@@ -477,6 +479,30 @@ async function runTestSuite() {
   assert(hostileHtml.includes('&lt;img src=x onerror=alert(1)&gt;'), 'S65-5a: a hostile system name is escaped in the printable HTML');
   assert(hostileHtml.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'S65-5b: a hostile organization name is escaped in the printable HTML');
   assert(!hostileHtml.includes('<img src=x') && !hostileHtml.includes('<script>alert(1)'), 'S65-5c: no raw hostile markup reaches the printable HTML');
+
+  // S237: one CSV cell helper; text a spreadsheet could read as a formula gets a leading apostrophe
+  assert(
+    csvCell('=cmd|calc') === `"'=cmd|calc"` && csvCell('+1') === `"'+1"` && csvCell('-2') === `"'-2"` && csvCell('@SUM(A1)') === `"'@SUM(A1)"` && csvCell('\tx') === `"'\tx"` && csvCell('\rx') === `"'\rx"`,
+    'S237-1a: csvCell prefixes an apostrophe on = + - @ tab and CR'
+  );
+  assert(csvCell('a"b') === '"a""b"' && csvCell('=a"b') === `"'=a""b"` && csvCell(null) === '""' && csvCell(undefined) === '""', 'S237-1b: csvCell doubles quotes and writes an empty cell for null / undefined');
+  assert(csvCell(-5) === '"-5"' && csvCell(0) === '"0"' && csvCell('Plain') === '"Plain"' && csvCell(' =x') === '" =x"', 'S237-1c: csvCell writes numbers as-is and leaves other text alone');
+  const s237Entry: POAMEntry = {
+    weaknessId: 'POAM-1', controlId: 'AC.L1-3.1.1', controlTitle: 'Authorized Access Control', weaknessDescription: '=HYPERLINK("http://x","y")',
+    scheduledCompletionDate: '2026-12-01', requiredResources: '+1', responsibleRole: '@admin', remediationPlan: '- Patch the host\n- Reboot', status: 'NOT_MET',
+  } as POAMEntry;
+  const s237Poam = generatePoamCsv([s237Entry]);
+  assert(s237Poam.includes(`"'=HYPERLINK(""http://x"",""y"")"`) && s237Poam.includes(`"'@admin"`) && s237Poam.includes(`"'+1"`), 'S237-2a: the POA&M CSV neutralises formula cells');
+  assert(s237Poam.includes(`"'- Patch the host\n- Reboot"`) && !s237Poam.includes(',"=HYPERLINK'), 'S237-2b: a bulleted plan gains one apostrophe and no cell starts with a bare formula');
+  const s237Controls = CMMC_LEVEL_2_CONTROLS.slice();
+  const s237Csv = generateEmassControlMatrixCsv(
+    s237Controls,
+    { [s237Controls[0].id]: { id: s237Controls[0].id, status: 'NOT_MET', implementationNotes: '=1+1', responsibleRole: 'Lead', lastUpdated: '', tags: ['-x', 'y'] } as ControlState },
+    sampleMeta
+  );
+  assert(s237Csv.includes(`"'=1+1"`) && s237Csv.includes(`"'-x; y"`), 'S237-3: the eMASS CSV neutralises formula cells');
+  const s237Read = (rel: string) => fs.readFileSync(path.join(process.cwd(), 'src', 'data', 'reports', rel), 'utf8').replace(/\r\n/g, '\n');
+  assert(['reportExporters.ts', 'sprsCompiler.ts', 'inventoryDocuments.ts'].every((f) => s237Read(f).includes("from './csv'") && !s237Read(f).includes(`replace(/"/g, '""')`)), 'S237-4: every CSV writer uses csvCell and none has its own quote escaping');
 
   // ==========================================================================
   // SUMMARY

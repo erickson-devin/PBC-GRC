@@ -10,6 +10,7 @@ import type { EnclaveAsset } from '../../types/telemetry';
 import type { SoftwareItem } from '../../types/software';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, summarizeScope } from '../telemetry/assetScope';
 import { NOT_RECORDED, UNNAMED_SYSTEM } from './documentDefaults';
+import { csvCell } from './csv';
 
 /**
  * Hardware and Software Inventory documents (issue #229, phase 1a), compiled from the asset inventory (and the manual
@@ -176,15 +177,10 @@ export function compileSoftwareInventory(metadata: ReportMetadata, input: Invent
 export function generateInventoryCsv(doc: CompiledDocument): string {
   const table = doc.sections.find((s) => s.id === 'inventory-table')?.table;
   if (!table) return '';
-  const cell = (val: string | number): string => {
-    let text = String(val);
-    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-    return `"${text.replace(/"/g, '""')}"`;
-  };
-  let csv = table.headers.map(cell).join(',') + '\r\n';
+  let csv = table.headers.map(csvCell).join(',') + '\r\n';
   for (const row of table.rows) {
     const cells = Array.isArray(row) ? row : row.cells;
-    csv += cells.map(cell).join(',') + '\r\n';
+    csv += cells.map(csvCell).join(',') + '\r\n';
   }
   return csv;
 }

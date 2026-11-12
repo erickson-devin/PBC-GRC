@@ -19,6 +19,7 @@ import {
   generateMachineReadablePackage,
   generatePoamCsv,
   computeSha256,
+  statusBadgeClass,
 } from '../src/data/reports/reportExporters';
 import {
   getFrameworkControls,
@@ -489,6 +490,45 @@ async function runArtifactGeneratorTests() {
     assert(!!availRow && availRow[1] === availCount && availRow[2] === 0 && availRow[4] === availCount && availRow[5] === '0%', 'S196-2 the Availability row counts recorded statuses from the controls');
     assert(subTitled(soc2Doc, '4.1')?.content === NO_CUECS_RECORDED, 'S196-3 SOC 2 4.1 states that no CUECs are recorded');
     assert(generatePrintableHtml(poamDoc, mockMetadata as never).includes('status-not-met">NOT_MET<') && !generatePrintableHtml(poamDoc, mockMetadata as never).includes('status-met">NOT_MET<'), 'S196-4 a NOT_MET status renders the not-met badge');
+
+    // #236: the badge colour is an exact allow-list, never a substring match
+    assert(['NON_COMPLIANT', 'NOT COMPLIANT', 'UNMET', 'Unmet', 'met', 'MET ', 'NOT_MET_X'].every(v => statusBadgeClass(v) === null), 'S236-1 look-alike statuses get no badge colour');
+    assert(
+      statusBadgeClass('MET') === 'status-met' && statusBadgeClass('NOT_MET') === 'status-not-met' && statusBadgeClass('IN_PROGRESS') === 'status-in-progress' && statusBadgeClass('NOT_STARTED') === 'status-not-started' &&
+      statusBadgeClass('Not met') === 'status-not-met' && statusBadgeClass('Met (self-assessed)') === 'status-met' && statusBadgeClass('Deficiency / Gap') === 'status-not-met' &&
+      statusBadgeClass('Remediation Underway') === 'status-in-progress' && statusBadgeClass('Compliant / Implemented') === 'status-met' && statusBadgeClass('3 Deficiencies') === 'status-not-met' && statusBadgeClass('2 Open') === 'status-not-started',
+      'S236-2 each status the compilers emit maps to its badge'
+    );
+    const s236Html = generatePrintableHtml({ ...poamDoc, sections: [{ id: 's236', title: 'S236', table: { headers: ['Control ID', 'Status'], rows: [['X-1', 'NON_COMPLIANT'], ['X-2', 'NOT COMPLIANT'], ['X-3', 'UNMET'], ['X-4', 'NOT_MET']] } }] });
+    assert(
+      s236Html.includes('<td>NON_COMPLIANT</td>') && s236Html.includes('<td>NOT COMPLIANT</td>') && s236Html.includes('<td>UNMET</td>') && !/status-badge[^>]*">NON_COMPLIANT</.test(s236Html) && s236Html.includes('status-not-met">NOT_MET<'),
+      'S236-3 an unknown status renders as plain text, a known one as its badge'
+    );
+    const s236Cycle = ['MET', 'IN_PROGRESS', 'NOT_MET', 'NOT_STARTED'] as const;
+    const s236States = (controls: typeof cmmcL1Controls, allMet: boolean): Record<string, ControlState> => {
+      const out: Record<string, ControlState> = {};
+      controls.forEach((c, i) => { out[c.id] = { id: c.id, status: allMet ? 'MET' : s236Cycle[i % 4], implementationNotes: 'Recorded.', responsibleRole: 'Lead', lastUpdated: '2026-09-14T10:00:00Z', tags: [] }; });
+      return out;
+    };
+    const s236Docs = [
+      compileNistSSP(mockMetadata, cmmcL1Controls, s236States(cmmcL1Controls, false), mockEvidence),
+      compileNistSSP(mockMetadata, cmmcL1Controls, s236States(cmmcL1Controls, true), mockEvidence),
+      compilePOAM(mockMetadata, cmmcL1Controls, s236States(cmmcL1Controls, false)),
+      compileSoc2SystemDescription(soc2Meta, soc2Controls, s236States(soc2Controls, false), mockEvidence),
+      compileHipaaAssessment(hipaaMeta, hipaaControls, s236States(hipaaControls, false), mockEvidence),
+    ];
+    const s236Cells: string[] = [];
+    const s236Collect = (table: { headers: string[]; rows: (string | number)[][] | { cells: (string | number)[] }[] } | undefined) => {
+      if (!table) return;
+      table.headers.forEach((h, col) => {
+        if (!/status|compliance posture/i.test(h)) return;
+        for (const row of table.rows) s236Cells.push(String((Array.isArray(row) ? row : row.cells)[col] ?? ''));
+      });
+    };
+    s236Docs.forEach(d => d.sections.forEach(sec => { s236Collect(sec.table); (sec.subsections || []).forEach(sub => s236Collect(sub.table)); }));
+    const s236Offenders = [...new Set(s236Cells.filter(c => statusBadgeClass(c) === null))];
+    if (s236Offenders.length) console.error('  offenders:', s236Offenders);
+    assert(s236Cells.length > 0 && s236Offenders.length === 0, `S236-4 every status the compilers print has a badge (${s236Cells.length} cells)`);
 
     const blankTenant = { id: 't-blank', name: '', cageCode: '', samStatus: 'ACTIVE', systemName: '', systemOwner: '', industry: '', createdAt: '', updatedAt: '' } as Tenant;
     const blankPolicy = generatePolicyDocument(blankTenant, 'AC', 'Access Control', 'CMMC_L1');
