@@ -489,9 +489,13 @@ const ahost = (o: Partial<NormalizedHost> = {}): NormalizedHost => nhost([], { a
   assert(p.toCreate.length === 1 && p.matched.length === 0, 'T50 unknown host -> create', p);
   assert(d.sourceOrigin === 'AGENT_REPORT' && d.discoveryStatus === 'UNCONFIRMED_DISCOVERY' && d.cmmcAssetCategory === 'CONTRACTOR_RISK', 'T50 AGENT_REPORT + UNCONFIRMED_DISCOVERY + CONTRACTOR_RISK', d);
   assert(eq(d.agentIds, { 'wazuh:src-wazuh': '001' }) && kindKey('WAZUH') === 'wazuh', 'T50 agentIds {wazuh:<source id>: id}', d.agentIds);
-  assert(d.hostName === 'web-01' && d.osProfile === 'Ubuntu' && d.notes === 'Reported by WAZUH agent 001 (Ubuntu 22.04). Unconfirmed: classify its CMMC category.', 'T50 draft fields', d);
+  assert(d.hostName === 'web-01' && d.osProfile === 'ubuntu2204' && d.notes === 'Reported by WAZUH agent 001 (Ubuntu 22.04). Unconfirmed: classify its CMMC category.', 'T50 draft fields', d);
   const weird = planAssetMatches([ahost({ osName: 'Linux <x>' })], [], 'WAZUH', SRC, 10);
   assert(weird.toCreate[0].osProfile === 'custom', 'T50 os name outside the allowed pattern -> custom', weird.toCreate[0]);
+  const win = planAssetMatches([ahost({ osName: 'Microsoft Windows 11 Pro', osVersion: '10.0.22631' })], [], 'WAZUH', SRC, 10).toCreate[0];
+  assert(win.osProfile === 'win11' && win.notes.includes('Microsoft Windows 11 Pro 10.0.22631'), 'T50 Windows 11 Pro -> win11, the raw name stays in the notes', win);
+  const win10 = planAssetMatches([ahost({ osName: 'Microsoft Windows 10 Pro', osVersion: '10.0.19045' })], [], 'WAZUH', SRC, 10).toCreate[0];
+  assert(win10.osProfile === 'custom' && win10.notes.includes('Microsoft Windows 10 Pro'), 'T50 Windows 10 is not a known profile -> custom, the raw name stays in the notes', win10);
 }
 {
   const p = planAssetMatches([ahost({ hostname: '', agentId: '077' })], [], 'WAZUH', SRC, 10);

@@ -1,0 +1,53 @@
+[
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "interface": {
+      "name": "eth0"
+    },
+    "network": {
+      "ip": "198.51.100.5",
+      "type": "IPv4"
+    }
+  },
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "interface": {
+      "name": "eth1"
+    },
+    "network": {
+      "ip": "192.0.2.21",
+      "type": "IPv4"
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "interface": {
+      "name": "ens3"
+    },
+    "network": {
+      "ip": "198.51.100.6",
+      "type": "IPv4"
+    }
+  }
+]

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import {
   X,
   Server,
@@ -27,6 +27,11 @@ import { errorMessage } from '../../utils/errors';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
 import { HARDWARE_LIMITS } from '../../data/telemetry/hardwareDetails';
+import { osProfileFor, osProfileSelectValue } from '../../data/telemetry/osProfile';
+import type { ObservedComparisonRow, ObservedField } from '../../data/telemetry/observedInventory';
+import { OBSERVED_COPY, OBSERVED_FIELD_LABEL, reportedOsText } from '../../data/telemetry/observedInventoryView';
+import { useObservedInventory } from '../../hooks/useObservedInventory';
+import { ObservedInventoryPanel } from './ObservedInventoryPanel';
 interface AddAssetModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -34,6 +39,8 @@ interface AddAssetModalProps {
   onSave: (asset: Omit<EnclaveAsset, 'id'>) => Promise<void> | void;
   initialAsset?: EnclaveAsset | null;
   tenantId: string;
+  /** True for a tenant on the server: only then is there scanner data to show beside an asset being edited. */
+  serverBacked?: boolean;
 }
 
 export const AddAssetModal: React.FC<AddAssetModalProps> = ({
@@ -42,6 +49,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   onSave,
   initialAsset,
   tenantId,
+  serverBacked = false,
 }) => {
   const [hostName, setHostName] = useState('');
   const [ipAddress, setIpAddress] = useState('');
@@ -58,6 +66,17 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
   const idBase = useId();
   const hwId = (f: string) => `${idBase}-hw-${f}`;
   const hwHelpId = `${idBase}-hw-help`;
+  const fieldId = (f: string) => `${idBase}-f-${f}`;
+  const osHelpId = `${idBase}-os-help`;
+  const scannerHelpId = (f: ObservedField) => `${idBase}-scanner-${f}`;
+  // Scanner values copied into the form and not edited since: each is flagged "not saved yet" under its field
+  const [fromScanner, setFromScanner] = useState<ObservedField[]>([]);
+  const [announcement, setAnnouncement] = useState('');
+  const ipRef = useRef<HTMLInputElement>(null);
+  const macRef = useRef<HTMLInputElement>(null);
+  const osRef = useRef<HTMLSelectElement>(null);
+  const serialRef = useRef<HTMLInputElement>(null);
+  const observed = useObservedInventory(tenantId, initialAsset?.id ?? null, isOpen && serverBacked && Boolean(initialAsset));
   const [fipsStatus, setFipsStatus] = useState<FipsValidationStatus | ''>('');
   const [fipsStandard, setFipsStandard] = useState<FipsStandard | ''>('');
   const [fipsCert, setFipsCert] = useState('');
@@ -70,7 +89,7 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
       setHostName(initialAsset.hostName);
       setIpAddress(initialAsset.ipAddress);
       setMacAddress(initialAsset.macAddress || '');
-      setOsProfile(initialAsset.osProfile as EnclaveAssetOsProfile);
+      setOsProfile(osProfileSelectValue(initialAsset.osProfile) as EnclaveAssetOsProfile);
       setCmmcAssetCategory(initialAsset.cmmcAssetCategory);
       setStatus(initialAsset.status);
       setNotes(initialAsset.notes || '');
@@ -103,18 +122,44 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
     }
     setError(null);
     setSaving(false);
+    setFromScanner([]);
+    setAnnouncement('');
   }, [initialAsset, isOpen]);
 
   if (!isOpen) return null;
+
+  /** The person edited the field by hand: it is theirs again, no longer "a scanner value". */
+  const edited = (f: ObservedField) => setFromScanner(cur => cur.filter(x => x !== f));
+
+  /** Copies one scanner value into its form field (nothing is saved), flags it, announces it and moves focus to it. */
+  const applyScannerValue = (row: ObservedComparisonRow) => {
+    if (row.field === 'ipAddress') {
+      setIpAddress(row.observed);
+      ipRef.current?.focus();
+    } else if (row.field === 'macAddress') {
+      setMacAddress(row.observed);
+      macRef.current?.focus();
+    } else if (row.field === 'serialNumber') {
+      setSerialNumber(row.observed);
+      serialRef.current?.focus();
+    } else {
+      const host = observed.hosts.find(h => h.sourceId === row.sourceId);
+      if (!host) return;
+      setOsProfile(osProfileFor(host.os.name, host.os.version) as EnclaveAssetOsProfile);
+      osRef.current?.focus();
+    }
+    setFromScanner(cur => (cur.includes(row.field) ? cur : [...cur, row.field]));
+    setAnnouncement(`${OBSERVED_FIELD_LABEL[row.field]} set from the scanner. Not saved yet.`);
+  };
+
+  const scannerHelp = (f: ObservedField) =>
+    fromScanner.includes(f) ? <p id={scannerHelpId(f)} className="mt-1 text-xs text-cyan-300">{OBSERVED_COPY.scannerValueHelp}</p> : null;
+  const reportedOs = reportedOsText(initialAsset?.osProfile, observed.hosts);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!hostName.trim()) {
       setError('Asset name is required.');
-      return;
-    }
-    if (!ipAddress.trim()) {
-      setError('IP address is required.');
       return;
     }
 
@@ -206,12 +251,13 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
           {/* Hostname & IP Address */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-300 mb-1.5">
+              <label htmlFor={fieldId('hostName')} className="block font-semibold text-slate-300 mb-1.5">
                 Asset name / hostname <span className="text-rose-400">*</span>
               </label>
               <div className="flex items-center gap-2">
                 <Monitor className="w-4 h-4 text-slate-400 shrink-0" />
                 <input
+                  id={fieldId('hostName')}
                   type="text"
                   required
                   value={hostName}
@@ -223,57 +269,88 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-300 mb-1.5">
-                IP Address <span className="text-rose-400">*</span>
+              <label htmlFor={fieldId('ipAddress')} className="block font-semibold text-slate-300 mb-1.5">
+                IP Address <span className="text-slate-400 font-normal">(Optional)</span>
               </label>
               <div className="flex items-center gap-2">
                 <Wifi className="w-4 h-4 text-slate-400 shrink-0" />
                 <input
+                  id={fieldId('ipAddress')}
+                  ref={ipRef}
                   type="text"
-                  required
                   value={ipAddress}
-                  onChange={e => setIpAddress(e.target.value)}
+                  onChange={e => { setIpAddress(e.target.value); edited('ipAddress'); }}
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby={fromScanner.includes('ipAddress') ? scannerHelpId('ipAddress') : undefined}
                   placeholder="e.g. 10.0.50.35"
                   className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
                 />
               </div>
+              {scannerHelp('ipAddress')}
             </div>
           </div>
 
           {/* MAC Address (Optional) & OS Profile */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-300 mb-1.5">
+              <label htmlFor={fieldId('macAddress')} className="block font-semibold text-slate-300 mb-1.5">
                 MAC Address <span className="text-slate-400 font-normal">(Optional)</span>
               </label>
               <input
+                id={fieldId('macAddress')}
+                ref={macRef}
                 type="text"
                 value={macAddress}
-                onChange={e => setMacAddress(e.target.value)}
+                onChange={e => { setMacAddress(e.target.value); edited('macAddress'); }}
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby={fromScanner.includes('macAddress') ? scannerHelpId('macAddress') : undefined}
                 placeholder="52:54:00:12:34:56"
                 className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
               />
+              {scannerHelp('macAddress')}
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-300 mb-1.5">
+              <label htmlFor={fieldId('osProfile')} className="block font-semibold text-slate-300 mb-1.5">
                 OS Platform Profile
               </label>
               <select
+                id={fieldId('osProfile')}
+                ref={osRef}
                 value={osProfile}
-                onChange={e => setOsProfile(e.target.value as EnclaveAssetOsProfile)}
+                onChange={e => { setOsProfile(e.target.value as EnclaveAssetOsProfile); edited('os'); }}
+                aria-describedby={[reportedOs ? osHelpId : '', fromScanner.includes('os') ? scannerHelpId('os') : ''].filter(Boolean).join(' ') || undefined}
                 className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
               >
                 <option value="rhel9">Red Hat Enterprise Linux 9</option>
                 <option value="rhel8">Red Hat Enterprise Linux 8</option>
                 <option value="ubuntu2204">Ubuntu 22.04 LTS</option>
                 <option value="win2022">Windows Server 2022</option>
-                <option value="win11">Windows 11 Enterprise</option>
+                <option value="win11">Windows 11</option>
                 <option value="cisco_ios">Cisco IOS / Network Device</option>
                 <option value="custom">Custom / Appliance</option>
               </select>
+              {reportedOs && <p id={osHelpId} className="mt-1 text-xs text-slate-400">Reported: <span className="font-mono">{reportedOs}</span></p>}
+              {scannerHelp('os')}
             </div>
           </div>
+
+          {/* What the scanners reported for this asset (#229): edit mode on a server-backed tenant only; nothing is saved until the person uses a value and saves */}
+          {initialAsset && serverBacked && (
+            <>
+              <ObservedInventoryPanel
+                status={observed.status}
+                hosts={observed.hosts}
+                recorded={initialAsset}
+                note={OBSERVED_COPY.editNote}
+                onRetry={observed.reload}
+                onUseValue={applyScannerValue}
+              />
+              <p role="status" className="sr-only">{announcement}</p>
+            </>
+          )}
 
           {/* CMMC Scope Category */}
           <div>
@@ -440,13 +517,16 @@ export const AddAssetModal: React.FC<AddAssetModalProps> = ({
                 id={hwId('serialNumber')}
                 type="text"
                 value={serialNumber}
-                onChange={e => setSerialNumber(e.target.value)}
+                ref={serialRef}
+                onChange={e => { setSerialNumber(e.target.value); edited('serialNumber'); }}
+                aria-describedby={fromScanner.includes('serialNumber') ? scannerHelpId('serialNumber') : undefined}
                 maxLength={HARDWARE_LIMITS.serialNumber}
                 autoComplete="off"
                 spellCheck={false}
                 placeholder="e.g. 7XK2L93"
                 className="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono"
               />
+              {scannerHelp('serialNumber')}
             </div>
             <div>
               <label htmlFor={hwId('location')} className="block font-semibold text-slate-300 mb-1.5">Location</label>

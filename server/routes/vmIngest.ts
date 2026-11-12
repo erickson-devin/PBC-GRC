@@ -3,7 +3,7 @@ import fs from 'fs';
 import express, { Router, Request, Response, NextFunction } from 'express';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { serviceTokenMiddleware } from '../middleware/serviceTokenMiddleware';
-import { validateIngestPayload, vmIngestMaxBytes } from '../vm/ingestSchema';
+import { VM_INGEST_FEATURES, validateIngestPayload, vmIngestMaxBytes } from '../vm/ingestSchema';
 import { listVmTokens, recordVmTokenPush } from '../vm/tokens';
 import { findRunBySha, recordReceivedRun, VmStoreError } from '../vm/store';
 import { enqueueVmRun, recoverStaleRuns } from '../vm/worker';
@@ -192,7 +192,7 @@ async function whoamiHandler(req: Request, res: Response): Promise<void> {
       scopes: caller.scopes,
       contract_sha256: CONTRACT_SHA256,
       limits: { max_bytes: vmIngestMaxBytes() },
-      features: ['whoami'],
+      features: [...VM_INGEST_FEATURES],
     });
   } catch (err: unknown) {
     console.error('[VM Ingest] whoami failed:', errorMessage(err));

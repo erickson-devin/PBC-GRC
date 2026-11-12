@@ -10,11 +10,13 @@ import {
   ingestConfigScanSchema,
   ingestExporterSchema,
   ingestFindingSchema,
+  ingestHardwareSchema,
   ingestHostSchema,
   ingestOsSchema,
   ingestPackageSchema,
   ingestPayloadSchema,
   ingestRuleResultSchema,
+  ingestSoftwareItemSchema,
   ingestSourceSchema,
   validateIngestPayload,
   vmIngestMaxBytes,
@@ -196,7 +198,7 @@ async function main() {
   assert(validateIngestPayload(mutate((p) => (p.source.kind = 'SCAP'))).ok, 'source kind SCAP accepted');
   assert(errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x' }]))).startsWith('$.hosts[0].findings:'), 'host with neither findings nor configuration rejected at findings');
   assert(
-    errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x' }]))) === '$.hosts[0].findings: required (a host reports findings, configuration results or both)',
+    errorOf(mutate((p) => (p.hosts = [{ agent_id: 'x' }]))) === '$.hosts[0].findings: required (a host reports findings, configuration results, inventory or a combination)',
     'neither: exact message',
   );
   assert(errorOf(mutate((p) => (p.hosts = [{ agent_id: 'a', findings: [] }, { agent_id: 'b' }]))).startsWith('$.hosts[1].findings:'), 'second host with neither names its index');
@@ -267,6 +269,8 @@ async function main() {
     ['package', props(defs.finding).package, ingestPackageSchema],
     ['configScan', defs.configScan, ingestConfigScanSchema],
     ['ruleResult', defs.ruleResult, ingestRuleResultSchema],
+    ['hardware', defs.hardware, ingestHardwareSchema],
+    ['softwareItem', defs.softwareItem, ingestSoftwareItemSchema],
   ];
   for (const [name, obj, zodObj] of objects) {
     assert(obj.additionalProperties === false, `${name}: additionalProperties false`);
@@ -317,6 +321,14 @@ async function main() {
   assert(props(defs.finding).published_at.maxLength === INGEST_LIMITS.dateTimeMax, 'maxLength published_at');
   assert(props(defs.finding).cvss_v3.minimum === 0 && props(defs.finding).cvss_v3.maximum === 10, 'cvss range 0..10');
   assert(INGEST_LIMITS.maxTotalFindings === 50000, 'total findings limit is 50000');
+  assert(props(defs.host).software.maxItems === INGEST_LIMITS.maxSoftwarePerHost && INGEST_LIMITS.maxSoftwarePerHost === 10000, 'maxItems software per host');
+  assert(INGEST_LIMITS.maxTotalSoftware === 200000, 'total software limit is 200000');
+  assert(String(doc.description).includes('200000'), 'description states the 200000 software items limit');
+  assert(props(defs.host).hardware.$ref === '#/$defs/hardware' && props(defs.host).software.items.$ref === '#/$defs/softwareItem', 'host references hardware and softwareItem');
+  assert(props(props(defs.host).os).platform.maxLength === INGEST_LIMITS.osPlatformMax && props(props(defs.host).os).kernel.maxLength === INGEST_LIMITS.osKernelMax, 'maxLength os platform and kernel');
+  assert(['cpu_cores', 'cpu_mhz', 'memory_bytes'].every((k) => props(defs.hardware)[k].type === 'integer'), 'hardware numerics are type integer');
+  assert(props(defs.hardware).cpu_cores.maximum === INGEST_LIMITS.cpuCoresMax && props(defs.hardware).cpu_mhz.maximum === INGEST_LIMITS.cpuMhzMax && props(defs.hardware).memory_bytes.maximum === INGEST_LIMITS.memoryBytesMax, 'hardware numeric maxima');
+  assert(same([...defs.softwareItem.required], ['name']), 'softwareItem requires only name');
 
   const p = INGEST_PATTERN_SOURCES;
   assert(defs.line.pattern === p.line, 'pattern line ($defs.line)');

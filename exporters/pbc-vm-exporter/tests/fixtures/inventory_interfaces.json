@@ -1,0 +1,87 @@
+[
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "host": {
+      "mac": "00:00:00:00:00:00"
+    },
+    "interface": {
+      "name": "lo",
+      "state": "up"
+    }
+  },
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "host": {
+      "mac": "02:00:00:00:21:01"
+    },
+    "interface": {
+      "name": "eth0",
+      "state": "up"
+    }
+  },
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "host": {
+      "mac": "02:00:00:00:21:02"
+    },
+    "interface": {
+      "name": "eth1",
+      "state": "up"
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "host": {
+      "mac": "02:00:00:00:22:01"
+    },
+    "interface": {
+      "name": "ens3",
+      "state": "down"
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "host": {
+      "mac": "02:00:00:00:22:02"
+    },
+    "interface": {
+      "name": "ens4",
+      "state": "up"
+    }
+  }
+]

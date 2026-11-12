@@ -45,6 +45,7 @@ Everything comes from the environment or from an env file (`--env-file PATH`, de
 | `WAZUH_MODE` | no | `auto` (default), `indexer` or `api`. `--mode` wins. Use `indexer` unless the manager API is also configured: `auto` and `api` need `WAZUH_API_*`. `init` and the in-app setup write `indexer` (or `api`), not `auto` |
 | `WAZUH_INDEXER_URL`, `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD` | indexer mode | Wazuh indexer, port 9200 (Wazuh 4.8 and later). The user is an indexer (OpenSearch security plugin) user, not a manager API user |
 | `WAZUH_INDEXER_INDEX` | no | Default `wazuh-states-vulnerabilities-*` |
+| `PBC_SEND_INVENTORY` | no | Wazuh indexer mode only. `auto` (default, also when unset or empty): send host inventory when PBC-GRC says it accepts it (`whoami` features); `true`: always send it; `false`: never read it. Anything else is a configuration error. See section 10d |
 | `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD` | api and auto mode | Wazuh manager API, port 55000 (4.7 and earlier; also used by `auto` to read the version) |
 | `WAZUH_CA_BUNDLE` | no | CA bundle file for the Wazuh certificates |
 | `ACTION1_BASE_URL` | `--source action1` | The full Action1 API root, for example `https://app.action1.com/api/3.0` (North America) or `https://app.eu.action1.com/api/3.0` (Europe) |
@@ -182,7 +183,7 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 ## 10. Dry run and sample
 
 * `--dry-run` builds and validates the payloads, prints one JSON document to stdout and sends nothing: `{"contract_sha256", "chunks": [{"sha256", "bytes", "hosts", "findings", "payload"}], "skipped_hosts", "dropped_rows"}`. The `sha256` is that of the real bytes that would be sent. The output goes through redaction.
-* `--sample` (requires `--dry-run`) uses the bundled synthetic Wazuh data (`samples/indexer_sample.json`, fake hostnames and public CVE ids) and needs no Wazuh or PBC-GRC configuration. It can never reach a tenant.
+* `--sample` (requires `--dry-run`) uses the bundled synthetic Wazuh data (`samples/indexer_sample.json`, fake hostnames and public CVE ids, plus `samples/indexer_inventory_sample.json` for the host inventory unless `PBC_SEND_INVENTORY=false`) and needs no Wazuh or PBC-GRC configuration. It can never reach a tenant. With the inventory the chunk entries also carry `"software"` (items in the chunk).
 * `--print-contract-sha256` prints the contract hash and exits.
 * `--sample --source action1` and `--sample --source sentinelone` (require `--dry-run`) use the bundled synthetic data (`samples/action1_sample.json`, `samples/sentinelone_sample.json`: `*.example` hostnames, documentation addresses, public CVE ids).
 * `--sample --source xccdf` (requires `--dry-run`) uses the bundled synthetic XCCDF file (`samples/xccdf_sample.xml`, documentation addresses only). The dry-run document then has `"results"` (rule results in the chunk) next to `"findings"` (always 0).
@@ -238,6 +239,17 @@ python -m pbc_vm_exporter --source sentinelone --dry-run
 * The whole read finishes before anything is sent: any error is exit 3 and no partial host is exported. At most 10000 pages per listing; a 429 is retried once after `Retry-After` (capped at 60 s). Logs and errors carry counts only.
 
 First live run, confirm: the base path and the `ApiToken` header; the `/agents` fields (`uuid`, `computerName`, `osName`, `osRevision`, `lastIpToMgmt`, `networkInterfaces[].inet` and `.physical`, `isDecommissioned`); the risks path and that the licence returns rows; the row fields (`cveId`, the severity words including NONE, `endpointId` equal to the agent `id` or to the `uuid`, `applicationName`, `applicationVersion`, `detectionDate`, the CVSS field name and version, a published date); `pagination.nextCursor` and the maximum limit; the 401 body at expiry; whether `siteIds` filters the risks.
+
+## 10d. Host inventory from Wazuh (indexer mode)
+
+With Wazuh 4.14 or later the exporter also reads the inventory indices `wazuh-states-inventory-{hardware,system,packages,hotfixes,interfaces,networks}-*` and adds to each host: the address (`agent.host.ip`), the MAC of the interface that carries it (else the first interface that is up with a non-zero MAC), the OS platform and kernel, `hardware` (architecture, CPU name, cores, MHz, memory bytes, serial number) and `software` (installed packages plus Windows hotfixes as items of type `hotfix`). The vulnerability documents carry none of these.
+
+* The indexer user needs `read` on `wazuh-states-inventory-*` as well. A missing or empty index is simply no inventory. Any read error (HTTP 403, a timeout) logs one count-only warning and the vulnerabilities are still pushed (exit 0).
+* A host known only to the inventory is sent as an inventory-only host: no `findings` key, so it never takes part in closure. A host with more than 10000 software items is sent without a software list (never truncated; counted in a warning). A payload carries at most 200000 software items; hosts are packed under that budget and never split.
+* `PBC_SEND_INVENTORY=auto` asks PBC-GRC (`GET /api/v1/vm/whoami`, `features`) before reading: an older server is sent vulnerabilities only. `--dry-run` has no server to ask, so `auto` includes the inventory there. `true` against a server that does not accept inventory gets HTTP 400 naming the field, with a hint. The manager API (`api` mode) has no inventory reader: it is skipped with one info line.
+* `check` adds "PBC-GRC accepts inventory" (PASS, or NOTE for an older server) and, when inventory is wanted and the server advertises it (or `PBC_SEND_INVENTORY=true`), "Wazuh inventory indices" (the number of system documents; 0 is a NOTE, never a failure).
+* The log stays counts-only: no agent id, host name, package name or serial number.
+* The inventory contract is part of the vendored contract: a PBC-GRC older than this exporter reports a different contract hash, so `check` fails the "contract matches the server" step (exit 4) until the server is upgraded; pushes keep working.
 
 ## 11. Exit codes
 

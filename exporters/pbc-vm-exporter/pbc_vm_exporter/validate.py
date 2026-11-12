@@ -17,6 +17,7 @@ from typing import Any, Sequence
 CONTRACT_PATH = Path(__file__).resolve().parent / "contract" / "ingest.schema.json"
 MAX_TOTAL_FINDINGS = 50000
 MAX_TOTAL_CONFIG_RESULTS = 100000
+MAX_TOTAL_SOFTWARE = 200000
 
 # Annotations are ignored; everything else must be in SUPPORTED_KEYWORDS or assert_supported_keywords raises, so a
 # contract that gains a keyword (say minItems) fails the Python tests instead of being silently unchecked.
@@ -118,11 +119,21 @@ def _is_number(v: Any) -> bool:
         return False
 
 
+def _is_integer(v: Any) -> bool:
+    """An int (never a bool), or a finite float with no fraction (JSON has one number type: 4.0 is the integer 4)."""
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, int):
+        return True
+    return isinstance(v, float) and math.isfinite(v) and v.is_integer()
+
+
 _TYPE_CHECKS = {
     "object": lambda v: isinstance(v, dict),
     "array": lambda v: isinstance(v, list),
     "string": lambda v: isinstance(v, str),
     "number": _is_number,
+    "integer": _is_integer,
     "null": lambda v: v is None,
 }
 
@@ -225,13 +236,19 @@ def validate_payload(obj: Any, schema: dict | None = None) -> str | None:
         if agent in seen:
             return f"$.hosts[{j}].agent_id: duplicate agent_id (also at $.hosts[{seen[agent]}])"
         seen[agent] = j
-    # A host reports findings, configuration results or both (a configuration-only host has no findings key).
+    # A host reports findings, configuration results, inventory or a combination (an inventory-only host has no findings key).
     for j, host in enumerate(hosts):
-        if "findings" not in host and "configuration" not in host:
-            return f"$.hosts[{j}].findings: required (a host reports findings, configuration results or both)"
+        if not any(key in host for key in ("findings", "configuration", "hardware", "software")):
+            return (
+                f"$.hosts[{j}].findings: required "
+                "(a host reports findings, configuration results, inventory or a combination)"
+            )
     total_results = sum(len(scan["results"]) for h in hosts for scan in h.get("configuration", []))
     if total_results > MAX_TOTAL_CONFIG_RESULTS:
         return f"$.hosts: at most {MAX_TOTAL_CONFIG_RESULTS} configuration results in total"
+    total_software = sum(len(h.get("software", [])) for h in hosts)
+    if total_software > MAX_TOTAL_SOFTWARE:
+        return f"$.hosts: at most {MAX_TOTAL_SOFTWARE} software items in total"
     for j, host in enumerate(hosts):
         for k, scan in enumerate(host.get("configuration", [])):
             rule_ids: dict[str, int] = {}

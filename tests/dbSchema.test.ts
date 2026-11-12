@@ -566,6 +566,17 @@ assert(
   'SW-D2: a tenant table (tenant RLS), not a program table and not backfilled'
 );
 
+console.log('\n--- scanner host inventory (vm_host_inventory, vm_host_software; issue #229) ---');
+for (const t of ['vm_host_inventory', 'vm_host_software']) {
+  assert(
+    RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id') &&
+      !(RLS_PROGRAM_TABLES as readonly string[]).includes(t) &&
+      !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t),
+    `HI-D1: ${t} is a tenant table (tenant RLS), not a program table and not backfilled`
+  );
+  assert(buildRlsSql().includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && buildRlsSql().includes(rlsPolicyName(t)), `HI-D2: ${t} gets FORCE row security and its tenant policy`);
+}
+
 const initAt = dbSrc.indexOf('export async function initDb(');
 const verAt = dbSrc.indexOf('assertSupportedPostgresVersion(ver.rows', initAt);
 const roleAt = dbSrc.indexOf('assessDatabaseRole(', initAt);

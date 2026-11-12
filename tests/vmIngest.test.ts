@@ -712,7 +712,7 @@ async function run() {
   assert(who.status === 200, 'a valid token -> 200 on GET /vm/whoami', who.body);
   assert(who.body?.contract_sha256 === crypto.createHash('sha256').update(contractBytes).digest('hex'), 'contract_sha256 is the sha256 of the bytes of server/vm/ingest.schema.json', who.body);
   assert(who.body?.token?.name === 'whoami-probe' && who.body?.token?.prefix === whoamiToken.token.slice(0, 12) && typeof who.body?.token?.expires_at === 'string', 'the token name, display prefix and expiry are returned', who.body?.token);
-  assert(JSON.stringify(who.body?.scopes) === '["vm:ingest"]' && who.body?.limits?.max_bytes === vmIngestMaxBytes() && JSON.stringify(who.body?.features) === '["whoami"]', 'scopes, the ingest max bytes and the feature list are returned', who.body);
+  assert(JSON.stringify(who.body?.scopes) === '["vm:ingest"]' && who.body?.limits?.max_bytes === vmIngestMaxBytes() && JSON.stringify(who.body?.features) === '["whoami","inventory"]', 'scopes, the ingest max bytes and the feature list are returned', who.body);
   assert(!who.text.includes(whoamiToken.token) && !who.text.includes(sha256Hex(whoamiToken.token)) && !who.text.includes(A), 'the answer carries neither the token, its hash nor the tenant id', who.text);
   assert(Boolean((await listTokens(ownerA, A)).find((t) => t.id === whoamiToken.record.id)?.lastUsedAt), 'whoami counts as token use (lastUsedAt is set)');
   const whoRevoked = await whoamiRaw(revokedToken.token);

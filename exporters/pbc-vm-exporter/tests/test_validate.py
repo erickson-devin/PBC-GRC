@@ -263,7 +263,7 @@ def test_configuration_only_host_is_accepted():
 
 def test_host_with_neither_findings_nor_configuration():
     p = config_payload({"agent_id": "xccdf-a"})
-    assert validate_payload(p) == "$.hosts[0].findings: required (a host reports findings, configuration results or both)"
+    assert validate_payload(p) == "$.hosts[0].findings: required (a host reports findings, configuration results, inventory or a combination)"
 
 
 def test_mixed_host_is_accepted():

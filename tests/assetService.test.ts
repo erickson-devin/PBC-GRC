@@ -210,6 +210,10 @@ async function backendTests() {
   assert(legacyLedger.includes('TELEMETRY_INGESTED') && !legacyLedger.includes('10.1.1.77') && !legacyLedger.includes('AA:BB:CC:DD:EE:01') && !legacyLedger.includes('accretion-ee01'), 'the legacy tenant ledger holds no IP, MAC or default host name');
   await legacy.remove(l1.id);
   assert((await legacy.list()).every((a) => a.id !== l1.id), 'local remove');
+  const blankIp = (await legacy.list()).find((x) => x.hostName === 'L-2')!;
+  const beforeBlankScan = JSON.stringify(await legacy.list());
+  await legacy.recordScan('NO-SUCH-HOST', '', 100);
+  assert(blankIp.ipAddress === '' && JSON.stringify(await legacy.list()) === beforeBlankScan, 'C3 a scan result with no IP never matches an asset whose IP is blank');
   assert((await getAssetBackend('tenant-other', 'local-legacy').list()).length === 0, "another tenant's local inventory is separate");
 }
 

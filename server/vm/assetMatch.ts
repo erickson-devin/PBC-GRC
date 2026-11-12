@@ -1,6 +1,7 @@
 import type { AssetDiscoveryStatus } from '../../src/types/telemetry';
 import type { VmSourceKind } from '../../src/types/vm';
 import type { NormalizedHost } from './adapters/wazuh';
+import { osProfileFor } from '../../src/data/telemetry/osProfile';
 
 /**
  * Decides which asset each reported host is (docs/VULNERABILITY_MANAGEMENT.md, section 6): the agent's own id first, then the MAC
@@ -57,8 +58,6 @@ export function normalizeMac(mac: string): string {
   return m === '' || /^0+$/.test(m) ? '' : m;
 }
 
-const OS_PROFILE = /^[A-Za-z0-9 ._()/+-]{1,64}$/;
-
 export function planAssetMatches(
   hosts: NormalizedHost[],
   candidates: AgentAssetCandidate[],
@@ -110,7 +109,7 @@ export function planAssetMatches(
       hostName,
       ipAddress: h.ip,
       macAddress: h.mac,
-      osProfile: OS_PROFILE.test(h.osName) ? h.osName : 'custom',
+      osProfile: osProfileFor(h.osName, h.osVersion),
       notes: `Reported by ${kind} agent ${h.agentId} (${h.osName} ${h.osVersion}). Unconfirmed: classify its CMMC category.`,
       agentIds: { [key]: h.agentId },
       sourceOrigin: 'AGENT_REPORT',

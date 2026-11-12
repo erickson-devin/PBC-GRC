@@ -1,0 +1,105 @@
+{
+  "_comment": "Synthetic data only: fake hostnames, documentation addresses (192.0.2.0/24, 198.51.100.0/24), locally administered MACs, made-up serials and CPUs. One list of _source documents per Wazuh 4.14 inventory index (wazuh-states-inventory-<kind>-*). Quirks on purpose: agent 001 and 002 also have vulnerabilities in indexer_sample.json; agent 012 is the numeric id 12 there; agent 090 has inventory only (an inventory-only host); a duplicate package, a zero MAC on a down interface, a fractional CPU speed, a placeholder serial.",
+  "hardware": [
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "host": { "cpu": { "name": "Example Octa-Core Processor", "cores": 8, "speed": 3400 }, "memory": { "total": 17179869184, "free": 4294967296 }, "serial_number": "SAMPLE-SN-0001" }
+    },
+    {
+      "agent": { "id": "002", "name": "sample-db-01", "host": { "ip": "192.0.2.12" } },
+      "host": { "cpu": { "name": "Example Quad-Core Processor", "cores": 4, "speed": 2999.5 }, "memory": { "total": 8589934592 }, "serial_number": "To Be Filled By O.E.M." }
+    },
+    {
+      "agent": { "id": "090", "name": "sample-app-90", "host": { "ip": "198.51.100.90" } },
+      "host": { "cpu": { "name": "Example Dual-Core Processor", "cores": 2, "speed": 2400 }, "memory": { "total": 4294967296 }, "serial_number": "SAMPLE-SN-0090" }
+    }
+  ],
+  "system": [
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "host": { "architecture": "x86_64", "os": { "name": "Ubuntu", "version": "22.04.4 LTS", "platform": "ubuntu", "kernel": { "release": "5.15.0-102-generic" } } }
+    },
+    {
+      "agent": { "id": "002", "name": "sample-db-01", "host": { "ip": "192.0.2.12" } },
+      "host": { "architecture": "x86_64", "os": { "name": "Red Hat Enterprise Linux", "version": "9.3", "platform": "rhel", "kernel": { "release": "5.14.0-362.8.1.el9_3.x86_64" } } }
+    },
+    {
+      "agent": { "id": "012", "name": "sample-win-12", "host": { "ip": "192.0.2.112" } },
+      "host": { "architecture": "x86_64", "os": { "name": "Microsoft Windows Server 2019", "version": "10.0.17763", "platform": "windows", "kernel": { "release": "10.0.17763.5576" } } }
+    },
+    {
+      "agent": { "id": "090", "name": "sample-app-90", "host": { "ip": "198.51.100.90" } },
+      "host": { "architecture": "x86_64", "os": { "name": "Microsoft Windows 11 Pro", "version": "10.0.22631", "platform": "windows", "kernel": { "release": "10.0.22631.3447" } } }
+    }
+  ],
+  "packages": [
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "package": { "name": "openssl", "version": "3.0.2-0ubuntu1.12", "vendor": "Example Maintainers <maint@example.invalid>", "architecture": "amd64", "type": "deb", "installed": "2024-03-01T08:00:00.000Z" }
+    },
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "package": { "name": "openssl", "version": "3.0.2-0ubuntu1.12", "vendor": "Example Maintainers <maint@example.invalid>", "architecture": "amd64", "type": "deb", "installed": "2024-03-01T08:00:00.000Z" }
+    },
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "package": { "name": "nginx", "version": "1.18.0-6ubuntu14.4", "architecture": "amd64", "type": "deb" }
+    },
+    {
+      "agent": { "id": "002", "name": "sample-db-01", "host": { "ip": "192.0.2.12" } },
+      "package": { "name": "postgresql-server", "version": "13.14-1.el9", "vendor": "Example Linux Vendor", "architecture": "x86_64", "type": "rpm", "installed": "2024-02-10T10:30:00.000Z" }
+    },
+    {
+      "agent": { "id": "012", "name": "sample-win-12", "host": { "ip": "192.0.2.112" } },
+      "package": { "name": "Example Runtime", "version": "4.8.1", "vendor": "Example Software, Inc.", "architecture": "x86_64", "type": "win" }
+    },
+    {
+      "agent": { "id": "090", "name": "sample-app-90", "host": { "ip": "198.51.100.90" } },
+      "package": { "name": "Example Editor", "version": "2.5.0", "vendor": "Example Software, Inc.", "architecture": "x86_64", "type": "win", "installed": "2024-04-20T00:00:00.000Z" }
+    }
+  ],
+  "hotfixes": [
+    {
+      "agent": { "id": "090", "name": "sample-app-90", "host": { "ip": "198.51.100.90" } },
+      "package": { "hotfix": { "name": "KB0000001" } }
+    },
+    {
+      "agent": { "id": "090", "name": "sample-app-90", "host": { "ip": "198.51.100.90" } },
+      "package": { "hotfix": { "name": "KB0000002" } }
+    }
+  ],
+  "interfaces": [
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "host": { "mac": "00:00:00:00:00:00" },
+      "interface": { "name": "lo", "state": "down" }
+    },
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "host": { "mac": "02:00:00:00:00:11" },
+      "interface": { "name": "eth0", "state": "up" }
+    },
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "host": { "mac": "02:00:00:00:00:99" },
+      "interface": { "name": "eth1", "state": "up" }
+    },
+    {
+      "agent": { "id": "002", "name": "sample-db-01", "host": { "ip": "192.0.2.12" } },
+      "host": { "mac": "02:00:00:00:00:12" },
+      "interface": { "name": "ens3", "state": "up" }
+    }
+  ],
+  "networks": [
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "interface": { "name": "eth0" },
+      "network": { "ip": "192.0.2.11", "type": "IPv4" }
+    },
+    {
+      "agent": { "id": "001", "name": "sample-web-01", "host": { "ip": "192.0.2.11" } },
+      "interface": { "name": "eth1" },
+      "network": { "ip": "203.0.113.5", "type": "IPv4" }
+    }
+  ]
+}

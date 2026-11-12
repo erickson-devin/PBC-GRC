@@ -181,7 +181,7 @@ export function syncAssetScanResult(
 ): void {
   const currentAssets = getEnclaveAssets(tenantId);
   const matchIdx = currentAssets.findIndex(
-    a => a.hostName.toLowerCase() === hostName.toLowerCase() || a.ipAddress === ipAddress
+    a => a.hostName.toLowerCase() === hostName.toLowerCase() || (ipAddress !== '' && a.ipAddress === ipAddress)
   );
 
   if (matchIdx >= 0) {

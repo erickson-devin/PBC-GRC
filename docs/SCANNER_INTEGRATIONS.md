@@ -121,6 +121,9 @@ WAZUH_INDEXER_USER=pbc-readonly
 WAZUH_INDEXER_PASSWORD=...
 WAZUH_CA_BUNDLE=/etc/wazuh-indexer/certs/root-ca.pem
 
+# Host inventory (hardware, software, MAC) from the indexer, Wazuh 4.14+: auto (default), true or false
+# PBC_SEND_INVENTORY=auto
+
 # Wazuh 4.7 and earlier instead (manager API)
 # WAZUH_MODE=api
 # WAZUH_API_URL=https://wazuh-manager.example.mil:55000
@@ -131,6 +134,11 @@ WAZUH_CA_BUNDLE=/etc/wazuh-indexer/certs/root-ca.pem
 Rules that matter:
 * `PBC_SOURCE_LABEL` names the **source** in PBC-GRC. Keep it stable forever: a new label is a new source, and the old
   source's findings would be treated as a separate scanner. One label per Wazuh deployment.
+* `PBC_SEND_INVENTORY` controls the host inventory (installed software, hardware, serial number, MAC and address) read
+  from the indexer indices `wazuh-states-inventory-*` (Wazuh 4.14 and later; give the indexer user `read` on them too).
+  `auto` (the default) sends it when PBC-GRC advertises support, `true` always sends it, `false` never reads it. If the
+  inventory cannot be read the vulnerabilities are still pushed, with a count-only warning. Hosts known only to the
+  inventory become unconfirmed assets in PBC-GRC. Details: the exporter README, section 10d.
 * `PBC_URL` is the exact HTTPS address of the proxy; the exporter follows no redirects. `PBC_CA_BUNDLE` only if the
   certificate is from a private CA.
 * There is no command-line option for a token or password, by design. The env file (mode 0600, owned by the service

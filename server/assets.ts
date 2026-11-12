@@ -5,6 +5,7 @@ import { CMMC_ASSET_CATEGORIES, isCmmcAssetCategory, isMachineAssetOrigin } from
 import { FipsFields, NO_FIPS, isFipsStandard, isFipsStatus, normalizeFips, resolveFips, FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import type { AgentAssetCandidate, AgentAssetDraft } from './vm/storeTypes';
 import { migrateLegacyAgentIds } from './vm/assetMatch';
+import { OS_PROFILE_KEYS } from '../src/data/telemetry/osProfile';
 import type {
   AccretionDiscoveryItem,
   AccretionMetadata,
@@ -785,5 +786,89 @@ export async function migrateLegacyAgentKeys(tenantId: string, legacyKey: string
        WHERE tenant_id = $1 AND agent_ids ? $2::text`,
       [tenantId, legacyKey, newKey],
     );
+  });
+}
+
+/** What a report may fill on an asset: only blank fields, only on an asset the scanner created. See planBlankFills (server/vm/inventory.ts). */
+export interface AgentBlankFills {
+  ipAddress?: string;
+  macAddress?: string;
+  serialNumber?: string;
+  osProfile?: string;
+}
+
+/** The fields planBlankFills looks at, read inside the worker's transaction (the asset may have been created moments ago). */
+export async function readAgentFillState(
+  tenantId: string,
+  assetId: string,
+  client?: pg.PoolClient,
+): Promise<{ sourceOrigin: string; ipAddress: string; macAddress: string; serialNumber: string; osProfile: string } | null> {
+  if (isMemory()) {
+    const m = memoryAssets.get(assetId);
+    return m && m.tenantId === tenantId
+      ? { sourceOrigin: m.sourceOrigin, ipAddress: m.ipAddress ?? '', macAddress: m.macAddress ?? '', serialNumber: m.serialNumber ?? '', osProfile: m.osProfile }
+      : null;
+  }
+  return withTenantClient(tenantId, client, async (c) => {
+    const res = await c.query('SELECT source_origin, ip_address, mac_address, serial_number, os_profile FROM enclave_assets WHERE id = $1 AND tenant_id = $2', [assetId, tenantId]);
+    const r = res.rows[0];
+    return r
+      ? { sourceOrigin: r.source_origin, ipAddress: r.ip_address ?? '', macAddress: r.mac_address ?? '', serialNumber: r.serial_number ?? '', osProfile: r.os_profile ?? 'custom' }
+      : null;
+  });
+}
+
+/** Operating system profiles a report may replace: none of the form's own choices ('custom' is a person's choice too). */
+const PROTECTED_OS_PROFILES = [...OS_PROFILE_KEYS, 'custom'];
+
+/**
+ * Fills blank ip / mac / serial number (and repairs a raw OS name stored as the profile) of an asset created by a scanner report. The
+ * guards are in the statement itself, so a value a person entered is never overwritten, even if the caller's snapshot was stale: a field
+ * changes only when it is blank and the asset's origin is AGENT_REPORT. updated_by / updated_at move only when something changed.
+ * Returns whether the asset changed.
+ */
+export async function fillBlankAgentFields(
+  tenantId: string,
+  assetId: string,
+  fills: AgentBlankFills,
+  actor: string,
+  client?: pg.PoolClient,
+): Promise<boolean> {
+  const ip = fills.ipAddress ?? null;
+  const mac = fills.macAddress ?? null;
+  const serial = fills.serialNumber ?? null;
+  const os = fills.osProfile ?? null;
+  if (ip === null && mac === null && serial === null && os === null) return false;
+  if (isMemory()) {
+    const m = memoryAssets.get(assetId);
+    if (!m || m.tenantId !== tenantId || m.sourceOrigin !== 'AGENT_REPORT') return false;
+    let changed = false;
+    if (ip !== null && (m.ipAddress ?? '') === '') { m.ipAddress = ip; changed = true; }
+    if (mac !== null && (m.macAddress ?? '') === '') { m.macAddress = mac; changed = true; }
+    if (serial !== null && (m.serialNumber ?? '') === '') { m.serialNumber = serial; changed = true; }
+    if (os !== null && !PROTECTED_OS_PROFILES.includes(m.osProfile)) { m.osProfile = os; changed = true; }
+    if (changed) {
+      m.updatedBy = actor;
+      m.updatedAt = new Date().toISOString();
+    }
+    return changed;
+  }
+  return withTenantClient(tenantId, client, async (c) => {
+    const res = await c.query(
+      `UPDATE enclave_assets SET
+         ip_address = CASE WHEN COALESCE(ip_address, $9::text) = $9::text AND $3::text IS NOT NULL THEN $3::text ELSE ip_address END,
+         mac_address = CASE WHEN COALESCE(mac_address, $9::text) = $9::text AND $4::text IS NOT NULL THEN $4::text ELSE mac_address END,
+         serial_number = CASE WHEN COALESCE(serial_number, $9::text) = $9::text AND $5::text IS NOT NULL THEN $5::text ELSE serial_number END,
+         os_profile = CASE WHEN $6::text IS NOT NULL AND NOT (os_profile = ANY($7::text[])) THEN $6::text ELSE os_profile END,
+         updated_by = $8,
+         updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND source_origin = $10::text
+         AND ((COALESCE(ip_address, $9::text) = $9::text AND $3::text IS NOT NULL)
+           OR (COALESCE(mac_address, $9::text) = $9::text AND $4::text IS NOT NULL)
+           OR (COALESCE(serial_number, $9::text) = $9::text AND $5::text IS NOT NULL)
+           OR ($6::text IS NOT NULL AND NOT (os_profile = ANY($7::text[]))))`,
+      [assetId, tenantId, ip, mac, serial, os, PROTECTED_OS_PROFILES, actor, '', 'AGENT_REPORT'],
+    );
+    return (res.rowCount ?? 0) > 0;
   });
 }

@@ -23,6 +23,8 @@ SEVERITY_MAP = {"critical": "CRITICAL", "high": "HIGH", "medium": "MEDIUM", "low
 
 MAX_FINDINGS_PER_HOST = 5000
 MAX_CONFIG_RESULTS_PER_PAYLOAD = 100000
+MAX_SOFTWARE_PER_HOST = 10000
+MAX_SOFTWARE_PER_PAYLOAD = 200000
 ENVELOPE_BYTES = 1024  # allowance for the payload outside the hosts array
 
 _VULN_ID = re.compile(r"(CVE-[0-9]{4}-[0-9]{4,7}|[A-Za-z0-9][A-Za-z0-9._:-]{0,63})")
@@ -33,6 +35,7 @@ _MAC = re.compile(r"[0-9A-Fa-f:.-]{0,32}")
 _SPACE_DATETIME = re.compile(r"\A([0-9]{4}-[0-9]{2}-[0-9]{2}) ([0-9]{2}:[0-9]{2}:[0-9]{2})\Z")
 _DATE_ONLY = re.compile(r"\A([0-9]{4}-[0-9]{2}-[0-9]{2})\Z")
 _NUMERIC = re.compile(r"[0-9]+(\.[0-9]+)?")
+_DIGITS = re.compile(r"[0-9]{1,20}")
 
 
 @dataclass
@@ -40,6 +43,7 @@ class AdapterStats:
     dropped_rows: int = 0
     dropped_hosts: int = 0
     skipped_hosts: list[str] = field(default_factory=list)
+    software_overflow_hosts: int = 0
 
 
 def map_severity(v: Any) -> str:
@@ -178,6 +182,66 @@ def row_to_finding(row: dict) -> dict | None:
     return finding
 
 
+def _int_field(v: Any, high: int) -> int | None:
+    """A whole number 0..high from an int, a finite float or a digit string; anything else is None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, str) and _DIGITS.fullmatch(v.strip()):
+        v = int(v.strip())
+    elif isinstance(v, float):
+        try:
+            if not math.isfinite(v):
+                return None
+        except OverflowError:
+            return None
+        v = int(v)  # a fraction (a CPU speed of 3.4 MHz) is cut, not rounded: the contract wants an integer
+    if not isinstance(v, int):
+        return None
+    return v if 0 <= v <= high else None
+
+
+def build_hardware(raw: Any) -> dict | None:
+    """The contract's hardware object from the raw inventory hardware, or None when nothing usable is left."""
+    if not isinstance(raw, dict):
+        return None
+    hardware: dict[str, Any] = {}
+    for key, limit in (("architecture", 32), ("cpu_name", 255)):
+        text = clean_line(raw.get(key), limit)
+        if text is not None:
+            hardware[key] = text
+    for key, high in (("cpu_cores", 4096), ("cpu_mhz", 1000000), ("memory_bytes", 9007199254740991)):
+        number = _int_field(raw.get(key), high)
+        if number is not None:
+            hardware[key] = number
+    serial = clean_line(raw.get("serial_number"), 128)
+    if serial is not None:
+        hardware["serial_number"] = serial
+    return hardware or None
+
+
+def build_software(raw_items: Any) -> list[dict]:
+    """The contract's software items: cleaned, de-duplicated on name, version and architecture (first wins), sorted."""
+    items: dict[tuple[str, str, str], dict] = {}
+    for raw in raw_items if isinstance(raw_items, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        name = clean_line(raw.get("name"), 255)
+        if name is None:
+            continue
+        item: dict[str, Any] = {"name": name}
+        for key, limit in (("version", 128), ("vendor", 255), ("architecture", 32), ("type", 32)):
+            text = clean_line(raw.get(key), limit)
+            if text is not None:
+                item[key] = text
+        installed = normalize_datetime(raw.get("installed"))
+        if installed is not None:
+            item["installed_at"] = installed
+        identity = (name, item.get("version", ""), item.get("architecture", ""))
+        if identity not in items:
+            items[identity] = item
+    return [items[k] for k in sorted(items)]
+
+
 def _sort_key(f: dict) -> tuple[str, str, str]:
     package = f.get("package") or {}
     return f["vuln_id"], package.get("name", ""), package.get("version", "")
@@ -195,9 +259,11 @@ def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list
             continue
         entry = merged.get(agent_id)
         if entry is None:
-            entry = {"raw": raw, "rows": []}
+            entry = {"raw": raw, "rows": [], "inventory": raw.get("inventory"), "inventory_only": bool(raw.get("inventory_only"))}
             merged[agent_id] = entry
         else:
+            if entry["inventory"] is None:
+                entry["inventory"] = raw.get("inventory")
             first = clean_line(entry["raw"].get("hostname"), 255)
             second = clean_line(raw.get("hostname"), 255)
             if first and second and first != second:
@@ -206,11 +272,15 @@ def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list
                 else:
                     log.warning("an agent appears with different hostnames; keeping the first")
         entry["rows"].extend(raw.get("rows") or [])
+        if not raw.get("inventory_only"):
+            entry["inventory_only"] = False
 
     hosts: list[dict] = []
     for agent_id in sorted(merged):
         entry = merged[agent_id]
         raw = entry["raw"]
+        inventory = entry["inventory"] if isinstance(entry["inventory"], dict) else {}
+        inventory_only = entry["inventory_only"]
         findings: list[dict] = []
         seen: set[str] = set()
         for row in entry["rows"]:
@@ -224,6 +294,17 @@ def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list
             seen.add(key)
             findings.append(finding)
         findings.sort(key=_sort_key)
+        hardware = build_hardware(inventory.get("hardware"))
+        software: list[dict] | None = None
+        if inventory.get("software_overflow") is True:
+            stats.software_overflow_hosts += 1  # never truncated: the host goes without a software list
+        elif inventory.get("software") is not None:
+            software = build_software(inventory.get("software"))
+            if len(software) > MAX_SOFTWARE_PER_HOST:
+                stats.software_overflow_hosts += 1
+                software = None
+        if inventory_only and hardware is None and software is None:
+            continue  # reported by inventory alone and nothing sendable: not a host the contract accepts
         if len(findings) > MAX_FINDINGS_PER_HOST:
             if name_hosts:
                 log.warning("skipping agent %s: %d findings exceed the %d per host limit", agent_id, len(findings),
@@ -237,22 +318,30 @@ def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list
         hostname = clean_line(raw.get("hostname"), 255)
         if hostname is not None:
             host["hostname"] = hostname
-        ip = raw.get("ip")
-        if isinstance(ip, str) and ip.strip() and _IP.fullmatch(ip.strip()):
-            host["ip"] = ip.strip()
-        mac = raw.get("mac")
-        if isinstance(mac, str) and mac.strip() and _MAC.fullmatch(mac.strip()):
-            host["mac"] = mac.strip()
+        # Inventory fills what the vulnerability documents did not carry (they have no address or MAC).
+        for key, pattern in (("ip", _IP), ("mac", _MAC)):
+            for value in (raw.get(key), inventory.get(key)):
+                if isinstance(value, str) and value.strip() and pattern.fullmatch(value.strip()):
+                    host[key] = value.strip()
+                    break
         os_info: dict[str, str] = {}
-        os_name = clean_line(raw.get("os_name"), 128)
-        if os_name is not None:
-            os_info["name"] = os_name
-        os_version = clean_line(raw.get("os_version"), 64)
-        if os_version is not None:
-            os_info["version"] = os_version
+        for key, limit, source in (
+            ("name", 128, "os_name"), ("version", 64, "os_version"), ("platform", 32, "os_platform"),
+            ("kernel", 128, "os_kernel"),
+        ):
+            text = clean_line(raw.get(source), limit)
+            if text is None:
+                text = clean_line(inventory.get(source), limit)
+            if text is not None:
+                os_info[key] = text
         if os_info:
             host["os"] = os_info
-        host["findings"] = findings
+        if not inventory_only:
+            host["findings"] = findings
+        if hardware is not None:
+            host["hardware"] = hardware
+        if software is not None:
+            host["software"] = software
         hosts.append(host)
     return hosts, stats
 
@@ -262,18 +351,22 @@ def encode_payload(p: dict) -> bytes:
 
 
 def chunk_hosts(
-    hosts: list[dict], *, max_hosts: int, max_findings: int, max_bytes: int, name_hosts: bool = True
+    hosts: list[dict], *, max_hosts: int, max_findings: int, max_bytes: int, name_hosts: bool = True,
+    max_software: int = MAX_SOFTWARE_PER_PAYLOAD,
 ) -> tuple[list[list[dict]], list[str]]:
-    """Greedy packing by hosts, findings and bytes. A host that does not fit an empty chunk is skipped, never cut."""
+    """Greedy packing by hosts, findings, software items and bytes. A host that does not fit an empty chunk is
+    skipped, never cut."""
     chunks: list[list[dict]] = []
     skipped: list[str] = []
     current: list[dict] = []
     cur_findings = 0
+    cur_software = 0
     cur_bytes = ENVELOPE_BYTES
     for host in hosts:
         n = len(host.get("findings", []))
+        sw = len(host.get("software", []))
         size = len(encode_payload(host)) + 1
-        if n > max_findings or ENVELOPE_BYTES + size > max_bytes:
+        if n > max_findings or sw > max_software or ENVELOPE_BYTES + size > max_bytes:
             if name_hosts:
                 log.warning("skipping agent %s: too large to send whole (%d findings, %d bytes)", host["agent_id"], n, size)
             else:
@@ -281,12 +374,14 @@ def chunk_hosts(
             skipped.append(host["agent_id"])
             continue
         if current and (
-            len(current) >= max_hosts or cur_findings + n > max_findings or cur_bytes + size > max_bytes
+            len(current) >= max_hosts or cur_findings + n > max_findings or cur_software + sw > max_software
+            or cur_bytes + size > max_bytes
         ):
             chunks.append(current)
-            current, cur_findings, cur_bytes = [], 0, ENVELOPE_BYTES
+            current, cur_findings, cur_software, cur_bytes = [], 0, 0, ENVELOPE_BYTES
         current.append(host)
         cur_findings += n
+        cur_software += sw
         cur_bytes += size
     if current:
         chunks.append(current)
@@ -356,10 +451,12 @@ def build_payloads(
     max_findings: int = 50000,
     max_bytes: int = 33554432,
     name_hosts: bool = True,
+    max_software: int = MAX_SOFTWARE_PER_PAYLOAD,
 ) -> tuple[list[dict], AdapterStats]:
     hosts, stats = build_hosts(raw_hosts, name_hosts=name_hosts)
     chunks, skipped = chunk_hosts(
-        hosts, max_hosts=max_hosts, max_findings=max_findings, max_bytes=max_bytes, name_hosts=name_hosts
+        hosts, max_hosts=max_hosts, max_findings=max_findings, max_bytes=max_bytes, name_hosts=name_hosts,
+        max_software=max_software,
     )
     stats.skipped_hosts.extend(skipped)
     if not chunks:

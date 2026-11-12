@@ -1,0 +1,47 @@
+[
+  {
+    "agent": {
+      "id": "001",
+      "name": "inv-web-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.21"
+      }
+    },
+    "host": {
+      "cpu": {
+        "name": "Fixture Octa-Core",
+        "cores": 8,
+        "speed": 3400
+      },
+      "memory": {
+        "free": 1000,
+        "total": 17179869184,
+        "used": 2000,
+        "usage": 0.5
+      },
+      "serial_number": "FIX-SN-0001"
+    }
+  },
+  {
+    "agent": {
+      "id": "002",
+      "name": "inv-db-01",
+      "version": "v4.14.0",
+      "host": {
+        "ip": "192.0.2.22"
+      }
+    },
+    "host": {
+      "cpu": {
+        "name": "Fixture Quad-Core",
+        "cores": 4,
+        "speed": 2400
+      },
+      "memory": {
+        "total": 8589934592
+      },
+      "serial_number": "To Be Filled By O.E.M."
+    }
+  }
+]
