@@ -53,6 +53,7 @@ import {
   toTenantInvitation,
 } from '../data/teamSync';
 import { findControlDefinition, getFrameworkControls } from '../data/frameworks';
+import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
 import { tabOwnsStoredSession } from '../services/tabSession';
 import { isTabLocked, waitForUnlock } from '../services/idleLock';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
@@ -822,7 +823,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     // In live mode the server is the source of truth for control answers, so carry over everything the user filled in
     // (otherwise the new tenant's defaults would replace it on the next sync).
-    const legacyControls = Object.values(StorageService.loadAssessment(target).controls).filter(
+    // Answers given under the earlier CMMC objective wording are re-flagged before anything is uploaded (a legacy Met is not sent as Met)
+    const legacyState = migrateCachedObjectives(StorageService.loadAssessment(target), target.primaryFramework ?? 'CMMC_L1').state;
+    const legacyControls = Object.values(legacyState.controls).filter(
       c => c.status !== 'NOT_STARTED' || (c.implementationNotes || '').trim() !== ''
     );
     const pushed = await Promise.allSettled(
@@ -837,8 +840,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
     const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
     const failedControls = legacyControls.filter((_, i) => pushed[i].status === 'rejected');
-
-    const legacyState = StorageService.loadAssessment(target);
 
     // Evidence files kept in this browser are uploaded to the new tenant (default program), one at a time. A file is removed
     // from the browser only once the server is proven to hold the same bytes; one that fails stays here and is listed in the vault.
@@ -1725,7 +1726,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // Server-backed: the server's narratives decide what is empty; without them loaded (or without write access) nothing is touched
     if (!canEdit || !liveObjectives || liveScopeKey !== scope) return;
     const controlIds = getFrameworkControls(activeFramework, activeBaselineTier, activeOverlayFilters).map(c => c.id);
-    const items = stackCascadeFill(controlIds, profile, id => liveObjectives[id]?.narrative ?? '');
+    const items = stackCascadeFill(controlIds, profile, id => liveObjectives[id]?.narrative ?? '', activeFramework);
     if (items.length === 0) return;
     updateLiveObjectivesBulk(items).catch((e: unknown) => {
       console.warn('[Stack cascade] Could not save the generated objective narratives:', errorMessage(e));

@@ -20,6 +20,7 @@ import {
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks';
+import { withGuideTitle } from '../../data/cmmcGuide/guide';
 import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { evidenceCoverage } from '../../data/evidenceCoverage';
@@ -476,7 +477,7 @@ export const EvidenceVaultView: React.FC = () => {
                               {ctrl.id}
                             </span>
                             <span className="truncate max-w-[150px] text-xs text-slate-400">
-                              {ctrl.title}
+                              {withGuideTitle(ctrl).title}
                             </span>
                           </button>
                         ) : (

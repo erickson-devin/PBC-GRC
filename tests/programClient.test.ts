@@ -652,7 +652,7 @@ async function main() {
   assert(/loadAssessment\(currentTenant, activeProgram\?\.framework \?\? 'CMMC_L1', cacheSegment\)/.test(assessCtx) && /\[currentTenant\.id, programScope\]/.test(assessCtx), 'T6c the cache is reloaded from the program\'s own key when the scope changes');
   const auditCalls = (assessCtx.match(/recordAuditEvent\(\{/g) ?? []).length;
   const auditMeta = (assessCtx.match(/recordAuditEvent\(\{\n\s+tenantId: currentTenant\.id,\n\s+metadata: auditMetadata,/g) ?? []).length;
-  assert(auditCalls === 10 && auditMeta === auditCalls, 'T6d every recordAuditEvent in AssessmentContext carries metadata.programId', { auditCalls, auditMeta });
+  assert(auditCalls === 11 && auditMeta === auditCalls, 'T6d every recordAuditEvent in AssessmentContext carries metadata.programId', { auditCalls, auditMeta });
   // Evidence delete (#88) and the upload ledger entry (#87), read from the source
   const removeBody = assessCtx.slice(assessCtx.indexOf('const removeEvidence = useCallback'), assessCtx.indexOf('const resetAssessment = useCallback'));
   const iCatchReturn = removeBody.indexOf('return false;', removeBody.indexOf('catch (err)'));

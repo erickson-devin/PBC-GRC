@@ -48,7 +48,9 @@ import { SspStatementEditor, hasStatementItems } from './SspStatementEditor';
 import { ImportAnalysisPanel } from './ImportAnalysisPanel';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
-import { NO_STACK_PROFILE_RECORDED } from '../../data/reports/documentDefaults';
+import { NO_OBJECTIVE_TEMPLATE_RECORDED, NO_STACK_PROFILE_RECORDED } from '../../data/reports/documentDefaults';
+import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
+import { cmmcCascadeSource, getControlObjectives } from '../../data/cmmcGuide/objectives';
 import { stackValueLabel } from '../../data/stackDraftView';
 import { useFipsModules } from '../../hooks/useFipsModules';
 import { NIST_800_171A_REGISTRY } from '../../data/frameworks/assessmentObjectives';
@@ -119,8 +121,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const activeId = propControlId !== undefined ? propControlId : selectedControlId;
 
   const controlIndex = activeId ? frameworkControls.findIndex((c) => c.id === activeId) : -1;
+  const fallbackDef = activeId && controlIndex < 0 ? findControlDefinition(activeId) : undefined;
   const control = activeId
-    ? (controlIndex >= 0 ? frameworkControls[controlIndex] : findControlDefinition(activeId))
+    ? (controlIndex >= 0 ? frameworkControls[controlIndex] : fallbackDef && withGuideTitle(fallbackDef))
     : null;
 
   const getFamilyPrefix = (id?: string, domain?: string): string => {
@@ -191,10 +194,33 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const compiledFamilyControls = React.useMemo(() => {
     if (!isPolicyControl || !familyPrefix) return [];
     const norm = familyPrefix.split('-')[0].trim().toUpperCase();
+    const byNumber = (a: { controlNumber: string }, b: { controlNumber: string }) =>
+      a.controlNumber.localeCompare(b.controlNumber, undefined, { numeric: true, sensitivity: 'base' });
+    if (activeFramework === 'CMMC_L1' || activeFramework === 'CMMC_L2') {
+      // A CMMC program lists the guide's requirements and objectives (not the 800-171A registry's): each objective is told from the
+      // template it carried over from the earlier catalog, or says it has none
+      return frameworkControls
+        .map((c) => ({ c, number: cmmcNumberOf(c.id) }))
+        .filter(({ c, number }) => number && ((c.domain || '').toUpperCase() === norm || c.id.toUpperCase().startsWith(`${norm}.`)))
+        .map(({ c, number }) => ({
+          controlNumber: number as string,
+          title: withGuideTitle(c).title,
+          objectives: getControlObjectives(c.id, c.title, undefined, undefined, activeFramework).map((o) => {
+            const src = cmmcCascadeSource(c.id, o.letter, activeFramework);
+            return { letter: o.letter, text: o.text, templateKey: src?.key, templateLetter: src?.letter };
+          }),
+        }))
+        .sort(byNumber);
+    }
     return Object.values(NIST_800_171A_REGISTRY)
       .filter((reg) => (reg.family || '').toUpperCase() === norm)
-      .sort((a, b) => a.controlNumber.localeCompare(b.controlNumber, undefined, { numeric: true, sensitivity: 'base' }));
-  }, [isPolicyControl, familyPrefix]);
+      .map((reg) => ({
+        controlNumber: reg.controlNumber,
+        title: reg.title,
+        objectives: reg.objectives.map((o) => ({ letter: o.letter, text: o.text, templateKey: reg.controlNumber, templateLetter: o.letter })),
+      }))
+      .sort(byNumber);
+  }, [isPolicyControl, familyPrefix, frameworkControls, activeFramework]);
 
   // CMVP certificates recorded on the Security Protection Assets: cited by the 3.13.11 policy text
   const cryptoModules = useFipsModules();
@@ -1218,7 +1244,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                             {ctrl.objectives.map((obj) => {
                               // No stack recorded: say so instead of inventing one
                               const narrative = stackTenant.stackProfile
-                                ? getCascadedObjectiveNarrative(ctrl.controlNumber, obj.letter, stackTenant.stackProfile, cryptoModules)
+                                ? (obj.templateKey && obj.templateLetter
+                                  ? getCascadedObjectiveNarrative(obj.templateKey, obj.templateLetter, stackTenant.stackProfile, cryptoModules)
+                                  : NO_OBJECTIVE_TEMPLATE_RECORDED)
                                 : NO_STACK_PROFILE_RECORDED;
                               return (
                                 <div key={obj.letter} className="text-xs bg-slate-950/70 p-3 rounded-lg border border-slate-800/60 space-y-1.5">

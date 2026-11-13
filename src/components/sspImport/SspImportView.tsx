@@ -16,6 +16,7 @@ import { aiErrorForUser, aiNoticeCopy } from '../../data/aiAvailabilityView';
 import { isCrossReferenceOnly } from '../../utils/sspImportHints';
 import { ApiClient } from '../../services/apiClient';
 import { getFrameworkControls } from '../../data/frameworks';
+import { withGuideTitle } from '../../data/cmmcGuide/guide';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { canRoleReviewSspImports } from '../../utils/roles';
 import { errorMessage } from '../../utils/errors';
@@ -124,7 +125,7 @@ const FILTERS: Array<{ id: Filter; label: string }> = [
 
 const CONTROL_TITLES: Map<string, string> = (() => {
   const m = new Map<string, string>();
-  for (const fw of ['CMMC_L2', 'CMMC_L1', 'NIST_800_53_REV5'] as const) for (const c of getFrameworkControls(fw)) m.set(c.id, c.title);
+  for (const fw of ['CMMC_L2', 'CMMC_L1', 'NIST_800_53_REV5'] as const) for (const c of getFrameworkControls(fw)) m.set(c.id, withGuideTitle(c).title);
   return m;
 })();
 

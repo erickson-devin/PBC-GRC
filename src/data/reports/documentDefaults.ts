@@ -21,6 +21,8 @@ export const SOC2_TESTS_BY_SERVICE_AUDITOR = 'Statuses are self-assessed. Tests 
 export const NO_SUBSERVICE_RELIANCE_RECORDED = 'No reliance on subservice organizations is recorded. The service organization completes this section.';
 /** #200: what a policy document states when the enclave stack survey has not been completed. */
 export const NO_STACK_PROFILE_RECORDED = 'Not recorded: complete the enclave stack survey to generate an implementation statement.';
+/** What a policy document states for a CMMC objective that has no hand-written implementation template (the guide's text has no carried one). */
+export const NO_OBJECTIVE_TEMPLATE_RECORDED = 'Not recorded: no implementation template exists for this objective; write the statement in the objective checklist.';
 export const NO_FAMILY_IMPLEMENTATION_RECORDED = 'Not recorded: no implementation statement is recorded for this control family.';
 /** #197: an attestation is an unsigned template until the named person signs and dates it. */
 export const UNSIGNED_ATTESTATION_NOTE = 'Unsigned. This statement takes effect only when the named person signs and dates it.';

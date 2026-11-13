@@ -17,9 +17,11 @@ import {
   getEquivalentControlIds,
   FRAMEWORK_REGISTRY,
   findControlDefinition,
-  getAssessmentObjectivesForControl,
   calculateControlRollup,
 } from '../data/frameworks';
+import { getControlObjectives } from '../data/cmmcGuide/objectives';
+import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
+import { withGuideTitle } from '../data/cmmcGuide/guide';
 import { StorageService, createDefaultSspMetadata, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { useEvidenceBlobScrub } from '../hooks/useEvidenceBlobScrub';
@@ -232,14 +234,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return programFrameworkControls(
         { framework: activeFramework, baseline: activeProgram.baseline ?? null, privacyBaseline: activeProgram.privacyBaseline },
         activeOverlayFilters
-      );
+      ).map(withGuideTitle);
     }
     const baseline = isNist80053 ? ciaTriad : activeBaselineTier;
     return getFrameworkControls(
       activeFramework,
       baseline,
       activeOverlayFilters
-    );
+    ).map(withGuideTitle);
   }, [activeFramework, activeBaselineTier, ciaTriad, activeOverlayFilters, activeProgram]);
 
   // Load tenant-isolated assessment state
@@ -291,7 +293,25 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     } else {
       scopeState = StorageService.loadAssessment(currentTenant, activeProgram?.framework ?? 'CMMC_L1', cacheSegment);
     }
-    setState({ ...scopeState, programId });
+    // Answers given under the earlier wording of a CMMC objective are re-flagged (see migrateCachedObjectives); nothing is deleted
+    const migrated = migrateCachedObjectives(scopeState, framework);
+    if (!currentTenant.serverBacked) {
+      // A browser-only tenant has no server history: the ledger records each changed control (ids and statuses only, never a narrative)
+      for (const change of migrated.changedControls) {
+        recordAuditEvent({
+          tenantId: currentTenant.id,
+          metadata: auditMetadata,
+          actorId: currentUser.id,
+          actorEmail: currentUser.email,
+          actorRole: currentUser.roles[currentTenant.id] || 'Operator',
+          actionType: 'CONTROL_STATUS_UPDATED',
+          targetEntity: change.id,
+          previousState: change.from,
+          newState: change.to,
+        }).catch(() => {});
+      }
+    }
+    setState({ ...migrated.state, programId });
     setSelectedControlId(null);
     setSelectedDomainFilter('ALL');
     setSelectedStatusFilter('ALL');
@@ -778,13 +798,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const getObjectivesForControl = useCallback((controlId: string): AssessmentObjective[] => {
     const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-    return getAssessmentObjectivesForControl(
+    return getControlObjectives(
       controlId,
       ctrl?.title,
       ctrl?.assessmentObjectives,
-      state.objectives
+      state.objectives,
+      activeFramework
     );
-  }, [frameworkControls, state.objectives, nistObjectivesReady]);
+  }, [frameworkControls, state.objectives, nistObjectivesReady, activeFramework]);
 
   const recalculateControlStatusFromObjectives = useCallback((controlId: string): ControlStatus => {
     const objectives = getObjectivesForControl(controlId);
@@ -812,8 +833,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   /** The catalog objective for an id the cache does not hold yet (the server's record is laid over it). */
   const seedObjective = useCallback((objectiveId: string, controlId: string): AssessmentObjective | undefined => {
     const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-    return getAssessmentObjectivesForControl(controlId, ctrl?.title, ctrl?.assessmentObjectives).find(o => o.id === objectiveId);
-  }, [frameworkControls]);
+    return getControlObjectives(controlId, ctrl?.title, ctrl?.assessmentObjectives, undefined, activeFramework).find(o => o.id === objectiveId);
+  }, [frameworkControls, activeFramework]);
 
   // Merge the server's objectives into the state, only for the scope on screen and only into a state of that scope. The server's
   // narratives reach the state only once the marker is set (or is set in the same step because nothing is left to upload): before that
@@ -857,7 +878,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const detail = (e as CustomEvent<ObjectiveCascadeDetail>).detail;
       if (!detail || detail.scope !== programScope || !canEdit) return;
       const current = stateRef.current.objectives || {};
-      const items = stackCascadeFill(frameworkControls.map(c => c.id), detail.profile, id => current[id]?.implementationNarrative ?? '');
+      const items = stackCascadeFill(frameworkControls.map(c => c.id), detail.profile, id => current[id]?.implementationNarrative ?? '', activeFramework);
       if (items.length === 0) return;
       const now = new Date().toISOString();
       setState(prev => {
@@ -874,7 +895,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
     window.addEventListener(OBJECTIVE_CASCADE_EVENT, onCascade);
     return () => window.removeEventListener(OBJECTIVE_CASCADE_EVENT, onCascade);
-  }, [currentTenant.serverBacked, programScope, canEdit, frameworkControls, seedObjective]);
+  }, [currentTenant.serverBacked, programScope, canEdit, frameworkControls, seedObjective, activeFramework]);
 
   /** True (after telling the user) when objectives cannot be changed right now: read-only role, or a server-backed tenant whose data is not loaded. */
   const objectiveWriteBlocked = useCallback((what: 'objectives' | 'narratives'): boolean => {
@@ -898,8 +919,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   /** The cached objectives of a control and the catalog objectives over them. */
   const objectivesOf = useCallback((s: AssessmentState, controlId: string): AssessmentObjective[] => {
     const ctrl = frameworkControls.find(c => c.id === controlId) || findControlDefinition(controlId);
-    return getAssessmentObjectivesForControl(controlId, ctrl?.title, ctrl?.assessmentObjectives, s.objectives || {});
-  }, [frameworkControls]);
+    return getControlObjectives(controlId, ctrl?.title, ctrl?.assessmentObjectives, s.objectives || {}, activeFramework);
+  }, [frameworkControls, activeFramework]);
 
   // Narratives may contain CUI and the ledger sits in localStorage: record a digest and length only, never text
   const recordObjectiveNarrativeChange = useCallback((objectiveId: string, previous: string, next: string) => {
@@ -1734,11 +1755,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     try {
       const text = await file.text();
-      const imported = JSON.parse(text) as AssessmentState;
+      const parsed = JSON.parse(text) as AssessmentState;
 
-      if (!imported.controls || !imported.sspMetadata) {
+      if (!parsed.controls || !parsed.sspMetadata) {
         throw new Error('Invalid assessment JSON structure');
       }
+      // A backup made under the earlier objective wording gets the same re-flagging as a cache (nothing is deleted)
+      const imported = migrateCachedObjectives(parsed, activeFramework).state;
 
       // Ensure all framework controls are present in imported state
       const targetControls = frameworkControls.length > 0 ? frameworkControls : getFrameworkControls(activeFramework);

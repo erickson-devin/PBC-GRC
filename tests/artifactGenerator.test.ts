@@ -31,7 +31,7 @@ import { getExportGaps } from '../src/data/reports/exportReadiness';
 import { createDefaultSspMetadata, scrubInventedMetadata, buildSspMarkdown, createInitialState } from '../src/services/storageService';
 import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
-import { getObjectivesForControl } from '../src/data/frameworks/assessmentObjectives';
+import { getControlObjectives } from '../src/data/cmmcGuide/objectives';
 import { ControlState, EvidenceItem, AssessmentState } from '../src/types/cmmc';
 
 let totalTests = 0;
@@ -534,7 +534,8 @@ async function runArtifactGeneratorTests() {
     const blankPolicy = generatePolicyDocument(blankTenant, 'AC', 'Access Control', 'CMMC_L1');
     assert(blankPolicy.includes(`**Organization:** ${NO_ORGANIZATION_RECORDED}`) && !blankPolicy.includes('undefined'), 'S200-1 a policy for a blank tenant states no organization and prints no "undefined"');
     assert(!/ENTRA|DEFENDER|AZURE|INTUNE|SENTINEL|Entra|Defender|Azure|Intune|Sentinel/.test(blankPolicy), 'S200-1 a policy for a tenant without a stack names no vendor');
-    const acObjectiveCount = cmmcL1Controls.filter(c => c.domain === 'AC').reduce((n, c) => n + getObjectivesForControl(c.id, c.title).length, 0);
+    const acObjectiveCount = cmmcL1Controls.filter(c => c.domain === 'AC').reduce((n, c) => n + getControlObjectives(c.id, c.title, c.assessmentObjectives, undefined, 'CMMC_L1').length, 0);
+    assert(acObjectiveCount === 19, `S200-2 the Level 1 guide has 19 access-control objectives (6+2+6+5), got ${acObjectiveCount}`);
     assert(acObjectiveCount > 0 && blankPolicy.split(NO_STACK_PROFILE_RECORDED).length - 1 === acObjectiveCount, 'S200-2 every objective states that no stack profile is recorded');
     const stackTenant = { ...blankTenant, name: 'Acme', systemName: 'Enclave', systemOwner: 'Owner', stackProfile: { identityProvider: 'OKTA', edrSolution: 'GENERIC_AV', infrastructure: 'ON_PREM_RHEL', mdmSolution: 'MANUAL_GPO', siemSolution: 'LOCAL_AUDITD' } } as Tenant;
     const zzPolicy = generatePolicyDocument(stackTenant, 'ZZ', 'Zeta', 'NIST_800_53_REV5');
