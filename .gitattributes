@@ -4,3 +4,6 @@
 
 # The ingest contract is vendored byte-for-byte into the exporter: both copies must hash identically on every platform.
 *.schema.json text eol=lf
+
+# The generated CMMC guide data is compared with a fresh parse and its tests expect LF on every platform (tests/cmmcGuideObjectives.test.ts G1).
+src/data/cmmcGuide/*.generated.json text eol=lf
