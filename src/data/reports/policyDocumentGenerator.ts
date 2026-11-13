@@ -2,6 +2,7 @@ import { Tenant, EnclaveStackProfile } from '../../types/tenant';
 import { getCascadedObjectiveNarrative } from '../frameworks/policyCompiler';
 import { getFrameworkControls } from '../frameworks/frameworkRegistry';
 import { cmmcNumberOf, withGuideTitle } from '../cmmcGuide/guide';
+import { cmmcDisplayId, cmmcGuideLetter } from '../cmmcGuide/displayId';
 import { cmmcCascadeSource, getControlObjectives } from '../cmmcGuide/objectives';
 import type { FipsModuleRef } from '../telemetry/fipsValidation';
 import {
@@ -79,7 +80,7 @@ export function generatePolicyDocument(
 
   if (familyControls.length > 0) {
     familyControls.forEach((control) => {
-      markdown += `### ${control.id} - ${withGuideTitle(control).title}\n\n`;
+      markdown += `### ${cmmcDisplayId(control.id, activeFramework)} - ${withGuideTitle(control).title}\n\n`;
       if (control.plainEnglishSummary) {
         markdown += `*Requirement Summary*: ${control.plainEnglishSummary}\n\n`;
       }
@@ -96,7 +97,7 @@ export function generatePolicyDocument(
               narrative = getCascadedObjectiveNarrative(control.id, obj.letter, stack, cryptoModules);
             }
           }
-          markdown += `**Objective ${obj.letter}**: ${obj.text}\n\n`;
+          markdown += `**Objective ${cmmcGuideLetter(control.id, obj.letter, activeFramework)}**: ${obj.text}\n\n`;
           markdown += `**Implementation**: ${narrative}\n\n`;
         });
       }

@@ -16,6 +16,7 @@ import { ReportMetadata, POAMEntry } from '../../types/report';
 import { SprsScoreResult } from '../../types/audit';
 import { NOT_RECORDED, recordedRole } from './documentDefaults';
 import { csvCell } from './csv';
+import { cmmcDisplayId } from '../cmmcGuide/displayId';
 
 export const SPRS_MAX_SCORE = 110;
 export const SPRS_MIN_SCORE = -203;
@@ -99,7 +100,7 @@ export function getSspGaps(
   if (!sspControl) {
     gaps.push('Requirement 3.12.4 (System Security Plan) is not part of this control catalog');
   } else if (controlStates[sspControl.id]?.status !== 'MET') {
-    gaps.push('Requirement 3.12.4 (System Security Plan) is not marked MET');
+    gaps.push(`Requirement ${cmmcDisplayId(sspControl.id, 'CMMC_L2')} (System Security Plan) is not marked MET`);
   }
 
   const fields: [keyof SspIdentity, string][] = [
@@ -251,7 +252,7 @@ export function generateEmassControlMatrixCsv(
     const row = [
       csvCell(metadata.systemName || NOT_RECORDED),
       csvCell(metadata.cageCode || 'N/A'),
-      csvCell(ctrl.id),
+      csvCell(cmmcDisplayId(ctrl.id, metadata.framework)),
       csvCell(mapsTo171 ? nistId : 'N/A'),
       csvCell(ctrl.title),
       csvCell(ctrl.domain),
@@ -285,6 +286,8 @@ export function generateSprsAssessmentSummary(
     systemOwner: metadata.systemOwner,
     systemBoundaryScope: metadata.boundaryDescription,
   });
+  // SPRS is a Level 2 submission: the lists name the requirements by the Level 2 guide id (the score itself reads stored ids)
+  const guideId = (id: string) => cmmcDisplayId(id, 'CMMC_L2');
 
   return {
     sprsSubmissionHeader: {
@@ -323,16 +326,16 @@ export function generateSprsAssessmentSummary(
           : 'POA&M Remediation Underway',
     },
     deficienciesBreakdown: {
-      criticalFivePointDeductions: sprs.deductionsByWeight.fivePoint,
-      intermediateThreePointDeductions: sprs.deductionsByWeight.threePoint,
-      standardOnePointDeductions: sprs.deductionsByWeight.onePoint,
+      criticalFivePointDeductions: sprs.deductionsByWeight.fivePoint.map(guideId),
+      intermediateThreePointDeductions: sprs.deductionsByWeight.threePoint.map(guideId),
+      standardOnePointDeductions: sprs.deductionsByWeight.onePoint.map(guideId),
     },
     remediationMilestonesSummary: {
       totalPoamWeaknesses: poamEntries.length,
       estimatedRemediationHorizon: poamEntries.length > 0 ? NOT_RECORDED : 'No open POA&M weaknesses',
       activeWeaknesses: poamEntries.slice(0, 10).map(p => ({
         weaknessId: p.weaknessId,
-        controlId: p.controlId,
+        controlId: guideId(p.controlId),
         targetDate: p.scheduledCompletionDate,
         responsibleRole: p.responsibleRole,
       })),

@@ -15,6 +15,7 @@ import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/framewor
 
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { NOT_RECORDED } from '../../data/reports/documentDefaults';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { SSP_METADATA_NEED_OWNER_MESSAGE } from '../../data/sspMetadataSync';
 export const SSPBuilder: React.FC = () => {
   const {
@@ -78,8 +79,8 @@ export const SSPBuilder: React.FC = () => {
     for (const ctrl of frameworkControls) {
       const cState = state.controls[ctrl.id];
       const evidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
-      const authority = ctrl.authorityReference || ctrl.id;
-      text += `\n[${ctrl.id}] ${ctrl.title} (${authority})\n`;
+      const authority = ctrl.authorityReference || cmmcDisplayId(ctrl.id, activeFramework);
+      text += `\n[${cmmcDisplayId(ctrl.id, activeFramework)}] ${ctrl.title} (${authority})\n`;
       text += `Status: ${cState?.status || 'NOT_STARTED'}\n`;
       text += `Implementation Statement:\n${cState?.implementationNotes || 'No implementation notes provided.'}\n`;
       if (evidence.length > 0) {
@@ -552,7 +553,7 @@ export const SSPBuilder: React.FC = () => {
                 const cState = state.controls[ctrl.id];
                 const status = cState?.status || 'NOT_STARTED';
                 const evidenceList = state.evidenceIndex.filter((e) => e.controlId === ctrl.id);
-                const authority = ctrl.authorityReference || ctrl.id;
+                const authority = ctrl.authorityReference || cmmcDisplayId(ctrl.id, activeFramework);
 
                 return (
                   <div
@@ -563,7 +564,7 @@ export const SSPBuilder: React.FC = () => {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono font-bold text-xs bg-slate-900 text-white px-2 py-0.5 rounded">
-                          {ctrl.id}
+                          {cmmcDisplayId(ctrl.id, activeFramework)}
                         </span>
                         <span className="font-bold text-sm text-slate-900">
                           {ctrl.title}

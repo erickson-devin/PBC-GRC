@@ -24,6 +24,7 @@ import { FRAMEWORK_REGISTRY, getFrameworkControls } from '../../data/frameworks'
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { menuLockReason, overlayBannerText, overlayRemovals } from '../../data/overlayScoping';
 import { programFrameworkControls } from '../../data/programScope';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import type { OverlayFilters } from '../../types/framework';
 import { ControlCard } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
@@ -143,7 +144,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       // Search query
       if (searchQuery.trim() !== '') {
         const query = searchQuery.toLowerCase();
-        const matchesId = ctrl.id.toLowerCase().includes(query);
+        const matchesId = ctrl.id.toLowerCase().includes(query) || cmmcDisplayId(ctrl.id, activeFramework).toLowerCase().includes(query);
         const matchesTitle = ctrl.title.toLowerCase().includes(query);
         const refText = (ctrl.authorityReference || ctrl.farReference || '').toLowerCase();
         const matchesRef = refText.includes(query);
@@ -604,8 +605,11 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                   >
                     {/* Control ID in Bold Monospace */}
                     <td className="py-3 px-4">
-                      <span className="font-mono font-bold text-xs px-2.5 py-1 rounded bg-cyan-950/50 text-cyan-300 border border-cyan-500/30">
-                        {ctrl.id}
+                      <span
+                        className="font-mono font-bold text-xs px-2.5 py-1 rounded bg-cyan-950/50 text-cyan-300 border border-cyan-500/30"
+                        title={cmmcDisplayId(ctrl.id, activeFramework) !== ctrl.id ? `Stored as ${ctrl.id}` : undefined}
+                      >
+                        {cmmcDisplayId(ctrl.id, activeFramework)}
                       </span>
                     </td>
 

@@ -13,6 +13,7 @@ import {
 } from './browserStorageScrub';
 import { activeProgramStorageKey } from '../data/programSync';
 import { NOT_RECORDED } from '../data/reports/documentDefaults';
+import { cmmcDisplayId } from '../data/cmmcGuide/displayId';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -122,7 +123,7 @@ export function buildSspMarkdown(
     const cState = state.controls[ctrl.id];
     const ctrlEvidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
     const authority = ctrl.authorityReference || '';
-    md += `### ${ctrl.id}: ${ctrl.title}\n\n`;
+    md += `### ${cmmcDisplayId(ctrl.id, framework)}: ${ctrl.title}\n\n`;
     if (authority) md += `- **Authority Reference:** ${authority}\n`;
     md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
     md += `- **Evaluation Status:** **${cState?.status || 'NOT_STARTED'}**\n`;

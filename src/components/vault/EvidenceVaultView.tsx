@@ -21,6 +21,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY, findControlDefinition } from '../../data/frameworks';
 import { withGuideTitle } from '../../data/cmmcGuide/guide';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { EvidenceItem } from '../../types/cmmc';
 import { EvidenceVault } from '../../services/evidenceVault';
 import { evidenceCoverage } from '../../data/evidenceCoverage';
@@ -116,7 +117,7 @@ export const EvidenceVaultView: React.FC = () => {
     <optgroup key={g.key} label={g.label}>
       {g.controls.map((c) => (
         <option key={c.id} value={c.id}>
-          {c.id} - {c.title}
+          {cmmcDisplayId(c.id, activeFramework)} - {c.title}
         </option>
       ))}
     </optgroup>
@@ -132,7 +133,7 @@ export const EvidenceVaultView: React.FC = () => {
       if (searchQuery.trim() !== '') {
         const q = searchQuery.toLowerCase();
         const matchesName = item.name.toLowerCase().includes(q);
-        const matchesCtrl = item.controlId.toLowerCase().includes(q);
+        const matchesCtrl = item.controlId.toLowerCase().includes(q) || cmmcDisplayId(item.controlId, activeFramework).toLowerCase().includes(q);
         const matchesDesc = (item.description || '').toLowerCase().includes(q);
         const matchesHash = (item.fileHash || '').toLowerCase().includes(q);
         if (!matchesName && !matchesCtrl && !matchesDesc && !matchesHash) {
@@ -473,15 +474,18 @@ export const EvidenceVaultView: React.FC = () => {
                             onClick={() => setSelectedControlId(ctrl.id)}
                             className="flex items-center gap-1.5 hover:text-brand-300 text-left group"
                           >
-                            <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-200 group-hover:bg-brand-500/20 group-hover:text-brand-300 transition-colors">
-                              {ctrl.id}
+                            <span
+                              className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-200 group-hover:bg-brand-500/20 group-hover:text-brand-300 transition-colors"
+                              title={cmmcDisplayId(ctrl.id, activeFramework) !== ctrl.id ? `Stored as ${ctrl.id}` : undefined}
+                            >
+                              {cmmcDisplayId(ctrl.id, activeFramework)}
                             </span>
                             <span className="truncate max-w-[150px] text-xs text-slate-400">
                               {withGuideTitle(ctrl).title}
                             </span>
                           </button>
                         ) : (
-                          <span className="font-mono text-xs text-slate-400">{item.controlId}</span>
+                          <span className="font-mono text-xs text-slate-400" title={cmmcDisplayId(item.controlId, activeFramework) !== item.controlId ? `Stored as ${item.controlId}` : undefined}>{cmmcDisplayId(item.controlId, activeFramework)}</span>
                         )}
                       </td>
 

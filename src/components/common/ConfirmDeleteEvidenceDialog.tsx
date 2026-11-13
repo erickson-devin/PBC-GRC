@@ -3,6 +3,8 @@ import { Loader2, Trash2 } from 'lucide-react';
 import { DialogOverlay, DialogTitle } from './DialogOverlay';
 import { ErrorNotice } from './ErrorNotice';
 import type { EvidenceItem } from '../../types/cmmc';
+import { useTenant } from '../../context/TenantContext';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 
 /** What a delete removes, from ids only (never names): is the row itself a cross-framework copy, and how many copies go or stay with it. */
 export interface EvidenceDeletionSummary {
@@ -42,6 +44,8 @@ interface ConfirmDeleteEvidenceDialogProps {
  */
 export const ConfirmDeleteEvidenceDialog: React.FC<ConfirmDeleteEvidenceDialogProps> = ({ item, evidenceIndex, serverBacked, onConfirm, onClose, onDeleted }) => {
   const descId = useId();
+  const { activeFramework } = useTenant();
+  const shownControlId = cmmcDisplayId(item.controlId, activeFramework);
   // Taken once: the row (and its copies) leave the index while the delete runs, and the text must not change under the user
   const [summary] = useState(() => summarizeEvidenceDeletion(item.id, evidenceIndex, serverBacked));
   const [busy, setBusy] = useState(false);
@@ -88,7 +92,7 @@ export const ConfirmDeleteEvidenceDialog: React.FC<ConfirmDeleteEvidenceDialogPr
         <div id={descId} className="space-y-3 text-xs text-slate-300 leading-relaxed">
           <p>
             <span className="font-semibold text-white break-all">{item.name}</span> will be removed from control{' '}
-            <span className="font-mono text-slate-200">{item.controlId}</span>.
+            <span className="font-mono text-slate-200" title={shownControlId !== item.controlId ? `Stored as ${item.controlId}` : undefined}>{shownControlId}</span>.
           </p>
           {item.fileHash && (
             <p className="font-mono text-slate-400">SHA-256 {item.fileHash.slice(0, 12)}…</p>
