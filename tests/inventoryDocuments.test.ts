@@ -230,6 +230,7 @@ async function main() {
   assert(!/console\.|localStorage|sessionStorage/.test(progHook), 'T1c the scanner hook has no console or browser storage');
   assert(progHook.includes('seq.current !== mine'), 'T1c the scanner hook ignores a stale answer');
   const compileCall = modal.slice(modal.indexOf('compileReportDocument('), modal.indexOf('}, [selectedDocType, formData'));
+  assert(compileCall.includes('observed:') && modal.includes('useProgramObservedInventory('), 'T1c the modal passes the scanner data to compileReportDocument');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

@@ -747,6 +747,7 @@ export async function generateMachineReadablePackage(
     controls: controlMap,
     evidenceIndex: evidenceList,
     poamEntries: doc.poamEntries || [],
+    ...(doc.vmPoamEntries && doc.vmPoamEntries.length > 0 ? { vmPoamEntries: doc.vmPoamEntries } : {}),
     ...(doc.inventory ? { inventory: doc.inventory } : {}),
   };
 

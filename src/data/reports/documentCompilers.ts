@@ -18,6 +18,7 @@ import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../tele
 import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry/fipsValidation';
 import { sprsAppliesTo } from './sprsCompiler';
 import { compileHardwareInventory, compileSoftwareInventory, InventoryInput } from './inventoryDocuments';
+import { VM_POAM_COPY, type VmPoamExport } from './vmPoamView';
 
 import {
   NO_CSP_RECORDED,
@@ -382,7 +383,8 @@ export function compilePOAM(
   metadata: ReportMetadata,
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  objectives?: Record<string, AssessmentObjective>
+  objectives?: Record<string, AssessmentObjective>,
+  vmPoam?: VmPoamExport
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
   const poamEntries = generatePOAMEntries(controls, controlStates, objectives, metadata.framework);
@@ -400,9 +402,16 @@ export function compilePOAM(
       rows: [
         ['Total Evaluated Controls', controls.length, `${fwDef.name} Catalog`],
         ['Compliant Controls (MET)', metrics.metCount, 'Baseline satisfied'],
-        ['Active POA&M Weaknesses', poamEntries.length, poamEntries.length > 0 ? 'Remediation actively required' : 'Zero deficiencies on record'],
+        ['Active POA&M Weaknesses', poamEntries.length, poamEntries.length > 0 ? 'Remediation actively required' : 'No control deficiencies on record'],
         ['Controls IN PROGRESS', metrics.inProgressCount, 'Recorded as in progress'],
         ['Controls NOT MET / Unaddressed', metrics.notMetCount + metrics.notStartedCount, 'Recorded as not met or not started'],
+        ...(vmPoam
+          ? [[
+              VM_POAM_COPY.summaryLabel,
+              vmPoam.status === 'ready' ? vmPoam.openItemsTotal : 'Not loaded',
+              vmPoam.status === 'ready' ? (vmPoam.openItemsTotal > 0 ? 'Listed in section 2b' : 'None open') : 'Could not be loaded when this document was generated',
+            ]]
+          : []),
       ],
     },
   });
@@ -439,6 +448,48 @@ export function compilePOAM(
       rows: tableRows,
     },
   });
+
+  // Section 2b (#274): open vulnerability items, separate from the control entries so SPRS and offboarding counts stay controls-only
+  if (vmPoam) {
+    const vmEntries = vmPoam.status === 'ready' ? vmPoam.entries : [];
+    const capped = vmPoam.status === 'ready' && vmPoam.openItemsTotal > vmEntries.length;
+    const vmSection: ReportSection = {
+      id: 'poam-sec-2b-vulnerabilities',
+      title: VM_POAM_COPY.docTitle,
+      summary: capped && vmPoam.status === 'ready' ? `${VM_POAM_COPY.docSummary} ${VM_POAM_COPY.docCap(vmEntries.length, vmPoam.openItemsTotal)}` : VM_POAM_COPY.docSummary,
+    };
+    if (vmPoam.status !== 'ready') {
+      vmSection.content = VM_POAM_COPY.docUnavailable;
+    } else if (vmEntries.length === 0) {
+      vmSection.content = VM_POAM_COPY.docNone;
+    } else {
+      vmSection.table = {
+        headers: [
+          'Weakness ID',
+          'Control ID',
+          'Requirement Title',
+          'Deficiency Description',
+          'Current Status',
+          'Target Completion Date',
+          'Responsible Role',
+          'Allocated Resources',
+          'Remediation Action Plan',
+        ],
+        rows: vmEntries.map(entry => [
+          entry.weaknessId,
+          entry.controlDisplayId ?? entry.controlId,
+          entry.controlTitle,
+          entry.weaknessDescription,
+          entry.status,
+          entry.scheduledCompletionDate,
+          entry.responsibleRole,
+          entry.requiredResources,
+          entry.remediationPlan,
+        ]),
+      };
+    }
+    sections.push(vmSection);
+  }
 
   // Section 3: Milestone Schedule Breakdown
   const milestoneSubsections = poamEntries.map(entry => {
@@ -499,6 +550,7 @@ export function compilePOAM(
     sections,
     summaryMetrics: metrics,
     poamEntries,
+    ...(vmPoam?.status === 'ready' ? { vmPoamEntries: vmPoam.entries } : {}),
   };
 }
 
@@ -834,13 +886,14 @@ export function compileReportDocument(
   controlStates: Record<string, ControlState>,
   evidence: EvidenceItem[] = [],
   inventory?: InventoryInput,
-  objectives?: Record<string, AssessmentObjective>
+  objectives?: Record<string, AssessmentObjective>,
+  extras?: { vmPoam?: VmPoamExport }
 ): CompiledDocument {
   switch (documentType) {
     case 'NIST_SP_800_18_SSP':
       return compileNistSSP(metadata, controls, controlStates, evidence, objectives);
     case 'POAM':
-      return compilePOAM(metadata, controls, controlStates, objectives);
+      return compilePOAM(metadata, controls, controlStates, objectives, extras?.vmPoam);
     case 'SOC_2_SYSTEM_DESCRIPTION':
       return compileSoc2SystemDescription(metadata, controls, controlStates, evidence, objectives);
     case 'HIPAA_SECURITY_ASSESSMENT':
