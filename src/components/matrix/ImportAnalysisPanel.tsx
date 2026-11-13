@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { FileSearch } from 'lucide-react';
 import { ApiClient } from '../../services/apiClient';
+import { cmmcNumberOf } from '../../data/cmmcGuide/guide';
+import { checklistLetterOf } from '../../data/cmmcGuide/importLetters';
 import type { ObjectiveStatus, SspImportJob, StagedControlView } from '../../types/sspImport';
 
 interface Props {
@@ -76,19 +78,27 @@ export const ImportAnalysisPanel: React.FC<Props> = ({ controlId, tenantId, prog
       )}
       {objectives.length > 0 && (
         <ul className="space-y-2">
-          {objectives.map((o) => (
-            <li key={o.letter} className="rounded-xl bg-slate-900/70 border border-slate-800 p-3 space-y-1.5">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-xs text-slate-200 break-words">
-                  <span className="font-mono text-cyan-300">[{o.letter}]</span> {o.text}
-                </p>
-                <span className={`shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${STATUS_CLASS[o.status]}`}>{STATUS_LABEL[o.status]}</span>
-              </div>
-              {o.evidence && <p className="text-xs text-slate-300 break-words border-l-2 border-slate-600 pl-3">{o.evidence}</p>}
-              {o.weak && <p className="text-[11px] text-amber-300">Check: this sentence shares few words with the objective.</p>}
-            </li>
-          ))}
+          {objectives.map((o) => {
+            const cl = checklistLetterOf(controlId, staged.framework, o.text); // the guide's checklist letter with this wording
+            return (
+              <li key={o.letter} className="rounded-xl bg-slate-900/70 border border-slate-800 p-3 space-y-1.5">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs text-slate-200 break-words">
+                    <span className="font-mono text-cyan-300">[{o.letter}]</span> {o.text}
+                    {typeof cl === 'string' && cl !== o.letter && <span className="text-slate-400"> (checklist [{cl}])</span>}
+                    {cl === null && <span className="text-slate-500"> (not worded like a checklist objective)</span>}
+                  </p>
+                  <span className={`shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${STATUS_CLASS[o.status]}`}>{STATUS_LABEL[o.status]}</span>
+                </div>
+                {o.evidence && <p className="text-xs text-slate-300 break-words border-l-2 border-slate-600 pl-3">{o.evidence}</p>}
+                {o.weak && <p className="text-[11px] text-amber-300">Check: this sentence shares few words with the objective.</p>}
+              </li>
+            );
+          })}
         </ul>
+      )}
+      {objectives.length > 0 && cmmcNumberOf(controlId) && (
+        <p className="text-[11px] text-slate-400">The import compares the document with its own list of objectives (NIST SP 800-171A), so its letters can differ from the CMMC Assessment Guide checklist below. Match objectives by their wording.</p>
       )}
       <p className="text-[11px] text-slate-500">This is what the AI found in the uploaded document, not an assessment. Mark each objective below yourself.</p>
     </section>
