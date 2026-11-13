@@ -102,6 +102,18 @@ export function cmmcCascadeLetters(controlId: string, framework: string): string
 }
 
 /**
+ * Whether an objective has a hand-written implementation template (#282). A CMMC objective has one only when the guide's text
+ * carried a template over (cmmcCarryOver); otherwise getControlObjectives gives it the generic wording, which is not an
+ * implementation statement: it is never adopted (the policy generator prints NO_OBJECTIVE_TEMPLATE_RECORDED for it).
+ * Every other framework's objective keeps its behaviour: true.
+ */
+export function hasWrittenTemplate(controlId: string, letter: string, framework: string): boolean {
+  if (!cmmcNumberOf(controlId)) return true;
+  const carried = cmmcCarryOver(controlId, framework)[letter];
+  return Boolean(carried && (carried.def.prefilledTemplate || '').trim());
+}
+
+/**
  * The objectives of a control. A CMMC control ('AC.L2-3.1.1', 'AC.L1-3.1.1') gets one objective per letter of the guide;
  * any other control gets the frozen resolver's answer, unchanged. A stored record supplies the status, narrative and evidence;
  * its text and every hand-written extra are replaced, so a stale cached extra cannot survive.
