@@ -96,3 +96,12 @@ export function softwareExportLine({ supported, loading, error, count }: { suppo
   if (loading) return 'Software: loading the software inventory…';
   return `Software: ${count} ${count === 1 ? 'entry' : 'entries'}.`;
 }
+
+/** The scanner line under the Software Inventory document: nothing for a browser-only organization. */
+export function scannerExportLine({ status, packages, assets, truncated }: { status: 'loading' | 'ready' | 'error' | 'unsupported'; packages: number; assets: number; truncated?: boolean }): string | null {
+  if (status === 'unsupported') return null;
+  if (status === 'loading') return 'Scanner-reported: loading the packages the scanners report…';
+  if (status === 'error') return 'Scanner-reported: the scanner data could not be loaded, so this document lists recorded software only.';
+  const line = `Scanner-reported: ${packages} ${packages === 1 ? 'package' : 'packages'} on ${assets} ${assets === 1 ? 'asset' : 'assets'}.`;
+  return truncated ? `${line} The list is cut at its limit; the document says how many packages are not listed.` : line;
+}

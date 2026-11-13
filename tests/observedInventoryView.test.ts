@@ -3,16 +3,23 @@ import path from 'path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { EnclaveAsset } from '../src/types/telemetry';
+import type { SoftwareItem } from '../src/types/software';
 import type { VmObservedHost, VmObservedSoftware } from '../src/types/vm';
 import {
   OBSERVED_COPY,
+  addActionsShown,
   assetEditPatch,
   filterObservedSoftware,
   formatCpuSpeed,
   formatMemoryBytes,
   isHotfix,
   observedSoftwareCaption,
+  prefillFromObserved,
   reportedOsText,
+  softwareListIndex,
+  softwareListKey,
+  softwareListMatch,
+  softwareListState,
   truncationNotice,
 } from '../src/data/telemetry/observedInventoryView';
 import { ObservedInventoryPanel } from '../src/components/telemetry/ObservedInventoryPanel';
@@ -101,6 +108,22 @@ assert(observedSoftwareCaption(0, 0) === 'No software loaded', 'C3 nothing loade
 assert(truncationNotice(1000, 1000) === null && truncationNotice(5, 3) === null, 'T1 no notice when everything is loaded');
 assert((truncationNotice(1000, 2500) ?? '').includes('1000 of 2500'), 'T2 the notice says how many of how many');
 
+console.log('--- software list ---');
+const entry = (over: Partial<SoftwareItem>): SoftwareItem => ({
+  id: 'i1', tenantId: 't', name: 'Pkg', version: '1', vendor: 'Acme', approved: null, assetId: null, notes: '', createdAt: '', updatedAt: '', ...over,
+});
+assert(softwareListKey(' Pkg ', ' 1.0 ', 'ACME ') === softwareListKey('pkg', '1.0', 'acme'), 'SL1 the key ignores case and edge spaces of name and vendor');
+assert(softwareListKey('a', '1.0A', '') !== softwareListKey('a', '1.0a', ''), 'SL1 the version is case-sensitive');
+const twoIndex = softwareListIndex([entry({ id: 'a', assetId: 'x', approved: false }), entry({ id: 'b', assetId: null, approved: true })]);
+const twoMatch = softwareListMatch({ name: 'pkg', version: '1', vendor: 'acme' }, twoIndex, 'x');
+assert(twoMatch !== null && twoMatch.item.approved === true && twoMatch.count === 2, 'SL2 a tenant-wide entry is preferred and the entries are counted', twoMatch);
+assert(softwareListMatch({ name: 'Pkg', version: '1', vendor: 'Acme' }, softwareListIndex([entry({ version: '' })]), 'x') === null, 'SL3 a blank version does not match every version');
+assert(JSON.stringify(prefillFromObserved({ name: ' Pkg ', version: '1', vendor: 'Acme' })) === JSON.stringify({ name: 'Pkg', version: '1', vendor: 'Acme', approved: null, assetId: null, notes: '' }), 'SL4 the prefill is trimmed, Not reviewed and tenant-wide');
+assert(addActionsShown(50) && !addActionsShown(51) && !addActionsShown(0), 'SL5 Add is drawn for 1 to 50 shown rows');
+const st = { supported: true, loading: false, error: null as string | null, count: 0 };
+assert(softwareListState({ ...st, count: 5000 }) === 'full' && softwareListState({ ...st, count: 4999 }) === 'ready' && softwareListState({ ...st, loading: true }) === 'loading'
+  && softwareListState({ ...st, error: 'x' }) === 'error' && softwareListState({ ...st, supported: false }) === 'hidden', 'SL6 the list state');
+
 console.log('--- the panel ---');
 const recorded = { ipAddress: '10.0.0.5', macAddress: '', osProfile: 'win2022', serialNumber: '' };
 const render = (props: Partial<React.ComponentProps<typeof ObservedInventoryPanel>>): string =>
@@ -131,7 +154,9 @@ const files = {
   modal: read('src/components/telemetry/AddAssetModal.tsx'),
   manager: read('src/components/telemetry/AssetInventoryManager.tsx'),
 };
-const scannerSources = [files.panel, files.list, files.dialog, files.hook, files.view].join('\n');
+const itemDialog = read('src/components/telemetry/SoftwareItemDialog.tsx');
+const swPanel = read('src/components/telemetry/SoftwareInventoryPanel.tsx');
+const scannerSources = [files.panel, files.list, files.dialog, files.hook, files.view, itemDialog].join('\n');
 assert(!/console\.|localStorage|sessionStorage|indexedDB|dangerouslySetInnerHTML/.test(scannerSources), 'SV1 the scanner-data code logs nothing, stores nothing and renders no HTML');
 assert(!/localStorage|sessionStorage|console\./.test(files.modal + files.manager), 'SV2 the form and the inventory store and log nothing');
 assert(files.dialog.includes('<DialogOverlay') && files.dialog.includes('max-h-[90vh]') && files.dialog.includes('Scanner data: {asset.hostName}'), 'SV3 the dialog is a titled, capped DialogOverlay');
@@ -140,7 +165,15 @@ assert(files.modal.includes('useObservedInventory(') && files.modal.indexOf('use
 assert(files.modal.includes('initialAsset && serverBacked') && files.modal.includes('onUseValue={applyScannerValue}') && !files.modal.includes('IP address is required'), 'SV6 the panel is edit-mode and server-backed only, and the IP address is optional');
 assert(files.manager.includes('assetEditPatch(editingAsset, assetData)') && files.manager.includes('<AssetScannerDataDialog') && files.manager.includes('serverBacked={serverBacked}') && files.manager.includes('setScannerAsset(null)'), 'SV7 the inventory sends a patch, opens the dialog and resets it on a tenant change');
 assert(files.manager.split('colSpan={columnCount}').length - 1 === 2 && !files.manager.includes('asset.complianceScore'), 'SV8 the inventory table keeps its two full-width rows and shows no stored score');
-assert(files.list.includes('OBSERVED_COPY.softwareNote') && files.panel.includes('onUseValue(row)'), 'SV9 the software list carries the not-the-approved-list note, and the Use button calls onUseValue');
+assert(files.list.includes('canAdd ? OBSERVED_COPY.softwareNote : OBSERVED_COPY.softwareNoteReadOnly') && OBSERVED_COPY.softwareNote.includes('This is not the approved software list')
+  && OBSERVED_COPY.softwareNoteReadOnly.includes('This is not the approved software list') && files.panel.includes('onUseValue(row)'), 'SV9 the software list carries the not-the-approved-list note, and the Use button calls onUseValue');
+assert(files.dialog.includes('max-w-4xl rounded-2xl') && !files.dialog.includes('max-w-4xlrounded'), 'SV10 the scanner dialog is 4xl wide and rounded');
+assert(files.list.includes("canAdd && listState === 'ready' && addActionsShown(shown.length)") && files.list.includes('stacked initial={null} prefill=')
+  && files.list.includes('setTimeout(() => searchRef.current?.focus(), 0)'), 'SV11 Add is for owners with a ready list and few rows, opens stacked, and focus returns to Search');
+assert(itemDialog.includes('initial ?? prefill ?? null') && itemDialog.includes("stacked ? 'z-[60]' : 'z-50'"), 'SV12 the item dialog seeds from a prefill and can stack');
+const hwAt = files.manager.indexOf("openExportModal('HARDWARE_INVENTORY')");
+const swAt = swPanel.indexOf("openExportModal('SOFTWARE_INVENTORY')");
+assert(hwAt >= 0 && hwAt < files.manager.indexOf('{canEdit && (<button') && swAt >= 0 && swAt < swPanel.indexOf('{canEdit && supported && ('), 'SV13 both inventories point to the export, ungated');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

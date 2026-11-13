@@ -11,6 +11,7 @@ import {
   softwareCountCaption,
   softwareEmptyMessage,
   softwareErrorMessage,
+  scannerExportLine,
   softwareExportLine,
   validateSoftwareName,
 } from '../src/data/softwareInventoryView';
@@ -117,6 +118,15 @@ function main() {
   assert(softwareExportLine({ supported: true, loading: false, error: true, count: 0 }) === 'Software: the software inventory could not be loaded, so this document lists no software entries.', 'SW15 error');
   assert(softwareExportLine({ supported: true, loading: true, error: false, count: 0 }) === 'Software: loading the software inventory…', 'SW15 loading');
   assert(softwareExportLine({ supported: true, loading: false, error: false, count: 3 }) === 'Software: 3 entries.' && softwareExportLine({ supported: true, loading: false, error: false, count: 1 }) === 'Software: 1 entry.', 'SW15 counts');
+
+  // SW15b: the scanner line
+  assert(scannerExportLine({ status: 'unsupported', packages: 3, assets: 2 }) === null, 'SW15b unsupported has no line');
+  assert(scannerExportLine({ status: 'loading', packages: 0, assets: 0 }) === 'Scanner-reported: loading the packages the scanners report…', 'SW15b loading');
+  assert(scannerExportLine({ status: 'error', packages: 0, assets: 0 }) === 'Scanner-reported: the scanner data could not be loaded, so this document lists recorded software only.', 'SW15b error');
+  assert(scannerExportLine({ status: 'ready', packages: 3, assets: 2 }) === 'Scanner-reported: 3 packages on 2 assets.', 'SW15b ready, plural');
+  assert(scannerExportLine({ status: 'ready', packages: 1, assets: 1 }) === 'Scanner-reported: 1 package on 1 asset.', 'SW15b ready, singular');
+  assert(scannerExportLine({ status: 'ready', packages: 0, assets: 0 }) === 'Scanner-reported: 0 packages on 0 assets.', 'SW15b ready, none');
+  assert((scannerExportLine({ status: 'ready', packages: 3, assets: 2, truncated: true }) ?? '').startsWith('Scanner-reported: 3 packages on 2 assets. ') && (scannerExportLine({ status: 'ready', packages: 3, assets: 2, truncated: true }) ?? '').includes('cut'), 'SW15b truncated says so');
 
   // SW16
   const parsed = parseServerSoftwareItems([{ id: 's', name: 'n' }, { name: 'x' }, null]);
