@@ -17,6 +17,7 @@ import type { ObjectiveDefinitionTemplate } from '../frameworks/assessmentObject
 import { findControlDefinition, getFrameworkControls } from '../frameworks/frameworkRegistry';
 import type { FrameworkControlDefinition } from '../../types/framework';
 import { cmmcNumberOf, guideObjectives } from './guide';
+import { cmmcObjectiveParameterIds } from './parameters';
 import { normalizeObjectiveText } from './validate';
 
 export { normalizeObjectiveText };
@@ -132,6 +133,12 @@ export function getControlObjectives(
   return guideObjectives(number, framework).map((g) => {
     const objId = `${controlId}[${g.letter}]`;
     const carried = carry[g.letter]?.def;
+    // Only the parameters placed on this objective (parameters.ts, #286): the registry has some on the wrong requirement.
+    const placed = cmmcObjectiveParameterIds(controlId, g.letter);
+    const filterPlaced = (list: AssessmentObjective['odpParameters']) => {
+      const kept = list?.filter((p) => placed.has(p.id));
+      return kept && kept.length > 0 ? kept : undefined;
+    };
     const prefilledTemplate = carried
       ? carried.prefilledTemplate
       : `The enclave implementation satisfies requirement ${number}[${g.letter}] (${g.text}). Compliance is enforced across cloud identity (**Microsoft Entra ID**), endpoint baselines (**Microsoft Intune** / **DISA STIG**s), and network perimeter controls with verified operational configurations.`;
@@ -143,7 +150,7 @@ export function getControlObjectives(
         prefilledTemplate,
         scapRuleId: carried?.scapRuleId,
         isAutoVerifiedByTelemetry: Boolean(carried?.isAutoVerifiedByTelemetry),
-        odpParameters: carried ? existing.odpParameters || carried.odpParameters : undefined,
+        odpParameters: carried ? filterPlaced(existing.odpParameters || carried.odpParameters) : undefined,
       };
     }
     return {
@@ -157,7 +164,7 @@ export function getControlObjectives(
       linkedEvidenceIds: [],
       isAutoVerifiedByTelemetry: Boolean(carried?.isAutoVerifiedByTelemetry),
       scapRuleId: carried?.scapRuleId,
-      odpParameters: carried?.odpParameters,
+      odpParameters: filterPlaced(carried?.odpParameters),
     };
   });
 }

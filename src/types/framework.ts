@@ -82,6 +82,8 @@ export interface ControlParameter {
   end?: number;
   /** A baseline value suggested by the catalog (OBJECTIVE ODPs). */
   defaultValue?: string;
+  /** CMMC: the guide objective letter this parameter belongs to. */
+  objectiveLetter?: string;
 }
 
 export interface FrameworkControlDefinition {
