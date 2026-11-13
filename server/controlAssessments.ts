@@ -291,6 +291,19 @@ export async function listControlAssessmentEvents(scope: ProgramScope, controlId
   return res.rows.map(toEvent);
 }
 
+/** The program's 'catalog-update' control events written under `actor` (one guide revision), oldest first, at most `limit`. */
+export async function listCatalogUpdateControlEvents(scope: ProgramScope, actor: string, limit: number): Promise<ControlAssessmentEvent[]> {
+  if (getDbMode() === 'memory') {
+    return (memoryEvents.get(eventsKey(scope)) ?? []).filter((e) => e.source === 'catalog-update' && e.actor === actor).slice(0, limit);
+  }
+  const res = await queryWithProgram(
+    scope,
+    `SELECT * FROM control_assessment_events WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) AND source = 'catalog-update' AND actor = $3 ORDER BY created_at, id LIMIT $4`,
+    [scope.tenantId, scope.programId, actor, limit]
+  );
+  return res.rows.filter((r) => r.tenant_id === scope.tenantId).map(toEvent);
+}
+
 /**
  * Retention sweep, memory mode: drops the events created before `cutoff` (all scopes, or only the tenants in `onlyTenantIds`).
  * Returns how many events went (or would go, with `dryRun`) and how many scopes held some.

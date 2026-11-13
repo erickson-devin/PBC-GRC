@@ -60,7 +60,44 @@ export interface ObjectiveEvent {
   createdAt: string;
 }
 
-const OBJECTIVE_ID_PATTERN = /^([A-Za-z0-9.()_-]{1,64})\[[a-z0-9]{1,16}\]$/;
+/** The most objectives (and, separately, controls) the catalog-update listing returns; `truncated` says when more exist. */
+export const MAX_CATALOG_UPDATE_ITEMS = 1000;
+
+/** One objective answer the CMMC Assessment Guide update re-flagged. Ids and statuses only: never narrative text, hashes, lengths or who. */
+export interface CatalogUpdateObjectiveChange {
+  objectiveId: string;
+  controlId: string;
+  oldStatus: string | null;
+  newStatus: string;
+  /** The objective's status now; null when its row is gone. */
+  currentStatus: string | null;
+  /** True when a person has changed the objective since the update. */
+  reviewed: boolean;
+  changedAt: string;
+}
+
+/** One control whose status the update re-rolled down. */
+export interface CatalogUpdateControlChange {
+  controlId: string;
+  oldStatus: string | null;
+  newStatus: string;
+  changedAt: string;
+}
+
+/** GET /api/v1/objectives/catalog-update: what the current guide revision's update changed in the program. */
+export interface CatalogUpdateChanges {
+  /** False for a program that is not CMMC Level 1 / 2 (the lists are then empty). */
+  applies: boolean;
+  catalogRev: string;
+  /** Sorted by objectiveId. */
+  objectives: CatalogUpdateObjectiveChange[];
+  /** Sorted by controlId. */
+  controls: CatalogUpdateControlChange[];
+  /** True when a list was cut at MAX_CATALOG_UPDATE_ITEMS. */
+  truncated: boolean;
+}
+
+const OBJECTIVE_ID_PATTERN =/^([A-Za-z0-9.()_-]{1,64})\[[a-z0-9]{1,16}\]$/;
 const EVIDENCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 export const isObjectiveStatus = (value: unknown): value is ObjectiveStatus =>

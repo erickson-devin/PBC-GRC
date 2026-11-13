@@ -463,6 +463,58 @@ export async function listObjectiveEvents(scope: ProgramScope, objectiveId: stri
   return res.rows.filter((r) => r.tenant_id === scope.tenantId && r.program_id === scope.programId).map(toEvent);
 }
 
+/** A catalog-update event with its place in the scope's history (memory mode only: PostgreSQL events are ordered by created_at, so `seq` is null there). */
+export type CatalogUpdateObjectiveEvent = ObjectiveEvent & { seq: number | null };
+
+/** The last event a person ('human') recorded on an objective: when, and (memory mode only) at which position of the scope's history. */
+export interface HumanEventMark {
+  at: string;
+  seq: number | null;
+}
+
+/**
+ * The program's 'catalog-update' events written under `actor` (one guide revision), oldest first, at most `limit`. Ids, statuses and times matter to the
+ * caller; the rows still carry the narrative hashes like any event, so they must not be sent on as they are.
+ */
+export async function listCatalogUpdateObjectiveEvents(scope: ProgramScope, actor: string, limit: number): Promise<CatalogUpdateObjectiveEvent[]> {
+  if (!hasScope(scope)) return [];
+  if (getDbMode() === 'memory') {
+    const out: CatalogUpdateObjectiveEvent[] = [];
+    (memoryEvents.get(scopeKey(scope)) ?? []).forEach((e, seq) => {
+      if (e.source === 'catalog-update' && e.actor === actor) out.push({ ...e, seq });
+    });
+    return out.slice(0, limit);
+  }
+  const res = await queryWithProgram(
+    scope,
+    `SELECT * FROM control_objective_events WHERE tenant_id = $1 AND program_id = $2 AND source = 'catalog-update' AND actor = $3 ORDER BY created_at, id LIMIT $4`,
+    [scope.tenantId, scope.programId, actor, limit]
+  );
+  return res.rows.filter((r) => r.tenant_id === scope.tenantId && r.program_id === scope.programId).map((r) => ({ ...toEvent(r), seq: null }));
+}
+
+/** For each of `objectiveIds`, the last 'human' event in the program (an objective nobody changed has no entry). Memory mode compares positions, not timestamps. */
+export async function latestHumanEventAt(scope: ProgramScope, objectiveIds: readonly string[]): Promise<Map<string, HumanEventMark>> {
+  const out = new Map<string, HumanEventMark>();
+  if (!hasScope(scope) || !objectiveIds.length) return out;
+  if (getDbMode() === 'memory') {
+    const wanted = new Set(objectiveIds);
+    (memoryEvents.get(scopeKey(scope)) ?? []).forEach((e, seq) => {
+      if (e.source === 'human' && wanted.has(e.objectiveId)) out.set(e.objectiveId, { at: e.createdAt, seq });
+    });
+    return out;
+  }
+  const res = await queryWithProgram(
+    scope,
+    `SELECT tenant_id, program_id, objective_id, max(created_at) AS last_at FROM control_objective_events WHERE tenant_id = $1 AND program_id = $2 AND source = 'human' AND objective_id = ANY($3::text[]) GROUP BY tenant_id, program_id, objective_id`,
+    [scope.tenantId, scope.programId, [...objectiveIds]]
+  );
+  for (const r of res.rows) {
+    if (r.tenant_id === scope.tenantId && r.program_id === scope.programId) out.set(String(r.objective_id), { at: new Date(r.last_at).toISOString(), seq: null });
+  }
+  return out;
+}
+
 /**
  * Retention sweep, memory mode: drops the objective events created before `cutoff` (all scopes, or only the tenants in `onlyTenantIds`).
  * Returns how many events went (or would go, with `dryRun`) and how many scopes held some.
