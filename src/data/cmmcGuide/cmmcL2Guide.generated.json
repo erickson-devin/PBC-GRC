@@ -1,0 +1,2395 @@
+{
+  "meta": {
+    "generatedBy": "scripts/generateCmmcObjectives.ts",
+    "document": "CMMC Assessment Guide – Level 2",
+    "version": "2.13",
+    "date": "September 2024",
+    "documentNumber": "DoD-CIO-00003",
+    "distribution": "DISTRIBUTION STATEMENT A. Approved for public release. Distribution is unlimited.",
+    "sourceFile": "AssessmentGuideL2v2.pdf",
+    "sha256": "0dcaba1626a0d23893981d74dd3f0f2338fff54cece67d81bc811ce76392d867",
+    "pages": 276
+  },
+  "requirements": [
+    {
+      "id": "AC.L2-3.1.1",
+      "number": "3.1.1",
+      "family": "AC",
+      "title": "Authorized Access Control [CUI Data]",
+      "displayTitle": "Authorized Access Control",
+      "statement": "Limit system access to authorized users, processes acting on behalf of authorized users, and devices (including other systems).",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "authorized users are identified"
+        },
+        {
+          "letter": "b",
+          "text": "processes acting on behalf of authorized users are identified"
+        },
+        {
+          "letter": "c",
+          "text": "devices (and other systems) authorized to connect to the system are identified"
+        },
+        {
+          "letter": "d",
+          "text": "system access is limited to authorized users"
+        },
+        {
+          "letter": "e",
+          "text": "system access is limited to processes acting on behalf of authorized users"
+        },
+        {
+          "letter": "f",
+          "text": "system access is limited to authorized devices (including other systems)"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.2",
+      "number": "3.1.2",
+      "family": "AC",
+      "title": "Transaction & Function Control",
+      "displayTitle": "Transaction & Function Control",
+      "statement": "Limit system access to the types of transactions and functions that authorized users are permitted to execute.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the types of transactions and functions that authorized users are permitted to execute are defined"
+        },
+        {
+          "letter": "b",
+          "text": "system access is limited to the defined types of transactions and functions for authorized users"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.3",
+      "number": "3.1.3",
+      "family": "AC",
+      "title": "Control CUI Flow",
+      "displayTitle": "Control CUI Flow",
+      "statement": "Control the flow of CUI in accordance with approved authorizations.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "information flow control policies are defined"
+        },
+        {
+          "letter": "b",
+          "text": "methods and enforcement mechanisms for controlling the flow of CUI are defined"
+        },
+        {
+          "letter": "c",
+          "text": "designated sources and destinations (e.g., networks, individuals, and devices) for CUI within the system and between interconnected systems are identified"
+        },
+        {
+          "letter": "d",
+          "text": "authorizations for controlling the flow of CUI are defined"
+        },
+        {
+          "letter": "e",
+          "text": "approved authorizations for controlling the flow of CUI are enforced"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.4",
+      "number": "3.1.4",
+      "family": "AC",
+      "title": "Separation of Duties",
+      "displayTitle": "Separation of Duties",
+      "statement": "Separate the duties of individuals to reduce the risk of malevolent activity without collusion.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the duties of individuals requiring separation are defined"
+        },
+        {
+          "letter": "b",
+          "text": "responsibilities for duties that require separation are assigned to separate individuals"
+        },
+        {
+          "letter": "c",
+          "text": "access privileges that enable individuals to exercise the duties that require separation are granted to separate individuals"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.5",
+      "number": "3.1.5",
+      "family": "AC",
+      "title": "Least Privilege",
+      "displayTitle": "Least Privilege",
+      "statement": "Employ the principle of least privilege, including for specific security functions and privileged accounts.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "privileged accounts are identified"
+        },
+        {
+          "letter": "b",
+          "text": "access to privileged accounts is authorized in accordance with the principle of least privilege"
+        },
+        {
+          "letter": "c",
+          "text": "security functions are identified"
+        },
+        {
+          "letter": "d",
+          "text": "access to security functions is authorized in accordance with the principle of least privilege"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.6",
+      "number": "3.1.6",
+      "family": "AC",
+      "title": "Non-Privileged Account Use",
+      "displayTitle": "Non-Privileged Account Use",
+      "statement": "Use non-privileged accounts or roles when accessing nonsecurity functions.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "nonsecurity functions are identified"
+        },
+        {
+          "letter": "b",
+          "text": "users are required to use non-privileged accounts or roles when accessing nonsecurity functions"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.7",
+      "number": "3.1.7",
+      "family": "AC",
+      "title": "Privileged Functions",
+      "displayTitle": "Privileged Functions",
+      "statement": "Prevent non-privileged users from executing privileged functions and capture the execution of such functions in audit logs.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "privileged functions are defined"
+        },
+        {
+          "letter": "b",
+          "text": "non-privileged users are defined"
+        },
+        {
+          "letter": "c",
+          "text": "non-privileged users are prevented from executing privileged functions"
+        },
+        {
+          "letter": "d",
+          "text": "the execution of privileged functions is captured in audit logs"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.8",
+      "number": "3.1.8",
+      "family": "AC",
+      "title": "Unsuccessful Logon Attempts",
+      "displayTitle": "Unsuccessful Logon Attempts",
+      "statement": "Limit unsuccessful logon attempts.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the means of limiting unsuccessful logon attempts is defined"
+        },
+        {
+          "letter": "b",
+          "text": "the defined means of limiting unsuccessful logon attempts is implemented"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.9",
+      "number": "3.1.9",
+      "family": "AC",
+      "title": "Privacy & Security Notices",
+      "displayTitle": "Privacy & Security Notices",
+      "statement": "Provide privacy and security notices consistent with applicable CUI rules.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "privacy and security notices required by CUI-specified rules are identified, consistent, and associated with the specific CUI category"
+        },
+        {
+          "letter": "b",
+          "text": "privacy and security notices are displayed"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.10",
+      "number": "3.1.10",
+      "family": "AC",
+      "title": "Session Lock",
+      "displayTitle": "Session Lock",
+      "statement": "Use session lock with pattern-hiding displays to prevent access and viewing of data after a period of inactivity.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the period of inactivity after which the system initiates a session lock is defined"
+        },
+        {
+          "letter": "b",
+          "text": "access to the system and viewing of data is prevented by initiating a session lock after the defined period of inactivity"
+        },
+        {
+          "letter": "c",
+          "text": "previously visible information is concealed via a pattern-hiding display after the defined period of inactivity"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.11",
+      "number": "3.1.11",
+      "family": "AC",
+      "title": "Session Termination",
+      "displayTitle": "Session Termination",
+      "statement": "Terminate (automatically) a user session after a defined condition.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "conditions requiring a user session to terminate are defined"
+        },
+        {
+          "letter": "b",
+          "text": "a user session is automatically terminated after any of the defined conditions occur"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.12",
+      "number": "3.1.12",
+      "family": "AC",
+      "title": "Control Remote Access",
+      "displayTitle": "Control Remote Access",
+      "statement": "Monitor and control remote access sessions.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "remote access sessions are permitted"
+        },
+        {
+          "letter": "b",
+          "text": "the types of permitted remote access are identified"
+        },
+        {
+          "letter": "c",
+          "text": "remote access sessions are controlled"
+        },
+        {
+          "letter": "d",
+          "text": "remote access sessions are monitored"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.13",
+      "number": "3.1.13",
+      "family": "AC",
+      "title": "Remote Access Confidentiality",
+      "displayTitle": "Remote Access Confidentiality",
+      "statement": "Employ cryptographic mechanisms to protect the confidentiality of remote access sessions.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "cryptographic mechanisms to protect the confidentiality of remote access sessions are identified"
+        },
+        {
+          "letter": "b",
+          "text": "cryptographic mechanisms to protect the confidentiality of remote access sessions are implemented"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.14",
+      "number": "3.1.14",
+      "family": "AC",
+      "title": "Remote Access Routing",
+      "displayTitle": "Remote Access Routing",
+      "statement": "Route remote access via managed access control points.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "managed access control points are identified and implemented"
+        },
+        {
+          "letter": "b",
+          "text": "remote access is routed through managed network access control points"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.15",
+      "number": "3.1.15",
+      "family": "AC",
+      "title": "Privileged Remote Access",
+      "displayTitle": "Privileged Remote Access",
+      "statement": "Authorize remote execution of privileged commands and remote access to security-relevant information.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "privileged commands authorized for remote execution are identified"
+        },
+        {
+          "letter": "b",
+          "text": "security-relevant information authorized to be accessed remotely is identified"
+        },
+        {
+          "letter": "c",
+          "text": "the execution of the identified privileged commands via remote access is authorized"
+        },
+        {
+          "letter": "d",
+          "text": "access to the identified security-relevant information via remote access is authorized"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.16",
+      "number": "3.1.16",
+      "family": "AC",
+      "title": "Wireless Access Authorization",
+      "displayTitle": "Wireless Access Authorization",
+      "statement": "Authorize wireless access prior to allowing such connections.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "wireless access points are identified"
+        },
+        {
+          "letter": "b",
+          "text": "wireless access is authorized prior to allowing such connections"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.17",
+      "number": "3.1.17",
+      "family": "AC",
+      "title": "Wireless Access Protection",
+      "displayTitle": "Wireless Access Protection",
+      "statement": "Protect wireless access using authentication and encryption.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "wireless access to the system is protected using authentication"
+        },
+        {
+          "letter": "b",
+          "text": "wireless access to the system is protected using encryption"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.18",
+      "number": "3.1.18",
+      "family": "AC",
+      "title": "Mobile Device Connection",
+      "displayTitle": "Mobile Device Connection",
+      "statement": "Control connection of mobile devices.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "mobile devices that process, store, or transmit CUI are identified"
+        },
+        {
+          "letter": "b",
+          "text": "mobile device connections are authorized"
+        },
+        {
+          "letter": "c",
+          "text": "mobile device connections are monitored and logged"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.19",
+      "number": "3.1.19",
+      "family": "AC",
+      "title": "Encrypt CUI on Mobile",
+      "displayTitle": "Encrypt CUI on Mobile",
+      "statement": "Encrypt CUI on mobile devices and mobile computing platforms.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "mobile devices and mobile computing platforms that process, store, or transmit CUI are identified"
+        },
+        {
+          "letter": "b",
+          "text": "encryption is employed to protect CUI on identified mobile devices and mobile computing platforms"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.20",
+      "number": "3.1.20",
+      "family": "AC",
+      "title": "External Connections [CUI Data]",
+      "displayTitle": "External Connections",
+      "statement": "Verify and control/limit connections to and use of external systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "connections to external systems are identified"
+        },
+        {
+          "letter": "b",
+          "text": "the use of external systems is identified"
+        },
+        {
+          "letter": "c",
+          "text": "connections to external systems are verified"
+        },
+        {
+          "letter": "d",
+          "text": "the use of external systems is verified"
+        },
+        {
+          "letter": "e",
+          "text": "connections to external systems are controlled/limited"
+        },
+        {
+          "letter": "f",
+          "text": "the use of external systems is controlled/limited"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.21",
+      "number": "3.1.21",
+      "family": "AC",
+      "title": "Portable Storage Use",
+      "displayTitle": "Portable Storage Use",
+      "statement": "Limit use of portable storage devices on external systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the use of portable storage devices containing CUI on external systems is identified and documented"
+        },
+        {
+          "letter": "b",
+          "text": "limits on the use of portable storage devices containing CUI on external systems are defined"
+        },
+        {
+          "letter": "c",
+          "text": "the use of portable storage devices containing CUI on external systems is limited as defined"
+        }
+      ]
+    },
+    {
+      "id": "AC.L2-3.1.22",
+      "number": "3.1.22",
+      "family": "AC",
+      "title": "Control Public Information [CUI Data]",
+      "displayTitle": "Control Public Information",
+      "statement": "Control CUI posted or processed on publicly accessible systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "individuals authorized to post or process information on publicly accessible systems are identified"
+        },
+        {
+          "letter": "b",
+          "text": "procedures to ensure CUI is not posted or processed on publicly accessible systems are identified"
+        },
+        {
+          "letter": "c",
+          "text": "a review process is in place prior to posting of any content to publicly accessible systems"
+        },
+        {
+          "letter": "d",
+          "text": "content on publicly accessible systems is reviewed to ensure that it does not include CUI"
+        },
+        {
+          "letter": "e",
+          "text": "mechanisms are in place to remove and address improper posting of CUI"
+        }
+      ]
+    },
+    {
+      "id": "AT.L2-3.2.1",
+      "number": "3.2.1",
+      "family": "AT",
+      "title": "Role-Based Risk Awareness",
+      "displayTitle": "Role-Based Risk Awareness",
+      "statement": "Ensure that managers, systems administrators, and users of organizational systems are made aware of the security risks associated with their activities and of the applicable policies, standards, and procedures related to the security of those systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "security risks associated with organizational activities involving CUI are identified"
+        },
+        {
+          "letter": "b",
+          "text": "policies, standards, and procedures related to the security of the system are identified"
+        },
+        {
+          "letter": "c",
+          "text": "managers, systems administrators, and users of the system are made aware of the security risks associated with their activities"
+        },
+        {
+          "letter": "d",
+          "text": "managers, systems administrators, and users of the system are made aware of the applicable policies, standards, and procedures related to the security of the system"
+        }
+      ]
+    },
+    {
+      "id": "AT.L2-3.2.2",
+      "number": "3.2.2",
+      "family": "AT",
+      "title": "Role-Based Training",
+      "displayTitle": "Role-Based Training",
+      "statement": "Ensure that personnel are trained to carry out their assigned information security-related duties and responsibilities.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "information security-related duties, roles, and responsibilities are defined"
+        },
+        {
+          "letter": "b",
+          "text": "information security-related duties, roles, and responsibilities are assigned to designated personnel"
+        },
+        {
+          "letter": "c",
+          "text": "personnel are adequately trained to carry out their assigned information security-related duties, roles, and responsibilities"
+        }
+      ]
+    },
+    {
+      "id": "AT.L2-3.2.3",
+      "number": "3.2.3",
+      "family": "AT",
+      "title": "Insider Threat Awareness",
+      "displayTitle": "Insider Threat Awareness",
+      "statement": "Provide security awareness training on recognizing and reporting potential indicators of insider threat.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "potential indicators associated with insider threats are identified"
+        },
+        {
+          "letter": "b",
+          "text": "security awareness training on recognizing and reporting potential indicators of insider threat is provided to managers and employees"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.1",
+      "number": "3.3.1",
+      "family": "AU",
+      "title": "System Auditing",
+      "displayTitle": "System Auditing",
+      "statement": "Create and retain system audit logs and records to the extent needed to enable the monitoring, analysis, investigation, and reporting of unlawful or unauthorized system activity.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "audit logs needed (i.e., event types to be logged) to enable the monitoring, analysis, investigation, and reporting of unlawful or unauthorized system activity are specified"
+        },
+        {
+          "letter": "b",
+          "text": "the content of audit records needed to support monitoring, analysis, investigation, and reporting of unlawful or unauthorized system activity is defined"
+        },
+        {
+          "letter": "c",
+          "text": "audit records are created (generated)"
+        },
+        {
+          "letter": "d",
+          "text": "audit records, once created, contain the defined content"
+        },
+        {
+          "letter": "e",
+          "text": "retention requirements for audit records are defined"
+        },
+        {
+          "letter": "f",
+          "text": "audit records are retained as defined"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.2",
+      "number": "3.3.2",
+      "family": "AU",
+      "title": "User Accountability",
+      "displayTitle": "User Accountability",
+      "statement": "Ensure that the actions of individual system users can be uniquely traced to those users so they can be held accountable for their actions.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the content of the audit records needed to support the ability to uniquely trace users to their actions is defined"
+        },
+        {
+          "letter": "b",
+          "text": "audit records, once created, contain the defined content"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.3",
+      "number": "3.3.3",
+      "family": "AU",
+      "title": "Event Review",
+      "displayTitle": "Event Review",
+      "statement": "Review and update logged events.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a process for determining when to review logged events is defined"
+        },
+        {
+          "letter": "b",
+          "text": "event types being logged are reviewed in accordance with the defined review process"
+        },
+        {
+          "letter": "c",
+          "text": "event types being logged are updated based on the review"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.4",
+      "number": "3.3.4",
+      "family": "AU",
+      "title": "Audit Failure Alerting",
+      "displayTitle": "Audit Failure Alerting",
+      "statement": "Alert in the event of an audit logging process failure.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "personnel or roles to be alerted in the event of an audit logging process failure are identified"
+        },
+        {
+          "letter": "b",
+          "text": "types of audit logging process failures for which alert will be generated are defined"
+        },
+        {
+          "letter": "c",
+          "text": "identified personnel or roles are alerted in the event of an audit logging process failure"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.5",
+      "number": "3.3.5",
+      "family": "AU",
+      "title": "Audit Correlation",
+      "displayTitle": "Audit Correlation",
+      "statement": "Correlate audit record review, analysis, and reporting processes for investigation and response to indications of unlawful, unauthorized, suspicious, or unusual activity.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "audit record review, analysis, and reporting processes for investigation and response to indications of unlawful, unauthorized, suspicious, or unusual activity are defined"
+        },
+        {
+          "letter": "b",
+          "text": "defined audit record review, analysis, and reporting processes are correlated"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.6",
+      "number": "3.3.6",
+      "family": "AU",
+      "title": "Reduction & Reporting",
+      "displayTitle": "Reduction & Reporting",
+      "statement": "Provide audit record reduction and report generation to support on-demand analysis and reporting.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "an audit record reduction capability that supports on-demand analysis is provided"
+        },
+        {
+          "letter": "b",
+          "text": "a report generation capability that supports on-demand reporting is provided"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.7",
+      "number": "3.3.7",
+      "family": "AU",
+      "title": "Authoritative Time Source",
+      "displayTitle": "Authoritative Time Source",
+      "statement": "Provide a system capability that compares and synchronizes internal system clocks with an authoritative source to generate time stamps for audit records.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "internal system clocks are used to generate time stamps for audit records"
+        },
+        {
+          "letter": "b",
+          "text": "an authoritative source with which to compare and synchronize internal system clocks is specified"
+        },
+        {
+          "letter": "c",
+          "text": "internal system clocks used to generate time stamps for audit records are compared to and synchronized with the specified authoritative time source"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.8",
+      "number": "3.3.8",
+      "family": "AU",
+      "title": "Audit Protection",
+      "displayTitle": "Audit Protection",
+      "statement": "Protect audit information and audit logging tools from unauthorized access, modification, and deletion.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "audit information is protected from unauthorized access"
+        },
+        {
+          "letter": "b",
+          "text": "audit information is protected from unauthorized modification"
+        },
+        {
+          "letter": "c",
+          "text": "audit information is protected from unauthorized deletion"
+        },
+        {
+          "letter": "d",
+          "text": "audit logging tools are protected from unauthorized access"
+        },
+        {
+          "letter": "e",
+          "text": "audit logging tools are protected from unauthorized modification"
+        },
+        {
+          "letter": "f",
+          "text": "audit logging tools are protected from unauthorized deletion"
+        }
+      ]
+    },
+    {
+      "id": "AU.L2-3.3.9",
+      "number": "3.3.9",
+      "family": "AU",
+      "title": "Audit Management",
+      "displayTitle": "Audit Management",
+      "statement": "Limit management of audit logging functionality to a subset of privileged users.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a subset of privileged users granted access to manage audit logging functionality is defined"
+        },
+        {
+          "letter": "b",
+          "text": "management of audit logging functionality is limited to the defined subset of privileged users"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.1",
+      "number": "3.4.1",
+      "family": "CM",
+      "title": "System Baselining",
+      "displayTitle": "System Baselining",
+      "statement": "Establish and maintain baseline configurations and inventories of organizational systems (including hardware, software, firmware, and documentation) throughout the respective system development life cycles.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a baseline configuration is established"
+        },
+        {
+          "letter": "b",
+          "text": "the baseline configuration includes hardware, software, firmware, and documentation"
+        },
+        {
+          "letter": "c",
+          "text": "the baseline configuration is maintained (reviewed and updated) throughout the system development life cycle"
+        },
+        {
+          "letter": "d",
+          "text": "a system inventory is established"
+        },
+        {
+          "letter": "e",
+          "text": "the system inventory includes hardware, software, firmware, and documentation"
+        },
+        {
+          "letter": "f",
+          "text": "the inventory is maintained (reviewed and updated) throughout the system development life cycle"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.2",
+      "number": "3.4.2",
+      "family": "CM",
+      "title": "Security Configuration Enforcement",
+      "displayTitle": "Security Configuration Enforcement",
+      "statement": "Establish and enforce security configuration settings for information technology products employed in organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "security configuration settings for information technology products employed in the system are established and included in the baseline configuration"
+        },
+        {
+          "letter": "b",
+          "text": "security configuration settings for information technology products employed in the system are enforced"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.3",
+      "number": "3.4.3",
+      "family": "CM",
+      "title": "System Change Management",
+      "displayTitle": "System Change Management",
+      "statement": "Track, review, approve or disapprove, and log changes to organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "changes to the system are tracked"
+        },
+        {
+          "letter": "b",
+          "text": "changes to the system are reviewed"
+        },
+        {
+          "letter": "c",
+          "text": "changes to the system are approved or disapproved"
+        },
+        {
+          "letter": "d",
+          "text": "changes to the system are logged"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.4",
+      "number": "3.4.4",
+      "family": "CM",
+      "title": "Security Impact Analysis",
+      "displayTitle": "Security Impact Analysis",
+      "statement": "Analyze the security impact of changes prior to implementation.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the security impact of changes to the system is analyzed prior to implementation"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.5",
+      "number": "3.4.5",
+      "family": "CM",
+      "title": "Access Restrictions for Change",
+      "displayTitle": "Access Restrictions for Change",
+      "statement": "Define, document, approve, and enforce physical and logical access restrictions associated with changes to organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "physical access restrictions associated with changes to the system are defined"
+        },
+        {
+          "letter": "b",
+          "text": "physical access restrictions associated with changes to the system are documented"
+        },
+        {
+          "letter": "c",
+          "text": "physical access restrictions associated with changes to the system are approved"
+        },
+        {
+          "letter": "d",
+          "text": "physical access restrictions associated with changes to the system are enforced"
+        },
+        {
+          "letter": "e",
+          "text": "logical access restrictions associated with changes to the system are defined"
+        },
+        {
+          "letter": "f",
+          "text": "logical access restrictions associated with changes to the system are documented"
+        },
+        {
+          "letter": "g",
+          "text": "logical access restrictions associated with changes to the system are approved"
+        },
+        {
+          "letter": "h",
+          "text": "logical access restrictions associated with changes to the system are enforced"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.6",
+      "number": "3.4.6",
+      "family": "CM",
+      "title": "Least Functionality",
+      "displayTitle": "Least Functionality",
+      "statement": "Employ the principle of least functionality by configuring organizational systems to provide only essential capabilities.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "essential system capabilities are defined based on the principle of least functionality"
+        },
+        {
+          "letter": "b",
+          "text": "the system is configured to provide only the defined essential capabilities"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.7",
+      "number": "3.4.7",
+      "family": "CM",
+      "title": "Nonessential Functionality",
+      "displayTitle": "Nonessential Functionality",
+      "statement": "Restrict, disable, or prevent the use of nonessential programs, functions, ports, protocols, and services.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "essential programs are defined"
+        },
+        {
+          "letter": "b",
+          "text": "the use of nonessential programs is defined"
+        },
+        {
+          "letter": "c",
+          "text": "the use of nonessential programs is restricted, disabled, or prevented as defined"
+        },
+        {
+          "letter": "d",
+          "text": "essential functions are defined"
+        },
+        {
+          "letter": "e",
+          "text": "the use of nonessential functions is defined"
+        },
+        {
+          "letter": "f",
+          "text": "the use of nonessential functions is restricted, disabled, or prevented as defined"
+        },
+        {
+          "letter": "g",
+          "text": "essential ports are defined"
+        },
+        {
+          "letter": "h",
+          "text": "the use of nonessential ports is defined"
+        },
+        {
+          "letter": "i",
+          "text": "the use of nonessential ports is restricted, disabled, or prevented as defined"
+        },
+        {
+          "letter": "j",
+          "text": "essential protocols are defined"
+        },
+        {
+          "letter": "k",
+          "text": "the use of nonessential protocols is defined"
+        },
+        {
+          "letter": "l",
+          "text": "the use of nonessential protocols is restricted, disabled, or prevented as defined"
+        },
+        {
+          "letter": "m",
+          "text": "essential services are defined"
+        },
+        {
+          "letter": "n",
+          "text": "the use of nonessential services is defined"
+        },
+        {
+          "letter": "o",
+          "text": "the use of nonessential services is restricted, disabled, or prevented as defined"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.8",
+      "number": "3.4.8",
+      "family": "CM",
+      "title": "Application Execution Policy",
+      "displayTitle": "Application Execution Policy",
+      "statement": "Apply deny-by-exception (blacklisting) policy to prevent the use of unauthorized software or deny-all, permit-by-exception (whitelisting) policy to allow the execution of authorized software.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a policy specifying whether whitelisting or blacklisting is to be implemented is specified"
+        },
+        {
+          "letter": "b",
+          "text": "the software allowed to execute under whitelisting or denied use under blacklisting is specified"
+        },
+        {
+          "letter": "c",
+          "text": "whitelisting to allow the execution of authorized software or blacklisting to prevent the use of unauthorized software is implemented as specified"
+        }
+      ]
+    },
+    {
+      "id": "CM.L2-3.4.9",
+      "number": "3.4.9",
+      "family": "CM",
+      "title": "User-Installed Software",
+      "displayTitle": "User-Installed Software",
+      "statement": "Control and monitor user-installed software.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a policy for controlling the installation of software by users is established"
+        },
+        {
+          "letter": "b",
+          "text": "installation of software by users is controlled based on the established policy"
+        },
+        {
+          "letter": "c",
+          "text": "installation of software by users is monitored"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.1",
+      "number": "3.5.1",
+      "family": "IA",
+      "title": "Identification [CUI Data]",
+      "displayTitle": "Identification",
+      "statement": "Identify system users, processes acting on behalf of users, and devices.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "system users are identified"
+        },
+        {
+          "letter": "b",
+          "text": "processes acting on behalf of users are identified"
+        },
+        {
+          "letter": "c",
+          "text": "devices accessing the system are identified"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.2",
+      "number": "3.5.2",
+      "family": "IA",
+      "title": "Authentication [CUI Data]",
+      "displayTitle": "Authentication",
+      "statement": "Authenticate (or verify) the identities of users, processes, or devices, as a prerequisite to allowing access to organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the identity of each user is authenticated or verified as a prerequisite to system access"
+        },
+        {
+          "letter": "b",
+          "text": "the identity of each process acting on behalf of a user is authenticated or verified as a prerequisite to system access"
+        },
+        {
+          "letter": "c",
+          "text": "the identity of each device accessing or connecting to the system is authenticated or verified as a prerequisite to system access"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.3",
+      "number": "3.5.3",
+      "family": "IA",
+      "title": "Multifactor Authentication",
+      "displayTitle": "Multifactor Authentication",
+      "statement": "Use multifactor authentication for local and network access to privileged accounts and for network access to non-privileged accounts.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "privileged accounts are identified"
+        },
+        {
+          "letter": "b",
+          "text": "multifactor authentication is implemented for local access to privileged accounts"
+        },
+        {
+          "letter": "c",
+          "text": "multifactor authentication is implemented for network access to privileged accounts"
+        },
+        {
+          "letter": "d",
+          "text": "multifactor authentication is implemented for network access to non-privileged accounts"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.4",
+      "number": "3.5.4",
+      "family": "IA",
+      "title": "Replay-Resistant Authentication",
+      "displayTitle": "Replay-Resistant Authentication",
+      "statement": "Employ replay-resistant authentication mechanisms for network access to privileged and non-privileged accounts.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "replay-resistant authentication mechanisms are implemented for network account access to privileged and non-privileged accounts"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.5",
+      "number": "3.5.5",
+      "family": "IA",
+      "title": "Identifier Reuse",
+      "displayTitle": "Identifier Reuse",
+      "statement": "Prevent reuse of identifiers for a defined period.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a period within which identifiers cannot be reused is defined"
+        },
+        {
+          "letter": "b",
+          "text": "reuse of identifiers is prevented within the defined period"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.6",
+      "number": "3.5.6",
+      "family": "IA",
+      "title": "Identifier Handling",
+      "displayTitle": "Identifier Handling",
+      "statement": "Disable identifiers after a defined period of inactivity.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a period of inactivity after which an identifier is disabled is defined"
+        },
+        {
+          "letter": "b",
+          "text": "identifiers are disabled after the defined period of inactivity"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.7",
+      "number": "3.5.7",
+      "family": "IA",
+      "title": "Password Complexity",
+      "displayTitle": "Password Complexity",
+      "statement": "Enforce a minimum password complexity and change of characters when new passwords are created.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "password complexity requirements are defined"
+        },
+        {
+          "letter": "b",
+          "text": "password change of character requirements are defined"
+        },
+        {
+          "letter": "c",
+          "text": "minimum password complexity requirements as defined are enforced when new passwords are created"
+        },
+        {
+          "letter": "d",
+          "text": "minimum password change of character requirements as defined are enforced when new passwords are created"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.8",
+      "number": "3.5.8",
+      "family": "IA",
+      "title": "Password Reuse",
+      "displayTitle": "Password Reuse",
+      "statement": "Prohibit password reuse for a specified number of generations.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the number of generations during which a password cannot be reused is specified"
+        },
+        {
+          "letter": "b",
+          "text": "reuse of passwords is prohibited during the specified number of generations"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.9",
+      "number": "3.5.9",
+      "family": "IA",
+      "title": "Temporary Passwords",
+      "displayTitle": "Temporary Passwords",
+      "statement": "Allow temporary password use for system logons with an immediate change to a permanent password.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "an immediate change to a permanent password is required when a temporary password is used for system logon"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.10",
+      "number": "3.5.10",
+      "family": "IA",
+      "title": "Cryptographically-Protected Passwords",
+      "displayTitle": "Cryptographically-Protected Passwords",
+      "statement": "Store and transmit only cryptographically-protected passwords.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "passwords are cryptographically protected in storage"
+        },
+        {
+          "letter": "b",
+          "text": "passwords are cryptographically protected in transit"
+        }
+      ]
+    },
+    {
+      "id": "IA.L2-3.5.11",
+      "number": "3.5.11",
+      "family": "IA",
+      "title": "Obscure Feedback",
+      "displayTitle": "Obscure Feedback",
+      "statement": "Obscure feedback of authentication information.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "authentication information is obscured during the authentication process"
+        }
+      ]
+    },
+    {
+      "id": "IR.L2-3.6.1",
+      "number": "3.6.1",
+      "family": "IR",
+      "title": "Incident Handling",
+      "displayTitle": "Incident Handling",
+      "statement": "Establish an operational incident-handling capability for organizational systems that includes preparation, detection, analysis, containment, recovery, and user response activities.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "an operational incident-handling capability is established"
+        },
+        {
+          "letter": "b",
+          "text": "the operational incident-handling capability includes preparation"
+        },
+        {
+          "letter": "c",
+          "text": "the operational incident-handling capability includes detection"
+        },
+        {
+          "letter": "d",
+          "text": "the operational incident-handling capability includes analysis"
+        },
+        {
+          "letter": "e",
+          "text": "the operational incident-handling capability includes containment"
+        },
+        {
+          "letter": "f",
+          "text": "the operational incident-handling capability includes recovery"
+        },
+        {
+          "letter": "g",
+          "text": "the operational incident-handling capability includes user response activities"
+        }
+      ]
+    },
+    {
+      "id": "IR.L2-3.6.2",
+      "number": "3.6.2",
+      "family": "IR",
+      "title": "Incident Reporting",
+      "displayTitle": "Incident Reporting",
+      "statement": "Track, document, and report incidents to designated officials and/or authorities both internal and external to the organization.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "incidents are tracked"
+        },
+        {
+          "letter": "b",
+          "text": "incidents are documented"
+        },
+        {
+          "letter": "c",
+          "text": "authorities to whom incidents are to be reported are identified"
+        },
+        {
+          "letter": "d",
+          "text": "organizational officials to whom incidents are to be reported are identified"
+        },
+        {
+          "letter": "e",
+          "text": "identified authorities are notified of incidents"
+        },
+        {
+          "letter": "f",
+          "text": "identified organizational officials are notified of incidents"
+        }
+      ]
+    },
+    {
+      "id": "IR.L2-3.6.3",
+      "number": "3.6.3",
+      "family": "IR",
+      "title": "Incident Response Testing",
+      "displayTitle": "Incident Response Testing",
+      "statement": "Test the organizational incident response capability.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the incident response capability is tested"
+        }
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.1",
+      "number": "3.7.1",
+      "family": "MA",
+      "title": "Perform Maintenance",
+      "displayTitle": "Perform Maintenance",
+      "statement": "Perform maintenance on organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "system maintenance is performed"
+        }
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.2",
+      "number": "3.7.2",
+      "family": "MA",
+      "title": "System Maintenance Control",
+      "displayTitle": "System Maintenance Control",
+      "statement": "Provide controls on the tools, techniques, mechanisms, and personnel used to conduct system maintenance.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "tools used to conduct system maintenance are controlled"
+        },
+        {
+          "letter": "b",
+          "text": "techniques used to conduct system maintenance are controlled"
+        },
+        {
+          "letter": "c",
+          "text": "mechanisms used to conduct system maintenance are controlled"
+        },
+        {
+          "letter": "d",
+          "text": "personnel used to conduct system maintenance are controlled"
+        }
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.3",
+      "number": "3.7.3",
+      "family": "MA",
+      "title": "Equipment Sanitization",
+      "displayTitle": "Equipment Sanitization",
+      "statement": "Ensure equipment removed for off-site maintenance is sanitized of any CUI.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "equipment to be removed from organizational spaces for off-site maintenance is sanitized of any CUI"
+        }
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.4",
+      "number": "3.7.4",
+      "family": "MA",
+      "title": "Media Inspection",
+      "displayTitle": "Media Inspection",
+      "statement": "Check media containing diagnostic and test programs for malicious code before the media are used in organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "media containing diagnostic and test programs are checked for malicious code before being used in organizational systems that process, store, or transmit CUI"
+        }
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.5",
+      "number": "3.7.5",
+      "family": "MA",
+      "title": "Nonlocal Maintenance",
+      "displayTitle": "Nonlocal Maintenance",
+      "statement": "Require multifactor authentication to establish nonlocal maintenance sessions via external network connections and terminate such connections when nonlocal maintenance is complete.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "multifactor authentication is used to establish nonlocal maintenance sessions via external network connections"
+        },
+        {
+          "letter": "b",
+          "text": "nonlocal maintenance sessions established via external network connections are terminated when nonlocal maintenance is complete"
+        }
+      ]
+    },
+    {
+      "id": "MA.L2-3.7.6",
+      "number": "3.7.6",
+      "family": "MA",
+      "title": "Maintenance Personnel",
+      "displayTitle": "Maintenance Personnel",
+      "statement": "Supervise the maintenance activities of maintenance personnel without required access authorization.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "maintenance personnel without required access authorization are supervised during maintenance activities"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.1",
+      "number": "3.8.1",
+      "family": "MP",
+      "title": "Media Protection",
+      "displayTitle": "Media Protection",
+      "statement": "Protect (i.e., physically control and securely store) system media containing CUI, both paper and digital.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "paper media containing CUI is physically controlled"
+        },
+        {
+          "letter": "b",
+          "text": "digital media containing CUI is physically controlled"
+        },
+        {
+          "letter": "c",
+          "text": "paper media containing CUI is securely stored"
+        },
+        {
+          "letter": "d",
+          "text": "digital media containing CUI is securely stored"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.2",
+      "number": "3.8.2",
+      "family": "MP",
+      "title": "Media Access",
+      "displayTitle": "Media Access",
+      "statement": "Limit access to CUI on system media to authorized users.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "access to CUI on system media is limited to authorized users"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.3",
+      "number": "3.8.3",
+      "family": "MP",
+      "title": "Media Disposal [CUI Data]",
+      "displayTitle": "Media Disposal",
+      "statement": "Sanitize or destroy system media containing CUI before disposal or release for reuse.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "system media containing CUI is sanitized or destroyed before disposal"
+        },
+        {
+          "letter": "b",
+          "text": "system media containing CUI is sanitized before it is released for reuse"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.4",
+      "number": "3.8.4",
+      "family": "MP",
+      "title": "Media Markings",
+      "displayTitle": "Media Markings",
+      "statement": "Mark media with necessary CUI markings and distribution limitations.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "media containing CUI is marked with applicable CUI markings"
+        },
+        {
+          "letter": "b",
+          "text": "media containing CUI is marked with distribution limitations"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.5",
+      "number": "3.8.5",
+      "family": "MP",
+      "title": "Media Accountability",
+      "displayTitle": "Media Accountability",
+      "statement": "Control access to media containing CUI and maintain accountability for media during transport outside of controlled areas.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "access to media containing CUI is controlled"
+        },
+        {
+          "letter": "b",
+          "text": "accountability for media containing CUI is maintained during transport outside of controlled areas"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.6",
+      "number": "3.8.6",
+      "family": "MP",
+      "title": "Portable Storage Encryption",
+      "displayTitle": "Portable Storage Encryption",
+      "statement": "Implement cryptographic mechanisms to protect the confidentiality of CUI stored on digital media during transport unless otherwise protected by alternative physical safeguards.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the confidentiality of CUI stored on digital media is protected during transport using cryptographic mechanisms or alternative physical safeguards"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.7",
+      "number": "3.8.7",
+      "family": "MP",
+      "title": "Removeable Media",
+      "displayTitle": "Removeable Media",
+      "statement": "Control the use of removable media on system components.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the use of removable media on system components is controlled"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.8",
+      "number": "3.8.8",
+      "family": "MP",
+      "title": "Shared Media",
+      "displayTitle": "Shared Media",
+      "statement": "Prohibit the use of portable storage devices when such devices have no identifiable owner.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the use of portable storage devices is prohibited when such devices have no identifiable owner"
+        }
+      ]
+    },
+    {
+      "id": "MP.L2-3.8.9",
+      "number": "3.8.9",
+      "family": "MP",
+      "title": "Protect Backups",
+      "displayTitle": "Protect Backups",
+      "statement": "Protect the confidentiality of backup CUI at storage locations.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the confidentiality of backup CUI is protected at storage locations"
+        }
+      ]
+    },
+    {
+      "id": "PS.L2-3.9.1",
+      "number": "3.9.1",
+      "family": "PS",
+      "title": "Screen Individuals",
+      "displayTitle": "Screen Individuals",
+      "statement": "Screen individuals prior to authorizing access to organizational systems containing CUI.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "individuals are screened prior to authorizing access to organizational systems containing CUI"
+        }
+      ]
+    },
+    {
+      "id": "PS.L2-3.9.2",
+      "number": "3.9.2",
+      "family": "PS",
+      "title": "Personnel Actions",
+      "displayTitle": "Personnel Actions",
+      "statement": "Ensure that organizational systems containing CUI are protected during and after personnel actions such as terminations and transfers.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a policy and/or process for terminating system access and any credentials coincident with personnel actions is established"
+        },
+        {
+          "letter": "b",
+          "text": "system access and credentials are terminated consistent with personnel actions such as termination or transfer"
+        },
+        {
+          "letter": "c",
+          "text": "the system is protected during and after personnel transfer actions"
+        }
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.1",
+      "number": "3.10.1",
+      "family": "PE",
+      "title": "Limit Physical Access [CUI Data]",
+      "displayTitle": "Limit Physical Access",
+      "statement": "Limit physical access to organizational systems, equipment, and the respective operating environments to authorized individuals.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "authorized individuals allowed physical access are identified"
+        },
+        {
+          "letter": "b",
+          "text": "physical access to organizational systems is limited to authorized individuals"
+        },
+        {
+          "letter": "c",
+          "text": "physical access to equipment is limited to authorized individuals"
+        },
+        {
+          "letter": "d",
+          "text": "physical access to operating environments is limited to authorized individuals"
+        }
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.2",
+      "number": "3.10.2",
+      "family": "PE",
+      "title": "Monitor Facility",
+      "displayTitle": "Monitor Facility",
+      "statement": "Protect and monitor the physical facility and support infrastructure for organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the physical facility where organizational systems reside is protected"
+        },
+        {
+          "letter": "b",
+          "text": "the support infrastructure for organizational systems is protected"
+        },
+        {
+          "letter": "c",
+          "text": "the physical facility where organizational systems reside is monitored"
+        },
+        {
+          "letter": "d",
+          "text": "the support infrastructure for organizational systems is monitored"
+        }
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.3",
+      "number": "3.10.3",
+      "family": "PE",
+      "title": "Escort Visitors [CUI Data]",
+      "displayTitle": "Escort Visitors",
+      "statement": "Escort visitors and monitor visitor activity.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "visitors are escorted"
+        },
+        {
+          "letter": "b",
+          "text": "visitor activity is monitored"
+        }
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.4",
+      "number": "3.10.4",
+      "family": "PE",
+      "title": "Physical Access Logs [CUI Data]",
+      "displayTitle": "Physical Access Logs",
+      "statement": "Maintain audit logs of physical access.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "audit logs of physical access are maintained"
+        }
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.5",
+      "number": "3.10.5",
+      "family": "PE",
+      "title": "Manage Physical Access [CUI Data]",
+      "displayTitle": "Manage Physical Access",
+      "statement": "Control and manage physical access devices.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "physical access devices are identified"
+        },
+        {
+          "letter": "b",
+          "text": "physical access devices are controlled"
+        },
+        {
+          "letter": "c",
+          "text": "physical access devices are managed"
+        }
+      ]
+    },
+    {
+      "id": "PE.L2-3.10.6",
+      "number": "3.10.6",
+      "family": "PE",
+      "title": "Alternative Work Sites",
+      "displayTitle": "Alternative Work Sites",
+      "statement": "Enforce safeguarding measures for CUI at alternate work sites.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "safeguarding measures for CUI are defined for alternate work sites"
+        },
+        {
+          "letter": "b",
+          "text": "safeguarding measures for CUI are enforced for alternate work sites"
+        }
+      ]
+    },
+    {
+      "id": "RA.L2-3.11.1",
+      "number": "3.11.1",
+      "family": "RA",
+      "title": "RIsk Assessments",
+      "displayTitle": "Risk Assessments",
+      "statement": "Periodically assess the risk to organizational operations (including mission, functions, image, or reputation), organizational assets, and individuals, resulting from the operation of organizational systems and the associated processing, storage, or transmission of CUI.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the frequency to assess risk to organizational operations, organizational assets, and individuals is defined"
+        },
+        {
+          "letter": "b",
+          "text": "risk to organizational operations, organizational assets, and individuals resulting from the operation of an organizational system that processes, stores, or transmits CUI is assessed with the defined frequency"
+        }
+      ]
+    },
+    {
+      "id": "RA.L2-3.11.2",
+      "number": "3.11.2",
+      "family": "RA",
+      "title": "Vulnerability Scan",
+      "displayTitle": "Vulnerability Scan",
+      "statement": "Scan for vulnerabilities in organizational systems and applications periodically and when new vulnerabilities affecting those systems and applications are identified.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the frequency to scan for vulnerabilities in organizational systems and applications is defined"
+        },
+        {
+          "letter": "b",
+          "text": "vulnerability scans are performed on organizational systems with the defined frequency"
+        },
+        {
+          "letter": "c",
+          "text": "vulnerability scans are performed on applications with the defined frequency"
+        },
+        {
+          "letter": "d",
+          "text": "vulnerability scans are performed on organizational systems when new vulnerabilities are identified"
+        },
+        {
+          "letter": "e",
+          "text": "vulnerability scans are performed on applications when new vulnerabilities are identified"
+        }
+      ]
+    },
+    {
+      "id": "RA.L2-3.11.3",
+      "number": "3.11.3",
+      "family": "RA",
+      "title": "Vulnerability Remediation",
+      "displayTitle": "Vulnerability Remediation",
+      "statement": "Remediate vulnerabilities in accordance with risk assessments.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "vulnerabilities are identified"
+        },
+        {
+          "letter": "b",
+          "text": "vulnerabilities are remediated in accordance with risk assessments"
+        }
+      ]
+    },
+    {
+      "id": "CA.L2-3.12.1",
+      "number": "3.12.1",
+      "family": "CA",
+      "title": "Security Control Assessment",
+      "displayTitle": "Security Control Assessment",
+      "statement": "Periodically assess the security controls in organizational systems to determine if the controls are effective in their application.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the frequency of security control assessments is defined"
+        },
+        {
+          "letter": "b",
+          "text": "security controls are assessed with the defined frequency to determine if the controls are effective in their application"
+        }
+      ]
+    },
+    {
+      "id": "CA.L2-3.12.2",
+      "number": "3.12.2",
+      "family": "CA",
+      "title": "operational Plan of Action",
+      "displayTitle": "Operational Plan of Action",
+      "statement": "Develop and implement plans of action designed to correct deficiencies and reduce or eliminate vulnerabilities in organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "deficiencies and vulnerabilities to be addressed by the plan of action are identified"
+        },
+        {
+          "letter": "b",
+          "text": "a plan of action is developed to correct identified deficiencies and reduce or eliminate identified vulnerabilities"
+        },
+        {
+          "letter": "c",
+          "text": "the plan of action is implemented to correct identified deficiencies and reduce or eliminate identified vulnerabilities"
+        }
+      ]
+    },
+    {
+      "id": "CA.L2-3.12.3",
+      "number": "3.12.3",
+      "family": "CA",
+      "title": "Security Control Monitoring",
+      "displayTitle": "Security Control Monitoring",
+      "statement": "Monitor security controls on an ongoing basis to ensure the continued effectiveness of the controls.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "security controls are monitored on an ongoing basis to ensure the continued effectiveness of those controls"
+        }
+      ]
+    },
+    {
+      "id": "CA.L2-3.12.4",
+      "number": "3.12.4",
+      "family": "CA",
+      "title": "System Security Plan",
+      "displayTitle": "System Security Plan",
+      "statement": "Develop, document, and periodically update system security plans that describe system boundaries, system environments of operation, how security requirements are implemented, and the relationships with or connections to other systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a system security plan is developed"
+        },
+        {
+          "letter": "b",
+          "text": "the system boundary is described and documented in the system security plan"
+        },
+        {
+          "letter": "c",
+          "text": "the system environment of operation is described and documented in the system security plan"
+        },
+        {
+          "letter": "d",
+          "text": "the security requirements identified and approved by the designated authority as non-applicable are identified"
+        },
+        {
+          "letter": "e",
+          "text": "the method of security requirement implementation is described and documented in the system security plan"
+        },
+        {
+          "letter": "f",
+          "text": "the relationship with or connection to other systems is described and documented in the system security plan"
+        },
+        {
+          "letter": "g",
+          "text": "the frequency to update the system security plan is defined"
+        },
+        {
+          "letter": "h",
+          "text": "system security plan is updated with the defined frequency"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.1",
+      "number": "3.13.1",
+      "family": "SC",
+      "title": "Boundary Protection [CUI Data]",
+      "displayTitle": "Boundary Protection",
+      "statement": "Monitor, control, and protect communications (i.e., information transmitted or received by organizational systems) at the external boundaries and key internal boundaries of organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the external system boundary is defined"
+        },
+        {
+          "letter": "b",
+          "text": "key internal system boundaries are defined"
+        },
+        {
+          "letter": "c",
+          "text": "communications are monitored at the external system boundary"
+        },
+        {
+          "letter": "d",
+          "text": "communications are monitored at key internal boundaries"
+        },
+        {
+          "letter": "e",
+          "text": "communications are controlled at the external system boundary"
+        },
+        {
+          "letter": "f",
+          "text": "communications are controlled at key internal boundaries"
+        },
+        {
+          "letter": "g",
+          "text": "communications are protected at the external system boundary"
+        },
+        {
+          "letter": "h",
+          "text": "communications are protected at key internal boundaries"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.2",
+      "number": "3.13.2",
+      "family": "SC",
+      "title": "Security Engineering",
+      "displayTitle": "Security Engineering",
+      "statement": "Employ architectural designs, software development techniques, and systems engineering principles that promote effective information security within organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "architectural designs that promote effective information security are identified"
+        },
+        {
+          "letter": "b",
+          "text": "software development techniques that promote effective information security are identified"
+        },
+        {
+          "letter": "c",
+          "text": "systems engineering principles that promote effective information security are identified"
+        },
+        {
+          "letter": "d",
+          "text": "identified architectural designs that promote effective information security are employed"
+        },
+        {
+          "letter": "e",
+          "text": "identified software development techniques that promote effective information security are employed"
+        },
+        {
+          "letter": "f",
+          "text": "identified systems engineering principles that promote effective information security are employed"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.3",
+      "number": "3.13.3",
+      "family": "SC",
+      "title": "Role Separation",
+      "displayTitle": "Role Separation",
+      "statement": "Separate user functionality from system management functionality.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "user functionality is identified"
+        },
+        {
+          "letter": "b",
+          "text": "system management functionality is identified"
+        },
+        {
+          "letter": "c",
+          "text": "user functionality is separated from system management functionality"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.4",
+      "number": "3.13.4",
+      "family": "SC",
+      "title": "Shared Resource Control",
+      "displayTitle": "Shared Resource Control",
+      "statement": "Prevent unauthorized and unintended information transfer via shared system resources.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "unauthorized and unintended information transfer via shared system resources is prevented"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.5",
+      "number": "3.13.5",
+      "family": "SC",
+      "title": "Public-Access System Separation [CUI Data]",
+      "displayTitle": "Public-Access System Separation",
+      "statement": "Implement subnetworks for publicly accessible system components that are physically or logically separated from internal networks.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "publicly accessible system components are identified"
+        },
+        {
+          "letter": "b",
+          "text": "subnetworks for publicly accessible system components are physically or logically separated from internal networks"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.6",
+      "number": "3.13.6",
+      "family": "SC",
+      "title": "Network Communication by Exception",
+      "displayTitle": "Network Communication by Exception",
+      "statement": "Deny network communications traffic by default and allow network communications traffic by exception (i.e., deny all, permit by exception).",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "network communications traffic is denied by default"
+        },
+        {
+          "letter": "b",
+          "text": "network communications traffic is allowed by exception"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.7",
+      "number": "3.13.7",
+      "family": "SC",
+      "title": "Split Tunneling",
+      "displayTitle": "Split Tunneling",
+      "statement": "Prevent remote devices from simultaneously establishing non-remote connections with organizational systems and communicating via some other connection to resources in external networks (i.e., split tunneling).",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "remote devices are prevented from simultaneously establishing non-remote connections with the system and communicating via some other connection to resources in external networks (i.e., split tunneling)"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.8",
+      "number": "3.13.8",
+      "family": "SC",
+      "title": "Data in Transit",
+      "displayTitle": "Data in Transit",
+      "statement": "Implement cryptographic mechanisms to prevent unauthorized disclosure of CUI during transmission unless otherwise protected by alternative physical safeguards.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "cryptographic mechanisms intended to prevent unauthorized disclosure of CUI are identified"
+        },
+        {
+          "letter": "b",
+          "text": "alternative physical safeguards intended to prevent unauthorized disclosure of CUI are identified"
+        },
+        {
+          "letter": "c",
+          "text": "either cryptographic mechanisms or alternative physical safeguards are implemented to prevent unauthorized disclosure of CUI during transmission"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.9",
+      "number": "3.13.9",
+      "family": "SC",
+      "title": "Connections Termination",
+      "displayTitle": "Connections Termination",
+      "statement": "Terminate network connections associated with communications sessions at the end of the sessions or after a defined period of inactivity.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "a period of inactivity to terminate network connections associated with communications sessions is defined"
+        },
+        {
+          "letter": "b",
+          "text": "network connections associated with communications sessions are terminated at the end of the sessions"
+        },
+        {
+          "letter": "c",
+          "text": "network connections associated with communications sessions are terminated after the defined period of inactivity"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.10",
+      "number": "3.13.10",
+      "family": "SC",
+      "title": "Key Management",
+      "displayTitle": "Key Management",
+      "statement": "Establish and manage cryptographic keys for cryptography employed in organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "cryptographic keys are established whenever cryptography is employed"
+        },
+        {
+          "letter": "b",
+          "text": "cryptographic keys are managed whenever cryptography is employed"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.11",
+      "number": "3.13.11",
+      "family": "SC",
+      "title": "CUI Encryption",
+      "displayTitle": "CUI Encryption",
+      "statement": "Employ FIPS-validated cryptography when used to protect the confidentiality of CUI.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "FIPS-validated cryptography is employed to protect the confidentiality of CUI"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.12",
+      "number": "3.13.12",
+      "family": "SC",
+      "title": "Collaborative Device Control",
+      "displayTitle": "Collaborative Device Control",
+      "statement": "Prohibit remote activation of collaborative computing devices and provide indication of devices in use to users present at the device.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "collaborative computing devices are identified"
+        },
+        {
+          "letter": "b",
+          "text": "collaborative computing devices provide indication to users of devices in use"
+        },
+        {
+          "letter": "c",
+          "text": "remote activation of collaborative computing devices is prohibited"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.13",
+      "number": "3.13.13",
+      "family": "SC",
+      "title": "Mobile Code",
+      "displayTitle": "Mobile Code",
+      "statement": "Control and monitor the use of mobile code.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "use of mobile code is controlled"
+        },
+        {
+          "letter": "b",
+          "text": "use of mobile code is monitored"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.14",
+      "number": "3.13.14",
+      "family": "SC",
+      "title": "Voice over Internet Protocol",
+      "displayTitle": "Voice over Internet Protocol",
+      "statement": "Control and monitor the use of Voice over Internet Protocol (VoIP) technologies.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "use of Voice over Internet Protocol (VoIP) technologies is controlled"
+        },
+        {
+          "letter": "b",
+          "text": "use of Voice over Internet Protocol (VoIP) technologies is monitored"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.15",
+      "number": "3.13.15",
+      "family": "SC",
+      "title": "Communications Authenticity",
+      "displayTitle": "Communications Authenticity",
+      "statement": "Protect the authenticity of communications sessions.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the authenticity of communications sessions is protected"
+        }
+      ]
+    },
+    {
+      "id": "SC.L2-3.13.16",
+      "number": "3.13.16",
+      "family": "SC",
+      "title": "Data at Rest",
+      "displayTitle": "Data at Rest",
+      "statement": "Protect the confidentiality of CUI at rest.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the confidentiality of CUI at rest is protected"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.1",
+      "number": "3.14.1",
+      "family": "SI",
+      "title": "Flaw Remediation [CUI Data]",
+      "displayTitle": "Flaw Remediation",
+      "statement": "Identify, report, and correct system flaws in a timely manner.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the time within which to identify system flaws is specified"
+        },
+        {
+          "letter": "b",
+          "text": "system flaws are identified within the specified time frame"
+        },
+        {
+          "letter": "c",
+          "text": "the time within which to report system flaws is specified"
+        },
+        {
+          "letter": "d",
+          "text": "system flaws are reported within the specified time frame"
+        },
+        {
+          "letter": "e",
+          "text": "the time within which to correct system flaws is specified"
+        },
+        {
+          "letter": "f",
+          "text": "system flaws are corrected within the specified time frame"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.2",
+      "number": "3.14.2",
+      "family": "SI",
+      "title": "Malicious Code Protection [CUI Data]",
+      "displayTitle": "Malicious Code Protection",
+      "statement": "Provide protection from malicious code at designated locations within organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "designated locations for malicious code protection are identified"
+        },
+        {
+          "letter": "b",
+          "text": "protection from malicious code at designated locations is provided"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.3",
+      "number": "3.14.3",
+      "family": "SI",
+      "title": "Security Alerts & Advisories",
+      "displayTitle": "Security Alerts & Advisories",
+      "statement": "Monitor system security alerts and advisories and take action in response.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "response actions to system security alerts and advisories are identified"
+        },
+        {
+          "letter": "b",
+          "text": "system security alerts and advisories are monitored"
+        },
+        {
+          "letter": "c",
+          "text": "actions in response to system security alerts and advisories are taken"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.4",
+      "number": "3.14.4",
+      "family": "SI",
+      "title": "Update Malicious Code Protection [CUI Data]",
+      "displayTitle": "Update Malicious Code Protection",
+      "statement": "Update malicious code protection mechanisms when new releases are available.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "malicious code protection mechanisms are updated when new releases are available"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.5",
+      "number": "3.14.5",
+      "family": "SI",
+      "title": "System & File Scanning [CUI Data]",
+      "displayTitle": "System & File Scanning",
+      "statement": "Perform periodic scans of organizational systems and real-time scans of files from external sources as files are downloaded, opened, or executed.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the frequency for malicious code scans is defined"
+        },
+        {
+          "letter": "b",
+          "text": "malicious code scans are performed with the defined frequency"
+        },
+        {
+          "letter": "c",
+          "text": "real-time malicious code scans of files from external sources as files are downloaded, opened, or executed are performed"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.6",
+      "number": "3.14.6",
+      "family": "SI",
+      "title": "Monitor Communications for Attacks",
+      "displayTitle": "Monitor Communications for Attacks",
+      "statement": "Monitor organizational systems, including inbound and outbound communications traffic, to detect attacks and indicators of potential attacks.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the system is monitored to detect attacks and indicators of potential attacks"
+        },
+        {
+          "letter": "b",
+          "text": "inbound communications traffic is monitored to detect attacks and indicators of potential attacks"
+        },
+        {
+          "letter": "c",
+          "text": "outbound communications traffic is monitored to detect attacks and indicators of potential attacks"
+        }
+      ]
+    },
+    {
+      "id": "SI.L2-3.14.7",
+      "number": "3.14.7",
+      "family": "SI",
+      "title": "Identify Unauthorized Use",
+      "displayTitle": "Identify Unauthorized Use",
+      "statement": "Identify unauthorized use of organizational systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "authorized use of the system is defined"
+        },
+        {
+          "letter": "b",
+          "text": "unauthorized use of the system is identified"
+        }
+      ]
+    }
+  ]
+}

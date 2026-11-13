@@ -102,6 +102,8 @@ export interface AssessmentState {
   objectivesMigratedAt?: string;
   /** Objective ids the server reported as conflicts; their narratives stay in the cache until the user resolves them. */
   objectivesPendingReview?: string[];
+  /** The CMMC assessment-guide objective catalog this cache was last reconciled with (see src/data/cmmcGuide/migration.ts); unset means a legacy cache. */
+  objectivesCatalogRev?: string;
   /** ISO time the client set once this cache key's SSP metadata is on the server; from then on the cache holds none of it (#84). */
   sspMetadataMigratedAt?: string;
 }

@@ -1,0 +1,108 @@
+=== page 35 ===
+PE.L1-b.1.ix – Manage Visitors & Physical Access [FCI Data]
+PE.L1-B.1.IX – MANAGE VISITORS & PHYSICAL ACCESS [FCI DATA]
+Escort visitors and monitor visitor activity; maintain audit logs of physical access; and
+control and manage physical access devices.
+22
+ASSESSMENT OBJECTIVES [NIST SP 800-171A]
+Determine if:
+[a] visitors are escorted;
+[b] visitor activity is monitored;
+[c] audit logs of physical access are maintained;
+[d] physical access devices are identified;
+[e] physical access devices are controlled; and
+[f] physical access devices are managed.
+23
+POTENTIAL ASSESSMENT METHODS AND OBJECTS [NIST SP 800-171A]
+Examine
+[SELECT FROM: Physical and environmental protection policy; procedures addressing
+physical access control; system security plan; physical access control logs or records;
+inventory records of physical access control devices; system entry and exit points; records
+of key and lock combination changes; storage locations for physical access control devices;
+physical access control devices; list of security safeguards controlling access to designated
+publicly accessible areas within facility; other relevant documents or records].
+Interview
+[SELECT FROM: Personnel with physical access control responsibilities; personnel with
+information security responsibilities].
+Test
+[SELECT FROM: Organizational processes for physical access control; mechanisms
+supporting or implementing physical access control; physical access control devices].
+24
+DISCUSSION [NIST SP 800-171 REV. 2]
+Individuals with permanent physical access authorization credentials are not considered
+visitors. Audit logs can be used to monitor visitor activity.
+22 NIST SP 800-171A, p.47
+23
+NIST SP 800-171A, pp. 47-48
+24
+NIST SP 800-171 Rev. 2, pp. 32-33
+CMMC Assessment Guide – Level 1 | Version 2.13 31
+=== page 36 ===
+PE.L1-b.1.ix – Manage Visitors & Physical Access [FCI Data]
+Organizations have flexibility in the types of audit logs employed. Audit logs can be
+procedural (e.g., written log of individuals accessing the facility), automated (e.g., capturing
+ID provided by a Personal Identity Verification (PIV) card), or some combination thereof.
+Physical access points can include facility access points, interior access points to systems or
+system components requiring supplemental access controls, or both. System components
+(e.g., workstations, notebook computers) may be in areas designated as publicly accessible
+with organizations safeguarding access to such devices.
+Physical access devices include keys, locks, combinations, and card readers.
+FURTHER DISCUSSION
+Do not allow visitors, even those people you know well, to walk around your facility without
+an escort. All non-employees should wear special visitor badges and/or are escorted by an
+employee at all times while on the property.
+Make sure you have a record of who accesses your facility (e.g., office, plant, factory). You can
+do this in writing by having employees and visitors sign in and sign out or by electronic
+means such as badge readers. Whatever means you use, you need to retain the access records
+for the time period that your company has defined.
+Identifying and controlling physical access devices (e.g., locks, badges, key cards) is just as
+important as monitoring and limiting who is able to physically access certain equipment.
+Physical access devices are only strong protection if you know who has them and what access
+they allow. Physical access devices can be managed using manual or automatic processes
+such a list of who is assigned what key, or updating the badge access system as personnel
+change roles.
+Example 1
+Coming back from a meeting, you see the friend of a coworker walking down the hallway
+near your office where FCI is stored. You know this person well and trust them, but are not
+sure why they are in the building. You stop to talk, and the person explains that they are
+meeting a coworker for lunch, but cannot remember where the lunchroom is. You walk the
+person back to the reception area to get a visitor badge and wait until someone can escort
+them to the lunchroom [a]. You report this incident, and the company decides to install a
+badge reader at the main door so visitors cannot enter without an escort [a].
+Example 2
+You and your coworkers like to have friends and family join you for lunch at the office on
+Fridays. Your small company has just signed a contract with the DoD in which your company
+will receive FCI and you now need to document who enters and leaves your facility. You work
+with the reception staff to ensure that all non-employees sign in at the reception area and
+sign out when they leave [c]. You retain those paper sign-in sheets in a locked filing cabinet
+for one year. Employees receive badges or key cards that enable tracking and logging access
+to company facilities.
+CMMC Assessment Guide – Level 1 | Version 2.13 32
+=== page 37 ===
+PE.L1-b.1.ix – Manage Visitors & Physical Access [FCI Data]
+Example 3
+You are a facility manager. A team member retired today and returns their company keys to
+you. The project on which they were working requires access to areas that contain
+equipment with FCI. You receive the keys, check your electronic records against the serial
+numbers on the keys to ensure all have been returned, and mark each key returned [f].
+Potential Assessment Considerations
+• Are personnel required to accompany visitors to areas in a facility with physical access
+to organizational systems [a]?
+• Are visitors clearly distinguishable from regular personnel [b]?
+• Is visitor activity monitored (e.g., use of cameras or guards, reviews of secure areas upon
+visitor departure, review of visitor audit logs) [b]?
+• Are logs of physical access to sensitive areas (both authorized access and visitor access)
+maintained per retention requirements [c]?
+• Are visitor access records retained for as long as required [c]?
+• Are lists or inventories of physical access devices maintained (e.g., keys, facility badges,
+key cards) [d]?
+• Is access to physical access devices limited (e.g., granted to, and accessible only by,
+authorized individuals) [e]?
+• Are physical access devices managed (e.g., revoking key card access when necessary,
+changing locks as needed, maintaining access control devices and systems) [f]?
+KEY REFERENCES
+• FAR Clause 52.204-21 b.1.ix
+• NIST SP 800-171 Rev. 2 3.10.3
+• NIST SP 800-171 Rev. 2 3.10.4
+• NIST SP 800-171 Rev. 2 3.10.5
+CMMC Assessment Guide – Level 1 | Version 2.13 33

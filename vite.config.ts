@@ -87,7 +87,8 @@ export default defineConfig({
           // ── Framework & Control Catalog definitions ─────────────────────
           if (
             id.includes('/src/data/cmmcLevel1Controls') ||
-            id.includes('/src/data/frameworks/')
+            id.includes('/src/data/frameworks/') ||
+            id.includes('/src/data/cmmcGuide/')
           ) {
             return 'framework-catalogs';
           }
