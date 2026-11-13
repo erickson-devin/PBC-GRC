@@ -32,6 +32,9 @@ import { createDefaultSspMetadata, scrubInventedMetadata, buildSspMarkdown, crea
 import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import { getControlObjectives } from '../src/data/cmmcGuide/objectives';
+import { guideObjectives } from '../src/data/cmmcGuide/guide';
+import fs from 'fs';
+import path from 'path';
 import { ControlState, EvidenceItem, AssessmentState } from '../src/types/cmmc';
 
 let totalTests = 0;
@@ -164,8 +167,8 @@ async function runArtifactGeneratorTests() {
     // Verify evidence SHA-256 inclusion
     const acFamily = sec3Subsections.find(s => s.title.includes('AC'));
     const acRows = acFamily?.table?.rows || [];
-    const ctrl1Row = acRows.find(r => (Array.isArray(r) ? r[0] : r.cells[0]) === 'AC.L1-3.1.1');
-    assert(Boolean(ctrl1Row), 'Found AC.L1-3.1.1 control row in family table');
+    const ctrl1Row = acRows.find(r => (Array.isArray(r) ? r[0] : r.cells[0]) === 'AC.L1-b.1.i');
+    assert(Boolean(ctrl1Row), 'Found AC.L1-b.1.i (the guide id of AC.L1-3.1.1) control row in family table');
     const evidenceCell = Array.isArray(ctrl1Row) ? ctrl1Row[6] : ctrl1Row?.cells[6];
     assert(String(evidenceCell).includes('access_control_policy_v2.pdf'), 'Evidence item listed in control row');
     assert(String(evidenceCell).includes('SHA-256: e3b0c442'), 'Evidence SHA-256 digest included');
@@ -190,6 +193,70 @@ async function runArtifactGeneratorTests() {
     // Verify POA&M master table
     const poamMatrixSec = poamDoc.sections.find(s => s.id === 'poam-sec-2-matrix');
     assert(Boolean(poamMatrixSec && poamMatrixSec.table?.rows.length === 2), 'POA&M master table contains rows for all weaknesses');
+
+    // -------------------------------------------------------------
+    // Test 3b: #285 POA&M rows name the objectives that are not Met
+    // -------------------------------------------------------------
+    console.log('\n--- Test 3b: POA&M rows name the objectives that are not Met (#285) ---');
+    {
+      const l2 = getFrameworkControls('CMMC_L2');
+      const c = l2.find(x => x.id === 'AC.L1-3.1.1')!;
+      const g = guideObjectives('3.1.1', 'CMMC_L2');
+      const base = getControlObjectives(c.id, c.title, c.assessmentObjectives, undefined, 'CMMC_L2');
+      const answers = (statuses: Record<string, string>): Record<string, any> => {
+        const out: Record<string, any> = {};
+        for (const o of base) if (statuses[o.letter]) out[o.id] = { ...o, status: statuses[o.letter] };
+        return out;
+      };
+      const stateFor = (id: string, status: ControlState['status'], notes = ''): Record<string, ControlState> => ({
+        [id]: { id, status, implementationNotes: notes, responsibleRole: '', lastUpdated: '', tags: [] },
+      });
+      const mixed = answers({ a: 'MET', b: 'MET', c: 'MET', d: 'NOT_MET', e: 'IN_PROGRESS' });
+      assert(g.length >= 6, `P0 the guide has at least six objectives for 3.1.1 (found: ${g.length})`);
+
+      const p1 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), mixed, 'CMMC_L2')[0];
+      assert(p1.weaknessDescription.startsWith(`Objectives not met (${g.length - 3} of ${g.length}):`), `P1 the weakness counts the objectives that are not Met (found: ${p1.weaknessDescription.slice(0, 60)})`);
+      assert(p1.weaknessDescription.includes(`[d] ${g[3].text} (Not met)`) && p1.weaknessDescription.includes(`[e] ${g[4].text} (In progress)`) && p1.weaknessDescription.includes(`[f] ${g[5].text} (Not started)`), 'P1 each open objective is named with its status');
+      assert(!p1.weaknessDescription.includes('[a] '), 'P1 a Met objective is not listed');
+      const openLetters = g.slice(3).map(x => `[${x.letter}]`).join(', ');
+      assert(p1.remediationPlan.includes(`Validate objectives: ${openLetters}`), `P1 the plan validates the open objectives (found: ${p1.remediationPlan})`);
+
+      const p2 = generatePOAMEntries([c], stateFor(c.id, 'NOT_STARTED'), {}, 'CMMC_L2')[0];
+      assert(p2.weaknessDescription.startsWith(`No assessment objective has been assessed. Objectives (${g.length}):`) && g.every(x => p2.weaknessDescription.includes(x.text)), 'P2 no answers lists every objective');
+
+      const p3 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), answers(Object.fromEntries(g.map(x => [x.letter, 'MET']))), 'CMMC_L2')[0];
+      assert(p3.weaknessDescription.includes('are recorded as met or not applicable') && p3.weaknessDescription.includes('recorded as Not met'), 'P3 all objectives Met but the requirement is not');
+
+      const p4 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), undefined, 'CMMC_L2')[0];
+      assert(p4.weaknessDescription === `Control requirement not met: ${c.plainEnglishSummary || c.title}.` && p4.remediationPlan.includes('Validate objective: "'), 'P4 objectives undefined keeps the old wording');
+
+      const soc2 = getFrameworkControls('SOC_2_TYPE_II');
+      const soc2States: Record<string, ControlState> = {};
+      for (const s of soc2) soc2States[s.id] = { id: s.id, status: 'NOT_MET', implementationNotes: '', responsibleRole: '', lastUpdated: '', tags: [] };
+      assert(JSON.stringify(generatePOAMEntries(soc2, soc2States, {}, 'SOC_2_TYPE_II')) === JSON.stringify(generatePOAMEntries(soc2, soc2States)), 'P5 SOC 2 rows are byte-identical with and without objective answers');
+      const ac2 = getFrameworkControls('NIST_800_53_REV5').filter(x => x.id === 'AC-2');
+      assert(ac2.length === 1 && JSON.stringify(generatePOAMEntries(ac2, stateFor('AC-2', 'NOT_MET'), {}, 'NIST_800_53_REV5')) === JSON.stringify(generatePOAMEntries(ac2, stateFor('AC-2', 'NOT_MET'))), 'P5 NIST 800-53 AC-2 is byte-identical');
+
+      const p6 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET', 'N1'), mixed, 'CMMC_L2')[0];
+      assert(p6.weaknessDescription.startsWith('Objectives not met') && p6.weaknessDescription.endsWith('Recorded implementation notes: N1'), 'P6 the objectives come first, then the notes excerpt');
+
+      const c347 = l2.find(x => x.id === 'CM.L2-3.4.7')!;
+      const g347 = guideObjectives('3.4.7', 'CMMC_L2');
+      const p7 = generatePOAMEntries([c347], stateFor(c347.id, 'NOT_STARTED'), {}, 'CMMC_L2')[0];
+      assert(g347.length === 15 && g347.every(x => p7.weaknessDescription.includes(`[${x.letter}]`)), `P7 3.4.7 lists all its objectives (${g347.length})`);
+      assert(p7.weaknessDescription.length < 2000, `P7 the description stays under 2000 characters (found: ${p7.weaknessDescription.length})`);
+      const p7csv = generatePoamCsv([p7]);
+      assert(p7csv.split(p7.weaknessDescription.replace(/"/g, '""')).length === 2 && p7csv.includes(`"${p7.weaknessDescription.replace(/"/g, '""')}"`), 'P7 the CSV carries the description once, quoted');
+
+      const p8doc = compileReportDocument('POAM', { ...mockMetadata, framework: 'CMMC_L2' }, l2, {}, [], undefined, mixed);
+      assert(JSON.stringify(p8doc.poamEntries) === JSON.stringify(generatePOAMEntries(l2, {}, mixed, 'CMMC_L2')), 'P8 compileReportDocument forwards the objectives');
+
+      const mp = getFrameworkControls('CMMC_L1').concat(l2).find(x => x.id === 'MP.L1-3.8.3')!;
+      assert(Boolean(mp) && generatePOAMEntries([mp], {}, {}, 'CMMC_L1')[0].weaknessDescription.includes('[FCI]'), 'P9 a Level 1 program gets the Level 1 wording');
+
+      const modalSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'reports', 'ArtifactExportModal.tsx'), 'utf8');
+      assert(/compileReportDocument\([\s\S]*?state\.objectives[\s\S]*?\)/.test(modalSrc), 'P10 the export modal passes the objective answers to the compiler');
+    }
 
     // -------------------------------------------------------------
     // Test 4: SOC 2 Type II System Description Compiler
@@ -359,7 +426,7 @@ async function runArtifactGeneratorTests() {
     const csvOutput = generatePoamCsv(poamDoc.poamEntries || []);
     assert(csvOutput.includes('"Weakness ID","Control ID","Control Title"'), 'CSV contains standard POA&M headers');
     assert(csvOutput.includes('POAM-'), 'CSV contains generated weakness IDs');
-    assert(csvOutput.includes('AC.L1-3.1.1'), 'CSV contains control ID');
+    assert(csvOutput.includes('AC.L1-b.1.i'), 'CSV contains the guide control ID');
     assert(csvOutput.includes('"IN_PROGRESS"') || csvOutput.includes('"NOT_MET"'), 'CSV contains status values');
 
     // -------------------------------------------------------------

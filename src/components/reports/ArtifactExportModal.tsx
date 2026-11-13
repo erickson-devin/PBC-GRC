@@ -60,6 +60,7 @@ import {
   emassCsvNotes,
 } from '../../data/reports/sprsCompiler';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
@@ -230,9 +231,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       frameworkControls,
       state.controls,
       state.evidenceIndex,
-      scopeUnavailable ? undefined : { assets: boundaryList, software: softwareInScope }
+      scopeUnavailable ? undefined : { assets: boundaryList, software: softwareInScope },
+      state.objectives ?? {}
     );
-  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex]);
+  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex, state.objectives]);
 
   // Export readiness (#151, B-1): advisory only, exports stay allowed. Labels are fixed text; values are never echoed.
   const metaIdBase = useId();
@@ -939,7 +941,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                               {entry.weaknessId}
                             </td>
                             <td className="p-3">
-                              <div className="font-bold text-white">{entry.controlId}</div>
+                              <div className="font-bold text-white" title={(entry.controlDisplayId ?? entry.controlId) !== entry.controlId ? `Stored as ${entry.controlId}` : undefined}>{entry.controlDisplayId ?? entry.controlId}</div>
                               <div className="text-xs text-slate-400 truncate max-w-[140px]">{entry.controlTitle}</div>
                             </td>
                             <td className="p-3 text-slate-300 max-w-xs">
@@ -1070,8 +1072,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           <span className="text-xs text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.fivePoint.map(id => (
-                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20">
-                              {id}
+                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20" title={cmmcDisplayId(id, 'CMMC_L2') !== id ? `Stored as ${id}` : undefined}>
+                              {cmmcDisplayId(id, 'CMMC_L2')}
                             </span>
                           ))
                         )}
@@ -1094,8 +1096,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           <span className="text-xs text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.threePoint.map(id => (
-                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
-                              {id}
+                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20" title={cmmcDisplayId(id, 'CMMC_L2') !== id ? `Stored as ${id}` : undefined}>
+                              {cmmcDisplayId(id, 'CMMC_L2')}
                             </span>
                           ))
                         )}
@@ -1118,8 +1120,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                           <span className="text-xs text-emerald-400 font-mono">None (100% Satisfied)</span>
                         ) : (
                           sprsResult.deductionsByWeight.onePoint.map(id => (
-                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                              {id}
+                            <span key={id} className="badge text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700" title={cmmcDisplayId(id, 'CMMC_L2') !== id ? `Stored as ${id}` : undefined}>
+                              {cmmcDisplayId(id, 'CMMC_L2')}
                             </span>
                           ))
                         )}
