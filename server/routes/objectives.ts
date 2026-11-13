@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import type { ProgramScope } from '../db';
 import { importObjectives, listObjectiveEvents, readObjectives, writeObjective, writeObjectivesBulk, type ObjectiveActor } from '../controlObjectives';
 import { parseExpectedUpdatedAt, StaleWriteError } from '../controlAssessments';
+import { ensureObjectiveCatalogCurrent } from '../objectiveCatalogMigration';
 import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, controlIdOfObjective, validateObjectiveInput, type ObjectiveInput } from '../../src/types/controlObjectives';
@@ -14,6 +15,9 @@ router.use(requireWriteRole);
 
 /** The tenant and program of the request (set by authMiddleware and the programContext middleware that is mounted before this router). */
 const scopeOf = (req: Request): ProgramScope => ({ tenantId: req.tenantId!, programId: req.programId! });
+
+/** Brings a CMMC program's stored answers up to the current objective catalog before they are read or changed (never throws; see objectiveCatalogMigration.ts). */
+const catalogCurrent = (req: Request): Promise<unknown> => ensureObjectiveCatalogCurrent(scopeOf(req), req.program?.frameworkId, req.program);
 
 /** The signed-in user, as recorded in the history: never a name taken from the request body. */
 const actorOf = (req: Request): ObjectiveActor => ({
@@ -75,6 +79,7 @@ function fail(res: Response, req: Request, what: string, err: unknown): void {
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const controlId = typeof req.query.controlId === 'string' && req.query.controlId !== '' ? req.query.controlId : undefined;
   try {
+    await catalogCurrent(req);
     const objectives = await readObjectives(scopeOf(req), controlId);
     res.json({ objectives });
   } catch (err: unknown) {
@@ -91,6 +96,7 @@ router.put('/', async (req: Request, res: Response): Promise<void> => {
   if (!inputs) return;
   if (!(await ensureControls(req, res, inputs))) return;
   try {
+    await catalogCurrent(req);
     const result = await writeObjectivesBulk(scopeOf(req), inputs, actorOf(req));
     res.json(result);
   } catch (err: unknown) {
@@ -108,6 +114,7 @@ router.post('/import', async (req: Request, res: Response): Promise<void> => {
   if (!inputs) return;
   if (!(await ensureControls(req, res, inputs))) return;
   try {
+    await catalogCurrent(req);
     const results = await importObjectives(scopeOf(req), inputs, actorOf(req));
     res.json({ results });
   } catch (err: unknown) {
@@ -158,6 +165,7 @@ router.put('/:objectiveId', async (req: Request, res: Response): Promise<void> =
   const item = input as unknown as ObjectiveInput;
   if (!(await ensureControlInFrameworkPolicy(req, res, item.controlId))) return;
   try {
+    await catalogCurrent(req);
     const { record, changed } = await writeObjective(scopeOf(req), item, actorOf(req), { expectedUpdatedAt: expected.value });
     res.json({ objective: record, changed });
   } catch (err: unknown) {

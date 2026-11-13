@@ -28,6 +28,7 @@ import {
   stackCascadeFill,
 } from '../src/data/objectiveSync';
 import { createStampedSaveChain } from '../src/data/notesAutosave';
+import { getCascadedObjectiveNarrative } from '../src/data/frameworks/policyCompiler';
 import { StorageService } from '../src/services/storageService';
 import type { AssessmentState, ControlState } from '../src/types/cmmc';
 import type { AssessmentObjective } from '../src/types/assessment';
@@ -244,6 +245,24 @@ console.log('\n--- Stack cascade ---');
   assert(JSON.stringify(registryLettersForControl('AC.L2-3.1.1')) === JSON.stringify(registryLettersForControl('3.1.1')) && registryLettersForControl('AC.L2-3.1.1').length > 1 && registryLettersForControl('XX.L9-9.9.9').length === 0, 'G4 the 171A registry resolves an L2 control id to its letters, and nothing for an unknown control');
   const profile = { identityProvider: 'Microsoft Entra ID' } as unknown as EnclaveStackProfile;
   const real = stackCascadeFill(['AC.L2-3.1.1', 'XX.L9-9.9.9'], profile, () => '');
+  const g6 = stackCascadeFill(['AC.L2-3.1.8'], profile, () => '', 'CMMC_L2');
+  assert(g6.length === 0, 'G6 a CMMC objective with no carried template gets no cascaded narrative', g6);
+  const g7 = stackCascadeFill(['AC.L2-3.1.7'], profile, () => '', 'CMMC_L2');
+  assert(
+    JSON.stringify(g7.map((i) => i.objectiveId)) === JSON.stringify(['AC.L2-3.1.7[c]', 'AC.L2-3.1.7[d]']) &&
+      g7[0].narrative === getCascadedObjectiveNarrative('3.1.7', 'b', profile),
+    'G7 a CMMC control cascades only the letters that carried a template, from the letter they carried from',
+    g7
+  );
+  assert(
+    stackCascadeFill(['AC-2'], profile, () => '', 'NIST_800_53_REV5').length === registryLettersForControl('AC-2').length,
+    'G8 a non-CMMC control keeps the registry letters'
+  );
+  const g9 = fs.readFileSync(path.join(process.cwd(), 'src/context/AssessmentContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert(
+    g9.includes("getControlObjectives") && g9.includes("from '../data/cmmcGuide/objectives'") && !g9.includes('getAssessmentObjectivesForControl('),
+    'G9 the assessment context resolves objectives through the guide-aware resolver'
+  );
   assert(real.length === registryLettersForControl('AC.L2-3.1.1').length && real.every((i) => /^AC\.L2-3\.1\.1\[[a-z]\]$/.test(i.objectiveId) && (i.narrative ?? '').length > 0), 'G5 stackCascadeFill produces ids of the given framework controls only, in the same id form the checklist uses', real.map((i) => i.objectiveId));
 }
 

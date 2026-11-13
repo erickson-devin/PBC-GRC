@@ -16,8 +16,10 @@
  *   7. local identities (second factor): local_users stays a global table without row security, the token_version / totp_* / recovery_code_hashes / must_change_password column shapes, an idempotent schema script, the three CHECK constraints (no plaintext secret, hex-only recovery digests, no confirmation without a secret), and the atomic single-use statements for recovery codes and TOTP steps. The same section proves local_user_password_history: a global table without row security, a bcrypt-only CHECK, a password change records the previous hash and keeps PASSWORD_HISTORY_DEPTH of them (none for a temporary password), and deleting the account deletes its history.
  *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS. 8l: program_ssp_metadata isolation (SSP metadata, issue #84; same pattern as 8j), the composite foreign key to programs, the primary key (one row per program), the shape CHECK (known keys, string values, 262 144 bytes), the first-writer race of writeSspMetadata, the tenants.stack_profile CHECK, and the cascade from a program delete.
  *   7b. account events (issue #40) and sessions (issue #163): local_sessions and local_account_events are global tables without row security; the sessions foreign key cascades, the sid / revoke-reason CHECKs refuse bad rows, a revoke changes exactly one row, and pruning removes only sessions that expired more than a day ago; the event table is append-only for the application role (UPDATE, DELETE and TRUNCATE refused with 42501), refuses an "@" in details and an action outside the list, and only the retention sweep can delete (the test event is backdated about 4000 days so no real event matches).
+ *   9. objective catalog update (issue #273): the one-time migration of stored CMMC objective answers (ensureObjectiveCatalogCurrent) on PostgreSQL. control_objectives.objective_catalog_rev exists and is nullable; two concurrent calls change a legacy row once (SELECT ... FOR UPDATE: one 'catalog-update' event, hashes and lengths only), keep narrative, evidence and Not met answers, re-roll up the Met control, stamp the revision, leave the updated_at of unchanged rows alone, and a third call does nothing; another program of the tenant, an archived program and a non-CMMC framework are not touched.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
+import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: this script must hit the real DB
@@ -708,6 +710,7 @@ async function main() {
   await verifyLocalIdentities();
   await verifyAccountEvents();
   await verifyProgramIsolation();
+  await verifyCatalogUpdate();
 }
 
 async function verifyDiscovery() {
@@ -1623,6 +1626,195 @@ async function verifyUpgrade() {
   } finally {
     await setSearchPath(null).catch(() => undefined);
     await pool.query('DROP SCHEMA IF EXISTS ' + SCHEMA + ' CASCADE').catch(() => undefined);
+  }
+}
+
+/**
+ * 9. The one-time update of stored CMMC objective answers to the Assessment Guide objectives (issue #273), on PostgreSQL: legacy rows (objective_catalog_rev NULL)
+ * are seeded with SQL, ensureObjectiveCatalogCurrent runs on them, and the expected values come from the same pure rules the server applies
+ * (src/data/cmmcGuide/migration.ts). A failure message names ids, statuses and counts only, never a narrative or a row value. Every row, event
+ * and program it creates is removed (the migration's history carries the actor "CMMC Assessment Guide v2.13 update", so it is deleted by program).
+ */
+async function verifyCatalogUpdate() {
+  console.log('\n--- 9. Objective catalog update (one-time migration of stored CMMC objective answers) ---');
+  const { ensureObjectiveCatalogCurrent } = await import('../server/objectiveCatalogMigration');
+  const { CMMC_OBJECTIVE_CATALOG_REV } = await import('../src/data/cmmcGuide/guide');
+  const { objectiveStatusAfterCatalogUpdate, controlStatusAfterCatalogUpdate } = await import('../src/data/cmmcGuide/migration');
+  type Status = Parameters<typeof objectiveStatusAfterCatalogUpdate>[1];
+  type ControlStatusValue = Parameters<typeof controlStatusAfterCatalogUpdate>[1];
+  const T = TENANT_X;
+  const NARRATIVE = 'rls_verify_narrative_9';
+  const NOTES = 'rls_verify_notes_9';
+  const SEEDED_AT = '2020-01-01T00:00:00.000Z';
+  const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+  const controlOf = (objectiveId: string) => objectiveId.slice(0, objectiveId.indexOf('['));
+  const seeds: { id: string; status: Status; narrative: string; evidence: string }[] = [
+    { id: 'CA.L2-3.12.4[a]', status: 'MET', narrative: NARRATIVE, evidence: '{rls_verify_ev_9}' },
+    { id: 'AC.L1-3.1.2[a]', status: 'MET', narrative: '', evidence: '{}' },
+    { id: 'AC.L1-3.1.2[b]', status: 'MET', narrative: '', evidence: '{}' },
+    { id: 'AC.L2-3.1.8[c]', status: 'NOT_MET', narrative: '', evidence: '{}' },
+  ];
+  const insertObjective =
+    'INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, status, narrative, linked_evidence_ids, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9::timestamptz)';
+  const insertControl = 'INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, program_id, updated_by) VALUES ($1, $2, $3, $4, $5, $6)';
+  const seed = async (scope: ProgramScope, rows: typeof seeds) => {
+    for (const s of rows) await queryWithProgram(scope, insertObjective, [scope.tenantId, scope.programId, controlOf(s.id), s.id, s.status, s.narrative, s.evidence, 'rls_verify_actor', SEEDED_AT]);
+  };
+  const readObjectives = async (scope: ProgramScope) => {
+    const res = await queryWithProgram(scope, 'SELECT objective_id, status, narrative, linked_evidence_ids, objective_catalog_rev, updated_at FROM control_objectives WHERE tenant_id = $1 AND program_id = $2', [scope.tenantId, scope.programId]);
+    return new Map(res.rows.map((r) => [String(r.objective_id), r]));
+  };
+  const objectiveEvents = async (scope: ProgramScope, objectiveId?: string) =>
+    (
+      await queryWithProgram(
+        scope,
+        "SELECT * FROM control_objective_events WHERE tenant_id = $1 AND program_id = $2 AND source = 'catalog-update' AND ($3::text IS NULL OR objective_id = $3::text)",
+        [scope.tenantId, scope.programId, objectiveId ?? null]
+      )
+    ).rows;
+  const controlEvents = async (scope: ProgramScope, controlId?: string) =>
+    (
+      await queryWithProgram(
+        scope,
+        "SELECT * FROM control_assessment_events WHERE tenant_id = $1 AND program_id = $2 AND source = 'catalog-update' AND ($3::text IS NULL OR control_id = $3::text)",
+        [scope.tenantId, scope.programId, controlId ?? null]
+      )
+    ).rows;
+
+  const ids: string[] = [];
+  try {
+    const mkP9 = async (name: string) => {
+      const id = await mkProgram(T, 'rls_verify_p9_' + name);
+      ids.push(id);
+      return { tenantId: T, programId: id };
+    };
+
+    // 9a. the column
+    const col = await pool.query(
+      "SELECT is_nullable, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'control_objectives' AND column_name = 'objective_catalog_rev'"
+    );
+    check(col.rows.length === 1 && col.rows[0].is_nullable === 'YES', '9a. control_objectives.objective_catalog_rev exists and is nullable (NULL = written before the update)', JSON.stringify(col.rows));
+    if (col.rows.length !== 1) {
+      console.log('  SKIP: 9b-9f. the column is missing, so the migration cannot be exercised');
+      return;
+    }
+
+    // 9b. seed legacy rows (no revision) and two Met controls
+    const primary = await mkP9('primary');
+    await seed(primary, seeds);
+    await queryWithProgram(primary, insertControl, [T, 'CA.L2-3.12.4', 'MET', NOTES, primary.programId, 'rls_verify_actor']);
+    await queryWithProgram(primary, insertControl, [T, 'AC.L2-3.1.5', 'MET', NOTES, primary.programId, 'rls_verify_actor']);
+    const seeded = await readObjectives(primary);
+    check(seeded.size === seeds.length && [...seeded.values()].every((r) => r.objective_catalog_rev === null), '9b. the seeded objective rows are legacy (objective_catalog_rev NULL)', 'rows ' + seeded.size);
+    const seededAt = new Map([...seeded].map(([id, r]) => [id, new Date(r.updated_at).getTime()]));
+
+    // 9c. two concurrent first calls migrate once (the second waits on SELECT ... FOR UPDATE, then finds no legacy row)
+    const results = await Promise.all([ensureObjectiveCatalogCurrent(primary, 'CMMC_L2'), ensureObjectiveCatalogCurrent(primary, 'CMMC_L2')]);
+    const expected = new Map(seeds.map((s) => [s.id, objectiveStatusAfterCatalogUpdate(s.id, s.status, 'CMMC_L2')]));
+    const changedIds = seeds.filter((s) => expected.get(s.id) !== s.status).map((s) => s.id);
+    const brief = ['CA.L2-3.12.4[a]=IN_PROGRESS', 'AC.L1-3.1.2[a]=MET', 'AC.L1-3.1.2[b]=IN_PROGRESS', 'AC.L2-3.1.8[c]=NOT_MET'];
+    check(
+      JSON.stringify(seeds.map((s) => s.id + '=' + expected.get(s.id))) === JSON.stringify(brief),
+      '9c. the pure rule keeps 3.12.4[a] IN_PROGRESS, L1 3.1.2[a] MET, 3.1.2[b] IN_PROGRESS and the Not met 3.1.8[c] (the expected values)',
+      JSON.stringify(seeds.map((s) => s.id + '=' + expected.get(s.id)))
+    );
+    const objectivesChanged = results.reduce((n, r) => n + (r?.objectivesChanged ?? 0), 0);
+    const controlsChanged = results.reduce((n, r) => n + (r?.controlsChanged ?? 0), 0);
+    check(objectivesChanged === changedIds.length && controlsChanged === 1, '9c. two concurrent calls report the changes once between them (' + changedIds.length + ' objectives, 1 control)', 'objectives ' + objectivesChanged + ', controls ' + controlsChanged + ', results ' + JSON.stringify(results));
+
+    const after = await readObjectives(primary);
+    for (const s of seeds) {
+      const row = after.get(s.id);
+      check(row?.status === expected.get(s.id), '9c. ' + s.id + ' is ' + expected.get(s.id) + ' after the update', 'status ' + row?.status);
+    }
+    const ca = after.get('CA.L2-3.12.4[a]');
+    check(ca?.narrative === NARRATIVE && JSON.stringify(ca?.linked_evidence_ids) === JSON.stringify(['rls_verify_ev_9']), '9c. CA.L2-3.12.4[a]: narrative and evidence links are unchanged');
+    check(after.size === seeds.length && seeds.every((s) => after.get(s.id)?.objective_catalog_rev === CMMC_OBJECTIVE_CATALOG_REV), '9c. every seeded row (changed or not) is stamped with ' + CMMC_OBJECTIVE_CATALOG_REV + ' and none was deleted', JSON.stringify([...after].map(([id, r]) => id + ':' + r.objective_catalog_rev)));
+    const keptStamp = after.get('AC.L1-3.1.2[a]');
+    check(keptStamp !== undefined && new Date(keptStamp.updated_at).getTime() === seededAt.get('AC.L1-3.1.2[a]'), '9c. AC.L1-3.1.2[a], which did not change status, keeps its updated_at (the stamp is not a write)');
+    const keptNotMet = after.get('AC.L2-3.1.8[c]');
+    check(keptNotMet !== undefined && new Date(keptNotMet.updated_at).getTime() === seededAt.get('AC.L2-3.1.8[c]'), '9c. AC.L2-3.1.8[c], a Not met answer, keeps its updated_at');
+    const changedRow = after.get('CA.L2-3.12.4[a]');
+    check(changedRow !== undefined && new Date(changedRow.updated_at).getTime() > (seededAt.get('CA.L2-3.12.4[a]') ?? Infinity), '9c. CA.L2-3.12.4[a], which changed status, has a later updated_at');
+
+    // 9d. the history: one event per changed objective (the concurrency proof), hashes and lengths only
+    const caEvents = await objectiveEvents(primary, 'CA.L2-3.12.4[a]');
+    check(caEvents.length === 1, "9d. exactly one 'catalog-update' event exists for CA.L2-3.12.4[a] (the two concurrent calls did not both write)", 'events ' + caEvents.length);
+    const ev = caEvents[0];
+    check(
+      ev !== undefined && ev.old_status === 'MET' && ev.new_status === 'IN_PROGRESS' && ev.narrative_changed === false && ev.evidence_changed === false && ev.control_id === 'CA.L2-3.12.4',
+      '9d. the event records MET -> IN_PROGRESS with no narrative or evidence change',
+      ev ? ev.old_status + ' -> ' + ev.new_status : 'no event'
+    );
+    check(
+      ev !== undefined &&
+        ev.old_narrative_sha256 === sha(NARRATIVE) && ev.new_narrative_sha256 === sha(NARRATIVE) &&
+        Number(ev.old_narrative_length) === NARRATIVE.length && Number(ev.new_narrative_length) === NARRATIVE.length &&
+        !('narrative' in ev) && !JSON.stringify(ev).includes(NARRATIVE),
+      '9d. the event carries the narrative only as SHA-256 and length (no text column, no text in the row)'
+    );
+    check((await objectiveEvents(primary)).length === changedIds.length, '9d. one catalog-update event per changed objective, none for the unchanged ones', 'events ' + (await objectiveEvents(primary)).length);
+
+    // 9e. the control roll-up
+    const controls = await queryWithProgram(primary, 'SELECT control_id, status, implementation_notes FROM control_assessments WHERE tenant_id = $1 AND program_id = $2', [T, primary.programId]);
+    const controlRow = (id: string) => controls.rows.find((r) => r.control_id === id);
+    const post: Record<string, Status> = {};
+    for (const [id, r] of after) post[id] = r.status as Status;
+    const expectCa = controlStatusAfterCatalogUpdate('CA.L2-3.12.4', 'MET' as ControlStatusValue, post, 'CMMC_L2');
+    const expectAc = controlStatusAfterCatalogUpdate('AC.L2-3.1.5', 'MET' as ControlStatusValue, post, 'CMMC_L2');
+    check(expectCa === 'IN_PROGRESS' && expectAc === 'MET', '9e. the pure rule re-rolls up the Met control 3.12.4 to IN_PROGRESS and keeps the Met control 3.1.5 (no objective answers)', expectCa + ' / ' + expectAc);
+    check(controlRow('CA.L2-3.12.4')?.status === expectCa && controlRow('CA.L2-3.12.4')?.implementation_notes === NOTES, '9e. control CA.L2-3.12.4 is ' + expectCa + ' and its notes are unchanged', 'status ' + controlRow('CA.L2-3.12.4')?.status);
+    check(controlRow('AC.L2-3.1.5')?.status === expectAc && controlRow('AC.L2-3.1.5')?.implementation_notes === NOTES, '9e. control AC.L2-3.1.5 (no objective rows) is still ' + expectAc, 'status ' + controlRow('AC.L2-3.1.5')?.status);
+    const caControlEvents = await controlEvents(primary, 'CA.L2-3.12.4');
+    const cev = caControlEvents[0];
+    check(
+      caControlEvents.length === 1 && cev.old_status === 'MET' && cev.new_status === 'IN_PROGRESS' && cev.notes_changed === false && cev.old_notes_sha256 === sha(NOTES) && cev.new_notes_sha256 === sha(NOTES) && !JSON.stringify(cev).includes(NOTES),
+      "9e. exactly one 'catalog-update' event for control CA.L2-3.12.4: MET -> IN_PROGRESS, notes unchanged and stored only as a digest",
+      'events ' + caControlEvents.length
+    );
+    check((await controlEvents(primary)).length === 1, "9e. no other control got a 'catalog-update' event", 'events ' + (await controlEvents(primary)).length);
+
+    // 9f. a further call is a no-op
+    const objectiveEventsBefore = (await objectiveEvents(primary)).length;
+    const third = await ensureObjectiveCatalogCurrent(primary, 'CMMC_L2');
+    check(third === null || (third.objectivesChanged === 0 && third.controlsChanged === 0), '9f. a third call reports no change', JSON.stringify(third));
+    check((await objectiveEvents(primary)).length === objectiveEventsBefore && (await controlEvents(primary)).length === 1, '9f. and adds no event (idempotent)');
+    const afterThird = await readObjectives(primary);
+    check(seeds.every((s) => afterThird.get(s.id)?.status === expected.get(s.id) && afterThird.get(s.id)?.objective_catalog_rev === CMMC_OBJECTIVE_CATALOG_REV), '9f. and leaves every status and revision as they were');
+
+    // 9g. program isolation: another program of the tenant is not touched by the first program's migration
+    const other = await mkP9('other');
+    await seed(other, [seeds[0]]);
+    const otherRows = await readObjectives(other);
+    const otherRow = otherRows.get('CA.L2-3.12.4[a]');
+    check(otherRow?.status === 'MET' && otherRow.objective_catalog_rev === null, "9g. another program's legacy row is untouched by the first program's migration (still MET, no revision)", 'status ' + otherRow?.status + ', rev ' + otherRow?.objective_catalog_rev);
+    check((await objectiveEvents(other)).length === 0, "9g. and has no catalog-update event", 'events ' + (await objectiveEvents(other)).length);
+
+    // 9h. an archived program is skipped (the program the request resolved says so), and so is a program of a framework other than CMMC
+    const archived = await mkP9('archived');
+    await seed(archived, [seeds[0]]);
+    await queryWithTenant(T, 'UPDATE programs SET archived_at = NOW() WHERE tenant_id = $1 AND id = $2', [T, archived.programId]);
+    const archivedResult = await ensureObjectiveCatalogCurrent(archived, 'CMMC_L2', { archivedAt: new Date().toISOString() });
+    const archivedRow = (await readObjectives(archived)).get('CA.L2-3.12.4[a]');
+    check(archivedResult === null && archivedRow?.status === 'MET' && archivedRow.objective_catalog_rev === null, '9h. an archived program is skipped: its old answer stays MET with no revision', 'result ' + JSON.stringify(archivedResult) + ', status ' + archivedRow?.status);
+    const nist = await mkP9('nist');
+    await seed(nist, [seeds[0]]);
+    const nistResult = await ensureObjectiveCatalogCurrent(nist, 'NIST_800_53_REV5');
+    const nistRow = (await readObjectives(nist)).get('CA.L2-3.12.4[a]');
+    check(nistResult === null && nistRow?.status === 'MET' && nistRow.objective_catalog_rev === null, '9h. a non-CMMC framework is skipped: the row stays MET with no revision', 'result ' + JSON.stringify(nistResult) + ', status ' + nistRow?.status);
+    check((await objectiveEvents(archived)).length === 0 && (await objectiveEvents(nist)).length === 0, '9h. and neither records an event');
+  } catch (err) {
+    // the SQL state only: a message can carry a row value
+    check(false, '9. the objective catalog update test ran to the end', 'code ' + String((err as { code?: string }).code ?? (err as Error).name));
+  } finally {
+    for (const id of ids) {
+      const scope = { tenantId: T, programId: id };
+      await queryWithProgram(scope, 'DELETE FROM control_objective_events WHERE program_id = $1', [id]).catch(() => undefined); // no foreign key: the history outlives its program
+      await queryWithProgram(scope, 'DELETE FROM control_assessment_events WHERE program_id = $1', [id]).catch(() => undefined);
+      await queryWithProgram(scope, 'DELETE FROM control_objectives WHERE program_id = $1', [id]).catch(() => undefined);
+      await queryWithProgram(scope, 'DELETE FROM control_assessments WHERE program_id = $1', [id]).catch(() => undefined);
+    }
+    await queryWithTenant(T, "DELETE FROM programs WHERE name LIKE 'rls_verify_p9_%'", []).catch(() => undefined);
   }
 }
 

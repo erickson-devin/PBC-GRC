@@ -17,6 +17,8 @@ import {
 import { FAR_L1_TO_800_171_MAP, NIST_800_171A_REGISTRY, normalizeControlNumber } from './frameworks/assessmentObjectives';
 import { getCascadedObjectiveNarrative } from './frameworks/policyCompiler';
 import type { EnclaveStackProfile } from '../types/tenant';
+import { cmmcNumberOf } from './cmmcGuide/guide';
+import { cmmcCascadeLetters, cmmcCascadeSource } from './cmmcGuide/objectives';
 
 /** The message a user who cannot write sees while this browser still holds narratives the server does not have. */
 export const OBJECTIVES_NEED_OWNER_MESSAGE =
@@ -276,14 +278,26 @@ export function registryLettersForControl(controlId: string): string[] {
   return registered ? registered.objectives.map((o) => o.letter) : [];
 }
 
-/** The cascade for a stack profile over the given framework controls: generated text for the objectives whose narrative is empty. */
+/**
+ * The cascade for a stack profile over the given framework controls: generated text for the objectives whose narrative is empty.
+ * A CMMC control cascades only the guide letters that carry a hand-written template (and from the letter it was carried from);
+ * any other control keeps the registry letters.
+ */
 export function stackCascadeFill(
   controlIds: readonly string[],
   profile: EnclaveStackProfile,
-  currentNarrative: (objectiveId: string) => string
+  currentNarrative: (objectiveId: string) => string,
+  framework: string = 'CMMC_L2'
 ): ObjectiveInput[] {
-  return cascadeFill(controlIds, registryLettersForControl, currentNarrative, (controlId, letter) =>
-    getCascadedObjectiveNarrative(controlId, letter, profile)
+  return cascadeFill(
+    controlIds,
+    (controlId) => (cmmcNumberOf(controlId) ? cmmcCascadeLetters(controlId, framework) : registryLettersForControl(controlId)),
+    currentNarrative,
+    (controlId, letter) => {
+      if (!cmmcNumberOf(controlId)) return getCascadedObjectiveNarrative(controlId, letter, profile);
+      const src = cmmcCascadeSource(controlId, letter, framework);
+      return src ? getCascadedObjectiveNarrative(src.key, src.letter, profile) : '';
+    }
   );
 }
 

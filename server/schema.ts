@@ -891,6 +891,8 @@ export const TABLES_SQL = `
       CONSTRAINT unq_control_objectives_program_objective UNIQUE (tenant_id, program_id, objective_id),
       CONSTRAINT fk_control_objectives_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
   );
+  -- The objective catalog revision the row was written against (NULL: written before the CMMC Assessment Guide objectives; see server/objectiveCatalogMigration.ts).
+  ALTER TABLE control_objectives ADD COLUMN IF NOT EXISTS objective_catalog_rev VARCHAR(32);
   ALTER TABLE control_objectives DROP CONSTRAINT IF EXISTS control_objectives_status_check;
   ALTER TABLE control_objectives ADD CONSTRAINT control_objectives_status_check CHECK (status IN (${objectiveStatusList}));
   CREATE INDEX IF NOT EXISTS idx_control_objectives_control ON control_objectives (tenant_id, program_id, control_id);

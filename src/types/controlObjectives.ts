@@ -10,7 +10,7 @@ export const OBJECTIVE_STATUSES = ['MET', 'NOT_MET', 'IN_PROGRESS', 'NOT_STARTED
 export type ObjectiveStatus = (typeof OBJECTIVE_STATUSES)[number];
 
 /** Append-only: the CHECK on control_objective_events.source is re-created from this list on every boot. */
-export const OBJECTIVE_CHANGE_SOURCES = ['human', 'browser-import', 'clone'] as const;
+export const OBJECTIVE_CHANGE_SOURCES = ['human', 'browser-import', 'clone', 'catalog-update'] as const;
 export type ObjectiveChangeSource = (typeof OBJECTIVE_CHANGE_SOURCES)[number];
 
 export const MAX_OBJECTIVE_NARRATIVE_LENGTH = 20000;

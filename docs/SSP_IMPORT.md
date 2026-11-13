@@ -113,7 +113,9 @@ instead of failing.
    objectives ([a], [b], [c]...) and the document's own text for that control, and says whether each objective is addressed.
    A claim of *addressed* or *partly* stands only if it cites a passage that really is in the document; otherwise the objective
    is shown as *not supported by the text*. An objective nothing addresses always produces a gap. The tally in the summary is
-   computed from the verified results, not taken from the model.
+   computed from the verified results, not taken from the model. The objectives it lists are the platform's 800-171A registry
+   letters, which can differ from the CMMC Assessment Guide objectives the objective checklist now shows (see
+   `docs/ASSESSMENT_PROGRAMS.md`, "CMMC assessment objectives"); the import's inputs are unchanged.
 
 The model has no tools and no network, and the document is passed as delimited data with an instruction to ignore anything in it
 that looks like an instruction. Whatever a document says, an AI suggestion cannot reach the review screen without a verified

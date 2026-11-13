@@ -13,6 +13,7 @@ import {
 } from '../src/types/controlObjectives';
 import { getDbMode, nextStamp, pool, queryWithProgram, type ProgramScope } from './db';
 import { matchesExpected, notesDigest, StaleWriteError } from './controlAssessments';
+import { CMMC_OBJECTIVE_CATALOG_REV, cmmcNumberOf } from '../src/data/cmmcGuide/guide';
 
 /**
  * Read and write access to a program's control_objectives rows (800-171A / 800-53A objectives: status, narrative, evidence links), and
@@ -41,7 +42,20 @@ interface Tx {
   /** Inserts only when no row has the id; false when one exists. */
   insertOnly(record: ObjectiveRecord): Promise<boolean>;
   addEvent(event: NewObjectiveEvent): Promise<void>;
+  /** The program's CMMC rows written before the current objective catalog (revision NULL), locked in PostgreSQL. */
+  legacyRows(): Promise<ObjectiveRecord[]>;
+  /** Stamps every such row with the current revision without touching its status, narrative, evidence or updatedAt. */
+  stampLegacy(): Promise<void>;
+  /** The stored statuses of the given controls' objectives, by objective id. */
+  statusesOf(controlIds: readonly string[]): Promise<Record<string, ObjectiveStatus>>;
 }
+
+/** The catalog revision a write stamps: the current one for a CMMC objective, NULL for any other framework's. */
+const revOf = (controlId: string): string | null => (cmmcNumberOf(controlId) ? CMMC_OBJECTIVE_CATALOG_REV : null);
+
+/** Control ids the migration looks at, in PostgreSQL terms (the same shape cmmcNumberOf accepts, without the number check). */
+const CMMC_CONTROL_ID_PATTERN = '^[A-Za-z]{2}\\.L[12]-';
+const isCmmcControlId = (controlId: string): boolean => new RegExp(CMMC_CONTROL_ID_PATTERN).test(controlId);
 
 const sameSet = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((x) => b.includes(x));
 const dedupe = (ids: readonly string[]): string[] => [...new Set(ids)];
@@ -155,7 +169,9 @@ function toEvent(row: pg.QueryResultRow): ObjectiveEvent {
 
 // ---- memory mode ----
 
-const memoryRows = new Map<string, Map<string, ObjectiveRecord>>(); // by `${tenant}__${program}`, then objective id
+/** A memory row also carries the catalog revision it was written against; it never leaves this file (copyRecord strips it). */
+type MemoryRow = ObjectiveRecord & { catalogRev: string | null };
+const memoryRows = new Map<string, Map<string, MemoryRow>>(); // by `${tenant}__${program}`, then objective id
 const memoryEvents = new Map<string, ObjectiveEvent[]>(); // by `${tenant}__${program}`, oldest first
 const scopeKey = (scope: ProgramScope): string => `${scope.tenantId}__${scope.programId}`;
 const hasScope = (scope: ProgramScope): boolean => Boolean(scope.tenantId) && Boolean(scope.programId);
@@ -171,15 +187,37 @@ export function __deleteProgramObjectivesForMemory(scope: ProgramScope): void {
   if (hasScope(scope)) memoryRows.delete(scopeKey(scope));
 }
 
-const copyRecord = (r: ObjectiveRecord): ObjectiveRecord => ({ ...r, linkedEvidenceIds: [...r.linkedEvidenceIds] });
+const copyRecord = (r: ObjectiveRecord): ObjectiveRecord => ({
+  objectiveId: r.objectiveId,
+  controlId: r.controlId,
+  status: r.status,
+  narrative: r.narrative,
+  linkedEvidenceIds: [...r.linkedEvidenceIds],
+  updatedBy: r.updatedBy,
+  updatedAt: r.updatedAt,
+});
+const copyRow = (r: MemoryRow): MemoryRow => ({ ...copyRecord(r), catalogRev: r.catalogRev });
+
+/** Test hook: stores rows as an older version would have (no catalog revision). */
+export function __seedLegacyObjectivesForTests(scope: ProgramScope, records: ObjectiveRecord[]): void {
+  if (!hasScope(scope)) return;
+  const rows = memoryRows.get(scopeKey(scope)) ?? new Map<string, MemoryRow>();
+  for (const r of records) rows.set(r.objectiveId, { ...copyRecord(r), updatedAt: r.updatedAt ?? nextStamp(rows.get(r.objectiveId)?.updatedAt), catalogRev: null });
+  memoryRows.set(scopeKey(scope), rows);
+}
+
+/** Test hook: the catalog revision stored with a row (undefined: no such row; null: a legacy row). */
+export function __objectiveCatalogRevForTests(scope: ProgramScope, objectiveId: string): string | null | undefined {
+  return memoryRows.get(scopeKey(scope))?.get(objectiveId)?.catalogRev;
+}
 
 /** Runs `fn` on a staged copy of the program's rows that replaces the stored ones only when it finishes (all or nothing), one at a time. */
 function memoryTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): Promise<T> {
   const run = async (): Promise<T> => {
     if (!hasScope(scope)) throw new Error('A program is required to write objectives');
     const key = scopeKey(scope);
-    const rows = new Map<string, ObjectiveRecord>();
-    for (const [id, r] of memoryRows.get(key) ?? []) rows.set(id, copyRecord(r));
+    const rows = new Map<string, MemoryRow>();
+    for (const [id, r] of memoryRows.get(key) ?? []) rows.set(id, copyRow(r));
     const added: ObjectiveEvent[] = [];
     const tx: Tx = {
       find: async (id) => {
@@ -187,17 +225,26 @@ function memoryTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): 
         return r ? copyRecord(r) : null;
       },
       save: async (record) => {
-        const stored = { ...copyRecord(record), updatedAt: nextStamp(rows.get(record.objectiveId)?.updatedAt) };
+        const stored: MemoryRow = { ...copyRecord(record), updatedAt: nextStamp(rows.get(record.objectiveId)?.updatedAt), catalogRev: revOf(record.controlId) };
         rows.set(record.objectiveId, stored);
         return copyRecord(stored);
       },
       insertOnly: async (record) => {
         if (rows.has(record.objectiveId)) return false;
-        rows.set(record.objectiveId, { ...copyRecord(record), updatedAt: nextStamp() });
+        rows.set(record.objectiveId, { ...copyRecord(record), updatedAt: nextStamp(), catalogRev: revOf(record.controlId) });
         return true;
       },
       addEvent: async (event) => {
         added.push({ ...event, id: `coe_${Date.now()}_${randomBytes(4).toString('hex')}`, createdAt: new Date().toISOString() });
+      },
+      legacyRows: async () => [...rows.values()].filter((r) => r.catalogRev === null && isCmmcControlId(r.controlId)).map(copyRecord),
+      stampLegacy: async () => {
+        for (const r of rows.values()) if (r.catalogRev === null && isCmmcControlId(r.controlId)) r.catalogRev = CMMC_OBJECTIVE_CATALOG_REV;
+      },
+      statusesOf: async (controlIds) => {
+        const out: Record<string, ObjectiveStatus> = {};
+        for (const r of rows.values()) if (controlIds.includes(r.controlId)) out[r.objectiveId] = r.status;
+        return out;
       },
     };
     const result = await fn(tx);
@@ -215,8 +262,8 @@ function memoryTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): 
 const SELECT_ONE = 'SELECT * FROM control_objectives WHERE tenant_id = $1 AND program_id = $2 AND objective_id = $3 FOR UPDATE';
 
 const UPSERT = `
-  INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, status, narrative, linked_evidence_ids, updated_by)
-  VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8)
+  INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, status, narrative, linked_evidence_ids, updated_by, objective_catalog_rev)
+  VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9)
   ON CONFLICT (tenant_id, program_id, objective_id)
   DO UPDATE SET
     control_id = EXCLUDED.control_id,
@@ -224,13 +271,14 @@ const UPSERT = `
     narrative = EXCLUDED.narrative,
     linked_evidence_ids = EXCLUDED.linked_evidence_ids,
     updated_by = EXCLUDED.updated_by,
+    objective_catalog_rev = EXCLUDED.objective_catalog_rev,
     updated_at = GREATEST(NOW(), control_objectives.updated_at + interval '1 millisecond')
   RETURNING *;
 `;
 
 const INSERT_ONLY = `
-  INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, status, narrative, linked_evidence_ids, updated_by)
-  VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8)
+  INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, status, narrative, linked_evidence_ids, updated_by, objective_catalog_rev)
+  VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9)
   ON CONFLICT (tenant_id, program_id, objective_id) DO NOTHING
   RETURNING id;
 `;
@@ -244,10 +292,18 @@ const INSERT_EVENT = `
   );
 `;
 
-async function pgTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): Promise<T> {
+const SELECT_LEGACY = `SELECT * FROM control_objectives WHERE tenant_id = $1 AND program_id = $2 AND objective_catalog_rev IS NULL AND control_id ~ '${CMMC_CONTROL_ID_PATTERN}' ORDER BY objective_id FOR UPDATE`;
+
+const STAMP_LEGACY = `UPDATE control_objectives SET objective_catalog_rev = $3 WHERE tenant_id = $1 AND program_id = $2 AND objective_catalog_rev IS NULL AND control_id ~ '${CMMC_CONTROL_ID_PATTERN}'`;
+
+const SELECT_STATUSES = 'SELECT objective_id, status FROM control_objectives WHERE tenant_id = $1 AND program_id = $2 AND control_id = ANY($3::text[])';
+
+async function pgTransaction<T>(scope: ProgramScope, fn: (tx: Tx, client: pg.PoolClient) => Promise<T>): Promise<T> {
   if (!hasScope(scope)) throw new Error('A program is required to write objectives');
   const c = await pool.connect();
-  const values = (r: ObjectiveRecord): (string | string[])[] => [scope.tenantId, scope.programId, r.controlId, r.objectiveId, r.status, r.narrative, r.linkedEvidenceIds, r.updatedBy];
+  const values = (r: ObjectiveRecord): (string | string[] | null)[] => [
+    scope.tenantId, scope.programId, r.controlId, r.objectiveId, r.status, r.narrative, r.linkedEvidenceIds, r.updatedBy, revOf(r.controlId),
+  ];
   const tx: Tx = {
     find: async (id) => {
       const res = await c.query(SELECT_ONE, [scope.tenantId, scope.programId, id]);
@@ -265,12 +321,22 @@ async function pgTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>)
         e.narrativeChanged, e.oldNarrativeSha256, e.newNarrativeSha256, e.oldNarrativeLength, e.newNarrativeLength, e.evidenceChanged,
       ]);
     },
+    legacyRows: async () => (await c.query(SELECT_LEGACY, [scope.tenantId, scope.programId])).rows.filter((r) => r.tenant_id === scope.tenantId && r.program_id === scope.programId).map(toRecord),
+    stampLegacy: async () => {
+      await c.query(STAMP_LEGACY, [scope.tenantId, scope.programId, CMMC_OBJECTIVE_CATALOG_REV]);
+    },
+    statusesOf: async (controlIds) => {
+      const out: Record<string, ObjectiveStatus> = {};
+      if (!controlIds.length) return out;
+      for (const r of (await c.query(SELECT_STATUSES, [scope.tenantId, scope.programId, [...controlIds]])).rows) out[String(r.objective_id)] = r.status as ObjectiveStatus;
+      return out;
+    },
   };
   try {
     await c.query('BEGIN');
     await c.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', scope.tenantId]);
     await c.query('SELECT set_config($1, $2, true)', ['app.current_program_id', scope.programId]);
-    const result = await fn(tx);
+    const result = await fn(tx, c);
     await c.query('COMMIT');
     return result;
   } catch (err) {
@@ -283,6 +349,52 @@ async function pgTransaction<T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>)
 
 const transaction = <T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): Promise<T> =>
   getDbMode() === 'memory' ? memoryTransaction(scope, fn) : pgTransaction(scope, fn);
+
+// ---- catalog update (used by objectiveCatalogMigration.ts) ----
+
+/** What the migration may do with the program's legacy rows, inside one transaction (all or nothing). */
+export interface CatalogMigrationTx {
+  /** The CMMC rows still on no catalog revision. In PostgreSQL they are locked: a concurrent migration waits, then finds none. */
+  legacyRows(): Promise<ObjectiveRecord[]>;
+  /** Sets the row's status (stamping the current revision), bumps updatedAt and records a 'catalog-update' event. Narrative and evidence are untouched. */
+  setStatus(record: ObjectiveRecord, status: ObjectiveStatus, who: ObjectiveActor): Promise<void>;
+  /** Stamps every remaining legacy row with the current revision (no updatedAt bump, so no false stale-write conflicts). */
+  stampLegacy(): Promise<void>;
+  statusesOf(controlIds: readonly string[]): Promise<Record<string, ObjectiveStatus>>;
+  /** The PostgreSQL connection of the transaction, for writes that must commit with it (null in memory mode). */
+  client: pg.PoolClient | null;
+}
+
+/** True when the program holds a CMMC row written before the current objective catalog. A plain read: no lock, no transaction. */
+export async function hasLegacyObjectives(scope: ProgramScope): Promise<boolean> {
+  if (!hasScope(scope)) return false;
+  if (getDbMode() === 'memory') {
+    return [...(memoryRows.get(scopeKey(scope))?.values() ?? [])].some((r) => r.catalogRev === null && isCmmcControlId(r.controlId));
+  }
+  const res = await queryWithProgram(
+    scope,
+    `SELECT 1 AS n FROM control_objectives WHERE tenant_id = $1 AND program_id = $2 AND objective_catalog_rev IS NULL AND control_id ~ '${CMMC_CONTROL_ID_PATTERN}' LIMIT 1`,
+    [scope.tenantId, scope.programId]
+  );
+  return res.rows.length > 0;
+}
+
+/** Runs `fn` in one transaction over the program's legacy rows. Errors propagate (the transaction rolls back): the caller decides what to do. */
+export function runCatalogMigration<T>(scope: ProgramScope, fn: (m: CatalogMigrationTx) => Promise<T>): Promise<T> {
+  const run = (tx: Tx, client: pg.PoolClient | null): Promise<T> =>
+    fn({
+      legacyRows: () => tx.legacyRows(),
+      stampLegacy: () => tx.stampLegacy(),
+      statusesOf: (ids) => tx.statusesOf(ids),
+      client,
+      setStatus: async (before, status, who) => {
+        const after: ObjectiveRecord = { ...before, status, updatedBy: who.actor.slice(0, 255), updatedAt: null };
+        await tx.save(after);
+        await tx.addEvent(buildEvent(scope, { objectiveId: before.objectiveId, controlId: before.controlId }, before, after, who));
+      },
+    });
+  return getDbMode() === 'memory' ? memoryTransaction(scope, (tx) => run(tx, null)) : pgTransaction(scope, run);
+}
 
 // ---- public API ----
 

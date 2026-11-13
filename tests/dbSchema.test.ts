@@ -78,8 +78,8 @@ assert(
 );
 const eventSources = [...(/control_assessment_events_source_check CHECK \(source IN \(([^)]*)\)\)/.exec(TABLES_SQL)?.[1] ?? '').matchAll(/'([^']*)'/g)].map((x) => x[1]);
 assert(
-  JSON.stringify(eventSources) === JSON.stringify(['human', 'ssp-commit', 'vm-snapshot', 'clone']) && JSON.stringify(eventSources) === JSON.stringify(CONTROL_CHANGE_SOURCES),
-  'the event source CHECK lists human, ssp-commit, vm-snapshot, clone and equals CONTROL_CHANGE_SOURCES', eventSources
+  JSON.stringify(eventSources) === JSON.stringify(['human', 'ssp-commit', 'vm-snapshot', 'clone', 'catalog-update']) && JSON.stringify(eventSources) === JSON.stringify(CONTROL_CHANGE_SOURCES),
+  'the event source CHECK lists human, ssp-commit, vm-snapshot, clone, catalog-update and equals CONTROL_CHANGE_SOURCES', eventSources
 );
 assert(
   TABLES_SQL.includes('DROP CONSTRAINT IF EXISTS control_assessment_events_source_check') &&
@@ -358,7 +358,13 @@ assert(
     objectivesDdl.indexOf('DROP CONSTRAINT IF EXISTS control_objectives_status_check') < objectivesDdl.indexOf('ADD CONSTRAINT control_objectives_status_check'),
   'OBJ: the status CHECK is dropped and re-added (the five assessment statuses)'
 );
-assert(objectivesDdl.includes("ADD CONSTRAINT control_objective_events_source_check CHECK (source IN ('human', 'browser-import', 'clone'))"), 'OBJ: the event source CHECK lists human, browser-import and clone');
+assert(objectivesDdl.includes("ADD CONSTRAINT control_objective_events_source_check CHECK (source IN ('human', 'browser-import', 'clone', 'catalog-update'))"), 'OBJ: the event source CHECK lists human, browser-import, clone and catalog-update');
+assert(
+  objectivesTable.includes('objective_catalog_rev') === false &&
+    objectivesDdl.includes('ALTER TABLE control_objectives ADD COLUMN IF NOT EXISTS objective_catalog_rev VARCHAR(32);') &&
+    objectivesDdl.indexOf('ADD COLUMN IF NOT EXISTS objective_catalog_rev VARCHAR(32);') > objectivesDdl.indexOf('CREATE TABLE IF NOT EXISTS control_objectives ('),
+  'OBJ: objective_catalog_rev is added idempotently (ADD COLUMN IF NOT EXISTS, nullable: NULL means written before the current catalog) after the table is created'
+);
 assert(
   objectivesDdl.includes('CREATE INDEX IF NOT EXISTS idx_control_objectives_control ON control_objectives (tenant_id, program_id, control_id);') &&
     objectivesDdl.includes('CREATE INDEX IF NOT EXISTS idx_control_objective_events_objective ON control_objective_events (tenant_id, program_id, objective_id, created_at DESC);'),

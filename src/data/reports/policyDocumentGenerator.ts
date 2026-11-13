@@ -1,13 +1,15 @@
 import { Tenant, EnclaveStackProfile } from '../../types/tenant';
 import { getCascadedObjectiveNarrative } from '../frameworks/policyCompiler';
-import { getObjectivesForControl } from '../frameworks/assessmentObjectives';
 import { getFrameworkControls } from '../frameworks/frameworkRegistry';
+import { cmmcNumberOf, withGuideTitle } from '../cmmcGuide/guide';
+import { cmmcCascadeSource, getControlObjectives } from '../cmmcGuide/objectives';
 import type { FipsModuleRef } from '../telemetry/fipsValidation';
 import {
   NO_ORGANIZATION_RECORDED,
   NO_SYSTEM_NAME_RECORDED,
   NO_SYSTEM_OWNER_RECORDED,
   NO_STACK_PROFILE_RECORDED,
+  NO_OBJECTIVE_TEMPLATE_RECORDED,
   NO_FAMILY_IMPLEMENTATION_RECORDED,
   UNNAMED_SYSTEM,
 } from './documentDefaults';
@@ -77,14 +79,23 @@ export function generatePolicyDocument(
 
   if (familyControls.length > 0) {
     familyControls.forEach((control) => {
-      markdown += `### ${control.id} - ${control.title}\n\n`;
+      markdown += `### ${control.id} - ${withGuideTitle(control).title}\n\n`;
       if (control.plainEnglishSummary) {
         markdown += `*Requirement Summary*: ${control.plainEnglishSummary}\n\n`;
       }
-      const objectives = getObjectivesForControl(control.id, control.title);
+      const objectives = getControlObjectives(control.id, control.title, undefined, undefined, activeFramework);
       if (objectives && objectives.length > 0) {
         objectives.forEach((obj) => {
-          const narrative = stack ? getCascadedObjectiveNarrative(control.id, obj.letter, stack, cryptoModules) : NO_STACK_PROFILE_RECORDED;
+          let narrative = NO_STACK_PROFILE_RECORDED;
+          if (stack) {
+            if (cmmcNumberOf(control.id)) {
+              // A CMMC objective is told from the template it carried over from the earlier catalog, never one attached by letter
+              const src = cmmcCascadeSource(control.id, obj.letter, activeFramework);
+              narrative = src ? getCascadedObjectiveNarrative(src.key, src.letter, stack, cryptoModules) : NO_OBJECTIVE_TEMPLATE_RECORDED;
+            } else {
+              narrative = getCascadedObjectiveNarrative(control.id, obj.letter, stack, cryptoModules);
+            }
+          }
           markdown += `**Objective ${obj.letter}**: ${obj.text}\n\n`;
           markdown += `**Implementation**: ${narrative}\n\n`;
         });

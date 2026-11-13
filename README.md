@@ -122,4 +122,8 @@ licence is not on that script's allow list.
 Work on a feature branch and open a pull request against `main`; CI must be green, including the live PostgreSQL checks.
 No new runtime dependencies without discussion: the on-premises install is supply-chain sensitive, base images and
 actions are pinned by digest, and a dependency must carry a licence compatible with proprietary distribution. Generated catalogs under `src/data/frameworks/` are verified against their sources with
-`npx tsx scripts/generateNist80053.ts --check`.
+`npx tsx scripts/generateNist80053.ts --check`. The CMMC assessment objectives in `src/data/cmmcGuide/` are generated from the DoD CIO's
+CMMC Assessment Guides (Level 2 and Level 1, version 2.13, DISTRIBUTION STATEMENT A: approved for public release; the guide text is
+shipped verbatim with this attribution) by `npx tsx scripts/generateCmmcObjectives.ts --l2 <AssessmentGuideL2.pdf> --l1 <AssessmentGuideL1.pdf>`,
+which needs no network and does not keep the PDFs. `npx tsx scripts/generateCmmcObjectives.ts --check` validates the committed files, and
+with the same two PDF arguments also proves they were generated from those PDFs.

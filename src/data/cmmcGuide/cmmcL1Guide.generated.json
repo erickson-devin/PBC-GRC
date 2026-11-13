@@ -1,0 +1,566 @@
+{
+  "meta": {
+    "generatedBy": "scripts/generateCmmcObjectives.ts",
+    "document": "CMMC Assessment Guide – Level 1",
+    "version": "2.13",
+    "date": "September 2024",
+    "documentNumber": "DoD-CIO-00002",
+    "distribution": "DISTRIBUTION STATEMENT A. Approved for public release. Distribution is unlimited.",
+    "sourceFile": "AssessmentGuideL1v2.pdf",
+    "sha256": "88116fa807b3685703f08c1992580ad0cfbc22ad2bcf76f99378fadf964f7368",
+    "pages": 54
+  },
+  "requirements": [
+    {
+      "id": "AC.L1-b.1.i",
+      "far": "b.1.i",
+      "numbers": [
+        "3.1.1"
+      ],
+      "family": "AC",
+      "title": "Authorized Access Control [FCI Data]",
+      "displayTitle": "Authorized Access Control",
+      "statement": "Limit information system access to authorized users, processes acting on behalf of authorized users, or devices (including other information systems).",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "authorized users are identified",
+          "number": "3.1.1",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "processes acting on behalf of authorized users are identified",
+          "number": "3.1.1",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "devices (and other systems) authorized to connect to the system are identified",
+          "number": "3.1.1",
+          "numberLetter": "c"
+        },
+        {
+          "letter": "d",
+          "text": "system access is limited to authorized users",
+          "number": "3.1.1",
+          "numberLetter": "d"
+        },
+        {
+          "letter": "e",
+          "text": "system access is limited to processes acting on behalf of authorized users",
+          "number": "3.1.1",
+          "numberLetter": "e"
+        },
+        {
+          "letter": "f",
+          "text": "system access is limited to authorized devices (including other systems)",
+          "number": "3.1.1",
+          "numberLetter": "f"
+        }
+      ]
+    },
+    {
+      "id": "AC.L1-b.1.ii",
+      "far": "b.1.ii",
+      "numbers": [
+        "3.1.2"
+      ],
+      "family": "AC",
+      "title": "Transaction & Function Control [FCI Data]",
+      "displayTitle": "Transaction & Function Control",
+      "statement": "Limit information system access to the types of transactions and functions that authorized users are permitted to execute.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the types of transactions and functions that authorized users are permitted to execute are defined",
+          "number": "3.1.2",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "system access is limited to the defined types of transactions and functions for authorized users",
+          "number": "3.1.2",
+          "numberLetter": "b"
+        }
+      ]
+    },
+    {
+      "id": "AC.L1-b.1.iii",
+      "far": "b.1.iii",
+      "numbers": [
+        "3.1.20"
+      ],
+      "family": "AC",
+      "title": "External Connections [FCI Data]",
+      "displayTitle": "External Connections",
+      "statement": "Verify and control/limit connections to and use of external information systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "connections to external systems are identified",
+          "number": "3.1.20",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "the use of external systems is identified",
+          "number": "3.1.20",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "connections to external systems are verified",
+          "number": "3.1.20",
+          "numberLetter": "c"
+        },
+        {
+          "letter": "d",
+          "text": "the use of external systems is verified",
+          "number": "3.1.20",
+          "numberLetter": "d"
+        },
+        {
+          "letter": "e",
+          "text": "connections to external systems are controlled/limited",
+          "number": "3.1.20",
+          "numberLetter": "e"
+        },
+        {
+          "letter": "f",
+          "text": "the use of external systems is controlled/limited",
+          "number": "3.1.20",
+          "numberLetter": "f"
+        }
+      ]
+    },
+    {
+      "id": "AC.L1-b.1.iv",
+      "far": "b.1.iv",
+      "numbers": [
+        "3.1.22"
+      ],
+      "family": "AC",
+      "title": "Control Public Information [FCI Data]",
+      "displayTitle": "Control Public Information",
+      "statement": "Control information posted or processed on publicly accessible information systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "individuals authorized to post or process information on publicly accessible systems are identified",
+          "number": "3.1.22",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "procedures to ensure [FCI] is not posted or processed on publicly accessible systems are identified",
+          "number": "3.1.22",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "a review process is in place prior to posting of any content to publicly accessible systems",
+          "number": "3.1.22",
+          "numberLetter": "c"
+        },
+        {
+          "letter": "d",
+          "text": "content on publicly accessible systems is reviewed to ensure that it does not include [FCI]",
+          "number": "3.1.22",
+          "numberLetter": "d"
+        },
+        {
+          "letter": "e",
+          "text": "mechanisms are in place to remove and address improper posting of [FCI]",
+          "number": "3.1.22",
+          "numberLetter": "e"
+        }
+      ]
+    },
+    {
+      "id": "IA.L1-b.1.v",
+      "far": "b.1.v",
+      "numbers": [
+        "3.5.1"
+      ],
+      "family": "IA",
+      "title": "Identification [FCI Data]",
+      "displayTitle": "Identification",
+      "statement": "Identify information system users, processes acting on behalf of users, or devices.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "system users are identified",
+          "number": "3.5.1",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "processes acting on behalf of users are identified",
+          "number": "3.5.1",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "devices accessing the system are identified",
+          "number": "3.5.1",
+          "numberLetter": "c"
+        }
+      ]
+    },
+    {
+      "id": "IA.L1-b.1.vi",
+      "far": "b.1.vi",
+      "numbers": [
+        "3.5.2"
+      ],
+      "family": "IA",
+      "title": "Authentication [FCI Data]",
+      "displayTitle": "Authentication",
+      "statement": "Authenticate (or verify) the identities of those users, processes, or devices, as a prerequisite to allowing access to organizational information systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the identity of each user is authenticated or verified as a prerequisite to system access",
+          "number": "3.5.2",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "the identity of each process acting on behalf of a user is authenticated or verified as a prerequisite to system access",
+          "number": "3.5.2",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "the identity of each device accessing or connecting to the system is authenticated or verified as a prerequisite to system access",
+          "number": "3.5.2",
+          "numberLetter": "c"
+        }
+      ]
+    },
+    {
+      "id": "MP.L1-b.1.vii",
+      "far": "b.1.vii",
+      "numbers": [
+        "3.8.3"
+      ],
+      "family": "MP",
+      "title": "Media Disposal [FCI Data]",
+      "displayTitle": "Media Disposal",
+      "statement": "Sanitize or destroy information system media containing Federal Contract Information before disposal or release for reuse.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "system media containing [FCI] is sanitized or destroyed before disposal",
+          "number": "3.8.3",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "system media containing [FCI] is sanitized before it is released for reuse",
+          "number": "3.8.3",
+          "numberLetter": "b"
+        }
+      ]
+    },
+    {
+      "id": "PE.L1-b.1.viii",
+      "far": "b.1.viii",
+      "numbers": [
+        "3.10.1"
+      ],
+      "family": "PE",
+      "title": "Limit Physical Access [FCI Data]",
+      "displayTitle": "Limit Physical Access",
+      "statement": "Limit physical access to organizational information systems, equipment, and the respective operating environments to authorized individuals.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "authorized individuals allowed physical access are identified",
+          "number": "3.10.1",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "physical access to organizational systems is limited to authorized individuals",
+          "number": "3.10.1",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "physical access to equipment is limited to authorized individuals",
+          "number": "3.10.1",
+          "numberLetter": "c"
+        },
+        {
+          "letter": "d",
+          "text": "physical access to operating environments is limited to authorized individuals",
+          "number": "3.10.1",
+          "numberLetter": "d"
+        }
+      ]
+    },
+    {
+      "id": "PE.L1-b.1.ix",
+      "far": "b.1.ix",
+      "numbers": [
+        "3.10.3",
+        "3.10.4",
+        "3.10.5"
+      ],
+      "family": "PE",
+      "title": "Manage Visitors & Physical Access [FCI Data]",
+      "displayTitle": "Manage Visitors & Physical Access",
+      "statement": "Escort visitors and monitor visitor activity; maintain audit logs of physical access; and control and manage physical access devices.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "visitors are escorted",
+          "number": "3.10.3",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "visitor activity is monitored",
+          "number": "3.10.3",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "audit logs of physical access are maintained",
+          "number": "3.10.4",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "d",
+          "text": "physical access devices are identified",
+          "number": "3.10.5",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "e",
+          "text": "physical access devices are controlled",
+          "number": "3.10.5",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "f",
+          "text": "physical access devices are managed",
+          "number": "3.10.5",
+          "numberLetter": "c"
+        }
+      ]
+    },
+    {
+      "id": "SC.L1-b.1.x",
+      "far": "b.1.x",
+      "numbers": [
+        "3.13.1"
+      ],
+      "family": "SC",
+      "title": "Boundary Protection [FCI Data]",
+      "displayTitle": "Boundary Protection",
+      "statement": "Monitor, control, and protect organizational communications (i.e., information transmitted or received by organizational information systems) at the external boundaries and key internal boundaries of the information systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the external system boundary is defined",
+          "number": "3.13.1",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "key internal system boundaries are defined",
+          "number": "3.13.1",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "communications are monitored at the external system boundary",
+          "number": "3.13.1",
+          "numberLetter": "c"
+        },
+        {
+          "letter": "d",
+          "text": "communications are monitored at key internal boundaries",
+          "number": "3.13.1",
+          "numberLetter": "d"
+        },
+        {
+          "letter": "e",
+          "text": "communications are controlled at the external system boundary",
+          "number": "3.13.1",
+          "numberLetter": "e"
+        },
+        {
+          "letter": "f",
+          "text": "communications are controlled at key internal boundaries",
+          "number": "3.13.1",
+          "numberLetter": "f"
+        },
+        {
+          "letter": "g",
+          "text": "communications are protected at the external system boundary",
+          "number": "3.13.1",
+          "numberLetter": "g"
+        },
+        {
+          "letter": "h",
+          "text": "communications are protected at key internal boundaries",
+          "number": "3.13.1",
+          "numberLetter": "h"
+        }
+      ]
+    },
+    {
+      "id": "SC.L1-b.1.xi",
+      "far": "b.1.xi",
+      "numbers": [
+        "3.13.5"
+      ],
+      "family": "SC",
+      "title": "Public-Access System Separation [FCI Data]",
+      "displayTitle": "Public-Access System Separation",
+      "statement": "Implement subnetworks for publicly accessible system components that are physically or logically separated from internal networks.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "publicly accessible system components are identified",
+          "number": "3.13.5",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "subnetworks for publicly accessible system components are physically or logically separated from internal networks",
+          "number": "3.13.5",
+          "numberLetter": "b"
+        }
+      ]
+    },
+    {
+      "id": "SI.L1-b.1.xii",
+      "far": "b.1.xii",
+      "numbers": [
+        "3.14.1"
+      ],
+      "family": "SI",
+      "title": "Flaw Remediation [FCI Data]",
+      "displayTitle": "Flaw Remediation",
+      "statement": "Identify, report, and correct information and information system flaws in a timely manner.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the time within which to identify system flaws is specified",
+          "number": "3.14.1",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "system flaws are identified within the specified time frame",
+          "number": "3.14.1",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "the time within which to report system flaws is specified",
+          "number": "3.14.1",
+          "numberLetter": "c"
+        },
+        {
+          "letter": "d",
+          "text": "system flaws are reported within the specified time frame",
+          "number": "3.14.1",
+          "numberLetter": "d"
+        },
+        {
+          "letter": "e",
+          "text": "the time within which to correct system flaws is specified",
+          "number": "3.14.1",
+          "numberLetter": "e"
+        },
+        {
+          "letter": "f",
+          "text": "system flaws are corrected within the specified time frame",
+          "number": "3.14.1",
+          "numberLetter": "f"
+        }
+      ]
+    },
+    {
+      "id": "SI.L1-b.1.xiii",
+      "far": "b.1.xiii",
+      "numbers": [
+        "3.14.2"
+      ],
+      "family": "SI",
+      "title": "Malicious Code ProTection [FCI Data]",
+      "displayTitle": "Malicious Code Protection",
+      "statement": "Provide protection from malicious code at appropriate locations within organizational information systems.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "designated locations for malicious code protection are identified",
+          "number": "3.14.2",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "protection from malicious code at designated locations is provided",
+          "number": "3.14.2",
+          "numberLetter": "b"
+        }
+      ]
+    },
+    {
+      "id": "SI.L1-b.1.xiv",
+      "far": "b.1.xiv",
+      "numbers": [
+        "3.14.4"
+      ],
+      "family": "SI",
+      "title": "Update Malicious Code Protection [FCI Data]",
+      "displayTitle": "Update Malicious Code Protection",
+      "statement": "Update malicious code protection mechanisms when new releases are available.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "malicious code protection mechanisms are updated when new releases are available",
+          "number": "3.14.4",
+          "numberLetter": "a"
+        }
+      ]
+    },
+    {
+      "id": "SI.L1-b.1.xv",
+      "far": "b.1.xv",
+      "numbers": [
+        "3.14.5"
+      ],
+      "family": "SI",
+      "title": "System & File Scanning [FCI Data]",
+      "displayTitle": "System & File Scanning",
+      "statement": "Perform periodic scans of the information system and real-time scans of files from external sources as files are downloaded, opened, or executed.",
+      "objectives": [
+        {
+          "letter": "a",
+          "text": "the frequency for malicious code scans is defined",
+          "number": "3.14.5",
+          "numberLetter": "a"
+        },
+        {
+          "letter": "b",
+          "text": "malicious code scans are performed with the defined frequency",
+          "number": "3.14.5",
+          "numberLetter": "b"
+        },
+        {
+          "letter": "c",
+          "text": "real-time malicious code scans of files from external sources as files are downloaded, opened, or executed are performed",
+          "number": "3.14.5",
+          "numberLetter": "c"
+        }
+      ]
+    }
+  ]
+}

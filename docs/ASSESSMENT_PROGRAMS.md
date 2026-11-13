@@ -87,3 +87,21 @@ Assets stay in one tenant-wide inventory. A program can declare which of them li
 * Each change is recorded in the program history as `assets_changed` (counts and asset ids, never a host name or address).
 * Deleting an asset or a program removes its membership. New assets are not added to any program automatically, and the
   vulnerability-management pipeline (snapshots, findings, POA&M items) still reads the whole inventory.
+
+## CMMC assessment objectives
+
+The objectives a CMMC control is assessed against (3.1.1 has six, a-f; 3.12.4 has eight) come from the DoD CIO's CMMC Assessment
+Guides, version 2.13 (September 2024; Level 2 is DoD-CIO-00003, Level 1 is DoD-CIO-00002; DISTRIBUTION STATEMENT A, approved for
+public release). `scripts/generateCmmcObjectives.ts` extracts them from the two PDFs into `src/data/cmmcGuide/*.generated.json`
+(110 Level 2 requirements with 320 objectives, 15 Level 1 requirements with 59), recording the PDFs' base name, SHA-256 and page
+count; nothing is fetched at runtime and the PDFs are not stored. A Level 1 program shows the Level 1 guide's wording, every other
+program the Level 2 wording, and the guide's requirement titles are shown in place of the catalog's. The shipped catalogs and the
+SSP import are unchanged. A hand-written implementation template, SCAP rule or parameter is kept only for an objective whose wording
+is the same as before.
+
+Answers given against the earlier objectives are re-flagged, never deleted. An objective keeps its answer when the objective at the
+same letter now says the same thing. Otherwise Met and Not applicable become In progress, and Not met, In progress and Not started
+are kept (letters are not re-keyed). A Met control that has stored objective answers is then recalculated over the guide's letters,
+where a letter without an answer counts as Not started, and can only come out lower than Met. Narratives and evidence links are
+never touched. A cached state records the revision it was reconciled with (`objectivesCatalogRev`, `cmmc-ag-2.13`), so the
+reconciliation runs once.
