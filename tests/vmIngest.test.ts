@@ -13,7 +13,9 @@ import { vmIngestMaxBytes } from '../server/vm/ingestSchema';
 import { __drainVmWorkerForTests, __resumeVmWorkerForTests, __setVmWorkerFaultForTests, abortVmRuns, activeVmRuns, enqueueVmRun } from '../server/vm/worker';
 import { markRunInterrupted, recordReceivedRun, updateRun } from '../server/vm/store';
 import { VM_SHUTDOWN_MESSAGE } from '../server/shutdown';
-import { countOpenPoamItems, loadSnapshotFindings } from '../server/vm/findingsStore';
+import { countOpenPoamItems, loadSnapshotFindings, saveFindings } from '../server/vm/findingsStore';
+import { createProgram } from '../server/programs';
+import type { VmFinding } from '../src/types/vm';
 import { firstProgram } from './programFixture';
 import { createAgentReportedAsset, listAgentAssetCandidates } from '../server/assets';
 
@@ -810,6 +812,87 @@ async function run() {
   const workerSrc = fs.readFileSync(path.join(process.cwd(), 'server', 'vm', 'worker.ts'), 'utf8').replace(/\r\n/g, '\n');
   const interruptLogs = workerSrc.split('\n').filter((l) => l.includes('interrupted by the shutdown'));
   assert(interruptLogs.length >= 1 && interruptLogs.every((l) => !l.includes('tenantId')), 'the interrupted log line carries no tenant id (V147-5)', interruptLogs);
+
+  console.log('\n--- POA&M episodes and target change (#275) ---');
+  // console.log is wrapped while a run is ingested or reprocessed, so the worker's own summary line can be read back
+  const withLogs = async <T>(fn: () => Promise<T>): Promise<{ value: T; lines: string[] }> => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+      return { value: await fn(), lines };
+    } finally {
+      console.log = orig;
+    }
+  };
+  const poamCountOf = (lines: string[], runId: string): string | null => {
+    const m = lines.find((l) => l.includes(`run ${runId} `) && l.includes('NORMALIZED'))?.match(/(\d+) POA&M/);
+    return m ? m[1] : null;
+  };
+  const itemsOf = async (pid: string, fid: string) => (await loadSnapshotFindings(A, pid)).poam.filter((p) => p.findingId === fid);
+  const reoPayload = (collectedAt: string, detectedAt: string) => ({
+    ...payloadOf({ label: 'reo-src', agents: ['reo1'] }),
+    collected_at: collectedAt,
+    hosts: [{ agent_id: 'reo1', hostname: 'host-reo1', findings: [{ vuln_id: 'CVE-2024-0900', severity: 'CRITICAL', detected_at: detectedAt }] }],
+  });
+  const reoRun = (collectedAt: string, detectedAt: string) =>
+    withLogs(async () => {
+      const res = await ingest(tokenA, Buffer.from(JSON.stringify(reoPayload(collectedAt, detectedAt))));
+      await __drainVmWorkerForTests();
+      return res;
+    });
+  const reprocessRun = (runId: string) =>
+    withLogs(async () => {
+      const res = await call('POST', `/tenants/${A}/vm/runs/${runId}/reprocess`, ownerA, A);
+      await __drainVmWorkerForTests();
+      return res;
+    });
+  const totalItems = async (pid: string) => (await loadSnapshotFindings(A, pid)).poam.length;
+
+  const beforeRe1 = await totalItems(defaultA.id);
+  const re1Run = await reoRun('2026-10-19T00:00:00Z', '2020-01-01T00:00:00Z');
+  const re1Id = (re1Run.value.body as Json)?.run_id as string;
+  const reoFinding = ((await findingsOf(A, ownerA, `?assetId=${await assetIdByName('host-reo1')}`))[0] ?? {}) as Json;
+  const reoItems1 = await itemsOf(defaultA.id, reoFinding.id);
+  assert(
+    re1Run.value.status === 202 && reoItems1.length === 1 && reoItems1[0].findingFirstSeenAt === '2020-01-01T00:00:00.000Z' && reoItems1[0].status === 'OPEN' && reoItems1[0].programId === defaultA.id,
+    'RE1 an overdue finding gets one OPEN item in the target program, recording its episode',
+    reoItems1,
+  );
+  assert(poamCountOf(re1Run.lines, re1Id) === String((await totalItems(defaultA.id)) - beforeRe1), 'RE1 the worker line counts the items really inserted', re1Run.lines.length);
+
+  // close the episode in the past (memory has no foreign key to protect), then the finding is reported again
+  await saveFindings(A, { created: [], updated: [], resolved: [{ ...(reoFinding as VmFinding), status: 'RESOLVED', resolvedAt: '2025-06-01T00:00:00.000Z', resolvedRunId: re1Id }], sightings: [], vulnIds: [] }, null);
+  const beforeRe2 = await totalItems(defaultA.id);
+  const re2Run = await reoRun('2026-10-20T00:00:00Z', '2025-07-01T00:00:00Z');
+  const re2Id = (re2Run.value.body as Json)?.run_id as string;
+  const reoAfter = ((await findingsOf(A, ownerA, `?assetId=${await assetIdByName('host-reo1')}`))[0] ?? {}) as Json;
+  const reoItems2 = await itemsOf(defaultA.id, reoFinding.id);
+  assert(reoAfter.status === 'OPEN' && reoAfter.firstSeenAt === '2025-07-01T00:00:00.000Z', 'RE2 the finding is reopened with a new first_seen_at (a new episode)', reoAfter);
+  assert(
+    reoItems2.length === 2 && JSON.stringify(reoItems2.map((p) => p.findingFirstSeenAt).sort()) === JSON.stringify(['2020-01-01T00:00:00.000Z', '2025-07-01T00:00:00.000Z']) && reoItems2.every((p) => p.status === 'OPEN'),
+    'RE2 the reopened, overdue finding gets a new item although the earlier episode\'s item is still OPEN',
+    reoItems2.map((p) => [p.findingFirstSeenAt, p.status]),
+  );
+  assert(poamCountOf(re2Run.lines, re2Id) === String((await totalItems(defaultA.id)) - beforeRe2), 'RE2 the worker line counts the items really inserted', re2Run.lines.length);
+
+  const reo3 = await reprocessRun(re2Id);
+  assert(reo3.value.status === 202 && (await itemsOf(defaultA.id, reoFinding.id)).length === 2 && poamCountOf(reo3.lines, re2Id) === '0', 'RE3 reprocessing the run adds no item and the worker line says 0 POA&M', [reo3.value.status, poamCountOf(reo3.lines, re2Id)]);
+
+  const targetP2 = await createProgram(A, { name: 'VM target 2', frameworkId: 'CMMC_L1' }, 'test');
+  const defaultItemsBefore = await totalItems(defaultA.id);
+  const setP2 = await call('PUT', `/tenants/${A}/programs/${targetP2.id}/vm-target`, ownerA, A);
+  assert(setP2.status === 200, 'RE4 the owner makes the second program the VM target', setP2.body);
+  const reo4 = await reprocessRun(re2Id);
+  const overdueNow = ((await findingsOf(A, ownerA, '?status=OPEN&limit=1000')) as Json[]).filter((f) => f.slaDueAt && Date.parse(f.slaDueAt) < Date.now()).length;
+  const p2Items = await totalItems(targetP2.id);
+  assert(overdueNow >= 2 && p2Items === overdueNow, 'RE4 after a target change the new program gets an item for every overdue finding (the old program\'s rows no longer hide them)', [p2Items, overdueNow]);
+  assert(poamCountOf(reo4.lines, re2Id) === String(overdueNow), 'RE4 the worker line reports exactly what was inserted', [poamCountOf(reo4.lines, re2Id), overdueNow]);
+  assert((await totalItems(defaultA.id)) === defaultItemsBefore, 'RE4 the previous target program keeps its items and gains none');
+
+  const reo5 = await reprocessRun(re2Id);
+  assert((await totalItems(targetP2.id)) === overdueNow && poamCountOf(reo5.lines, re2Id) === '0', 'RE5 a second reprocess adds nothing and the worker line says 0 POA&M (it used to repeat the planned count)', [await totalItems(targetP2.id), poamCountOf(reo5.lines, re2Id)]);
+  assert((await call('PUT', `/tenants/${A}/programs/${defaultA.id}/vm-target`, ownerA, A)).status === 200, 'the VM target is restored to the default program');
 
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();

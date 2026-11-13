@@ -187,6 +187,76 @@ export interface VmPoamItem {
   updatedAt: string;
   /** The program the item belongs to; null for a legacy item that was never backfilled. */
   programId?: string | null;
+  /** The finding's first_seen_at (episode) the item was created for; null for an item created before #275. */
+  findingFirstSeenAt?: string | null;
+}
+
+/** Most affected packages one POA&M row of GET /vm/poam carries (the count is always the true one). */
+export const VM_POAM_PACKAGES_RETURNED = 10;
+
+/** One item of GET /vm/poam with the finding it is about. */
+export interface VmPoamRow {
+  id: string;
+  status: VmPoamStatus;
+  controlId: string;
+  weakness: string;
+  scheduledCompletion: string | null;
+  createdAt: string;
+  updatedAt: string;
+  findingFirstSeenAt: string | null;
+  /** null when the finding was deleted with its asset (the key sets finding_id NULL). */
+  finding: null | {
+    id: string;
+    vulnId: string;
+    severity: VmSeverity;
+    status: VmFindingStatus;
+    kev: boolean;
+    firstSeenAt: string;
+    lastSeenAt: string;
+    slaDueAt: string | null;
+    resolvedAt: string | null;
+    /** The first VM_POAM_PACKAGES_RETURNED; the single legacy package when the list is empty. */
+    affectedPackages: VmAffectedPackage[];
+    affectedPackageCount: number;
+    asset: { id: string; name: string } | null;
+  };
+}
+
+/** An open finding whose deadline has not passed yet (no POA&M item is due for it). */
+export interface VmUpcomingFinding {
+  findingId: string;
+  vulnId: string;
+  severity: VmSeverity;
+  kev: boolean;
+  firstSeenAt: string;
+  slaDueAt: string;
+  /** floor((slaDueAt - generatedAt) / 1 day); 0 = due within 24 h. */
+  daysRemaining: number;
+  assetId: string;
+  assetName: string;
+  affectedPackages: VmAffectedPackage[];
+  affectedPackageCount: number;
+}
+
+export interface VmPoamResponse {
+  tenantId: string;
+  programId: string;
+  generatedAt: string;
+  rules: {
+    controlId: 'RA.L2-3.11.3';
+    autocreateEnabled: boolean;
+    vmTargetProgramId: string | null;
+    isVmTarget: boolean;
+    slaDays: { CRITICAL: number; HIGH: number; MEDIUM: number; LOW: number };
+  };
+  items: VmPoamRow[];
+  itemsTotal: number;
+  openItemsTotal: number;
+  /** OPEN findings past their deadline with no item of their episode in this program (autocreate off, or no run since the deadline). Target program only. */
+  overdueWithoutItemCount: number;
+  /** Target program only. */
+  upcoming: VmUpcomingFinding[];
+  upcomingTotal: number;
 }
 
 /** One configuration (XCCDF) scan of one asset in one run. Timestamps are ISO strings. */
@@ -277,6 +347,22 @@ export interface VmObservedSoftware {
   architecture: string;
   type: string;
   installedAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/** One host row of the program-wide read (GET /vm/inventory/hosts): the per-asset view plus the asset it belongs to. */
+export type VmObservedHostWithAsset = VmObservedHost & { assetId: string };
+
+/** One distinct package across the program's hosts (GET /vm/inventory/software), grouped by lower-cased trimmed name and vendor and trimmed version. */
+export interface VmObservedSoftwareGroup {
+  name: string;
+  version: string;
+  vendor: string;
+  assetCount: number;
+  /** At most 50 asset ids, sorted. */
+  assetIds: string[];
+  sourceIds: string[];
   firstSeenAt: string;
   lastSeenAt: string;
 }

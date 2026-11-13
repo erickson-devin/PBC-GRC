@@ -492,26 +492,32 @@ const cand = (f: Partial<VmFinding> = {}, kev = false): PoamCandidate => ({
   assert(plan[0].createdBy === 'system:vm-worker' && plan[0].createdBy === VM_WORKER_ACTOR, 'T40 created_by system:vm-worker', plan[0]);
   assert(plan[0].status === 'OPEN' && plan[0].mitigation === '' && plan[0].owner === '' && plan[0].scheduledCompletion === null, 'T40 draft is OPEN with empty mitigation/owner', plan[0]);
   assert(planPoamItems([cand({ slaDueAt: NOW })], [], NOW).length === 0, 'T41 sla == now is not overdue (strict <)');
-  const once = planPoamItems([cand()], [{ findingId: 'f-existing', status: 'OPEN', createdAt: NOW }], NOW);
+  assert(plan[0].findingFirstSeenAt === R1, 'T40 the draft records the finding episode (first_seen_at)', plan[0]);
+  const once = planPoamItems([cand()], [{ findingId: 'f-existing', status: 'OPEN', createdAt: NOW, findingFirstSeenAt: R1 }], NOW);
   assert(once.length === 0, 'T42 once: the second plan is empty', once);
+  // #275: an item of an earlier episode no longer blocks, whatever its status (this flips the old T43, where an open item blocked for ever)
   for (const status of ['OPEN', 'IN_PROGRESS'] as const) {
-    const l: LinkedPoamItem[] = [{ findingId: 'f-existing', status, createdAt: '2025-01-01T00:00:00.000Z' }];
-    assert(planPoamItems([cand()], l, NOW).length === 0, `T43 ${status} item blocks`);
+    const l: LinkedPoamItem[] = [{ findingId: 'f-existing', status, createdAt: '2025-01-01T00:00:00.000Z', findingFirstSeenAt: null }];
+    assert(planPoamItems([cand()], l, NOW).length === 1, `T43 ${status} legacy item from an earlier episode does not block (new episode, new item)`);
   }
-  const before: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'COMPLETED', createdAt: '2025-12-01T00:00:00.000Z' }];
+  const sameEp: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'OPEN', createdAt: '2025-01-01T00:00:00.000Z', findingFirstSeenAt: R1 }];
+  assert(planPoamItems([cand()], sameEp, NOW).length === 0, 'T43b an item recorded for this episode blocks (createdAt is ignored)');
+  const otherEp: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'OPEN', createdAt: NOW, findingFirstSeenAt: '2025-06-01T00:00:00.000Z' }];
+  assert(planPoamItems([cand()], otherEp, NOW).length === 1, 'T43c an item recorded for another episode does not block');
+  const before: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'COMPLETED', createdAt: '2025-12-01T00:00:00.000Z', findingFirstSeenAt: null }];
   assert(planPoamItems([cand()], before, NOW).length === 1, 'T44a COMPLETED item created before the current first_seen_at does not block');
-  const after: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'COMPLETED', createdAt: '2026-01-05T00:00:00.000Z' }];
+  const after: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'COMPLETED', createdAt: '2026-01-05T00:00:00.000Z', findingFirstSeenAt: null }];
   assert(planPoamItems([cand()], after, NOW).length === 0, 'T44b COMPLETED item created at/after first_seen_at blocks');
-  const atFirst: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'COMPLETED', createdAt: R1 }];
+  const atFirst: LinkedPoamItem[] = [{ findingId: 'f-existing', status: 'COMPLETED', createdAt: R1, findingFirstSeenAt: null }];
   assert(planPoamItems([cand()], atFirst, NOW).length === 0, 'T44b created exactly at first_seen_at blocks');
-  const otherFinding: LinkedPoamItem[] = [{ findingId: 'f-other', status: 'OPEN', createdAt: NOW }];
+  const otherFinding: LinkedPoamItem[] = [{ findingId: 'f-other', status: 'OPEN', createdAt: NOW, findingFirstSeenAt: R1 }];
   assert(planPoamItems([cand()], otherFinding, NOW).length === 1, 'T43 an item of another finding does not block');
   for (const status of ['RESOLVED', 'RISK_ACCEPTED', 'FALSE_POSITIVE'] as const) {
     assert(planPoamItems([cand({ status })], [], NOW).length === 0, `T45 overdue ${status} -> none`);
   }
   const elsewhere = cand({ assetId: B });
   assert(planPoamItems([elsewhere], [], NOW).length === 1, 'T46 overdue on an asset not reported by the run still gets one (tenant-wide)');
-  assert(planPoamItems([cand({ status: 'RESOLVED', resolvedAt: R2 })], [{ findingId: 'f-existing', status: 'OPEN', createdAt: R2 }], NOW).length === 0, 'T47 closing later leaves the item as is: no new draft');
+  assert(planPoamItems([cand({ status: 'RESOLVED', resolvedAt: R2 })], [{ findingId: 'f-existing', status: 'OPEN', createdAt: R2, findingFirstSeenAt: null }], NOW).length === 0, 'T47 closing later leaves the item as is: no new draft');
   assert(planPoamItems([cand({ slaDueAt: null })], [], NOW).length === 0, 'T48 null sla -> none');
   const w = poamWeakness(cand({ severity: 'HIGH' }));
   assert(w === 'CVE-2026-0001 on web-01: HIGH severity, first seen 2026-01-01, remediation due 2026-01-31 (overdue). Affected packages: openssl 1.0 (fixed in 1.1).', 'T49 weakness text template', w);

@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { getDbMode } from '../db';
-import type { VmObservedHost, VmObservedSoftware, VmSourceKind } from '../../src/types/vm';
+import type { VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmSourceKind } from '../../src/types/vm';
 import type { NormalizedInventory, NormalizedSoftwareItem } from './inventory';
 import { withVmTenantTx } from './findingsStore';
 import { listSources } from './store';
@@ -255,6 +255,128 @@ export async function getObservedHosts(tenantId: string, assetId: string): Promi
       [tenantId, assetId],
     );
     return rows.map(rowToObserved);
+  });
+}
+
+/**
+ * What every source currently reports about the given assets (null = every asset of the tenant), one row per asset and source, by asset id
+ * then most recently seen first. The program-wide read behind the Hardware Inventory document.
+ */
+export async function listObservedHostsForAssets(tenantId: string, assetIds: string[] | null): Promise<VmObservedHostWithAsset[]> {
+  const wanted = assetIds === null ? null : new Set(assetIds);
+  if (isMemory()) {
+    const sources = new Map((await listSources(tenantId)).map((s) => [s.id, { kind: s.kind, label: s.label }]));
+    return [...memoryHosts.values()]
+      .filter((h) => h.tenantId === tenantId && (wanted === null || wanted.has(h.assetId)))
+      .map((h) => ({ ...memoryToObserved(h, sources), assetId: h.assetId }))
+      .sort((a, b) => (a.assetId < b.assetId ? -1 : a.assetId > b.assetId ? 1 : newestFirst(a, b)));
+  }
+  if (wanted !== null && wanted.size === 0) return [];
+  return withVmTenantTx(tenantId, async (client) => {
+    const { rows } = await need(client).query(
+      `SELECT i.*, s.kind AS source_kind, s.label AS source_label
+         FROM vm_host_inventory i
+         JOIN vm_sources s ON s.tenant_id = i.tenant_id AND s.id = i.source_id
+        WHERE i.tenant_id = $1 AND ($2::text[] IS NULL OR i.asset_id = ANY($2::text[]))
+        ORDER BY i.asset_id COLLATE "C", i.last_seen_at DESC, i.source_id COLLATE "C"`,
+      [tenantId, wanted === null ? null : [...wanted]],
+    );
+    return rows.map((r) => ({ ...rowToObserved(r), assetId: String(r.asset_id) }));
+  });
+}
+
+/** Most asset ids a package group carries; `assetCount` still counts them all. */
+export const OBSERVED_GROUP_ASSET_IDS_MAX = 50;
+
+/** The same trim as PostgreSQL's btrim (spaces only), so the memory store and the SQL form the same groups. */
+const btrim = (s: string): string => s.replace(/^ +| +$/g, '');
+const lowerKey = (s: string): string => btrim(s).toLowerCase();
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * The packages the sources report for the given assets (null = every asset), one group per distinct (lower-cased trimmed name, trimmed version,
+ * lower-cased trimmed vendor) with the assets and sources that report it. Hotfixes are left out (they are patch state, not software). Ordered by
+ * that key in byte order (COLLATE "C" in SQL, `<` here), so both stores return the same groups in the same order. `totalGroups` is the number
+ * of groups before the limit. Only groups leave the database: 100k raw rows are never sent.
+ */
+export async function aggregateObservedSoftware(
+  tenantId: string,
+  assetIds: string[] | null,
+  f: { limit: number },
+): Promise<{ totalGroups: number; items: VmObservedSoftwareGroup[] }> {
+  const wanted = assetIds === null ? null : new Set(assetIds);
+  if (isMemory()) {
+    type Acc = { name: string; version: string; vendor: string; assets: Set<string>; sources: Set<string>; first: string; last: string; key: [string, string, string] };
+    const groups = new Map<string, Acc>();
+    for (const [hk, items] of memorySoftware) {
+      const h = memoryHosts.get(hk);
+      if (!h || h.tenantId !== tenantId || (wanted !== null && !wanted.has(h.assetId))) continue;
+      for (const s of items.values()) {
+        if (s.type.trim().toLowerCase() === 'hotfix') continue;
+        const version = btrim(s.version);
+        const key: [string, string, string] = [lowerKey(s.name), version, lowerKey(s.vendor)];
+        const id = JSON.stringify(key);
+        const g = groups.get(id);
+        if (!g) {
+          groups.set(id, { name: s.name, version, vendor: s.vendor, assets: new Set([h.assetId]), sources: new Set([h.sourceId]), first: s.firstSeenAt, last: s.lastSeenAt, key });
+          continue;
+        }
+        if (s.name < g.name) g.name = s.name;
+        if (s.vendor < g.vendor) g.vendor = s.vendor;
+        g.assets.add(h.assetId);
+        g.sources.add(h.sourceId);
+        if (s.firstSeenAt < g.first) g.first = s.firstSeenAt;
+        if (s.lastSeenAt > g.last) g.last = s.lastSeenAt;
+      }
+    }
+    const sorted = [...groups.values()].sort((a, b) => cmp(a.key[0], b.key[0]) || cmp(a.key[1], b.key[1]) || cmp(a.key[2], b.key[2]));
+    return {
+      totalGroups: sorted.length,
+      items: sorted.slice(0, f.limit).map((g) => ({
+        name: g.name,
+        version: g.version,
+        vendor: g.vendor,
+        assetCount: g.assets.size,
+        assetIds: [...g.assets].sort(cmp).slice(0, OBSERVED_GROUP_ASSET_IDS_MAX),
+        sourceIds: [...g.sources].sort(cmp),
+        firstSeenAt: g.first,
+        lastSeenAt: g.last,
+      })),
+    };
+  }
+  if (wanted !== null && wanted.size === 0) return { totalGroups: 0, items: [] };
+  return withVmTenantTx(tenantId, async (client) => {
+    const c = need(client);
+    const scope = [tenantId, wanted === null ? null : [...wanted]];
+    const where = `tenant_id = $1 AND ($2::text[] IS NULL OR asset_id = ANY($2::text[])) AND lower(btrim(type)) <> 'hotfix'`;
+    const groupBy = 'GROUP BY lower(btrim(name)), btrim(version), lower(btrim(vendor))';
+    const count = await c.query(`SELECT count(*)::int AS n FROM (SELECT 1 FROM vm_host_software WHERE ${where} ${groupBy}) g`, scope);
+    const { rows } = await c.query(
+      `SELECT min(name COLLATE "C") AS name, btrim(version) AS version, min(vendor COLLATE "C") AS vendor,
+              count(DISTINCT asset_id)::int AS asset_count,
+              (array_agg(DISTINCT asset_id COLLATE "C" ORDER BY asset_id COLLATE "C"))[1:${OBSERVED_GROUP_ASSET_IDS_MAX}] AS asset_ids,
+              array_agg(DISTINCT source_id COLLATE "C" ORDER BY source_id COLLATE "C") AS source_ids,
+              min(first_seen_at) AS first_seen_at, max(last_seen_at) AS last_seen_at
+         FROM vm_host_software
+        WHERE ${where}
+        ${groupBy}
+        ORDER BY lower(btrim(name)) COLLATE "C", btrim(version) COLLATE "C", lower(btrim(vendor)) COLLATE "C"
+        LIMIT $3`,
+      [...scope, f.limit],
+    );
+    return {
+      totalGroups: Number(count.rows[0]?.n ?? 0),
+      items: rows.map((r) => ({
+        name: r.name,
+        version: r.version ?? '',
+        vendor: r.vendor ?? '',
+        assetCount: Number(r.asset_count),
+        assetIds: (r.asset_ids ?? []).map(String),
+        sourceIds: (r.source_ids ?? []).map(String),
+        firstSeenAt: iso(r.first_seen_at) as string,
+        lastSeenAt: iso(r.last_seen_at) as string,
+      })),
+    };
   });
 }
 

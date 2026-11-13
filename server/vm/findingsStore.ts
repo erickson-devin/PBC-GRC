@@ -5,12 +5,13 @@ import { listAssets } from '../assets';
 import { listSources, noteSourceNormalized, updateRun } from './store';
 import type { ApplyRunResult, LinkedPoamItem, PoamCandidate, PoamDraft, SightingDraft } from './storeTypes';
 import type { OtherSourceReport } from './transitions';
-import type { VmFinding, VmFindingStatus, VmPoamItem, VmPoamStatus, VmRun, VmSeverity, VmSighting, VmVuln, VmVulnSource } from '../../src/types/vm';
+import { VM_POAM_PACKAGES_RETURNED } from '../../src/types/vm';
+import type { VmAffectedPackage, VmFinding, VmFindingStatus, VmPoamItem, VmPoamRow, VmPoamStatus, VmRun, VmSeverity, VmSighting, VmUpcomingFinding, VmVuln, VmVulnSource } from '../../src/types/vm';
 
 /**
  * Persistence of findings, sightings, vulnerability reference rows and POA&M items for the VM worker: PostgreSQL (one tenant
  * transaction per run, opened by withVmTenantTx) or process memory when DB_MODE=memory. The memory branch enforces the same
- * uniqueness as the schema (sighting per run and finding; one auto-created POA&M item per finding) so reprocessing behaves
+ * uniqueness as the schema (sighting per run and finding; one auto-created POA&M item per finding episode and program) so reprocessing behaves
  * the same in tests.
  */
 const isMemory = (): boolean => getDbMode() === 'memory';
@@ -27,7 +28,7 @@ const chunks = <T>(items: T[]): T[][] => {
 const memoryFindings = new Map<string, VmFinding>(); // key: id
 const memorySightings = new Map<string, VmSighting>(); // key: tenantId|runId|findingId
 const memoryRunAssets = new Map<string, { tenantId: string; runId: string; assetId: string; sourceId: string; receivedAt: string }>(); // key: tenantId|runId|assetId
-const memoryPoam = new Map<string, VmPoamItem>(); // key: id (programId is null until a caller passes one; see insertPoamItems)
+const memoryPoam = new Map<string, VmPoamItem>(); // key: id (programId is null when a caller passes none; see insertPoamItems)
 const memoryVulns = new Map<string, VmVuln>(); // key: vuln_id
 
 /** Test hook. */
@@ -150,6 +151,7 @@ export function rowToPoamItem(r: pg.QueryResultRow): VmPoamItem {
     createdAt: iso(r.created_at) as string,
     updatedAt: iso(r.updated_at) as string,
     programId: r.program_id ?? null,
+    findingFirstSeenAt: iso(r.finding_first_seen_at),
   };
 }
 
@@ -439,7 +441,7 @@ export async function listPoamCandidates(
     const linked = [...memoryPoam.values()]
       // PostgreSQL sees only the transaction's program through RLS; the memory store filters the same way
       .filter((p) => p.tenantId === tenantId && (!programId || p.programId === programId) && p.findingId !== null && ids.has(p.findingId))
-      .map((p) => ({ findingId: p.findingId as string, status: p.status, createdAt: p.createdAt }));
+      .map((p) => ({ findingId: p.findingId as string, status: p.status, createdAt: p.createdAt, findingFirstSeenAt: p.findingFirstSeenAt ?? null }));
     return { candidates, linked };
   }
   const c = need(client);
@@ -454,23 +456,33 @@ export async function listPoamCandidates(
   const candidates = found.rows.map((r) => ({ finding: rowToFinding(r), assetName: r.asset_name as string, kev: Boolean(r.kev) }));
   if (candidates.length === 0) return { candidates, linked: [] };
   const links = await c.query(
-    'SELECT finding_id, status, created_at FROM vm_poam_items WHERE tenant_id = $1 AND finding_id = ANY($2::text[])',
+    'SELECT finding_id, status, created_at, finding_first_seen_at FROM vm_poam_items WHERE tenant_id = $1 AND finding_id = ANY($2::text[])',
     [tenantId, candidates.map((x) => x.finding.id)],
   );
-  const linked = links.rows.map((r) => ({ findingId: r.finding_id as string, status: r.status as VmPoamStatus, createdAt: iso(r.created_at) as string }));
+  const linked = links.rows.map((r) => ({ findingId: r.finding_id as string, status: r.status as VmPoamStatus, createdAt: iso(r.created_at) as string, findingFirstSeenAt: iso(r.finding_first_seen_at) }));
   return { candidates, linked };
 }
 
 /**
- * Inserts the worker's POA&M items; the partial unique index (unq_vm_poam_items_auto) makes a repeat a no-op. `programId` is the program
- * the items belong to (the tenant's default program once the worker passes it); without one the rows carry none.
+ * Inserts the worker's POA&M items and returns how many rows were really inserted. The partial unique index
+ * (unq_vm_poam_items_auto_episode: tenant, program, finding, episode) makes a repeat a no-op. `programId` is the program the items
+ * belong to (the VM target program the worker passes); without one the rows carry none.
  */
-export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], client: pg.PoolClient | null, programId: string | null = null): Promise<void> {
-  if (drafts.length === 0) return;
+export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], client: pg.PoolClient | null, programId: string | null = null): Promise<number> {
+  if (drafts.length === 0) return 0;
   if (isMemory()) {
+    let inserted = 0;
     for (const d of drafts) {
-      const exists = [...memoryPoam.values()].some((p) => p.tenantId === tenantId && p.findingId === d.findingId && p.createdBy === d.createdBy);
+      const exists = [...memoryPoam.values()].some(
+        (p) =>
+          p.tenantId === tenantId &&
+          (p.programId ?? null) === programId &&
+          p.findingId === d.findingId &&
+          p.createdBy === d.createdBy &&
+          p.findingFirstSeenAt === d.findingFirstSeenAt,
+      );
       if (exists) continue;
+      inserted++;
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
       memoryPoam.set(id, {
@@ -487,19 +499,224 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
         createdAt: now,
         updatedAt: now,
         programId,
+        findingFirstSeenAt: new Date(d.findingFirstSeenAt).toISOString(),
       });
     }
-    return;
+    return inserted;
   }
   const c = need(client);
+  let inserted = 0;
   for (const part of chunks(drafts)) {
-    await c.query(
-      `INSERT INTO vm_poam_items (tenant_id, finding_id, control_id, weakness, mitigation, owner, scheduled_completion, status, created_by, program_id)
-       VALUES ${placeholders(part.length, 10)}
+    const res = await c.query(
+      `INSERT INTO vm_poam_items (tenant_id, finding_id, control_id, weakness, mitigation, owner, scheduled_completion, status, created_by, program_id, finding_first_seen_at)
+       VALUES ${placeholders(part.length, 11)}
        ON CONFLICT DO NOTHING`,
-      part.flatMap((d) => [tenantId, d.findingId, d.controlId, d.weakness, d.mitigation, d.owner, d.scheduledCompletion, d.status, d.createdBy, programId]),
+      part.flatMap((d) => [tenantId, d.findingId, d.controlId, d.weakness, d.mitigation, d.owner, d.scheduledCompletion, d.status, d.createdBy, programId, d.findingFirstSeenAt]),
     );
+    inserted += res.rowCount ?? 0;
   }
+  return inserted;
+}
+
+export interface PoamViewOptions {
+  /** Only OPEN and IN_PROGRESS items. */
+  openOnly: boolean;
+  limit: number;
+  offset: number;
+  /** Most upcoming findings returned (0 returns none; the total is still counted). */
+  upcomingLimit: number;
+  /** True for the VM target program: the upcoming findings and the overdue-without-item count are filled; otherwise they stay empty / 0. */
+  includeFindingWindow: boolean;
+}
+
+export interface PoamView {
+  items: VmPoamRow[];
+  itemsTotal: number;
+  openItemsTotal: number;
+  overdueWithoutItemCount: number;
+  upcoming: VmUpcomingFinding[];
+  upcomingTotal: number;
+}
+
+const isOpenPoam = (status: string): boolean => status === 'OPEN' || status === 'IN_PROGRESS';
+const DAY_MS = 86400000;
+
+/** The first VM_POAM_PACKAGES_RETURNED packages of the finding; its single legacy package when the list is empty. */
+function packagesReturned(f: Pick<VmFinding, 'affectedPackages' | 'packageName' | 'packageVersion' | 'fixedVersion'>): VmAffectedPackage[] {
+  const list = f.affectedPackages.length > 0 ? f.affectedPackages : f.packageName ? [{ name: f.packageName, version: f.packageVersion, fixedVersion: f.fixedVersion }] : [];
+  return list.slice(0, VM_POAM_PACKAGES_RETURNED).map((p) => ({ name: p.name, version: p.version, fixedVersion: p.fixedVersion }));
+}
+
+const packageCountOf = (f: Pick<VmFinding, 'affectedPackages' | 'packageName' | 'affectedPackageCount'>): number =>
+  Math.max(f.affectedPackageCount, f.affectedPackages.length, f.affectedPackages.length === 0 && f.packageName ? 1 : 0);
+
+function poamRowOf(item: VmPoamItem, f: VmFinding | null, assetName: string | null, kev: boolean): VmPoamRow {
+  return {
+    id: item.id,
+    status: item.status,
+    controlId: item.controlId,
+    weakness: item.weakness,
+    scheduledCompletion: item.scheduledCompletion,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    findingFirstSeenAt: item.findingFirstSeenAt ?? null,
+    finding: f
+      ? {
+          id: f.id,
+          vulnId: f.vulnId,
+          severity: f.severity,
+          status: f.status,
+          kev,
+          firstSeenAt: f.firstSeenAt,
+          lastSeenAt: f.lastSeenAt,
+          slaDueAt: f.slaDueAt,
+          resolvedAt: f.resolvedAt,
+          affectedPackages: packagesReturned(f),
+          affectedPackageCount: packageCountOf(f),
+          asset: assetName === null ? null : { id: f.assetId, name: assetName },
+        }
+      : null,
+  };
+}
+
+function upcomingOf(f: VmFinding, assetName: string, kev: boolean, nowMs: number): VmUpcomingFinding {
+  return {
+    findingId: f.id,
+    vulnId: f.vulnId,
+    severity: f.severity,
+    kev,
+    firstSeenAt: f.firstSeenAt,
+    slaDueAt: f.slaDueAt as string,
+    daysRemaining: Math.floor((Date.parse(f.slaDueAt as string) - nowMs) / DAY_MS),
+    assetId: f.assetId,
+    assetName,
+    affectedPackages: packagesReturned(f),
+    affectedPackageCount: packageCountOf(f),
+  };
+}
+
+/** Same episode rule as the planner (planPoamItems): the recorded episode, or for an item without one, created at or after first_seen_at. */
+const itemCoversEpisode = (p: VmPoamItem, f: VmFinding): boolean =>
+  p.findingFirstSeenAt ? Date.parse(p.findingFirstSeenAt) === Date.parse(f.firstSeenAt) : Date.parse(p.createdAt) >= Date.parse(f.firstSeenAt);
+
+/**
+ * The program's POA&M items with the finding and host each is about (open first, then most severe, earliest deadline), the counts, and
+ * for the VM target program the open findings not yet due plus how many overdue ones have no item of their episode. One tenant
+ * transaction on PostgreSQL (row security applies the program); the memory store filters by hand the same way. The tenant's other
+ * programs' items are never read: every query names the program.
+ */
+export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: PoamViewOptions): Promise<PoamView> {
+  const nowMs = Date.parse(nowIso);
+  if (isMemory()) {
+    const names = new Map((await listAssets(scope.tenantId)).map((a) => [a.id, a.hostName]));
+    const mine = [...memoryPoam.values()].filter((p) => p.tenantId === scope.tenantId && p.programId === scope.programId);
+    const sev = (f: VmFinding | undefined): number => (f ? SEVERITY_ORDER[f.severity] : 5);
+    const sorted = mine
+      .filter((p) => !opts.openOnly || isOpenPoam(p.status))
+      .map((p) => ({ p, f: p.findingId ? memoryFindings.get(p.findingId) : undefined }))
+      .sort((a, b) => {
+        const oa = isOpenPoam(a.p.status) ? 0 : 1;
+        const ob = isOpenPoam(b.p.status) ? 0 : 1;
+        if (oa !== ob) return oa - ob;
+        if (sev(a.f) !== sev(b.f)) return sev(a.f) - sev(b.f);
+        const da = a.f?.slaDueAt ?? null;
+        const db = b.f?.slaDueAt ?? null;
+        if (da !== db) return da === null ? 1 : db === null ? -1 : da < db ? -1 : 1;
+        if (a.p.createdAt !== b.p.createdAt) return a.p.createdAt < b.p.createdAt ? -1 : 1;
+        return a.p.id < b.p.id ? -1 : a.p.id > b.p.id ? 1 : 0;
+      });
+    const items = sorted.slice(opts.offset, opts.offset + opts.limit).map(({ p, f }) =>
+      poamRowOf(p, f ? { ...f } : null, f ? (names.get(f.assetId) ?? null) : null, f ? Boolean(memoryVulns.get(f.vulnId)?.kev) : false),
+    );
+    let overdueWithoutItemCount = 0;
+    let upcomingAll: VmFinding[] = [];
+    if (opts.includeFindingWindow) {
+      const open = [...memoryFindings.values()].filter((f) => f.tenantId === scope.tenantId && f.status === 'OPEN' && f.slaDueAt !== null);
+      overdueWithoutItemCount = open.filter((f) => Date.parse(f.slaDueAt as string) < nowMs && !mine.some((p) => p.findingId === f.id && itemCoversEpisode(p, f))).length;
+      upcomingAll = open
+        .filter((f) => Date.parse(f.slaDueAt as string) >= nowMs)
+        .sort((a, b) => (a.slaDueAt as string) < (b.slaDueAt as string) ? -1 : (a.slaDueAt as string) > (b.slaDueAt as string) ? 1 : SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+    return {
+      items,
+      itemsTotal: mine.length,
+      openItemsTotal: mine.filter((p) => isOpenPoam(p.status)).length,
+      overdueWithoutItemCount,
+      upcoming: upcomingAll.slice(0, opts.upcomingLimit).map((f) => upcomingOf({ ...f }, names.get(f.assetId) ?? '', Boolean(memoryVulns.get(f.vulnId)?.kev), nowMs)),
+      upcomingTotal: upcomingAll.length,
+    };
+  }
+  return withVmTenantTx(scope.tenantId, async (client) => {
+    const c = need(client);
+    const sevOrder = "CASE f.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'UNKNOWN' THEN 3 WHEN 'LOW' THEN 4 ELSE 5 END";
+    const itemRows = await c.query(
+      `SELECT p.*, f.vuln_id, f.severity AS f_severity, f.status AS f_status, f.first_seen_at AS f_first_seen_at, f.last_seen_at AS f_last_seen_at,
+              f.sla_due_at AS f_sla_due_at, f.resolved_at AS f_resolved_at, f.affected_packages, f.affected_package_count, f.package_name,
+              f.package_version, f.fixed_version, f.asset_id, a.asset_name, COALESCE(v.kev, FALSE) AS kev, (f.id IS NOT NULL) AS has_finding
+         FROM vm_poam_items p
+         LEFT JOIN vm_findings f ON f.tenant_id = p.tenant_id AND f.id = p.finding_id
+         LEFT JOIN enclave_assets a ON a.tenant_id = f.tenant_id AND a.id = f.asset_id
+         LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id
+        WHERE p.tenant_id = $1 AND p.program_id = $2${opts.openOnly ? " AND p.status IN ('OPEN', 'IN_PROGRESS')" : ''}
+        ORDER BY CASE WHEN p.status IN ('OPEN', 'IN_PROGRESS') THEN 0 ELSE 1 END, ${sevOrder}, f.sla_due_at NULLS LAST, p.created_at, p.id
+        LIMIT $3 OFFSET $4`,
+      [scope.tenantId, scope.programId, opts.limit, opts.offset],
+    );
+    const items = itemRows.rows.map((r) => {
+      const finding: VmFinding | null = r.has_finding
+        ? rowToFinding({
+            id: r.finding_id, tenant_id: r.tenant_id, asset_id: r.asset_id, vuln_id: r.vuln_id, status: r.f_status, severity: r.f_severity,
+            first_seen_at: r.f_first_seen_at, last_seen_at: r.f_last_seen_at, resolved_at: r.f_resolved_at, sla_due_at: r.f_sla_due_at,
+            package_name: r.package_name, package_version: r.package_version, fixed_version: r.fixed_version,
+            affected_packages: r.affected_packages, affected_package_count: r.affected_package_count,
+          })
+        : null;
+      return poamRowOf(rowToPoamItem(r), finding, finding && r.asset_name ? (r.asset_name as string) : null, Boolean(r.kev));
+    });
+    const counts = await c.query(
+      `SELECT COUNT(*)::int AS total, (COUNT(*) FILTER (WHERE status IN ('OPEN', 'IN_PROGRESS')))::int AS open
+         FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2`,
+      [scope.tenantId, scope.programId],
+    );
+    let overdueWithoutItemCount = 0;
+    let upcoming: VmUpcomingFinding[] = [];
+    let upcomingTotal = 0;
+    if (opts.includeFindingWindow) {
+      const overdue = await c.query(
+        `SELECT COUNT(*)::int AS n FROM vm_findings f
+          WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at < $2::timestamptz
+            AND NOT EXISTS (
+              SELECT 1 FROM vm_poam_items p
+               WHERE p.tenant_id = f.tenant_id AND p.finding_id = f.id AND p.program_id = $3
+                 AND (p.finding_first_seen_at = f.first_seen_at OR (p.finding_first_seen_at IS NULL AND p.created_at >= f.first_seen_at)))`,
+        [scope.tenantId, nowIso, scope.programId],
+      );
+      overdueWithoutItemCount = Number(overdue.rows[0]?.n ?? 0);
+      const total = await c.query("SELECT COUNT(*)::int AS n FROM vm_findings f WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at >= $2::timestamptz", [scope.tenantId, nowIso]);
+      upcomingTotal = Number(total.rows[0]?.n ?? 0);
+      if (opts.upcomingLimit > 0) {
+        const rows = await c.query(
+          `SELECT f.*, a.asset_name, COALESCE(v.kev, FALSE) AS kev
+             FROM vm_findings f
+             LEFT JOIN enclave_assets a ON a.tenant_id = f.tenant_id AND a.id = f.asset_id
+             LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id
+            WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at >= $2::timestamptz
+            ORDER BY f.sla_due_at, ${sevOrder}, f.id
+            LIMIT $3`,
+          [scope.tenantId, nowIso, opts.upcomingLimit],
+        );
+        upcoming = rows.rows.map((r) => upcomingOf(rowToFinding(r), (r.asset_name as string | null) ?? '', Boolean(r.kev), nowMs));
+      }
+    }
+    return {
+      items,
+      itemsTotal: Number(counts.rows[0]?.total ?? 0),
+      openItemsTotal: Number(counts.rows[0]?.open ?? 0),
+      overdueWithoutItemCount,
+      upcoming,
+      upcomingTotal,
+    };
+  }, scope.programId);
 }
 
 /** The program's POA&M items still open (OPEN or IN_PROGRESS). A legacy item with no program is not counted until it is backfilled. */

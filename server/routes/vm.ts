@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { VmTokenError, createVmToken, listVmTokens, revokeVmToken } from '../vm/tokens';
 import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
-import { listFindings } from '../vm/findingsStore';
+import { listFindings, loadVmPoamView } from '../vm/findingsStore';
+import { VM_POAM_CONTROL_ID, getVmSlaConfig, isPoamAutocreateEnabled } from '../vm/transitions';
 import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults } from '../vm/configStore';
 import { computeConfigSuggestions } from '../vm/configSuggestions';
-import { getObservedHosts, listObservedSoftware } from '../vm/inventoryStore';
+import { aggregateObservedSoftware, getObservedHosts, listObservedHostsForAssets, listObservedSoftware } from '../vm/inventoryStore';
 import { getAsset, listAssets } from '../assets';
-import { getProgram } from '../programs';
+import { getProgram, resolveVmTargetProgram } from '../programs';
 import { getProgramBoundary } from '../programAssets';
 import { frameworksDefiningControl } from '../middleware/frameworkGuard';
 import { mapConfigRule } from '../../src/data/telemetry/configRuleMap';
@@ -23,7 +24,7 @@ import { VM_MANUAL_SNAPSHOT_MIN_INTERVAL_MS, manualSnapshotAllowed } from '../vm
 import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
 import { VM_CONFIG_RESULTS, VM_FINDING_STATUSES, VM_SEVERITIES, VM_TOKEN_SCOPES } from '../../src/types/vm';
-import type { VmConfigResult, VmFindingStatus, VmSeverity, VmTokenScope } from '../../src/types/vm';
+import type { VmConfigResult, VmFindingStatus, VmPoamResponse, VmSeverity, VmTokenScope } from '../../src/types/vm';
 
 /**
  * Tenant-scoped vulnerability management, mounted at /api/v1/tenants/:tenantId/vm by the tenants router, AFTER
@@ -240,6 +241,82 @@ router.get('/findings', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+/** A non-negative integer query parameter within [0, max]: the fallback when absent, null when it is not valid. */
+function countParam(raw: unknown, fallback: number, max: number): number | null {
+  if (raw === undefined) return fallback;
+  const n = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  return Number.isInteger(n) && n >= 0 && n <= max ? n : null;
+}
+
+/**
+ * GET .../vm/poam?status=open|all&limit=&offset=&upcomingLimit=: the POA&M items of the request's program (x-program-id, else the default
+ * program) with the finding and host each is about, plus the rule that creates them (#274, docs/VULNERABILITY_MANAGEMENT.md). For the VM target
+ * program it also lists the open findings whose deadline has not passed yet and counts the overdue ones that have no item. Open to every
+ * role, like /findings. Read only. Nothing about a finding is logged.
+ */
+router.get('/poam', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const { status } = req.query;
+  if (status !== undefined && status !== 'open' && status !== 'all') {
+    res.status(400).json({ error: 'Invalid status: open or all' });
+    return;
+  }
+  const limit = limitParam(req.query.limit, 500, 1000);
+  if (limit === null) {
+    res.status(400).json({ error: 'Invalid limit: between 1 and 1000' });
+    return;
+  }
+  const offset = countParam(req.query.offset, 0, 100000);
+  if (offset === null) {
+    res.status(400).json({ error: 'Invalid offset: between 0 and 100000' });
+    return;
+  }
+  const upcomingLimit = countParam(req.query.upcomingLimit, 100, 1000);
+  if (upcomingLimit === null) {
+    res.status(400).json({ error: 'Invalid upcomingLimit: between 0 and 1000' });
+    return;
+  }
+  try {
+    const program = req.program ?? (req.programId ? await getProgram(tenantId, req.programId) : null);
+    if (!program) {
+      // no program header and no default: the tenant has no program yet
+      if (!req.programId) {
+        res.status(409).json({ error: 'This tenant has no program yet: create one first', code: 'program_required' });
+        return;
+      }
+      res.status(404).json({ error: 'Program not found', code: 'program_not_found' });
+      return;
+    }
+    const target = await resolveVmTargetProgram(tenantId);
+    const isVmTarget = target?.program.id === program.id;
+    const generatedAt = new Date().toISOString();
+    const view = await loadVmPoamView({ tenantId, programId: program.id }, generatedAt, {
+      openOnly: status !== 'all',
+      limit,
+      offset,
+      upcomingLimit,
+      includeFindingWindow: isVmTarget,
+    });
+    const response: VmPoamResponse = {
+      tenantId,
+      programId: program.id,
+      generatedAt,
+      rules: {
+        controlId: VM_POAM_CONTROL_ID,
+        autocreateEnabled: isPoamAutocreateEnabled(),
+        vmTargetProgramId: target?.program.id ?? null,
+        isVmTarget,
+        slaDays: getVmSlaConfig(),
+      },
+      ...view,
+    };
+    res.json(response);
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the POA&M items');
+  }
+});
+
 /** GET .../vm/sources */
 router.get('/sources', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -303,6 +380,62 @@ router.get('/assets/:assetId/software', async (req: Request, res: Response): Pro
     res.json({ tenantId: req.tenantId, assetId, totalCount, items });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the installed software');
+  }
+});
+
+/**
+ * The assets of the request's program for the program-wide inventory reads: its declared boundary, or every asset when it declares none
+ * (assetIds null = no filter). Answers 409 program_required / 404 program_not_found itself and returns null, like /config/suggestions.
+ */
+async function programInventoryScope(req: Request, res: Response): Promise<{ programId: string; declared: boolean; assetIds: string[] | null } | null> {
+  const tenantId = req.tenantId!;
+  const program = req.program ?? (req.programId ? await getProgram(tenantId, req.programId) : null);
+  if (!program) {
+    if (!req.programId) {
+      res.status(409).json({ error: 'This tenant has no program yet: create one first', code: 'program_required' });
+      return null;
+    }
+    res.status(404).json({ error: 'Program not found', code: 'program_not_found' });
+    return null;
+  }
+  const boundary = await getProgramBoundary(tenantId, program.id);
+  return { programId: program.id, declared: boundary.declared, assetIds: boundary.declared ? boundary.assetIds : null };
+}
+
+/**
+ * GET .../vm/inventory/hosts: what the sources report about every asset of the request's program (x-program-id, else the default program):
+ * one row per asset and source, by asset then most recently seen first. Open to every role, like the per-asset read. Read only.
+ */
+router.get('/inventory/hosts', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const scope = await programInventoryScope(req, res);
+    if (!scope) return;
+    const hosts = await listObservedHostsForAssets(req.tenantId!, scope.assetIds);
+    res.json({ tenantId: req.tenantId, programId: scope.programId, declared: scope.declared, hosts });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to read the program host inventory');
+  }
+});
+
+/**
+ * GET .../vm/inventory/software?limit=: the distinct packages the sources report across the request's program, grouped by name, version and
+ * vendor (hotfixes left out), with how many assets report each (default limit 10000 groups, up to 20000). Open to every role. Read only.
+ */
+router.get('/inventory/software', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const limit = limitParam(req.query.limit, 10000, 20000);
+  if (limit === null) {
+    res.status(400).json({ error: 'Invalid limit: between 1 and 20000' });
+    return;
+  }
+  try {
+    const scope = await programInventoryScope(req, res);
+    if (!scope) return;
+    const { totalGroups, items } = await aggregateObservedSoftware(req.tenantId!, scope.assetIds, { limit });
+    res.json({ tenantId: req.tenantId, programId: scope.programId, declared: scope.declared, totalGroups, truncated: totalGroups > items.length, items });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to read the program software inventory');
   }
 });
 

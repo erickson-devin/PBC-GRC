@@ -2,7 +2,7 @@ import './testEnv';
 import { validateIngestPayload, INGEST_LIMITS, VM_INGEST_FEATURES } from '../server/vm/ingestSchema';
 import type { IngestPayload } from '../server/vm/ingestSchema';
 import { normalizeInventory, planBlankFills, usableSerial } from '../server/vm/inventory';
-import { __resetVmInventoryForTests, getObservedHosts, listObservedSoftware, replaceHostInventory } from '../server/vm/inventoryStore';
+import { __resetVmInventoryForTests, aggregateObservedSoftware, getObservedHosts, listObservedHostsForAssets, listObservedSoftware, replaceHostInventory } from '../server/vm/inventoryStore';
 import { isKnownOsProfile, osProfileFor, osProfileSelectValue, OS_PROFILE_KEYS } from '../src/data/telemetry/osProfile';
 
 /**
@@ -151,6 +151,35 @@ async function main() {
   assert((await listObservedSoftware(T, 'a1', { sourceId: 'src-2', limit: 10 })).items.map((i) => i.name).join() === 'z', 'S9 the source filter narrows the list');
   __resetVmInventoryForTests();
   assert((await getObservedHosts(T, 'a1')).length === 0, '__resetVmInventoryForTests empties the store');
+
+  // ---------------------------------------------------------------------------------------------- program-wide reads (issue #279)
+  console.log('\n--- program-wide aggregate (memory) ---');
+  const A = 't-agg';
+  const seed = (assetId: string, software: Json[]) => replaceHostInventory(A, run('r-' + assetId), '2026-11-10T10:00:00Z', [draft(assetId, { hardware: hw, software })], null);
+  await seed('a1', [pkg('Pkg', '1', { vendor: 'Acme' }), pkg('Pkg', '2', { vendor: 'Acme' }), pkg('KB5001', '1', { type: 'Hotfix' })]);
+  await seed('a2', [pkg('PKG ', '1', { vendor: 'acme' })]);
+  const g1 = await aggregateObservedSoftware(A, null, { limit: 100 });
+  const pkg1 = g1.items.find((i) => i.version === '1');
+  assert(g1.totalGroups === 2 && pkg1?.assetCount === 2 && pkg1.assetIds.join() === 'a1,a2' && pkg1.name === 'PKG ' && pkg1.vendor === 'Acme', 'AG1 the same name, version and vendor on two assets (case and edge spaces aside) is one group', g1);
+  assert(g1.items.some((i) => i.version === '2' && i.assetCount === 1), 'AG2 another version is a separate group', g1);
+  assert(!g1.items.some((i) => i.name === 'KB5001'), 'AG3 a hotfix is left out', g1);
+  const only1 = await aggregateObservedSoftware(A, ['a1'], { limit: 100 });
+  assert(only1.items.find((i) => i.version === '1')?.assetCount === 1 && only1.totalGroups === 2, 'AG4 an asset filter counts only those assets', only1);
+  assert((await aggregateObservedSoftware(A, [], { limit: 100 })).totalGroups === 0, 'AG4b an empty asset filter matches nothing');
+  const many = Array.from({ length: 60 }, (_, i) => 'm' + String(i).padStart(2, '0'));
+  for (const id of many) await seed(id, [pkg('Shared', '9')]);
+  const shared = (await aggregateObservedSoftware(A, many, { limit: 100 })).items[0];
+  assert(shared.assetCount === 60 && shared.assetIds.length === 50 && shared.assetIds[0] === 'm00' && shared.assetIds[49] === 'm49', 'AG5 assetIds is capped at 50, sorted; assetCount still counts all', shared);
+  const cut = await aggregateObservedSoftware(A, null, { limit: 1 });
+  assert(cut.items.length === 1 && cut.totalGroups === 3, 'AG6 the limit cuts the groups and totalGroups is the size before it', cut);
+  const order = (await aggregateObservedSoftware(A, null, { limit: 100 })).items.map((i) => i.name.trim().toLowerCase() + '@' + i.version);
+  assert(order.join() === 'pkg@1,pkg@2,shared@9', 'AG6b groups are ordered by lower-cased name, then version', order);
+  const none = await aggregateObservedSoftware('other-tenant', null, { limit: 100 });
+  assert(none.totalGroups === 0 && none.items.length === 0, 'AG7 another tenant has no groups');
+  const hostsOf = await listObservedHostsForAssets(A, ['a1']);
+  assert(hostsOf.length === 1 && hostsOf[0].assetId === 'a1' && hostsOf[0].hardware?.cpuCores === 4, 'AG8 the host read returns only the asked assets, each with its asset id', hostsOf);
+  assert((await listObservedHostsForAssets(A, null)).length === 62 && (await listObservedHostsForAssets('other-tenant', null)).length === 0, 'AG8b no filter returns every host of the tenant, never another tenant\'s');
+  __resetVmInventoryForTests();
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

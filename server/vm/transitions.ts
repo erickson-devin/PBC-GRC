@@ -302,10 +302,14 @@ export interface LinkedPoamItem {
   findingId: string;
   status: VmPoamStatus;
   createdAt: string;
+  /** The finding's first_seen_at (episode) the item was created for; null for an item created before #275. */
+  findingFirstSeenAt: string | null;
 }
 
 export interface PoamDraft {
   findingId: string;
+  /** The finding's first_seen_at (episode) this item is for. */
+  findingFirstSeenAt: string;
   controlId: 'RA.L2-3.11.3';
   weakness: string;
   mitigation: '';
@@ -337,9 +341,10 @@ function affectedPackagesText(f: VmFinding): string {
 }
 
 /**
- * One POA&M item per open episode of an overdue finding. A linked item blocks a new one while it is OPEN or IN_PROGRESS, or when
- * it was created at or after the finding's current first_seen_at (the same episode). A finding that was closed, reopened and
- * went overdue again gets a new item.
+ * One POA&M item per episode of an overdue finding. A linked item blocks a new one only when it is for the finding's current
+ * episode: its recorded finding_first_seen_at equals the finding's first_seen_at, or (an item created before the episode was
+ * recorded) it was created at or after that first_seen_at. A finding that was closed, reopened and went overdue again gets a new
+ * item, even while the previous episode's item is still open.
  */
 export function planPoamItems(candidates: PoamCandidate[], linked: LinkedPoamItem[], now: string): PoamDraft[] {
   const nowMs = Date.parse(now);
@@ -348,14 +353,15 @@ export function planPoamItems(candidates: PoamCandidate[], linked: LinkedPoamIte
     const f = c.finding;
     if (f.status !== 'OPEN' || f.slaDueAt === null) continue;
     if (!(Date.parse(f.slaDueAt) < nowMs)) continue;
-    const blocked = linked.some(
-      (l) =>
-        l.findingId === f.id &&
-        (l.status === 'OPEN' || l.status === 'IN_PROGRESS' || Date.parse(l.createdAt) >= Date.parse(f.firstSeenAt)),
-    );
+    const sameEpisode = (l: LinkedPoamItem): boolean =>
+      l.findingFirstSeenAt !== null
+        ? Date.parse(l.findingFirstSeenAt) === Date.parse(f.firstSeenAt)
+        : Date.parse(l.createdAt) >= Date.parse(f.firstSeenAt); // legacy item: no recorded episode
+    const blocked = linked.some((l) => l.findingId === f.id && sameEpisode(l));
     if (blocked) continue;
     drafts.push({
       findingId: f.id,
+      findingFirstSeenAt: f.firstSeenAt,
       controlId: VM_POAM_CONTROL_ID,
       weakness: poamWeakness(c),
       mitigation: '',

@@ -402,6 +402,7 @@ async function run() {
 
   const draft = {
     findingId: 'fnd_a27g_' + crypto.randomBytes(4).toString('hex'),
+    findingFirstSeenAt: '2026-01-01T00:00:00.000Z',
     controlId: 'RA.L2-3.11.3' as const,
     weakness: 'A27g',
     mitigation: '' as const,
