@@ -300,6 +300,7 @@ async function main() {
     'src/data/storage/offboardingEngine.ts',
     'src/data/storage/retentionPolicy.ts',
     'src/data/telemetry/assetRegistry.ts',
+    'src/hooks/useCatalogUpdateChanges.ts', // that the user dismissed the objective-update notice: a timestamp under a key of ids, never an answer or CUI (#287)
     'src/services/browserStorageScrub.ts',
     'src/services/failedMoves.ts',
     'src/services/idleLock.ts', // the session lock record (an opaque session reference and a timestamp) and the last-input time, never a session or CUI (#163)

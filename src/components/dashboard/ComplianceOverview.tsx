@@ -26,11 +26,15 @@ import { DomainCards } from './DomainCards';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { ROLE_LABELS } from '../../utils/roles';
 import { SspGateBanner } from './SspGateBanner';
+import { CatalogUpdateOverviewNotice } from './CatalogUpdateNotice';
+import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
+import { catalogUpdateNoticeMode, catalogUpdateOverviewText } from '../../data/cmmcGuide/catalogUpdateReview';
 
 export const ComplianceOverview: React.FC = () => {
   const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
   const { currentTenant, canEdit, currentRole, activeFramework } = useTenant();
   const storageConfig = useStorageConfig(currentTenant);
+  const catalogUpdate = useCatalogUpdateChanges();
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
   const guidance = getFrameworkGuidanceText(activeFramework);
@@ -71,6 +75,11 @@ export const ComplianceOverview: React.FC = () => {
 
       {/* A tenant that exists only in this browser: offer to move it to the server (owners only) */}
       {canEdit && <LegacyTenantNotice tenant={currentTenant} />}
+
+      {/* The objective update set some answers back to In progress: say so where the score that dropped is shown (#287) */}
+      {catalogUpdateNoticeMode(catalogUpdate) === 'review' && (
+        <CatalogUpdateOverviewNotice text={catalogUpdateOverviewText(catalogUpdate.summary, { rev: catalogUpdate.rev, sprs: activeFramework === 'CMMC_L2' })} onOpenMatrix={() => setActiveTab('matrix')} />
+      )}
 
       {/* RBAC Read-Only Banner for Viewers */}
       {!canEdit && (

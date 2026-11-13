@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Filter,
@@ -15,6 +15,8 @@ import {
   Paperclip,
   FileEdit,
   SlidersHorizontal,
+  RefreshCw,
+  Check,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -28,6 +30,10 @@ import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import type { OverlayFilters } from '../../types/framework';
 import { ControlCard } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
+import { CatalogUpdateNotice } from './CatalogUpdateNotice';
+import { CatalogUpdateList } from './CatalogUpdateList';
+import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
+import { catalogUpdateNoticeCopy, catalogUpdateNoticeMode } from '../../data/cmmcGuide/catalogUpdateReview';
 
 interface AssessmentMatrixProps {
   onSelectControl?: (controlId: string) => void;
@@ -45,6 +51,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     searchQuery,
     setSearchQuery,
     setSelectedControlId,
+    openControlAtObjective,
   } = useAssessment();
 
   const {
@@ -80,6 +87,20 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   const PAGE_SIZE = 60;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
+  // The objective update (#287): which answers it set back to In progress, a filter for the controls they are on, and the list that reviews them
+  const catalogUpdate = useCatalogUpdateChanges();
+  const [catalogUpdateFilter, setCatalogUpdateFilter] = useState<Set<string> | null>(null); // a snapshot: a control stays listed after its answers are reviewed
+  const [catalogListOpen, setCatalogListOpen] = useState(false);
+  const catalogChipRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const noticeMode = catalogUpdateNoticeMode(catalogUpdate);
+  const noticeCopy = catalogUpdateNoticeCopy(catalogUpdate.summary, { canEdit, rev: catalogUpdate.rev });
+  const controlTitles = useMemo(() => new Map(frameworkControls.map((c) => [c.id, c.title])), [frameworkControls]);
+  const toggleCatalogFilter = () => setCatalogUpdateFilter((f) => (f ? null : new Set(catalogUpdate.summary.controlIds)));
+  const showCatalogChip = catalogUpdateFilter !== null || (catalogUpdate.status === 'ready' && catalogUpdate.summary.unreviewedControls > 0);
+  // Another program's filter and list must not carry over
+  useEffect(() => { setCatalogUpdateFilter(null); setCatalogListOpen(false); }, [currentTenant.id, activeProgram?.id]);
+
   const currentFrameworkDef = useMemo(() => {
     return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
   }, [activeFramework]);
@@ -111,6 +132,9 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       if (selectedDomainFilter !== 'ALL' && ctrl.domain !== selectedDomainFilter) {
         return false;
       }
+
+      // Controls with answers the objective update set back to In progress
+      if (catalogUpdateFilter && !catalogUpdateFilter.has(ctrl.id)) return false;
 
       // Base controls and control enhancements (SP 800-53)
       if (selectedKindFilter !== 'ALL' && ctrl.controlKind && ctrl.controlKind !== selectedKindFilter) {
@@ -165,12 +189,12 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
       return true;
     });
-  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls]);
+  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls, catalogUpdateFilter]);
 
   // A new filter starts again at the first page
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, frameworkControls]);
+  }, [selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, frameworkControls, catalogUpdateFilter]);
   const shownControls = useMemo(() => filteredControls.slice(0, visibleCount), [filteredControls, visibleCount]);
 
   const handleControlClick = (id: string) => {
@@ -209,6 +233,14 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   return (
     <div className="space-y-6 animate-fadeIn">
       {canEdit && <FailedMoveControlsNotice />}
+      <CatalogUpdateNotice mode={noticeMode} copy={noticeCopy} filterOn={catalogUpdateFilter !== null} onToggleFilter={toggleCatalogFilter}
+        onOpenList={() => setCatalogListOpen(true)}
+        onDismiss={() => { catalogUpdate.dismiss(); requestAnimationFrame(() => (catalogChipRef.current ?? searchInputRef.current)?.focus()); }} />
+      {catalogListOpen && (
+        <CatalogUpdateList view={catalogUpdate} titles={controlTitles} programName={activeProgram?.name ?? currentTenant.name}
+          onOpen={(row) => openControlAtObjective(row.controlId, row.orphan ? null : row.objectiveId, row.previousStatus)}
+          onClose={() => setCatalogListOpen(false)} />
+      )}
 
       {/* Top Header & Framework Target Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -346,6 +378,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
+            ref={searchInputRef}
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -361,6 +394,19 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             </button>
           )}
         </div>
+
+        {showCatalogChip && (
+          <div className="flex items-center gap-1.5 flex-wrap pt-3 border-t border-slate-800/80">
+            <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Objective update:</span>
+            <button ref={catalogChipRef} type="button" aria-pressed={catalogUpdateFilter !== null} onClick={toggleCatalogFilter}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${catalogUpdateFilter !== null ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 ring-1 ring-amber-500/30 font-bold shadow-sm' : 'bg-slate-950 text-slate-400 hover:text-amber-300 hover:bg-slate-800 border border-slate-800'}`}>
+              {catalogUpdateFilter !== null && <Check className="w-3 h-3" aria-hidden="true" />}
+              <span>Changed by the objective update</span>
+              <span className="text-xs font-mono opacity-80">({catalogUpdateFilter !== null ? catalogUpdateFilter.size : catalogUpdate.summary.unreviewedControls})</span>
+            </button>
+            <button type="button" onClick={() => setCatalogListOpen(true)} className="px-2 py-1 text-xs font-semibold text-cyan-300 hover:text-cyan-200 underline underline-offset-2">Review the list</button>
+          </div>
+        )}
 
         {/* Filter Chips: Domain & Status */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pt-3 border-t border-slate-800/80">
@@ -530,13 +576,14 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           <HelpCircle className="w-10 h-10 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-white">No controls match your filter criteria</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
-            Try clearing your search query or switching family and status filters.
+            {catalogUpdateFilter ? 'The filter "Changed by the objective update" is on. Clear it or the other filters to see more controls.' : 'Try clearing your search query or switching family and status filters.'}
           </p>
           <button
             onClick={() => {
               setSelectedDomainFilter('ALL');
               setSelectedStatusFilter('ALL');
               setSearchQuery('');
+              setCatalogUpdateFilter(null);
             }}
             className="btn-secondary text-xs px-3.5 py-2 mt-2"
           >

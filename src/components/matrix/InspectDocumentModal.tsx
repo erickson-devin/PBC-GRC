@@ -75,6 +75,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const {
     selectedControlId,
     setSelectedControlId,
+    focusObjective,
+    clearFocusObjective,
     frameworkControls,
     state,
     notesStatus,
@@ -168,6 +170,11 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
       setActiveTab('objectives');
     }
   }, [isPolicyControl, activeTab]);
+
+  // Opened on one objective (the objective update's review list): show the objectives tab
+  useEffect(() => {
+    if (focusObjective && focusObjective.controlId === activeId) setActiveTab('objectives');
+  }, [focusObjective, activeId]);
 
   const compiledFamilyControls = React.useMemo(() => {
     if (!isPolicyControl || !familyPrefix) return [];
@@ -300,6 +307,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handleClose = () => {
+    clearFocusObjective();
     if (propOnClose) {
       propOnClose();
     } else {
@@ -308,6 +316,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handlePrev = () => {
+    clearFocusObjective();
     if (controlIndex > 0) {
       const prevControl = frameworkControls[controlIndex - 1];
       setSelectedControlId(prevControl.id);
@@ -315,6 +324,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handleNext = () => {
+    clearFocusObjective();
     if (controlIndex >= 0 && controlIndex < frameworkControls.length - 1) {
       const nextControl = frameworkControls[controlIndex + 1];
       setSelectedControlId(nextControl.id);
@@ -626,7 +636,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 To write how the control is implemented, use the <button type="button" onClick={() => setActiveTab('narrative')} className="underline text-cyan-300 hover:text-cyan-200">System Security Plan (SSP)</button> tab.
               </p>
               <ImportAnalysisPanel controlId={control.id} tenantId={currentTenant.id} programId={activeProgram?.id ?? null} />
-              <ObjectiveChecklist controlId={control.id} />
+              <ObjectiveChecklist controlId={control.id} focusObjective={focusObjective && focusObjective.controlId === control.id ? focusObjective : null} onFocusHandled={clearFocusObjective} />
             </div>
           )}
 

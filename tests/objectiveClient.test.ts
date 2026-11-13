@@ -309,6 +309,10 @@ async function api() {
     const hist = await ApiClient.getObjectiveHistory('t1', 'AC.L2-3.1.1[a]', 'p1');
     assert(calls[0].url === '/api/v1/objectives/AC.L2-3.1.1%5Ba%5D/history' && headerOf(calls[0], 'x-program-id') === 'p1' && hist.length === 1, 'A6 getObjectiveHistory reads the history of the encoded id');
 
+    stub(200, { applies: true, catalogRev: 'cmmc-ag-2.13', objectives: [], controls: [], truncated: false });
+    const catalog = await ApiClient.getCatalogUpdateChanges('t1', 'p1');
+    assert(calls[0].url === '/api/v1/objectives/catalog-update' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && catalog.applies === true, 'A6b getCatalogUpdateChanges reads /objectives/catalog-update with the program header');
+
     stub(403, { error: 'Read-only role' });
     let refused = '';
     try {
