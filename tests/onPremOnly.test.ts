@@ -4,6 +4,7 @@ import path from 'path';
 import { builtinModules } from 'module';
 import { readAppVersion } from '../server/version';
 import { assertStorageWritable } from '../server/evidence/storage';
+import { logDetail } from '../server/ssp/logDetail';
 
 /**
  * On-prem only guard (Phase 5.8). PBC-GRC is deployed on the customer's own hardware: local accounts, local disk,
@@ -682,6 +683,26 @@ assert(pushStep.includes('push: true') && pushStep.includes("if: steps.smoke.out
 const tsconfigText = fs.readFileSync(path.join(root, 'tsconfig.json'), 'utf8').replace(/\r\n/g, '\n');
 const tsconfigInclude = tsconfigText.match(/"include"\s*:\s*\[([^\]]*)\]/)?.[1] ?? '';
 assert(/"scripts"/.test(tsconfigInclude), 'tsconfig.json includes scripts/, so npm run typecheck covers the operator scripts', tsconfigInclude);
+
+console.log('\n--- CUI in SSP import logs (#290) ---');
+// an uploaded file's name can be sensitive: it must not reach the server log, the control's updated_by or a history event
+const sspLogSources = ['server/ssp/commit.ts', 'server/ssp/runner.ts', 'server/ssp/policyVault.ts', 'server/routes/sspImports.ts'].map((f) => ({
+  f,
+  text: fs.readFileSync(path.join(root, f), 'utf8').replace(/\r\n/g, '\n'),
+}));
+const sspConsoleCalls = (text: string) => [...text.matchAll(/console\.\w+\(([\s\S]*?)\);/g)].map((m) => m[1]);
+const sspLeaks = sspLogSources.flatMap(({ f, text }) => sspConsoleCalls(text).filter((c) => c.includes('fileName') || c.includes('originalname')).map((c) => `${f}: ${c.slice(0, 80)}`));
+assert(sspLeaks.length === 0 && sspConsoleCalls(sspLogSources[0].text).length > 0, 'no SSP import console call names the uploaded file (fileName / originalname) (#290)', sspLeaks);
+const sspCommitSrc = sspLogSources[0].text;
+assert(!/updatedBy\s*=[^;]*fileName/.test(sspCommitSrc) && sspCommitSrc.includes('`SSP import ${job.id} - reviewed by ${reviewer}`'), 'the commit label carries the job id, not the file name (#290)');
+const sspRoutesSrc = sspLogSources[3].text;
+assert(!sspConsoleCalls(sspRoutesSrc).some((c) => c.includes('errorMessage(')), 'no console call in the SSP import routes logs errorMessage(err) (#290)');
+assert(sspLogSources[1].text.includes('failed:`, logDetail(err))'), 'the SSP import failure log uses logDetail(err) (#290)');
+const enoent = Object.assign(new Error("ENOENT: no such file or directory, open 'sspj_1_Secret_Plan.pdf'"), { code: 'ENOENT' });
+assert(logDetail(enoent) === 'code ENOENT' && !logDetail(enoent).includes('Secret'), 'logDetail keeps only the code of an fs error (#290)', logDetail(enoent));
+assert(logDetail(Object.assign(new Error('duplicate key value'), { code: '23505' })) === 'code 23505', 'logDetail keeps only the code of a pg error (#290)');
+assert(logDetail(new Error('Control AC.L1-3.1.1 could not be written')) === 'Control AC.L1-3.1.1 could not be written', 'logDetail keeps the message of an error without a code (#290)');
+assert(logDetail('plain') === 'plain' && logDetail(null) === 'unknown' && logDetail({ code: 42 }) === 'unknown', 'logDetail handles a string, null and a non-string code (#290)');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

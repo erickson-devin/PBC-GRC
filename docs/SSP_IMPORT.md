@@ -51,7 +51,9 @@ only). They are not an assessment of whether a practice is met.
 * Commit changes **implementation notes only**, never the status. A control with no answer yet starts as `NOT_STARTED`.
 * A suggestion is committed only if the control's answer is unchanged since the suggestion was staged. Otherwise it becomes a
   `CONFLICT`, nothing is written for it, and it can be reviewed again against the current answer.
-* The commit attributes the change to the import and the reviewer (`updated_by`).
+* The commit records `SSP import <job id> - reviewed by <reviewer>` in `updated_by`, and the history event names the reviewer.
+  The uploaded file's name is never written to a control or the server log. Controls committed before this change keep their
+  old label, which named the file, until their next change; history events never carried it, and existing rows are not rewritten.
 * The original file is kept in the evidence vault under `tenants/<tenantId>/policies/uploaded/`, separate from evidence and
   from documents the application generates. It is removed only when the import is deleted.
 

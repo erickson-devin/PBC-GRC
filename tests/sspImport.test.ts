@@ -400,14 +400,27 @@ async function apiTests() {
 
   console.log('\n--- Conflict detection ---');
   // someone changes the control after it was staged and while it is awaiting commit... first make it differ from the snapshot
-  const commit1 = await call('POST', `${root(tenant)}/${jobId}/commit`, owner, tenant, {});
+  const captured: string[] = [];
+  const realLog = console.log, realWarn = console.warn, realError = console.error;
+  const capture = (real: (...a: unknown[]) => void) => (...args: unknown[]) => { captured.push(args.map(String).join(' ')); real(...args); };
+  console.log = capture(realLog); console.warn = capture(realWarn); console.error = capture(realError);
+  let commit1: { status: number; body: Json };
+  try {
+    commit1 = await call('POST', `${root(tenant)}/${jobId}/commit`, owner, tenant, {});
+  } finally {
+    console.log = realLog; console.warn = realWarn; console.error = realError;
+  }
+  assert(captured.some((l) => l.includes(jobId) && l.includes('committed 1 control(s), 1 conflict(s)')), 'the commit is logged by job id and counts (#290)', captured);
+  assert(!captured.some((l) => l.includes('My SSP')), 'the uploaded file name is not in the server log (#290)');
   assert(commit1.status === 200 && commit1.body?.conflicts.length === 1 && commit1.body.conflicts[0] === target.id, 'a control changed after staging is NOT overwritten: it becomes a conflict', commit1.body);
   assert(commit1.body?.committed.length === 1 && commit1.body.committed[0] === other.id, 'the unchanged control was committed in the same call');
   const afterConflict = await controlOf(owner, tenant, 'AC.L1-3.1.1');
   assert(afterConflict.implementationNotes === 'ORIGINAL NOTES' && afterConflict.status === 'IN_PROGRESS', 'the conflicting control keeps its own notes and status');
   const committed = await controlOf(owner, tenant, 'IA.L1-3.5.1');
   assert(committed.implementationNotes.startsWith('Every user has a unique account') && committed.status === 'NOT_STARTED', 'the committed control got the suggested notes and its status was NOT changed');
-  assert(String(committed.updatedBy).includes('My SSP.pdf') && String(committed.updatedBy).includes('u_ssp_owner'), 'the update is attributed to the import and the reviewer', committed.updatedBy);
+  assert(committed.updatedBy === `SSP import ${jobId} - reviewed by u_ssp_owner` && !String(committed.updatedBy).includes('My SSP'), 'the update is attributed to the import (by id, not file name) and the reviewer (#290)', committed.updatedBy);
+  const hist = await call('GET', '/controls/IA.L1-3.5.1/history', owner, tenant);
+  assert(hist.status === 200 && hist.body?.events?.[0]?.source === 'ssp-commit' && hist.body.events[0].actor === 'u_ssp_owner' && !JSON.stringify(hist.body).includes('My SSP'), 'the history event names the reviewer and never the file (#290)', hist.body?.events?.[0]);
   assert((await controlOf(owner, tenant, 'AC.L1-3.1.2')).implementationNotes === '', 'the rejected suggestion was not written');
   const state = (await call('GET', `${root(tenant)}/${jobId}/staged`, owner, tenant)).body?.staged as Json[];
   assert(state.find((i) => i.id === other.id)?.reviewState === 'COMMITTED' && state.find((i) => i.id === target.id)?.reviewState === 'CONFLICT', 'states are recorded: COMMITTED and CONFLICT');

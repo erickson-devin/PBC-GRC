@@ -37,7 +37,7 @@ export async function commitReviewedSuggestions(
   if (staged.length === 0) return result;
 
   const live = await readLiveControls(scope);
-  const updatedBy = `SSP import "${job.fileName}" - reviewed by ${reviewer}`.slice(0, 255);
+  const updatedBy = `SSP import ${job.id} - reviewed by ${reviewer}`.slice(0, 255);
 
   for (const item of staged) {
     const current = live.get(item.controlId);
@@ -72,8 +72,6 @@ export async function commitReviewedSuggestions(
   const remaining = (await listStaged(scope, job.id)).filter((s) => ['PENDING', 'ACCEPTED', 'EDITED', 'CONFLICT'].includes(s.reviewState));
   if (result.committed.length > 0 && remaining.length === 0) await updateJob(scope, job.id, { status: 'COMMITTED' });
 
-  console.log(
-    `[SSP Import] ${job.id} (${job.fileName}, sha256 ${job.fileSha256.slice(0, 12)}...): ${reviewer} committed ${result.committed.length} control(s), ${result.conflicts.length} conflict(s)`
-  );
+  console.log(`[SSP Import] ${job.id}: committed ${result.committed.length} control(s), ${result.conflicts.length} conflict(s)`);
   return result;
 }

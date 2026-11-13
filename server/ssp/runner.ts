@@ -3,6 +3,7 @@ import type { ProgramScope } from '../db';
 import { readControlAssessments } from '../controlAssessments';
 import { getProgram } from '../programs';
 import { errorMessage } from '../../src/utils/errors';
+import { logDetail } from './logDetail';
 import { analyzeDocumentWithAi } from './analyze';
 import { chunkDocument } from './chunk';
 import { ANALYZER_ID, mapDocumentToControls } from './controlMapper';
@@ -184,7 +185,7 @@ async function processJob(scope: ProgramScope, jobId: string): Promise<void> {
       return;
     }
     const message = err instanceof ExtractionError ? err.message : 'The import failed unexpectedly. Check the server log and try again.';
-    if (!(err instanceof ExtractionError)) console.error(`[SSP Import] ${jobId} failed:`, errorMessage(err));
+    if (!(err instanceof ExtractionError)) console.error(`[SSP Import] ${jobId} failed:`, logDetail(err));
     await fail(scope, jobId, message);
   }
 }
