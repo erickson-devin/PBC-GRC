@@ -1,17 +1,13 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
   Clock,
-  Sparkles,
   Paperclip,
-  ShieldCheck,
   Check,
   ChevronDown,
   ChevronUp,
   FileText,
-  Activity,
-  Zap,
   ExternalLink,
   Ban,
   FileCheck,
@@ -22,8 +18,9 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { AssessmentObjective, ObjectiveStatus } from '../../types/assessment';
 import { calculateControlRollup } from '../../data/frameworks/assessmentObjectives';
-import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
-import { planConfirmAll, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
+import { hasWrittenTemplate } from '../../data/cmmcGuide/objectives';
+import { cmmcGuideLetter, cmmcGuideObjectiveId } from '../../data/cmmcGuide/displayId';
+import { planConfirmAll, confirmAllResultMessage, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
 import { unsavedObjectiveDrafts } from '../../services/unsavedText';
@@ -51,15 +48,21 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   } = useAssessment();
 
   // Objective status, narratives and evidence links of a server-backed tenant live on the server: no editing until they are loaded
-  const { canEdit: roleCanEdit, currentTenant } = useTenant();
+  const { canEdit: roleCanEdit, currentTenant, activeFramework } = useTenant();
   const canEdit = roleCanEdit && notesEditable;
 
   // Retrieve objectives for this control
   const objectives = getObjectivesForControl(controlId);
   const rollup = calculateControlRollup(objectives);
 
-  // Mapped STIG rules and control evidence
-  const mappedStigRules = getStigRulesForControl(controlId);
+  // A CMMC objective with only the generic wording has no starter template to offer (#282); other frameworks are unchanged
+  const hasTemplate = (o: { letter: string }) => hasWrittenTemplate(controlId, o.letter, activeFramework);
+  const templatedCount = objectives.filter(hasTemplate).length;
+  // The letter the CMMC Assessment Guide prints (a Level 1 program re-letters the three PE controls); the stored letter stays the key
+  const shownLetter = (letter: string) => cmmcGuideLetter(controlId, letter, activeFramework);
+  const narrativeBaseId = useId();
+
+  // Control evidence
   const controlEvidence = state.evidenceIndex.filter((e) => e.controlId === controlId);
 
   // Local state for expanded pre-filled cards and narrative edits
@@ -73,7 +76,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     Object.fromEntries(objectives.map((o) => [o.id, currentTenant.serverBacked ? serverObjectiveNarrative(o.id) : o.implementationNarrative])),
   ));
   const [appliedNoticeId, setAppliedNoticeId] = useState<string | null>(null);
-  const [bulkNotice, setBulkNotice] = useState<boolean>(false);
+  const [bulkResult, setBulkResult] = useState<{ filled: number; skipped: number } | null>(null);
   const [showEvidenceSelectorForId, setShowEvidenceSelectorForId] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<ConfirmAllPlan | null>(null);
 
@@ -127,7 +130,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     const baseNarrative =
       editingNarratives[obj.id] !== undefined
         ? editingNarratives[obj.id]
-        : obj.implementationNarrative || obj.prefilledTemplate;
+        : obj.implementationNarrative || (hasTemplate(obj) ? obj.prefilledTemplate : '');
 
     let updated = baseNarrative;
     if (oldValue && updated.includes(oldValue)) {
@@ -168,47 +171,50 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     }
   };
 
+  // A template is sample wording: the objective goes to In progress (a MET or N/A objective keeps its status), never straight to MET
+  const afterTemplate = (o: AssessmentObjective): AssessmentObjective =>
+    ({ ...o, status: o.status === 'MET' || o.status === 'NOT_APPLICABLE' ? o.status : ('IN_PROGRESS' as ObjectiveStatus), implementationNarrative: o.prefilledTemplate });
+
   const handleApplyPrefilled = (obj: AssessmentObjective) => {
-    if (!canEdit) return;
+    if (!canEdit || !hasTemplate(obj)) return;
     applyObjectivePrefilledNarrative(obj.id);
     setAppliedNoticeId(obj.id);
     setTimeout(() => setAppliedNoticeId(null), 2500);
 
     if (onStatusChange) {
-      const updatedObjs = objectives.map((o) =>
-        o.id === obj.id
-          ? { ...o, status: 'MET' as ObjectiveStatus, implementationNarrative: o.prefilledTemplate }
-          : o
-      );
+      const updatedObjs = objectives.map((o) => (o.id === obj.id ? afterTemplate(o) : o));
       const nextRollup = calculateControlRollup(updatedObjs);
       onStatusChange(nextRollup.calculatedStatus);
     }
   };
 
-  const applyAll = () => {
+  const applyAll = (plan: ConfirmAllPlan) => {
     applyAllObjectiveTemplatesForControl(controlId);
-    setBulkNotice(true);
-    setTimeout(() => setBulkNotice(false), 3000);
+    setBulkResult({ filled: plan.filled.length, skipped: plan.skipped.length });
+    setTimeout(() => setBulkResult(null), 8000);
     if (onStatusChange) {
-      onStatusChange('MET');
+      const filledIds = new Set(plan.filled.map((o) => o.id));
+      onStatusChange(calculateControlRollup(objectives.map((o) => (filledIds.has(o.id) ? afterTemplate(o) : o))).calculatedStatus);
     }
   };
 
   // Ask first when the apply would overwrite notes or narratives that already hold text
   const handleBulkApplyAll = () => {
     if (!canEdit) return;
-    const plan = planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '');
+    const plan = planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '', hasTemplate);
+    if (plan.filled.length === 0) return;
     if (!plan.needsConfirmation) {
-      applyAll();
+      applyAll(plan);
       return;
     }
     setPendingPlan(plan);
   };
 
   const handleConfirmReplace = () => {
+    const plan = pendingPlan;
     setPendingPlan(null);
-    if (!canEdit) return;
-    applyAll();
+    if (!canEdit || !plan) return;
+    applyAll(plan);
   };
 
   const handleNarrativeChange = (objId: string, value: string) => {
@@ -298,15 +304,20 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
 
         {/* Bulk Action Button */}
         <div className="flex items-center gap-2 self-start md:self-auto">
-          <button
-            onClick={handleBulkApplyAll}
-            disabled={!canEdit}
-            className="btn-accent flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs"
-            title="Auto-fills all objective narratives with pre-filled baseline templates and marks all objectives as MET"
-          >
-            <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse motion-reduce:animate-none" />
-            <span>Confirm All Best-Practice Narratives</span>
-          </button>
+          {templatedCount > 0 ? (
+            <button
+              type="button"
+              onClick={handleBulkApplyAll}
+              disabled={!canEdit}
+              className="btn-accent flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs"
+              title="Writes the starter template of each objective that has one and sets those objectives to In progress. Review each one, then mark it MET yourself. Objectives without a template are left as they are."
+            >
+              <FileText className="w-4 h-4 text-cyan-300" aria-hidden="true" />
+              <span>Use starter templates ({templatedCount} of {objectives.length})</span>
+            </button>
+          ) : (
+            <p className="text-xs text-slate-400 max-w-xs">No starter templates exist for this control&apos;s objectives. Write each narrative below.</p>
+          )}
         </div>
       </div>
 
@@ -317,18 +328,21 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
         >
           <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <DialogTitle as="h3" className="text-sm font-bold text-white">Replace with the best-practice narratives?</DialogTitle>
+            <DialogTitle as="h3" className="text-sm font-bold text-white">Replace with the starter templates?</DialogTitle>
             <div className="space-y-3 text-xs text-slate-300 leading-relaxed">
               {pendingPlan.notesReplaced && (
-                <p>The control's implementation notes ({(state.controls[controlId]?.implementationNotes ?? '').length} characters) will be replaced.</p>
+                <p>The control's implementation notes ({(state.controls[controlId]?.implementationNotes ?? '').length} characters) will be replaced with {pendingPlan.filled.length} template sections.</p>
               )}
               {pendingPlan.narrativesReplaced.length > 0 && (
                 <p>
-                  The narratives of objectives {pendingPlan.narrativesReplaced.map((o) => `[${o.letter}]`).join(', ')} differ from the template and will be replaced.
+                  The narratives of objectives {pendingPlan.narrativesReplaced.map((o) => `[${shownLetter(o.letter)}]`).join(', ')} differ from the template and will be replaced.
                 </p>
               )}
               {pendingPlan.statusChanged.length > 0 && (
-                <p>Objectives {pendingPlan.statusChanged.map((o) => `[${o.letter}]`).join(', ')} will be marked MET.</p>
+                <p>Objectives {pendingPlan.statusChanged.map((o) => `[${shownLetter(o.letter)}]`).join(', ')} will be set to In progress.</p>
+              )}
+              {pendingPlan.skipped.length > 0 && (
+                <p>Objectives {pendingPlan.skipped.map((o) => `[${shownLetter(o.letter)}]`).join(', ')} have no starter template and are left as they are.</p>
               )}
             </div>
             <div className="flex items-center justify-end gap-2.5 pt-1">
@@ -347,12 +361,14 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
         </DialogOverlay>
       )}
 
-      {bulkNotice && (
-        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
-          <Check className="w-4 h-4 text-emerald-400" />
-          <span>All {is80053 ? 'NIST SP 800-53A' : 'NIST SP 800-171A'} determination narratives applied and rolled up to MET status!</span>
-        </div>
-      )}
+      <div role="status" aria-live="polite">
+        {bulkResult && (
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
+            <Check className="w-4 h-4 text-emerald-400" aria-hidden="true" />
+            <span>{confirmAllResultMessage(bulkResult.filled, bulkResult.skipped)}</span>
+          </div>
+        )}
+      </div>
 
       {/* ── Individual Assessment Objectives List ── */}
       <div className="space-y-4">
@@ -364,6 +380,8 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
               : obj.implementationNarrative;
           const hasConfirmedNarrative = Boolean(obj.implementationNarrative?.trim());
           const isAppliedJustNow = appliedNoticeId === obj.id;
+          const objHasTemplate = hasTemplate(obj);
+          const narrativeId = `${narrativeBaseId}-${obj.letter}`;
 
           // Compute effective ODPs
           const effectiveOdps =
@@ -386,13 +404,6 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
             obj.linkedEvidenceIds?.includes(e.id)
           );
 
-          // Find SCAP / STIG rule match if available
-          const matchingStig = mappedStigRules.find(
-            (r) =>
-              (obj.scapRuleId && r.ruleVersion.toLowerCase().includes(obj.scapRuleId.toLowerCase())) ||
-              r.vulnId.toLowerCase().includes(obj.letter.toLowerCase())
-          );
-
           return (
             <div
               key={obj.id}
@@ -411,7 +422,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                   {/* Objective Letter Badge */}
                   <span className="shrink-0 font-mono font-bold text-sm px-2.5 py-1 rounded-xl bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950/40">
-                    [{obj.letter}]
+                    [{shownLetter(obj.letter)}]
                   </span>
 
                   {/* Determination Statement Text */}
@@ -420,27 +431,19 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                       {renderTextWithOdpBadges(obj.text)}
                     </p>
                     <div className="flex items-center gap-2 flex-wrap text-xs text-slate-400">
-                      <span className="font-mono text-cyan-400/80">{obj.id}</span>
-
-                      {/* Telemetry verification badge */}
-                      {obj.isAutoVerifiedByTelemetry && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-medium">
-                          <Activity className="w-3 h-3 text-emerald-400 animate-pulse motion-reduce:animate-none" />
-                          <span>Telemetry Verified (OpenSCAP / STIG)</span>
-                        </span>
-                      )}
+                      <span
+                        className="font-mono text-cyan-400/80"
+                        title={cmmcGuideObjectiveId(obj.id, activeFramework) !== obj.id ? `Stored as ${obj.id}` : undefined}
+                      >
+                        {cmmcGuideObjectiveId(obj.id, activeFramework)}
+                      </span>
 
                       {obj.scapRuleId && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-mono text-xs">
-                          <Zap className="w-3 h-3 text-cyan-400" />
-                          <span>CCE: {obj.scapRuleId}</span>
-                        </span>
-                      )}
-
-                      {matchingStig && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/30 font-mono text-xs">
-                          <ShieldCheck className="w-3 h-3 text-purple-400" />
-                          <span>STIG: {matchingStig.vulnId}</span>
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-mono text-xs"
+                          title="SCAP Security Guide rule mapped to this objective. A reference only: no scan result is linked here."
+                        >
+                          SCAP rule (reference): {obj.scapRuleId}
                         </span>
                       )}
                     </div>
@@ -478,24 +481,25 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                 </div>
               </div>
 
-              {/* ── Pre-Filled Best-Practice Template Card ── */}
+              {/* ── Starter template card (only for an objective that has a written template) ── */}
+              {objHasTemplate ? (
               <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
                 <button type="button" aria-expanded={isTemplateOpen}
                   onClick={() => toggleTemplateExpand(obj.id)}
                   className="w-full text-left px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-900/60 transition-colors"
                 >
                   <div className="flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <FileText className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
                     <span className="text-xs font-semibold text-cyan-200">
-                      Industry Best-Practice Defense Baseline Narrative
+                      Starter template
                     </span>
-                    <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-400 border border-cyan-800/40">
-                      FedRAMP Mod / Azure Gov / STIG
+                    <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                      Sample wording: review before use
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400">
-                      {isTemplateOpen ? 'Collapse' : 'Preview Template'}
+                      {isTemplateOpen ? 'Collapse' : 'Preview'}
                     </span>
                     {isTemplateOpen ? (
                       <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
@@ -512,20 +516,24 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     </div>
                     <div className="flex items-center justify-between gap-4 pt-1">
                       <span className="text-xs text-slate-400 italic">
-                        Clicking confirm writes this standard narrative to the SSP and marks objective [{obj.letter}] as MET.
+                        Using it writes this sample wording as objective [{shownLetter(obj.letter)}]'s narrative and sets the objective to In progress. Edit it to match your environment, then mark the objective MET yourself.
                       </span>
                       <button
+                        type="button"
                         onClick={() => handleApplyPrefilled(obj)}
                         disabled={!canEdit}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-500/40 hover:border-cyan-400 disabled:opacity-50 shrink-0 shadow-sm"
                       >
-                        <Check className="w-3.5 h-3.5 text-cyan-300" />
-                        <span>Confirm & Use Best-Practice Narrative</span>
+                        <Check className="w-3.5 h-3.5 text-cyan-300" aria-hidden="true" />
+                        <span>Use template for [{shownLetter(obj.letter)}]</span>
                       </button>
                     </div>
                   </div>
                 )}
               </div>
+              ) : (
+                <p className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-2.5 text-xs text-slate-400">No starter template exists for this objective. Write how your organization meets it in the narrative below.</p>
+              )}
 
               {/* ── Organization-Defined Parameters (ODPs) Inline Editor ── */}
               {effectiveOdps.length > 0 && (
@@ -608,17 +616,17 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
               )}
 
               {isAppliedJustNow && (
-                <div className="mt-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Baseline narrative confirmed and objective [{obj.letter}] marked MET!</span>
+                <div role="status" className="mt-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
+                  <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                  <span>Starter template written to objective [{shownLetter(obj.letter)}]. Review it, then mark the objective MET.</span>
                 </div>
               )}
 
               {/* ── Implementation Narrative Box ── */}
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-slate-300 flex items-center gap-2">
-                    <FileText className="w-3.5 h-3.5 text-slate-400" />
+                  <label htmlFor={narrativeId} className="text-xs font-medium text-slate-300 flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
                     <span>Objective Implementation Narrative</span>
                     {hasConfirmedNarrative && (
                       <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
@@ -626,26 +634,28 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                       </span>
                     )}
                   </label>
-                  {!isTemplateOpen && !hasConfirmedNarrative && (
+                  {objHasTemplate && !isTemplateOpen && !hasConfirmedNarrative && (
                     <button
+                      type="button"
                       onClick={() => handleApplyPrefilled(obj)}
                       disabled={!canEdit}
                       className="text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-semibold transition-colors disabled:opacity-50"
                     >
-                      <Sparkles className="w-3 h-3" />
-                      <span>Quick-Adopt Baseline Template</span>
+                      <FileText className="w-3 h-3" aria-hidden="true" />
+                      <span>Use template for [{shownLetter(obj.letter)}]</span>
                     </button>
                   )}
                 </div>
 
                 <div className="relative">
                   <textarea
+                    id={narrativeId}
                     rows={3}
                     value={currentNarrative}
                     onChange={(e) => handleNarrativeChange(obj.id, e.target.value)}
                     onBlur={() => handleSaveNarrative(obj.id)}
                     disabled={!canEdit}
-                    placeholder={`Describe how requirement [${obj.letter}] (${obj.text}) is implemented in your enclave, or click 'Confirm & Use Best-Practice Narrative' above...`}
+                    placeholder={objHasTemplate ? `Describe how requirement [${shownLetter(obj.letter)}] (${obj.text}) is implemented in your enclave, or use the starter template above...` : `Describe how requirement [${shownLetter(obj.letter)}] (${obj.text}) is implemented in your enclave...`}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/50 transition-all font-sans leading-relaxed disabled:opacity-60"
                   />
                   {editingNarratives[obj.id] !== undefined &&
@@ -662,7 +672,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                 </div>
               </div>
 
-              {/* ── Evidence Attachment Badges & Auto-Linked Artifacts ── */}
+              {/* ── Evidence pinned to this objective ── */}
               <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-semibold text-slate-400 flex items-center gap-1">
@@ -704,16 +714,6 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     ))
                   )}
 
-                  {/* SCAP Finding Auto-link badge if available */}
-                  {obj.scapRuleId && (
-                    <span
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-xs font-mono"
-                      title="OpenSCAP continuous telemetry finding linked to this determination statement"
-                    >
-                      <Activity className="w-3 h-3 text-emerald-400" />
-                      <span>SCAP Scan Finding: PASS</span>
-                    </span>
-                  )}
                 </div>
 
                 {/* Evidence Attach Trigger */}
@@ -734,7 +734,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     {showEvidenceSelectorForId === obj.id && (
                       <div className="absolute right-0 bottom-full mb-2 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl p-3 z-30 space-y-2 animate-scaleUp">
                         <div className="flex items-center justify-between pb-1 border-b border-slate-800">
-                          <span className="text-xs font-bold text-white">Attach Evidence to [{obj.letter}]</span>
+                          <span className="text-xs font-bold text-white">Attach Evidence to [{shownLetter(obj.letter)}]</span>
                           <button
                             onClick={() => setShowEvidenceSelectorForId(null)}
                             className="text-slate-400 hover:text-white text-xs"

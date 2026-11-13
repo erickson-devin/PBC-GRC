@@ -5,6 +5,8 @@ import { useAiAssistStatus, useIsAiAdmin } from '../../hooks/useAiAssistStatus';
 import { AiOffNotice } from '../common/AiOffNotice';
 import { AI_BUTTON_CHECKING_TITLE, aiAvailability, aiErrorForUser, aiNoticeCopy } from '../../data/aiAvailabilityView';
 import { findVagueWording, isParameterOpen, parameterValue, parseParameterTags, replaceSentence, replaceTag, resolveParameters, setParameterValue } from '../../data/frameworks/parameters';
+import { cmmcNumberOf } from '../../data/cmmcGuide/guide';
+import { cmmcGuideParameters } from '../../data/cmmcGuide/parameters';
 import type { ControlParameter, FrameworkControlDefinition } from '../../types/framework';
 import type { WordingSuggestionRequest, WordingSuggestions } from '../../types/aiAssist';
 
@@ -47,7 +49,9 @@ function tagSentence(notes: string, p: ControlParameter): string | undefined {
 }
 
 export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange, params, narrativeOnly, placeValue, bare, aiNotice = !bare }) => {
-  const catalogParams = useMemo(() => (narrativeOnly ? [] : params ?? resolveParameters(control)), [control, params, narrativeOnly]);
+  const catalogParams = useMemo(() => (narrativeOnly ? [] : params ?? (cmmcNumberOf(control.id) ? cmmcGuideParameters(control.id) : resolveParameters(control))), [control, params, narrativeOnly]);
+  // The AI assist route answers only the parameters the control carries in the catalog: a parameter moved to its guide objective is not asked about.
+  const serverIds = useMemo(() => new Set(resolveParameters(control).map((p) => p.id)), [control]);
   const scoped = params !== undefined;
   const tagParams = useMemo(() => (scoped ? [] : parseParameterTags(notes, `${control.id}:notes`, 'NOTES')), [notes, control.id, scoped]);
   const vague = useMemo(() => (scoped ? [] : findVagueWording(notes)), [notes, scoped]);
@@ -144,10 +148,11 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xs font-semibold text-slate-100 break-words">{p.label}</span>
+            {p.objectiveLetter && <span className="text-[10px] font-mono text-cyan-300">Objective [{p.objectiveLetter}]</span>}
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-800 border border-slate-600 text-slate-300">{p.kind === 'SELECTION' ? 'Selection' : 'Assignment'}</span>
             <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${open ? 'bg-amber-500/10 border-amber-500/40 text-amber-300' : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'}`}>{open ? 'Open' : 'Set'}</span>
           </div>
-          {showSuggest && suggestButton(key, body)}
+          {showSuggest && (p.source !== 'OBJECTIVE' || serverIds.has(p.id)) && suggestButton(key, body)}
         </div>
         {p.kind === 'SELECTION' && p.choices?.length ? (
           <div className="flex flex-wrap gap-1.5" role="group" aria-label={`${p.label} choices`}>

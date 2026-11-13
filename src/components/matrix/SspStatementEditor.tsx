@@ -59,8 +59,8 @@ function ItemText({ item }: { item: StatementItem }) {
 /**
  * The SSP authoring view of a control whose text is a list of lettered items: the control text, then each item with the
  * parameters in it and a field for how the organisation meets that item. The answers are kept in the control's one narrative
- * (see data/frameworks/narrativeItems.ts), so the quick editor, exports and the assessor still see the same text; the
- * parameter rows and the "Suggest Parameter Wording" helper are the ones of the quick editor.
+ * (see data/frameworks/narrativeItems.ts), so the plain notes editor in the inspect modal, exports and the assessor still see the same text; the
+ * parameter rows and the "Suggest Parameter Wording" helper are the ones of OdpPanel.
  */
 export const SspStatementEditor: React.FC<Props> = ({ control, notes, canEdit, tenantId, onNotesChange, onNotesBlur }) => {
   const itemized = useMemo(() => statementItems(control.statement), [control.statement]);

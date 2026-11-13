@@ -4,6 +4,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { CMMC_LEVEL_2_CONTROLS } from '../../data/frameworks/cmmcLevel2Controls';
 import { crosswalkFor171, crosswalkFor53, requirementNumberOf } from '../../data/frameworks/nist80053/crosswalk';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import type { ControlStatus } from '../../types/cmmc';
 import type { ComplianceFramework } from '../../types/framework';
 
@@ -127,7 +128,7 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
               return (
                 <li key={`${item.id}`} className="rounded-lg border border-slate-800 bg-slate-900/70 p-2.5 space-y-1.5">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-xs font-bold text-cyan-300">{item.id}</span>
+                    <span className="font-mono text-xs font-bold text-cyan-300" title={cmmcDisplayId(item.id, item.framework) !== item.id ? `Stored as ${item.id}` : undefined}>{cmmcDisplayId(item.id, item.framework)}</span>
                     {item.badge && <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{item.badge}</span>}
                     <span className="text-xs text-slate-200">{item.title}</span>
                   </div>

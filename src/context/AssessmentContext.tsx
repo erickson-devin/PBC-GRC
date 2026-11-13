@@ -19,8 +19,9 @@ import {
   findControlDefinition,
   calculateControlRollup,
 } from '../data/frameworks';
-import { getControlObjectives } from '../data/cmmcGuide/objectives';
+import { getControlObjectives, hasWrittenTemplate } from '../data/cmmcGuide/objectives';
 import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
+import { normalizeImportedCmmcIds } from '../data/cmmcGuide/displayId';
 import { withGuideTitle } from '../data/cmmcGuide/guide';
 import { StorageService, createDefaultSspMetadata, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
@@ -1156,13 +1157,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const baseObjectives = objectivesOf(s, controlId);
     const target = baseObjectives.find(o => o.id === objectiveId);
     if (!target) return;
+    // The generic wording is not an implementation statement: it is never written (#282)
+    if (!hasWrittenTemplate(controlId, target.letter, activeFramework)) return;
 
     const now = new Date().toISOString();
     const confirmedNarrative = target.prefilledTemplate;
+    // A template is sample wording: the objective goes to In progress for the user to review and mark MET; MET and N/A are kept
+    const nextStatus: ObjectiveStatus = target.status === 'MET' || target.status === 'NOT_APPLICABLE' ? target.status : 'IN_PROGRESS';
     const updatedObjective: AssessmentObjective = {
       ...target,
       implementationNarrative: confirmedNarrative,
-      status: 'MET',
+      status: nextStatus,
       lastUpdated: now,
       updatedBy: currentUser.name,
     };
@@ -1223,10 +1228,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (rolledStatus !== currentCtrl.status) controlUpdate.status = rolledStatus;
     const controlChanged = controlUpdate.implementationNotes !== undefined || controlUpdate.status !== undefined;
     saveObjectives(
-      [{ objectiveId, controlId, status: 'MET', narrative: confirmedNarrative }],
+      [{ objectiveId, controlId, status: nextStatus, narrative: confirmedNarrative }],
       controlChanged ? { id: controlId, update: controlUpdate } : undefined
     );
-  }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, currentTenant.id, recordObjectiveNarrativeChange, saveObjectives]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, currentTenant.id, activeFramework, recordObjectiveNarrativeChange, saveObjectives]);
 
   const applyAllObjectiveTemplatesForControl = useCallback((controlId: string) => {
     if (objectiveWriteBlocked('narratives')) return;
@@ -1239,17 +1244,23 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const narrativeSections: string[] = [];
     const inputs: ObjectiveInput[] = [];
 
-    baseObjectives.forEach(obj => {
+    // Only an objective with a hand-written template is filled; one with only the generic wording is left as it is (#282)
+    const templated = baseObjectives.filter(obj => hasWrittenTemplate(controlId, obj.letter, activeFramework));
+    if (templated.length === 0) return;
+
+    templated.forEach(obj => {
       const narrative = obj.prefilledTemplate;
+      // A template is sample wording: In progress for the user to review and mark MET; MET and N/A are kept
+      const nextStatus: ObjectiveStatus = obj.status === 'MET' || obj.status === 'NOT_APPLICABLE' ? obj.status : 'IN_PROGRESS';
       nextObjectives[obj.id] = {
         ...obj,
-        status: 'MET',
+        status: nextStatus,
         implementationNarrative: narrative,
         lastUpdated: now,
         updatedBy: currentUser.name,
       };
       narrativeSections.push(`[Objective ${obj.letter.toUpperCase()} - ${obj.text}]:\n${narrative}`);
-      inputs.push({ objectiveId: obj.id, controlId, status: 'MET', narrative });
+      inputs.push({ objectiveId: obj.id, controlId, status: nextStatus, narrative });
       recordObjectiveNarrativeChange(obj.id, obj.implementationNarrative || '', narrative);
     });
 
@@ -1264,6 +1275,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
 
     const newNotes = narrativeSections.join('\n\n');
+    // The control rolls up from all its objectives: one already NOT_MET, or one left without a template, keeps it from MET
+    const rolledStatus: ControlStatus = calculateControlRollup(baseObjectives.map(o => nextObjectives[o.id] ?? o)).calculatedStatus;
     setState(prev => ({
       ...prev,
       objectives: { ...(prev.objectives || {}), ...nextObjectives },
@@ -1271,7 +1284,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ...prev.controls,
         [controlId]: {
           ...(prev.controls[controlId] || currentCtrl),
-          status: 'MET' as ControlStatus,
+          status: rolledStatus,
           implementationNotes: newNotes,
           lastUpdated: now,
           updatedBy: currentUser.name,
@@ -1279,19 +1292,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       },
     }));
 
-    const metAfter = Object.entries(s.controls).filter(([id, c]) => id !== controlId && c.status === 'MET').length + 1;
-    const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
-    if (metAfter === totalRequired) {
-      setTimeout(triggerSprsCelebration, 150);
-    }
-
     // Save through the audited server writers: one bulk write for the objectives, and the control only for the fields that change
     const controlUpdate: Partial<ControlState> = { updatedBy: currentUser.name };
     if (newNotes !== (currentCtrl.implementationNotes || '')) controlUpdate.implementationNotes = newNotes;
-    if (currentCtrl.status !== 'MET') controlUpdate.status = 'MET';
+    if (rolledStatus !== currentCtrl.status) controlUpdate.status = rolledStatus;
     const controlChanged = controlUpdate.implementationNotes !== undefined || controlUpdate.status !== undefined;
     saveObjectives(inputs, controlChanged ? { id: controlId, update: controlUpdate } : undefined);
-  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, activeFramework, triggerSprsCelebration, recordObjectiveNarrativeChange, saveObjectives]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, currentUser, currentTenant.id, activeFramework, recordObjectiveNarrativeChange, saveObjectives]);
 
   const linkEvidenceToObjective = useCallback((objectiveId: string, evidenceId: string) => {
     if (objectiveWriteBlocked('objectives')) return;
@@ -1760,8 +1767,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (!parsed.controls || !parsed.sspMetadata) {
         throw new Error('Invalid assessment JSON structure');
       }
+      // A file that names controls by the CMMC Assessment Guide's ids is re-keyed to the stored ids first (a copy; nothing is logged)
+      const normalized = normalizeImportedCmmcIds(parsed, activeFramework).state;
       // A backup made under the earlier objective wording gets the same re-flagging as a cache (nothing is deleted)
-      const imported = migrateCachedObjectives(parsed, activeFramework).state;
+      const imported = migrateCachedObjectives(normalized, activeFramework).state;
 
       // Ensure all framework controls are present in imported state
       const targetControls = frameworkControls.length > 0 ? frameworkControls : getFrameworkControls(activeFramework);

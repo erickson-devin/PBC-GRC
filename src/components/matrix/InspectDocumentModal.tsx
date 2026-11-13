@@ -50,6 +50,7 @@ import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentG
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
 import { NO_OBJECTIVE_TEMPLATE_RECORDED, NO_STACK_PROFILE_RECORDED } from '../../data/reports/documentDefaults';
 import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { cmmcCascadeSource, getControlObjectives } from '../../data/cmmcGuide/objectives';
 import { stackValueLabel } from '../../data/stackDraftView';
 import { useFipsModules } from '../../hooks/useFipsModules';
@@ -432,8 +433,11 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
         {/* ── Top Header ── */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="font-mono font-bold text-sm tracking-wide px-3 py-1 rounded-xl bg-cyan-950/60 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950/40">
-              {control.id}
+            <span
+              className="font-mono font-bold text-sm tracking-wide px-3 py-1 rounded-xl bg-cyan-950/60 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950/40"
+              title={cmmcDisplayId(control.id, activeFramework) !== control.id ? `Stored as ${control.id}` : undefined}
+            >
+              {cmmcDisplayId(control.id, activeFramework)}
             </span>
             <span
               className="text-xs font-semibold px-2.5 py-0.5 rounded-lg"

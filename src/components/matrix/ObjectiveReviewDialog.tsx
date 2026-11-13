@@ -3,6 +3,8 @@ import { GitMerge } from 'lucide-react';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { useAssessment } from '../../context/AssessmentContext';
+import { useTenant } from '../../context/TenantContext';
+import { cmmcGuideObjectiveId } from '../../data/cmmcGuide/displayId';
 import { errorMessage } from '../../utils/errors';
 
 /**
@@ -12,6 +14,7 @@ import { errorMessage } from '../../utils/errors';
  */
 export const ObjectiveReviewDialog: React.FC = () => {
   const { state, objectivePendingReview, serverObjectiveNarrative, resolveObjectiveConflict } = useAssessment();
+  const { activeFramework } = useTenant();
   const [dismissed, setDismissed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,15 +56,15 @@ export const ObjectiveReviewDialog: React.FC = () => {
             const busy = busyId === objectiveId;
             return (
               <li key={objectiveId} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
-                <p className="font-mono text-xs font-bold text-cyan-300">{objectiveId}</p>
+                <p className="font-mono text-xs font-bold text-cyan-300" title={cmmcGuideObjectiveId(objectiveId, activeFramework) !== objectiveId ? `Stored as ${objectiveId}` : undefined}>{cmmcGuideObjectiveId(objectiveId, activeFramework)}</p>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <section aria-label={`The server's text for ${objectiveId}`}>
+                  <section aria-label={`The server's text for ${cmmcGuideObjectiveId(objectiveId, activeFramework)}`}>
                     <h4 className="mb-1 text-xs font-semibold text-slate-300">The server&apos;s text</h4>
                     <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-slate-800 bg-slate-950 p-3 font-sans text-xs text-slate-200">
                       {serverText || '(empty)'}
                     </pre>
                   </section>
-                  <section aria-label={`This browser's text for ${objectiveId}`}>
+                  <section aria-label={`This browser's text for ${cmmcGuideObjectiveId(objectiveId, activeFramework)}`}>
                     <h4 className="mb-1 text-xs font-semibold text-slate-300">This browser&apos;s text</h4>
                     <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-slate-800 bg-slate-950 p-3 font-sans text-xs text-slate-200">
                       {browserText || '(empty)'}

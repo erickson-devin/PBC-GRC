@@ -23,6 +23,7 @@ import {
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
+import { cmmcStoredIds } from '../../data/cmmcGuide/displayId';
 export const AuditTrailViewer: React.FC = () => {
   const { currentTenant, programs } = useTenant();
 
@@ -101,8 +102,11 @@ export const AuditTrailViewer: React.FC = () => {
       if (endDate && new Date(entry.timestamp) > new Date(endDate + 'T23:59:59')) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
+        // The records show the id as stored; a guide id typed here is translated to the stored id(s) it names
+        const storedIds = cmmcStoredIds(searchQuery.trim());
         const matches =
           entry.targetEntity.toLowerCase().includes(q) ||
+          storedIds.some((id) => entry.targetEntity.toLowerCase().includes(id.toLowerCase())) ||
           entry.actorEmail.toLowerCase().includes(q) ||
           entry.actionType.toLowerCase().includes(q) ||
           entry.sha256Hash.toLowerCase().includes(q);

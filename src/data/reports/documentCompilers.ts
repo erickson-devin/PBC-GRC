@@ -8,6 +8,10 @@ import {
 } from '../../types/report';
 import { FrameworkControlDefinition, ComplianceFramework } from '../../types/framework';
 import { ControlState, EvidenceItem, ControlStatus } from '../../types/cmmc';
+import { AssessmentObjective } from '../../types/assessment';
+import { getControlObjectives } from '../cmmcGuide/objectives';
+import { cmmcNumberOf } from '../cmmcGuide/guide';
+import { cmmcDisplayId, cmmcGuideLetter } from '../cmmcGuide/displayId';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
@@ -92,13 +96,52 @@ export function calculateSummaryMetrics(
   };
 }
 
+const OBJECTIVE_STATUS_WORD: Record<string, string> = { NOT_MET: 'Not met', IN_PROGRESS: 'In progress', NOT_STARTED: 'Not started' };
+
+/**
+ * #285: for a CMMC control, the guide objectives that are not Met, worded for a POA&M weakness. Null (the old wording stays)
+ * when no objective answers were supplied or the control is not a CMMC requirement. Public guide wording only, never notes.
+ */
+export function cmmcObjectiveWeakness(
+  ctrl: FrameworkControlDefinition,
+  status: ControlStatus,
+  objectives: Record<string, AssessmentObjective> | undefined,
+  framework: string
+): { description: string; validate: string } | null {
+  if (objectives === undefined || cmmcNumberOf(ctrl.id) === null) return null;
+  const objs = getControlObjectives(ctrl.id, ctrl.title, ctrl.assessmentObjectives, objectives, framework || 'CMMC_L2');
+  const n = objs.length;
+  const letterOf = (o: AssessmentObjective) => cmmcGuideLetter(ctrl.id, o.letter, framework);
+  const line = (o: AssessmentObjective) => `[${letterOf(o)}] ${o.text}`;
+  const answered = objs.filter((o) => Object.prototype.hasOwnProperty.call(objectives, o.id));
+  if (answered.length === 0) {
+    return {
+      description: `No assessment objective has been assessed. Objectives (${n}): ${objs.map(line).join('; ')}`,
+      validate: `Validate objectives: ${objs.map((o) => `[${letterOf(o)}]`).join(', ')}`,
+    };
+  }
+  const open = objs.filter((o) => o.status !== 'MET' && o.status !== 'NOT_APPLICABLE');
+  if (open.length > 0) {
+    return {
+      description: `Objectives not met (${open.length} of ${n}): ${open.map((o) => `${line(o)} (${OBJECTIVE_STATUS_WORD[o.status] ?? o.status})`).join('; ')}.`,
+      validate: `Validate objective${open.length > 1 ? 's' : ''}: ${open.map((o) => `[${letterOf(o)}]`).join(', ')}`,
+    };
+  }
+  return {
+    description: `All ${n} objectives are recorded as met or not applicable; the requirement itself is recorded as ${OBJECTIVE_STATUS_WORD[status] ?? status}.`,
+    validate: 'Validate objective answers against the requirement status',
+  };
+}
+
 /**
  * Automatically aggregates NOT_MET and IN_PROGRESS (and unaddressed) controls into structured POA&M entries.
  * #198: only what is recorded is stated. A due date, resources and milestones are never invented; they print as not recorded.
  */
 export function generatePOAMEntries(
   controls: FrameworkControlDefinition[],
-  controlStates: Record<string, ControlState>
+  controlStates: Record<string, ControlState>,
+  objectives?: Record<string, AssessmentObjective>,
+  framework?: string
 ): POAMEntry[] {
   const poamEntries: POAMEntry[] = [];
   let counter = 1;
@@ -115,17 +158,24 @@ export function generatePOAMEntries(
 
       // Weakness description: the recorded notes when there are any, else the requirement itself
       const notes = state?.implementationNotes?.trim();
-      const weaknessDesc = notes
-        ? `Recorded implementation notes: ${notes.substring(0, 160)}${notes.length > 160 ? '...' : ''}`
-        : `Control requirement not met: ${ctrl.plainEnglishSummary || ctrl.title}.`;
+      // #285: a CMMC control with objective answers names the objectives that are not Met, then the notes excerpt
+      const objectiveWeakness = cmmcObjectiveWeakness(ctrl, status, objectives, framework ?? '');
+      const notesLine = notes ? `Recorded implementation notes: ${notes.substring(0, 160)}${notes.length > 160 ? '...' : ''}` : '';
+      const weaknessDesc = objectiveWeakness
+        ? objectiveWeakness.description + (notesLine ? ` ${notesLine}` : '')
+        : notes
+          ? notesLine
+          : `Control requirement not met: ${ctrl.plainEnglishSummary || ctrl.title}.`;
 
       // Remediation action plan
       const primaryObjective = ctrl.assessmentObjectives?.[0] || 'Verify technical and administrative safeguards satisfy baseline.';
-      const remediationPlan = `1. Complete procedural policy for ${ctrl.title}.\n2. Configure automated technical baseline or identity enforcement.\n3. Validate objective: "${primaryObjective}".\n4. Collect and upload immutable SHA-256 verification artifacts into GRC Vault.`;
+      const validateStep = objectiveWeakness ? `${objectiveWeakness.validate}.` : `Validate objective: "${primaryObjective}".`;
+      const remediationPlan = `1. Complete procedural policy for ${ctrl.title}.\n2. Configure automated technical baseline or identity enforcement.\n3. ${validateStep}\n4. Collect and upload immutable SHA-256 verification artifacts into GRC Vault.`;
 
       poamEntries.push({
         weaknessId,
         controlId: ctrl.id,
+        controlDisplayId: cmmcDisplayId(ctrl.id, framework),
         controlTitle: ctrl.title,
         weaknessDescription: weaknessDesc,
         scheduledCompletionDate: NOT_RECORDED,
@@ -149,7 +199,8 @@ export function compileNistSSP(
   metadata: ReportMetadata,
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  evidence: EvidenceItem[] = []
+  evidence: EvidenceItem[] = [],
+  objectives?: Record<string, AssessmentObjective>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
   const fwDef = FRAMEWORK_REGISTRY[metadata.framework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -265,7 +316,7 @@ export function compileNistSSP(
         : 'No files attached';
 
       return [
-        ctrl.id,
+        cmmcDisplayId(ctrl.id, metadata.framework),
         ctrl.title,
         ctrl.authorityReference || fwDef.authority,
         status,
@@ -319,7 +370,7 @@ export function compileNistSSP(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates),
+    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework),
   };
 }
 
@@ -330,10 +381,11 @@ export function compileNistSSP(
 export function compilePOAM(
   metadata: ReportMetadata,
   controls: FrameworkControlDefinition[],
-  controlStates: Record<string, ControlState>
+  controlStates: Record<string, ControlState>,
+  objectives?: Record<string, AssessmentObjective>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
-  const poamEntries = generatePOAMEntries(controls, controlStates);
+  const poamEntries = generatePOAMEntries(controls, controlStates, objectives, metadata.framework);
   const fwDef = FRAMEWORK_REGISTRY[metadata.framework] || FRAMEWORK_REGISTRY.CMMC_L1;
 
   const sections: ReportSection[] = [];
@@ -358,7 +410,7 @@ export function compilePOAM(
   // Section 2: Master POA&M Tracking Table
   const tableRows = poamEntries.map(entry => [
     entry.weaknessId,
-    entry.controlId,
+    entry.controlDisplayId ?? entry.controlId,
     entry.controlTitle,
     entry.weaknessDescription,
     entry.status,
@@ -393,7 +445,7 @@ export function compilePOAM(
     const milestones = entry.milestones || [];
     const summaryLines = `Responsible Owner: ${entry.responsibleRole} | Target Date: ${entry.scheduledCompletionDate}\nResource Allocation: ${entry.requiredResources}\nDeficiency Summary: ${entry.weaknessDescription}`;
     return {
-      title: `Weakness [${entry.weaknessId}] — ${entry.controlId}: ${entry.controlTitle}`,
+      title: `Weakness [${entry.weaknessId}] — ${entry.controlDisplayId ?? entry.controlId}: ${entry.controlTitle}`,
       content: milestones.length > 0 ? summaryLines : `${summaryLines}\n${NO_MILESTONES_RECORDED}`,
       ...(milestones.length > 0
         ? {
@@ -458,7 +510,8 @@ export function compileSoc2SystemDescription(
   metadata: ReportMetadata,
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  evidence: EvidenceItem[] = []
+  evidence: EvidenceItem[] = [],
+  objectives?: Record<string, AssessmentObjective>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
 
@@ -618,7 +671,7 @@ export function compileSoc2SystemDescription(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates),
+    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework),
   };
 }
 
@@ -630,7 +683,8 @@ export function compileHipaaAssessment(
   metadata: ReportMetadata,
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  evidence: EvidenceItem[] = []
+  evidence: EvidenceItem[] = [],
+  objectives?: Record<string, AssessmentObjective>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
 
@@ -766,7 +820,7 @@ export function compileHipaaAssessment(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates),
+    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework),
   };
 }
 
@@ -779,22 +833,23 @@ export function compileReportDocument(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   evidence: EvidenceItem[] = [],
-  inventory?: InventoryInput
+  inventory?: InventoryInput,
+  objectives?: Record<string, AssessmentObjective>
 ): CompiledDocument {
   switch (documentType) {
     case 'NIST_SP_800_18_SSP':
-      return compileNistSSP(metadata, controls, controlStates, evidence);
+      return compileNistSSP(metadata, controls, controlStates, evidence, objectives);
     case 'POAM':
-      return compilePOAM(metadata, controls, controlStates);
+      return compilePOAM(metadata, controls, controlStates, objectives);
     case 'SOC_2_SYSTEM_DESCRIPTION':
-      return compileSoc2SystemDescription(metadata, controls, controlStates, evidence);
+      return compileSoc2SystemDescription(metadata, controls, controlStates, evidence, objectives);
     case 'HIPAA_SECURITY_ASSESSMENT':
-      return compileHipaaAssessment(metadata, controls, controlStates, evidence);
+      return compileHipaaAssessment(metadata, controls, controlStates, evidence, objectives);
     case 'HARDWARE_INVENTORY':
       return compileHardwareInventory(metadata, inventory, calculateSummaryMetrics(controls, controlStates));
     case 'SOFTWARE_INVENTORY':
       return compileSoftwareInventory(metadata, inventory, calculateSummaryMetrics(controls, controlStates));
     default:
-      return compileNistSSP(metadata, controls, controlStates, evidence);
+      return compileNistSSP(metadata, controls, controlStates, evidence, objectives);
   }
 }

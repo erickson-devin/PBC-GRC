@@ -5,6 +5,7 @@ import l1Json from '../src/data/cmmcGuide/cmmcL1Guide.generated.json';
 import { CMMC_L1_GUIDE, CMMC_L2_GUIDE, CMMC_OBJECTIVE_CATALOG_REV, cmmcGuideTitle, cmmcNumberOf, guideObjectives, withGuideTitle } from '../src/data/cmmcGuide/guide';
 import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, normalizeObjectiveText } from '../src/data/cmmcGuide/objectives';
 import { controlStatusAfterCatalogUpdate, migrateCachedObjectives, objectiveStatusAfterCatalogUpdate } from '../src/data/cmmcGuide/migration';
+import { checklistLetterOf } from '../src/data/cmmcGuide/importLetters';
 import { validateGuideData } from '../src/data/cmmcGuide/validate';
 import type { L1GuideFile, L2GuideFile } from '../src/data/cmmcGuide/validate';
 import { buildGuideFiles, parseGuideLines } from '../scripts/generateCmmcObjectives';
@@ -324,6 +325,43 @@ assert(throws(() => buildGuideFiles({ ...mk(2, []), date: null }, mk(1, []), src
 
 assert(normalizeObjectiveText('The [CUI] data, and an Apple!') === 'cui data and apple' && normalizeObjectiveText('Federal Contract Information') === 'fci', 'normalizeObjectiveText lowercases, spells out FCI and CUI, drops punctuation and articles');
 assert(CMMC_L2_GUIDE.requirements.length === 110 && CMMC_L1_GUIDE.requirements.length === 15, 'the typed guide exports hold both files');
+
+console.log('\n--- The checklist letter of an objective listed by an SSP import ---');
+const reg317 = NIST_800_171A_REGISTRY['3.1.7'].objectives;
+const reg313 = NIST_800_171A_REGISTRY['3.1.3'].objectives;
+assert(checklistLetterOf('AC.L2-3.1.7', 'CMMC_L2', reg317[1].text) === 'c', 'checklistLetterOf: the registry 3.1.7[b] wording is the guide\'s [c]', checklistLetterOf('AC.L2-3.1.7', 'CMMC_L2', reg317[1].text));
+assert(same(reg313.map((o) => checklistLetterOf('AC.L2-3.1.3', 'CMMC_L2', o.text)), [null, null]), 'checklistLetterOf: neither registry 3.1.3 objective is worded like a guide objective', reg313.map((o) => checklistLetterOf('AC.L2-3.1.3', 'CMMC_L2', o.text)));
+assert(checklistLetterOf('AC.L1-3.1.1', 'CMMC_L1', 'authorized users are identified') === 'a', 'checklistLetterOf: Level 1 3.1.1 "authorized users are identified" is [a]');
+const g383 = (fw: string) => guideObjectives('3.8.3', fw)[0].text;
+assert(checklistLetterOf('MP.L1-3.8.3', 'CMMC_L1', g383('CMMC_L1')) === 'a' && checklistLetterOf('MP.L1-3.8.3', 'CMMC_L1', g383('CMMC_L2')) === 'a', 'checklistLetterOf: a Level 1 program also finds the Level 2 wording (fallback)');
+assert(checklistLetterOf('AC-2', 'NIST_800_53_REV5', 'x') === undefined && checklistLetterOf('3.1.1', 'CMMC_L2', 'authorized users are identified') === undefined, 'checklistLetterOf: undefined for a control that is not a CMMC requirement');
+let listed = 0;
+let wordedLike = 0;
+let neverUndefined = true;
+let countsAgree = true;
+for (const c of l2Controls) {
+  const n = cmmcNumberOf(c.id)!;
+  for (const o of NIST_800_171A_REGISTRY[n]?.objectives ?? []) {
+    listed++;
+    const cl = checklistLetterOf(c.id, 'CMMC_L2', o.text);
+    if (cl === undefined) neverUndefined = false;
+    const independent = guideObjectives(n, 'CMMC_L2').filter((g) => norm(g.text) === norm(o.text)).length === 1;
+    if ((cl !== null && cl !== undefined) !== independent) countsAgree = false;
+    if (cl) wordedLike++;
+  }
+}
+console.log(`  (gap-analysis objectives that match a checklist objective by wording: ${wordedLike} of ${listed})`);
+assert(listed > 0 && neverUndefined, 'checklistLetterOf: never undefined for a Level 2 control', listed);
+assert(countsAgree, 'checklistLetterOf: finds a letter exactly when one guide objective has the wording (independent count)');
+
+const readSrc = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
+const panelSrc = readSrc('src/components/matrix/ImportAnalysisPanel.tsx');
+const viewSrc = readSrc('src/components/sspImport/SspImportView.tsx');
+assert(panelSrc.includes('can differ from the CMMC Assessment Guide checklist below'), 'the panel explains why the letters can differ');
+assert(/checklistLetterOf\(controlId, staged\.framework, o\.text\)/.test(panelSrc) && /cmmcNumberOf\(controlId\)/.test(panelSrc), 'the panel matches by wording and shows the caption for CMMC controls only');
+assert(panelSrc.includes('Mark each objective below yourself.'), 'the panel keeps its closing line');
+assert(/checklistLetterOf\(current\.controlId, current\.framework, o\.text\)/.test(viewSrc) && viewSrc.includes('can differ from the control\'s objective checklist (CMMC Assessment Guide)'), 'the review screen matches by wording and explains why the letters can differ');
+assert([panelSrc, viewSrc].every((s) => s.includes('(not worded like a checklist objective)') && s.includes('(checklist [')), 'both screens carry the two per-objective notes');
 
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 if (passed !== total) process.exitCode = 1;

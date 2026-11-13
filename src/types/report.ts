@@ -64,6 +64,8 @@ export interface POAMMilestone {
 export interface POAMEntry {
   weaknessId: string;
   controlId: string;
+  /** The guide's control id for display and export (CMMC); controlId stays the stored id. */
+  controlDisplayId?: string;
   controlTitle: string;
   weaknessDescription: string;
   scheduledCompletionDate: string;

@@ -16,7 +16,9 @@ import { aiErrorForUser, aiNoticeCopy } from '../../data/aiAvailabilityView';
 import { isCrossReferenceOnly } from '../../utils/sspImportHints';
 import { ApiClient } from '../../services/apiClient';
 import { getFrameworkControls } from '../../data/frameworks';
-import { withGuideTitle } from '../../data/cmmcGuide/guide';
+import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
+import { checklistLetterOf } from '../../data/cmmcGuide/importLetters';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { canRoleReviewSspImports } from '../../utils/roles';
 import { errorMessage } from '../../utils/errors';
@@ -598,7 +600,7 @@ export const SspImportView: React.FC = () => {
                         <p>{detail.job.coverage.missing.length === 0 ? 'The document mentions every control in scope.' : 'The document never mentions these controls. They may need to be written up, or the document may use different identifiers.'}</p>
                         <ul className="grid gap-1 sm:grid-cols-2">
                           {detail.job.coverage.missing.map((id) => (
-                            <li key={id} className="rounded-lg bg-slate-900 border border-slate-800 px-2.5 py-1.5"><span className="font-mono text-cyan-300">{id}</span> <span className="text-slate-400">{CONTROL_TITLES.get(id)}</span></li>
+                            <li key={id} className="rounded-lg bg-slate-900 border border-slate-800 px-2.5 py-1.5"><span className="font-mono text-cyan-300" title={cmmcDisplayId(id, detail.job.framework) !== id ? `Stored as ${id}` : undefined}>{cmmcDisplayId(id, detail.job.framework)}</span> <span className="text-slate-400">{CONTROL_TITLES.get(id)}</span></li>
                           ))}
                         </ul>
                       </div>
@@ -643,7 +645,7 @@ export const SspImportView: React.FC = () => {
                                 <li key={s.id}>
                                   <button type="button" onClick={() => setSelectedId(s.id)} aria-current={s.id === selectedId ? 'true' : undefined} className={`w-full text-left rounded-lg border px-3 py-2 ${s.id === selectedId ? 'border-brand-500/60 bg-brand-950/30' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'}`}>
                                     <span className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-sm text-cyan-300">{s.controlId}</span>
+                                      <span className="font-mono text-sm text-cyan-300" title={cmmcDisplayId(s.controlId, detail.job.framework) !== s.controlId ? `Stored as ${s.controlId}` : undefined}>{cmmcDisplayId(s.controlId, detail.job.framework)}</span>
                                       <StateBadge state={s.reviewState} />
                                     </span>
                                     <span className="block text-xs text-slate-400 truncate">{CONTROL_TITLES.get(s.controlId)}</span>
@@ -657,9 +659,9 @@ export const SspImportView: React.FC = () => {
                             </ul>
 
                             {current && (
-                              <article aria-label={`Suggestion for ${current.controlId}`} className="min-w-0 space-y-3">
+                              <article aria-label={`Suggestion for ${cmmcDisplayId(current.controlId, detail.job.framework)}`} className="min-w-0 space-y-3">
                                 <div>
-                                  <h4 className="text-base font-bold text-white"><span className="font-mono text-cyan-300">{current.controlId}</span> {CONTROL_TITLES.get(current.controlId)}</h4>
+                                  <h4 className="text-base font-bold text-white"><span className="font-mono text-cyan-300" title={cmmcDisplayId(current.controlId, detail.job.framework) !== current.controlId ? `Stored as ${current.controlId}` : undefined}>{cmmcDisplayId(current.controlId, detail.job.framework)}</span> {CONTROL_TITLES.get(current.controlId)}</h4>
                                   <p className="text-xs text-slate-400 mt-0.5">{MATCH_HELP[current.matchKind]}</p>
                                   {current.origin === 'AI' && (
                                     <p role="note" className="mt-1.5 text-xs text-brand-200">AI-generated suggestion: the summary is the model’s wording; the quotation below is the document’s own text. Check one against the other before accepting.</p>
@@ -714,10 +716,14 @@ export const SspImportView: React.FC = () => {
                                   <p className="text-sm text-slate-300">{current.gapAnalysis.summary}</p>
                                   {current.gapAnalysis.objectives && current.gapAnalysis.objectives.length > 0 && (
                                     <ul aria-label="Assessment objectives" className="mt-2 space-y-2">
-                                      {current.gapAnalysis.objectives.map((o) => (
+                                      {current.gapAnalysis.objectives.map((o) => {
+                                        const cl = checklistLetterOf(current.controlId, current.framework, o.text); // the guide's checklist letter with this wording
+                                        return (
                                         <li key={o.letter} className="text-sm text-slate-200">
                                           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold mr-1.5 ${o.weak ? WEAK_CLASS : OBJECTIVE_CLASS[o.status]}`}>{objectiveLabel(o.status, current.gapAnalysis.mode)}</span>
                                           <span className="font-mono text-xs text-slate-400">[{o.letter}]</span> {o.text}
+                                          {typeof cl === 'string' && cl !== o.letter && <span className="text-slate-400"> (checklist [{cl}])</span>}
+                                          {cl === null && <span className="text-slate-500"> (not worded like a checklist objective)</span>}
                                           {o.weak && (
                                             <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-amber-300">
                                               <AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" /> Check: shares few words with this objective
@@ -725,8 +731,12 @@ export const SspImportView: React.FC = () => {
                                           )}
                                           {o.evidence && <q className={`block mt-0.5 text-xs italic ${o.weak ? 'text-amber-200/80 border-l-2 border-amber-500/50 pl-2' : 'text-slate-400'}`}>{o.evidence.replace(/\s+/g, ' ')}</q>}
                                         </li>
-                                      ))}
+                                        );
+                                      })}
                                     </ul>
+                                  )}
+                                  {current.gapAnalysis.objectives && current.gapAnalysis.objectives.length > 0 && cmmcNumberOf(current.controlId) && (
+                                    <p className="mt-2 text-xs text-slate-400">The import compares the document with its own list of objectives (NIST SP 800-171A), so its letters can differ from the control's objective checklist (CMMC Assessment Guide). Match objectives by their wording.</p>
                                   )}
                                   {current.gapAnalysis.gaps.length > 0 && (
                                     <ul className="mt-2 space-y-1.5">

@@ -19,6 +19,7 @@ import { useTenant } from '../../context/TenantContext';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { remediationPriorities } from '../../data/reports/remediationPriority';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { storagePathLabel } from '../../data/audit/storageDriver';
 import { DomainCards } from './DomainCards';
@@ -309,7 +310,7 @@ export const ComplianceOverview: React.FC = () => {
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="font-mono text-xs font-bold text-cyan-400">{control.id}</span>
+                        <span className="font-mono text-xs font-bold text-cyan-400" title={cmmcDisplayId(control.id, activeFramework) !== control.id ? `Stored as ${control.id}` : undefined}>{cmmcDisplayId(control.id, activeFramework)}</span>
                         <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
                           {control.domain}
                         </span>

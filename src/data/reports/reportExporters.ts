@@ -802,7 +802,7 @@ export function generatePoamCsv(poamEntries: POAMEntry[]): string {
   for (const entry of poamEntries) {
     const row = [
       csvCell(entry.weaknessId),
-      csvCell(entry.controlId),
+      csvCell(entry.controlDisplayId ?? entry.controlId),
       csvCell(entry.controlTitle),
       csvCell(entry.weaknessDescription),
       csvCell(entry.status),

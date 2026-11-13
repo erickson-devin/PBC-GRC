@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import { AlertTriangle, CheckCircle2, CloudOff, HelpCircle, Info, ListChecks, Lock } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { ApiClient } from '../../services/apiClient';
 import type { VmConfigRuleResultRow } from '../../services/apiClient';
@@ -41,7 +42,7 @@ const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text
 const TABLE_HEAD_CLASS = 'border-b border-slate-800 bg-slate-900/80 text-slate-400 font-semibold';
 
 export const ConfigurationResultsView: React.FC = () => {
-  const { currentTenant, activeProgram, programsStatus, canEdit, refreshLiveData } = useTenant();
+  const { currentTenant, activeProgram, programsStatus, canEdit, refreshLiveData, activeFramework } = useTenant();
   const { state, notesEditable, decideControlStatus, frameworkControls, setSelectedControlId } = useAssessment();
   const { assets, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
   const tenantId = currentTenant.id;
@@ -147,7 +148,7 @@ export const ConfigurationResultsView: React.FC = () => {
     if (scopeRef.current !== scope) return;
     setBusyId(null);
     setConfirmId(null);
-    const message = applyResultMessage(outcome, s.controlId, next);
+    const message = applyResultMessage(outcome, cmmcDisplayId(s.controlId, activeFramework), next);
     setRowResults((r) => ({ ...r, [s.controlId]: { kind: outcome === 'saved' ? 'ok' : 'error', message, stale: outcome === 'stale' } }));
     if (outcome === 'saved') setAnnouncement(message);
     focusLater(() => (outcome === 'saved' || outcome === 'stale' ? resultRefs.current.get(s.controlId) : applyRefs.current.get(s.controlId) ?? resultRefs.current.get(s.controlId)));
@@ -387,6 +388,7 @@ export const ConfigurationResultsView: React.FC = () => {
                           {split.shown.map((s) => {
                             const current: ControlStatus = state.controls[s.controlId]?.status ?? 'NOT_STARTED';
                             const next = suggestionStatus(s.suggestion);
+                            const shownId = cmmcDisplayId(s.controlId, activeFramework);
                             const block = applyBlock({ suggestion: s.suggestion, currentStatus: current, canEdit, archived, controlsLoaded: notesEditable });
                             const style = SUGGESTION_STYLE[s.suggestion];
                             const failing = failingAssetNames(s.failingAssetIds, names, 5);
@@ -398,10 +400,11 @@ export const ConfigurationResultsView: React.FC = () => {
                                   <button
                                     type="button"
                                     onClick={() => setSelectedControlId(s.controlId)}
-                                    aria-label={`Open ${s.controlId}`}
+                                    aria-label={`Open ${shownId}`}
+                                    title={shownId !== s.controlId ? `Stored as ${s.controlId}` : undefined}
                                     className="font-mono font-bold text-cyan-300 hover:underline rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
                                   >
-                                    {s.controlId}
+                                    {shownId}
                                   </button>
                                   {titles.get(s.controlId) && <span className="block text-slate-400 max-w-xs">{titles.get(s.controlId)}</span>}
                                 </th>
@@ -427,7 +430,7 @@ export const ConfigurationResultsView: React.FC = () => {
                                     <span className="text-slate-400">None</span>
                                   ) : (
                                     <>
-                                      <ul aria-label={`Assets failing ${s.controlId}`} className="space-y-0.5">
+                                      <ul aria-label={`Assets failing ${shownId}`} className="space-y-0.5">
                                         {failing.shown.map((n, i) => <li key={i} className="font-mono text-slate-200">{n}</li>)}
                                       </ul>
                                       {failing.more > 0 && <span className="block text-slate-400">+{failing.more} more</span>}
@@ -443,7 +446,7 @@ export const ConfigurationResultsView: React.FC = () => {
                                         onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancelConfirm(s.controlId); } }}
                                         className="ml-auto max-w-xs space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-left"
                                       >
-                                        <p id={`${baseId}-confirm-${s.controlId}`} className="text-xs text-amber-100">{applyConfirmText(s.controlId, current, next)}</p>
+                                        <p id={`${baseId}-confirm-${s.controlId}`} className="text-xs text-amber-100">{applyConfirmText(shownId, current, next)}</p>
                                         <div className="flex items-center justify-end gap-2">
                                           <button
                                             type="button"
@@ -477,7 +480,7 @@ export const ConfigurationResultsView: React.FC = () => {
                                         aria-describedby={block !== null ? blockReasonId : undefined}
                                         className="px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-cyan-500/20 text-cyan-200 border-cyan-500/40 hover:bg-cyan-500/30 whitespace-nowrap"
                                       >
-                                        Apply {statusLabel(next)}…<span className="sr-only"> to {s.controlId}</span>
+                                        Apply {statusLabel(next)}…<span className="sr-only"> to {shownId}</span>
                                       </button>
                                     ) : null}
                                     {result && result.kind === 'ok' && (

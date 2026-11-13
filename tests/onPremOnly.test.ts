@@ -330,6 +330,22 @@ console.log('\n--- Documents honesty (#196 to #200) ---');
   assert(m.includes("serviceCommitments: meta.serviceCommitments || '',") && m.includes('serviceCommitments: formData.serviceCommitments'), 'S199-5 the export form loads and saves the service commitments');
 }
 
+// ----------------------------------------------------------------------------- Verification claims with nothing behind them (#277)
+
+console.log('\n--- Unbacked verification claims (#277) ---');
+{
+  const UNBACKED_277 = ['Telemetry Verified', 'SCAP Scan Finding', 'Scan Finding: PASS', 'continuous telemetry finding'];
+  const offenders: string[] = [];
+  for (const [k, body] of text) {
+    if (!k.startsWith('src/')) continue;
+    body.replace(/\r\n/g, '\n').split('\n').forEach((line, i) => { if (UNBACKED_277.some((lit) => line.includes(lit))) offenders.push(`${k}:${i + 1}`); });
+  }
+  assert(offenders.length === 0, 'S277-1: no screen claims a telemetry verification or a scan result it does not have', offenders);
+  const oc277 = (text.get('src/components/matrix/ObjectiveChecklist.tsx') ?? '').replace(/\r\n/g, '\n');
+  assert(oc277.length > 0 && !oc277.includes('isAutoVerifiedByTelemetry') && !oc277.includes('getStigRulesForControl') && !oc277.includes('CCE: '), 'S277-2: the objective checklist reads no telemetry flag, matches no STIG rule by letter and labels no rule id a CCE');
+  assert(oc277.includes('SCAP rule (reference): {obj.scapRuleId}'), 'S277-3: a mapped SCAP rule is shown as a reference');
+}
+
 // ----------------------------------------------------------------------------- Part 2: container and config shape
 
 console.log('\n--- docker-compose.yml ---');
