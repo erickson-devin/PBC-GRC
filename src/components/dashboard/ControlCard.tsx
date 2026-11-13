@@ -1,4 +1,4 @@
-import React, { useState, useRef, useId } from 'react';
+import React, { useId, useRef } from 'react';
 import {
   Shield,
   CheckCircle2,
@@ -6,16 +6,8 @@ import {
   Clock,
   HelpCircle,
   Paperclip,
-  ChevronDown,
-  ChevronUp,
   FileEdit,
-  Upload,
-  Sparkles,
-  ExternalLink,
   ChevronRight,
-  HardDrive,
-  Copy,
-  Check,
   Terminal,
 } from 'lucide-react';
 import { ControlStatus, DomainInfo } from '../../types/cmmc';
@@ -25,11 +17,7 @@ import { useTenant } from '../../context/TenantContext';
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { getControlImpactBadge } from '../../data/frameworks';
-import { OdpPanel } from '../matrix/OdpPanel';
-import { CrosswalkPanel } from '../matrix/CrosswalkPanel';
-
-import { activateOnKey } from '../../utils/a11y';
-import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
+import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 interface ControlCardProps {
   control: FrameworkControlDefinition;
@@ -48,33 +36,20 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     notesEditable,
     notesNotSaved,
     retryUnsavedNotes,
-    updateControlStatus,
-    updateControlNotes,
-    flushControlNotes,
-    applyStarterTemplate,
-    uploadEvidence,
     setSelectedControlId,
   } = useAssessment();
-  const { canEdit, currentTenant, activeFramework } = useTenant();
+  const { canEdit, activeFramework } = useTenant();
 
   const ctrlState = state.controls[control.id];
   const status: ControlStatus = ctrlState?.status || 'NOT_STARTED';
-  const notes = ctrlState?.implementationNotes || '';
-  const hasNotes = notes.trim().length > 0;
-  const evidenceList = state.evidenceIndex.filter((e) => e.controlId === control.id);
-  const evidenceCount = evidenceList.length;
+  const hasNotes = (ctrlState?.implementationNotes || '').trim().length > 0;
+  const notesNotLoaded = notesStatus === 'loading' || notesStatus === 'unavailable';
+  const evidenceCount = state.evidenceIndex.filter((e) => e.controlId === control.id).length;
   const mappedStigRules = getStigRulesForControl(control.id);
 
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [copiedHash, setCopiedHash] = useState<string | null>(null);
-  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
   const notesNotSavedId = useId();
   const notesNotSavedReason = notesNotSaved[control.id];
-  const [quickTemplateNotice, setQuickTemplateNotice] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const openButtonRef = useRef<HTMLButtonElement>(null);
 
   // Status Badge Helper
   const renderStatusBadge = () => {
@@ -130,69 +105,6 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     );
   };
 
-  // Drag & Drop Handlers
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!canEdit) return;
-    setIsDraggingOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-    if (!canEdit) return;
-
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-
-    await uploadFiles(files);
-  };
-
-  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    await uploadFiles(files);
-    e.target.value = '';
-  };
-
-  const uploadFiles = async (files: FileList) => {
-    setIsUploading(true);
-    try {
-      for (let i = 0; i < files.length; i++) {
-        await uploadEvidence(control.id, files[i]);
-      }
-    } catch (err) {
-      console.error('Evidence upload failed:', err);
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleQuickTemplate = () => {
-    if (control.starterTemplates && control.starterTemplates.length > 0) {
-      applyStarterTemplate(control.id, control.starterTemplates[0].narrative);
-      setQuickTemplateNotice(true);
-      setTimeout(() => setQuickTemplateNotice(false), 2500);
-    }
-  };
-
-  const handleCopyHash = (hash: string) => {
-    void copyText(hash).then((ok) => {
-      if (!ok) { setCopyFailedKey(hash); return; }
-      setCopyFailedKey(null);
-      setCopiedHash(hash);
-      setTimeout(() => setCopiedHash(null), 2000);
-    });
-  };
-
   const handleOpenDetail = () => {
     if (onOpenDetailModal) {
       onOpenDetailModal();
@@ -201,15 +113,17 @@ export const ControlCard: React.FC<ControlCardProps> = ({
     }
   };
 
+  // Retry from the card: a saved retry removes the marker and its button, so focus goes to the Open button instead of the page
+  const handleRetry = () => {
+    void retryUnsavedNotes(control.id).finally(() => {
+      if (!document.activeElement || document.activeElement === document.body) openButtonRef.current?.focus();
+    });
+  };
+
   return (
     <div
-      className={`stitch-card transition-all duration-200 shadow-md ${
-        isExpanded
-          ? 'ring-1 ring-cyan-500/40 shadow-cyan-950/30'
-          : 'hover:border-slate-700 hover:shadow-lg hover:shadow-slate-950/40'
-      }`}
+      className="stitch-card transition-all duration-200 shadow-md hover:border-slate-700 hover:shadow-lg hover:shadow-slate-950/40"
     >
-      <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
       {/* Top Header Strip */}
       <div className="p-4 sm:p-5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         
@@ -217,8 +131,11 @@ export const ControlCard: React.FC<ControlCardProps> = ({
         <div className="space-y-2.5 max-w-3xl flex-1">
           <div className="flex items-center gap-2.5 flex-wrap">
             {/* Control ID in Bold Monospace Text */}
-            <span className="font-mono font-bold text-sm tracking-wide px-3 py-1 rounded-lg bg-cyan-950/50 text-cyan-300 border border-cyan-500/30 shadow-sm shadow-cyan-950/30">
-              {control.id}
+            <span
+              className="font-mono font-bold text-sm tracking-wide px-3 py-1 rounded-lg bg-cyan-950/50 text-cyan-300 border border-cyan-500/30 shadow-sm shadow-cyan-950/30"
+              title={cmmcDisplayId(control.id, activeFramework) !== control.id ? `Stored as ${control.id}` : undefined}
+            >
+              {cmmcDisplayId(control.id, activeFramework)}
             </span>
 
             {/* Tactical Point Weight Badge for CMMC Level 2 */}
@@ -263,12 +180,8 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
           {/* Control Title & Plain-English Summary */}
           <div>
-            <h3 
-              onClick={handleOpenDetail}
-              className="text-base font-bold text-white hover:text-cyan-300 transition-colors cursor-pointer inline-flex items-center gap-2"
-            >
-              <span>{control.title}</span>
-              <ExternalLink className="w-3.5 h-3.5 text-slate-400 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <h3 className="text-base font-bold text-white">
+              {control.title}
             </h3>
             <p className="text-xs text-slate-300/90 leading-relaxed mt-1">
               {control.plainEnglishSummary}
@@ -298,11 +211,11 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           <div className="flex items-center gap-4 text-xs pt-1 flex-wrap">
             <span
               className={`flex items-center gap-1.5 font-medium ${
-                hasNotes ? 'text-emerald-400' : 'text-slate-400'
+                notesNotLoaded ? 'text-amber-300' : hasNotes ? 'text-emerald-400' : 'text-slate-400'
               }`}
             >
-              <FileEdit className="w-3.5 h-3.5" />
-              {hasNotes ? 'Narrative Documented' : 'No narrative yet'}
+              <FileEdit className="w-3.5 h-3.5" aria-hidden="true" />
+              {notesNotLoaded ? 'Narrative not loaded' : hasNotes ? 'Narrative Documented' : 'No narrative yet'}
             </span>
 
             <span
@@ -316,262 +229,46 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
             {mappedStigRules.length > 0 && (
               <span
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleOpenDetail();
-                }}
-                className="flex items-center gap-1 font-mono text-xs px-2.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-500/35 hover:border-cyan-400 cursor-pointer transition-colors shadow-sm"
+                className="flex items-center gap-1 font-mono text-xs px-2.5 py-0.5 rounded-full bg-cyan-950/70 text-cyan-300 border border-cyan-500/35 shadow-sm"
                 title={`${mappedStigRules.length} DISA STIG technical rules mapped to this control requirement`}
               >
-                <Terminal className="w-3 h-3 text-cyan-400" />
+                <Terminal className="w-3 h-3 text-cyan-400" aria-hidden="true" />
                 <span>{mappedStigRules.length} STIG {mappedStigRules.length === 1 ? 'Rule' : 'Rules'}</span>
               </span>
             )}
           </div>
-        </div>
 
-        {/* Right Actions: Quick Status Selector & Buttons */}
-        <div className="flex items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-800/80 shrink-0 flex-wrap">
-          
-          {/* Quick Status Dropdown */}
-          <div className="relative">
-            <select
-              value={status}
-              disabled={!canEdit}
-              onChange={(e) => updateControlStatus(control.id, e.target.value as ControlStatus)}
-              className={`text-xs font-bold rounded-xl px-3 py-2 pr-8 border appearance-none cursor-pointer focus:outline-none transition-all duration-200 disabled:opacity-60 ${
-                status === 'MET'
-                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40 hover:border-emerald-400'
-                  : status === 'NOT_MET'
-                  ? 'bg-rose-950/60 text-rose-300 border-rose-500/40 hover:border-rose-400'
-                  : status === 'IN_PROGRESS'
-                  ? 'bg-amber-950/60 text-amber-300 border-amber-500/40 hover:border-amber-400'
-                  : 'bg-slate-850 text-slate-300 border-slate-700 hover:border-slate-600'
-              }`}
-            >
-              <option value="NOT_STARTED" className="bg-slate-900 text-slate-300">NOT_STARTED</option>
-              <option value="IN_PROGRESS" className="bg-slate-900 text-amber-400">IN_PROGRESS</option>
-              <option value="MET" className="bg-slate-900 text-emerald-400">MET (Compliant)</option>
-              <option value="NOT_MET" className="bg-slate-900 text-rose-400">NOT_MET</option>
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-              <ChevronDown className="w-3 h-3" />
-            </div>
-          </div>
-
-          {/* Secondary Quick-Edit Toggle */}
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="btn-secondary text-xs px-3 py-2"
-            title={isExpanded ? 'Collapse inline editor' : 'Expand inline narrative & evidence dropzone'}
-          >
-            <span>{isExpanded ? 'Close Editor' : 'Quick Edit'}</span>
-            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Primary Action Button: Electric Cyan/Blue gradient with hover glow */}
-          <button
-            onClick={handleOpenDetail}
-            className="btn-primary text-xs px-3.5 py-2"
-          >
-            <span>Inspect & Document</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-
-        </div>
-
-      </div>
-
-      {/* Expandable Inline Narrative & Evidence Dropzone Section */}
-      {isExpanded && (
-        <div className="border-t border-slate-800 bg-slate-950/60 p-4 sm:p-6 rounded-b-xl space-y-5 animate-fadeIn">
-          
-          {/* Top Bar for Expanded Area */}
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
-              <FileEdit className="w-3.5 h-3.5" />
-              <span>Implementation Narrative ({currentTenant.name})</span>
-            </span>
-
-            <div className="flex items-center gap-2">
-              {quickTemplateNotice && (
-                <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1 animate-fadeIn">
-                  <Check className="w-3.5 h-3.5" /> Starter template applied!
-                </span>
-              )}
-              {canEdit && control.starterTemplates && control.starterTemplates.length > 0 && (
-                <button
-                  onClick={handleQuickTemplate}
-                  className="px-2.5 py-1 rounded-lg bg-cyan-950/40 text-cyan-300 hover:text-cyan-200 border border-cyan-500/30 text-xs font-medium flex items-center gap-1 transition-colors"
-                >
-                  <Sparkles className="w-3 h-3 text-cyan-400" />
-                  <span>Use Starter Template</span>
+          {notesNotSavedReason && (
+            <div id={notesNotSavedId} className="flex flex-wrap items-center gap-2 text-xs text-amber-300">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span className="font-semibold">Not saved</span>
+              <span className="text-amber-200/90">{NOTES_NOT_SAVED_DETAIL[notesNotSavedReason]}</span>
+              {notesNotSavedReason === 'failed' && canEdit && notesEditable && (
+                <button type="button" onClick={handleRetry}
+                  className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+                  Retry
                 </button>
               )}
             </div>
-          </div>
-
-          {/* Implementation Narrative Text Box */}
-          <div className="space-y-1.5">
-            <textarea
-              rows={4}
-              disabled={!canEdit || !notesEditable}
-              aria-describedby={notesNotSavedReason ? notesNotSavedId : undefined}
-              value={notes}
-              onChange={(e) => updateControlNotes(control.id, e.target.value)}
-              onBlur={() => flushControlNotes(control.id)}
-              placeholder={`Describe how ${currentTenant.name} enforces this practice (e.g. policies, technical configurations, endpoint controls)...`}
-              className="w-full p-3.5 rounded-xl bg-slate-900 border border-slate-700/80 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 text-xs sm:text-sm text-slate-100 placeholder-slate-400 leading-relaxed font-sans transition-all duration-200 disabled:opacity-60 resize-y"
-            />
-            {notesNotSavedReason && (
-              <div id={notesNotSavedId} className="flex flex-wrap items-center gap-2 px-1 text-xs text-amber-300">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                <span className="font-semibold">Not saved</span>
-                <span className="text-amber-200/90">{NOTES_NOT_SAVED_DETAIL[notesNotSavedReason]}</span>
-                {notesNotSavedReason === 'failed' && canEdit && notesEditable && (
-                  <button type="button" onClick={() => void retryUnsavedNotes(control.id)}
-                    className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
-                    Retry
-                  </button>
-                )}
-              </div>
-            )}
-            {(notesStatus === 'loading' || notesStatus === 'unavailable') && (
-              <p role="status" className="text-xs text-amber-300 px-1">
-                {notesStatus === 'loading'
-                  ? 'Loading implementation notes from the server…'
-                  : 'Implementation notes could not be loaded from the server. They are not kept in this browser, so editing is off until the server is reachable.'}
-              </p>
-            )}
-            <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-              <span>FAR 52.204-21 audit evidence reference</span>
-              <span className="font-mono">{notes.length} characters</span>
-            </div>
-            <OdpPanel control={control} notes={notes} canEdit={canEdit && notesEditable}tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
-            <CrosswalkPanel controlId={control.id} />
-          </div>
-
-          {/* Evidence Upload Drop-Zone with Clear Drop Indicators */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Paperclip className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Audit Evidence Drop-Zone ({evidenceCount} attached)</span>
-              </span>
-              <span className="text-xs text-slate-400">SHA-256 Validated • Local Vault</span>
-            </div>
-
-            {canEdit ? (
-              <div role="button" tabIndex={0} onKeyDown={activateOnKey} aria-label="Upload evidence files: drop files here or press Enter to browse"
-                onDragOver={handleDragOver}
-                onDragEnter={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                data-drag-over={isDraggingOver}
-                className={`dropzone-container relative transition-all duration-200 ${
-                  isDraggingOver
-                    ? 'border-cyan-400 bg-cyan-950/40 ring-2 ring-cyan-500/50 shadow-lg shadow-cyan-500/20 scale-[1.01]'
-                    : 'hover:border-cyan-500/50 hover:bg-slate-900/60'
-                }`}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileInputChange}
-                  multiple
-                  className="hidden"
-                />
-
-                <div className="flex flex-col items-center justify-center space-y-2">
-                  <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-                      isDraggingOver
-                        ? 'bg-cyan-500/25 text-cyan-300 scale-110 animate-bounce motion-reduce:animate-none'
-                        : 'bg-slate-800 text-cyan-400'
-                    }`}
-                  >
-                    <Upload className="w-5 h-5" />
-                  </div>
-
-                  <div>
-                    <p className="text-xs sm:text-sm font-bold text-white">
-                      {isUploading
-                        ? 'Hashing with SHA-256 & Encrypting into Local Vault...'
-                        : isDraggingOver
-                        ? 'Drop Files to Attach as Evidence'
-                        : 'Drag & Drop Evidence Files Here or Click to Browse'}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Supports screenshots, PDFs, configuration exports, and audit reports.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 text-center">
-                Read-only clearance: Evidence uploading disabled for viewer mode.
-              </div>
-            )}
-
-            {/* Attached Evidence Chips */}
-            {evidenceCount > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                {evidenceList.map((item) => {
-                  const isInherited = item.syncStatus === 'inherited' || (item.description && item.description.startsWith('[Inherited'));
-                  return (
-                    <div
-                      key={item.id}
-                      className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs ${
-                        isInherited ? 'bg-indigo-950/30 border-indigo-500/30' : 'bg-slate-900/90 border-slate-800'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Paperclip className={`w-3.5 h-3.5 shrink-0 ${isInherited ? 'text-indigo-400' : 'text-cyan-400'}`} />
-                        <div className="min-w-0">
-                          <p className="font-semibold text-white truncate text-xs">{item.name}</p>
-                          <div className="flex items-center gap-1 text-xs text-slate-400 font-mono">
-                            <span>{Math.round(item.fileSize / 1024)} KB</span>
-                            <span>•</span>
-                            {isInherited ? (
-                              <span className="text-amber-300 font-medium px-1 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 flex items-center gap-0.5">
-                                Cross-Framework Inherited
-                              </span>
-                            ) : (
-                              <span className="text-emerald-400 flex items-center gap-0.5">
-                                <HardDrive className="w-2.5 h-2.5" /> Local Vault
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {item.fileHash && (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          onClick={() => handleCopyHash(item.fileHash!)}
-                          title="Copy SHA-256"
-                          className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-750 text-xs font-mono text-slate-300 flex items-center gap-1 border border-slate-700 shrink-0"
-                        >
-                          {copiedHash === item.fileHash ? (
-                            <Check className="w-2.5 h-2.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-2.5 h-2.5" />
-                          )}
-                          <span>{item.fileHash.slice(0, 6)}...</span>
-                        </button>
-                        {copyFailedKey === item.fileHash && <span aria-hidden="true" className="text-xs text-amber-300">Not copied</span>}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
+          )}
         </div>
-      )}
+
+        {/* Right: the one action, open the control */}
+        <div className="flex items-center w-full lg:w-auto justify-end pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-800/80 shrink-0">
+          <button
+            ref={openButtonRef}
+            type="button"
+            onClick={handleOpenDetail}
+            aria-label={`Open ${cmmcDisplayId(control.id, activeFramework)}`}
+            aria-describedby={notesNotSavedReason ? notesNotSavedId : undefined}
+            className="btn-primary text-xs px-3.5 py-2"
+          >
+            <span>Open</span>
+            <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+
+      </div>
 
     </div>
   );

@@ -448,13 +448,14 @@ async function runTests() {
       'src/views/PolicyLibraryView.tsx',
       'src/components/stigs/StigAutomationModal.tsx',
       'src/components/audit/AuditTrailViewer.tsx',
-      'src/components/dashboard/ControlCard.tsx',
       'src/components/matrix/InspectDocumentModal.tsx',
     ];
     for (const rel of reportsFailure) {
       const s = srcNorm(rel);
       assert(s.includes('copyText(') && s.includes('COPY_FAILED_MESSAGE') && !s.includes('copyToClipboard') && !s.includes('Clipboard write failed'), `S189-1: ${rel} copies through copyText and reports a refused copy`);
     }
+    const card189 = srcNorm('src/components/dashboard/ControlCard.tsx');
+    assert(!card189.includes('copyText(') && !card189.includes('copyToClipboard') && !card189.includes('COPY_FAILED_MESSAGE'), 'S189-1: the control card copies nothing (hashes are copied in the inspect modal, #276)');
     const financeNorm = srcNorm('src/components/admin/FinanceProvisioningLog.tsx');
     assert(financeNorm.includes('copyText(') && !financeNorm.includes('copyToClipboard') && !financeNorm.includes('Clipboard write failed'), 'S189-1: the finance log copies through copyText and reports a refused copy');
     for (const rel of ['src/components/settings/InviteStaffModal.tsx', 'src/components/admin/NewTenantModal.tsx', 'src/pages/SetupPage.tsx', 'src/components/auth/MfaEnrolmentPanel.tsx']) {

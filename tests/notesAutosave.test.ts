@@ -150,8 +150,13 @@ function sources() {
   const body = slice(assess, 'const updateControlNotes = useCallback', '// Action: Update Control Role');
   assert(body.length > 0 && body.includes('notesAutosaveRef.current.push(') && !body.includes('saveControl('), 'S51-11 updateControlNotes pushes a draft and never saves per keystroke');
   assert(assess.includes('flushAll()') && assess.includes('visibilitychange') && assess.includes('beforeunload') && /notesAutosaveRef\.current\.has\(key\) \|\| saveChainRef\.current\.busy\(key\) \|\| staleNotesRef\.current\.has\(key\)/.test(assess), 'S51-11 the context flushes on leave / hide, warns on unload, and the live merge keeps notes being saved');
-  const editors = ['src/components/dashboard/ControlCard.tsx', 'src/components/matrix/InspectDocumentModal.tsx', 'src/components/matrix/SspStatementEditor.tsx'];
+  const editors = ['src/components/matrix/InspectDocumentModal.tsx', 'src/components/matrix/SspStatementEditor.tsx'];
   assert(editors.every((f) => read(f).includes('onBlur=')), 'S51-11 every notes editor flushes on blur');
+  const card = read('src/components/dashboard/ControlCard.tsx');
+  assert(!card.includes('<textarea') && !card.includes('<select') && !card.includes('updateControlNotes') && !card.includes('updateControlStatus') && !card.includes('applyStarterTemplate') && !card.includes('uploadEvidence') && !card.includes('<OdpPanel'), 'S276-1 the control card edits nothing: no notes box, status select, starter template, upload or parameters');
+  assert(card.includes('<span>Open</span>') && card.includes('aria-label={`Open ${cmmcDisplayId(control.id, activeFramework)}`}') && !card.includes('Inspect & Document') && !card.includes('Quick Edit') && !card.includes('<h3 onClick') && !/<h3\s[^>]*onClick/.test(card), 'S276-2 the card has one Open button named after the control; no Quick Edit, no clickable title');
+  assert(card.includes('NOTES_NOT_SAVED_DETAIL[notesNotSavedReason]') && card.includes("notesNotSavedReason === 'failed' && canEdit && notesEditable") && card.includes('retryUnsavedNotes(control.id)'), 'S276-3 the card still shows the Not saved marker, with Retry only for a failed save that can be edited');
+  assert(card.includes('{renderStatusBadge()}') && card.includes("'Narrative not loaded'"), 'S276-4 the card shows the status badge and says when the narrative is not loaded');
   const module = read('src/data/notesAutosave.ts');
   assert(!/localStorage|sessionStorage|indexedDB|console\.|recordAuditEvent|fetch\(/.test(module), 'S51-11 notesAutosave.ts touches no storage, console, ledger or network');
 
