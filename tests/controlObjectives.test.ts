@@ -1,7 +1,8 @@
 import './testEnv';
 import { createHash } from 'node:crypto';
 import { server } from '../server/index';
-import { readObjectives } from '../server/controlObjectives';
+import { __objectiveCatalogRevForTests, __seedLegacyObjectivesForTests, readObjectives } from '../server/controlObjectives';
+import type { ObjectiveRecord, ObjectiveStatus } from '../src/types/controlObjectives';
 
 /**
  * Assessment objectives over HTTP (800-171A / 800-53A objective records: status, narrative, evidence links), program-scoped: the read and
@@ -220,6 +221,77 @@ async function run() {
   assert(o6r.status === 400 && o6r.body?.error === 'expectedUpdatedAt must be a timestamp or null' && find(await list(P15), OBJ)?.narrative === 'N2', 'S70-O6 a value that is not a timestamp or null -> 400; nothing is written', o6r.body);
   const o7r = await call('PUT', '/objectives', owner, T, { objectives: [{ objectiveId: OBJ, controlId: CTRL, narrative: 'N7', expectedUpdatedAt: '2000-01-01T00:00:00.000Z' }] }, P15);
   assert(o7r.status === 200 && o7r.body?.changed === 1 && find(await list(P15), OBJ)?.narrative === 'N7', 'S70-O7 the bulk PUT ignores expectedUpdatedAt (no version check)', o7r.body);
+
+  console.log('\n--- 16: CMMC Assessment Guide catalog update (answers kept, re-flagged, never deleted) ---');
+  const M = (await newProgram(T, 'Obj Catalog M')).id;
+  const MS = { tenantId: T, programId: M };
+  const legacy = (objectiveId: string, status: ObjectiveStatus, narrative = '', linkedEvidenceIds: string[] = []): ObjectiveRecord => ({
+    objectiveId,
+    controlId: objectiveId.slice(0, objectiveId.indexOf('[')),
+    status,
+    narrative,
+    linkedEvidenceIds,
+    updatedBy: 'Old User',
+    updatedAt: null,
+  });
+  __seedLegacyObjectivesForTests(MS, [
+    legacy('CA.L2-3.12.4[a]', 'MET', 'N1', ['ev_1']),
+    legacy('AC.L1-3.1.2[a]', 'MET'),
+    legacy('AC.L1-3.1.2[b]', 'MET'),
+    legacy('AC.L2-3.1.8[c]', 'NOT_MET'),
+  ]);
+  await call('PUT', '/controls/CA.L2-3.12.4', owner, T, { status: 'MET' }, M);
+  await call('PUT', '/controls/AC.L2-3.1.5', owner, T, { status: 'MET' }, M);
+  assert(__objectiveCatalogRevForTests(MS, 'CA.L2-3.12.4[a]') === null, 'C0 the seeded rows are legacy (no catalog revision) before the first read');
+  const controlsBefore = ((await call('GET', '/controls', owner, T, undefined, M)).body?.controls ?? []) as Json[]; // reads the controls first: this migrates the program
+  const cList = await list(M);
+  const caA = find(cList, 'CA.L2-3.12.4[a]');
+  assert(caA?.status === 'IN_PROGRESS' && caA?.narrative === 'N1' && JSON.stringify(caA?.linkedEvidenceIds) === JSON.stringify(['ev_1']), 'C1 a Met objective whose meaning changed (3.12.4[a]) becomes IN_PROGRESS; its narrative and evidence links are untouched', caA);
+  assert(find(cList, 'AC.L1-3.1.2[a]')?.status === 'MET' && find(cList, 'AC.L1-3.1.2[b]')?.status === 'IN_PROGRESS', 'C2 the L1-named 3.1.2[a] keeps MET (same words in the guide), [b] (different words) becomes IN_PROGRESS', [find(cList, 'AC.L1-3.1.2[a]'), find(cList, 'AC.L1-3.1.2[b]')]);
+  assert(find(cList, 'AC.L2-3.1.8[c]')?.status === 'NOT_MET', 'C3 a Not met answer is kept even though its letter no longer exists');
+  assert(cList.body?.objectives.length === 4 && Object.keys(find(cList, 'CA.L2-3.12.4[a]') ?? {}).sort().join() === 'controlId,linkedEvidenceIds,narrative,objectiveId,status,updatedAt,updatedBy', 'C3 no answer is deleted, and the response shape has no catalog revision field', Object.keys(caA ?? {}));
+  const caEvents = await history(M, 'CA.L2-3.12.4[a]');
+  assert(
+    caEvents.length === 1 && caEvents[0].source === 'catalog-update' && caEvents[0].oldStatus === 'MET' && caEvents[0].newStatus === 'IN_PROGRESS' && caEvents[0].narrativeChanged === false &&
+      caEvents[0].evidenceChanged === false && caEvents[0].newNarrativeSha256 === sha('N1') && caEvents[0].oldNarrativeSha256 === sha('N1') && !JSON.stringify(caEvents).includes('N1'),
+    'C4 the history: one catalog-update event, MET -> IN_PROGRESS, narrativeChanged false, the narrative only as a hash and length',
+    caEvents
+  );
+  assert((await history(M, 'AC.L1-3.1.2[a]')).length === 0 && (await history(M, 'AC.L2-3.1.8[c]')).length === 0, 'C4 an answer that does not change records no event');
+  const caControl = controlsBefore.find((c) => c.id === 'CA.L2-3.12.4');
+  const acControl = controlsBefore.find((c) => c.id === 'AC.L2-3.1.5');
+  const ctrlEvents = ((await call('GET', '/controls/CA.L2-3.12.4/history', owner, T, undefined, M)).body?.events ?? []) as Json[];
+  assert(caControl?.status === 'IN_PROGRESS' && acControl?.status === 'MET', 'C5 a Met control with objective answers is re-rolled up (IN_PROGRESS); a Met control with none stays MET', [caControl?.status, acControl?.status]);
+  assert(ctrlEvents[0]?.source === 'catalog-update' && ctrlEvents[0].oldStatus === 'MET' && ctrlEvents[0].newStatus === 'IN_PROGRESS' && ctrlEvents[0].notesChanged === false, 'C5 the control history records the catalog-update', ctrlEvents[0]);
+  assert(__objectiveCatalogRevForTests(MS, 'CA.L2-3.12.4[a]') === 'cmmc-ag-2.13' && __objectiveCatalogRevForTests(MS, 'AC.L2-3.1.8[c]') === 'cmmc-ag-2.13', 'C7 the migrated rows (changed or not) are stamped with the current revision');
+
+  const put6 = await put(M, 'CA.L2-3.12.4[a]', { controlId: 'CA.L2-3.12.4', status: 'MET' });
+  await list(M);
+  await call('GET', '/controls', owner, T, undefined, M);
+  const after6 = find(await list(M), 'CA.L2-3.12.4[a]');
+  assert(put6.status === 200 && after6?.status === 'MET' && (await history(M, 'CA.L2-3.12.4[a]')).length === 2, 'C6 the answer re-confirmed after the update stays MET through later reads, and the history grew by exactly one event', [put6.body, after6, (await history(M, 'CA.L2-3.12.4[a]')).length]);
+  const putNew = await put(M, 'AC.L2-3.1.4[a]', { controlId: 'AC.L2-3.1.4', status: 'MET' });
+  assert(putNew.status === 200 && __objectiveCatalogRevForTests(MS, 'AC.L2-3.1.4[a]') === 'cmmc-ag-2.13', 'C7 a write stamps the current revision', putNew.body);
+  assert(find(await list(M), 'AC.L2-3.1.4[a]')?.status === 'MET' && (await history(M, 'AC.L2-3.1.4[a]')).length === 1, 'C7 and a row written after the update is not downgraded by later reads');
+
+  const B8 = (await newProgram(T, 'Obj Catalog B')).id;
+  const B8S = { tenantId: T, programId: B8 };
+  __seedLegacyObjectivesForTests(B8S, [legacy('CA.L2-3.12.4[a]', 'MET', 'B1')]);
+  assert((await readObjectives(B8S)).find((o) => o.objectiveId === 'CA.L2-3.12.4[a]')?.status === 'MET' && __objectiveCatalogRevForTests(B8S, 'CA.L2-3.12.4[a]') === null, 'C8 another program\'s legacy rows are untouched until that program is read');
+  const B8Archived = await call('POST', `/tenants/${T}/programs/${B8}/archive`, owner, T);
+  const archivedRead = await list(B8);
+  assert(B8Archived.status < 300 && find(archivedRead, 'CA.L2-3.12.4[a]')?.status === 'MET' && __objectiveCatalogRevForTests(B8S, 'CA.L2-3.12.4[a]') === null, 'C9 an archived program is skipped: its old answers stay as they were', archivedRead.body);
+  const NS = { tenantId: T, programId: NIST };
+  __seedLegacyObjectivesForTests(NS, [legacy('AC-2[a01]', 'MET')]);
+  assert(find(await list(NIST), 'AC-2[a01]')?.status === 'MET', 'C10 a non-CMMC program is never touched');
+  const twice = await Promise.all([list(M), list(M)]);
+  assert(twice.every((r) => r.status === 200) && (await history(M, 'CA.L2-3.12.4[a]')).length === 2, 'C11 two concurrent reads of a migrated program change nothing');
+
+  const P12 = (await newProgram(T, 'Obj Catalog Race')).id;
+  const P12S = { tenantId: T, programId: P12 };
+  __seedLegacyObjectivesForTests(P12S, [legacy('CA.L2-3.12.4[a]', 'MET', 'R1')]);
+  await Promise.all([list(P12), call('GET', '/controls', owner, T, undefined, P12), list(P12)]);
+  assert((await history(P12, 'CA.L2-3.12.4[a]')).length === 1 && find(await list(P12), 'CA.L2-3.12.4[a]')?.status === 'IN_PROGRESS', 'C12 three concurrent first reads migrate once: exactly one event');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

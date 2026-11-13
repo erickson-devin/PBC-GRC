@@ -9,6 +9,7 @@ import {
   StaleWriteError,
   writeControlAssessment,
 } from '../controlAssessments';
+import { ensureObjectiveCatalogCurrent } from '../objectiveCatalogMigration';
 import { ensureControlInFrameworkPolicy, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
 import {
@@ -213,7 +214,9 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     }
     const targetControlIds = frameworkControls.map(c => c.id);
 
-    // 2. Query the active program's assessment records from PostgreSQL (guarded by RLS; a legacy row with no program counts as its own until backfilled)
+    // 2. Query the active program's assessment records from PostgreSQL (guarded by RLS; a legacy row with no program counts as its own until backfilled).
+    // A CMMC program's stored objective answers are brought up to the current objective catalog first, so the control statuses read here are already rolled up.
+    await ensureObjectiveCatalogCurrent(scope, program?.frameworkId, program);
     const result = await queryWithProgram(
       scope,
       'SELECT * FROM control_assessments WHERE tenant_id = $1 AND (program_id = $2 OR program_id IS NULL) ORDER BY control_id ASC',
