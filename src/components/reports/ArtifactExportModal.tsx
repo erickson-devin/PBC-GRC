@@ -913,7 +913,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
           {/* TAB 3: POA&M (#278 grouped and filtered on screen; #274 vulnerability items). Exports always list every entry. */}
           {activeTab === 'poam' && (
             <PoamWorkspace key={activeProgram?.id ?? 'no-program'} entries={compiledDoc.poamEntries ?? []} framework={activeFramework}
-              frameworkControls={frameworkControls} vm={vmPoam} vmEntries={vmEntries} programs={programs} onExportCsv={handleExportPoamCsv} />
+              frameworkControls={frameworkControls} vm={vmPoam} vmEntries={vmEntries} programs={programs} onExportCsv={handleExportPoamCsv}
+              onNavigateAway={embedded ? undefined : onClose} />
           )}
 
           {/* TAB 4: SPRS / eMASS SUBMISSION ENGINE */}
