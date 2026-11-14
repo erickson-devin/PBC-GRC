@@ -166,8 +166,8 @@ async function run() {
   const snapFile = (tenant: string, id: string, ext: string) => path.join(VM_TEST_VAULT, 'tenants', tenant, 'vm', 'snapshots', `${id}.${ext}`);
 
   console.log('\n--- A01-A06: a Level 1 tenant ---');
-  const put1 = await call('PUT', '/controls/SI.L1-3.14.1', owner1, L1, { status: 'MET', implementationNotes: 'Human text before.' });
-  assert(put1.status === 200, 'A01 the owner sets SI.L1-3.14.1 to MET with human notes (200)', put1.body);
+  const put1 = await call('PUT', '/controls/SI.L1-3.14.1', owner1, L1, { status: 'NOT_MET', implementationNotes: 'Human text before.' });
+  assert(put1.status === 200, 'A01 the owner sets SI.L1-3.14.1 to NOT_MET with human notes (200)', put1.body);
 
   const post1 = await snapshotPost(L1, owner1);
   const snap1 = (post1.body?.snapshot ?? {}) as Json;
@@ -206,7 +206,7 @@ async function run() {
 
   const si1 = await controlOf(L1, owner1, 'CMMC_L1', 'SI.L1-3.14.1');
   const notes1 = String(si1?.implementationNotes);
-  assert(si1?.status === 'MET', 'A06 the human status MET is untouched', si1?.status);
+  assert(si1?.status === 'NOT_MET', 'A06 the human status NOT_MET is untouched', si1?.status);
   assert(notes1.startsWith(`Human text before.\n\n${VM_NOTES_BEGIN}`) && count(notes1, VM_NOTES_BEGIN) === 1 && count(notes1, VM_NOTES_END) === 1, 'A06 the notes keep the human text, then one delimited block', notes1);
   assert((snap1.evidenceIds as string[]).every((e) => notes1.includes(e)), 'A06 the block names both evidence ids');
 
@@ -215,7 +215,7 @@ async function run() {
   assert(again.status === 429 && again.body?.error === 'vm_snapshot_too_soon' && typeof again.body?.retryAfterSeconds === 'number' && again.body.retryAfterSeconds > 0, 'A07 an immediate second POST -> 429 vm_snapshot_too_soon with retryAfterSeconds', again.body);
 
   __resetVmSnapshotLimiterForTests();
-  const put2 = await call('PUT', '/controls/SI.L1-3.14.1', owner1, L1, { status: 'MET', implementationNotes: `${notes1}\n\nHuman text after.` });
+  const put2 = await call('PUT', '/controls/SI.L1-3.14.1', owner1, L1, { status: 'NOT_MET', implementationNotes: `${notes1}\n\nHuman text after.` });
   const post2 = await snapshotPost(L1, owner1);
   const snap2 = (post2.body?.snapshot ?? {}) as Json;
   assert(put2.status === 200 && post2.status === 201 && SNAPSHOT_ID.test(snap2.id) && snap2.id !== snap1.id, 'A08 after the limit is reset and the human adds text, a second snapshot -> 201 with a new id', [put2.status, post2.body]);
@@ -224,7 +224,7 @@ async function run() {
   assert(count(notes2, VM_NOTES_BEGIN) === 1 && count(notes2, VM_NOTES_END) === 1, 'A08 the notes still hold exactly one begin and one end marker', notes2);
   assert(notes2.startsWith('Human text before.') && notes2.includes('Human text after.'), 'A08 the human text before and after the block survives');
   assert((snap2.evidenceIds as string[]).every((e) => notes2.includes(e)) && !(snap1.evidenceIds as string[]).some((e) => notes2.includes(e)), 'A08 the block holds the new evidence ids and none of the old ones');
-  assert(si2?.status === 'MET', 'A08 the status is still MET', si2?.status);
+  assert(si2?.status === 'NOT_MET', 'A08 the status is still NOT_MET', si2?.status);
   assert((await snapshotRowsOf(L1, owner1)).length === 16, 'A08 sixteen snapshot rows in total after two snapshots', (await snapshotRowsOf(L1, owner1)).length);
 
   const live1 = await readControlAssessments({ tenantId: L1, programId: l1Program.id });

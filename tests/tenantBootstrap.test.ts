@@ -73,7 +73,7 @@ async function run() {
   const members = await call('GET', `/tenants/${tenantId}/members`, founder, tenantId);
   assert(members.status === 200 && members.body?.totalCount === 1 && members.body?.members?.[0]?.role === 'TENANT_OWNER', 'GET members: exactly one member, the owner', members);
   assert((await call('GET', '/controls', founder, tenantId)).status === 200, 'founder can read the new tenant');
-  assert((await call('PUT', '/controls/AC.L1-3.1.1', founder, tenantId, { status: 'MET', implementationNotes: 'bootstrap' })).status === 200, 'founder (TENANT_OWNER) can write');
+  assert((await call('PUT', '/controls/AC.L1-3.1.1', founder, tenantId, { status: 'IN_PROGRESS', implementationNotes: 'bootstrap' })).status === 200, 'founder (TENANT_OWNER) can write');
   const invite = await call('POST', `/tenants/${tenantId}/members`, founder, tenantId, { userId: 'u_analyst', email: 'analyst@acme-defense.com', role: 'ASSESSOR' });
   assert(invite.status === 201, 'the owner can add the next member immediately', invite);
 

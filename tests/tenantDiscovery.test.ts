@@ -95,7 +95,7 @@ async function run() {
   for (const t of (await mine(bob)).tenants) {
     const read = await call('GET', '/controls', bob, t.id);
     assert(read.status === 200, `bob can read every tenant he is listed in (${t.name})`, read.status);
-    const write = await call('PUT', '/controls/AC.L1-3.1.1', bob, t.id, { status: 'MET', implementationNotes: 'x' });
+    const write = await call('PUT', '/controls/AC.L1-3.1.1', bob, t.id, { status: 'IN_PROGRESS', implementationNotes: 'x' });
     assert((write.status === 200) === (t.role === 'TENANT_OWNER'), `listed role ${t.role} == enforced write access (${t.name}: ${write.status})`);
   }
   assert((await call('GET', '/controls', bob, t2)).status === 403, 'and a tenant that is not listed is not accessible (403)');
