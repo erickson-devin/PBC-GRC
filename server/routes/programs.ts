@@ -10,6 +10,7 @@ import {
   getProgramMetrics,
   listPrograms,
   listProgramEvents,
+  resolveVmTargetProgram,
   setTenantDefaultProgram,
   setVmTargetProgram,
   unarchiveProgram,
@@ -22,6 +23,9 @@ import { getUserDefaultProgramId } from '../userProgramDefaults';
 import { requireWriteRole } from '../middleware/roleGuard';
 import { ensureActiveTenant } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
+import { countOpenPoamItems, countOverdueWithoutItem } from '../vm/findingsStore';
+import { isPoamAutocreateEnabled } from '../vm/transitions';
+import type { VmTargetPreview } from '../../src/types/vm';
 
 /**
  * The programs of a tenant (authorization boundaries): /api/v1/tenants/:tenantId/programs. Mounted by routes/tenants.ts after
@@ -64,6 +68,9 @@ function fail(res: Response, err: unknown, what: string): void {
 }
 
 const idOf = (req: Request): string => String(req.params.id);
+
+/** The frameworks whose programs can be the VM target (the same list as VM_TARGET_FRAMEWORKS in ../programs, which does not export it). */
+const VM_TARGET_FRAMEWORK_IDS: readonly string[] = ['CMMC_L1', 'CMMC_L2'];
 
 /**
  * GET /api/v1/tenants/:tenantId/programs[?includeArchived=true]
@@ -216,6 +223,37 @@ router.put('/:id/vm-target', async (req: Request, res: Response): Promise<void> 
     res.json(result);
   } catch (err: unknown) {
     fail(res, err, 'set the VM target');
+  }
+});
+
+/**
+ * GET /api/v1/tenants/:tenantId/programs/:id/vm-target/preview (every role): what making the program the VM target would mean, nothing is
+ * changed. 200 VmTargetPreview { programId, isTarget, eligible, ineligibleReason, currentTargetId, currentTargetExplicit, openPoamInCurrent,
+ * overdueWithoutItem, autocreateEnabled }. overdueWithoutItem is about how many open findings are past their deadline with no POA&M item in
+ * the program (deadlines can pass before the next run). 404 program_not_found for an unknown id or another tenant's program.
+ */
+router.get('/:id/vm-target/preview', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  try {
+    const program = await getProgram(tenantId, idOf(req));
+    if (!program) throw new ProgramError('program_not_found', 'Program not found');
+    const current = await resolveVmTargetProgram(tenantId);
+    const ineligibleReason: VmTargetPreview['ineligibleReason'] = program.archivedAt ? 'program_archived' : !VM_TARGET_FRAMEWORK_IDS.includes(program.frameworkId) ? 'invalid_vm_target' : null;
+    const preview: VmTargetPreview = {
+      programId: program.id,
+      isTarget: current?.program.id === program.id,
+      eligible: ineligibleReason === null,
+      ineligibleReason,
+      currentTargetId: current?.program.id ?? null,
+      currentTargetExplicit: current?.explicit ?? false,
+      openPoamInCurrent: current ? await countOpenPoamItems({ tenantId, programId: current.program.id }) : 0,
+      overdueWithoutItem: await countOverdueWithoutItem({ tenantId, programId: program.id }, new Date().toISOString()),
+      autocreateEnabled: isPoamAutocreateEnabled(),
+    };
+    res.json(preview);
+  } catch (err: unknown) {
+    fail(res, err, 'preview the VM target');
   }
 });
 

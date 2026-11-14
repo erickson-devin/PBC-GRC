@@ -26,8 +26,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets and program_ssp_metadata are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets, program_ssp_metadata and vm_poam_item_events are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata' && t !== 'vm_poam_item_events');
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -1302,6 +1302,38 @@ async function verifyProgramIsolation() {
     const peNotNull = await pool.query("SELECT attnotnull FROM pg_attribute WHERE attrelid = 'program_events'::regclass AND attname = 'program_id' AND NOT attisdropped");
     check(peNotNull.rows.length === 1 && peNotNull.rows[0].attnotnull === true, '8i. program_events: program_id is NOT NULL (attnotnull)', JSON.stringify(peNotNull.rows));
 
+    // 8x. vulnerability POA&M item history (#295, #297): vm_poam_item_events isolation, its CHECKs, no foreign key (same pattern as 8i)
+    const insertPoamEvent = "INSERT INTO vm_poam_item_events (tenant_id, program_id, item_id, source, actor, actor_user_id, old_status, new_status) VALUES ($1, $2, 'rls_verify_item', $3, $4, $5, 'OPEN', $6) RETURNING id";
+    const poamEvArgs = (program: string | null, source = 'human', actor = 'rls_verify_actor', user: string | null = 'rls_verify_user', status = 'COMPLETED') => [TENANT_X, program, source, actor, user, status];
+    const pv1 = await queryWithProgram(scopeA, insertPoamEvent, poamEvArgs(programA));
+    check(pv1.rows.length === 1, '8x. vm_poam_item_events: under program A the event is inserted');
+    const pvBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM vm_poam_item_events WHERE program_id = $1', [programA]);
+    const pvBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM vm_poam_item_events WHERE tenant_id = $1', [TENANT_X]);
+    check(pvBSeesA.rows.length === 0 && pvBSeesAny.rows.length === 0, "8x. vm_poam_item_events: program B cannot read program A's event (0 rows, by program or by tenant)", 'saw ' + pvBSeesA.rows.length + ' / ' + pvBSeesAny.rows.length);
+    const pvBUpdates = await queryWithProgram(scopeB, "UPDATE vm_poam_item_events SET actor = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const pvBDeletes = await queryWithProgram(scopeB, 'DELETE FROM vm_poam_item_events WHERE program_id = $1', [programA]);
+    check((pvBUpdates.rowCount ?? 0) === 0 && (pvBDeletes.rowCount ?? 0) === 0, "8x. vm_poam_item_events: program B can neither update nor delete program A's event (0 rows)", 'updated ' + pvBUpdates.rowCount + ', deleted ' + pvBDeletes.rowCount);
+    const pvBInserts = await rejectsIn(scopeB, insertPoamEvent, poamEvArgs(programA), { code: '42501' });
+    check(pvBInserts.ok, '8x. vm_poam_item_events: program B cannot insert an event into program A (WITH CHECK, 42501)', pvBInserts.detail);
+    const pvNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_poam_item_events WHERE tenant_id = $1', [TENANT_X]);
+    check(pvNoCtx.rows.length === 0, '8x. vm_poam_item_events: a tenant context with no program context sees zero rows', 'saw ' + pvNoCtx.rows.length);
+    let pvNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertPoamEvent, poamEvArgs(programA));
+    } catch (err) {
+      pvNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(pvNoCtxInsert === '42501', '8x. vm_poam_item_events: no program context cannot insert an event (42501)', pvNoCtxInsert);
+    const pvBadStatus = await rejectsIn(scopeA, insertPoamEvent, poamEvArgs(programA, 'human', 'rls_verify_actor', 'rls_verify_user', 'BOGUS'), { code: '23514', constraint: 'vm_poam_item_events_status_check' });
+    check(pvBadStatus.ok, '8x. vm_poam_item_events: an unknown status is refused (23514, vm_poam_item_events_status_check)', pvBadStatus.detail);
+    const pvBadSystem = await rejectsIn(scopeA, insertPoamEvent, poamEvArgs(programA, 'system', 'rls_verify_actor', null), { code: '23514', constraint: 'vm_poam_item_events_system_check' });
+    check(pvBadSystem.ok, '8x. vm_poam_item_events: a system event must carry the worker as actor and no user id (23514, vm_poam_item_events_system_check)', pvBadSystem.detail);
+    const pvFk = await pool.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'vm_poam_item_events'::regclass AND contype = 'f'");
+    check(pvFk.rows[0]?.n === 0, '8x. vm_poam_item_events: no foreign key (the history outlives the item and the program)', JSON.stringify(pvFk.rows[0]));
+    const pvNotNull = await pool.query("SELECT attnotnull FROM pg_attribute WHERE attrelid = 'vm_poam_item_events'::regclass AND attname = 'program_id' AND NOT attisdropped");
+    check(pvNotNull.rows.length === 1 && pvNotNull.rows[0].attnotnull === true, '8x. vm_poam_item_events: program_id is NOT NULL (attnotnull)', JSON.stringify(pvNotNull.rows));
+    await queryWithProgram(scopeA, "DELETE FROM vm_poam_item_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+
     const insertScoped = "INSERT INTO programs (tenant_id, name, framework_id, baseline, scoping) VALUES ($1, $2, 'NIST_800_53_REV5', 'MODERATE', $3::jsonb)";
     const scopingBogus = await privacyCode(insertScoped, [TENANT_X, 'rls_verify_p8_scope_bogus', '{"bogus":true}']);
     check(scopingBogus === '23514 programs_scoping_check', '8i. programs: an unknown scoping key is refused (23514, programs_scoping_check)', scopingBogus);
@@ -1528,6 +1560,7 @@ async function verifyProgramIsolation() {
     for (const id of [programA, programB]) {
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM program_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM vm_poam_item_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
     }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the rows cascade with their program

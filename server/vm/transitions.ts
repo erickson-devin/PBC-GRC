@@ -1,5 +1,5 @@
 import { VM_MAX_AFFECTED_PACKAGES } from '../../src/types/vm';
-import type { VmFinding, VmPoamStatus, VmRun, VmSeverity } from '../../src/types/vm';
+import type { VmFinding, VmFindingStatus, VmPoamStatus, VmRun, VmSeverity } from '../../src/types/vm';
 import type { NormalizedHost } from './adapters/wazuh';
 
 /**
@@ -372,6 +372,43 @@ export function planPoamItems(candidates: PoamCandidate[], linked: LinkedPoamIte
     });
   }
   return drafts;
+}
+
+/** A worker-created OPEN / IN_PROGRESS POA&M item with the finding it is about, as the completion sweep reads it. */
+export interface OpenAutoPoamItem {
+  id: string;
+  status: VmPoamStatus;
+  createdBy: string;
+  createdAt: string;
+  /** The finding's first_seen_at (episode) the item was created for; null for an item created before #275. */
+  findingFirstSeenAt: string | null;
+  /** False once a person reopened the item: the worker leaves it alone from then on. */
+  autoComplete: boolean;
+  scheduledCompletion: string | null;
+  /** null when the finding was deleted with its asset. */
+  finding: { status: VmFindingStatus; firstSeenAt: string } | null;
+}
+
+/**
+ * The ids of the items a later scan confirmed fixed (#295). An item completes only when the worker created it, it is still OPEN or
+ * IN_PROGRESS, no person reopened it (autoComplete), its finding still exists and either the finding is RESOLVED in the item's own
+ * episode, or the finding has moved on to a later episode (an earlier episode can only have ended by a machine RESOLVED). A finding a
+ * person decided (RISK_ACCEPTED, FALSE_POSITIVE) never completes an item. The episode rule is the planner's (planPoamItems).
+ */
+export function planPoamCompletions(items: OpenAutoPoamItem[]): string[] {
+  const out: string[] = [];
+  for (const item of items) {
+    if (item.createdBy !== VM_WORKER_ACTOR || !item.autoComplete) continue;
+    if (item.status !== 'OPEN' && item.status !== 'IN_PROGRESS') continue;
+    const f = item.finding;
+    if (!f || (f.status !== 'RESOLVED' && f.status !== 'OPEN')) continue;
+    const firstSeen = Date.parse(f.firstSeenAt);
+    const episode = item.findingFirstSeenAt !== null ? Date.parse(item.findingFirstSeenAt) : null;
+    const sameEpisode = episode !== null ? episode === firstSeen : Date.parse(item.createdAt) >= firstSeen; // legacy item: no recorded episode
+    const earlierEpisode = episode !== null ? episode < firstSeen : Date.parse(item.createdAt) < firstSeen;
+    if ((f.status === 'RESOLVED' && sameEpisode) || earlierEpisode) out.push(item.id);
+  }
+  return out;
 }
 
 /** Runs a restart left behind: RECEIVED or NORMALIZING for longer than staleAfterMs and not being processed now. Oldest first. */
