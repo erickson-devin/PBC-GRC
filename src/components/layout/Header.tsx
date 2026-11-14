@@ -15,6 +15,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
 import { getFrameworkTitle } from '../../data/frameworks';
+import { importResultMessage } from '../../data/cmmcGuide/controlStatusView';
 import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { TenantSwitcher } from './TenantSwitcher';
 import { ProgramSwitcher } from './ProgramSwitcher';
@@ -32,6 +33,7 @@ export const Header: React.FC<HeaderProps> = () => {
     resetAssessment,
     exportAssessmentJSON,
     importAssessmentJSON,
+    importControlsLowered,
     setActiveTab,
     openExportModal,
   } = useAssessment();
@@ -56,7 +58,7 @@ export const Header: React.FC<HeaderProps> = () => {
     if (file) {
       const success = await importAssessmentJSON(file);
       if (success) {
-        alert(`Assessment data successfully imported for ${currentTenant.name}!`);
+        alert(importResultMessage(currentTenant.name, importControlsLowered()));
       }
       e.target.value = '';
     }

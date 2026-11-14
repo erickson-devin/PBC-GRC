@@ -4,6 +4,7 @@
  * renders them as text nodes. Asset ids come from the server; names come from the asset inventory. No storage, no console.
  */
 import type { ControlStatus } from '../../types/cmmc';
+import { statusDisplayLabel } from '../statusLabels';
 import type { VmConfigResult, VmConfigScan, VmConfigSuggestion, VmConfigSuggestionValue } from '../../types/vm';
 
 export const EXPORTER_XCCDF_COMMAND = 'pbc-vm-exporter --source xccdf --input <file>';
@@ -31,19 +32,18 @@ export const CONFIG_RESULTS_COPY = {
 } as const;
 
 /** How a person's Apply ended (AssessmentContext.decideControlStatus). */
-export type ControlDecisionOutcome = 'saved' | 'stale' | 'archived' | 'failed' | 'unreachable' | 'read_only' | 'not_loaded';
+export type ControlDecisionOutcome = 'saved' | 'stale' | 'archived' | 'failed' | 'unreachable' | 'read_only' | 'not_loaded' | 'objectives_not_met';
 /** Why a row offers no Apply (null: it does). Checked in this order. */
 export type ApplyBlock = 'review' | 'matches' | 'read_only' | 'archived' | 'not_loaded';
 
 export const UNKNOWN_ASSET = 'Unknown asset';
 
 export function statusLabel(s: ControlStatus): string {
-  return s.replace(/_/g, ' ');
+  return statusDisplayLabel(s);
 }
 
 export function suggestionLabel(v: VmConfigSuggestionValue): string {
-  if (v === 'MET') return 'Suggests MET';
-  if (v === 'NOT_MET') return 'Suggests NOT MET';
+  if (v === 'MET' || v === 'NOT_MET') return `Suggests ${statusDisplayLabel(v)}`;
   return 'Needs review';
 }
 
@@ -83,6 +83,7 @@ export function applyResultMessage(outcome: ControlDecisionOutcome, id: string, 
     case 'unreachable': return `The server could not be reached, so ${id} was not saved.`;
     case 'failed': return `${id} was not saved. Try again, or set the status in the control matrix.`;
     case 'read_only': return `${id} was not saved: only a Tenant Owner or MSP Admin can record a control status.`;
+    case 'objectives_not_met': return `${id} was not recorded as Met: its objectives are not all Met or Not applicable yet. Answer them in the control matrix, then apply again.`;
     default: return `${id} was not saved: the controls are not loaded from the server yet.`;
   }
 }
