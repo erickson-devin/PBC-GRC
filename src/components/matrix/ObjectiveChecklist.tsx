@@ -13,6 +13,7 @@ import {
   FileCheck,
   Sliders,
   RefreshCw,
+  Loader2,
   type LucideIcon,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -23,9 +24,19 @@ import { hasWrittenTemplate } from '../../data/cmmcGuide/objectives';
 import { cmmcGuideLetter, cmmcGuideObjectiveId } from '../../data/cmmcGuide/displayId';
 import { objectiveNotInChecklist, previousStatusBadge } from '../../data/cmmcGuide/catalogUpdateReview';
 import { planConfirmAll, confirmAllResultMessage, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
+import { statusDisplayLabel } from '../../data/statusLabels';
+import { objectiveSspBadge, objectiveNarrativesInSsp } from '../../data/cmmcGuide/sspStatementView';
+import { objectiveSaveView, objectiveSaveAnnouncement } from '../../data/objectiveSaveState';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
 import { unsavedObjectiveDrafts } from '../../services/unsavedText';
+
+const OBJECTIVE_STATUS_OPTIONS: { id: ObjectiveStatus; icon: LucideIcon; active: string; short?: string }[] = [
+  { id: 'MET', icon: CheckCircle2, active: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
+  { id: 'NOT_MET', icon: AlertTriangle, active: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
+  { id: 'IN_PROGRESS', icon: Clock, active: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
+  { id: 'NOT_APPLICABLE', icon: Ban, active: 'bg-slate-700 text-slate-200 border-slate-600', short: 'N/A' },
+];
 
 interface ObjectiveChecklistProps {
   controlId: string;
@@ -52,6 +63,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     setPreviewEvidence,
     notesEditable,
     serverObjectiveNarrative,
+    objectiveSaves,
   } = useAssessment();
 
   // Objective status, narratives and evidence links of a server-backed tenant live on the server: no editing until they are loaded
@@ -86,6 +98,21 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   const [bulkResult, setBulkResult] = useState<{ filled: number; skipped: number } | null>(null);
   const [showEvidenceSelectorForId, setShowEvidenceSelectorForId] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<ConfirmAllPlan | null>(null);
+
+  // Per-objective save line: announced politely (never moves focus); Retry hands focus to the line it replaces
+  const saveLineRefs = useRef(new Map<string, HTMLParagraphElement>());
+  const prevSavesRef = useRef(objectiveSaves);
+  const [saveAnnouncement, setSaveAnnouncement] = useState('');
+  useEffect(() => {
+    const text = objectiveSaveAnnouncement(
+      prevSavesRef.current,
+      objectiveSaves,
+      objectives.map((o) => ({ id: o.id, label: shownLetter(o.letter) })),
+      { serverBacked: Boolean(currentTenant.serverBacked) },
+    );
+    prevSavesRef.current = objectiveSaves;
+    if (text) setSaveAnnouncement(text);
+  }, [objectiveSaves]);
 
   // Opened on one objective (the objective update's list): scroll to it once, focus it, and mark it until the control changes
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
@@ -259,6 +286,15 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     }
   };
 
+  // Resends only what failed: the status attempted and the draft still in the box
+  const handleRetrySave = (obj: AssessmentObjective) => {
+    const e = objectiveSaves[obj.id];
+    if (!canEdit || e?.state !== 'failed') return;
+    if (e.status) updateObjectiveStatus(obj.id, e.status);
+    if (e.narrative && editingNarratives[obj.id] !== undefined) updateObjectiveNarrative(obj.id, editingNarratives[obj.id]);
+    requestAnimationFrame(() => saveLineRefs.current.get(obj.id)?.focus());
+  };
+
   const percentMet =
     rollup.totalObjectives > 0
       ? Math.round(((rollup.metCount + rollup.notApplicableCount) / rollup.totalObjectives) * 100)
@@ -279,7 +315,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
               {is80053 ? 'NIST SP 800-53A Objective Rollup' : 'NIST SP 800-171A Objective Rollup'}
             </span>
             <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-bold ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                 rollup.calculatedStatus === 'MET'
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                   : rollup.calculatedStatus === 'NOT_MET'
@@ -300,19 +336,19 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     : 'bg-slate-400'
                 }`}
               />
-              Control Status: {rollup.calculatedStatus}
+              Objectives add up to: {statusDisplayLabel(rollup.calculatedStatus)}
             </span>
           </div>
 
           <div className="flex items-center gap-2 text-sm">
             <span className="font-semibold text-white">
-              {rollup.metCount} of {rollup.totalObjectives} Objectives Met
+              {rollup.metCount} of {rollup.totalObjectives} objectives Met
             </span>
             {rollup.notApplicableCount > 0 && (
-              <span className="text-xs text-slate-400">({rollup.notApplicableCount} N/A)</span>
+              <span className="text-xs text-slate-400">({rollup.notApplicableCount} not applicable)</span>
             )}
             {rollup.notMetCount > 0 && (
-              <span className="text-xs text-rose-400 font-medium">({rollup.notMetCount} Not Met)</span>
+              <span className="text-xs text-rose-400 font-medium">({rollup.notMetCount} not met)</span>
             )}
           </div>
 
@@ -337,7 +373,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
               onClick={handleBulkApplyAll}
               disabled={!canEdit}
               className="btn-accent flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs"
-              title="Writes the starter template of each objective that has one and sets those objectives to In progress. Review each one, then mark it MET yourself. Objectives without a template are left as they are."
+              title="Writes the starter template of each objective that has one and sets those objectives to In progress. Review each one, then mark it Met yourself. Objectives without a template are left as they are."
             >
               <FileText className="w-4 h-4 text-cyan-300" aria-hidden="true" />
               <span>Use starter templates ({templatedCount} of {objectives.length})</span>
@@ -347,6 +383,9 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           )}
         </div>
       </div>
+      {!objectiveNarrativesInSsp(controlId, activeFramework) && (
+        <p className="text-xs text-slate-400">Objective narratives are kept for the assessment. The SSP prints the implementation statement written on the System Security Plan (SSP) tab.</p>
+      )}
 
       {pendingPlan && (
         <DialogOverlay
@@ -388,6 +427,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
         </DialogOverlay>
       )}
 
+      <p role="status" aria-live="polite" className="sr-only">{saveAnnouncement}</p>
       <div role="status" aria-live="polite">
         {bulkResult && (
           <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
@@ -410,6 +450,9 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           const isAppliedJustNow = appliedNoticeId === obj.id;
           const objHasTemplate = hasTemplate(obj);
           const narrativeId = `${narrativeBaseId}-${obj.letter}`;
+          const hasDraft = editingNarratives[obj.id] !== undefined && editingNarratives[obj.id] !== obj.implementationNarrative;
+          const saveView = objectiveSaveView(objectiveSaves[obj.id], { serverBacked: Boolean(currentTenant.serverBacked), canEdit, hasDraft });
+          const sspBadge = objectiveSspBadge(controlId, activeFramework, obj, state.controls[controlId]?.implementationNotes ?? '');
 
           // Compute effective ODPs
           const effectiveOdps =
@@ -487,36 +530,56 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                   </div>
                 </div>
 
-                {/* Status Toggle Buttons */}
-                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0 self-start">
-                  {(
-                    [
-                      { id: 'MET', label: 'MET', icon: CheckCircle2, active: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
-                      { id: 'NOT_MET', label: 'NOT MET', icon: AlertTriangle, active: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
-                      { id: 'IN_PROGRESS', label: 'IN PROGRESS', icon: Clock, active: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
-                      { id: 'NOT_APPLICABLE', label: 'N/A', icon: Ban, active: 'bg-slate-700 text-slate-200 border-slate-600' },
-                    ] as { id: ObjectiveStatus; label: string; icon: LucideIcon; active: string }[]
-                  ).map((s) => {
-                    const isSelected = obj.status === s.id;
-                    const IconComponent = s.icon;
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => handleStatusClick(obj.id, s.id)}
-                        disabled={!canEdit}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all border ${
-                          isSelected
-                            ? `${s.active} shadow-sm`
-                            : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-850'
-                        } disabled:opacity-50`}
-                      >
-                        <IconComponent className="w-3.5 h-3.5" />
-                        <span>{s.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Status Toggle Buttons: toggle buttons (aria-pressed), not a radiogroup, because every choice saves */}
+                {canEdit ? (
+                  <div role="group" aria-label={`Status of objective [${shownLetter(obj.letter)}]`} className="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0 self-start">
+                    {OBJECTIVE_STATUS_OPTIONS.map((s) => {
+                      const isSelected = obj.status === s.id;
+                      const IconComponent = s.icon;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          aria-pressed={isSelected}
+                          onClick={() => { if (!isSelected) handleStatusClick(obj.id, s.id); }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
+                            isSelected
+                              ? `${s.active} shadow-sm underline underline-offset-4 decoration-2`
+                              : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-850'
+                          }`}
+                        >
+                          <IconComponent className="w-3.5 h-3.5" aria-hidden="true" />
+                          {s.short ? <><span aria-hidden="true">{s.short}</span><span className="sr-only">{statusDisplayLabel(s.id)}</span></> : <span>{statusDisplayLabel(s.id)}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold border shrink-0 self-start ${OBJECTIVE_STATUS_OPTIONS.find((o) => o.id === obj.status)?.active ?? 'bg-slate-800 text-slate-300 border-slate-700'}`}>
+                    <span className="sr-only">Status: </span>{statusDisplayLabel(obj.status)}
+                  </span>
+                )}
               </div>
+              {saveView && (
+                <p
+                  id={`${narrativeId}-save`}
+                  tabIndex={-1}
+                  ref={(el) => { if (el) saveLineRefs.current.set(obj.id, el); else saveLineRefs.current.delete(obj.id); }}
+                  className={`mt-2 flex flex-wrap items-center gap-2 text-xs lg:justify-end focus:outline-none ${saveView.tone === 'warn' ? 'text-amber-300' : saveView.tone === 'ok' ? 'text-emerald-300' : 'text-slate-400'}`}
+                >
+                  {saveView.tone === 'warn' ? <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> : saveView.tone === 'ok' ? <Check className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> : <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+                  <span>{saveView.text}</span>
+                  {saveView.retry && (
+                    <button
+                      type="button"
+                      onClick={() => handleRetrySave(obj)}
+                      className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                    >
+                      Retry<span className="sr-only"> objective [{shownLetter(obj.letter)}]</span>
+                    </button>
+                  )}
+                </p>
+              )}
 
               {/* ── Starter template card (only for an objective that has a written template) ── */}
               {objHasTemplate ? (
@@ -553,7 +616,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     </div>
                     <div className="flex items-center justify-between gap-4 pt-1">
                       <span className="text-xs text-slate-400 italic">
-                        Using it writes this sample wording as objective [{shownLetter(obj.letter)}]'s narrative and sets the objective to In progress. Edit it to match your environment, then mark the objective MET yourself.
+                        Using it writes this sample wording as objective [{shownLetter(obj.letter)}]'s narrative and sets the objective to In progress. Edit it to match your environment, then mark the objective Met yourself.
                       </span>
                       <button
                         type="button"
@@ -655,22 +718,22 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
               {isAppliedJustNow && (
                 <div role="status" className="mt-2 p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-fadeIn">
                   <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
-                  <span>Starter template written to objective [{shownLetter(obj.letter)}]. Review it, then mark the objective MET.</span>
+                  <span>Starter template written to objective [{shownLetter(obj.letter)}]. Review it, then mark the objective Met.</span>
                 </div>
               )}
 
               {/* ── Implementation Narrative Box ── */}
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 flex-wrap">
                   <label htmlFor={narrativeId} className="text-xs font-medium text-slate-300 flex items-center gap-2">
                     <FileText className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                    <span>Objective Implementation Narrative</span>
-                    {hasConfirmedNarrative && (
-                      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                        Confirmed for SSP
-                      </span>
-                    )}
+                    <span>Narrative for objective [{shownLetter(obj.letter)}]</span>
                   </label>
+                  {sspBadge && (
+                    <span id={`${narrativeId}-ssp`} className={`text-xs font-mono px-1.5 py-0.5 rounded border ${sspBadge.kind === 'prints' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : sspBadge.kind === 'starter' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>{sspBadge.text}</span>
+                  )}
+                  </div>
                   {objHasTemplate && !isTemplateOpen && !hasConfirmedNarrative && (
                     <button
                       type="button"
@@ -687,6 +750,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                 <div className="relative">
                   <textarea
                     id={narrativeId}
+                    aria-describedby={[sspBadge ? `${narrativeId}-ssp` : '', saveView ? `${narrativeId}-save` : ''].filter(Boolean).join(' ') || undefined}
                     rows={3}
                     value={currentNarrative}
                     onChange={(e) => handleNarrativeChange(obj.id, e.target.value)}
@@ -699,10 +763,12 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                     editingNarratives[obj.id] !== obj.implementationNarrative && (
                       <div className="absolute bottom-2.5 right-2.5 flex items-center gap-2">
                         <button
+                          type="button"
                           onClick={() => handleSaveNarrative(obj.id)}
+                          aria-label={`Save the narrative for objective [${shownLetter(obj.letter)}]`}
                           className="px-2 py-1 rounded-md text-xs font-bold bg-cyan-600 text-white hover:bg-cyan-500 shadow-sm transition-colors"
                         >
-                          Save Changes
+                          Save changes
                         </button>
                       </div>
                     )}

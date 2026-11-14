@@ -322,6 +322,37 @@ async function headers() {
     await ApiClient.getVmPoam('t1', undefined, null);
     assert(headerOf(calls[1], 'x-program-id') === undefined && calls[1].url.endsWith('/vm/poam'), 'H3c getVmPoam with a null program sends no x-program-id and no query');
 
+    stub(200, { item: { id: 'i1', status: 'IN_PROGRESS' }, changed: true });
+    const edited = await ApiClient.updateVmPoamItem('t1', 'i1', { status: 'IN_PROGRESS' }, '2026-11-01T10:00:00.000Z', 'p1');
+    const sent = JSON.parse(String(calls[0].init.body)) as Record<string, unknown>;
+    assert(
+      calls[0].init.method === 'PATCH' && calls[0].url.endsWith('/api/v1/tenants/t1/vm/poam/i1') && headerOf(calls[0], 'x-program-id') === 'p1' && headerOf(calls[0], 'x-tenant-id') === 't1' && sent.expectedUpdatedAt === '2026-11-01T10:00:00.000Z' && sent.status === 'IN_PROGRESS' && edited.changed === true && edited.item.id === 'i1',
+      'H3d updateVmPoamItem sends PATCH /vm/poam/:id with the patch and expectedUpdatedAt, x-tenant-id and x-program-id',
+      [calls[0].url, calls[0].init.method, sent],
+    );
+    await ApiClient.updateVmPoamItem('t1', 'i1', { owner: 'IT' }, '2026-11-01T10:00:00.000Z', null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined, 'H3e updateVmPoamItem with a null program sends no x-program-id');
+
+    stub(200, { events: [] });
+    const evs = await ApiClient.getVmPoamItemEvents('t1', 'i1', 'p1');
+    assert(calls[0].url.endsWith('/vm/poam/i1/events') && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && Array.isArray(evs), 'H3f getVmPoamItemEvents reads GET /vm/poam/:id/events with x-program-id', calls[0].url);
+
+    stub(200, { item: { id: 'i1' } });
+    const one = await ApiClient.getVmPoamItem('t1', 'i1', 'p1');
+    assert(calls[0].url.endsWith('/api/v1/tenants/t1/vm/poam/i1') && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && one.id === 'i1', 'H3g getVmPoamItem reads GET /vm/poam/:id with x-program-id', calls[0].url);
+
+    stub(409, { error: 'x', code: 'stale_write' });
+    let staleReason: unknown;
+    try { await ApiClient.updateVmPoamItem('t1', 'i1', { owner: 'IT' }, '2026-11-01T10:00:00.000Z', 'p1'); } catch (e) { staleReason = (e as { reason?: unknown }).reason; }
+    assert(staleReason === 'stale_write', 'H3h a refused edit carries the server code as the error reason', staleReason);
+
+    stub(200, { programId: 'p2', isTarget: false, eligible: true, ineligibleReason: null, currentTargetId: 'p1', currentTargetExplicit: false, openPoamInCurrent: 2, overdueWithoutItem: 3, autocreateEnabled: true });
+    const prev = await ApiClient.getVmTargetProgramPreview('t1', 'p2');
+    assert(calls[0].url.endsWith('/api/v1/tenants/t1/programs/p2/vm-target/preview') && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && prev.overdueWithoutItem === 3, 'H3i getVmTargetProgramPreview reads GET /programs/:id/vm-target/preview', calls[0].url);
+    stub(200, { program: { id: 'p2' }, previousId: 'p1', openPoamInPrevious: 2 });
+    const set = await ApiClient.setVmTargetProgram('t1', 'p2');
+    assert(calls[0].url.endsWith('/api/v1/tenants/t1/programs/p2/vm-target') && calls[0].init.method === 'PUT' && set.previousId === 'p1' && set.openPoamInPrevious === 2, 'H3j setVmTargetProgram sends PUT /programs/:id/vm-target and returns previousId and openPoamInPrevious', [calls[0].url, calls[0].init.method, set]);
+
     stub(200, { job: { id: 'j' } });
     const file = new File(['x'], 'ssp.docx');
     await ApiClient.sspUpload('t1', file, 'CMMC_L2', 'rules', undefined, 'p1');
@@ -624,7 +655,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;
@@ -718,6 +749,7 @@ async function main() {
   // The objective status writer saves the rolled-up control status (otherwise the next live merge reverts it)
   const statusBody = assessCtx.slice(assessCtx.indexOf('const updateObjectiveStatus = useCallback'), assessCtx.indexOf('const updateObjectiveNarrative = useCallback'));
   assert(statusBody.includes('saveControl(controlId, { status: rolledStatus') && !statusBody.includes("previousState: 'STATUS_UPDATE'") && !statusBody.includes('updateLiveControl(') && (statusBody.match(/saveControl\(/g) ?? []).length === 1, 'T6r updateObjectiveStatus saves the rolled-up control status once, and records the real previous status in the ledger');
+  assert(/\.then\(ok => \{\s+if \(ok\) void saveControl\(controlId, \{ status: rolledStatus/.test(statusBody.replace(/\r\n/g, '\n')), 'M292-4 the rolled-up control status is sent only after its objective was saved');
   const hook = read('src/hooks/useProgram.ts');
   assert(!/\.setItem\(/.test(hook) && /useTenant\(\)/.test(hook), 'T6q useProgram is a read-through of TenantContext and writes no storage');
 

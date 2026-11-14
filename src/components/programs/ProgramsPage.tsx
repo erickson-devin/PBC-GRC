@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Layers, Plus, Check, Pencil, Archive, ArchiveRestore, Trash2, ChevronDown, ChevronRight, Loader2, Server, UserCheck, Building2 } from 'lucide-react';
+import { Layers, Plus, Check, Pencil, Archive, ArchiveRestore, Trash2, ChevronDown, ChevronRight, Loader2, Server, UserCheck, Building2, Crosshair } from 'lucide-react';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { ProgramFormModal } from './ProgramFormModal';
@@ -12,12 +12,15 @@ import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { programOverlayLabels } from '../../data/overlayScoping';
 import { archiveImpactLines, nextOrganizationDefault, noProgramCopy, programGate } from '../../data/programDefaultChoice';
 import { declaredAssetsView, type DeclaredAssetsView } from '../../data/programAssets';
+import { resolveVmTargetProgramId, vmTargetArchiveLine, vmTargetCardNote, vmTargetConfirmLines, vmTargetIneligibleReason, VM_TARGET_COPY } from '../../data/vmTargetView';
 import type { Program, ProgramMetrics } from '../../types/program';
+import type { VmTargetPreview } from '../../types/vm';
 import { errorMessage } from '../../utils/errors';
 
 /** The server's refusals for archive / restore / delete, in plain language (its own message is used for anything else). */
 const ACTION_MESSAGES: Record<string, string> = {
-  program_is_vm_target: 'This program receives the vulnerability-management data. Choose another VM target first.',
+  program_is_vm_target: 'This program receives the vulnerability data. Choose another vulnerability target first.',
+  invalid_vm_target: 'Only a CMMC Level 1 or Level 2 program can be the vulnerability target.',
   program_required: 'This organization has no active program. Create one or restore an archived one first.',
   program_not_empty: 'This program still holds evidence files, SSP imports or POA&M items. Deleting it would orphan them, so the server refuses. Keep it archived instead.',
   program_not_found: 'This program no longer exists. The list has been refreshed.',
@@ -39,6 +42,7 @@ const NEUTRAL_BADGE = `${badgeClass} bg-slate-800/60 text-slate-300 border borde
 const STATUS_BADGE = `${badgeClass} bg-cyan-950/40 text-cyan-400 border border-cyan-800/40`;
 const ACCENT_BADGE = `${badgeClass} bg-purple-950/40 text-purple-300 border border-purple-800/40`;
 const MINE_BADGE = `${badgeClass} bg-emerald-950/40 text-emerald-300 border border-emerald-800/40`;
+const VM_BADGE = `${badgeClass} bg-rose-950/40 text-rose-300 border border-rose-800/40`;
 const buttonClass = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const SECONDARY_BUTTON = `${buttonClass} bg-slate-800/60 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white`;
 const PRIMARY_BUTTON = `${buttonClass} bg-brand-600 text-white border-brand-500/40 hover:bg-brand-500 shadow-lg shadow-brand-500/25`;
@@ -201,7 +205,18 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({ title, confirmLabel, dang
   </DialogOverlay>
 );
 
-type Pending = { kind: 'archive' | 'delete' | 'org-default'; program: Program };
+type Pending = { kind: 'archive' | 'delete' | 'org-default' | 'vm-target'; program: Program };
+
+type PreviewState = { status: 'idle' | 'loading' | 'error' } | { status: 'ready'; data: VmTargetPreview };
+
+/** The program that receives the vulnerability data now: the server's answer when the preview loaded, else the resolution on this page. */
+function currentTargetFor(preview: PreviewState, resolved: { programId: string; explicit: boolean } | null, programs: Program[], chosenId: string): { name: string; explicit: boolean } | null {
+  const id = preview.status === 'ready' ? preview.data.currentTargetId : resolved?.programId ?? null;
+  const explicit = preview.status === 'ready' ? preview.data.currentTargetExplicit : resolved?.explicit ?? false;
+  if (!id || id === chosenId) return null;
+  const found = programs.find((p) => p.id === id);
+  return found ? { name: found.name, explicit } : null;
+}
 
 /**
  * The programs page (#programs): every program (authorization boundary) of the organization as a card, with its framework,
@@ -235,10 +250,34 @@ export const ProgramsPage: React.FC = () => {
   const ready = programsStatus === 'ready';
   const metrics = useProgramMetrics(currentTenant.id, ready, programs.map((p) => p.id));
 
+  // The vulnerability target is shown to every role; the preview (counts only) is read when a manager opens the confirmation
+  const vmTarget = useMemo(() => resolveVmTargetProgramId(programs), [programs]);
+  const [preview, setPreview] = useState<PreviewState>({ status: 'idle' });
+  const previewSeq = useRef(0);
+  const focusTargetNote = useRef<string | null>(null);
+  useEffect(() => {
+    const id = focusTargetNote.current;
+    if (!id || pending) return;
+    focusTargetNote.current = null;
+    requestAnimationFrame(() => document.getElementById(`${uid}-${id}-vm`)?.focus());
+  }, [pending, programs, uid]);
+
+  const loadPreview = async (program: Program) => {
+    const seq = ++previewSeq.current;
+    setPreview({ status: 'loading' });
+    try {
+      const data = await ApiClient.getVmTargetProgramPreview(currentTenant.id, program.id);
+      if (mounted.current && seq === previewSeq.current) setPreview({ status: 'ready', data });
+    } catch {
+      if (mounted.current && seq === previewSeq.current) setPreview({ status: 'error' });
+    }
+  };
+
   const startAction = (kind: Pending['kind'], program: Program) => {
     setDialogError(null);
     setTypedName('');
     setPending({ kind, program });
+    if (kind === 'vm-target') void loadPreview(program);
   };
 
   const closeDialog = () => {
@@ -256,11 +295,18 @@ export const ProgramsPage: React.FC = () => {
       else if (kind === 'org-default') {
         await setOrganizationDefaultProgram(program.id);
         if (mounted.current) setAnnouncement(`${program.name} is now the organization default.`);
+      } else if (kind === 'vm-target') {
+        await ApiClient.setVmTargetProgram(currentTenant.id, program.id);
+        await refreshPrograms();
+        if (mounted.current) {
+          setAnnouncement(VM_TARGET_COPY.announced(program.name));
+          focusTargetNote.current = program.id;
+        }
       } else await deleteProgram(program.id);
       if (mounted.current) setPending(null);
     } catch (err: unknown) {
       if (mounted.current) {
-        setDialogError(actionError(err, kind === 'archive' ? 'Could not archive the program. Please try again.' : kind === 'org-default' ? 'Could not change the organization default. Please try again.' : 'Could not delete the program. Please try again.'));
+        setDialogError(actionError(err, kind === 'archive' ? 'Could not archive the program. Please try again.' : kind === 'org-default' ? 'Could not change the organization default. Please try again.' : kind === 'vm-target' ? VM_TARGET_COPY.failed : 'Could not delete the program. Please try again.'));
       }
     } finally {
       if (mounted.current) setBusyId(null);
@@ -380,6 +426,8 @@ export const ProgramsPage: React.FC = () => {
     const baseline = baselineChip(program);
     const overlayLabels = programOverlayLabels(program.scoping);
     const nameId = `${uid}-${program.id}`;
+    const isVmTarget = vmTarget?.programId === program.id;
+    const targetReason = vmTargetIneligibleReason(program);
     return (
       <li key={program.id} aria-labelledby={nameId} className={`rounded-2xl bg-slate-900/60 border p-5 space-y-4 ${isActive ? 'border-brand-500/40 shadow-sm shadow-brand-500/10' : 'border-slate-800'}`}>
         <div className="space-y-2">
@@ -388,6 +436,7 @@ export const ProgramsPage: React.FC = () => {
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               {isActive && <span className={STATUS_BADGE}>Active</span>}
               {program.isDefault && <span className={ACCENT_BADGE}>Organization default</span>}
+              {isVmTarget && <span className={VM_BADGE}>{VM_TARGET_COPY.badge}</span>}
               {program.isMyDefault && <span className={MINE_BADGE}>My default</span>}
               {program.archived && <span className={NEUTRAL_BADGE}>Archived</span>}
             </div>
@@ -462,8 +511,26 @@ export const ProgramsPage: React.FC = () => {
             )}
           </div>
         )}
-        {program.vmTarget && canManagePrograms && !program.archived && (
-          <p id={`${nameId}-vm`} className="text-xs text-slate-400">This program receives the vulnerability-management data. Choose another VM target before archiving it.</p>
+        {!program.archived && canManagePrograms && !isVmTarget && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={targetReason ? undefined : () => startAction('vm-target', program)}
+              aria-disabled={targetReason ? true : undefined}
+              disabled={Boolean(busyId)}
+              aria-describedby={targetReason ? `${nameId}-vm-reason` : undefined}
+              className={`${SECONDARY_BUTTON}${targetReason ? ' opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <Crosshair className="w-3.5 h-3.5" aria-hidden="true" />
+              {VM_TARGET_COPY.action}
+            </button>
+            {targetReason && <p id={`${nameId}-vm-reason`} className="text-xs text-slate-400">{targetReason}</p>}
+          </div>
+        )}
+        {isVmTarget && vmTarget && (
+          <p id={`${nameId}-vm`} tabIndex={-1} className="text-xs text-slate-400 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400">
+            {vmTargetCardNote({ explicit: vmTarget.explicit, canManage: canManagePrograms })}
+          </p>
         )}
       </li>
     );
@@ -535,6 +602,10 @@ export const ProgramsPage: React.FC = () => {
           {archiveImpactLines(pending.program, programs).map((line) => (
             <p key={line.text} className={line.tone === 'warn' ? 'rounded-xl border border-amber-800/40 bg-amber-950/30 px-3 py-2 text-amber-200' : undefined}>{line.text}</p>
           ))}
+          {(() => {
+            const t = vmTargetArchiveLine(pending.program, programs);
+            return t ? <p className="rounded-xl border border-amber-800/40 bg-amber-950/30 px-3 py-2 text-amber-200">{t}</p> : null;
+          })()}
         </ConfirmDialog>
       )}
 
@@ -551,6 +622,33 @@ export const ProgramsPage: React.FC = () => {
             People who have not chosen their own default land on it when they sign in.
             {replacedDefault(pending.program.id)} Personal defaults are not changed.
           </p>
+        </ConfirmDialog>
+      )}
+
+      {pending?.kind === 'vm-target' && (
+        <ConfirmDialog
+          title={`Make "${pending.program.name}" the vulnerability target?`}
+          confirmLabel={VM_TARGET_COPY.action}
+          busy={busyId === pending.program.id}
+          confirmDisabled={preview.status === 'loading' || (preview.status === 'ready' && !preview.data.eligible)}
+          error={dialogError}
+          onConfirm={() => { void confirm(); }}
+          onCancel={closeDialog}
+        >
+          {preview.status === 'loading' ? (
+            <p role="status" className="flex items-center gap-2 text-slate-400"><Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />{VM_TARGET_COPY.previewLoading}</p>
+          ) : (
+            <>
+              {vmTargetConfirmLines({
+                programName: pending.program.name,
+                preview: preview.status === 'ready' ? preview.data : null,
+                current: currentTargetFor(preview, vmTarget, programs, pending.program.id),
+              }).map((line) => (
+                <p key={line.text} className={line.tone === 'warn' ? 'rounded-xl border border-amber-800/40 bg-amber-950/30 px-3 py-2 text-amber-200' : undefined}>{line.text}</p>
+              ))}
+              {preview.status === 'error' && <button type="button" onClick={() => { void loadPreview(pending.program); }} className={SECONDARY_BUTTON}>{VM_TARGET_COPY.previewRetry}</button>}
+            </>
+          )}
         </ConfirmDialog>
       )}
 

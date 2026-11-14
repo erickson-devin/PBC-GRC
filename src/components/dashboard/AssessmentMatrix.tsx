@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   RefreshCw,
   Check,
+  ListChecks,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -32,8 +33,14 @@ import { ControlCard } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 import { CatalogUpdateNotice } from './CatalogUpdateNotice';
 import { CatalogUpdateList } from './CatalogUpdateList';
+import { MetMismatchNotice } from './MetMismatchNotice';
 import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
 import { catalogUpdateNoticeCopy, catalogUpdateNoticeMode } from '../../data/cmmcGuide/catalogUpdateReview';
+import { refusedMetControls } from '../../data/cmmcGuide/controlStatusGuard';
+import { metMismatchesInView } from '../../data/cmmcGuide/controlStatusView';
+import { hasSspStatement } from '../../data/cmmcGuide/sspStatementView';
+import { statusDisplayLabel } from '../../data/statusLabels';
+import { matrixEmptyFilterMessage, matrixSearchPlaceholder } from '../../data/matrixView';
 
 interface AssessmentMatrixProps {
   onSelectControl?: (controlId: string) => void;
@@ -52,6 +59,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     setSearchQuery,
     setSelectedControlId,
     openControlAtObjective,
+    objectivesReady,
+    notesEditable,
   } = useAssessment();
 
   const {
@@ -99,7 +108,17 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   const toggleCatalogFilter = () => setCatalogUpdateFilter((f) => (f ? null : new Set(catalogUpdate.summary.controlIds)));
   const showCatalogChip = catalogUpdateFilter !== null || (catalogUpdate.status === 'ready' && catalogUpdate.summary.unreviewedControls > 0);
   // Another program's filter and list must not carry over
-  useEffect(() => { setCatalogUpdateFilter(null); setCatalogListOpen(false); }, [currentTenant.id, activeProgram?.id]);
+  useEffect(() => { setCatalogUpdateFilter(null); setCatalogListOpen(false); setMetMismatchFilter(null); }, [currentTenant.id, activeProgram?.id]);
+
+  // Controls recorded as Met while their objectives do not add up to Met (#292): a notice, a filter and a marker. Hidden until the server's objectives are merged.
+  const frameworkIds = useMemo(() => new Set(frameworkControls.map((c) => c.id)), [frameworkControls]);
+  const metMismatches = useMemo(
+    () => (objectivesReady && notesEditable ? metMismatchesInView(refusedMetControls(state.controls, state.objectives, activeFramework), frameworkIds) : []),
+    [objectivesReady, notesEditable, state.controls, state.objectives, activeFramework, frameworkIds]
+  );
+  const mismatchById = useMemo(() => new Map(metMismatches.map((m) => [m.controlId, m])), [metMismatches]);
+  const [metMismatchFilter, setMetMismatchFilter] = useState<Set<string> | null>(null); // a snapshot, like the catalog filter
+  const toggleMetMismatchFilter = () => setMetMismatchFilter((f) => (f ? null : new Set(metMismatches.map((m) => m.controlId))));
 
   const currentFrameworkDef = useMemo(() => {
     return FRAMEWORK_REGISTRY[activeFramework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -135,6 +154,9 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
       // Controls with answers the objective update set back to In progress
       if (catalogUpdateFilter && !catalogUpdateFilter.has(ctrl.id)) return false;
+
+      // Controls recorded as Met while their objectives do not add up to Met
+      if (metMismatchFilter && !metMismatchFilter.has(ctrl.id)) return false;
 
       // Base controls and control enhancements (SP 800-53)
       if (selectedKindFilter !== 'ALL' && ctrl.controlKind && ctrl.controlKind !== selectedKindFilter) {
@@ -189,12 +211,12 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
       return true;
     });
-  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls, catalogUpdateFilter]);
+  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls, catalogUpdateFilter, metMismatchFilter]);
 
   // A new filter starts again at the first page
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, frameworkControls, catalogUpdateFilter]);
+  }, [selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, frameworkControls, catalogUpdateFilter, metMismatchFilter]);
   const shownControls = useMemo(() => filteredControls.slice(0, visibleCount), [filteredControls, visibleCount]);
 
   const handleControlClick = (id: string) => {
@@ -233,6 +255,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   return (
     <div className="space-y-6 animate-fadeIn">
       {canEdit && <FailedMoveControlsNotice />}
+      <MetMismatchNotice count={metMismatches.length} canEdit={canEdit} filterOn={metMismatchFilter !== null} onToggleFilter={toggleMetMismatchFilter} />
       <CatalogUpdateNotice mode={noticeMode} copy={noticeCopy} filterOn={catalogUpdateFilter !== null} onToggleFilter={toggleCatalogFilter}
         onOpenList={() => setCatalogListOpen(true)}
         onDismiss={() => { catalogUpdate.dismiss(); requestAnimationFrame(() => (catalogChipRef.current ?? searchInputRef.current)?.focus()); }} />
@@ -382,7 +405,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={`Search ${currentFrameworkDef.shortName} by control ID (e.g. ${frameworkControls[0]?.id || 'AC-2'}), title, authority reference, or keywords...`}
+            placeholder={matrixSearchPlaceholder(currentFrameworkDef.shortName, frameworkControls[0]?.id, activeFramework)}
             className="w-full pl-10 pr-16 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 focus:outline-none text-xs sm:text-sm text-white placeholder-slate-400 transition-all duration-200"
           />
           {searchQuery && (
@@ -394,6 +417,17 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             </button>
           )}
         </div>
+
+        {(metMismatchFilter !== null || metMismatches.length > 0) && (
+          <div className="flex items-center gap-1.5 flex-wrap pt-3 border-t border-slate-800/80">
+            <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1"><ListChecks className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Objectives:</span>
+            <button type="button" aria-pressed={metMismatchFilter !== null} onClick={toggleMetMismatchFilter}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${metMismatchFilter !== null ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 ring-1 ring-amber-500/30 font-bold shadow-sm' : 'bg-slate-950 text-slate-400 hover:text-amber-300 hover:bg-slate-800 border border-slate-800'}`}>
+              {metMismatchFilter !== null && <Check className="w-3 h-3" aria-hidden="true" />}<span>Met with open objectives</span>
+              <span className="text-xs font-mono opacity-80">({metMismatchFilter !== null ? metMismatchFilter.size : metMismatches.length})</span>
+            </button>
+          </div>
+        )}
 
         {showCatalogChip && (
           <div className="flex items-center gap-1.5 flex-wrap pt-3 border-t border-slate-800/80">
@@ -453,17 +487,18 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             </span>
             {(
               [
-                { id: 'ALL', label: 'All' },
-                { id: 'MET', label: 'Met' },
-                { id: 'IN_PROGRESS', label: 'In Progress' },
-                { id: 'NOT_STARTED', label: 'Not Started' },
-                { id: 'NOT_MET', label: 'Not Met' },
-              ] as { id: ControlStatus | 'ALL'; label: string }[]
+                { id: 'ALL' },
+                { id: 'MET' },
+                { id: 'IN_PROGRESS' },
+                { id: 'NOT_STARTED' },
+                { id: 'NOT_MET' },
+              ] as { id: ControlStatus | 'ALL' }[]
             ).map((item) => {
               const isSelected = selectedStatusFilter === item.id;
               return (
                 <button
                   key={item.id}
+                  aria-pressed={isSelected}
                   onClick={() => setSelectedStatusFilter(item.id)}
                   className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                     isSelected
@@ -471,7 +506,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                       : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
                   }`}
                 >
-                  {item.label}
+                  {item.id === 'ALL' ? 'All' : statusDisplayLabel(item.id)}
                 </button>
               );
             })}
@@ -576,7 +611,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           <HelpCircle className="w-10 h-10 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-white">No controls match your filter criteria</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
-            {catalogUpdateFilter ? 'The filter "Changed by the objective update" is on. Clear it or the other filters to see more controls.' : 'Try clearing your search query or switching family and status filters.'}
+            {matrixEmptyFilterMessage({ catalog: catalogUpdateFilter !== null, metMismatch: metMismatchFilter !== null })}
           </p>
           <button
             onClick={() => {
@@ -584,6 +619,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               setSelectedStatusFilter('ALL');
               setSearchQuery('');
               setCatalogUpdateFilter(null);
+              setMetMismatchFilter(null);
             }}
             className="btn-secondary text-xs px-3.5 py-2 mt-2"
           >
@@ -608,6 +644,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 control={ctrl}
                 domainInfo={domainInfo}
                 onOpenDetailModal={() => handleControlClick(ctrl.id)}
+                metMismatch={mismatchById.get(ctrl.id) ?? null}
               />
             );
           })}
@@ -641,7 +678,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 const hasInheritedEvidence = evidenceList.some(
                   (e) => e.syncStatus === 'inherited' || (e.description && e.description.startsWith('[Inherited'))
                 );
-                const hasNotes = Boolean(ctrlState?.implementationNotes && ctrlState.implementationNotes.trim().length > 0);
+                const hasNotes = hasSspStatement(ctrl.id, ctrlState?.implementationNotes, state.objectives, activeFramework);
+                const mismatch = mismatchById.get(ctrl.id);
                 const authorityRef = ctrl.authorityReference || ctrl.farReference || 'Baseline';
                 const mappings = ctrl.mappings || [];
 
@@ -691,19 +729,24 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                     <td className="py-3 px-4">
                       {status === 'MET' ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> MET
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" aria-hidden="true" /> {statusDisplayLabel(status)}
                         </span>
                       ) : status === 'NOT_MET' ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                          <AlertTriangle className="w-3 h-3 text-rose-400" /> NOT_MET
+                          <AlertTriangle className="w-3 h-3 text-rose-400" aria-hidden="true" /> {statusDisplayLabel(status)}
                         </span>
                       ) : status === 'IN_PROGRESS' ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                          <Clock className="w-3 h-3 text-amber-400" /> IN_PROGRESS
+                          <Clock className="w-3 h-3 text-amber-400" aria-hidden="true" /> {statusDisplayLabel(status)}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-slate-800 text-slate-400 border border-slate-700">
-                          <HelpCircle className="w-3 h-3 text-slate-400" /> NOT_STARTED
+                          <HelpCircle className="w-3 h-3 text-slate-400" aria-hidden="true" /> {statusDisplayLabel(status)}
+                        </span>
+                      )}
+                      {mismatch && (
+                        <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                          {mismatch.open} of {mismatch.total} objectives open
                         </span>
                       )}
                     </td>

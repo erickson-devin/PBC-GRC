@@ -14,6 +14,8 @@ import {
 import { activeProgramStorageKey } from '../data/programSync';
 import { NOT_RECORDED } from '../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../data/cmmcGuide/displayId';
+import { composeImplementationStatement } from '../data/cmmcGuide/sspStatement';
+import { statusDisplayLabel } from '../data/statusLabels';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -126,10 +128,10 @@ export function buildSspMarkdown(
     md += `### ${cmmcDisplayId(ctrl.id, framework)}: ${ctrl.title}\n\n`;
     if (authority) md += `- **Authority Reference:** ${authority}\n`;
     md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
-    md += `- **Evaluation Status:** **${cState?.status || 'NOT_STARTED'}**\n`;
+    md += `- **Evaluation Status:** **${statusDisplayLabel(cState?.status)}**\n`;
     md += `- **Responsible Role:** ${cState?.responsibleRole || NOT_RECORDED}\n`;
     md += `\n**Implementation Statement:**\n\n`;
-    md += `${cState?.implementationNotes || '_No implementation narrative provided._'}\n\n`;
+    md += `${composeImplementationStatement(ctrl.id, cState?.implementationNotes, state.objectives, framework).text || '_No implementation narrative provided._'}\n\n`;
 
     if (ctrlEvidence.length > 0) {
       md += `**Audit Evidence Artifacts:**\n\n`;

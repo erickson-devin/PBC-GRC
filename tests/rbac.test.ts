@@ -40,7 +40,7 @@ async function call(method: string, path: string, token: string, tenant: string 
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-const controlUpdate = { status: 'MET', implementationNotes: 'RBAC test update' };
+const controlUpdate = { status: 'IN_PROGRESS', implementationNotes: 'RBAC test update' };
 const uploadRequest = { controlId: 'AC.L1-3.1.1', fileName: 'p.pdf', fileHash: 'abc123', fileSize: 1, mimeType: 'application/pdf' };
 
 /**

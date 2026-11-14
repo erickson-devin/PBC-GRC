@@ -26,7 +26,7 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmPoamResponse, VmRun, VmServiceToken, VmSeverity, VmSource } from '../types/vm';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmPoamItemEvent, VmPoamItemPatch, VmPoamResponse, VmPoamRow, VmRun, VmServiceToken, VmSeverity, VmSource, VmTargetPreview } from '../types/vm';
 import { parseObservedHosts, parseObservedSoftware, parseObservedSoftwareGroups, parseProgramObservedHosts } from '../data/telemetry/observedInventory';
 import { parseVmFindings } from '../data/telemetry/vmFindingsView';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
@@ -674,6 +674,19 @@ export const ApiClient = {
     await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/default`, { tenantId, body: {} });
   },
 
+  /** GET .../programs/:programId/vm-target/preview (every role): what making the program the VM target would mean (the current target, its open POA&M items, how many overdue findings have no item here). Changes nothing. */
+  async getVmTargetProgramPreview(tenantId: string, programId: string): Promise<VmTargetPreview> {
+    const data = await authedJson<VmTargetPreview>('GET', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/vm-target/preview`, { tenantId });
+    if (!data || typeof data.programId !== 'string' || typeof data.eligible !== 'boolean' || typeof data.overdueWithoutItem !== 'number') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data;
+  },
+
+  /** PUT .../programs/:programId/vm-target (owner / MSP admin): makes the program the VM target. Existing items stay in the previous target (`openPoamInPrevious`). Refresh the programs after success. */
+  async setVmTargetProgram(tenantId: string, programId: string): Promise<{ previousId: string | null; openPoamInPrevious: number }> {
+    const data = await authedJson<{ previousId?: string | null; openPoamInPrevious?: number }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/vm-target`, { tenantId, body: {} });
+    return { previousId: typeof data?.previousId === 'string' ? data.previousId : null, openPoamInPrevious: typeof data?.openPoamInPrevious === 'number' ? data.openPoamInPrevious : 0 };
+  },
+
   /** DELETE .../programs/:programId. Only an empty program that is not the VM target (no evidence, imports or POA&M items). */
   async deleteProgram(tenantId: string, programId: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId });
@@ -878,6 +891,27 @@ export const ApiClient = {
     const data = await authedJson<VmPoamResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/poam${qs ? `?${qs}` : ''}`, { tenantId, programId });
     if (!Array.isArray(data?.items) || !Array.isArray(data?.upcoming)) throw new ApiError(502, 'The server returned an unexpected response.');
     return data;
+  },
+
+  /** GET /api/v1/tenants/:id/vm/poam/:itemId for the program (x-program-id): one item as a row of getVmPoam, whatever its status. Every role reads; 404 when it is not in that program. Never cached in browser storage. */
+  async getVmPoamItem(tenantId: string, itemId: string, programId?: string | null): Promise<VmPoamRow> {
+    const data = await authedJson<{ item?: VmPoamRow }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/poam/${encodeURIComponent(itemId)}`, { tenantId, programId });
+    if (!data?.item || typeof data.item !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.item;
+  },
+
+  /** PATCH /api/v1/tenants/:id/vm/poam/:itemId for the program (x-program-id), owner / MSP admin: edits owner, mitigation, scheduled completion or status. `expectedUpdatedAt` is the item's updatedAt as loaded (409 reason `stale_write` when it changed). Other reasons: `finding_still_open`, `mitigation_required`, `invalid_poam_patch`, `program_archived`. Never cached in browser storage. */
+  async updateVmPoamItem(tenantId: string, itemId: string, patch: VmPoamItemPatch, expectedUpdatedAt: string, programId?: string | null): Promise<{ item: VmPoamRow; changed: boolean }> {
+    const data = await authedJson<{ item?: VmPoamRow; changed?: boolean }>('PATCH', `/tenants/${encodeURIComponent(tenantId)}/vm/poam/${encodeURIComponent(itemId)}`, { tenantId, programId, body: { ...patch, expectedUpdatedAt } });
+    if (!data?.item || typeof data.item !== 'object' || typeof data.changed !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { item: data.item, changed: data.changed };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/poam/:itemId/events for the program (x-program-id): the item's history, newest first. Every role reads; statuses, dates and changed flags only. */
+  async getVmPoamItemEvents(tenantId: string, itemId: string, programId?: string | null): Promise<VmPoamItemEvent[]> {
+    const data = await authedJson<{ events?: VmPoamItemEvent[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/poam/${encodeURIComponent(itemId)}/events`, { tenantId, programId });
+    if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.events;
   },
 
   /** GET /api/v1/tenants/:id/vm/tokens (owner / MSP admin): the organization's service tokens, newest first. Never includes a token value. */

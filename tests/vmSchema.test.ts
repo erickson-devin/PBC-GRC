@@ -57,7 +57,7 @@ function parseEnum(body: string, constraintName: string): string[] {
 }
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
-const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items', 'vm_config_scans', 'vm_config_results', 'vm_host_inventory', 'vm_host_software'];
+const TENANT_TABLES = ['vm_service_tokens', 'vm_sources', 'vm_runs', 'vm_findings', 'vm_sightings', 'vm_run_assets', 'vm_poam_items', 'vm_poam_item_events', 'vm_config_scans', 'vm_config_results', 'vm_host_inventory', 'vm_host_software'];
 const ALL_TABLES = [...TENANT_TABLES, 'vm_vulns'];
 const NL = String.fromCharCode(10);
 const at = (t: string) => TABLES_SQL.indexOf(`CREATE TABLE IF NOT EXISTS ${t}`);
@@ -176,6 +176,21 @@ const vulnSources = parseEnum(vulns, 'vm_vulns_source_check');
 assert(vulns.includes("source VARCHAR(16) NOT NULL DEFAULT 'INGEST'"), 'vm_vulns.source is an inline column, NOT NULL DEFAULT INGEST');
 assert(same(vulnSources, VM_VULN_SOURCES) && same(vulnSources, ['INGEST', 'FEED', 'ADMIN']), 'vm_vulns source list equals VM_VULN_SOURCES (INGEST, FEED, ADMIN)', vulnSources);
 assert(!TABLES_SQL.includes('ALTER TABLE vm_vulns'), 'vm_vulns is never ALTERed on boot: an inline CHECK avoids rescanning the global CVE table under an exclusive lock at every start');
+
+console.log('\n--- POA&M item edits and history (#295, #297) ---');
+for (const col of ['updated_by VARCHAR(255)', 'status_changed_by VARCHAR(255)', 'status_changed_at TIMESTAMPTZ', 'auto_complete BOOLEAN NOT NULL DEFAULT TRUE']) {
+  assert(TABLES_SQL.indexOf(`ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ${col};`) > at('vm_poam_items'), `vm_poam_items column is added idempotently: ${col}`);
+}
+const poamEvents = block('vm_poam_item_events');
+const eventStatusLists = [...(/vm_poam_item_events_status_check CHECK \(new_status IN \(([^)]*)\) AND \(old_status IS NULL OR old_status IN \(([^)]*)\)\)\)/.exec(poamEvents)?.slice(1) ?? [])].map((l) => [...l.matchAll(/'([^']*)'/g)].map((x) => x[1]));
+assert(eventStatusLists.length === 2 && same(eventStatusLists[0], VM_POAM_STATUSES) && same(eventStatusLists[1], VM_POAM_STATUSES), 'event status lists (new and old) equal VM_POAM_STATUSES', eventStatusLists);
+assert(poamEvents.includes("CHECK (source IN ('human', 'system'))"), 'event source is human or system');
+assert(poamEvents.includes("source = 'human' OR (actor = 'system:vm-worker' AND actor_user_id IS NULL)"), 'a system event carries the worker as actor and no user id');
+assert(poamEvents.includes('program_id VARCHAR(64) NOT NULL') && poamEvents.includes('tenant_id VARCHAR(64) NOT NULL'), 'events carry the tenant and the program (NOT NULL)');
+assert(!/FOREIGN KEY|REFERENCES/.test(poamEvents), 'no foreign key: the history outlives the item and the program');
+assert(!/\b(owner|mitigation) (TEXT|VARCHAR)/.test(poamEvents), 'no owner or mitigation text column: only digests, lengths and changed flags');
+assert(poamEvents.includes('new_owner_sha256 VARCHAR(64)') && poamEvents.includes('new_mitigation_sha256 VARCHAR(64)') && poamEvents.includes('owner_changed BOOLEAN NOT NULL DEFAULT FALSE') && poamEvents.includes('mitigation_changed BOOLEAN NOT NULL DEFAULT FALSE'), 'digests and changed flags exist');
+assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_vm_poam_item_events_item ON vm_poam_item_events (tenant_id, program_id, item_id, created_at DESC);'), 'the per-item history index exists');
 
 console.log('\n--- vm_config_scans, vm_config_results (issue #103) ---');
 const configScans = block('vm_config_scans');

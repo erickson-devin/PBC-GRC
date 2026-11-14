@@ -30,7 +30,7 @@ export const VM_POAM_COPY = {
   noProgram: 'No program is selected, so vulnerability POA&M items cannot be shown.',
   browserOnly: 'Vulnerability POA&M items come from the scanner integration, which needs an organization stored on the server. This organization is stored only in this browser.',
   searchLabel: 'Search vulnerability items',
-  searchPlaceholder: 'Search by CVE, asset or package',
+  searchPlaceholder: 'Search by CVE, asset, package or owner',
   noMatch: 'No vulnerability items match the search.',
   orphanAsset: 'Asset no longer recorded',
   findingRemoved: 'Finding removed with its asset',
@@ -46,6 +46,12 @@ export const VM_POAM_COPY = {
   docUnavailable: 'The vulnerability POA&M items could not be loaded when this document was generated, so none are listed. Generate the document again to include them.',
   docCap: (shown: number, total: number) => `This document lists the first ${shown} of ${total} open items.`,
   summaryLabel: 'Open Vulnerability POA&M Items',
+  exportFields: 'The document and CSV print each open item\'s owner as the Responsible Role, its target date as the Scheduled Completion Date and its plan as the Remediation Plan. An empty owner or date prints as Not recorded; an empty plan prints the standard remediation sentence.',
+  closedLoading: 'Loading the completed and risk-accepted items…',
+  refreshFailed: 'The vulnerability items could not be refreshed. The list below may be out of date.',
+  openPrograms: 'Open Programs & Boundaries',
+  notInExports: 'Not in exports',
+  readOnlyNote: 'Only a Tenant Owner or MSP Admin can edit POA&M items.',
 };
 
 const SEVERITY_RANK: Record<VmSeverity, number> = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, UNKNOWN: 2, LOW: 1 };
@@ -89,8 +95,8 @@ export function vmPoamEntries(rows: readonly VmPoamRow[], framework: string): PO
       weaknessDescription: row.weakness,
       scheduledCompletionDate: row.scheduledCompletion ?? NOT_RECORDED,
       requiredResources: NOT_RECORDED,
-      responsibleRole: NOT_RECORDED,
-      remediationPlan: 'Remediate or mitigate the vulnerability, then confirm that a later scan no longer reports it.',
+      responsibleRole: row.owner.trim() || NOT_RECORDED,
+      remediationPlan: row.mitigation.trim() || 'Remediate or mitigate the vulnerability, then confirm that a later scan no longer reports it.',
       status: row.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'OPEN',
       milestones: [],
     });
@@ -117,9 +123,14 @@ export interface VmPoamAssetGroup {
   items: VmPoamRow[];
   worstSeverity: VmSeverity | null;
   kevCount: number;
+  /** How many of the items are open or in progress. */
+  openCount: number;
 }
 
-/** Items per asset, the most severe asset first; items keep the server's order inside a group. */
+/**
+ * Items per asset, a group with open items before one with only closed items, then the most severe asset first; items keep the server's
+ * order inside a group. Severity and KEV count come from the open items, or from all of them when none is open.
+ */
 export function groupVmPoamByAsset(rows: readonly VmPoamRow[]): VmPoamAssetGroup[] {
   const groups = new Map<string, VmPoamAssetGroup>();
   for (const row of rows) {
@@ -127,11 +138,16 @@ export function groupVmPoamByAsset(rows: readonly VmPoamRow[]): VmPoamAssetGroup
     const key = asset ? asset.id : VM_POAM_ORPHAN_KEY;
     let g = groups.get(key);
     if (!g) {
-      g = { key, assetName: asset ? asset.name : VM_POAM_COPY.orphanAsset, items: [], worstSeverity: null, kevCount: 0 };
+      g = { key, assetName: asset ? asset.name : VM_POAM_COPY.orphanAsset, items: [], worstSeverity: null, kevCount: 0, openCount: 0 };
       groups.set(key, g);
     }
     g.items.push(row);
-    if (row.finding) {
+    if (isOpenVmPoamStatus(row.status)) g.openCount++;
+  }
+  for (const g of groups.values()) {
+    const counted = g.openCount > 0 ? g.items.filter((r) => isOpenVmPoamStatus(r.status)) : g.items;
+    for (const row of counted) {
+      if (!row.finding) continue;
       const s = row.finding.severity;
       if (g.worstSeverity === null || SEVERITY_RANK[s] > SEVERITY_RANK[g.worstSeverity]) g.worstSeverity = s;
       if (row.finding.kev) g.kevCount++;
@@ -139,7 +155,15 @@ export function groupVmPoamByAsset(rows: readonly VmPoamRow[]): VmPoamAssetGroup
   }
   const rank = (g: VmPoamAssetGroup): number => (g.worstSeverity && g.key !== VM_POAM_ORPHAN_KEY ? SEVERITY_RANK[g.worstSeverity] : 0);
   return [...groups.values()].sort((a, b) =>
-    rank(b) - rank(a) || b.items.length - a.items.length || a.assetName.localeCompare(b.assetName) || a.key.localeCompare(b.key));
+    (b.openCount > 0 ? 1 : 0) - (a.openCount > 0 ? 1 : 0) || rank(b) - rank(a) || b.items.length - a.items.length || a.assetName.localeCompare(b.assetName) || a.key.localeCompare(b.key));
+}
+
+/** The count text of an asset group: the plain item count while every item is open, else the open and closed counts. */
+export function vmGroupCountText(g: Pick<VmPoamAssetGroup, 'items' | 'openCount'>): string {
+  const n = g.items.length;
+  const closed = n - g.openCount;
+  if (closed === 0) return `${n} ${n === 1 ? 'item' : 'items'}`;
+  return g.openCount === 0 ? `${closed} closed` : `${g.openCount} open, ${closed} closed`;
 }
 
 /** Search over the CVE id, asset name, every package name and the weakness text; all terms must match. In memory only. */
@@ -152,6 +176,7 @@ export function filterVmPoamRows(rows: readonly VmPoamRow[], query: string): VmP
       r.finding?.asset?.name ?? '',
       ...(r.finding?.affectedPackages.map((p) => p.name) ?? []),
       r.weakness,
+      r.owner ?? '',
     ].join(' ').toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
@@ -180,21 +205,33 @@ export function vmRulesText(rules: VmPoamResponse['rules'], framework: string): 
   const id = cmmcDisplayId(rules.controlId, framework);
   const d = (n: number): string => (n === 1 ? '1 day' : `${n} days`);
   const s = rules.slaDays;
-  return `A vulnerability becomes a POA&M item under ${id} when it is still open after its remediation deadline. The deadline counts from when the vulnerability was first seen: Critical ${d(s.CRITICAL)}, High ${d(s.HIGH)}, Medium ${d(s.MEDIUM)}, Low ${d(s.LOW)}. Unknown severity uses the Medium deadline, and a known exploited vulnerability (KEV) never gets longer than the Critical deadline. Items are added when the next scan is processed after the deadline. They are not closed automatically when a later scan no longer reports the vulnerability.`;
+  return `A vulnerability becomes a POA&M item under ${id} when it is still open after its remediation deadline. The deadline counts from when the vulnerability was first seen: Critical ${d(s.CRITICAL)}, High ${d(s.HIGH)}, Medium ${d(s.MEDIUM)}, Low ${d(s.LOW)}. Unknown severity uses the Medium deadline, and a known exploited vulnerability (KEV) never gets longer than the Critical deadline. Items are added when the next scan is processed after the deadline. An item is completed automatically when a later scan confirms the fix: the scanner that reported the vulnerability scans the host again and no longer lists it, and no other active scanner still reports it. A host that is not scanned completes nothing. If the vulnerability comes back it gets a new item; the completed one stays in the history. An item a person reopened is not completed automatically. This also applies to items in a program that was the target earlier, unless it is archived.`;
 }
 
-export interface VmPoamNotice { id: string; tone: 'amber' | 'slate'; text: string }
+export interface VmPoamNotice {
+  id: string;
+  tone: 'amber' | 'slate';
+  text: string;
+  /** A link the screen offers next to the text. */
+  action?: 'open_programs';
+}
 
-export function vmPoamNotices(data: VmPoamResponse, ctx: { framework: string; targetProgramName: string | null }): VmPoamNotice[] {
+/** How many items are closed (completed or risk accepted): the server's total less the open ones, known before the closed rows are loaded. */
+export function vmClosedCount(data: VmPoamResponse): number {
+  return Math.max(0, data.itemsTotal - data.openItemsTotal);
+}
+
+export function vmPoamNotices(data: VmPoamResponse, ctx: { framework: string; targetProgramName: string | null; includeClosed?: boolean }): VmPoamNotice[] {
   const { rules } = data;
   const out: VmPoamNotice[] = [];
   const hasItems = data.items.length > 0;
   if (rules.vmTargetProgramId === null) {
-    out.push({ id: 'no_target', tone: 'amber', text: 'No program receives vulnerability POA&M items, so none are created. That needs a CMMC program as the organization default or as the vulnerability target.' });
+    out.push({ id: 'no_target', tone: 'amber', action: 'open_programs', text: 'No program receives vulnerability POA&M items, so none are created. That needs a CMMC program as the organization default or as the vulnerability target.' });
   } else if (!rules.isVmTarget) {
     out.push({
       id: 'not_target',
       tone: 'slate',
+      action: 'open_programs',
       text: `This program is not the vulnerability target, so new items are created in ${ctx.targetProgramName ?? 'another program'}, not here.${hasItems ? ' The items below were created while this program was the target.' : ''}`,
     });
   }
@@ -213,16 +250,47 @@ export function vmPoamNotices(data: VmPoamResponse, ctx: { framework: string; ta
       text: `Level 1 has no vulnerability remediation practice. These items keep the Level 2 id RA.L2-3.11.3; the closest Level 1 practice is ${cmmcGuideId('SI.L2-3.14.1', 'CMMC_L1')}.`,
     });
   }
-  if (data.openItemsTotal > data.items.length) {
-    out.push({ id: 'cap', tone: 'slate', text: `Showing the first ${data.items.length} of ${data.openItemsTotal} open items. The exports list the same ${data.items.length}.` });
+  // The cap compares with the open rows shown: completed rows loaded next to them must not hide a truncated open list
+  const openShown = data.items.filter((r) => isOpenVmPoamStatus(r.status)).length;
+  if (data.openItemsTotal > openShown) {
+    out.push({ id: 'cap', tone: 'slate', text: `Showing the first ${openShown} of ${data.openItemsTotal} open items. The exports list the same ${openShown}.` });
+  }
+  const closedTotal = vmClosedCount(data);
+  const closedShown = data.items.length - openShown;
+  if (ctx.includeClosed && closedShown < closedTotal) {
+    out.push({ id: 'closed_cap', tone: 'slate', text: `Showing the first ${closedShown} of ${closedTotal} completed or risk-accepted items.` });
   }
   return out;
 }
 
-export function vmItemsEmptyText(data: VmPoamResponse): string {
-  return data.rules.isVmTarget && data.rules.autocreateEnabled && data.overdueWithoutItemCount === 0
+export function vmClosedToggleText(n: number): string {
+  return `Show completed and risk-accepted items (${n})`;
+}
+
+/** Shown while no open item is listed; says so, and where the closed items are. */
+export function vmItemsEmptyText(data: VmPoamResponse, opts: { includeClosed?: boolean } = {}): string {
+  const base = data.rules.isVmTarget && data.rules.autocreateEnabled && data.overdueWithoutItemCount === 0
     ? 'No vulnerability POA&M items are open, and no open vulnerability is past its deadline.'
     : 'No vulnerability POA&M items are open in this program.';
+  const n = vmClosedCount(data);
+  if (n === 0) return base;
+  if (opts.includeClosed) return `${base} ${n === 1 ? 'The completed or risk-accepted item is' : `The ${n} completed or risk-accepted items are`} listed below.`;
+  return `${base} ${n} completed or risk-accepted ${n === 1 ? 'item is' : 'items are'} hidden.`;
+}
+
+/** The row after a save, in the loaded response: replaced in place, or removed when it is now closed and closed items are hidden. Same reference when the id is not loaded. */
+export function applyVmPoamRowUpdate(data: VmPoamResponse, row: VmPoamRow, includeClosed: boolean): VmPoamResponse {
+  const index = data.items.findIndex((r) => r.id === row.id);
+  if (index < 0) return data;
+  const wasOpen = isOpenVmPoamStatus(data.items[index].status);
+  const nowOpen = isOpenVmPoamStatus(row.status);
+  const items = !nowOpen && !includeClosed ? data.items.filter((r) => r.id !== row.id) : data.items.map((r) => (r.id === row.id ? row : r));
+  return { ...data, items, openItemsTotal: data.openItemsTotal + (nowOpen ? 1 : 0) - (wasOpen ? 1 : 0) };
+}
+
+/** An open item whose recorded target date has passed (calendar dates, no clock: `generatedAt` is the response's own). */
+export function vmPastTargetDate(row: Pick<VmPoamRow, 'status' | 'scheduledCompletion'>, generatedAt: string): boolean {
+  return isOpenVmPoamStatus(row.status) && row.scheduledCompletion !== null && row.scheduledCompletion < generatedAt.slice(0, 10);
 }
 
 export function vmResultsText(shown: number, total: number): string {

@@ -12,6 +12,8 @@ import { AssessmentObjective } from '../../types/assessment';
 import { getControlObjectives } from '../cmmcGuide/objectives';
 import { cmmcNumberOf } from '../cmmcGuide/guide';
 import { cmmcDisplayId, cmmcGuideLetter } from '../cmmcGuide/displayId';
+import { composeImplementationStatement } from '../cmmcGuide/sspStatement';
+import { statusDisplayLabel } from '../statusLabels';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
@@ -97,8 +99,6 @@ export function calculateSummaryMetrics(
   };
 }
 
-const OBJECTIVE_STATUS_WORD: Record<string, string> = { NOT_MET: 'Not met', IN_PROGRESS: 'In progress', NOT_STARTED: 'Not started' };
-
 /**
  * #285: for a CMMC control, the guide objectives that are not Met, worded for a POA&M weakness. Null (the old wording stays)
  * when no objective answers were supplied or the control is not a CMMC requirement. Public guide wording only, never notes.
@@ -124,12 +124,12 @@ export function cmmcObjectiveWeakness(
   const open = objs.filter((o) => o.status !== 'MET' && o.status !== 'NOT_APPLICABLE');
   if (open.length > 0) {
     return {
-      description: `Objectives not met (${open.length} of ${n}): ${open.map((o) => `${line(o)} (${OBJECTIVE_STATUS_WORD[o.status] ?? o.status})`).join('; ')}.`,
+      description: `Objectives not met (${open.length} of ${n}): ${open.map((o) => `${line(o)} (${statusDisplayLabel(o.status)})`).join('; ')}.`,
       validate: `Validate objective${open.length > 1 ? 's' : ''}: ${open.map((o) => `[${letterOf(o)}]`).join(', ')}`,
     };
   }
   return {
-    description: `All ${n} objectives are recorded as met or not applicable; the requirement itself is recorded as ${OBJECTIVE_STATUS_WORD[status] ?? status}.`,
+    description: `All ${n} objectives are recorded as met or not applicable; the requirement itself is recorded as ${statusDisplayLabel(status)}.`,
     validate: 'Validate objective answers against the requirement status',
   };
 }
@@ -305,7 +305,8 @@ export function compileNistSSP(
     const rows = domainCtrls.map(ctrl => {
       const cState = controlStates[ctrl.id];
       const status = cState?.status || 'NOT_STARTED';
-      let narrative = cState?.implementationNotes || 'No implementation narrative documented.';
+      // #293: the control-level notes, then the objective narratives (CMMC only; the notes alone without objectives)
+      let narrative = composeImplementationStatement(ctrl.id, cState?.implementationNotes, objectives, metadata.framework).text || 'No implementation narrative documented.';
       // 3.13.11: cite the validated modules from the asset inventory (plain text: this is a table cell)
       if (metadata.cryptoModules && isCryptographicProtectionControl(ctrl.id)) {
         narrative = applyFipsModules(narrative, metadata.cryptoModules, { bold: false });
@@ -320,7 +321,7 @@ export function compileNistSSP(
         cmmcDisplayId(ctrl.id, metadata.framework),
         ctrl.title,
         ctrl.authorityReference || fwDef.authority,
-        status,
+        statusDisplayLabel(status),
         narrative,
         role,
         evidenceSummary,

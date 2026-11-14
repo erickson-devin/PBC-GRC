@@ -13,7 +13,7 @@ import { vmIngestMaxBytes } from '../server/vm/ingestSchema';
 import { __drainVmWorkerForTests, __resumeVmWorkerForTests, __setVmWorkerFaultForTests, abortVmRuns, activeVmRuns, enqueueVmRun } from '../server/vm/worker';
 import { markRunInterrupted, recordReceivedRun, updateRun } from '../server/vm/store';
 import { VM_SHUTDOWN_MESSAGE } from '../server/shutdown';
-import { countOpenPoamItems, loadSnapshotFindings, saveFindings } from '../server/vm/findingsStore';
+import { countOpenPoamItems, loadSnapshotFindings, memoryPoamEvents, saveFindings } from '../server/vm/findingsStore';
 import { createProgram } from '../server/programs';
 import type { VmFinding } from '../src/types/vm';
 import { firstProgram } from './programFixture';
@@ -870,8 +870,8 @@ async function run() {
   const reoItems2 = await itemsOf(defaultA.id, reoFinding.id);
   assert(reoAfter.status === 'OPEN' && reoAfter.firstSeenAt === '2025-07-01T00:00:00.000Z', 'RE2 the finding is reopened with a new first_seen_at (a new episode)', reoAfter);
   assert(
-    reoItems2.length === 2 && JSON.stringify(reoItems2.map((p) => p.findingFirstSeenAt).sort()) === JSON.stringify(['2020-01-01T00:00:00.000Z', '2025-07-01T00:00:00.000Z']) && reoItems2.every((p) => p.status === 'OPEN'),
-    'RE2 the reopened, overdue finding gets a new item although the earlier episode\'s item is still OPEN',
+    reoItems2.length === 2 && JSON.stringify(reoItems2.map((p) => p.findingFirstSeenAt).sort()) === JSON.stringify(['2020-01-01T00:00:00.000Z', '2025-07-01T00:00:00.000Z']) && reoItems2.find((p) => p.findingFirstSeenAt === '2020-01-01T00:00:00.000Z')?.status === 'COMPLETED' && reoItems2.find((p) => p.findingFirstSeenAt === '2025-07-01T00:00:00.000Z')?.status === 'OPEN',
+    'RE2 the reopened, overdue finding gets a new OPEN item and the earlier episode\'s item is COMPLETED (#295: that episode ended by a RESOLVED)',
     reoItems2.map((p) => [p.findingFirstSeenAt, p.status]),
   );
   assert(poamCountOf(re2Run.lines, re2Id) === String((await totalItems(defaultA.id)) - beforeRe2), 'RE2 the worker line counts the items really inserted', re2Run.lines.length);
@@ -894,6 +894,97 @@ async function run() {
   assert((await totalItems(targetP2.id)) === overdueNow && poamCountOf(reo5.lines, re2Id) === '0', 'RE5 a second reprocess adds nothing and the worker line says 0 POA&M (it used to repeat the planned count)', [await totalItems(targetP2.id), poamCountOf(reo5.lines, re2Id)]);
   assert((await call('PUT', `/tenants/${A}/programs/${defaultA.id}/vm-target`, ownerA, A)).status === 200, 'the VM target is restored to the default program');
 
+  console.log('\n--- POA&M completion when a later scan confirms the fix (#295) ---');
+  const completedCountOf = (lines: string[], runId: string): string | null => {
+    const m = lines.find((l) => l.includes(`run ${runId} `) && l.includes('NORMALIZED'))?.match(/(\d+) POA&M completed/);
+    return m ? m[1] : null;
+  };
+  const acHost = (id: string, vulns: string[]) => ({
+    agent_id: id,
+    hostname: 'host-' + id,
+    findings: vulns.map((v) => ({ vuln_id: v, severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' })),
+  });
+  const acRun = (label: string, hosts: Array<ReturnType<typeof acHost>>, collectedAt: string) =>
+    withLogs(async () => {
+      const res = await ingest(tokenA, Buffer.from(JSON.stringify({ ...payloadOf({ label }), collected_at: collectedAt, hosts })));
+      await __drainVmWorkerForTests();
+      return res;
+    });
+  const acFinding = async (host: string) => ((await findingsOf(A, ownerA, `?assetId=${await assetIdByName(host)}`))[0] ?? {}) as Json;
+
+  const ac1Run = await acRun('ac-src', [acHost('ac1', ['CVE-2024-0950']), acHost('ac2', ['CVE-2024-0951'])], '2026-10-21T00:00:00Z');
+  const ac1Finding = await acFinding('host-ac1');
+  const ac1Items = await itemsOf(defaultA.id, ac1Finding.id);
+  assert(ac1Run.value.status === 202 && ac1Items.length === 1 && ac1Items[0].status === 'OPEN' && ac1Items[0].autoComplete === true, 'AC0 an overdue finding gets one OPEN item that is auto-completable', ac1Items);
+  assert(poamCountOf(ac1Run.lines, (ac1Run.value.body as Json).run_id) !== null && completedCountOf(ac1Run.lines, (ac1Run.value.body as Json).run_id) === '0', 'AC0 the worker line carries the created count first and "0 POA&M completed"', ac1Run.lines.length);
+
+  // AC2: the source scans another host only, so the finding of host-ac1 is neither resolved nor its item completed
+  const ac2Run = await acRun('ac-src', [acHost('ac2', ['CVE-2024-0951'])], '2026-10-22T00:00:00Z');
+  const ac2Item = (await itemsOf(defaultA.id, ac1Finding.id))[0];
+  assert((await acFinding('host-ac1')).status === 'OPEN' && ac2Item.status === 'OPEN' && completedCountOf(ac2Run.lines, (ac2Run.value.body as Json).run_id) === '0', 'AC2 a host that was not scanned completes nothing (finding and item stay OPEN)', [ac2Item.status]);
+
+  // AC1: the same source scans host-ac1 again and no longer lists the vulnerability
+  const ac3Run = await acRun('ac-src', [acHost('ac1', []), acHost('ac2', ['CVE-2024-0951'])], '2026-10-23T00:00:00Z');
+  const ac3Id = (ac3Run.value.body as Json).run_id as string;
+  const ac3Item = (await itemsOf(defaultA.id, ac1Finding.id))[0];
+  assert((await acFinding('host-ac1')).status === 'RESOLVED', 'AC1 the finding is RESOLVED by the later scan', await acFinding('host-ac1'));
+  assert(ac3Item.status === 'COMPLETED' && ac3Item.statusChangedBy === 'system:vm-worker' && ac3Item.updatedBy === 'system:vm-worker' && Boolean(ac3Item.statusChangedAt), 'AC1 the item is COMPLETED, by the worker', ac3Item);
+  assert(completedCountOf(ac3Run.lines, ac3Id) === '1' && poamCountOf(ac3Run.lines, ac3Id) === '0', 'AC1 the worker line says "0 POA&M, 1 POA&M completed"', ac3Run.lines.filter((l) => l.includes('NORMALIZED')));
+  const acEvents = memoryPoamEvents.filter((e) => e.itemId === ac3Item.id);
+  assert(
+    acEvents.length === 1 && acEvents[0].source === 'system' && acEvents[0].actor === 'system:vm-worker' && acEvents[0].runId === ac3Id && acEvents[0].oldStatus === 'OPEN' && acEvents[0].newStatus === 'COMPLETED' && !acEvents[0].ownerChanged && !acEvents[0].mitigationChanged,
+    'AC1 one system event records OPEN -> COMPLETED with the run id',
+    acEvents,
+  );
+
+  // AC3: reprocessing the same run completes nothing twice
+  const ac3Again = await reprocessRun(ac3Id);
+  const ac3ItemAgain = (await itemsOf(defaultA.id, ac1Finding.id))[0];
+  assert(ac3Again.value.status === 202 && ac3ItemAgain.status === 'COMPLETED' && ac3ItemAgain.updatedAt === ac3Item.updatedAt && completedCountOf(ac3Again.lines, ac3Id) === '0' && memoryPoamEvents.filter((e) => e.itemId === ac3Item.id).length === 1, 'AC3 reprocessing completes nothing twice (same updatedAt, one event, "0 POA&M completed")', [ac3ItemAgain.updatedAt, ac3Item.updatedAt]);
+
+  // AC4: the vulnerability comes back in a new episode: a new OPEN item, the completed one stays
+  await saveFindings(A, { created: [], updated: [], resolved: [{ ...(ac1Finding as VmFinding), status: 'RESOLVED', resolvedAt: '2025-06-01T00:00:00.000Z', resolvedRunId: ac3Id }], sightings: [], vulnIds: [] }, null);
+  await acRun('ac-src', [{ ...acHost('ac1', ['CVE-2024-0950']), findings: [{ vuln_id: 'CVE-2024-0950', severity: 'CRITICAL', detected_at: '2025-07-01T00:00:00Z' }] }, acHost('ac2', ['CVE-2024-0951'])], '2026-10-24T00:00:00Z');
+  const ac4Items = await itemsOf(defaultA.id, ac1Finding.id);
+  assert(
+    ac4Items.length === 2 && ac4Items.filter((p) => p.status === 'COMPLETED').length === 1 && ac4Items.filter((p) => p.status === 'OPEN' && p.findingFirstSeenAt === '2025-07-01T00:00:00.000Z').length === 1,
+    'AC4 a reopened finding gets a new OPEN item and the earlier episode item stays COMPLETED',
+    ac4Items.map((p) => [p.findingFirstSeenAt, p.status]),
+  );
+
+
+  // AC6: completion runs although VM_POAM_AUTOCREATE is off (the switch is about creating items)
+  const ac6a = await acRun('ac-src6', [acHost('ac6', ['CVE-2024-0957'])], '2026-10-26T00:00:00Z');
+  const ac6Finding = await acFinding('host-ac6');
+  assert((await itemsOf(defaultA.id, ac6Finding.id)).length === 1 && ac6a.value.status === 202, 'AC6 setup: the overdue finding has one item', ac6a.value.status);
+  const savedAutocreate = process.env.VM_POAM_AUTOCREATE;
+  process.env.VM_POAM_AUTOCREATE = 'off';
+  const ac6b = await acRun('ac-src6', [acHost('ac6', [])], '2026-10-27T00:00:00Z');
+  if (savedAutocreate === undefined) delete process.env.VM_POAM_AUTOCREATE;
+  else process.env.VM_POAM_AUTOCREATE = savedAutocreate;
+  const ac6Id = (ac6b.value.body as Json).run_id as string;
+  assert((await itemsOf(defaultA.id, ac6Finding.id))[0].status === 'COMPLETED' && poamCountOf(ac6b.lines, ac6Id) === '0' && completedCountOf(ac6b.lines, ac6Id) === '1', 'AC6 with VM_POAM_AUTOCREATE off the item still completes and none is created', ac6b.lines.filter((l) => l.includes('NORMALIZED')));
+
+  // AC5: items left in a program that was the VM target earlier complete too, unless that program is archived
+  const ac5a = await acRun('ac-src5', [acHost('ac5', ['CVE-2024-0955'])], '2026-10-28T00:00:00Z');
+  const ac5Finding = await acFinding('host-ac5');
+  const progOld = await createProgram(A, { name: 'AC old target', frameworkId: 'CMMC_L1' }, 'test');
+  const progNew = await createProgram(A, { name: 'AC new target', frameworkId: 'CMMC_L1' }, 'test');
+  assert((await call('PUT', `/tenants/${A}/programs/${progOld.id}/vm-target`, ownerA, A)).status === 200, 'AC5 setup: the second program becomes the target');
+  await acRun('ac-src5', [acHost('ac5', ['CVE-2024-0955']), acHost('ac7', ['CVE-2024-0958'])], '2026-10-29T00:00:00Z');
+  const ac7Finding = await acFinding('host-ac7');
+  assert(ac5a.value.status === 202 && (await itemsOf(defaultA.id, ac5Finding.id)).length === 1 && (await itemsOf(progOld.id, ac7Finding.id)).length === 1, 'AC5 setup: one item in the default program, one in the second program', [(await itemsOf(defaultA.id, ac5Finding.id)).length, (await itemsOf(progOld.id, ac7Finding.id)).length]);
+  assert((await call('PUT', `/tenants/${A}/programs/${progNew.id}/vm-target`, ownerA, A)).status === 200, 'AC5 setup: a third program becomes the target');
+  assert((await call('POST', `/tenants/${A}/programs/${progOld.id}/archive`, ownerA, A)).status === 200, 'AC5 setup: the second program is archived');
+  const ac5Close = await acRun('ac-src5', [acHost('ac5', []), acHost('ac7', [])], '2026-10-30T00:00:00Z');
+  const ac5CloseId = (ac5Close.value.body as Json).run_id as string;
+  assert((await acFinding('host-ac5')).status === 'RESOLVED' && (await acFinding('host-ac7')).status === 'RESOLVED', 'AC5 the closing scan resolves both findings');
+  assert((await itemsOf(defaultA.id, ac5Finding.id))[0].status === 'COMPLETED', 'AC5 the item in the previous target (default, not archived) is completed', (await itemsOf(defaultA.id, ac5Finding.id))[0].status);
+  assert((await itemsOf(progOld.id, ac7Finding.id))[0].status === 'OPEN', 'AC5 the item in an archived program is frozen: untouched', (await itemsOf(progOld.id, ac7Finding.id))[0].status);
+  assert(completedCountOf(ac5Close.lines, ac5CloseId) === '1', 'AC5 the worker line counts the completions of the other programs', ac5Close.lines.filter((l) => l.includes('NORMALIZED')));
+  assert(memoryPoamEvents.filter((e) => e.runId === ac5CloseId).every((e) => e.programId === defaultA.id) && memoryPoamEvents.some((e) => e.runId === ac5CloseId), 'AC5 the event is recorded under the item\'s own program', memoryPoamEvents.filter((e) => e.runId === ac5CloseId).length);
+  assert(memoryPoamEvents.every((e) => Object.keys(e).sort().join() === ['actor', 'createdAt', 'id', 'itemId', 'mitigationChanged', 'newScheduledCompletion', 'newStatus', 'oldScheduledCompletion', 'oldStatus', 'ownerChanged', 'programId', 'runId', 'source', 'tenantId'].join()), 'AC events carry statuses, dates, flags and ids only (no owner, mitigation or weakness text)');
+  assert((await call('PUT', `/tenants/${A}/programs/${defaultA.id}/vm-target`, ownerA, A)).status === 200, 'AC the VM target is restored to the default program');
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();
   const limited: number[] = [];

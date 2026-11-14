@@ -58,6 +58,7 @@ import { catalogUpdateKeyPrefix } from '../data/cmmcGuide/catalogUpdateReview';
 import { tabOwnsStoredSession } from '../services/tabSession';
 import { isTabLocked, waitForUnlock } from '../services/idleLock';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
+import { lowerRefusedMet } from '../data/cmmcGuide/controlStatusGuard';
 import { OBJECTIVE_CASCADE_EVENT, applyImportResult, chunkItems, objectivesToUpload, stackCascadeFill } from '../data/objectiveSync';
 import {
   ComplianceFramework,
@@ -314,7 +315,7 @@ interface TenantContextType {
    * Moves a tenant that only exists in this browser to the server: creates it there, then ports its assessment and
    * evidence files to the new server-generated id. Browser-only team members and invitations are not carried over.
    */
-  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number }>;
+  migrateLocalTenantToServer: (tenantId: string) => Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number; controlsLowered: number }>;
 
   initializeBlankTenant: (email: string, domain?: string, orgName?: string) => Tenant;
   completeTenantOnboarding: (tenantId: string, data: {
@@ -783,7 +784,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     target: Tenant,
     override: ServerTenantPatch = {},
     activate = true
-  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number }> => {
+  ): Promise<{ tenant: Tenant; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number; controlsLowered: number }> => {
     const base = toServerPatch(target);
     const created = await createTenantOnServer(
       { ...base, ...override, name: (override.name ?? target.name).trim() },
@@ -825,22 +826,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // In live mode the server is the source of truth for control answers, so carry over everything the user filled in
     // (otherwise the new tenant's defaults would replace it on the next sync).
     // Answers given under the earlier CMMC objective wording are re-flagged before anything is uploaded (a legacy Met is not sent as Met)
-    const legacyState = migrateCachedObjectives(StorageService.loadAssessment(target), target.primaryFramework ?? 'CMMC_L1').state;
+    const migratedLegacy = migrateCachedObjectives(StorageService.loadAssessment(target), target.primaryFramework ?? 'CMMC_L1').state;
+    // A Met control whose objectives are not all Met is sent at its objectives' status: the server refuses such a Met (#292). Only the count is kept
+    const lowering = lowerRefusedMet(migratedLegacy, created.primaryFramework ?? target.primaryFramework ?? 'CMMC_L1');
+    const legacyState = lowering.state;
+    const controlsLowered = lowering.lowered.length;
     const legacyControls = Object.values(legacyState.controls).filter(
       c => c.status !== 'NOT_STARTED' || (c.implementationNotes || '').trim() !== ''
     );
-    const pushed = await Promise.allSettled(
-      legacyControls.map(c =>
-        ApiClient.updateControl(created.id, c.id, {
-          status: c.status,
-          implementationNotes: c.implementationNotes,
-          responsibleRole: c.responsibleRole,
-          updatedBy: c.updatedBy,
-        })
-      )
-    );
-    const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
-    const failedControls = legacyControls.filter((_, i) => pushed[i].status === 'rejected');
 
     // Evidence files kept in this browser are uploaded to the new tenant (default program), one at a time. A file is removed
     // from the browser only once the server is proven to hold the same bytes; one that fails stays here and is listed in the vault.
@@ -894,6 +887,20 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         objectivesFailed += chunk.length;
       }
     }
+
+    // The control answers go after the objectives: the server checks a Met control against the objectives it holds (#292)
+    const pushed = await Promise.allSettled(
+      legacyControls.map(c =>
+        ApiClient.updateControl(created.id, c.id, {
+          status: c.status,
+          implementationNotes: c.implementationNotes,
+          responsibleRole: c.responsibleRole,
+          updatedBy: c.updatedBy,
+        })
+      )
+    );
+    const controlsFailed = pushed.filter(r => r.status === 'rejected').length;
+    const failedControls = legacyControls.filter((_, i) => pushed[i].status === 'rejected');
 
     // The CMMC asset inventory is server-owned too. A demo fleet that an older version seeded into this browser is never
     // carried over (it is not this tenant's data).
@@ -950,17 +957,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       delete roles[target.id];
       return { ...prev, roles };
     });
-    return { tenant: created, evidenceFilesMoved, evidenceFailed, controlsFailed, objectivesFailed, assetsMoved, assetsFailed, registryFieldsFailed };
+    return { tenant: created, evidenceFilesMoved, evidenceFailed, controlsFailed, objectivesFailed, assetsMoved, assetsFailed, registryFieldsFailed, controlsLowered };
   }, [createTenantOnServer]);
 
   /** "Move to server": the user-facing action for tenants that only exist in this browser. */
-  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number }> => {
+  const migrateLocalTenantToServer = useCallback(async (tenantId: string): Promise<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; objectivesFailed: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number; controlsLowered: number }> => {
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
     if (!target) throw new ApiError(404, 'That tenant was not found.');
-    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, evidenceFailed: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0, registryFieldsFailed: 0 };
+    if (target.serverBacked) return { tenantId, evidenceFilesMoved: 0, evidenceFailed: 0, controlsFailed: 0, objectivesFailed: 0, assetsMoved: 0, assetsFailed: 0, registryFieldsFailed: 0, controlsLowered: 0 };
     if (target.isConfigured === false) throw new ApiError(409, 'Finish this tenant\'s setup wizard first; it creates the tenant on the server.');
     const moved = await migrateTenantToServer(target, {}, target.id === currentTenantIdRef.current);
-    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, evidenceFailed: moved.evidenceFailed, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed, registryFieldsFailed: moved.registryFieldsFailed };
+    return { tenantId: moved.tenant.id, evidenceFilesMoved: moved.evidenceFilesMoved, evidenceFailed: moved.evidenceFailed, controlsFailed: moved.controlsFailed, objectivesFailed: moved.objectivesFailed, assetsMoved: moved.assetsMoved, assetsFailed: moved.assetsFailed, registryFieldsFailed: moved.registryFieldsFailed, controlsLowered: moved.controlsLowered };
   }, [migrateTenantToServer]);
 
 

@@ -92,6 +92,8 @@ console.log('\n--- Source ---');
     const count = (s: string, needle: string) => s.split(needle).length - 1;
     assert(body.length > 0 && setAt > 0 && count(before, 'recordAuditEvent(') === 1 && count(before, 'saveControl(') === 1 && !after.includes('recordAuditEvent(') && !after.includes('saveControl(') && !after.includes('setTimeout(') && !body.includes('let sent') && body.includes('stateRef.current.controls'), `S181-7 ${name} records and saves once, before and outside the state updater`);
   }
+  const statusBody = bodies[0][1];
+  assert(statusBody.includes('checkControlStatusWrite(') && statusBody.indexOf('checkControlStatusWrite(') < statusBody.indexOf('saveControl(') && statusBody.indexOf('checkControlStatusWrite(') < statusBody.indexOf('recordAuditEvent('), 'M292-3 updateControlStatus checks the Met rule before it saves, records or changes anything');
   const plan = read('src/utils/controlEditPlan.ts');
   assert(!plan.includes('console.') && !plan.includes('recordAuditEvent') && !plan.includes('localStorage'), 'S181-8 the plan module is pure: no console, ledger or storage');
 }
