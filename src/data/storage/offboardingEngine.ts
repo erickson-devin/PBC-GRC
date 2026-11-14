@@ -10,6 +10,7 @@
 import { Tenant } from '../../types/tenant';
 import type { SspMetadataFields } from '../../types/sspMetadata';
 import { AssessmentState, ControlState, EvidenceItem } from '../../types/cmmc';
+import type { AssessmentObjective } from '../../types/assessment';
 import { CompiledDocument, POAMEntry } from '../../types/report';
 import { CertificateOfDestruction, AuditLogEntry } from '../../types/audit';
 import { StorageService } from '../../services/storageService';
@@ -89,6 +90,8 @@ export interface HandoverOptions {
   overlays?: OverlayFilters;
   /** The program's SSP details from the server (#84): its environment, cloud providers, boundary text and the other SSP fields. Without it a program's package states none of them. */
   sspMetadata?: SspMetadataFields;
+  /** The program's objective answers from the server (#293), so its SSP prints the objective narratives and its POA&M names the open objectives. Without them the SSP prints the control-level notes only. */
+  objectives?: Record<string, AssessmentObjective>;
 }
 
 /** Thrown (and shown to the operator as is) when the evidence files cannot be cleared; it holds no tenant data. */
@@ -163,6 +166,7 @@ export async function generateEnclaveHandoverPackage(
   const primaryFw = tenant.primaryFramework || 'CMMC_L1';
   const controls = program ? programFrameworkControls(program, scopingToOverlays(program.scoping)) : getFrameworkControls(primaryFw, 'ALL_CONTROLS', browserTenantOverlays(primaryFw, options.overlays));
   const controlsForReport = { ...state?.controls, ...controlStates };
+  const objectivesForReport = options.objectives ?? state?.objectives;
 
   // Compile official NIST SP 800-18 / NIST SP 800-171 System Security Plan
   const sspDocument = compileNistSSP(
@@ -186,11 +190,12 @@ export async function generateEnclaveHandoverPackage(
     },
     controls,
     controlsForReport,
-    [...evidenceForPackage]
+    [...evidenceForPackage],
+    objectivesForReport
   );
 
   // Generate structured POA&M entries
-  const poamMatrix = generatePOAMEntries(controls, controlsForReport);
+  const poamMatrix = generatePOAMEntries(controls, controlsForReport, objectivesForReport, program ? program.framework : primaryFw);
 
   const now = new Date().toISOString();
   const rawPayload = {
