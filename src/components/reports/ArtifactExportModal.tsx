@@ -25,7 +25,8 @@ import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useSoftwareItems } from '../../hooks/useSoftwareItems';
-import { softwareExportLine } from '../../data/softwareInventoryView';
+import { softwareExportLine, scannerExportLine } from '../../data/softwareInventoryView';
+import { useProgramObservedInventory } from '../../hooks/useProgramObservedInventory';
 import { collectFipsModules } from '../../data/telemetry/fipsValidation';
 import { useProgramAssets } from '../../hooks/useProgramAssets';
 import { boundaryAssets } from '../../data/programAssets';
@@ -64,6 +65,9 @@ import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
+import { PoamWorkspace } from './PoamWorkspace';
+import { useVmPoam } from '../../hooks/useVmPoam';
+import { vmPoamExportFor, poamTabLabel, poamTabAriaLabel } from '../../data/reports/vmPoamView';
 interface ArtifactExportModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -71,9 +75,11 @@ interface ArtifactExportModalProps {
   embedded?: boolean;
   /** Pre-select a specific document type when opening (e.g., 'POAM') */
   initialDocType?: string;
+  /** Open on this view (the POA&M sidebar entry opens on the table) */
+  initialTab?: 'preview' | 'poam';
 }
 
-export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen, onClose, embedded = false, initialDocType: propInitialDocType }) => {
+export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen, onClose, embedded = false, initialDocType: propInitialDocType, initialTab: propInitialTab }) => {
   const {
     state,
     frameworkControls,
@@ -86,6 +92,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     currentTenant,
     activeFramework,
     activeProgram,
+    programs,
     canEdit,
   } = useTenant();
 
@@ -112,7 +119,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   });
 
   // Active View Tab: 'preview' | 'metadata' | 'poam' | 'sprs'
-  const [activeTab, setActiveTab] = useState<'preview' | 'metadata' | 'poam' | 'sprs'>('preview');
+  const [activeTab, setActiveTab] = useState<'preview' | 'metadata' | 'poam' | 'sprs'>(propInitialTab ?? 'preview');
 
   // The inventory documents have no POA&M or SPRS / eMASS view: leave those tabs if one is selected
   const isInventoryDoc = isInventoryDocumentType(selectedDocType);
@@ -122,9 +129,18 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     const ids = new Set(boundaryList.map((a) => a.id));
     return software.items.filter((item) => item.assetId === null || ids.has(item.assetId));
   }, [software.items, boundaryList]);
+  // What the scanners report for the program (issue #279), for the two inventory documents
+  const scanner = useProgramObservedInventory({ enabled: isOpen && isInventoryDoc });
+  const scannerObserved = scanner.observed;
+  const scannerAssetCount = useMemo(() => new Set(scannerObserved.hosts.filter((h) => h.softwareReported).map((h) => h.assetId)).size, [scannerObserved]);
+  const scannerLine = scannerExportLine({ status: scanner.status, packages: scannerObserved.software.length, assets: scannerAssetCount, truncated: scannerObserved.truncated });
   useEffect(() => {
     if (isInventoryDoc && (activeTab === 'poam' || activeTab === 'sprs')) setActiveTab('preview');
   }, [isInventoryDoc, activeTab]);
+  // #274: the program's vulnerability POA&M items, for the POA&M table and the POA&M exports (server-backed organizations)
+  const vmPoam = useVmPoam({ enabled: isOpen && !isInventoryDoc && (activeTab === 'poam' || selectedDocType === 'POAM') });
+  const vmPoamExport = useMemo(() => vmPoamExportFor(vmPoam.load, activeFramework), [vmPoam.load, activeFramework]);
+  const vmEntries = vmPoamExport?.status === 'ready' ? vmPoamExport.entries : [];
 
   // Compute live DoD SPRS scoring metrics (CMMC Level 2 only)
   const sprsResult = useMemo(() => {
@@ -231,10 +247,11 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       frameworkControls,
       state.controls,
       state.evidenceIndex,
-      scopeUnavailable ? undefined : { assets: boundaryList, software: softwareInScope },
-      state.objectives ?? {}
+      scopeUnavailable ? undefined : { assets: boundaryList, software: softwareInScope, observed: scanner.status === 'loading' ? undefined : scannerObserved },
+      state.objectives ?? {},
+      { vmPoam: vmPoamExport }
     );
-  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex, state.objectives]);
+  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex, state.objectives, vmPoamExport, scanner.status, scannerObserved]);
 
   // Export readiness (#151, B-1): advisory only, exports stay allowed. Labels are fixed text; values are never echoed.
   const metaIdBase = useId();
@@ -277,7 +294,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   };
 
   const handleExportPoamCsv = () => {
-    const entries = compiledDoc.poamEntries || [];
+    const entries = [...(compiledDoc.poamEntries || []), ...vmEntries];
     downloadPoamCsv(entries, formData.systemName);
   };
 
@@ -319,14 +336,14 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       label: 'Hardware Inventory',
       icon: HardDrive,
       badge: 'CM.L2-3.4.1',
-      desc: 'Every asset in the program boundary with recorded hardware details (CM.L2-3.4.1).',
+      desc: 'Every asset in the program boundary with recorded hardware details and what the scanners report (CM.L2-3.4.1).',
     },
     {
       id: 'SOFTWARE_INVENTORY',
       label: 'Software Inventory',
       icon: Package,
       badge: 'CM.L2-3.4.8',
-      desc: "Manual software entries plus each asset's operating system, with approval state (CM.L2-3.4.8).",
+      desc: "Manual software entries, scanner-reported packages and each asset's operating system, with approval state (CM.L2-3.4.8).",
     },
   ];
 
@@ -420,6 +437,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <>
               <button
                 onClick={() => setActiveTab('poam')}
+                aria-label={poamTabAriaLabel(compiledDoc.poamEntries?.length ?? 0, vmPoam.load)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                   activeTab === 'poam'
                     ? 'bg-brand-600 text-white'
@@ -427,7 +445,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                 }`}
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                <span>POA&M Table ({compiledDoc.poamEntries?.length || 0})</span>
+                <span>{poamTabLabel(compiledDoc.poamEntries?.length ?? 0, vmPoam.load)}</span>
               </button>
               <button
                 onClick={() => setActiveTab('sprs')}
@@ -519,6 +537,12 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   <p data-testid="software-inventory-scope" aria-live="polite" className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300">
                     <Package className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
                     <span>{softwareExportLine({ supported: software.supported, loading: software.loading, error: Boolean(software.error), count: softwareInScope.length })}</span>
+                  </p>
+                )}
+                {selectedDocType === 'SOFTWARE_INVENTORY' && scannerLine !== null && (
+                  <p data-testid="scanner-inventory-scope" aria-live="polite" className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300">
+                    <Server className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>{scannerLine}</span>
                   </p>
                 )}
 
@@ -886,93 +910,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             </div>
           )}
 
-          {/* TAB 3: POA&M TABLE & DEFICIENCY TRACKING */}
+          {/* TAB 3: POA&M (#278 grouped and filtered on screen; #274 vulnerability items). Exports always list every entry. */}
           {activeTab === 'poam' && (
-            <div className="max-w-5xl mx-auto space-y-6">
-              <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between flex-wrap gap-4 shadow-lg">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-400" />
-                    Automated Plan of Action & Milestones (POA&M) Matrix
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Aggregated {compiledDoc.poamEntries?.length || 0} active weaknesses across all non-compliant and in-progress controls.
-                  </p>
-                </div>
-
-                <button
-                  onClick={handleExportPoamCsv}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition-colors"
-                >
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                  <span>Download POA&M (CSV)</span>
-                </button>
-              </div>
-
-              {(!compiledDoc.poamEntries || compiledDoc.poamEntries.length === 0) ? (
-                <div className="p-12 text-center rounded-3xl bg-slate-900/60 border border-slate-800 space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                    <CheckCircle2 className="w-6 h-6" />
-                  </div>
-                  <h4 className="text-base font-bold text-white">Zero Open Deficiencies on Record!</h4>
-                  <p className="text-xs text-slate-400 max-w-md mx-auto">
-                    All controls evaluated for {formData.systemName} are currently marked MET (100% compliant). Zero open POA&M entries are required.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-900 shadow-xl">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-950 text-slate-400 uppercase text-xs tracking-wider border-b border-slate-800">
-                        <tr>
-                          <th className="p-3">Weakness ID</th>
-                          <th className="p-3">Control</th>
-                          <th className="p-3">Deficiency Summary</th>
-                          <th className="p-3">Status</th>
-                          <th className="p-3">Target Date</th>
-                          <th className="p-3">Owner</th>
-                          <th className="p-3">Resources</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800">
-                        {compiledDoc.poamEntries.map((entry) => (
-                          <tr key={entry.weaknessId} className="hover:bg-slate-850/50">
-                            <td className="p-3 font-mono font-bold text-amber-300">
-                              {entry.weaknessId}
-                            </td>
-                            <td className="p-3">
-                              <div className="font-bold text-white" title={(entry.controlDisplayId ?? entry.controlId) !== entry.controlId ? `Stored as ${entry.controlId}` : undefined}>{entry.controlDisplayId ?? entry.controlId}</div>
-                              <div className="text-xs text-slate-400 truncate max-w-[140px]">{entry.controlTitle}</div>
-                            </td>
-                            <td className="p-3 text-slate-300 max-w-xs">
-                              {entry.weaknessDescription}
-                            </td>
-                            <td className="p-3">
-                              <span className={`badge px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${
-                                entry.status === 'IN_PROGRESS'
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                  : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                              }`}>
-                                {entry.status}
-                              </span>
-                            </td>
-                            <td className="p-3 font-mono text-slate-300">
-                              {entry.scheduledCompletionDate}
-                            </td>
-                            <td className="p-3 text-slate-300">
-                              {entry.responsibleRole}
-                            </td>
-                            <td className="p-3 text-slate-400 text-xs">
-                              {entry.requiredResources}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
+            <PoamWorkspace key={activeProgram?.id ?? 'no-program'} entries={compiledDoc.poamEntries ?? []} framework={activeFramework}
+              frameworkControls={frameworkControls} vm={vmPoam} vmEntries={vmEntries} programs={programs} onExportCsv={handleExportPoamCsv} />
           )}
 
           {/* TAB 4: SPRS / eMASS SUBMISSION ENGINE */}
@@ -1238,7 +1179,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
           <div className="flex items-center gap-2.5 flex-wrap justify-end w-full sm:w-auto">
             {/* Download POA&M CSV */}
-            {compiledDoc.poamEntries && compiledDoc.poamEntries.length > 0 && (
+            {((compiledDoc.poamEntries?.length ?? 0) + vmEntries.length) > 0 && (
               <button
                 onClick={handleExportPoamCsv}
                 className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"

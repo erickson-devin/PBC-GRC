@@ -128,6 +128,23 @@ export interface InventoryPackageSection {
     ipAddress: string;
     macAddress: string;
     discoveryStatus: string;
+    /** What a scanner reports for the asset, as text (NOT_RECORDED when it reports nothing); the recorded fields above are never replaced. */
+    osVersion?: string;
+    cpu?: string;
+    memory?: string;
+    /** The newest scanner report of the asset, raw; null when no scanner reports it (or none was loaded). */
+    observed?: {
+      sourceLabel: string;
+      lastSeenAt: string;
+      osName: string;
+      osVersion: string;
+      cpuName: string;
+      cpuCores: number | null;
+      memoryBytes: number | null;
+      serialNumber: string;
+      ipAddress: string;
+      macAddress: string;
+    } | null;
   }>;
   software?: Array<{
     id: string | null;
@@ -137,7 +154,11 @@ export interface InventoryPackageSection {
     approved: boolean | null;
     assetId: string | null;
     hostName: string | null;
-    source: 'MANUAL' | 'ASSET_OS';
+    source: 'MANUAL' | 'SCANNER' | 'MANUAL_AND_SCANNER' | 'ASSET_OS';
+    /** Scanner-reported rows: how many assets report it, which sources, and when it was last reported. */
+    assetCount?: number;
+    sourceLabels?: string[];
+    lastReportedAt?: string;
   }>;
 }
 
@@ -151,6 +172,8 @@ export interface CompiledDocument {
   sections: ReportSection[];
   summaryMetrics: DocumentSummaryMetrics;
   poamEntries?: POAMEntry[];
+  /** #274: open vulnerability POA&M items (POA&M document only); never part of poamEntries, so SPRS counts stay controls-only. */
+  vmPoamEntries?: POAMEntry[];
   inventory?: InventoryPackageSection;
 }
 
@@ -182,5 +205,7 @@ export interface MachineReadablePackage {
     gcsPath?: string;
   }[];
   poamEntries?: POAMEntry[];
+  /** #274: open vulnerability POA&M items, present only when there are some. */
+  vmPoamEntries?: POAMEntry[];
   inventory?: InventoryPackageSection;
 }

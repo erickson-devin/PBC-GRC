@@ -1,10 +1,11 @@
 import { writeControlAssessment, type ControlChangeActor } from './controlAssessments';
-import { hasLegacyObjectives, runCatalogMigration, type ObjectiveActor } from './controlObjectives';
+import { hasLegacyObjectives, runCatalogMigration, type CatalogUpdateObjectiveEvent, type HumanEventMark, type ObjectiveActor } from './controlObjectives';
 import type { ProgramScope } from './db';
 import { CMMC_OBJECTIVE_CATALOG_REV, cmmcNumberOf } from '../src/data/cmmcGuide/guide';
 import { controlStatusAfterCatalogUpdate, objectiveStatusAfterCatalogUpdate } from '../src/data/cmmcGuide/migration';
 import type { ControlStatus } from '../src/types/cmmc';
-import type { ObjectiveStatus } from '../src/types/controlObjectives';
+import type { ControlAssessmentEvent } from '../src/types/controlHistory';
+import type { CatalogUpdateChanges, CatalogUpdateControlChange, CatalogUpdateObjectiveChange, ObjectiveStatus } from '../src/types/controlObjectives';
 
 /**
  * Brings a program's stored objective answers up to the CMMC Assessment Guide objectives (catalog revision cmmc-ag-2.13), the first time
@@ -17,7 +18,8 @@ import type { ObjectiveStatus } from '../src/types/controlObjectives';
  * second caller waits, then finds none). It never throws into a request and never logs a row value: only an SQL state code.
  */
 
-const ACTOR = 'CMMC Assessment Guide v2.13 update';
+/** The actor the update records its history events under; the catalog-update listing filters on it, so each guide revision has its own. */
+export const CATALOG_UPDATE_ACTOR = 'CMMC Assessment Guide v2.13 update';
 
 const sqlState = (err: unknown): string => {
   const code = (err as { code?: unknown } | null)?.code;
@@ -44,7 +46,7 @@ export async function ensureObjectiveCatalogCurrent(
     return await runCatalogMigration(scope, async (m) => {
       const rows = await m.legacyRows();
       if (!rows.length) return { objectivesChanged: 0, controlsChanged: 0 };
-      const objectiveWho: ObjectiveActor = { source: 'catalog-update', actor: ACTOR, userId: null };
+      const objectiveWho: ObjectiveActor = { source: 'catalog-update', actor: CATALOG_UPDATE_ACTOR, userId: null };
       let objectivesChanged = 0;
       for (const row of rows) {
         const to = objectiveStatusAfterCatalogUpdate(row.objectiveId, row.status as ObjectiveStatus, framework);
@@ -57,7 +59,7 @@ export async function ensureObjectiveCatalogCurrent(
       // rule C, over every control that had a legacy row, from the stored statuses after rule R
       const controlIds = [...new Set(rows.map((r) => r.controlId).filter((id) => cmmcNumberOf(id) !== null))];
       const post = await m.statusesOf(controlIds);
-      const controlWho: ControlChangeActor = { source: 'catalog-update', actor: ACTOR, userId: null };
+      const controlWho: ControlChangeActor = { source: 'catalog-update', actor: CATALOG_UPDATE_ACTOR, userId: null };
       let controlsChanged = 0;
       for (const controlId of controlIds) {
         const written = await writeControlAssessment(
@@ -66,7 +68,7 @@ export async function ensureObjectiveCatalogCurrent(
           (current) => {
             if (!current || current.status !== 'MET') return null;
             const to = controlStatusAfterCatalogUpdate(controlId, current.status as ControlStatus, post, framework);
-            return to === current.status ? null : { status: to, notes: null, role: null, updatedBy: ACTOR };
+            return to === current.status ? null : { status: to, notes: null, role: null, updatedBy: CATALOG_UPDATE_ACTOR };
           },
           controlWho,
           m.client
@@ -80,4 +82,45 @@ export async function ensureObjectiveCatalogCurrent(
     console.error(`[Objective catalog ${CMMC_OBJECTIVE_CATALOG_REV}] The update was not applied (SQL state ${sqlState(err)}); it is retried on the next read.`);
     return null;
   }
+}
+/**
+ * The catalog-update listing from the history events (pure, so it is tested without a server). Ids and statuses only: nothing of an event but
+ * its ids, statuses and time is kept. An objective counts as reviewed when a person ('human') wrote to it after the update (`humanAt`: memory mode
+ * compares positions in the history, PostgreSQL compares times). `currentById` is the objectives' status now. Each list is sorted by id and cut at `cap`.
+ */
+export function buildCatalogUpdateChanges(
+  objectiveEvents: readonly CatalogUpdateObjectiveEvent[],
+  controlEvents: readonly ControlAssessmentEvent[],
+  humanAt: ReadonlyMap<string, HumanEventMark>,
+  currentById: ReadonlyMap<string, string>,
+  cap: number
+): Pick<CatalogUpdateChanges, 'objectives' | 'controls' | 'truncated'> {
+  // oldest first: the first event of an id has the status from before the update
+  const firstObjective = new Map<string, CatalogUpdateObjectiveEvent>();
+  for (const e of objectiveEvents) if (!firstObjective.has(e.objectiveId)) firstObjective.set(e.objectiveId, e);
+  const firstControl = new Map<string, ControlAssessmentEvent>();
+  for (const e of controlEvents) if (!firstControl.has(e.controlId)) firstControl.set(e.controlId, e);
+  const byId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+  const objectives: CatalogUpdateObjectiveChange[] = [...firstObjective.values()]
+    .sort((a, b) => byId(a.objectiveId, b.objectiveId))
+    .map((e) => {
+      const human = humanAt.get(e.objectiveId);
+      const reviewed = human !== undefined && (human.seq !== null && e.seq !== null ? human.seq > e.seq : human.at >= e.createdAt);
+      return {
+        objectiveId: e.objectiveId,
+        controlId: e.controlId,
+        oldStatus: e.oldStatus,
+        newStatus: e.newStatus,
+        currentStatus: currentById.get(e.objectiveId) ?? null,
+        reviewed,
+        changedAt: e.createdAt,
+      };
+    });
+  const controls: CatalogUpdateControlChange[] = [...firstControl.values()]
+    .sort((a, b) => byId(a.controlId, b.controlId))
+    .map((e) => ({ controlId: e.controlId, oldStatus: e.oldStatus, newStatus: e.newStatus, changedAt: e.createdAt }));
+
+  const truncated = objectives.length > cap || controls.length > cap || objectiveEvents.length > cap || controlEvents.length > cap;
+  return { objectives: objectives.slice(0, cap), controls: controls.slice(0, cap), truncated };
 }

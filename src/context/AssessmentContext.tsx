@@ -21,8 +21,9 @@ import {
 } from '../data/frameworks';
 import { getControlObjectives, hasWrittenTemplate } from '../data/cmmcGuide/objectives';
 import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
+import { browserCatalogUpdate } from '../data/cmmcGuide/catalogUpdateReview';
 import { normalizeImportedCmmcIds } from '../data/cmmcGuide/displayId';
-import { withGuideTitle } from '../data/cmmcGuide/guide';
+import { CMMC_OBJECTIVE_CATALOG_REV, withGuideTitle } from '../data/cmmcGuide/guide';
 import { StorageService, createDefaultSspMetadata, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
 import { useEvidenceBlobScrub } from '../hooks/useEvidenceBlobScrub';
@@ -118,6 +119,13 @@ interface AssessmentContextType {
   setActiveTab: (tab: NavigationTab) => void;
   selectedControlId: string | null;
   setSelectedControlId: (id: string | null) => void;
+  /** Set with the control when it was opened on one objective (the objective update's list); the checklist clears it once it has scrolled there. */
+  focusObjective: FocusObjectiveRequest | null;
+  /** Opens a control (on the objective, when one is given, with the status the objective update set it back from). */
+  openControlAtObjective: (controlId: string, objectiveId: string | null, previousStatus?: ObjectiveStatus | null) => void;
+  clearFocusObjective: () => void;
+  /** Browser-only tenants: hides the objective update notice (records the time in the cache). */
+  dismissCatalogUpdate: () => void;
   selectedDomainFilter: string;
   setSelectedDomainFilter: (domain: string) => void;
   selectedStatusFilter: ControlStatus | 'ALL';
@@ -178,6 +186,13 @@ interface AssessmentContextType {
   setIsExportModalOpen: (open: boolean) => void;
   exportModalInitialDocType?: ReportDocumentType;
   openExportModal: (initialDocType?: ReportDocumentType) => void;
+}
+
+/** A control opened on one of its objectives; `previousStatus` is what the objective update set the answer back from. */
+export interface FocusObjectiveRequest {
+  controlId: string;
+  objectiveId: string;
+  previousStatus: ObjectiveStatus | null;
 }
 
 const AssessmentContext = createContext<AssessmentContextType | undefined>(undefined);
@@ -264,6 +279,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const staleNotesRef = useRef(new Set<string>());
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
+  const [focusObjective, setFocusObjective] = useState<FocusObjectiveRequest | null>(null);
   const [selectedDomainFilter, setSelectedDomainFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<ControlStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -274,6 +290,15 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const openExportModal = useCallback((initialDocType?: ReportDocumentType) => {
     setExportModalInitialDocType(initialDocType);
     setIsExportModalOpen(true);
+  }, []);
+
+  const openControlAtObjective = useCallback((controlId: string, objectiveId: string | null, previousStatus: ObjectiveStatus | null = null) => {
+    setFocusObjective(objectiveId ? { controlId, objectiveId, previousStatus } : null);
+    setSelectedControlId(controlId);
+  }, []);
+  const clearFocusObjective = useCallback(() => setFocusObjective(null), []);
+  const dismissCatalogUpdate = useCallback(() => {
+    setState((prev) => (prev.catalogUpdate ? { ...prev, catalogUpdate: { ...prev.catalogUpdate, dismissedAt: new Date().toISOString() } } : prev));
   }, []);
 
   // When the active tenant or program changes, reload that scope's partitioned assessment from its own cache key and reset what
@@ -297,7 +322,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Answers given under the earlier wording of a CMMC objective are re-flagged (see migrateCachedObjectives); nothing is deleted
     const migrated = migrateCachedObjectives(scopeState, framework);
     if (!currentTenant.serverBacked) {
-      // A browser-only tenant has no server history: the ledger records each changed control (ids and statuses only, never a narrative)
+      // A browser-only tenant has no server history: the ledger records each changed control (ids and statuses only, never a narrative),
+      // marked as the objective update's so it can be told from a person's edit
+      const auditMetadata = { programId: programId ?? null, source: 'catalog-update', catalogRev: CMMC_OBJECTIVE_CATALOG_REV };
       for (const change of migrated.changedControls) {
         recordAuditEvent({
           tenantId: currentTenant.id,
@@ -312,8 +339,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }).catch(() => {});
       }
     }
-    setState({ ...migrated.state, programId });
+    // A browser-only cache keeps what the update changed (ids and statuses only) so the matrix can say so; a server-backed tenant reads it from the server
+    const catalogUpdate = !currentTenant.serverBacked && (migrated.changedObjectives.length > 0 || migrated.changedControls.length > 0)
+      ? browserCatalogUpdate(migrated.changedObjectives, migrated.changedControls, CMMC_OBJECTIVE_CATALOG_REV, new Date().toISOString())
+      : undefined;
+    setState({ ...migrated.state, ...(catalogUpdate ? { catalogUpdate } : {}), programId });
     setSelectedControlId(null);
+    setFocusObjective(null);
     setSelectedDomainFilter('ALL');
     setSelectedStatusFilter('ALL');
     setSearchQuery('');
@@ -1885,6 +1917,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setActiveTab,
     selectedControlId,
     setSelectedControlId,
+    focusObjective,
+    openControlAtObjective,
+    clearFocusObjective,
+    dismissCatalogUpdate,
     selectedDomainFilter,
     setSelectedDomainFilter,
     selectedStatusFilter,
@@ -1944,6 +1980,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     frameworkControls,
     activeTab,
     selectedControlId,
+    focusObjective,
+    openControlAtObjective,
+    clearFocusObjective,
+    dismissCatalogUpdate,
     selectedDomainFilter,
     selectedStatusFilter,
     searchQuery,

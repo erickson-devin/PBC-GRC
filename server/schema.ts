@@ -624,8 +624,6 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_tenant ON vm_poam_items (tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_finding ON vm_poam_items (tenant_id, finding_id);
-  -- Makes the worker's auto-created POA&M item unique per finding even across processes.
-  CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_auto ON vm_poam_items (tenant_id, finding_id) WHERE created_by = 'system:vm-worker' AND finding_id IS NOT NULL;
 
   -- Configuration scan results (issue #103): tenant-wide like every VM table; one row per scan of an asset in a run.
   CREATE TABLE IF NOT EXISTS vm_config_scans (
@@ -843,6 +841,11 @@ export const TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_evidence_metadata_program ON evidence_metadata (tenant_id, program_id, uploaded_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ssp_import_jobs_program ON ssp_import_jobs (tenant_id, program_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_vm_poam_items_program ON vm_poam_items (tenant_id, program_id, status);
+  -- The episode (the finding's first_seen_at) an automatic item was created for: one item per finding episode and program (#275).
+  -- Items from before it have a NULL episode and fall outside the index. The old (tenant_id, finding_id) index is dropped last.
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS finding_first_seen_at TIMESTAMPTZ;
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_auto_episode ON vm_poam_items (tenant_id, program_id, finding_id, finding_first_seen_at) WHERE created_by = 'system:vm-worker' AND finding_id IS NOT NULL AND finding_first_seen_at IS NOT NULL;
+  DROP INDEX IF EXISTS unq_vm_poam_items_auto;
   -- The per-program key replaces the old (tenant_id, control_id) one: the same control id holds one row per program. Every ON CONFLICT
   -- on control_assessments names (tenant_id, program_id, control_id) (server/controlAssessments.ts, server/routes/controls.ts).
   CREATE UNIQUE INDEX IF NOT EXISTS unq_control_assessments_program_control ON control_assessments (tenant_id, program_id, control_id);

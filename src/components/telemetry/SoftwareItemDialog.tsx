@@ -23,6 +23,10 @@ interface SoftwareItemDialogProps {
   /** Saves the entry; rejects with the ApiError when the server refuses it (the dialog then stays open). */
   onSave: (input: SoftwareItemInput) => Promise<void>;
   onClose: () => void;
+  /** Values for a new entry (used only when `initial` is null), e.g. a package copied from the scanner data. */
+  prefill?: SoftwareItemInput;
+  /** Opened over another dialog: drawn above it. */
+  stacked?: boolean;
 }
 
 const CHOICES: ApprovalChoice[] = ['APPROVED', 'NOT_APPROVED', 'NOT_REVIEWED'];
@@ -32,13 +36,14 @@ const inputClass = 'w-full bg-slate-800/80 border border-slate-700 rounded-lg px
 const labelClass = 'block font-semibold text-slate-300 mb-1.5';
 
 /** Add / edit dialog of the software inventory. Names, vendors and notes may be CUI: nothing here is logged or stored in the browser. */
-export const SoftwareItemDialog: React.FC<SoftwareItemDialogProps> = ({ initial, assets, assetsLoading, onSave, onClose }) => {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [version, setVersion] = useState(initial?.version ?? '');
-  const [vendor, setVendor] = useState(initial?.vendor ?? '');
-  const [choice, setChoice] = useState<ApprovalChoice>(approvalChoice(initial?.approved ?? null));
-  const [assetId, setAssetId] = useState<string>(initial?.assetId ?? TENANT_WIDE);
-  const [notes, setNotes] = useState(initial?.notes ?? '');
+export const SoftwareItemDialog: React.FC<SoftwareItemDialogProps> = ({ initial, assets, assetsLoading, onSave, onClose, prefill, stacked }) => {
+  const seed: SoftwareItemInput | null = initial ?? prefill ?? null;
+  const [name, setName] = useState(seed?.name ?? '');
+  const [version, setVersion] = useState(seed?.version ?? '');
+  const [vendor, setVendor] = useState(seed?.vendor ?? '');
+  const [choice, setChoice] = useState<ApprovalChoice>(approvalChoice(seed?.approved ?? null));
+  const [assetId, setAssetId] = useState<string>(seed?.assetId ?? TENANT_WIDE);
+  const [notes, setNotes] = useState(seed?.notes ?? '');
   const [nameError, setNameError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -78,7 +83,7 @@ export const SoftwareItemDialog: React.FC<SoftwareItemDialogProps> = ({ initial,
   };
 
   return (
-    <DialogOverlay onClose={saving ? undefined : onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+    <DialogOverlay onClose={saving ? undefined : onClose} className={`fixed inset-0 ${stacked ? 'z-[60]' : 'z-50'} flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn`}>
       <div aria-hidden="true" className="absolute inset-0" onClick={saving ? undefined : onClose} />
       <div className="relative w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6 text-slate-100 z-10 space-y-5 max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -100,6 +105,8 @@ export const SoftwareItemDialog: React.FC<SoftwareItemDialogProps> = ({ initial,
             <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
+
+        {!initial && prefill && <p className="text-xs text-slate-400">Filled in from the scanner data. Check the values, then choose the approval.</p>}
 
         <ErrorNotice message={error} />
 

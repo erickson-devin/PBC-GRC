@@ -1,7 +1,9 @@
 import './testEnv';
 import { createHash } from 'node:crypto';
 import { server } from '../server/index';
-import { __objectiveCatalogRevForTests, __seedLegacyObjectivesForTests, readObjectives } from '../server/controlObjectives';
+import { __objectiveCatalogRevForTests, __seedLegacyObjectivesForTests, latestHumanEventAt, listCatalogUpdateObjectiveEvents, readObjectives, type CatalogUpdateObjectiveEvent } from '../server/controlObjectives';
+import { listCatalogUpdateControlEvents } from '../server/controlAssessments';
+import { buildCatalogUpdateChanges, CATALOG_UPDATE_ACTOR } from '../server/objectiveCatalogMigration';
 import type { ObjectiveRecord, ObjectiveStatus } from '../src/types/controlObjectives';
 
 /**
@@ -293,6 +295,71 @@ async function run() {
   await Promise.all([list(P12), call('GET', '/controls', owner, T, undefined, P12), list(P12)]);
   assert((await history(P12, 'CA.L2-3.12.4[a]')).length === 1 && find(await list(P12), 'CA.L2-3.12.4[a]')?.status === 'IN_PROGRESS', 'C12 three concurrent first reads migrate once: exactly one event');
 
+  console.log('\n--- 17: catalog-update listing (GET /objectives/catalog-update) ---');
+  const cu = (program: string, who = owner, tenant = T) => call('GET', '/objectives/catalog-update', who, tenant, undefined, program);
+  const cuIds = (r: { body: Json | null }) => ((r.body?.objectives ?? []) as Json[]).map((o) => o.objectiveId);
+  const cuObj = (r: { body: Json | null }, id: string) => ((r.body?.objectives ?? []) as Json[]).find((o) => o.objectiveId === id);
+  const cuM = await cu(M);
+  assert(
+    cuM.status === 200 && cuM.body?.applies === true && cuM.body?.catalogRev === 'cmmc-ag-2.13' && JSON.stringify(cuIds(cuM)) === JSON.stringify(['AC.L1-3.1.2[b]', 'CA.L2-3.12.4[a]']) &&
+      (cuM.body?.objectives as Json[]).every((o) => o.oldStatus === 'MET' && o.newStatus === 'IN_PROGRESS'),
+    'CU1 the update lists exactly the two re-flagged objectives, MET -> IN_PROGRESS',
+    cuM.body
+  );
+  assert(
+    cuObj(cuM, 'CA.L2-3.12.4[a]')?.currentStatus === 'MET' && cuObj(cuM, 'CA.L2-3.12.4[a]')?.reviewed === true &&
+      cuObj(cuM, 'AC.L1-3.1.2[b]')?.currentStatus === 'IN_PROGRESS' && cuObj(cuM, 'AC.L1-3.1.2[b]')?.reviewed === false,
+    'CU2 an objective a person changed afterwards (C6) is reviewed and shows its current status; the untouched one is not',
+    cuM.body?.objectives
+  );
+  const cuControls = (cuM.body?.controls ?? []) as Json[];
+  assert(
+    cuControls.length === 1 && cuControls[0].controlId === 'CA.L2-3.12.4' && cuControls[0].oldStatus === 'MET' && cuControls[0].newStatus === 'IN_PROGRESS' &&
+      !cuControls.some((c) => c.controlId === 'AC.L2-3.1.5') && cuM.body?.truncated === false,
+    'CU3 the controls are the one re-rolled down (not the Met control without answers); not truncated',
+    cuM.body?.controls
+  );
+  const cuText = JSON.stringify(cuM.body);
+  assert(
+    !cuText.includes('N1') && !cuText.includes('Sha256') && !cuText.includes('narrative') && !cuText.includes('actor') &&
+      ((cuM.body?.objectives ?? []) as Json[]).every((o) => Object.keys(o).sort().join() === 'changedAt,controlId,currentStatus,newStatus,objectiveId,oldStatus,reviewed') &&
+      cuControls.every((c) => Object.keys(c).sort().join() === 'changedAt,controlId,newStatus,oldStatus'),
+    'CU4 the response carries ids and statuses only: no narrative, hash, actor, and exactly the documented fields',
+    cuText
+  );
+  const cuViewer = await cu(M, viewer);
+  assert(cuViewer.status === 200 && JSON.stringify(cuIds(cuViewer)) === JSON.stringify(['AC.L1-3.1.2[b]', 'CA.L2-3.12.4[a]']), 'CU5 a VIEWER may read the listing', cuViewer.body);
+  const cuArchived = await cu(B8);
+  assert(
+    cuArchived.status === 200 && (cuArchived.body?.objectives ?? []).length === 0 && (cuArchived.body?.controls ?? []).length === 0 && __objectiveCatalogRevForTests(B8S, 'CA.L2-3.12.4[a]') === null,
+    'CU6 an archived program lists nothing, and the read did not migrate it',
+    cuArchived.body
+  );
+  const cuNist = await cu(NIST);
+  assert(cuNist.status === 200 && cuNist.body?.applies === false && (cuNist.body?.objectives ?? []).length === 0 && (cuNist.body?.controls ?? []).length === 0, 'CU7 a non-CMMC program answers applies:false with empty lists', cuNist.body);
+  const cuRace = await cu(P12);
+  assert(cuRace.status === 200 && JSON.stringify(cuIds(cuRace)) === JSON.stringify(['CA.L2-3.12.4[a]']) && (cuRace.body?.controls ?? []).length === 0, 'CU8 a program with one re-flagged objective and no Met control lists one objective and no control', cuRace.body);
+  const P17 = (await newProgram(T, 'Obj Catalog First')).id;
+  __seedLegacyObjectivesForTests({ tenantId: T, programId: P17 }, [legacy('CA.L2-3.12.4[a]', 'MET', 'F1')]);
+  const cuFirst = await cu(P17);
+  assert(cuFirst.status === 200 && JSON.stringify(cuIds(cuFirst)) === JSON.stringify(['CA.L2-3.12.4[a]']) && cuObj(cuFirst, 'CA.L2-3.12.4[a]')?.reviewed === false, 'CU9 the first request of an un-migrated program migrates it and lists the change', cuFirst.body);
+  const cuForeign = await cu(M, owner, T2);
+  assert(cuForeign.status === 404 && cuForeign.body?.code === 'program_not_found', 'CU10 another tenant\'s program is 404 program_not_found', cuForeign.body);
+  const objEvents = await listCatalogUpdateObjectiveEvents(MS, CATALOG_UPDATE_ACTOR, 10);
+  const cuCtrlEvents = await listCatalogUpdateControlEvents(MS, CATALOG_UPDATE_ACTOR, 10);
+  const humanAt = await latestHumanEventAt(MS, ['AC.L1-3.1.2[b]', 'CA.L2-3.12.4[a]']);
+  const capped = buildCatalogUpdateChanges(objEvents, cuCtrlEvents, humanAt, new Map(), 1);
+  assert(
+    objEvents.length === 2 && capped.objectives.length === 1 && capped.objectives[0].objectiveId === 'AC.L1-3.1.2[b]' && capped.truncated === true && capped.objectives[0].currentStatus === null,
+    'CU11 the assembler cuts each list at the cap (sorted by id first) and says it is truncated',
+    capped
+  );
+  const tie = (seq: number): CatalogUpdateObjectiveEvent => ({ ...objEvents[0], seq, createdAt: '2026-01-01T00:00:00.000Z' });
+  const markAfter = new Map([[objEvents[0].objectiveId, { at: '2026-01-01T00:00:00.000Z', seq: 5 }]]);
+  assert(
+    buildCatalogUpdateChanges([tie(2)], [], markAfter, new Map(), 10).objectives[0].reviewed === true && buildCatalogUpdateChanges([tie(7)], [], markAfter, new Map(), 10).objectives[0].reviewed === false,
+    'CU11 in memory mode "reviewed" compares positions in the history, so a human event in the same millisecond still counts when it came later'
+  );
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');

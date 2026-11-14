@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Ban,
   FileCheck,
   Sliders,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -20,6 +21,7 @@ import { AssessmentObjective, ObjectiveStatus } from '../../types/assessment';
 import { calculateControlRollup } from '../../data/frameworks/assessmentObjectives';
 import { hasWrittenTemplate } from '../../data/cmmcGuide/objectives';
 import { cmmcGuideLetter, cmmcGuideObjectiveId } from '../../data/cmmcGuide/displayId';
+import { objectiveNotInChecklist, previousStatusBadge } from '../../data/cmmcGuide/catalogUpdateReview';
 import { planConfirmAll, confirmAllResultMessage, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
@@ -28,11 +30,16 @@ import { unsavedObjectiveDrafts } from '../../services/unsavedText';
 interface ObjectiveChecklistProps {
   controlId: string;
   onStatusChange?: (status: string) => void;
+  /** Open on this objective: scrolled into view, focused and marked. */
+  focusObjective?: { objectiveId: string; previousStatus: ObjectiveStatus | null } | null;
+  onFocusHandled?: () => void;
 }
 
 export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   controlId,
   onStatusChange,
+  focusObjective,
+  onFocusHandled,
 }) => {
   const {
     state,
@@ -79,6 +86,26 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   const [bulkResult, setBulkResult] = useState<{ filled: number; skipped: number } | null>(null);
   const [showEvidenceSelectorForId, setShowEvidenceSelectorForId] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<ConfirmAllPlan | null>(null);
+
+  // Opened on one objective (the objective update's list): scroll to it once, focus it, and mark it until the control changes
+  const cardRefs = useRef(new Map<string, HTMLDivElement>());
+  const [highlight, setHighlight] = useState<{ objectiveId: string; previousStatus: ObjectiveStatus | null } | null>(null);
+  const [missingObjectiveId, setMissingObjectiveId] = useState<string | null>(null);
+  useEffect(() => { setHighlight(null); setMissingObjectiveId(null); }, [controlId]);
+  useEffect(() => {
+    if (!focusObjective) return;
+    const el = cardRefs.current.get(focusObjective.objectiveId);
+    if (el) {
+      const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+      setHighlight(focusObjective);
+      setMissingObjectiveId(null);
+    } else {
+      setMissingObjectiveId(focusObjective.objectiveId);
+    }
+    onFocusHandled?.();
+  }, [focusObjective, onFocusHandled]);
 
   // Local state for Organization-Defined Parameters (ODPs) inline customization
   const [odpCustomValues, setOdpCustomValues] = useState<Record<string, Record<string, string>>>({});
@@ -371,6 +398,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
       </div>
 
       {/* ── Individual Assessment Objectives List ── */}
+      {missingObjectiveId && <p role="status" className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">{objectiveNotInChecklist(cmmcGuideObjectiveId(missingObjectiveId, activeFramework))}</p>}
       <div className="space-y-4">
         {objectives.map((obj) => {
           const isTemplateOpen = expandedTemplates[obj.id] ?? false;
@@ -407,7 +435,9 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           return (
             <div
               key={obj.id}
-              className={`p-5 rounded-2xl border transition-all duration-200 ${
+              ref={(el) => { if (el) cardRefs.current.set(obj.id, el); else cardRefs.current.delete(obj.id); }}
+              data-objective-id={obj.id} tabIndex={-1} role="group" aria-label={`Objective ${cmmcGuideObjectiveId(obj.id, activeFramework)}`}
+              className={`outline-none scroll-mt-4 motion-reduce:transition-none ${highlight?.objectiveId === obj.id ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900' : ''} p-5 rounded-2xl border transition-all duration-200 ${
                 obj.status === 'MET'
                   ? 'bg-slate-900/80 border-emerald-500/30 shadow-sm shadow-emerald-950/20'
                   : obj.status === 'NOT_MET'
@@ -437,6 +467,13 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                       >
                         {cmmcGuideObjectiveId(obj.id, activeFramework)}
                       </span>
+
+                      {highlight?.objectiveId === obj.id && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-200 border border-cyan-400/60 font-mono text-xs">
+                          <RefreshCw className="w-3 h-3" aria-hidden="true" />
+                          {highlight.previousStatus ? previousStatusBadge(highlight.previousStatus) : 'Opened from the objective update list'}
+                        </span>
+                      )}
 
                       {obj.scapRuleId && (
                         <span

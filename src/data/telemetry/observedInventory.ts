@@ -1,6 +1,6 @@
 import type { EnclaveAsset } from '../../types/telemetry';
 import { VM_SOURCE_KINDS } from '../../types/vm';
-import type { VmObservedHost, VmObservedSoftware, VmSourceKind } from '../../types/vm';
+import type { VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmSourceKind } from '../../types/vm';
 import { isKnownOsProfile, osProfileFor } from './osProfile';
 
 /**
@@ -86,6 +86,42 @@ export function parseObservedSoftware(raw: unknown): { totalCount: number; items
     });
   }
   return { totalCount: isObj(raw) ? (num(raw.totalCount) ?? items.length) : items.length, items };
+}
+
+/** The hosts of a program-wide response (GET /vm/inventory/hosts); a row without an asset id or a source id is dropped. */
+export function parseProgramObservedHosts(raw: unknown): VmObservedHostWithAsset[] {
+  const list = isObj(raw) && Array.isArray(raw.hosts) ? raw.hosts : [];
+  const out: VmObservedHostWithAsset[] = [];
+  for (const it of list) {
+    const host = parseHost(it);
+    const assetId = isObj(it) ? str(it.assetId) : '';
+    if (host && assetId !== '') out.push({ ...host, assetId });
+  }
+  return out;
+}
+
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+/** The package groups of a program-wide response (GET /vm/inventory/software); nameless groups are dropped, the total falls back to the group count. */
+export function parseObservedSoftwareGroups(raw: unknown): { totalGroups: number; truncated: boolean; items: VmObservedSoftwareGroup[] } {
+  const list = isObj(raw) && Array.isArray(raw.items) ? raw.items : [];
+  const items: VmObservedSoftwareGroup[] = [];
+  for (const it of list) {
+    if (!isObj(it) || str(it.name) === '') continue;
+    const assetIds = strList(it.assetIds);
+    items.push({
+      name: str(it.name),
+      version: str(it.version),
+      vendor: str(it.vendor),
+      assetCount: num(it.assetCount) ?? assetIds.length,
+      assetIds,
+      sourceIds: strList(it.sourceIds),
+      firstSeenAt: str(it.firstSeenAt),
+      lastSeenAt: str(it.lastSeenAt),
+    });
+  }
+  const totalGroups = isObj(raw) ? (num(raw.totalGroups) ?? items.length) : items.length;
+  return { totalGroups, truncated: isObj(raw) && raw.truncated === true, items };
 }
 
 export type ObservedField = 'ipAddress' | 'macAddress' | 'serialNumber' | 'os';

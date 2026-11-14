@@ -1,4 +1,4 @@
-import { compareRecordedObserved, parseObservedHosts, parseObservedSoftware, usableSerial } from '../src/data/telemetry/observedInventory';
+import { compareRecordedObserved, parseObservedHosts, parseObservedSoftware, parseObservedSoftwareGroups, parseProgramObservedHosts, usableSerial } from '../src/data/telemetry/observedInventory';
 import { usableSerial as serverUsableSerial } from '../server/vm/inventory';
 import type { VmObservedHost } from '../src/types/vm';
 
@@ -45,6 +45,23 @@ assert(parseObservedHosts([host()]).length === 1 && parsed[0].hardware?.memoryBy
 const sw = parseObservedSoftware({ totalCount: 9, items: [{ sourceId: 's', name: 'pkg', version: '1', installedAt: 'x' }, { name: '' }, 3] });
 assert(sw.totalCount === 9 && sw.items.length === 1 && sw.items[0].vendor === '' && sw.items[0].installedAt === 'x', 'C-2 software: bad items are dropped, strings default to empty', sw);
 assert(parseObservedSoftware(undefined).totalCount === 0 && parseObservedSoftware({ items: [{ name: 'a' }] }).totalCount === 1, 'C-2 an unusable body is empty; a missing total falls back to the item count');
+
+console.log('\n--- program-wide parsing ---');
+const progHosts = parseProgramObservedHosts({ hosts: [{ ...host(), assetId: 'a1' }, { ...host({ sourceId: 's2' }), assetId: 'a2' }, host(), { ...host(), assetId: '' }, { assetId: 'a3' }, { assetId: 'a4', sourceId: '' }, 7, null] });
+assert(progHosts.length === 2 && progHosts[0].assetId === 'a1' && progHosts[1].sourceId === 's2' && progHosts[0].hardware?.serialNumber === 'FAKE-1', 'C-5 program hosts: well-formed rows kept, rows without an asset id or source id dropped', progHosts.length);
+assert(parseProgramObservedHosts(null).length === 0 && parseProgramObservedHosts('x').length === 0 && parseProgramObservedHosts([host()]).length === 0 && parseProgramObservedHosts({ hosts: 5 }).length === 0, 'C-5 program hosts: a non-array or null body gives none');
+let threw = false;
+try {
+  parseProgramObservedHosts({ hosts: [{ assetId: 7, sourceId: 's', os: 3, hardware: 'x', softwareCount: 'many' }, { assetId: 'a', sourceId: 's', ipAddress: 5, softwareReported: 'yes' }] });
+} catch {
+  threw = true;
+}
+assert(!threw, 'C-5 program hosts: wrong-typed fields do not throw');
+const groups = parseObservedSoftwareGroups({ totalGroups: 7, truncated: true, items: [{ name: 'pkg', version: '1', vendor: 'v', assetCount: 2, assetIds: ['a1', 'a2', 5], sourceIds: ['s1'], firstSeenAt: 'f', lastSeenAt: 'l' }, { name: '' }, { version: '1' }, 3, null] });
+assert(groups.totalGroups === 7 && groups.truncated && groups.items.length === 1 && groups.items[0].assetCount === 2 && groups.items[0].assetIds.join() === 'a1,a2' && groups.items[0].sourceIds.join() === 's1' && groups.items[0].lastSeenAt === 'l', 'C-6 software groups: well-formed group kept, nameless ones and wrong-typed ids dropped', groups);
+const loose = parseObservedSoftwareGroups({ items: [{ name: 'a', assetIds: ['x', 'y'], assetCount: 'two', version: 4, truncated: 'yes' }], truncated: 'yes' });
+assert(loose.totalGroups === 1 && !loose.truncated && loose.items[0].assetCount === 2 && loose.items[0].version === '', 'C-6 software groups: totals and counts fall back, wrong-typed fields default');
+assert(parseObservedSoftwareGroups(null).items.length === 0 && parseObservedSoftwareGroups('x').totalGroups === 0 && parseObservedSoftwareGroups([]).items.length === 0 && parseObservedSoftwareGroups({ items: 'x' }).items.length === 0 && !parseObservedSoftwareGroups(undefined).truncated, 'C-6 software groups: a non-array or null body gives none');
 
 console.log('\n--- comparison ---');
 const blank = compareRecordedObserved(asset, [host()]);

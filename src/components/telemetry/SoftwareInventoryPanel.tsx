@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Ban, CheckCircle2, Clock, Edit2, Lock, Package, Plus, Search, Trash2 } from 'lucide-react';
+import { Ban, CheckCircle2, Clock, Edit2, FileDown, Lock, Package, Plus, Search, Trash2 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
+import { useAssessment } from '../../context/AssessmentContext';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useSoftwareItems } from '../../hooks/useSoftwareItems';
 import { ApiClient } from '../../services/apiClient';
@@ -34,6 +35,7 @@ const APPROVAL_BADGE: Record<ApprovalChoice, { cls: string; Icon: typeof CheckCi
  */
 export const SoftwareInventoryPanel: React.FC = () => {
   const { currentTenant, canEdit } = useTenant();
+  const { openExportModal } = useAssessment();
   const tenantId = currentTenant.id;
   const { items, loading, error: loadError, reload, supported } = useSoftwareItems({ enabled: true });
   const { assets, loading: assetsLoading, reload: reloadAssets } = useEnclaveAssets();
@@ -139,24 +141,35 @@ export const SoftwareInventoryPanel: React.FC = () => {
             </p>
           </div>
         </div>
-        {canEdit && supported && (
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            disabled={!editorsReady}
-            onClick={() => setDialog({ initial: null, key: ++dialogCounter.current })}
-            className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => openExportModal('SOFTWARE_INVENTORY')}
+            title="Opens the Export Center with the Software Inventory document (CM.L2-3.4.8) selected"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
           >
-            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Add Software</span>
+            <FileDown className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+            <span>Export software inventory</span>
           </button>
-        )}
+          {canEdit && supported && (
+            <button
+              type="button"
+              disabled={!editorsReady}
+              onClick={() => setDialog({ initial: null, key: ++dialogCounter.current })}
+              className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Add Software</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {!supported ? (
         <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
           <span>
             The software inventory is kept on the server, so it needs a server-backed organization. This organization is stored only in this browser
-            {canEdit ? ': move it to the server from the notice above the asset inventory' : ''}. The exported Software Inventory document still lists each asset's operating system.
+            {canEdit ? ': move it to the server from the notice above the asset inventory' : ''}. The exported Software Inventory document still lists each asset's operating system: use Export software inventory above.
           </span>
         </div>
       ) : (

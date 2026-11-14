@@ -281,8 +281,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       if (programId && isPoamAutocreateEnabled()) {
         const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client, programId);
         const drafts = planPoamItems(overdue, linked, now);
-        await insertPoamItems(tenantId, drafts, client, programId);
-        poam = drafts.length;
+        poam = await insertPoamItems(tenantId, drafts, client, programId);
       }
 
       const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;

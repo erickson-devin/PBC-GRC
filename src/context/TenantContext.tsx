@@ -54,6 +54,7 @@ import {
 } from '../data/teamSync';
 import { findControlDefinition, getFrameworkControls } from '../data/frameworks';
 import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
+import { catalogUpdateKeyPrefix } from '../data/cmmcGuide/catalogUpdateReview';
 import { tabOwnsStoredSession } from '../services/tabSession';
 import { isTabLocked, waitForUnlock } from '../services/idleLock';
 import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
@@ -1825,6 +1826,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         window.localStorage.removeItem(overlayFiltersStorageKey(tenantId));
         // every other program's assessment cache (pbc_cmmc_assessment_v3_<tenant>::<program>) and the active-program choice
         StorageService.listProgramKeys(tenantId).forEach(key => window.localStorage.removeItem(key));
+        // the objective update notice's dismissals (a revision and a user id only)
+        Object.keys(window.localStorage).filter((k) => k.startsWith(catalogUpdateKeyPrefix(tenantId))).forEach((k) => window.localStorage.removeItem(k));
       } catch {}
     }
     // evidence files live in IndexedDB, not localStorage

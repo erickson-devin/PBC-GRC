@@ -1,4 +1,4 @@
-import { AssessmentObjective } from './assessment';
+import { AssessmentObjective, ObjectiveStatus } from './assessment';
 
 export type ControlStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'MET' | 'NOT_MET';
 
@@ -104,6 +104,17 @@ export interface AssessmentState {
   objectivesPendingReview?: string[];
   /** The CMMC assessment-guide objective catalog this cache was last reconciled with (see src/data/cmmcGuide/migration.ts); unset means a legacy cache. */
   objectivesCatalogRev?: string;
+  /**
+   * What the guide update set back to In progress in this browser-only cache (ids and statuses only, never narrative text), kept so the notice can say so;
+   * a server-backed tenant reads the same from the server and ignores this. `dismissedAt` is when the notice was dismissed.
+   */
+  catalogUpdate?: {
+    rev: string;
+    at: string;
+    objectives: { objectiveId: string; controlId: string; from: ObjectiveStatus; to: ObjectiveStatus }[];
+    controls: { controlId: string; from: ControlStatus; to: ControlStatus }[];
+    dismissedAt?: string;
+  };
   /** ISO time the client set once this cache key's SSP metadata is on the server; from then on the cache holds none of it (#84). */
   sspMetadataMigratedAt?: string;
 }

@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { policyControlReference } from '../src/data/policyControlReference';
 import { crosswalkFor53 } from '../src/data/frameworks/nist80053/crosswalk';
+import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
+import { cmmcNumberOf } from '../src/data/cmmcGuide/guide';
+import { isFamilyPolicyControl, FAMILY_POLICY_REQUIREMENTS } from '../src/data/reports/familyPolicyControl';
 
 /**
  * Issue #232: the "AC-1" buttons of the policy views open a read-only SP 800-53 reference and never switch the active program.
@@ -86,6 +89,53 @@ console.log('--- source checks ---');
   }
   assert(dialog.includes('z-[60]') && dialog.includes('max-h-[90vh]') && dialog.includes('<DialogTitle') && dialog.includes('Read-only'), 'dialog has its overlay classes, title and read-only text');
   assert(!dialog.includes('setActiveFramework') && !dialog.includes('console.') && !dialog.includes('dangerouslySetInnerHTML'), 'dialog never switches, logs or injects HTML');
+  assert(!helper.includes('console.'), 'helper does not log');
+}
+
+console.log('--- #289: Living Policy tab ---');
+{
+  for (const id of ['AC.L1-3.1.1', 'AC.L2-3.1.1', 'SC.L1-3.13.1', 'IA.L1-3.5.1', 'SI.L1-3.14.1', 'AU.L2-3.3.1', 'CM.L2-3.4.1']) {
+    assert(isFamilyPolicyControl(id), `${id} offers the Living Policy tab`);
+  }
+  for (let n = 10; n <= 19; n++) assert(!isFamilyPolicyControl(`AC.L2-3.1.${n}`), `AC.L2-3.1.${n} does not`);
+  assert(!isFamilyPolicyControl('IA.L2-3.5.10'), 'IA.L2-3.5.10 does not');
+  assert(!isFamilyPolicyControl('IA.L2-3.5.11'), 'IA.L2-3.5.11 does not');
+  for (let n = 10; n <= 16; n++) assert(!isFamilyPolicyControl(`SC.L2-3.13.${n}`), `SC.L2-3.13.${n} does not`);
+  assert(!isFamilyPolicyControl('SC.L2-3.13.11'), 'SC.L2-3.13.11 does not');
+  assert(!isFamilyPolicyControl('AC.L1-3.1.2'), 'AC.L1-3.1.2 does not');
+  assert(!isFamilyPolicyControl('AC.L1-b.1.i'), 'AC.L1-b.1.i does not');
+  assert(!isFamilyPolicyControl('') && !isFamilyPolicyControl(undefined), 'an empty or missing id does not');
+
+  const l2 = getFrameworkControls('CMMC_L2').map((c) => c.id).filter((id) => isFamilyPolicyControl(id));
+  const nums = l2.map((id) => cmmcNumberOf(id) ?? '').sort();
+  assert(l2.length === FAMILY_POLICY_REQUIREMENTS.length, 'CMMC L2: one matching control per family', l2);
+  assert(JSON.stringify(nums) === JSON.stringify([...FAMILY_POLICY_REQUIREMENTS].sort()), 'CMMC L2: the matching numbers are the family list', nums);
+  assert(new Set(l2.map((id) => id.slice(0, 2))).size === l2.length, 'CMMC L2: each has a distinct family prefix', l2);
+  const l1 = getFrameworkControls('CMMC_L1').map((c) => c.id).filter((id) => isFamilyPolicyControl(id)).sort();
+  assert(JSON.stringify(l1) === JSON.stringify(['AC.L1-3.1.1', 'IA.L1-3.5.1', 'PE.L1-3.10.1', 'SC.L1-3.13.1', 'SI.L1-3.14.1']), 'CMMC L1: the five Level 1 families', l1);
+
+  // The expression this replaced, kept to prove that every other framework behaves as before.
+  const legacy = (id: string): boolean => Boolean(
+    id && (
+      id.endsWith('-1') ||
+      id === '3.1.1' || id === '3.2.1' || id === '3.3.1' || id === '3.4.1' || id === '3.5.1' || id === '3.6.1' || id === '3.7.1' ||
+      id === '3.8.1' || id === '3.9.1' || id === '3.10.1' || id === '3.11.1' || id === '3.12.1' || id === '3.13.1' || id === '3.14.1' ||
+      id.includes('.L2-3.1.1') || id.includes('.L2-3.5.1') || id.includes('.L2-3.14.1') ||
+      id.includes('.L2-3.3.1') || id.includes('.L2-3.4.1') || id.includes('.L2-3.13.1')
+    )
+  );
+  const ids = [
+    ...['NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'].flatMap((f) => getFrameworkControls(f).map((c) => c.id)),
+    '3.1.1', '3.14.1', '3.1.10', 'AC-1', 'AC-10', 'AC-11', 'AC-2(1)',
+  ];
+  const mismatches = ids.filter((id) => isFamilyPolicyControl(id) !== legacy(id));
+  assert(ids.length > 300 && mismatches.length === 0, 'non-CMMC ids match the old expression', mismatches);
+  assert(isFamilyPolicyControl('AC-1') && isFamilyPolicyControl('3.1.1'), 'AC-1 and 3.1.1 are policy controls');
+  assert(!isFamilyPolicyControl('AC-10') && !isFamilyPolicyControl('AC-11') && !isFamilyPolicyControl('3.1.10'), 'AC-10, AC-11 and 3.1.10 are not');
+
+  const modal = read('src/components/matrix/InspectDocumentModal.tsx');
+  const helper = read('src/data/reports/familyPolicyControl.ts');
+  assert(modal.includes('isFamilyPolicyControl(control?.id)') && !modal.includes(".includes('.L2-3."), 'the modal uses the helper, no substring checks');
   assert(!helper.includes('console.'), 'helper does not log');
 }
 

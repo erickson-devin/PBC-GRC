@@ -4,6 +4,7 @@
  * the copy: the views render them as text nodes. Nothing here stores or logs.
  */
 import type { EnclaveAsset } from '../../types/telemetry';
+import type { SoftwareItem, SoftwareItemInput } from '../../types/software';
 import type { VmObservedHost, VmObservedSoftware } from '../../types/vm';
 import type { AssetInput } from './assetScope';
 import type { FipsFields } from './fipsValidation';
@@ -26,7 +27,14 @@ export const OBSERVED_COPY = {
   blank: 'Blank in record',
   useValue: 'Use scanner value',
   scannerValueHelp: 'Scanner value, not saved yet.',
-  softwareNote: 'Reported by the scanner. This is not the approved software list: record approval decisions in the Software Inventory.',
+  softwareNote: 'Reported by the scanner. This is not the approved software list: Add opens the Software Inventory form with the package filled in, and its approval starts as Not reviewed.',
+  softwareNoteReadOnly: 'Reported by the scanner. This is not the approved software list: the Software list column shows which packages the Software Inventory already records.',
+  listChecking: 'Checking which packages are on the software list…',
+  listError: 'Could not check the software list, so packages cannot be added from here.',
+  listFull: 'The software list holds 5,000 entries, the most it can hold. Remove entries in the Software Inventory to add more.',
+  listNarrow: 'Search or filter to 50 packages or fewer to add one to the software list.',
+  softwareAdded: 'Software entry added to the Software Inventory.',
+  notOnList: 'Not on list',
   softwareEmpty: 'No installed software has been reported for this asset.',
   softwareLoading: 'Loading the installed software…',
   softwareError: 'The installed software could not be loaded. The asset record is unaffected.',
@@ -149,4 +157,55 @@ export function observedSoftwareCaption(shown: number, loaded: number): string {
 export function truncationNotice(loaded: number, total: number): string | null {
   if (total <= loaded) return null;
   return `Showing the first ${loaded} of ${total} items reported. Search and filters apply to the items shown.`;
+}
+
+// --- Copying a package to the software list (#279) ---
+
+/** "Add" buttons are drawn only while this many rows or fewer are shown (each is a tab stop). */
+export const ADD_ACTION_ROW_LIMIT = 50;
+
+/** The server's cap on software entries per tenant. */
+const SOFTWARE_LIST_CAP = 5000;
+
+type PackageIdentity = Pick<VmObservedSoftware, 'name' | 'version' | 'vendor'>;
+
+/** Name and vendor ignore case and edge spaces; the version is compared exactly (apart from edge spaces). */
+export const softwareListKey = (name: string, version: string, vendor: string): string =>
+  `${name.trim().toLowerCase()}\u0000${version.trim()}\u0000${vendor.trim().toLowerCase()}`;
+
+/** The software list's entries grouped by their key. */
+export function softwareListIndex(items: SoftwareItem[]): Map<string, SoftwareItem[]> {
+  const index = new Map<string, SoftwareItem[]>();
+  for (const it of items) {
+    const key = softwareListKey(it.name, it.version, it.vendor);
+    const group = index.get(key);
+    if (group) group.push(it);
+    else index.set(key, [it]);
+  }
+  return index;
+}
+
+/** The entry that records a reported package: a tenant-wide one first, then one for this asset, then the first. */
+export function softwareListMatch(pkg: PackageIdentity, index: Map<string, SoftwareItem[]>, assetId: string): { item: SoftwareItem; count: number } | null {
+  const group = index.get(softwareListKey(pkg.name, pkg.version, pkg.vendor));
+  if (!group || group.length === 0) return null;
+  const item = group.find((g) => g.assetId === null) ?? group.find((g) => g.assetId === assetId) ?? group[0];
+  return { item, count: group.length };
+}
+
+/** The form values for a reported package: its approval starts as Not reviewed and the entry tenant-wide. */
+export function prefillFromObserved(pkg: PackageIdentity): SoftwareItemInput {
+  return { name: pkg.name.trim(), version: pkg.version.trim(), vendor: pkg.vendor.trim(), approved: null, assetId: null, notes: '' };
+}
+
+export const addActionsShown = (shownRows: number): boolean => shownRows > 0 && shownRows <= ADD_ACTION_ROW_LIMIT;
+
+export type SoftwareListState = 'hidden' | 'loading' | 'error' | 'full' | 'ready';
+
+export function softwareListState(s: { supported: boolean; loading: boolean; error: string | null; count: number }): SoftwareListState {
+  if (!s.supported) return 'hidden';
+  if (s.loading) return 'loading';
+  if (s.error) return 'error';
+  if (s.count >= SOFTWARE_LIST_CAP) return 'full';
+  return 'ready';
 }

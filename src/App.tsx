@@ -309,7 +309,7 @@ const AppContent: React.FC = () => {
                 {activeTab === 'configresults' && <ConfigurationResultsView />}
                 {activeTab === 'policies' && <PolicyLibraryView />}
                 {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
-                {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" embedded />}
+                {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" initialTab="poam" embedded />}
                 {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
                 {activeTab === 'rbac' && <TeamSettingsModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}
                 {(activeTab === 'audit_logs' || activeTab === 'audit') && <AuditTrailViewer />}

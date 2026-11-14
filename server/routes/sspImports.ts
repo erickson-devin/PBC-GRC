@@ -23,7 +23,7 @@ import {
   type SspReviewState,
 } from '../ssp/types';
 import { canRoleReviewSspImports, canRoleWrite } from '../../src/utils/roles';
-import { errorMessage } from '../../src/utils/errors';
+import { logDetail } from '../ssp/logDetail';
 
 /**
  * SSP import, mounted at /api/v1/tenants/:tenantId/ssp-imports AFTER requireWriteRole: uploading, reviewing and committing
@@ -91,7 +91,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     for (const j of jobs) if (!SSP_JOB_TERMINAL.includes(j.status)) trackSspJob(j.id, { tenantId: j.tenantId, programId: j.programId ?? scope.programId });
     res.json({ jobs });
   } catch (err: unknown) {
-    console.error('[SSP Import] list failed:', errorMessage(err));
+    console.error('[SSP Import] list failed:', logDetail(err));
     res.status(500).json({ error: 'Failed to list SSP imports' });
   }
 });
@@ -193,7 +193,7 @@ router.post('/', (req: Request, res: Response): void => {
       console.log(`[SSP Import] upload accepted (${file.size} bytes) for ${framework}: job ${job.id}`);
       res.status(202).json({ job });
     } catch (err: unknown) {
-      console.error('[SSP Import] upload failed:', errorMessage(err));
+      console.error('[SSP Import] upload failed:', logDetail(err));
       if (!res.headersSent) res.status(500).json({ error: 'The upload could not be processed' });
     } finally {
       uploadsInFlight--;
@@ -270,7 +270,7 @@ router.get('/:jobId/staged', async (req: Request, res: Response): Promise<void> 
       }),
     });
   } catch (err: unknown) {
-    console.error('[SSP Import] staged list failed:', errorMessage(err));
+    console.error('[SSP Import] staged list failed:', logDetail(err));
     res.status(500).json({ error: 'Failed to load the suggestions' });
   }
 });
@@ -334,7 +334,7 @@ router.patch('/:jobId/staged/:id', async (req: Request, res: Response): Promise<
     });
     res.json({ staged: updated });
   } catch (err: unknown) {
-    console.error('[SSP Import] review update failed:', errorMessage(err));
+    console.error('[SSP Import] review update failed:', logDetail(err));
     res.status(500).json({ error: 'Failed to save the decision' });
   }
 });
@@ -364,7 +364,7 @@ router.post('/:jobId/commit', async (req: Request, res: Response): Promise<void>
     const result = await commitReviewedSuggestions(scope, job, reviewerName(req), ids, req.user?.uid ?? null);
     res.json({ ...result, job: await getJob(scope, job.id) });
   } catch (err: unknown) {
-    console.error('[SSP Import] commit failed:', errorMessage(err));
+    console.error('[SSP Import] commit failed:', logDetail(err));
     res.status(500).json({ error: 'The commit failed part-way. Reload the import: what was already written is marked as committed.' });
   }
 });

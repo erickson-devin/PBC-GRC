@@ -47,6 +47,7 @@ import { OdpPanel } from './OdpPanel';
 import { SspStatementEditor, hasStatementItems } from './SspStatementEditor';
 import { ImportAnalysisPanel } from './ImportAnalysisPanel';
 import { generateFamilyPolicyDocument } from '../../data/reports/policyDocumentGenerator';
+import { isFamilyPolicyControl } from '../../data/reports/familyPolicyControl';
 import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompiler';
 import { NO_OBJECTIVE_TEMPLATE_RECORDED, NO_STACK_PROFILE_RECORDED } from '../../data/reports/documentDefaults';
 import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
@@ -74,6 +75,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const {
     selectedControlId,
     setSelectedControlId,
+    focusObjective,
+    clearFocusObjective,
     frameworkControls,
     state,
     notesStatus,
@@ -152,31 +155,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     return (id.split('.')[0] || '').toUpperCase();
   };
 
-  const isPolicyControl = Boolean(
-    control?.id && (
-      control.id.endsWith('-1') ||
-      control.id === '3.1.1' ||
-      control.id === '3.2.1' ||
-      control.id === '3.3.1' ||
-      control.id === '3.4.1' ||
-      control.id === '3.5.1' ||
-      control.id === '3.6.1' ||
-      control.id === '3.7.1' ||
-      control.id === '3.8.1' ||
-      control.id === '3.9.1' ||
-      control.id === '3.10.1' ||
-      control.id === '3.11.1' ||
-      control.id === '3.12.1' ||
-      control.id === '3.13.1' ||
-      control.id === '3.14.1' ||
-      control.id.includes('.L2-3.1.1') ||
-      control.id.includes('.L2-3.5.1') ||
-      control.id.includes('.L2-3.14.1') ||
-      control.id.includes('.L2-3.3.1') ||
-      control.id.includes('.L2-3.4.1') ||
-      control.id.includes('.L2-3.13.1')
-    )
-  );
+  const isPolicyControl = isFamilyPolicyControl(control?.id);
   const familyPrefix = getFamilyPrefix(control?.id, control?.domain);
   const familyTitle = control?.domainName || control?.domain || familyPrefix;
 
@@ -191,6 +170,11 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
       setActiveTab('objectives');
     }
   }, [isPolicyControl, activeTab]);
+
+  // Opened on one objective (the objective update's review list): show the objectives tab
+  useEffect(() => {
+    if (focusObjective && focusObjective.controlId === activeId) setActiveTab('objectives');
+  }, [focusObjective, activeId]);
 
   const compiledFamilyControls = React.useMemo(() => {
     if (!isPolicyControl || !familyPrefix) return [];
@@ -323,6 +307,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handleClose = () => {
+    clearFocusObjective();
     if (propOnClose) {
       propOnClose();
     } else {
@@ -331,6 +316,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handlePrev = () => {
+    clearFocusObjective();
     if (controlIndex > 0) {
       const prevControl = frameworkControls[controlIndex - 1];
       setSelectedControlId(prevControl.id);
@@ -338,6 +324,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   };
 
   const handleNext = () => {
+    clearFocusObjective();
     if (controlIndex >= 0 && controlIndex < frameworkControls.length - 1) {
       const nextControl = frameworkControls[controlIndex + 1];
       setSelectedControlId(nextControl.id);
@@ -620,7 +607,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             <span>STIG Hardening ({mappedStigRules.length})</span>
           </button>
 
-          {/* Generated Living Policy Tab Button (for any -1 control) */}
+          {/* Generated Living Policy Tab Button (for the first requirement of a family) */}
           {isPolicyControl && (
             <button
               onClick={() => setActiveTab('living_policy')}
@@ -649,7 +636,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 To write how the control is implemented, use the <button type="button" onClick={() => setActiveTab('narrative')} className="underline text-cyan-300 hover:text-cyan-200">System Security Plan (SSP)</button> tab.
               </p>
               <ImportAnalysisPanel controlId={control.id} tenantId={currentTenant.id} programId={activeProgram?.id ?? null} />
-              <ObjectiveChecklist controlId={control.id} />
+              <ObjectiveChecklist controlId={control.id} focusObjective={focusObjective && focusObjective.controlId === control.id ? focusObjective : null} onFocusHandled={clearFocusObjective} />
             </div>
           )}
 
@@ -1049,7 +1036,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             </div>
           )}
 
-          {/* 7. Generated Living Policy Tab (for -1 controls) */}
+          {/* 7. Generated Living Policy Tab (for the first requirement of a family) */}
           {isPolicyControl && activeTab === 'living_policy' && (
             <div className="space-y-6 animate-fadeIn">
               {/* Action Toolbar */}

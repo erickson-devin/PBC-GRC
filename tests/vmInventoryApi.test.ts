@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import { server } from '../server/index';
 import { vmIngestRateLimiter, vmTokenRateLimiter } from '../server/routes/vmIngest';
 import { __drainVmWorkerForTests, __setVmWorkerFaultForTests } from '../server/vm/worker';
+import { changeProgramAssets } from '../server/programAssets';
+import { createProgram } from '../server/programs';
+import { firstProgram } from './programFixture';
 
 /**
  * Host inventory over HTTP (issue #229 phase 2): a push that carries hardware and software, the assets it creates and fills, the two read
@@ -105,8 +108,9 @@ async function run() {
   const admin = person('u_inv_admin');
   const viewer = person('u_inv_viewer');
   const owner2 = person('u_inv_o2');
-  const mkTenant = async (who: string, name: string) => (await call('POST', '/tenants', who, undefined, { name })).body?.tenant?.id as string;
-  const T1 = await mkTenant(admin, 'Inv One');
+  const mkTenant = async (who: string, name: string, extra: Record<string, unknown> = {}) => (await call('POST', '/tenants', who, undefined, { name, ...extra })).body?.tenant?.id as string;
+  const T1 = await mkTenant(admin, 'Inv One', { primaryFramework: 'CMMC_L2' });
+  await firstProgram(T1, 'CMMC_L2'); // a tenant starts with no program: the program-wide reads need the organization default
   const T2 = await mkTenant(owner2, 'Inv Other');
   assert(Boolean(T1 && T2), 'two tenants created', { T1, T2 });
   await call('POST', `/tenants/${T1}/members`, admin, T1, { userId: 'u_inv_viewer', email: 'u_inv_viewer@test.mil', role: 'VIEWER' });
@@ -165,6 +169,48 @@ async function run() {
   const sourceId = o1[0]?.sourceId as string;
   assert((await softwareOf(h1.id, `?sourceId=${sourceId}`)).body?.items?.length === 3 && (await softwareOf(h1.id, '?sourceId=nope')).body?.items?.length === 0, 'A4 the source filter narrows the list');
   assert((await softwareOf(h1.id, '?limit=0')).status === 400 && (await softwareOf(h1.id, '?limit=10001')).status === 400 && (await softwareOf(h1.id, '?limit=abc')).status === 400 && (await softwareOf(h1.id, '?sourceId=a%20b')).status === 400, 'A4 a limit outside 1..10000 or a malformed source id is a 400');
+
+  console.log('\n--- P1-P8: the program-wide reads (issue #279) ---');
+  const pCaptured: string[] = [];
+  const pCapture = (...args: unknown[]) => { pCaptured.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')); };
+  console.log = pCapture; console.error = pCapture; console.warn = pCapture; console.info = pCapture;
+  try {
+    const progSoftware = async (query = '', who = admin, headers: Record<string, string> = {}) => call('GET', `/tenants/${T1}/vm/inventory/software${query}`, who, T1, undefined, headers);
+    const progHosts = async (who = admin, headers: Record<string, string> = {}) => call('GET', `/tenants/${T1}/vm/inventory/hosts`, who, T1, undefined, headers);
+    const p1 = await progSoftware();
+    const groupOf = (body: Json | null, name: string) => ((body?.items ?? []) as Json[]).find((g) => String(g.name).toLowerCase() === name.toLowerCase());
+    assert(p1.status === 200 && p1.body?.tenantId === T1 && p1.body?.totalGroups === 5 && p1.body?.truncated === false && p1.body?.declared === false && typeof p1.body?.programId === 'string', 'P1 the program software aggregate lists 5 distinct packages', p1.body);
+    assert(groupOf(p1.body, `${PKG_MARK}-0`)?.assetCount === 1 && groupOf(p1.body, `${PKG_MARK}-0`)?.vendor === 'Fake Vendor' && (groupOf(p1.body, `${PKG_MARK}-0`)?.assetIds as string[])?.join() === h1.id, 'P1b a group carries its vendor, asset count and asset ids', groupOf(p1.body, `${PKG_MARK}-0`));
+    const rep = await ingest(tok1, { ...inventoryPayload('inv-main', '2026-11-10T13:00:00Z'), hosts: [{ agent_id: '002', hostname: H2_NAME, software: [{ name: `${PKG_MARK}-two-a`, version: '2' }, { name: `${PKG_MARK}-two-b`, version: '2' }, { name: `${PKG_MARK}-0`.toUpperCase(), version: '1.0', vendor: 'FAKE VENDOR' }] }] });
+    await __drainVmWorkerForTests();
+    const p2 = await progSoftware();
+    assert(rep.status === 202 && p2.body?.totalGroups === 5 && groupOf(p2.body, `${PKG_MARK}-0`)?.assetCount === 2, 'P2 the same package on two assets (other case and vendor case) is still one group', p2.body);
+    assert((await progSoftware('', viewer)).status === 200 && (await progHosts(viewer)).status === 200, 'P3 a viewer can read both');
+    const p4a = await progSoftware('?limit=0');
+    const p4b = await progSoftware('?limit=20001');
+    const p4c = await progSoftware('?limit=abc');
+    const p4d = await progSoftware('?limit=1');
+    assert(p4a.status === 400 && p4b.status === 400 && p4c.status === 400 && p4a.body?.error === 'Invalid limit: between 1 and 20000', 'P4 a limit outside 1..20000 is a 400', p4a.body);
+    assert(p4d.status === 200 && p4d.body?.items?.length === 1 && p4d.body?.truncated === true && p4d.body?.totalGroups === 5, 'P4b limit=1 returns one group and says it is truncated', p4d.body);
+    const program2 = await createProgram(T1, { name: 'Inventory boundary', frameworkId: 'CMMC_L2' }, 'u_inv_admin');
+    await changeProgramAssets(T1, program2.id, { add: [h2.id], remove: [] }, { actor: 'test', userId: null });
+    const p5 = await progSoftware('', admin, { 'x-program-id': program2.id });
+    const p5h = await progHosts(admin, { 'x-program-id': program2.id });
+    assert(p5.body?.declared === true && p5.body?.programId === program2.id && p5.body?.totalGroups === 3 && !groupOf(p5.body, `${PKG_MARK}-1`) && groupOf(p5.body, `${PKG_MARK}-0`)?.assetCount === 1, 'P5 a program that declares only H2 sees only H2\'s packages', p5.body);
+    assert(((p5h.body?.hosts ?? []) as Json[]).length === 1 && p5h.body?.hosts?.[0]?.assetId === h2.id, 'P5b and only H2\'s host row', p5h.body);
+    assert((await progSoftware('', admin, { 'x-program-id': 'no-such-program' })).status === 404 && (await progHosts(admin, { 'x-program-id': 'no-such-program' })).status === 404, 'P6 an unknown program is a 404');
+    const p7 = await progHosts();
+    const p7h1 = ((p7.body?.hosts ?? []) as Json[]).find((h) => h.assetId === h1.id);
+    const p7h2 = ((p7.body?.hosts ?? []) as Json[]).find((h) => h.assetId === h2.id);
+    assert(p7.status === 200 && p7h1?.os?.name === 'Microsoft Windows 11 Pro' && p7h1?.hardware?.cpuCores === 8 && p7h1?.sourceLabel === 'inv-main' && p7h2?.hardware === null, 'P7 the host read carries the OS and hardware, and H2 has no hardware', p7.body);
+    assert((await call('GET', `/tenants/${T1}/vm/inventory/software`, owner2, T1)).status >= 400 && (await call('GET', `/tenants/${T1}/vm/inventory/hosts`, null, T1)).status === 401, 'P3b a non-member and an anonymous caller are refused');
+    const noProgram = await call('GET', `/tenants/${T2}/vm/inventory/software`, owner2, T2);
+    assert(noProgram.status === 409 && noProgram.body?.code === 'program_required', 'P3c a tenant with no program yet gets 409 program_required', noProgram.body);
+  } finally {
+    console.log = original.log; console.error = original.error; console.warn = original.warn; console.info = original.info;
+  }
+  const pLog = pCaptured.join('\n');
+  assert(!pLog.includes(PKG_MARK) && !pLog.toLowerCase().includes(H1_NAME.toLowerCase()) && !pLog.includes(H2_NAME) && !pLog.includes(H1_SERIAL), 'P8 nothing of the inventory reaches the log during the program-wide reads', undefined);
 
   console.log('\n--- A6: a person edits the asset, the next run does not overwrite ---');
   const edit = await call('PUT', `/tenants/${T1}/assets/${h1.id}`, admin, T1, { ipAddress: '10.200.0.9', serialNumber: 'OWNER-SERIAL', macAddress: '11:22:33:44:55:66' });

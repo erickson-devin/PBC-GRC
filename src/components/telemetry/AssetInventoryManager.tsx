@@ -24,6 +24,7 @@ import {
   MinusCircle,
   ListChecks,
   Radar,
+  FileDown,
 } from 'lucide-react';
 import {
   EnclaveAsset,
@@ -39,6 +40,7 @@ import type { VmConfigScan } from '../../types/vm';
 import { INVENTORY_COPY, assetConfigSummary, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption, latestScansByAsset, shownCaption } from '../../data/telemetry/configResultsView';
 import type { InventoryScanStatus } from '../../data/telemetry/configResultsView';
 import { useTenant } from '../../context/TenantContext';
+import { useAssessment } from '../../context/AssessmentContext';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
@@ -60,6 +62,7 @@ const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text
 
 export const AssetInventoryManager: React.FC = () => {
   const { currentTenant, activeProgram, programs, programsStatus } = useTenant();
+  const { openExportModal } = useAssessment();
   // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
   const serverBacked = Boolean(currentTenant.serverBacked);
@@ -409,6 +412,16 @@ export const AssetInventoryManager: React.FC = () => {
 
         {/* Action Buttons (changes are limited to Tenant Owners / MSP Admins; everyone else gets a read-only view) */}
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => openExportModal('HARDWARE_INVENTORY')}
+            title="Opens the Export Center with the Hardware Inventory document (CM.L2-3.4.1) selected"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+          >
+            <FileDown className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+            <span>Export hardware inventory</span>
+          </button>
+
           <input
             type="file"
             ref={fileInputRef}
@@ -999,6 +1012,8 @@ export const AssetInventoryManager: React.FC = () => {
           asset={scannerAsset}
           tenantId={tenantId}
           canEdit={canEdit}
+          assets={assets}
+          assetsLoading={loading}
           onClose={() => setScannerAsset(null)}
         />
       )}

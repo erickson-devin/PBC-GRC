@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import type { ProgramScope } from '../db';
-import { importObjectives, listObjectiveEvents, readObjectives, writeObjective, writeObjectivesBulk, type ObjectiveActor } from '../controlObjectives';
-import { parseExpectedUpdatedAt, StaleWriteError } from '../controlAssessments';
-import { ensureObjectiveCatalogCurrent } from '../objectiveCatalogMigration';
+import { importObjectives, latestHumanEventAt, listCatalogUpdateObjectiveEvents, listObjectiveEvents, readObjectives, writeObjective, writeObjectivesBulk, type ObjectiveActor } from '../controlObjectives';
+import { listCatalogUpdateControlEvents, parseExpectedUpdatedAt, StaleWriteError } from '../controlAssessments';
+import { buildCatalogUpdateChanges, CATALOG_UPDATE_ACTOR, ensureObjectiveCatalogCurrent } from '../objectiveCatalogMigration';
 import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
-import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, controlIdOfObjective, validateObjectiveInput, type ObjectiveInput } from '../../src/types/controlObjectives';
+import { CMMC_OBJECTIVE_CATALOG_REV } from '../../src/data/cmmcGuide/guide';
+import { MAX_CATALOG_UPDATE_ITEMS, MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, controlIdOfObjective, validateObjectiveInput, type CatalogUpdateChanges, type ObjectiveInput } from '../../src/types/controlObjectives';
 import { errorMessage } from '../../src/utils/errors';
 
 const router = Router();
@@ -119,6 +120,33 @@ router.post('/import', async (req: Request, res: Response): Promise<void> => {
     res.json({ results });
   } catch (err: unknown) {
     fail(res, req, 'importing objectives', err);
+  }
+});
+
+/**
+ * GET /api/v1/objectives/catalog-update
+ * What the CMMC Assessment Guide update changed in the program: the objective answers re-flagged (with the status before, the status now and whether a person has
+ * changed them since) and the controls re-rolled down. Ids and statuses only, never narrative text, hashes or who. Every role may read it. An archived program
+ * lists nothing (the update skips it); a program that is not CMMC Level 1 / 2 answers applies:false.
+ */
+router.get('/catalog-update', async (req: Request, res: Response): Promise<void> => {
+  const framework = req.program?.frameworkId;
+  const applies = framework === 'CMMC_L1' || framework === 'CMMC_L2';
+  const empty: CatalogUpdateChanges = { applies, catalogRev: CMMC_OBJECTIVE_CATALOG_REV, objectives: [], controls: [], truncated: false };
+  if (!applies || req.program?.archivedAt) {
+    res.json(empty);
+    return;
+  }
+  try {
+    await catalogCurrent(req);
+    const scope = scopeOf(req);
+    const objectiveEvents = await listCatalogUpdateObjectiveEvents(scope, CATALOG_UPDATE_ACTOR, MAX_CATALOG_UPDATE_ITEMS + 1);
+    const controlEvents = await listCatalogUpdateControlEvents(scope, CATALOG_UPDATE_ACTOR, MAX_CATALOG_UPDATE_ITEMS + 1);
+    const humanAt = await latestHumanEventAt(scope, [...new Set(objectiveEvents.map((e) => e.objectiveId))]);
+    const currentById = new Map((await readObjectives(scope)).map((o) => [o.objectiveId, o.status as string]));
+    res.json({ ...empty, ...buildCatalogUpdateChanges(objectiveEvents, controlEvents, humanAt, currentById, MAX_CATALOG_UPDATE_ITEMS) });
+  } catch (err: unknown) {
+    fail(res, req, 'reading the catalog update', err);
   }
 });
 

@@ -312,6 +312,16 @@ async function headers() {
     await ApiClient.sspListJobs('t1', 'p1');
     assert(headerOf(calls[0], 'x-program-id') === 'p1', 'H3 sspListJobs sends x-program-id');
 
+    stub(200, { items: [], upcoming: [] });
+    await ApiClient.getVmPoam('t1', { status: 'all', limit: 5 }, 'p1');
+    assert(
+      calls[0].url.endsWith('/api/v1/tenants/t1/vm/poam?status=all&limit=5') && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === 'p1',
+      'H3b getVmPoam reads GET /vm/poam with the query, x-tenant-id and x-program-id',
+      calls[0].url,
+    );
+    await ApiClient.getVmPoam('t1', undefined, null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined && calls[1].url.endsWith('/vm/poam'), 'H3c getVmPoam with a null program sends no x-program-id and no query');
+
     stub(200, { job: { id: 'j' } });
     const file = new File(['x'], 'ssp.docx');
     await ApiClient.sspUpload('t1', file, 'CMMC_L2', 'rules', undefined, 'p1');
@@ -614,7 +624,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;

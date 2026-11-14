@@ -13,7 +13,7 @@
  * throttled last_used_at / list / cap / revoke, and run-store receive / dedupe / source resolution / list / update, each
  * under two tenants to prove isolation, then the normalization worker end to end (findings, closure, assets, a forced failure that
  * must roll the whole run back, reprocess idempotence), and finally the scheduler (section 14: the cross-tenant enumeration
- * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63; section 20: configuration scan results, issue #103). It inserts and removes rows named
+ * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63; section 20: configuration scan results, issue #103; section 21: affected packages, issue #267; section 22: one POA&M item per finding episode and program, and the snapshot's POA&M count on PostgreSQL, issue #275; section 23: the POA&M read view, issue #274; section 24: the program-wide scanner inventory reads, package grouping, hotfix exclusion, limit, ordering and asset restriction, issue #279). It inserts and removes rows named
  * "vm_verify..." / "vm-verify..." (and "VM-VERIFY-" and "CVE-2099-" rows in vm_vulns), the snapshot evidence and control
  * rows of the two verify tenants, and payload and snapshot files under the tenant's vault directory.
  * Exit code 0 = all checks passed.
@@ -33,14 +33,15 @@ const { pool, initDb, queryWithTenant, queryWithProgram, checkDatabaseConnection
 const { createVmToken, listVmTokens, revokeVmToken, lookupVmTokenByHash, sha256Hex, VmTokenError, VM_TOKEN_PATTERN, MAX_ACTIVE_TOKENS_PER_TENANT } =
   await import('../server/vm/tokens');
 const { recordReceivedRun, findRunBySha, getRun, listRuns, listSources, resetRunForReprocess, updateRun, enumerateSchedulerSources, VmStoreError } = await import('../server/vm/store');
-const { listFindings } = await import('../server/vm/findingsStore');
+const { listFindings, loadSnapshotFindings, loadVmPoamView, withVmTenantTx } = await import('../server/vm/findingsStore');
 const { createAgentReportedAsset } = await import('../server/assets');
+const { replaceHostInventory, aggregateObservedSoftware, listObservedHostsForAssets } = await import('../server/vm/inventoryStore');
 const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = await import('../server/vm/worker');
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
-const { runVmSnapshot, latestSnapshotAt, __setVmSnapshotFaultForTests } = await import('../server/vm/snapshotWriter');
+const { runVmSnapshot, latestSnapshotAt, loadSnapshotInput, __setVmSnapshotFaultForTests } = await import('../server/vm/snapshotWriter');
 const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
-const { createProgram, listPrograms } = await import('../server/programs');
-const { VM_NOTES_BEGIN } = await import('../server/vm/snapshot');
+const { createProgram, listPrograms, resolveVmTargetProgram, setVmTargetProgram } = await import('../server/programs');
+const { VM_NOTES_BEGIN, computeSnapshot, getVmSnapshotConfig } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
 
@@ -593,12 +594,181 @@ async function main() {
     await __drainVmWorkerForTests();
     const pkgUpdated = await pkgOf();
     check(pkgUpdated.length === 1 && pkgUpdated[0].status === 'OPEN' && pkgUpdated[0].affectedPackages.length === 1 && pkgUpdated[0].affectedPackageCount === 1 && pkgUpdated[0].affectedPackages[0].name === 'openssl', 'UPDATE: a run with one package shrinks the list and the finding stays OPEN (::jsonb cast)', JSON.stringify(pkgUpdated));
+
+    console.log('\n--- 22. POA&M per episode and program (#275) ---');
+    // Like writeRun, but the findings are written as given (a detected_at puts the finding past its deadline).
+    const writeFindingsRun = async (label: string, collectedAt: string, hosts: Array<{ agent: string; name: string; findings: Record<string, unknown>[] }>) => {
+      const id = crypto.randomUUID();
+      const bytes = Buffer.from(
+        JSON.stringify({
+          schema_version: 1,
+          source: { kind: 'WAZUH', label },
+          exporter: { name: 'vm-verify', version: '0.0.0' },
+          collected_at: collectedAt,
+          hosts: hosts.map((h) => ({ agent_id: h.agent, hostname: h.name, findings: h.findings })),
+        }),
+      );
+      const file = path.join(localStorageRoot(), 'tenants', TENANT_X, 'vm', 'runs', `${id}.json`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, bytes);
+      rawFiles.push(file);
+      await recordReceivedRun(TENANT_X, {
+        id,
+        kind: 'WAZUH',
+        label,
+        collectedAt,
+        exporterName: 'vm-verify',
+        exporterVersion: '0.0.0',
+        hostCount: hosts.length,
+        findingCount: hosts.reduce((n, h) => n + h.findings.length, 0),
+        rawPath: file,
+        rawSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+        rawBytes: bytes.length,
+      });
+      return id;
+    };
+    const processRun = async (id: string) => {
+      enqueueVmRun(TENANT_X, id);
+      await __drainVmWorkerForTests();
+    };
+    const reprocessRun = async (id: string) => {
+      await resetRunForReprocess(TENANT_X, id);
+      await processRun(id);
+    };
+    const target22 = await resolveVmTargetProgram(TENANT_X);
+    if (!target22) throw new Error('tenant X has no VM target program');
+    const scope = { tenantId: TENANT_X, programId: target22.program.id };
+    const episodesOf = async (s: { tenantId: string; programId: string }, findingId: string): Promise<string[]> =>
+      (await queryWithProgram(s, 'SELECT finding_first_seen_at FROM vm_poam_items WHERE tenant_id = $1 AND finding_id = $2 ORDER BY finding_first_seen_at', [s.tenantId, findingId])).rows.map((r) => new Date(r.finding_first_seen_at).toISOString());
+    const itemCountIn = async (s: { tenantId: string; programId: string }): Promise<number> =>
+      Number((await queryWithProgram(s, 'SELECT count(*)::int AS n FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2', [s.tenantId, s.programId])).rows[0]?.n);
+    const hostPoam = (detectedAt: string | null): Array<{ agent: string; name: string; findings: Record<string, unknown>[] }> => [
+      { agent: 'vmv-poam', name: 'vm-verify-poam', findings: detectedAt === null ? [] : [{ vuln_id: 'CVE-2099-0100', severity: 'CRITICAL', detected_at: detectedAt }] },
+    ];
+
+    const poamRun1 = await writeFindingsRun('vm_verify_poam', '2099-06-01T00:00:00Z', hostPoam('2020-01-01T00:00:00Z'));
+    await processRun(poamRun1);
+    const poamFinding = (await queryWithTenant(TENANT_X, "SELECT id FROM vm_findings WHERE tenant_id = $1 AND vuln_id = 'CVE-2099-0100'", [TENANT_X])).rows[0]?.id as string;
+    const episodes1 = await episodesOf(scope, poamFinding);
+    check(episodes1.length === 1 && episodes1[0].startsWith('2020-01-01'), 'an overdue finding gets one POA&M item in the VM target program, recording its episode (finding_first_seen_at)', JSON.stringify(episodes1));
+
+    // #275 item 2: the snapshot reads the target program's items on PostgreSQL (the transaction sets the program)
+    const snapPoam = (await loadSnapshotFindings(TENANT_X, scope.programId)).poam;
+    check(snapPoam.some((p) => p.findingId === poamFinding), 'loadSnapshotFindings returns the target program\'s item under row security');
+    const report22 = computeSnapshot(await loadSnapshotInput(TENANT_X, new Date(), getVmSnapshotConfig(), 'vmsnap_verify_x', scope.programId));
+    check(report22.poam.overdueWithPoam >= 1, 'the snapshot counts the overdue finding as having a POA&M item (overdueWithPoam >= 1)', JSON.stringify(report22.poam));
+
+    await reprocessRun(poamRun1);
+    check((await episodesOf(scope, poamFinding)).length === 1, 'reprocessing the run keeps exactly one item for the episode (unique index and ON CONFLICT)');
+
+    // close the episode, move its resolved_at into the past, then report the finding again: a new episode
+    const poamRun2 = await writeFindingsRun('vm_verify_poam', '2099-06-02T00:00:00Z', hostPoam(null));
+    await processRun(poamRun2);
+    check((await queryWithTenant(TENANT_X, 'SELECT status FROM vm_findings WHERE tenant_id = $1 AND id = $2', [TENANT_X, poamFinding])).rows[0]?.status === 'RESOLVED', 'a run that no longer lists the finding resolves it');
+    await queryWithTenant(TENANT_X, "UPDATE vm_findings SET resolved_at = '2025-06-01T00:00:00Z' WHERE tenant_id = $1 AND id = $2", [TENANT_X, poamFinding]);
+    const poamRun3 = await writeFindingsRun('vm_verify_poam', '2099-06-03T00:00:00Z', hostPoam('2025-07-01T00:00:00Z'));
+    await processRun(poamRun3);
+    const episodes2 = await episodesOf(scope, poamFinding);
+    check(episodes2.length === 2 && episodes2[0].startsWith('2020-01-01') && episodes2[1].startsWith('2025-07-01'), 'the reopened, overdue finding gets a second item for its new episode (the first is still open)', JSON.stringify(episodes2));
+
+    // target change: the new program gets items although the previous target keeps its own
+    const itemsInDefault = await itemCountIn(scope);
+    const target2 = await createProgram(TENANT_X, { name: 'VM Verify Target 2', frameworkId: 'CMMC_L2' }, 'vm_verify');
+    const scope2 = { tenantId: TENANT_X, programId: target2.id };
+    await setVmTargetProgram(TENANT_X, target2.id, { actor: 'vm_verify', userId: null });
+    check((await loadSnapshotFindings(TENANT_X, target2.id)).poam.length === 0, 'under the second program the first program\'s items are not visible (row security)');
+    await reprocessRun(poamRun3);
+    const overdueNow = await count("SELECT count(*)::int AS n FROM vm_findings WHERE tenant_id = $1 AND status = 'OPEN' AND sla_due_at < now()", [TENANT_X]);
+    check(overdueNow >= 1 && (await itemCountIn(scope2)) === overdueNow, 'after a target change the new program gets one item for every overdue open finding', `${await itemCountIn(scope2)} items for ${overdueNow} findings`);
+    check((await itemCountIn(scope)) === itemsInDefault, 'the previous target program keeps its items and gains none');
+    await reprocessRun(poamRun3);
+    check((await itemCountIn(scope2)) === overdueNow, 'a second reprocess adds nothing to the new target');
+    await setVmTargetProgram(TENANT_X, scope.programId, { actor: 'vm_verify', userId: null });
+
+    console.log('\n--- 23. POA&M view (#274) ---');
+    const viewNow = new Date().toISOString();
+    const viewOptions = { openOnly: true, limit: 1000, offset: 0, upcomingLimit: 1000, includeFindingWindow: true };
+    const viewX = await loadVmPoamView(scope, viewNow, viewOptions);
+    const viewRow = viewX.items.find((i) => i.finding?.id === poamFinding);
+    check(Boolean(viewRow) && viewRow?.finding?.vulnId === 'CVE-2099-0100' && viewRow?.finding?.asset?.name === 'vm-verify-poam' && viewRow?.finding?.slaDueAt !== null && viewRow?.controlId === 'RA.L2-3.11.3', 'the view returns the item with its finding, host name and deadline', JSON.stringify(viewRow));
+    check(viewX.itemsTotal === itemsInDefault && viewX.openItemsTotal === itemsInDefault, 'the view counts the program\'s items', `${viewX.itemsTotal} / ${viewX.openItemsTotal} of ${itemsInDefault}`);
+    const upcomingSql = await count("SELECT count(*)::int AS n FROM vm_findings WHERE tenant_id = $1 AND status = 'OPEN' AND sla_due_at >= $2::timestamptz", [TENANT_X, viewNow]);
+    check(viewX.upcomingTotal === upcomingSql && viewX.upcoming.length === Math.min(1000, upcomingSql), 'upcomingTotal equals the SQL count of open findings not yet due', `${viewX.upcomingTotal} vs ${upcomingSql}`);
+    const viewP2 = await loadVmPoamView(scope2, viewNow, { ...viewOptions, includeFindingWindow: false });
+    check(viewP2.itemsTotal === overdueNow && viewP2.upcoming.length === 0 && viewP2.upcomingTotal === 0 && viewP2.overdueWithoutItemCount === 0, 'a program that is not the target gets its own items and no upcoming rows', JSON.stringify([viewP2.itemsTotal, viewP2.upcomingTotal]));
+    check(!viewP2.items.some((i) => viewX.items.some((j) => j.id === i.id)), 'the two programs\' items are disjoint');
+    const scopeY = await scopeOf(TENANT_Y);
+    const viewY = await loadVmPoamView(scopeY, viewNow, viewOptions);
+    check(viewY.items.length === 0 && viewY.itemsTotal === 0, 'tenant Y sees none of tenant X\'s items');
+    const viewCross = await loadVmPoamView({ tenantId: TENANT_Y, programId: scope.programId }, viewNow, viewOptions);
+    check(viewCross.items.length === 0 && viewCross.itemsTotal === 0, 'tenant X\'s program id under tenant Y returns no item (row security)');
+
+    console.log('\n--- 24. Scanner-reported inventory, program-wide (#279) ---');
+    // Three hosts of tenant X; the packages differ only by case and spaces, by one version, one is a hotfix and one name is not ASCII.
+    const invRun = await writeRun('vm_verify_inventory', '2099-07-01T00:00:00Z', [{ agent: 'vmv-inv', name: 'vm-verify-inv-0', cves: [] }]);
+    const invSource = (await listSources(TENANT_X)).find((s) => s.label === 'vm_verify_inventory');
+    if (!invSource) throw new Error('the inventory verify source was not created');
+    const invAsset = async (name: string, agentId: string): Promise<string> => {
+      const made = await createAgentReportedAsset(TENANT_X, {
+        agentId, hostName: name, ipAddress: '', macAddress: '', osProfile: 'custom', notes: 'vm_verify inventory',
+        agentIds: { wazuh: agentId }, sourceOrigin: 'AGENT_REPORT', discoveryStatus: 'UNCONFIRMED_DISCOVERY', cmmcAssetCategory: 'CONTRACTOR_RISK',
+      }, new Date().toISOString(), 'vm_verify');
+      if (!made) throw new Error('the inventory verify asset was not created');
+      return made.id;
+    };
+    const invA1 = await invAsset('vm-verify-inv-1', 'inv-1');
+    const invA2 = await invAsset('vm-verify-inv-2', 'inv-2');
+    const invA3 = await invAsset('vm-verify-inv-3', 'inv-3');
+    const pkg = (name: string, version: string, vendor: string, type = 'deb') => ({ name, version, vendor, architecture: 'amd64', type, installedAt: null });
+    const invDraft = (assetId: string, agentId: string, hostname: string, software: ReturnType<typeof pkg>[]) => ({
+      assetId, agentId, hostname,
+      inv: { ip: '', mac: '', os: { name: 'Ubuntu', version: '22.04', platform: 'ubuntu', kernel: '' }, hardware: null, software },
+    });
+    await withVmTenantTx(TENANT_X, (client) =>
+      replaceHostInventory(TENANT_X, { id: invRun, sourceId: invSource.id }, '2099-07-01T00:00:00Z', [
+        invDraft(invA1, 'inv-1', 'vm-verify-inv-1', [
+          pkg('OpenSSL ', '3.0.2', ' The OpenSSL Project'),
+          pkg('OpenSSL', '3.0.13', 'The OpenSSL Project'),
+          pkg('KB5001234', '1', 'Microsoft', 'hotfix'),
+          pkg('Café Tool', '1', 'Zed'),
+        ]),
+        invDraft(invA2, 'inv-2', 'vm-verify-inv-2', [pkg('openssl', '3.0.2', 'the openssl project ')]),
+        invDraft(invA3, 'inv-3', 'vm-verify-inv-3', [pkg('zzz-only-h3', '1', '')]),
+      ], client),
+    );
+    const invIds = [invA1, invA2, invA3];
+    const all24 = await aggregateObservedSoftware(TENANT_X, invIds, { limit: 100 });
+    const names24 = all24.items.map((g) => `${g.name.trim().toLowerCase()}@${g.version}`);
+    check(all24.totalGroups === 4 && all24.items.length === 4, 'four groups: the case and space variants merged, the other version kept apart, the hotfix left out', JSON.stringify(names24));
+    const merged = all24.items.find((g) => g.name.trim().toLowerCase() === 'openssl' && g.version === '3.0.2');
+    check(Boolean(merged) && merged?.assetCount === 2 && merged?.assetIds.length === 2 && merged?.vendor.trim().toLowerCase() === 'the openssl project', 'the openssl 3.0.2 variants form one group on 2 assets', JSON.stringify(merged));
+    check(all24.items.find((g) => g.version === '3.0.13')?.assetCount === 1, 'openssl 3.0.13 is a separate group on 1 asset');
+    check(!all24.items.some((g) => g.name === 'KB5001234'), 'the hotfix row is omitted');
+    check(all24.items.some((g) => g.name === 'Café Tool' && g.version === '1'), 'a non-ASCII name comes back intact');
+    check(names24.join('|') === ['café tool@1', 'openssl@3.0.13', 'openssl@3.0.2', 'zzz-only-h3@1'].join('|'), 'groups come back in ascending group-key order (byte order)', names24.join('|'));
+    const cut24 = await aggregateObservedSoftware(TENANT_X, invIds, { limit: 2 });
+    check(cut24.totalGroups === 4 && cut24.items.length === 2 && cut24.items.map((g) => g.name.trim().toLowerCase()).join('|') === 'café tool|openssl', 'limit 2 returns the first two groups and totalGroups 4 (truncated)', JSON.stringify([cut24.totalGroups, cut24.items.length]));
+    const only12 = await aggregateObservedSoftware(TENANT_X, [invA1, invA2], { limit: 100 });
+    check(only12.totalGroups === 3 && !only12.items.some((g) => g.name === 'zzz-only-h3'), 'restricted to two asset ids, the third asset\'s package is absent', JSON.stringify(only12.items.map((g) => g.name)));
+    const only2 = await aggregateObservedSoftware(TENANT_X, [invA2], { limit: 100 });
+    check(only2.totalGroups === 1 && only2.items[0]?.assetCount === 1, 'restricted to one asset id, only that asset\'s package group remains', JSON.stringify(only2.items.map((g) => g.name)));
+    check((await aggregateObservedSoftware(TENANT_X, [], { limit: 100 })).totalGroups === 0, 'an empty asset id list returns nothing');
+    const otherTenant = await aggregateObservedSoftware(TENANT_Y, invIds, { limit: 100 });
+    check(otherTenant.totalGroups === 0 && otherTenant.items.length === 0, 'another tenant gets nothing for the same asset ids (row security)');
+    const wholeTenant = await aggregateObservedSoftware(TENANT_X, null, { limit: 100 });
+    check(wholeTenant.items.some((g) => g.name === 'zzz-only-h3'), 'null asset ids cover every asset of the tenant');
+    const hosts13 = await listObservedHostsForAssets(TENANT_X, [invA1, invA3]);
+    check(hosts13.length === 2 && hosts13.every((h) => h.assetId === invA1 || h.assetId === invA3) && hosts13.every((h) => h.sourceId === invSource.id), 'listObservedHostsForAssets returns only the requested assets\' rows', JSON.stringify(hosts13.map((h) => h.assetId)));
+    check((await listObservedHostsForAssets(TENANT_X, [])).length === 0 && (await listObservedHostsForAssets(TENANT_Y, invIds)).length === 0, 'no asset ids, or another tenant, returns no host row');
+    check((await listObservedHostsForAssets(TENANT_X, null)).filter((h) => invIds.includes(h.assetId)).length === 3, 'null asset ids return the rows of all three assets');
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
       const programId = (await queryWithTenant(t, 'SELECT id FROM programs WHERE tenant_id = $1 AND is_default', [t]).catch(() => null))?.rows[0]?.id as string | undefined;
       const inProgram = (sql: string, params: string[]) => (programId ? queryWithProgram({ tenantId: t, programId }, sql, params) : Promise.resolve(undefined));
-      await inProgram('DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
+      // POA&M items live in the program that was the VM target when they were created: clear every program of the tenant, or the RESTRICT key keeps the programs
+      const programIds = ((await queryWithTenant(t, 'SELECT id FROM programs WHERE tenant_id = $1', [t]).catch(() => null))?.rows ?? []).map((r) => r.id as string);
+      for (const pid of programIds) await queryWithProgram({ tenantId: t, programId: pid }, 'DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_sightings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_findings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_run_assets WHERE tenant_id = $1', [t]).catch(() => undefined);

@@ -1,6 +1,6 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata';
-import type { ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
+import type { CatalogUpdateChanges, ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
 const SESSION_REF_KEY = 'pbc_session_ref_v3';
@@ -26,8 +26,8 @@ import type { TenantRole } from '../types/tenant';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedSoftware, VmRun, VmServiceToken, VmSeverity, VmSource } from '../types/vm';
-import { parseObservedHosts, parseObservedSoftware } from '../data/telemetry/observedInventory';
+import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmPoamResponse, VmRun, VmServiceToken, VmSeverity, VmSource } from '../types/vm';
+import { parseObservedHosts, parseObservedSoftware, parseObservedSoftwareGroups, parseProgramObservedHosts } from '../data/telemetry/observedInventory';
 import { parseVmFindings } from '../data/telemetry/vmFindingsView';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
@@ -849,9 +849,35 @@ export const ApiClient = {
     return parseVmFindings(data);
   },
 
+  /** GET /api/v1/tenants/:id/vm/inventory/hosts for the program (x-program-id): what the scanners report for each asset of its boundary. Never cached in the browser. */
+  async getProgramObservedHosts(tenantId: string, programId?: string | null): Promise<{ hosts: VmObservedHostWithAsset[] }> {
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/inventory/hosts`, { tenantId, programId });
+    return { hosts: parseProgramObservedHosts(data) };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/inventory/software for the program (x-program-id): the distinct packages the scanners report across its boundary (limit 1 to 20000). Never cached in the browser. */
+  async listProgramObservedSoftware(tenantId: string, options?: { limit?: number }, programId?: string | null): Promise<{ totalGroups: number; truncated: boolean; items: VmObservedSoftwareGroup[] }> {
+    const qs = options?.limit !== undefined ? `?limit=${encodeURIComponent(String(options.limit))}` : '';
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/inventory/software${qs}`, { tenantId, programId });
+    return parseObservedSoftwareGroups(data);
+  },
+
   /** GET /api/v1/tenants/:id/vm/config/suggestions for the program (x-program-id): computed on read, never written to a control. */
   async getConfigSuggestions(tenantId: string, programId?: string | null): Promise<VmConfigSuggestionsResponse> {
     return authedJson<VmConfigSuggestionsResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/suggestions`, { tenantId, programId });
+  },
+
+  /** GET /api/v1/tenants/:id/vm/poam for the program (x-program-id): its POA&M items with their findings, and for the VM target program the upcoming deadlines. Every role reads; never cached in browser storage. */
+  async getVmPoam(tenantId: string, options?: { status?: 'open' | 'all'; limit?: number; offset?: number; upcomingLimit?: number }, programId?: string | null): Promise<VmPoamResponse> {
+    const q = new URLSearchParams();
+    if (options?.status) q.set('status', options.status);
+    if (options?.limit !== undefined) q.set('limit', String(options.limit));
+    if (options?.offset !== undefined) q.set('offset', String(options.offset));
+    if (options?.upcomingLimit !== undefined) q.set('upcomingLimit', String(options.upcomingLimit));
+    const qs = q.toString();
+    const data = await authedJson<VmPoamResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/poam${qs ? `?${qs}` : ''}`, { tenantId, programId });
+    if (!Array.isArray(data?.items) || !Array.isArray(data?.upcoming)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data;
   },
 
   /** GET /api/v1/tenants/:id/vm/tokens (owner / MSP admin): the organization's service tokens, newest first. Never includes a token value. */
@@ -1493,6 +1519,19 @@ export const ApiClient = {
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
     const data = await res.json();
     return Array.isArray(data.events) ? data.events : [];
+  },
+
+  /**
+   * GET /api/v1/objectives/catalog-update
+   * The objective answers the CMMC Assessment Guide update set back to In progress (ids and statuses only, never narrative text)
+   */
+  async getCatalogUpdateChanges(tenantId: string, programId?: string | null): Promise<CatalogUpdateChanges> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/catalog-update`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return await res.json();
   },
 
   /**
