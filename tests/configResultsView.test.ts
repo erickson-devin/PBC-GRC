@@ -46,8 +46,8 @@ const scanOf = (id: string, assetId: string, benchmarkTitle: string, scannedAt =
 
 function main() {
   console.log('\n--- helpers (V5) ---');
-  assert(statusLabel('NOT_MET') === 'NOT MET' && statusLabel('IN_PROGRESS') === 'IN PROGRESS' && statusLabel('MET') === 'MET' && statusLabel('NOT_STARTED') === 'NOT STARTED', 'V5a statusLabel');
-  assert(suggestionLabel('MET') === 'Suggests MET' && suggestionLabel('NOT_MET') === 'Suggests NOT MET' && suggestionLabel('REVIEW') === 'Needs review', 'V5b suggestionLabel');
+  assert(statusLabel('NOT_MET') === 'Not met' && statusLabel('IN_PROGRESS') === 'In progress' && statusLabel('MET') === 'Met' && statusLabel('NOT_STARTED') === 'Not started', 'V5a statusLabel');
+  assert(suggestionLabel('MET') === 'Suggests Met' && suggestionLabel('NOT_MET') === 'Suggests Not met' && suggestionLabel('REVIEW') === 'Needs review', 'V5b suggestionLabel');
   assert(suggestionStatus('MET') === 'MET' && suggestionStatus('NOT_MET') === 'NOT_MET' && suggestionStatus('REVIEW') === null, 'V5c suggestionStatus');
   const ok = { canEdit: true, archived: false, controlsLoaded: true };
   assert(
@@ -98,12 +98,12 @@ function main() {
     'V5n unmappedNote'
   );
   assert(
-    applyConfirmText('AC.L1-3.1.1', 'IN_PROGRESS', 'NOT_MET') === 'Record AC.L1-3.1.1 as NOT MET? It is IN PROGRESS now. This is your decision: it is saved under your name in the control history. The scan result is only a suggestion.',
+    applyConfirmText('AC.L1-3.1.1', 'IN_PROGRESS', 'NOT_MET') === 'Record AC.L1-3.1.1 as Not met? It is In progress now. This is your decision: it is saved under your name in the control history. The scan result is only a suggestion.',
     'V5o applyConfirmText'
   );
   const msg = (o: ControlDecisionOutcome) => applyResultMessage(o, 'AC.L1-3.1.1', 'MET');
   assert(
-    msg('saved') === 'AC.L1-3.1.1 recorded as MET.' &&
+    msg('saved') === 'AC.L1-3.1.1 recorded as Met.' &&
       msg('stale') === 'Someone else changed AC.L1-3.1.1 after this page loaded it, so nothing was saved. Reload to see the current status, then decide again.' &&
       msg('archived') === 'AC.L1-3.1.1 was not saved: this program is archived and its controls are read-only.' &&
       msg('unreachable') === 'The server could not be reached, so AC.L1-3.1.1 was not saved.' &&
@@ -111,6 +111,10 @@ function main() {
       msg('read_only') === 'AC.L1-3.1.1 was not saved: only a Tenant Owner or MSP Admin can record a control status.' &&
       msg('not_loaded') === 'AC.L1-3.1.1 was not saved: the controls are not loaded from the server yet.',
     'V5p applyResultMessage, all seven outcomes'
+  );
+  assert(
+    msg('objectives_not_met') === 'AC.L1-3.1.1 was not recorded as Met: its objectives are not all Met or Not applicable yet. Answer them in the control matrix, then apply again.',
+    'V5p2 applyResultMessage, the objectives_not_met outcome: id only, no text'
   );
   assert(shownCaption(500, 812, 'scans') === 'Showing 500 of 812 scans.' && shownCaption(3, 3, 'scans') === '', 'V5q shownCaption');
   assert(archivedMessage('Lab') === 'Lab is archived: its controls are read-only, so no suggestion can be applied.', 'V5r archivedMessage');
@@ -126,7 +130,10 @@ function main() {
   );
   const helperSrc = read('src/data/telemetry/configResultsView.ts');
   const nonTypeImports = helperSrc.split('\n').filter((l) => /^import /.test(l) && !/^import type /.test(l));
-  assert(nonTypeImports.length === 0 && !/react|console\.|localStorage|sessionStorage|fetch\(/.test(helperSrc.replace(/\/\*[\s\S]*?\*\//, '')), 'V5v the helper module is pure: type imports only, no react, console, storage or fetch');
+  assert(
+    nonTypeImports.length === 1 && nonTypeImports[0].includes("from '../statusLabels'") && !/react|console\.|localStorage|sessionStorage|fetch\(/.test(helperSrc.replace(/\/\*[\s\S]*?\*\//, '')),
+    'V5v the helper module is pure: type imports plus the one status label helper, no react, console, storage or fetch'
+  );
 
   console.log('\n--- source checks ---');
   const view = read('src/components/telemetry/ConfigurationResultsView.tsx');

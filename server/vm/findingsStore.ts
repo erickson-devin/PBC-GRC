@@ -1,12 +1,14 @@
 import crypto from 'crypto';
 import type pg from 'pg';
-import { getDbMode, pool, queryWithProgram, type ProgramScope } from '../db';
+import { getDbMode, nextStamp, pool, queryWithProgram, type ProgramScope } from '../db';
 import { listAssets } from '../assets';
 import { listSources, noteSourceNormalized, updateRun } from './store';
-import type { ApplyRunResult, LinkedPoamItem, PoamCandidate, PoamDraft, SightingDraft } from './storeTypes';
-import type { OtherSourceReport } from './transitions';
+import type { ApplyRunResult, LinkedPoamItem, OpenAutoPoamItem, PoamCandidate, PoamDraft, SightingDraft } from './storeTypes';
+import { planPoamCompletions, VM_WORKER_ACTOR, type OtherSourceReport } from './transitions';
+import { matchesExpected, notesDigest, StaleWriteError } from '../controlAssessments';
+import { planVmPoamStatus, vmPoamFindingOpenInEpisode } from '../../src/data/vmPoamEdit';
 import { VM_POAM_PACKAGES_RETURNED } from '../../src/types/vm';
-import type { VmAffectedPackage, VmFinding, VmFindingStatus, VmPoamItem, VmPoamRow, VmPoamStatus, VmRun, VmSeverity, VmSighting, VmUpcomingFinding, VmVuln, VmVulnSource } from '../../src/types/vm';
+import type { VmAffectedPackage, VmFinding, VmFindingStatus, VmPoamItem, VmPoamItemEvent, VmPoamItemPatch, VmPoamRow, VmPoamStatus, VmRun, VmSeverity, VmSighting, VmUpcomingFinding, VmVuln, VmVulnSource } from '../../src/types/vm';
 
 /**
  * Persistence of findings, sightings, vulnerability reference rows and POA&M items for the VM worker: PostgreSQL (one tenant
@@ -30,6 +32,8 @@ const memorySightings = new Map<string, VmSighting>(); // key: tenantId|runId|fi
 const memoryRunAssets = new Map<string, { tenantId: string; runId: string; assetId: string; sourceId: string; receivedAt: string }>(); // key: tenantId|runId|assetId
 const memoryPoam = new Map<string, VmPoamItem>(); // key: id (programId is null when a caller passes none; see insertPoamItems)
 const memoryVulns = new Map<string, VmVuln>(); // key: vuln_id
+/** vm_poam_item_events in memory mode, oldest first (the PostgreSQL table without the digest columns). Never holds owner or mitigation text. */
+export const memoryPoamEvents: Array<VmPoamItemEvent & { tenantId: string; programId: string }> = [];
 
 /** Test hook. */
 export function __resetVmFindingsForTests(): void {
@@ -37,6 +41,7 @@ export function __resetVmFindingsForTests(): void {
   memorySightings.clear();
   memoryRunAssets.clear();
   memoryPoam.clear();
+  memoryPoamEvents.length = 0;
   memoryVulns.clear();
 }
 
@@ -152,6 +157,10 @@ export function rowToPoamItem(r: pg.QueryResultRow): VmPoamItem {
     updatedAt: iso(r.updated_at) as string,
     programId: r.program_id ?? null,
     findingFirstSeenAt: iso(r.finding_first_seen_at),
+    updatedBy: r.updated_by ?? null,
+    statusChangedBy: r.status_changed_by ?? null,
+    statusChangedAt: iso(r.status_changed_at),
+    autoComplete: r.auto_complete ?? true,
   };
 }
 
@@ -500,6 +509,10 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
         updatedAt: now,
         programId,
         findingFirstSeenAt: new Date(d.findingFirstSeenAt).toISOString(),
+        updatedBy: null,
+        statusChangedBy: null,
+        statusChangedAt: null,
+        autoComplete: true,
       });
     }
     return inserted;
@@ -560,6 +573,13 @@ function poamRowOf(item: VmPoamItem, f: VmFinding | null, assetName: string | nu
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     findingFirstSeenAt: item.findingFirstSeenAt ?? null,
+    createdBy: item.createdBy,
+    owner: item.owner,
+    mitigation: item.mitigation,
+    updatedBy: item.updatedBy ?? null,
+    statusChangedBy: item.statusChangedBy ?? null,
+    statusChangedAt: item.statusChangedAt ?? null,
+    autoComplete: item.autoComplete ?? true,
     finding: f
       ? {
           id: f.id,
@@ -632,7 +652,7 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
     let upcomingAll: VmFinding[] = [];
     if (opts.includeFindingWindow) {
       const open = [...memoryFindings.values()].filter((f) => f.tenantId === scope.tenantId && f.status === 'OPEN' && f.slaDueAt !== null);
-      overdueWithoutItemCount = open.filter((f) => Date.parse(f.slaDueAt as string) < nowMs && !mine.some((p) => p.findingId === f.id && itemCoversEpisode(p, f))).length;
+      overdueWithoutItemCount = await countOverdueWithoutItem(scope, nowIso);
       upcomingAll = open
         .filter((f) => Date.parse(f.slaDueAt as string) >= nowMs)
         .sort((a, b) => (a.slaDueAt as string) < (b.slaDueAt as string) ? -1 : (a.slaDueAt as string) > (b.slaDueAt as string) ? 1 : SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -650,29 +670,13 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
     const c = need(client);
     const sevOrder = "CASE f.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'UNKNOWN' THEN 3 WHEN 'LOW' THEN 4 ELSE 5 END";
     const itemRows = await c.query(
-      `SELECT p.*, f.vuln_id, f.severity AS f_severity, f.status AS f_status, f.first_seen_at AS f_first_seen_at, f.last_seen_at AS f_last_seen_at,
-              f.sla_due_at AS f_sla_due_at, f.resolved_at AS f_resolved_at, f.affected_packages, f.affected_package_count, f.package_name,
-              f.package_version, f.fixed_version, f.asset_id, a.asset_name, COALESCE(v.kev, FALSE) AS kev, (f.id IS NOT NULL) AS has_finding
-         FROM vm_poam_items p
-         LEFT JOIN vm_findings f ON f.tenant_id = p.tenant_id AND f.id = p.finding_id
-         LEFT JOIN enclave_assets a ON a.tenant_id = f.tenant_id AND a.id = f.asset_id
-         LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id
+      `${POAM_ROW_SELECT}
         WHERE p.tenant_id = $1 AND p.program_id = $2${opts.openOnly ? " AND p.status IN ('OPEN', 'IN_PROGRESS')" : ''}
         ORDER BY CASE WHEN p.status IN ('OPEN', 'IN_PROGRESS') THEN 0 ELSE 1 END, ${sevOrder}, f.sla_due_at NULLS LAST, p.created_at, p.id
         LIMIT $3 OFFSET $4`,
       [scope.tenantId, scope.programId, opts.limit, opts.offset],
     );
-    const items = itemRows.rows.map((r) => {
-      const finding: VmFinding | null = r.has_finding
-        ? rowToFinding({
-            id: r.finding_id, tenant_id: r.tenant_id, asset_id: r.asset_id, vuln_id: r.vuln_id, status: r.f_status, severity: r.f_severity,
-            first_seen_at: r.f_first_seen_at, last_seen_at: r.f_last_seen_at, resolved_at: r.f_resolved_at, sla_due_at: r.f_sla_due_at,
-            package_name: r.package_name, package_version: r.package_version, fixed_version: r.fixed_version,
-            affected_packages: r.affected_packages, affected_package_count: r.affected_package_count,
-          })
-        : null;
-      return poamRowOf(rowToPoamItem(r), finding, finding && r.asset_name ? (r.asset_name as string) : null, Boolean(r.kev));
-    });
+    const items = itemRows.rows.map(poamRowFromJoined);
     const counts = await c.query(
       `SELECT COUNT(*)::int AS total, (COUNT(*) FILTER (WHERE status IN ('OPEN', 'IN_PROGRESS')))::int AS open
          FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2`,
@@ -682,16 +686,7 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
     let upcoming: VmUpcomingFinding[] = [];
     let upcomingTotal = 0;
     if (opts.includeFindingWindow) {
-      const overdue = await c.query(
-        `SELECT COUNT(*)::int AS n FROM vm_findings f
-          WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at < $2::timestamptz
-            AND NOT EXISTS (
-              SELECT 1 FROM vm_poam_items p
-               WHERE p.tenant_id = f.tenant_id AND p.finding_id = f.id AND p.program_id = $3
-                 AND (p.finding_first_seen_at = f.first_seen_at OR (p.finding_first_seen_at IS NULL AND p.created_at >= f.first_seen_at)))`,
-        [scope.tenantId, nowIso, scope.programId],
-      );
-      overdueWithoutItemCount = Number(overdue.rows[0]?.n ?? 0);
+      overdueWithoutItemCount = await countOverdueWithoutItem(scope, nowIso, c);
       const total = await c.query("SELECT COUNT(*)::int AS n FROM vm_findings f WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at >= $2::timestamptz", [scope.tenantId, nowIso]);
       upcomingTotal = Number(total.rows[0]?.n ?? 0);
       if (opts.upcomingLimit > 0) {
@@ -718,6 +713,395 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
     };
   }, scope.programId);
 }
+
+/**
+ * How many OPEN findings are past their SLA deadline and have no POA&M item of their current episode in the program (any item
+ * status counts as covering it). The same figure loadVmPoamView returns for the target program. Pass the transaction's client to read
+ * inside it; without one a tenant transaction in the program's context is opened (PostgreSQL).
+ */
+export async function countOverdueWithoutItem(scope: ProgramScope, nowIso: string, client?: pg.PoolClient | null): Promise<number> {
+  if (isMemory()) {
+    const nowMs = Date.parse(nowIso);
+    const mine = [...memoryPoam.values()].filter((p) => p.tenantId === scope.tenantId && p.programId === scope.programId);
+    return [...memoryFindings.values()].filter(
+      (f) =>
+        f.tenantId === scope.tenantId && f.status === 'OPEN' && f.slaDueAt !== null && Date.parse(f.slaDueAt) < nowMs &&
+        !mine.some((p) => p.findingId === f.id && itemCoversEpisode(p, f)),
+    ).length;
+  }
+  const count = async (c: pg.PoolClient): Promise<number> => {
+    const overdue = await c.query(
+      `SELECT COUNT(*)::int AS n FROM vm_findings f
+        WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at < $2::timestamptz
+          AND NOT EXISTS (
+            SELECT 1 FROM vm_poam_items p
+             WHERE p.tenant_id = f.tenant_id AND p.finding_id = f.id AND p.program_id = $3
+               AND (p.finding_first_seen_at = f.first_seen_at OR (p.finding_first_seen_at IS NULL AND p.created_at >= f.first_seen_at)))`,
+      [scope.tenantId, nowIso, scope.programId],
+    );
+    return Number(overdue.rows[0]?.n ?? 0);
+  };
+  if (client) return count(client);
+  return withVmTenantTx(scope.tenantId, (c) => count(need(c)), scope.programId);
+}
+
+/**
+ * Completes the worker's POA&M items of one program that a later scan confirmed fixed (#295; the rule is planPoamCompletions): every
+ * eligible item of the program, so a backlog from before the upgrade completes too. Reprocessing a run completes nothing twice (a
+ * completed item is no longer a candidate). Returns how many items were completed. Statuses, ids and dates only reach the events.
+ */
+async function completeInProgram(tenantId: string, runId: string, nowIso: string, client: pg.PoolClient | null, programId: string): Promise<number> {
+  if (isMemory()) {
+    const items = [...memoryPoam.values()].filter((p) => p.tenantId === tenantId && p.programId === programId && p.createdBy === VM_WORKER_ACTOR && isOpenPoam(p.status) && (p.autoComplete ?? true));
+    const ids = planPoamCompletions(
+      items.map((p) => {
+        const f = p.findingId ? memoryFindings.get(p.findingId) : undefined;
+        return {
+          id: p.id,
+          status: p.status,
+          createdBy: p.createdBy,
+          createdAt: p.createdAt,
+          findingFirstSeenAt: p.findingFirstSeenAt ?? null,
+          autoComplete: p.autoComplete ?? true,
+          scheduledCompletion: p.scheduledCompletion,
+          finding: f && f.tenantId === tenantId ? { status: f.status, firstSeenAt: f.firstSeenAt } : null,
+        };
+      }),
+    );
+    for (const id of ids) {
+      const p = memoryPoam.get(id) as VmPoamItem;
+      memoryPoam.set(id, { ...p, status: 'COMPLETED', statusChangedBy: VM_WORKER_ACTOR, statusChangedAt: nowIso, updatedBy: VM_WORKER_ACTOR, updatedAt: nextStamp(p.updatedAt) });
+      memoryPoamEvents.push({
+        id: crypto.randomUUID(),
+        tenantId,
+        programId,
+        itemId: id,
+        source: 'system',
+        actor: VM_WORKER_ACTOR,
+        oldStatus: p.status,
+        newStatus: 'COMPLETED',
+        oldScheduledCompletion: p.scheduledCompletion,
+        newScheduledCompletion: p.scheduledCompletion,
+        ownerChanged: false,
+        mitigationChanged: false,
+        runId,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    return ids.length;
+  }
+  const c = need(client);
+  const found = await c.query(
+    `SELECT p.id, p.status, p.created_by, p.created_at, p.finding_first_seen_at, p.auto_complete, p.scheduled_completion,
+            f.status AS f_status, f.first_seen_at AS f_first_seen_at
+       FROM vm_poam_items p
+       LEFT JOIN vm_findings f ON f.tenant_id = p.tenant_id AND f.id = p.finding_id
+      WHERE p.tenant_id = $1 AND p.program_id = $2 AND p.created_by = $3 AND p.status IN ('OPEN', 'IN_PROGRESS') AND p.auto_complete
+        FOR UPDATE OF p`,
+    [tenantId, programId, VM_WORKER_ACTOR],
+  );
+  const items: OpenAutoPoamItem[] = found.rows.map((r) => ({
+    id: r.id as string,
+    status: r.status as VmPoamStatus,
+    createdBy: r.created_by as string,
+    createdAt: iso(r.created_at) as string,
+    findingFirstSeenAt: iso(r.finding_first_seen_at),
+    autoComplete: Boolean(r.auto_complete),
+    scheduledCompletion: null, // not read by the planner; the event copies the column in SQL
+    finding: r.f_status ? { status: r.f_status as VmFindingStatus, firstSeenAt: iso(r.f_first_seen_at) as string } : null,
+  }));
+  const ids = planPoamCompletions(items);
+  if (ids.length === 0) return 0;
+  const oldStatus = new Map(items.map((i) => [i.id, i.status]));
+  for (const part of chunks(ids)) {
+    await c.query(
+      `UPDATE vm_poam_items
+          SET status = 'COMPLETED', status_changed_by = $3::text, status_changed_at = $4::timestamptz, updated_by = $3::text,
+              updated_at = GREATEST(NOW(), updated_at + interval '1 millisecond')
+        WHERE tenant_id = $1::text AND program_id = $5::text AND id = ANY($2::text[])`,
+      [tenantId, part, VM_WORKER_ACTOR, nowIso, programId],
+    );
+    await c.query(
+      `INSERT INTO vm_poam_item_events (tenant_id, program_id, item_id, source, actor, run_id, old_status, new_status, old_scheduled_completion, new_scheduled_completion)
+       SELECT $1::text, $2::text, p.id, 'system', $3::text, $4::text, u.old_status, 'COMPLETED', p.scheduled_completion, p.scheduled_completion
+         FROM unnest($5::text[], $6::text[]) AS u(id, old_status)
+         JOIN vm_poam_items p ON p.tenant_id = $1::text AND p.program_id = $2::text AND p.id = u.id`,
+      [tenantId, programId, VM_WORKER_ACTOR, runId, part, part.map((id) => oldStatus.get(id) as string)],
+    );
+  }
+  return ids.length;
+}
+
+/** Completes the target program's worker items a later scan confirmed fixed (#295). `client` is the run's transaction, in `programId`'s context. */
+export async function completeResolvedPoamItems(tenantId: string, runId: string, nowIso: string, client: pg.PoolClient | null, programId: string): Promise<number> {
+  return completeInProgram(tenantId, runId, nowIso, client, programId);
+}
+
+/**
+ * The same for the tenant's other programs that are not archived (items left behind in a program that was the VM target earlier). On PostgreSQL
+ * the transaction's program setting is switched to each program in turn and restored to `targetProgramId` before returning, so a later write
+ * of the run (always in the target) is under the right policy. An archived program's items are frozen and never touched.
+ */
+export async function completeResolvedPoamItemsInOtherPrograms(
+  tenantId: string,
+  runId: string,
+  nowIso: string,
+  client: pg.PoolClient | null,
+  targetProgramId: string,
+): Promise<number> {
+  let completed = 0;
+  if (isMemory()) {
+    // Dynamic import: server/programs.ts imports this module (counts), so a static import would be a cycle.
+    const { getProgram } = await import('../programs');
+    const ids = [...new Set([...memoryPoam.values()].filter((p) => p.tenantId === tenantId && p.programId && p.programId !== targetProgramId).map((p) => p.programId as string))];
+    for (const id of ids) {
+      const program = await getProgram(tenantId, id);
+      if (!program || program.archivedAt) continue;
+      completed += await completeInProgram(tenantId, runId, nowIso, null, id);
+    }
+    return completed;
+  }
+  const c = need(client);
+  const others = await c.query('SELECT id FROM programs WHERE tenant_id = $1 AND archived_at IS NULL AND id <> $2 ORDER BY id', [tenantId, targetProgramId]);
+  if (others.rows.length === 0) return 0;
+  for (const row of others.rows) {
+    await c.query('SELECT set_config($1, $2, true)', ['app.current_program_id', row.id as string]);
+    completed += await completeInProgram(tenantId, runId, nowIso, c, row.id as string);
+  }
+  await c.query('SELECT set_config($1, $2, true)', ['app.current_program_id', targetProgramId]);
+  return completed;
+}
+
+/** The SELECT of one POA&M row with its finding, host and KEV flag (the caller adds WHERE, ORDER and LIMIT): see poamRowFromJoined. */
+const POAM_ROW_SELECT = `SELECT p.*, f.vuln_id, f.severity AS f_severity, f.status AS f_status, f.first_seen_at AS f_first_seen_at, f.last_seen_at AS f_last_seen_at,
+              f.sla_due_at AS f_sla_due_at, f.resolved_at AS f_resolved_at, f.affected_packages, f.affected_package_count, f.package_name,
+              f.package_version, f.fixed_version, f.asset_id, a.asset_name, COALESCE(v.kev, FALSE) AS kev, (f.id IS NOT NULL) AS has_finding
+         FROM vm_poam_items p
+         LEFT JOIN vm_findings f ON f.tenant_id = p.tenant_id AND f.id = p.finding_id
+         LEFT JOIN enclave_assets a ON a.tenant_id = f.tenant_id AND a.id = f.asset_id
+         LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id`;
+
+function poamRowFromJoined(r: pg.QueryResultRow): VmPoamRow {
+  const finding: VmFinding | null = r.has_finding
+    ? rowToFinding({
+        id: r.finding_id, tenant_id: r.tenant_id, asset_id: r.asset_id, vuln_id: r.vuln_id, status: r.f_status, severity: r.f_severity,
+        first_seen_at: r.f_first_seen_at, last_seen_at: r.f_last_seen_at, resolved_at: r.f_resolved_at, sla_due_at: r.f_sla_due_at,
+        package_name: r.package_name, package_version: r.package_version, fixed_version: r.fixed_version,
+        affected_packages: r.affected_packages, affected_package_count: r.affected_package_count,
+      })
+    : null;
+  return poamRowOf(rowToPoamItem(r), finding, finding && r.asset_name ? (r.asset_name as string) : null, Boolean(r.kev));
+}
+
+/** The item of the program as a row of GET /vm/poam, or null when the id is unknown or belongs to another tenant or program. */
+export async function getVmPoamRow(scope: ProgramScope, itemId: string): Promise<VmPoamRow | null> {
+  if (isMemory()) {
+    const p = memoryPoam.get(itemId);
+    if (!p || p.tenantId !== scope.tenantId || p.programId !== scope.programId) return null;
+    return memoryRowOf(p, (await listAssets(scope.tenantId)).map((a) => [a.id, a.hostName] as const));
+  }
+  return withVmTenantTx(
+    scope.tenantId,
+    async (client) => {
+      const res = await need(client).query(`${POAM_ROW_SELECT} WHERE p.tenant_id = $1 AND p.program_id = $2 AND p.id = $3`, [scope.tenantId, scope.programId, itemId]);
+      return res.rows[0] ? poamRowFromJoined(res.rows[0]) : null;
+    },
+    scope.programId,
+  );
+}
+
+function memoryRowOf(p: VmPoamItem, assets: ReadonlyArray<readonly [string, string]>): VmPoamRow {
+  const f = p.findingId ? memoryFindings.get(p.findingId) : undefined;
+  const name = f ? (assets.find(([id]) => id === f.assetId)?.[1] ?? null) : null;
+  return poamRowOf(p, f ? { ...f } : null, name, f ? Boolean(memoryVulns.get(f.vulnId)?.kev) : false);
+}
+
+/** Why an edit was refused by the status rules (planVmPoamStatus). Carries a code only, never any text of the item. */
+export class VmPoamEditError extends Error {
+  constructor(readonly code: 'finding_still_open' | 'mitigation_required') {
+    super(code);
+    this.name = 'VmPoamEditError';
+  }
+}
+
+export interface VmPoamEditor {
+  /** Display name stored as updated_by and on the event. */
+  actor: string;
+  /** The signed-in user's id (stored only on the event row in PostgreSQL). */
+  userId: string | null;
+}
+
+/** What an edit changes, from the stored item and the patch. Throws VmPoamEditError when the status rules refuse it. */
+function planEdit(p: VmPoamItem, findingOpenInEpisode: boolean, patch: VmPoamItemPatch) {
+  const owner = patch.owner ?? p.owner;
+  const mitigation = patch.mitigation ?? p.mitigation;
+  const scheduledCompletion = patch.scheduledCompletion === undefined ? p.scheduledCompletion : patch.scheduledCompletion;
+  const status = patch.status ?? p.status;
+  const ownerChanged = owner !== p.owner;
+  const mitigationChanged = mitigation !== p.mitigation;
+  const dateChanged = scheduledCompletion !== p.scheduledCompletion;
+  const statusChanged = status !== p.status;
+  const changed = ownerChanged || mitigationChanged || dateChanged || statusChanged;
+  let reopen = false;
+  if (changed) {
+    const plan = planVmPoamStatus({ status: p.status, findingOpenInEpisode }, status, mitigation);
+    if (!plan.ok) throw new VmPoamEditError(plan.code);
+    reopen = plan.reopen;
+  }
+  return { owner, mitigation, scheduledCompletion, status, ownerChanged, mitigationChanged, dateChanged, statusChanged, changed, reopen };
+}
+
+const ACTOR_MAX = 255;
+const USER_ID_MAX = 128;
+
+/**
+ * Edits one item of the program (#297): owner, mitigation, scheduled completion, status. `expectedUpdatedAt` must be the stored stamp
+ * (else StaleWriteError). Null when the id is unknown or belongs to another tenant or program. A change that alters nothing writes
+ * nothing (`changed: false`, no event, the stamp stays). A real change bumps updated_at, records who changed it and one event with the
+ * statuses, dates, changed flags and the SHA-256 and length of the new owner / mitigation, never their text. Throws VmPoamEditError.
+ */
+export async function updateVmPoamItem(
+  scope: ProgramScope,
+  itemId: string,
+  patch: VmPoamItemPatch,
+  expectedUpdatedAt: string,
+  who: VmPoamEditor,
+): Promise<{ item: VmPoamRow; changed: boolean } | null> {
+  const actor = who.actor.slice(0, ACTOR_MAX);
+  if (isMemory()) {
+    const p = memoryPoam.get(itemId);
+    if (!p || p.tenantId !== scope.tenantId || p.programId !== scope.programId) return null;
+    if (!matchesExpected(p.updatedAt, expectedUpdatedAt)) throw new StaleWriteError({ updatedAt: p.updatedAt, updatedBy: p.updatedBy ?? null });
+    const f = p.findingId ? memoryFindings.get(p.findingId) : undefined;
+    const plan = planEdit(p, vmPoamFindingOpenInEpisode(p, f && f.tenantId === scope.tenantId ? f : null), patch);
+    const assets = (await listAssets(scope.tenantId)).map((a) => [a.id, a.hostName] as const);
+    if (!plan.changed) return { item: memoryRowOf(p, assets), changed: false };
+    const now = new Date().toISOString();
+    const next: VmPoamItem = {
+      ...p,
+      owner: plan.owner,
+      mitigation: plan.mitigation,
+      scheduledCompletion: plan.scheduledCompletion,
+      status: plan.status,
+      updatedBy: actor,
+      updatedAt: nextStamp(p.updatedAt),
+      ...(plan.statusChanged ? { statusChangedBy: actor, statusChangedAt: now } : {}),
+      ...(plan.reopen ? { autoComplete: false } : {}),
+    };
+    memoryPoam.set(itemId, next);
+    memoryPoamEvents.push({
+      id: crypto.randomUUID(),
+      tenantId: scope.tenantId,
+      programId: scope.programId,
+      itemId,
+      source: 'human',
+      actor,
+      oldStatus: p.status,
+      newStatus: plan.status,
+      oldScheduledCompletion: p.scheduledCompletion,
+      newScheduledCompletion: plan.scheduledCompletion,
+      ownerChanged: plan.ownerChanged,
+      mitigationChanged: plan.mitigationChanged,
+      runId: null,
+      createdAt: now,
+    });
+    return { item: memoryRowOf(next, assets), changed: true };
+  }
+  const updated = await withVmTenantTx(
+    scope.tenantId,
+    async (client) => {
+      const c = need(client);
+      const found = await c.query(
+        `SELECT p.*, f.status AS f_status, f.first_seen_at AS f_first_seen_at
+           FROM vm_poam_items p
+           LEFT JOIN vm_findings f ON f.tenant_id = p.tenant_id AND f.id = p.finding_id
+          WHERE p.tenant_id = $1::text AND p.program_id = $2::text AND p.id = $3::text
+            FOR UPDATE OF p`,
+        [scope.tenantId, scope.programId, itemId],
+      );
+      const r = found.rows[0];
+      if (!r) return null;
+      const p = rowToPoamItem(r);
+      if (!matchesExpected(p.updatedAt, expectedUpdatedAt)) throw new StaleWriteError({ updatedAt: p.updatedAt, updatedBy: p.updatedBy ?? null });
+      const open = vmPoamFindingOpenInEpisode(p, r.f_status ? { status: r.f_status as VmFindingStatus, firstSeenAt: iso(r.f_first_seen_at) as string } : null);
+      const plan = planEdit(p, open, patch);
+      if (!plan.changed) return { changed: false };
+      await c.query(
+        `UPDATE vm_poam_items
+            SET owner = $4::text, mitigation = $5::text, scheduled_completion = $6::date, status = $7::text, updated_by = $8::text,
+                updated_at = GREATEST(NOW(), updated_at + interval '1 millisecond'),
+                status_changed_by = CASE WHEN $9::boolean THEN $8::text ELSE status_changed_by END,
+                status_changed_at = CASE WHEN $9::boolean THEN NOW() ELSE status_changed_at END,
+                auto_complete = CASE WHEN $10::boolean THEN FALSE ELSE auto_complete END
+          WHERE tenant_id = $1::text AND program_id = $2::text AND id = $3::text`,
+        [scope.tenantId, scope.programId, itemId, plan.owner, plan.mitigation, plan.scheduledCompletion, plan.status, actor, plan.statusChanged, plan.reopen],
+      );
+      const ownerDigest = plan.ownerChanged ? notesDigest(plan.owner) : null;
+      const mitigationDigest = plan.mitigationChanged ? notesDigest(plan.mitigation) : null;
+      await c.query(
+        `INSERT INTO vm_poam_item_events (tenant_id, program_id, item_id, source, actor, actor_user_id, old_status, new_status,
+                                          old_scheduled_completion, new_scheduled_completion, owner_changed, new_owner_sha256, new_owner_length,
+                                          mitigation_changed, new_mitigation_sha256, new_mitigation_length)
+         VALUES ($1::text, $2::text, $3::text, 'human', $4::text, $5::text, $6::text, $7::text, $8::date, $9::date, $10::boolean, $11::text, $12::integer,
+                 $13::boolean, $14::text, $15::integer)`,
+        [
+          scope.tenantId, scope.programId, itemId, actor, who.userId ? who.userId.slice(0, USER_ID_MAX) : null, p.status, plan.status,
+          p.scheduledCompletion, plan.scheduledCompletion, plan.ownerChanged, ownerDigest?.sha256 ?? null, ownerDigest?.length ?? null,
+          plan.mitigationChanged, mitigationDigest?.sha256 ?? null, mitigationDigest?.length ?? null,
+        ],
+      );
+      return { changed: true };
+    },
+    scope.programId,
+  );
+  if (!updated) return null;
+  const item = await getVmPoamRow(scope, itemId);
+  return item ? { item, changed: updated.changed } : null;
+}
+
+/** The item's history, newest first (at most `limit`). Statuses, dates and changed flags only: never the owner or mitigation text. */
+export async function listVmPoamItemEvents(scope: ProgramScope, itemId: string, limit: number): Promise<VmPoamItemEvent[]> {
+  if (isMemory()) {
+    return memoryPoamEvents
+      .filter((e) => e.tenantId === scope.tenantId && e.programId === scope.programId && e.itemId === itemId)
+      .reverse()
+      .slice(0, limit)
+      .map(({ tenantId: _t, programId: _p, ...event }) => ({ ...event }));
+  }
+  return withVmTenantTx(
+    scope.tenantId,
+    async (client) => {
+      const res = await need(client).query(
+        `SELECT id, item_id, source, actor, old_status, new_status, old_scheduled_completion, new_scheduled_completion, owner_changed,
+                mitigation_changed, run_id, created_at
+           FROM vm_poam_item_events
+          WHERE tenant_id = $1::text AND program_id = $2::text AND item_id = $3::text
+          ORDER BY created_at DESC, id DESC
+          LIMIT $4::integer`,
+        [scope.tenantId, scope.programId, itemId, limit],
+      );
+      return res.rows.map((r): VmPoamItemEvent => ({
+        id: r.id,
+        itemId: r.item_id,
+        source: r.source as 'human' | 'system',
+        actor: r.actor,
+        oldStatus: (r.old_status ?? null) as VmPoamStatus | null,
+        newStatus: r.new_status as VmPoamStatus,
+        oldScheduledCompletion: dateOnly(r.old_scheduled_completion),
+        newScheduledCompletion: dateOnly(r.new_scheduled_completion),
+        ownerChanged: Boolean(r.owner_changed),
+        mitigationChanged: Boolean(r.mitigation_changed),
+        runId: r.run_id ?? null,
+        createdAt: iso(r.created_at) as string,
+      }));
+    },
+    scope.programId,
+  );
+}
+
+/** A DATE column as YYYY-MM-DD (the driver returns a Date at local midnight). */
+const dateOnly = (v: unknown): string | null =>
+  v instanceof Date ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}` : ((v as string | null | undefined) ?? null);
 
 /** The program's POA&M items still open (OPEN or IN_PROGRESS). A legacy item with no program is not counted until it is backfilled. */
 export async function countOpenPoamItems(scope: ProgramScope): Promise<number> {

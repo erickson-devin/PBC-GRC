@@ -240,6 +240,16 @@ assert(
 );
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_program_events_program ON program_events (tenant_id, program_id, created_at DESC);'), 'P1: program_events is indexed by program and time');
 assert(RLS_TENANT_TABLES.some((r) => r.table === 'program_events' && r.tenantColumn === 'tenant_id') && !PROGRAM_BACKFILL_TABLES.includes('program_events' as never), 'P1: program_events is a tenant and program RLS table but is not backfilled');
+assert(RLS_TENANT_TABLES.some((r) => r.table === 'vm_poam_item_events' && r.tenantColumn === 'tenant_id') && !PROGRAM_BACKFILL_TABLES.includes('vm_poam_item_events' as never) && !PROGRAM_SCOPED.includes('vm_poam_item_events'), 'P1: vm_poam_item_events is a tenant and program RLS table, NOT NULL program_id from creation, and is not backfilled');
+for (const col of ['updated_by VARCHAR(255)', 'status_changed_by VARCHAR(255)', 'status_changed_at TIMESTAMPTZ', 'auto_complete BOOLEAN NOT NULL DEFAULT TRUE']) {
+  assert(TABLES_SQL.includes('ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ' + col + ';'), 'P1: vm_poam_items gets ' + col + ' idempotently (#295, #297)');
+}
+{
+  const evStart = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS vm_poam_item_events (');
+  const ev = evStart < 0 ? '' : TABLES_SQL.slice(evStart, TABLES_SQL.indexOf('\n  );', evStart));
+  assert(ev !== '' && !/FOREIGN KEY|REFERENCES/.test(ev), 'P1: vm_poam_item_events has no foreign key (the history outlives the item and the program)');
+  assert(ev !== '' && !/\b(owner|mitigation) (TEXT|VARCHAR)/.test(ev) && /new_owner_sha256/.test(ev) && /new_mitigation_length/.test(ev), 'P1: vm_poam_item_events holds no owner or mitigation text, only digests, lengths and flags');
+}
 for (const t of PROGRAM_SCOPED) {
   assert(TABLES_SQL.includes('ALTER TABLE ' + t + ' ADD COLUMN IF NOT EXISTS program_id VARCHAR(64)'), 'P1: ' + t + ' gets a nullable program_id, idempotently');
 }
@@ -278,7 +288,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets and program_ssp_metadata', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata and vm_poam_item_events', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(

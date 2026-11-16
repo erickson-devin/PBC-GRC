@@ -209,7 +209,10 @@ assert(
 );
 const assessment = read('src/context/AssessmentContext.tsx');
 const saveBody = assessment.slice(assessment.indexOf('const saveObjectives = useCallback'), assessment.indexOf('// Review of a conflict the one-time upload found'));
-assert(saveBody.indexOf('401') !== -1 && saveBody.indexOf('401') < saveBody.indexOf('alert('), 'saveObjectives checks for a 401 before it alerts');
+assert(
+  saveBody.includes('err.status === 401') && !saveBody.includes('alert(') && saveBody.indexOf('err.status === 401') < saveBody.indexOf('objectiveNotSavedNotice('),
+  'saveObjectives checks for a 401 before it raises the not-saved notice, and never alerts'
+);
 
 console.log('\n--- The screens ---');
 const E1 = entry('control:AC.L1-b.1.1:notes', 'CUI-MARK-77', 'Implementation notes, AC.L1-b.1.1');

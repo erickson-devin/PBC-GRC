@@ -252,7 +252,7 @@ async function contractTests() {
   for (const [who, token, res] of [['owner', owner, o], ['analyst', analyst, a]] as const) {
     for (const t of res.result.tenants) {
       const uiCanEdit = canRoleWrite(applyRoleSync({}, res.result)[t.id]);
-      const put = await call('PUT', '/controls/AC.L1-3.1.1', token, t.id, { status: 'MET', implementationNotes: 'sync' });
+      const put = await call('PUT', '/controls/AC.L1-3.1.1', token, t.id, { status: 'IN_PROGRESS', implementationNotes: 'sync' });
       assert((put.status === 200) === uiCanEdit, `${who} in ${t.name}: UI canEdit=${uiCanEdit} matches server (${put.status})`);
     }
   }

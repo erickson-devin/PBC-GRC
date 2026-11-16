@@ -13,7 +13,7 @@
  * throttled last_used_at / list / cap / revoke, and run-store receive / dedupe / source resolution / list / update, each
  * under two tenants to prove isolation, then the normalization worker end to end (findings, closure, assets, a forced failure that
  * must roll the whole run back, reprocess idempotence), and finally the scheduler (section 14: the cross-tenant enumeration
- * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63; section 20: configuration scan results, issue #103; section 21: affected packages, issue #267; section 22: one POA&M item per finding episode and program, and the snapshot's POA&M count on PostgreSQL, issue #275; section 23: the POA&M read view, issue #274; section 24: the program-wide scanner inventory reads, package grouping, hotfix exclusion, limit, ordering and asset restriction, issue #279). It inserts and removes rows named
+ * policy, stale_since, the snapshot evidence files and rows, the control notes block; section 15: the control assessment history; section 16: staleness from the last normalized run and its backfill, issue #59; section 17: a failed snapshot leaves no row, event or file, issue #56; section 18: two managers of one kind keep separate agent ids and a finding closes only when no other source still lists it, issue #62 and #63; section 19: legacy bare-kind agent id keys are rewritten, issue #63; section 20: configuration scan results, issue #103; section 21: affected packages, issue #267; section 22: one POA&M item per finding episode and program, and the snapshot's POA&M count on PostgreSQL, issue #275; section 23: the POA&M read view, issue #274; section 24: the program-wide scanner inventory reads, package grouping, hotfix exclusion, limit, ordering and asset restriction, issue #279; section 25: POA&M completion, issue #295; section 26: editing a POA&M item, issue #297). It inserts and removes rows named
  * "vm_verify..." / "vm-verify..." (and "VM-VERIFY-" and "CVE-2099-" rows in vm_vulns), the snapshot evidence and control
  * rows of the two verify tenants, and payload and snapshot files under the tenant's vault directory.
  * Exit code 0 = all checks passed.
@@ -33,14 +33,14 @@ const { pool, initDb, queryWithTenant, queryWithProgram, checkDatabaseConnection
 const { createVmToken, listVmTokens, revokeVmToken, lookupVmTokenByHash, sha256Hex, VmTokenError, VM_TOKEN_PATTERN, MAX_ACTIVE_TOKENS_PER_TENANT } =
   await import('../server/vm/tokens');
 const { recordReceivedRun, findRunBySha, getRun, listRuns, listSources, resetRunForReprocess, updateRun, enumerateSchedulerSources, VmStoreError } = await import('../server/vm/store');
-const { listFindings, loadSnapshotFindings, loadVmPoamView, withVmTenantTx } = await import('../server/vm/findingsStore');
+const { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, loadSnapshotFindings, loadVmPoamView, updateVmPoamItem, withVmTenantTx } = await import('../server/vm/findingsStore');
 const { createAgentReportedAsset } = await import('../server/assets');
 const { replaceHostInventory, aggregateObservedSoftware, listObservedHostsForAssets } = await import('../server/vm/inventoryStore');
 const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = await import('../server/vm/worker');
 const { runVmSchedulerTick } = await import('../server/vm/scheduler');
 const { runVmSnapshot, latestSnapshotAt, loadSnapshotInput, __setVmSnapshotFaultForTests } = await import('../server/vm/snapshotWriter');
-const { writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
-const { createProgram, listPrograms, resolveVmTargetProgram, setVmTargetProgram } = await import('../server/programs');
+const { StaleWriteError, writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
+const { archiveProgram, createProgram, listPrograms, resolveVmTargetProgram, setVmTargetProgram } = await import('../server/programs');
 const { VM_NOTES_BEGIN, computeSnapshot, getVmSnapshotConfig } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
@@ -669,7 +669,7 @@ async function main() {
     const poamRun3 = await writeFindingsRun('vm_verify_poam', '2099-06-03T00:00:00Z', hostPoam('2025-07-01T00:00:00Z'));
     await processRun(poamRun3);
     const episodes2 = await episodesOf(scope, poamFinding);
-    check(episodes2.length === 2 && episodes2[0].startsWith('2020-01-01') && episodes2[1].startsWith('2025-07-01'), 'the reopened, overdue finding gets a second item for its new episode (the first is still open)', JSON.stringify(episodes2));
+    check(episodes2.length === 2 && episodes2[0].startsWith('2020-01-01') && episodes2[1].startsWith('2025-07-01'), 'the reopened, overdue finding gets a second item for its new episode (the first one was completed by the worker, section 25)', JSON.stringify(episodes2));
 
     // target change: the new program gets items although the previous target keeps its own
     const itemsInDefault = await itemCountIn(scope);
@@ -691,7 +691,8 @@ async function main() {
     const viewX = await loadVmPoamView(scope, viewNow, viewOptions);
     const viewRow = viewX.items.find((i) => i.finding?.id === poamFinding);
     check(Boolean(viewRow) && viewRow?.finding?.vulnId === 'CVE-2099-0100' && viewRow?.finding?.asset?.name === 'vm-verify-poam' && viewRow?.finding?.slaDueAt !== null && viewRow?.controlId === 'RA.L2-3.11.3', 'the view returns the item with its finding, host name and deadline', JSON.stringify(viewRow));
-    check(viewX.itemsTotal === itemsInDefault && viewX.openItemsTotal === itemsInDefault, 'the view counts the program\'s items', `${viewX.itemsTotal} / ${viewX.openItemsTotal} of ${itemsInDefault}`);
+    const openInDefault = Number((await queryWithProgram(scope, "SELECT count(*)::int AS n FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2 AND status IN ('OPEN', 'IN_PROGRESS')", [TENANT_X, scope.programId])).rows[0]?.n);
+    check(viewX.itemsTotal === itemsInDefault && viewX.openItemsTotal === openInDefault, 'the view counts the program\'s items (the open count is the SQL count: completed items no longer count, #295)', `${viewX.itemsTotal} / ${viewX.openItemsTotal} of ${itemsInDefault} (open in SQL: ${openInDefault})`);
     const upcomingSql = await count("SELECT count(*)::int AS n FROM vm_findings WHERE tenant_id = $1 AND status = 'OPEN' AND sla_due_at >= $2::timestamptz", [TENANT_X, viewNow]);
     check(viewX.upcomingTotal === upcomingSql && viewX.upcoming.length === Math.min(1000, upcomingSql), 'upcomingTotal equals the SQL count of open findings not yet due', `${viewX.upcomingTotal} vs ${upcomingSql}`);
     const viewP2 = await loadVmPoamView(scope2, viewNow, { ...viewOptions, includeFindingWindow: false });
@@ -761,6 +762,128 @@ async function main() {
     check(hosts13.length === 2 && hosts13.every((h) => h.assetId === invA1 || h.assetId === invA3) && hosts13.every((h) => h.sourceId === invSource.id), 'listObservedHostsForAssets returns only the requested assets\' rows', JSON.stringify(hosts13.map((h) => h.assetId)));
     check((await listObservedHostsForAssets(TENANT_X, [])).length === 0 && (await listObservedHostsForAssets(TENANT_Y, invIds)).length === 0, 'no asset ids, or another tenant, returns no host row');
     check((await listObservedHostsForAssets(TENANT_X, null)).filter((h) => invIds.includes(h.assetId)).length === 3, 'null asset ids return the rows of all three assets');
+    console.log('\n--- 25. POA&M completion when a later scan confirms the fix (#295) ---');
+    const findingIdOf = async (vulnId: string): Promise<string> =>
+      (await queryWithTenant(TENANT_X, 'SELECT id FROM vm_findings WHERE tenant_id = $1 AND vuln_id = $2', [TENANT_X, vulnId])).rows[0]?.id as string;
+    const itemRowsOf = async (s: { tenantId: string; programId: string }, findingId: string) =>
+      (await queryWithProgram(s, 'SELECT id, status, status_changed_by, updated_by, auto_complete, updated_at FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2 AND finding_id = $3 ORDER BY finding_first_seen_at', [s.tenantId, s.programId, findingId])).rows;
+    const eventCountOf = async (s: { tenantId: string; programId: string }, runId: string): Promise<number> =>
+      Number((await queryWithProgram(s, 'SELECT count(*)::int AS n FROM vm_poam_item_events WHERE tenant_id = $1 AND run_id = $2', [s.tenantId, runId])).rows[0]?.n);
+
+    // 25a: the run that no longer listed CVE-2099-0100 (poamRun2) completed the first episode's item and wrote one system event under the target program
+    const items25 = await itemRowsOf(scope, poamFinding);
+    check(items25.length === 2 && items25[0].status === 'COMPLETED' && items25[0].status_changed_by === 'system:vm-worker' && items25[0].updated_by === 'system:vm-worker', 'the item of the resolved episode is COMPLETED by the worker', JSON.stringify(items25));
+    check(items25[1].status === 'OPEN', 'the item of the reopened episode is still OPEN', JSON.stringify(items25));
+    check((await eventCountOf(scope, poamRun2)) === 1, 'one vm_poam_item_events row with the run id is visible under the target program');
+    check((await eventCountOf(scope2, poamRun2)) === 0, 'the event is not visible under another program (row security)');
+    check(Number((await queryWithTenant(TENANT_X, 'SELECT count(*)::int AS n FROM vm_poam_item_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n) === 0, 'a tenant context with no program sees no event');
+    const sysEvent = (await queryWithProgram(scope, 'SELECT source, actor, actor_user_id, old_status, new_status, owner_changed, mitigation_changed, new_owner_sha256 FROM vm_poam_item_events WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, poamRun2])).rows[0];
+    check(sysEvent?.source === 'system' && sysEvent.actor === 'system:vm-worker' && sysEvent.actor_user_id === null && sysEvent.old_status === 'OPEN' && sysEvent.new_status === 'COMPLETED' && sysEvent.owner_changed === false && sysEvent.mitigation_changed === false && sysEvent.new_owner_sha256 === null, 'the event records OPEN -> COMPLETED by the worker, no user id, no text digest', JSON.stringify(sysEvent));
+
+    // 25b: reprocessing the resolving run completes nothing twice
+    await reprocessRun(poamRun2);
+    const items25b = await itemRowsOf(scope, poamFinding);
+    check((await eventCountOf(scope, poamRun2)) === 1 && new Date(items25b[0].updated_at).toISOString() === new Date(items25[0].updated_at).toISOString() && items25b[0].status === 'COMPLETED', 'reprocessing the run adds no event and leaves the item untouched (same updated_at)');
+
+    // the open items the screen counts are exactly the SQL count (completed ones no longer count)
+    const openSql = Number((await queryWithProgram(scope, "SELECT count(*)::int AS n FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2 AND status IN ('OPEN', 'IN_PROGRESS')", [TENANT_X, scope.programId])).rows[0]?.n);
+    const view25 = await loadVmPoamView(scope, new Date().toISOString(), { openOnly: false, limit: 1000, offset: 0, upcomingLimit: 0, includeFindingWindow: false });
+    check(view25.openItemsTotal === openSql && view25.openItemsTotal < view25.itemsTotal, 'openItemsTotal equals the SQL count of open items and is below the total', `${view25.openItemsTotal} / ${openSql} / ${view25.itemsTotal}`);
+
+    // 25c: an item a person reopened (auto_complete = FALSE) is not completed; once the flag is back (backlog sweep) the next run completes it
+    const poam2a = await writeFindingsRun('vm_verify_poam2', '2099-06-04T00:00:00Z', [{ agent: 'vmv-poam2', name: 'vm-verify-poam2', findings: [{ vuln_id: 'CVE-2099-0101', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] }]);
+    await processRun(poam2a);
+    const finding2 = await findingIdOf('CVE-2099-0101');
+    await queryWithProgram(scope, 'UPDATE vm_poam_items SET auto_complete = FALSE WHERE tenant_id = $1 AND program_id = $2 AND finding_id = $3', [TENANT_X, scope.programId, finding2]);
+    const poam2b = await writeFindingsRun('vm_verify_poam2', '2099-06-05T00:00:00Z', [{ agent: 'vmv-poam2', name: 'vm-verify-poam2', findings: [] }]);
+    await processRun(poam2b);
+    const items25c = await itemRowsOf(scope, finding2);
+    check((await queryWithTenant(TENANT_X, 'SELECT status FROM vm_findings WHERE tenant_id = $1 AND id = $2', [TENANT_X, finding2])).rows[0]?.status === 'RESOLVED' && items25c.length === 1 && items25c[0].status === 'OPEN' && (await eventCountOf(scope, poam2b)) === 0, 'an item with auto_complete FALSE stays OPEN although its finding is RESOLVED', JSON.stringify(items25c));
+    await queryWithProgram(scope, 'UPDATE vm_poam_items SET auto_complete = TRUE WHERE tenant_id = $1 AND program_id = $2 AND finding_id = $3', [TENANT_X, scope.programId, finding2]);
+    await reprocessRun(poam2b);
+    const items25c2 = await itemRowsOf(scope, finding2);
+    check(items25c2[0].status === 'COMPLETED' && (await eventCountOf(scope, poam2b)) === 1, 'the next run sweeps it up: every eligible item completes, not only those the run resolved', JSON.stringify(items25c2));
+
+    // 25d: items left in a program that was the VM target earlier complete too, unless that program is archived
+    const target3 = await createProgram(TENANT_X, { name: 'VM Verify Target 3', frameworkId: 'CMMC_L2' }, 'vm_verify');
+    const scope3 = { tenantId: TENANT_X, programId: target3.id };
+    const poam3a = await writeFindingsRun('vm_verify_poam3', '2099-06-06T00:00:00Z', [{ agent: 'vmv-poam3', name: 'vm-verify-poam3', findings: [{ vuln_id: 'CVE-2099-0102', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] }]);
+    await processRun(poam3a); // target: the default program
+    const finding3 = await findingIdOf('CVE-2099-0102');
+    await setVmTargetProgram(TENANT_X, target2.id, { actor: 'vm_verify', userId: null });
+    const poam3b = await writeFindingsRun('vm_verify_poam3', '2099-06-07T00:00:00Z', [
+      { agent: 'vmv-poam3', name: 'vm-verify-poam3', findings: [{ vuln_id: 'CVE-2099-0102', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+      { agent: 'vmv-poam4', name: 'vm-verify-poam4', findings: [{ vuln_id: 'CVE-2099-0103', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]);
+    await processRun(poam3b); // target: the second program, which gets an item for each
+    const finding4 = await findingIdOf('CVE-2099-0103');
+    await setVmTargetProgram(TENANT_X, target3.id, { actor: 'vm_verify', userId: null });
+    await archiveProgram(TENANT_X, target2.id);
+    const poam3c = await writeFindingsRun('vm_verify_poam3', '2099-06-08T00:00:00Z', [
+      { agent: 'vmv-poam3', name: 'vm-verify-poam3', findings: [] },
+      { agent: 'vmv-poam4', name: 'vm-verify-poam4', findings: [] },
+    ]);
+    await processRun(poam3c); // target: the third program; the default program is a previous target, the second is archived
+    const prevDefault = await itemRowsOf(scope, finding3);
+    const archived3 = await itemRowsOf(scope2, finding3);
+    const archived4 = await itemRowsOf(scope2, finding4);
+    check(prevDefault.length === 1 && prevDefault[0].status === 'COMPLETED' && prevDefault[0].status_changed_by === 'system:vm-worker', 'the item in a previous, non-archived target program is completed', JSON.stringify(prevDefault));
+    check(archived3.length === 1 && archived3[0].status === 'OPEN' && archived4.length === 1 && archived4[0].status === 'OPEN', 'the items in an archived program are frozen: untouched', JSON.stringify([archived3, archived4]));
+    check((await eventCountOf(scope, poam3c)) === 1 && (await eventCountOf(scope2, poam3c)) === 0 && (await eventCountOf(scope3, poam3c)) === 0, 'the event is recorded under the item\'s own program (and none for the archived one)');
+    // the transaction's program setting was restored to the target before the run's later writes: the run is NORMALIZED and the target's own items are readable
+    check((await getRun(TENANT_X, poam3c))?.status === 'NORMALIZED', 'the run finished NORMALIZED after switching programs inside its transaction');
+    await setVmTargetProgram(TENANT_X, scope.programId, { actor: 'vm_verify', userId: null });
+    console.log('\n--- 26. Editing a vulnerability POA&M item (#297) ---');
+    const humanEvents = async (s: { tenantId: string; programId: string }, itemId: string): Promise<number> =>
+      Number((await queryWithProgram(s, "SELECT count(*)::int AS n FROM vm_poam_item_events WHERE tenant_id = $1 AND item_id = $2 AND source = 'human'", [s.tenantId, itemId])).rows[0]?.n);
+    const poam5a = await writeFindingsRun('vm_verify_poam5', '2099-06-09T00:00:00Z', [{ agent: 'vmv-poam5', name: 'vm-verify-poam5', findings: [{ vuln_id: 'CVE-2099-0104', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] }]);
+    await processRun(poam5a);
+    const finding5 = await findingIdOf('CVE-2099-0104');
+    const item5 = (await itemRowsOf(scope, finding5))[0];
+    check(item5?.status === 'OPEN' && item5.auto_complete === true, 'the item to edit exists, OPEN and auto-completing', JSON.stringify(item5));
+    const stamp5 = new Date(item5.updated_at).toISOString();
+
+    // 26a: an edit under the target program changes the row and writes one human event with digests, never the text
+    const edited = await updateVmPoamItem(scope, item5.id as string, { owner: 'vm-verify owner', mitigation: 'vm-verify mitigation', scheduledCompletion: '2099-12-15', status: 'IN_PROGRESS' }, stamp5, { actor: 'vm_verify editor', userId: 'vm_verify_user' });
+    check(edited?.changed === true && edited.item.owner === 'vm-verify owner' && edited.item.scheduledCompletion === '2099-12-15' && edited.item.status === 'IN_PROGRESS' && edited.item.updatedBy === 'vm_verify editor' && edited.item.statusChangedBy === 'vm_verify editor' && Date.parse(edited.item.updatedAt) > Date.parse(stamp5), 'updateVmPoamItem edits the row and bumps updated_at', JSON.stringify(edited));
+    const ev5 = (await queryWithProgram(scope, "SELECT source, actor, actor_user_id, old_status, new_status, owner_changed, mitigation_changed, new_owner_sha256, new_owner_length, new_mitigation_sha256 FROM vm_poam_item_events WHERE tenant_id = $1 AND item_id = $2 AND source = 'human'", [TENANT_X, item5.id])).rows;
+    check(ev5.length === 1 && ev5[0].actor === 'vm_verify editor' && ev5[0].actor_user_id === 'vm_verify_user' && ev5[0].old_status === 'OPEN' && ev5[0].new_status === 'IN_PROGRESS' && ev5[0].owner_changed === true && ev5[0].mitigation_changed === true && ev5[0].new_owner_sha256 === sha256Hex('vm-verify owner') && ev5[0].new_owner_length === 15, 'one human event with the user id, the statuses, the changed flags and the SHA-256 and length of the new owner', JSON.stringify(ev5));
+    const noText = (await queryWithProgram(scope, 'SELECT row_to_json(e)::text AS t FROM vm_poam_item_events e WHERE tenant_id = $1 AND item_id = $2', [TENANT_X, item5.id])).rows.every((r) => !String(r.t).includes('vm-verify owner') && !String(r.t).includes('vm-verify mitigation'));
+    check(noText, 'no event row holds the owner or the mitigation text');
+    const events5 = await listVmPoamItemEvents(scope, item5.id as string, 100);
+    check(events5.length === 1 && events5[0].source === 'human' && events5[0].newScheduledCompletion === '2099-12-15' && events5[0].oldScheduledCompletion === null, 'listVmPoamItemEvents returns the event with its dates');
+    const one5 = await getVmPoamRow(scope, item5.id as string);
+    check(one5?.id === item5.id && one5?.owner === 'vm-verify owner' && one5?.mitigation === 'vm-verify mitigation', 'getVmPoamRow reads the edited item');
+
+    // 26b: another program's scope finds nothing and changes nothing
+    const other = await updateVmPoamItem(scope2, item5.id as string, { owner: 'vm-verify intruder' }, new Date(edited!.item.updatedAt).toISOString(), { actor: 'vm_verify editor', userId: null });
+    check(other === null && (await getVmPoamRow(scope2, item5.id as string)) === null && (await listVmPoamItemEvents(scope2, item5.id as string, 100)).length === 0, 'under another program the item is not found, not readable and has no history (row security)');
+    check((await getVmPoamRow(scope, item5.id as string))?.owner === 'vm-verify owner', 'the row is unchanged after the refused attempt');
+
+    // 26c: a stale stamp, a no-op, and the status rules
+    let stale = false;
+    try { await updateVmPoamItem(scope, item5.id as string, { owner: 'vm-verify late' }, stamp5, { actor: 'vm_verify editor', userId: null }); } catch (err) { stale = err instanceof StaleWriteError; }
+    check(stale, 'a stale expected stamp is refused with StaleWriteError');
+    const noop = await updateVmPoamItem(scope, item5.id as string, { owner: 'vm-verify owner' }, edited!.item.updatedAt, { actor: 'vm_verify editor', userId: null });
+    check(noop?.changed === false && noop.item.updatedAt === edited!.item.updatedAt && (await humanEvents(scope, item5.id as string)) === 1, 'a patch that changes nothing writes no event and keeps updated_at');
+    let editCode = '';
+    try { await updateVmPoamItem(scope, item5.id as string, { status: 'COMPLETED' }, edited!.item.updatedAt, { actor: 'vm_verify editor', userId: null }); } catch (err) { editCode = err instanceof VmPoamEditError ? err.code : 'other'; }
+    check(editCode === 'finding_still_open', 'COMPLETED while the finding is still OPEN is refused (finding_still_open)', editCode);
+    editCode = '';
+    try { await updateVmPoamItem(scope, item5.id as string, { status: 'RISK_ACCEPTED', mitigation: '' }, edited!.item.updatedAt, { actor: 'vm_verify editor', userId: null }); } catch (err) { editCode = err instanceof VmPoamEditError ? err.code : 'other'; }
+    check(editCode === 'mitigation_required', 'RISK_ACCEPTED with no mitigation is refused (mitigation_required)', editCode);
+
+    // 26d: the scan stops listing the finding: the worker completes the item; a person reopens it (auto_complete FALSE) and the next run leaves it alone
+    const poam5b = await writeFindingsRun('vm_verify_poam5', '2099-06-10T00:00:00Z', [{ agent: 'vmv-poam5', name: 'vm-verify-poam5', findings: [] }]);
+    await processRun(poam5b);
+    const done5 = (await itemRowsOf(scope, finding5))[0];
+    check(done5.status === 'COMPLETED' && done5.status_changed_by === 'system:vm-worker', 'the worker completed the edited IN_PROGRESS item', JSON.stringify(done5));
+    const reopened = await updateVmPoamItem(scope, item5.id as string, { status: 'OPEN' }, new Date(done5.updated_at).toISOString(), { actor: 'vm_verify editor', userId: 'vm_verify_user' });
+    const reopenedRow = (await itemRowsOf(scope, finding5))[0];
+    check(reopened?.changed === true && reopened.item.status === 'OPEN' && reopened.item.autoComplete === false && reopenedRow.auto_complete === false, 'reopening a COMPLETED item sets auto_complete to FALSE', JSON.stringify(reopenedRow));
+    await reprocessRun(poam5b);
+    const after5 = (await itemRowsOf(scope, finding5))[0];
+    check(after5.status === 'OPEN' && new Date(after5.updated_at).toISOString() === reopened!.item.updatedAt, 'the next worker run leaves the reopened item OPEN and untouched', JSON.stringify(after5));
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
@@ -769,6 +892,7 @@ async function main() {
       // POA&M items live in the program that was the VM target when they were created: clear every program of the tenant, or the RESTRICT key keeps the programs
       const programIds = ((await queryWithTenant(t, 'SELECT id FROM programs WHERE tenant_id = $1', [t]).catch(() => null))?.rows ?? []).map((r) => r.id as string);
       for (const pid of programIds) await queryWithProgram({ tenantId: t, programId: pid }, 'DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
+      for (const pid of programIds) await queryWithProgram({ tenantId: t, programId: pid }, 'DELETE FROM vm_poam_item_events WHERE tenant_id = $1', [t]).catch(() => undefined); // the history has no foreign key to the program
       await queryWithTenant(t, 'DELETE FROM vm_sightings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_findings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_run_assets WHERE tenant_id = $1', [t]).catch(() => undefined);

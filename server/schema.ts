@@ -50,6 +50,7 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_ssp_metadata', tenantColumn: 'tenant_id' },
   { table: 'user_program_defaults', tenantColumn: 'tenant_id' },
   { table: 'software_items', tenantColumn: 'tenant_id' },
+  { table: 'vm_poam_item_events', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -71,6 +72,7 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'program_events',
   'program_assets',
   'program_ssp_metadata',
+  'vm_poam_item_events',
 ];
 
 /**
@@ -1103,6 +1105,40 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_software_items_tenant ON software_items (tenant_id, lower(name));
   CREATE INDEX IF NOT EXISTS idx_software_items_asset ON software_items (tenant_id, asset_id);
+
+  -- Vulnerability POA&M item edits and history (#295, #297). The worker completes an item a later scan confirmed fixed; a person edits one.
+  -- auto_complete goes FALSE when a person reopens an item. Events carry statuses, dates, flags, digests and ids: never the owner or mitigation text.
+  -- No foreign key: the history outlives the item and the program (like program_events). program_id is NOT NULL from creation (nothing to backfill).
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS updated_by VARCHAR(255);
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS status_changed_by VARCHAR(255);
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ;
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS auto_complete BOOLEAN NOT NULL DEFAULT TRUE;
+  CREATE TABLE IF NOT EXISTS vm_poam_item_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      item_id VARCHAR(64) NOT NULL,
+      source VARCHAR(16) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      run_id VARCHAR(64),
+      old_status VARCHAR(16),
+      new_status VARCHAR(16) NOT NULL,
+      old_scheduled_completion DATE,
+      new_scheduled_completion DATE,
+      owner_changed BOOLEAN NOT NULL DEFAULT FALSE,
+      new_owner_sha256 VARCHAR(64),
+      new_owner_length INTEGER,
+      mitigation_changed BOOLEAN NOT NULL DEFAULT FALSE,
+      new_mitigation_sha256 VARCHAR(64),
+      new_mitigation_length INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT vm_poam_item_events_source_check CHECK (source IN ('human', 'system')),
+      CONSTRAINT vm_poam_item_events_status_check CHECK (new_status IN (${vmPoamStatusList}) AND (old_status IS NULL OR old_status IN (${vmPoamStatusList}))),
+      CONSTRAINT vm_poam_item_events_sha_check CHECK ((new_owner_sha256 IS NULL OR new_owner_sha256 ~ '^[0-9a-f]{64}$') AND (new_mitigation_sha256 IS NULL OR new_mitigation_sha256 ~ '^[0-9a-f]{64}$')),
+      CONSTRAINT vm_poam_item_events_system_check CHECK (source = 'human' OR (actor = 'system:vm-worker' AND actor_user_id IS NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_poam_item_events_item ON vm_poam_item_events (tenant_id, program_id, item_id, created_at DESC);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

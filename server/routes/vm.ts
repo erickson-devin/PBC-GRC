@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { VmTokenError, createVmToken, listVmTokens, revokeVmToken } from '../vm/tokens';
 import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
-import { listFindings, loadVmPoamView } from '../vm/findingsStore';
+import { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, loadVmPoamView, updateVmPoamItem } from '../vm/findingsStore';
+import { StaleWriteError } from '../controlAssessments';
+import { parseVmPoamPatch } from '../../src/data/vmPoamEdit';
 import { VM_POAM_CONTROL_ID, getVmSlaConfig, isPoamAutocreateEnabled } from '../vm/transitions';
 import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults } from '../vm/configStore';
 import { computeConfigSuggestions } from '../vm/configSuggestions';
@@ -314,6 +316,117 @@ router.get('/poam', async (req: Request, res: Response): Promise<void> => {
     res.json(response);
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the POA&M items');
+  }
+});
+
+/**
+ * The program an item route works in (the x-program-id header or the tenant's default, resolved by optionalProgramContext, which already
+ * refused an archived program for a write). Answers 409 program_required / 404 program_not_found itself and returns null then.
+ */
+async function poamProgramId(req: Request, res: Response): Promise<string | null> {
+  const program = req.program ?? (req.programId ? await getProgram(req.tenantId!, req.programId) : null);
+  if (program) return program.id;
+  if (!req.programId) {
+    res.status(409).json({ error: 'This tenant has no program yet: create one first', code: 'program_required' });
+    return null;
+  }
+  res.status(404).json({ error: 'Program not found', code: 'program_not_found' });
+  return null;
+}
+
+/** GET .../vm/poam/:itemId (every role): one item of the program as a row of GET /vm/poam, { item }. Any status. 404 like the PATCH. */
+router.get('/poam/:itemId', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const itemId = String(req.params.itemId);
+  if (!TOKEN_ID_PATTERN.test(itemId)) {
+    res.status(404).json({ error: 'POA&M item not found' });
+    return;
+  }
+  try {
+    const programId = await poamProgramId(req, res);
+    if (!programId) return;
+    const item = await getVmPoamRow({ tenantId, programId }, itemId);
+    if (!item) {
+      res.status(404).json({ error: 'POA&M item not found' });
+      return;
+    }
+    res.json({ item });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to read the POA&M item');
+  }
+});
+
+/**
+ * PATCH .../vm/poam/:itemId (owner / admin, by requireWriteRole). Body { expectedUpdatedAt, owner?, mitigation?, scheduledCompletion?, status? }
+ * (parseVmPoamPatch). 200 { item, changed } (a change that alters nothing: changed false, no event, the stamp stays). 400 invalid_poam_patch
+ * with `field` (never the value), 400 mitigation_required, 404 for a malformed, unknown, other-tenant or other-program id (all look the same),
+ * 409 program_required / program_archived / stale_write / finding_still_open. The log line and the events carry ids, statuses and dates only.
+ */
+router.patch('/poam/:itemId', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const itemId = String(req.params.itemId);
+  if (!TOKEN_ID_PATTERN.test(itemId)) {
+    res.status(404).json({ error: 'POA&M item not found' });
+    return;
+  }
+  try {
+    const programId = await poamProgramId(req, res);
+    if (!programId) return;
+    const parsed = parseVmPoamPatch(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: 'Invalid ' + parsed.field, code: 'invalid_poam_patch', field: parsed.field });
+      return;
+    }
+    const user = req.user!;
+    const result = await updateVmPoamItem({ tenantId, programId }, itemId, parsed.patch, parsed.expectedUpdatedAt, {
+      actor: user.name || user.email || user.uid || 'Compliance Assessor',
+      userId: user.uid ?? null,
+    });
+    if (!result) {
+      res.status(404).json({ error: 'POA&M item not found' });
+      return;
+    }
+    if (result.changed) console.log('[VM API] ' + user.uid + ' updated POA&M item ' + itemId + ' in ' + tenantId);
+    res.json(result);
+  } catch (err: unknown) {
+    if (err instanceof StaleWriteError) {
+      res.status(409).json({ error: 'This POA&M item was saved by someone else after you loaded it.', code: 'stale_write', current: err.current });
+      return;
+    }
+    if (err instanceof VmPoamEditError) {
+      if (err.code === 'finding_still_open') {
+        res.status(409).json({ error: 'The scanner still reports this vulnerability: it cannot be completed yet. Use risk accepted instead.', code: 'finding_still_open' });
+      } else {
+        res.status(400).json({ error: 'Risk accepted needs a mitigation.', code: 'mitigation_required', field: 'mitigation' });
+      }
+      return;
+    }
+    sendError(res, err, 'Failed to update the POA&M item');
+  }
+});
+
+/** GET .../vm/poam/:itemId/events: the item's history, newest first, at most 100 (every role). { events }. Never the owner or mitigation text. 404 like the PATCH. */
+router.get('/poam/:itemId/events', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const itemId = String(req.params.itemId);
+  if (!TOKEN_ID_PATTERN.test(itemId)) {
+    res.status(404).json({ error: 'POA&M item not found' });
+    return;
+  }
+  try {
+    const programId = await poamProgramId(req, res);
+    if (!programId) return;
+    const scope = { tenantId, programId };
+    if (!(await getVmPoamRow(scope, itemId))) {
+      res.status(404).json({ error: 'POA&M item not found' });
+      return;
+    }
+    res.json({ events: await listVmPoamItemEvents(scope, itemId, 100) });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to list the POA&M item history');
   }
 });
 

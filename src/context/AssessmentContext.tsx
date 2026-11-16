@@ -22,6 +22,7 @@ import {
 import { getControlObjectives, hasWrittenTemplate } from '../data/cmmcGuide/objectives';
 import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
 import { browserCatalogUpdate } from '../data/cmmcGuide/catalogUpdateReview';
+import { checkControlStatusWrite, lowerRefusedMet, type ControlStatusDecision } from '../data/cmmcGuide/controlStatusGuard';
 import { normalizeImportedCmmcIds } from '../data/cmmcGuide/displayId';
 import { CMMC_OBJECTIVE_CATALOG_REV, withGuideTitle } from '../data/cmmcGuide/guide';
 import { StorageService, createDefaultSspMetadata, createInitialState } from '../services/storageService';
@@ -71,6 +72,13 @@ import {
   type ControlSaveFailure,
   type NotesNotSaved,
 } from '../data/controlSave';
+import {
+  markObjectiveSaves,
+  objectiveNotSavedNotice,
+  objectiveSaveFailureOf,
+  settleObjectiveSaves,
+  type ObjectiveSaveMap,
+} from '../data/objectiveSaveState';
 import { createNotesAutosave, createSaveChain, createStampedSaveChain, newerStamp, notesKey, type NotesDraft } from '../data/notesAutosave';
 import { errorMessage } from '../utils/errors';
 import { useTenant } from './TenantContext';
@@ -99,6 +107,13 @@ export type NavigationTab =
   | 'settings'    // Enclave Settings
   | 'programs'    // Programs & Boundaries (the programs page)
   | 'stigs';      // Legacy — now external link, kept for backwards compat
+
+/** The stored status of each objective by id, for the Met rule (#292). */
+const statusesOf = (objectives: Record<string, { status: ObjectiveStatus }> | undefined): Record<string, ObjectiveStatus> => {
+  const out: Record<string, ObjectiveStatus> = {};
+  for (const [id, o] of Object.entries(objectives ?? {})) if (o) out[id] = o.status;
+  return out;
+};
 
 interface AssessmentContextType {
   state: AssessmentState;
@@ -136,7 +151,8 @@ interface AssessmentContextType {
   setPreviewEvidence: (item: EvidenceItem | null) => void;
 
   // Actions with RBAC enforcement
-  updateControlStatus: (controlId: string, status: ControlStatus) => void;
+  /** Sets a control's status. A Met the objectives do not support (CMMC) is refused with the counts and nothing is changed or sent (#292). */
+  updateControlStatus: (controlId: string, status: ControlStatus) => ControlStatusDecision;
   /** Records a status a person chose from a configuration-results suggestion (#103): only ever called from a click, saved with the control's stamp so a newer change is refused, never alerts. */
   decideControlStatus: (controlId: string, status: ControlStatus) => Promise<ControlDecisionOutcome>;
   updateControlNotes: (controlId: string, notes: string) => void;
@@ -161,6 +177,8 @@ interface AssessmentContextType {
   removeEvidence: (evidenceId: string) => Promise<boolean>;
   resetAssessment: () => Promise<void>;
   importAssessmentJSON: (file: File) => Promise<boolean>;
+  /** Controls the last successful import set to their objectives' status because the file had them Met without every objective Met (#292). */
+  importControlsLowered: () => number;
   exportAssessmentJSON: () => void;
   exportAssessmentMarkdown: () => void;
 
@@ -174,6 +192,10 @@ interface AssessmentContextType {
   recalculateControlStatusFromObjectives: (controlId: string) => ControlStatus;
   /** True while this browser holds objective narratives that are not on the server and this user cannot move them (an owner has to open the organization). */
   objectivesNeedOwner: boolean;
+  /** True once the objectives on screen are the server's (browser-only tenants: always). Until then a cached status must not be flagged against them. */
+  objectivesReady: boolean;
+  /** The save state of each objective answer saved in this program (saving, saved, failed); ids, statuses and times only. */
+  objectiveSaves: ObjectiveSaveMap;
   /** Objective ids whose cached narrative differs from the server's (owner / MSP only; empty for everybody else). */
   objectivePendingReview: string[];
   /** The server's narrative for an objective ('' when it has none). */
@@ -465,6 +487,13 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const programScopeRef = useRef(programScope);
   programScopeRef.current = programScope;
   const [controlSaveError, setControlSaveError] = useState<ControlSaveFailure | null>(null);
+  // How many controls the last JSON import set to their objectives' status instead of Met (#292); a count, never text
+  // A ref with a getter, not state: the caller reads it right after `await importAssessmentJSON(...)`, before a re-render
+  const importLoweredRef = useRef(0);
+  const getImportControlsLowered = useCallback(() => importLoweredRef.current, []);
+  // Per-objective save state (#294): ids, statuses and times only, never text. A token tells a newer save from an older one.
+  const [objectiveSaves, setObjectiveSaves] = useState<ObjectiveSaveMap>({});
+  const objectiveSaveSeqRef = useRef(0);
   const dismissControlSaveError = useCallback(() => setControlSaveError(null), []);
   const [notesNotSaved, setNotesNotSaved] = useState<NotesNotSaved>({});
   const notesNotSavedRef = useRef(notesNotSaved);
@@ -473,6 +502,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   useEffect(() => {
     setControlSaveError(null);
     setNotesNotSaved({});
+    setObjectiveSaves({});
     serverStampRef.current.clear();
     staleNotesRef.current.clear();
     objectiveSavesRef.current.clear();
@@ -529,6 +559,17 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   }, [currentTenant.id, currentTenant.serverBacked, programScope, updateLiveControl]);
 
+  /** Puts a control's status back to the server's when a rolled-up status was never sent (its objectives failed to save), in the program it was made in. */
+  const revertLocalControlStatus = useCallback((controlId: string, status: ControlStatus, scope: string) => {
+    setState(prev => {
+      if (programScopeKey(prev.tenantId, prev.programId) !== scope) return prev;
+      const local = prev.controls[controlId];
+      if (!local) return prev;
+      const next = revertFailedControlFields(local, liveControlsRef.current?.[controlId], { status });
+      return next === local ? prev : { ...prev, controls: { ...prev.controls, [controlId]: next } };
+    });
+  }, []);
+
   /** Sends again the notes of controls whose save failed (current text, not a copy). Status / role were reverted on failure, so there is nothing else to resend. */
   const retryUnsavedNotes = useCallback(async (onlyControlId?: string): Promise<{ saved: number; failed: number }> => {
     if (!canEdit || !notesEditable || activeProgram?.archived) return { saved: 0, failed: 0 };
@@ -545,14 +586,19 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [canEdit, notesEditable, activeProgram?.archived, saveControl, currentUser.name]);
 
   // Action: Update Control Status with RBAC Check
-  const updateControlStatus = useCallback((controlId: string, status: ControlStatus) => {
+  const updateControlStatus = useCallback((controlId: string, status: ControlStatus): ControlStatusDecision => {
     if (!canEdit) {
       alert('Read-Only access: You do not have permission to modify controls for this tenant.');
-      return;
+      return { allowed: true };
     }
     if (!notesEditable) {
       alert(NOTES_NOT_EDITABLE_MESSAGE);
-      return;
+      return { allowed: true };
+    }
+    // Met needs every objective Met or Not applicable (CMMC): a refusal changes and sends nothing, the caller shows the counts (#292)
+    if (status === 'MET') {
+      const decision = checkControlStatusWrite(controlId, status, statusesOf(stateRef.current.objectives), activeFramework);
+      if (!decision.allowed) return decision;
     }
 
     // Worked out once from the current controls: the ledger entry and the save are made here, never inside the state updater
@@ -589,6 +635,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
 
     setState(prev => applyControlNext(prev, controlId, plan.next));
+    return { allowed: true };
   }, [canEdit, notesEditable, currentTenant.id, auditMetadata, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, triggerSprsCelebration, activeFramework, frameworkControls, saveControl]);
 
   // Notes go to the server a moment after the last keystroke (or on blur / tab hide / unmount), one PUT per burst and one ledger entry
@@ -629,6 +676,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!canEdit) return 'read_only';
     if (activeProgram?.archived) return 'archived';
     if (!notesEditable) return 'not_loaded';
+    // A Met the control's objectives do not support is not sent (#292)
+    if (!checkControlStatusWrite(controlId, status, statusesOf(stateRef.current.objectives), activeFramework).allowed) return 'objectives_not_met';
     const scope = programScope;
     const outcome = await saveControl(controlId, { status, updatedBy: currentUser.name }, { checkStale: true, quiet: true });
     if (outcome !== 'saved') return outcome;
@@ -650,7 +699,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }).catch(() => {});
     setState(prev => (programScopeKey(prev.tenantId, prev.programId) === scope ? applyControlNext(prev, controlId, plan.next) : prev));
     return 'saved';
-  }, [canEdit, activeProgram?.archived, notesEditable, programScope, saveControl, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, auditMetadata]);
+  }, [canEdit, activeProgram?.archived, notesEditable, programScope, saveControl, activeFramework, currentTenant.id, currentUser.id, currentUser.email, currentUser.roles, currentUser.name, auditMetadata]);
 
   // Leaving the program or the page sends what is typed; a tab that is hidden sends it too (it may never come back)
   useEffect(() => () => { notesAutosaveRef.current.flushAll(); }, [currentTenant.id, programScope]);
@@ -858,6 +907,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // The scope whose cache holds narratives that are not on the server and that this user cannot move (viewer / assessor)
   const [needOwnerScope, setNeedOwnerScope] = useState<string | null>(null);
   const objectivesNeedOwner = Boolean(currentTenant.serverBacked) && needOwnerScope === programScope;
+  const objectivesReady = !currentTenant.serverBacked || (Boolean(liveObjectives) && liveScopeKey === programScope && stateScope === programScope && !objectivesNeedOwner);
   // The scope an upload is running for: one upload at a time
   const migratingScope = useRef<string | null>(null);
 
@@ -989,9 +1039,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   }, [seedObjective]);
 
-  /** Saves objectives to the server (server-backed tenants), and optionally the rolled-up control change with them. Both calls start now, so both belong to the program on screen at the click. */
-  const saveObjectives = useCallback((inputs: Array<ObjectiveInput & { checkStale?: boolean }>, control?: { id: string; update: Partial<ControlState> }) => {
-    if (!currentTenant.serverBacked || inputs.length === 0) return;
+  /**
+   * Saves objectives to the server (server-backed tenants), and optionally the rolled-up control change with them. The objective call starts
+   * now and the control call follows once the objectives are saved (the server refuses a Met control whose objectives are not all Met, #292);
+   * both belong to the program on screen at the click. Resolves true when the objectives were saved (or there was nothing to send).
+   */
+  const saveObjectives = useCallback((inputs: Array<ObjectiveInput & { checkStale?: boolean }>, control?: { id: string; update: Partial<ControlState> }): Promise<boolean> => {
+    if (inputs.length === 0) return Promise.resolve(true);
+    const token = ++objectiveSaveSeqRef.current;
+    if (!currentTenant.serverBacked) {
+      setObjectiveSaves(m => settleObjectiveSaves(markObjectiveSaves(m, inputs, token), inputs, token, { state: 'saved', at: new Date().toISOString() }));
+      return Promise.resolve(true);
+    }
     const scope = programScope;
     // A queued save goes to the program it was made in, even if another is opened before it runs
     const program = programId ?? null;
@@ -1009,8 +1068,24 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         )
       )
       : updateLiveObjectivesBulk(inputs);
+    // The per-objective marker: saving now, saved or failed when the server answers (only in the program it was made in)
+    setObjectiveSaves(m => markObjectiveSaves(m, inputs, token));
+    void objectiveSave.then(
+      () => { if (programScopeRef.current === scope) setObjectiveSaves(m => settleObjectiveSaves(m, inputs, token, { state: 'saved', at: new Date().toISOString() })); },
+      (err: unknown) => { if (programScopeRef.current === scope) setObjectiveSaves(m => settleObjectiveSaves(m, inputs, token, { state: 'failed', reason: objectiveSaveFailureOf(err) })); },
+    );
     // The control part reports its own failure (saveControl never rejects), apart from the objective part
-    if (control) void saveControl(control.id, control.update);
+    // A status rolled up from objectives the server never got is not sent (the screen is rolled back below); notes or a role in the same update still go
+    if (control) {
+      void objectiveSave.then(
+        () => saveControl(control.id, control.update),
+        () => {
+          const { status, ...rest } = control.update;
+          if (status !== undefined) revertLocalControlStatus(control.id, status, scope);
+          return Object.keys(rest).some(k => k !== 'updatedBy') ? saveControl(control.id, rest) : undefined;
+        }
+      );
+    }
     void objectiveSave.catch((err: unknown) => {
       // A 401 means the session has ended: the sign-in screen says so, and an alert here would come after the sign-out
       // A stale write (someone else saved this objective first) is a notice, not an alert; the text stays on screen (nothing to revert to)
@@ -1019,11 +1094,12 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         return;
       }
       if (!(err instanceof ApiError && err.status === 401)) {
-        alert(`The objective change could not be saved to the server: ${errorMessage(err) || 'unknown error'}`);
+        setControlSaveError(p => coalesceSaveFailure(p, objectiveNotSavedNotice(inputs.length)));
       }
       revertObjectives(inputs.map(i => i.objectiveId), scope);
     });
-  }, [currentTenant.serverBacked, programScope, programId, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives]);
+    return objectiveSave.then(() => true, () => false);
+  }, [currentTenant.serverBacked, programScope, programId, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives, revertLocalControlStatus]);
 
   // Review of a conflict the one-time upload found: the id keeps its cached narrative until the user picks a text
   // Ids whose cached narrative is empty or equal to the server's need no decision: they are dropped (this heals caches from older builds)
@@ -1126,9 +1202,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // Save: the objective, and the rolled-up control status when it changed (otherwise the next live merge reverts it)
     if (currentTenant.serverBacked) {
-      saveObjectives([{ objectiveId, controlId, status }]);
+      // The control's status goes out only after its objective is saved (the server checks Met against the saved objectives, #292)
+      const sent = saveObjectives([{ objectiveId, controlId, status }]);
       if (rolledStatus !== currentCtrl.status) {
-        void saveControl(controlId, { status: rolledStatus, updatedBy: currentUser.name });
+        const scope = programScope;
+        void sent.then(ok => {
+          if (ok) void saveControl(controlId, { status: rolledStatus, updatedBy: currentUser.name });
+          else revertLocalControlStatus(controlId, rolledStatus, scope);
+        });
       }
     }
 
@@ -1144,7 +1225,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       previousState: currentCtrl.status,
       newState: rolledStatus,
     }).catch(() => {});
-  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, saveControl]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, saveControl, revertLocalControlStatus, programScope]);
 
   const updateObjectiveNarrative = useCallback((objectiveId: string, narrative: string) => {
     if (objectiveWriteBlocked('narratives')) return;
@@ -1802,7 +1883,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // A file that names controls by the CMMC Assessment Guide's ids is re-keyed to the stored ids first (a copy; nothing is logged)
       const normalized = normalizeImportedCmmcIds(parsed, activeFramework).state;
       // A backup made under the earlier objective wording gets the same re-flagging as a cache (nothing is deleted)
-      const imported = migrateCachedObjectives(normalized, activeFramework).state;
+      const migratedImport = migrateCachedObjectives(normalized, activeFramework).state;
+      // A Met control whose objectives are not all Met is imported at its objectives' status (#292); only the count is kept, never text
+      const lowering = lowerRefusedMet(migratedImport, activeFramework);
+      const imported = lowering.state;
 
       // Ensure all framework controls are present in imported state
       const targetControls = frameworkControls.length > 0 ? frameworkControls : getFrameworkControls(activeFramework);
@@ -1854,15 +1938,18 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         sspDraftsRef.current.push(sspKey, { scope: programScope, programId: programId ?? null, fields: pickSspFields(imported.sspMetadata) });
         setSspSaveState({ scope: programScope, value: 'saving' });
       }
-      // Objectives of a server-backed tenant go to the server in chunks of 500 (each chunk all-or-nothing)
+      // Objectives of a server-backed tenant go to the server in chunks of 500 (each chunk all-or-nothing). The control writes below wait
+      // for them: the server checks a Met control against the objectives it has saved (#292)
+      let objectivesSent: Promise<void> = Promise.resolve();
       if (currentTenant.serverBacked) {
         const objectiveUploads = objectivesToUpload(imported.objectives, isKnownControl).items;
         if (objectiveUploads.length > 0) {
-          updateLiveObjectivesBulk(objectiveUploads).catch((err: unknown) => {
+          objectivesSent = updateLiveObjectivesBulk(objectiveUploads).then(() => undefined, (err: unknown) => {
             alert(`The objectives of the imported file could not all be saved to the server: ${errorMessage(err) || 'unknown error'}`);
           });
         }
       }
+      importLoweredRef.current = lowering.lowered.length;
       if (serverUpdates.length > 0) {
         const IMPORT_PUT_CAP = 1000;
         if (serverUpdates.length > IMPORT_PUT_CAP) {
@@ -1870,6 +1957,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         const importScope = programScope;
         void (async () => {
+          await objectivesSent;
           const attempts = serverUpdates.slice(0, IMPORT_PUT_CAP);
           let saved = 0;
           let failed = 0;
@@ -1948,6 +2036,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     removeEvidence,
     resetAssessment,
     importAssessmentJSON,
+    importControlsLowered: getImportControlsLowered,
     exportAssessmentJSON,
     exportAssessmentMarkdown,
 
@@ -1965,6 +2054,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     linkEvidenceToObjective,
     recalculateControlStatusFromObjectives,
     objectivesNeedOwner,
+    objectivesReady,
+    objectiveSaves,
     objectivePendingReview,
     serverObjectiveNarrative,
     resolveObjectiveConflict,
@@ -2005,6 +2096,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     removeEvidence,
     resetAssessment,
     importAssessmentJSON,
+    getImportControlsLowered,
     exportAssessmentJSON,
     exportAssessmentMarkdown,
     isExportModalOpen,
@@ -2018,6 +2110,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     linkEvidenceToObjective,
     recalculateControlStatusFromObjectives,
     objectivesNeedOwner,
+    objectivesReady,
+    objectiveSaves,
     objectivePendingReview,
     serverObjectiveNarrative,
     resolveObjectiveConflict,

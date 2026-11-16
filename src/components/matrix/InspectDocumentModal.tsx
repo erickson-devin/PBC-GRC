@@ -52,6 +52,11 @@ import { getCascadedObjectiveNarrative } from '../../data/frameworks/policyCompi
 import { NO_OBJECTIVE_TEMPLATE_RECORDED, NO_STACK_PROFILE_RECORDED } from '../../data/reports/documentDefaults';
 import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
+import { statusDisplayLabel } from '../../data/statusLabels';
+import { controlHeaderView } from '../../data/cmmcGuide/controlStatusView';
+import { metRefusalMessage } from '../../data/cmmcGuide/controlStatusGuard';
+import { composeImplementationStatement } from '../../data/cmmcGuide/sspStatement';
+import { sspStatementLabel, sspPreviewCaption } from '../../data/cmmcGuide/sspStatementView';
 import { cmmcCascadeSource, getControlObjectives } from '../../data/cmmcGuide/objectives';
 import { stackValueLabel } from '../../data/stackDraftView';
 import { useFipsModules } from '../../hooks/useFipsModules';
@@ -63,6 +68,13 @@ import { activateOnKey } from '../../utils/a11y';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
+const CONTROL_STATUS_OPTIONS: { id: ControlStatus; active: string }[] = [
+  { id: 'NOT_STARTED', active: 'bg-slate-800 text-white border-slate-600' },
+  { id: 'IN_PROGRESS', active: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
+  { id: 'MET', active: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
+  { id: 'NOT_MET', active: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
+];
+
 interface InspectDocumentModalProps {
   controlId?: string | null;
   onClose?: () => void;
@@ -91,6 +103,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     removeEvidence,
     setPreviewEvidence,
     getObjectivesForControl,
+    objectivesReady,
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram } = useTenant();
@@ -121,8 +134,15 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingDelete, setPendingDelete] = useState<EvidenceItem | null>(null);
   const evidenceTabRef = useRef<HTMLButtonElement>(null);
+  const [statusAnnouncement, setStatusAnnouncement] = useState('');
+  const statusGroupLabelId = React.useId();
+  const metReasonId = React.useId();
+  const statusNoteId = React.useId();
+  const sspPreviewHeadingId = React.useId();
+  const statusButtonRefs = useRef(new Map<ControlStatus, HTMLButtonElement>());
 
   const activeId = propControlId !== undefined ? propControlId : selectedControlId;
+  useEffect(() => { setStatusAnnouncement(''); }, [activeId]);
 
   const controlIndex = activeId ? frameworkControls.findIndex((c) => c.id === activeId) : -1;
   const fallbackDef = activeId && controlIndex < 0 ? findControlDefinition(activeId) : undefined;
@@ -263,6 +283,28 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   const controlEvidence = state.evidenceIndex.filter((e) => e.controlId === control.id);
   const objectives = getObjectivesForControl(control.id);
   const metObjectivesCount = objectives.filter((o) => o.status === 'MET').length;
+
+  // The recorded status (what is stored) and what the objectives add up to are told apart; Met is refused while objectives are open
+  const statusEditable = canEdit && notesEditable;
+  const storedStatus = ctrlState.status as ControlStatus;
+  const header = objectivesReady
+    ? controlHeaderView({ controlId: control.id, framework: activeFramework, stored: storedStatus, objectives })
+    : { metRefusal: null, note: null };
+  const announce = (text: string) => { setStatusAnnouncement(''); requestAnimationFrame(() => setStatusAnnouncement(text)); };
+  const handleStatusClick = (next: ControlStatus, blocked: boolean) => {
+    if (blocked) { announce(header.metRefusal ?? ''); return; }
+    if (storedStatus === next) return;                       // no duplicate save or ledger entry
+    const d = updateControlStatus(control.id, next);
+    if (!d.allowed) announce(metRefusalMessage(d));
+  };
+  const handleFixStatus = (to: ControlStatus) => {
+    const d = updateControlStatus(control.id, to);
+    if (!d.allowed) return;
+    announce(`Recorded status set to ${statusDisplayLabel(to)}.`);
+    requestAnimationFrame(() => statusButtonRefs.current.get(to)?.focus());   // the note and its button disappear
+  };
+  const statementLabel = sspStatementLabel(control.id, activeFramework);
+  const composed = composeImplementationStatement(control.id, ctrlState.implementationNotes, state.objectives, activeFramework);
 
   // Mappings
   const rawMappings =
@@ -416,6 +458,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   return (
     <DialogOverlay onClose={handleClose} className="no-print fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
       <span role="status" aria-live="polite" className="sr-only">{copyFailedKey ? COPY_FAILED_MESSAGE : ''}</span>
+      <span role="status" aria-live="polite" className="sr-only">{statusAnnouncement}</span>
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scaleUp">
         {/* ── Top Header ── */}
         <div className="px-6 py-4 bg-slate-850 border-b border-slate-800 flex items-center justify-between gap-4 shrink-0">
@@ -486,29 +529,55 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           </div>
 
           {/* Workflow Status Selector */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800 shrink-0 self-start md:self-auto">
-            {(
-              [
-                { id: 'NOT_STARTED', label: 'Not Started', active: 'bg-slate-800 text-white font-mono' },
-                { id: 'IN_PROGRESS', label: 'In Progress', active: 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono font-bold' },
-                { id: 'MET', label: 'Met', active: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono font-bold' },
-                { id: 'NOT_MET', label: 'Not Met', active: 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono font-bold' },
-              ] as { id: ControlStatus; label: string; active: string }[]
-            ).map((s) => {
-              const isSelected = ctrlState.status === s.id;
-              return (
-                <button
-                  key={s.id}
-                  onClick={() => updateControlStatus(control.id, s.id)}
-                  disabled={!canEdit}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 disabled:opacity-60 ${
-                    isSelected ? s.active : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
+          <div className="flex flex-col items-start md:items-end gap-1.5 shrink-0 self-start md:self-auto md:max-w-sm">
+            <span id={statusGroupLabelId} className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Recorded status</span>
+            {statusEditable ? (
+              <div role="group" aria-labelledby={statusGroupLabelId} className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+                {CONTROL_STATUS_OPTIONS.map((s) => {
+                  const isSelected = storedStatus === s.id;
+                  const blocked = s.id === 'MET' && header.metRefusal !== null && !isSelected;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      ref={(el) => { if (el) statusButtonRefs.current.set(s.id, el); else statusButtonRefs.current.delete(s.id); }}
+                      aria-pressed={isSelected}
+                      aria-disabled={blocked || undefined}
+                      aria-describedby={s.id === 'MET' && header.metRefusal ? (header.note?.tone === 'warn' ? statusNoteId : metReasonId) : undefined}
+                      onClick={() => handleStatusClick(s.id, blocked)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
+                        isSelected ? `${s.active} underline underline-offset-4 decoration-2` : blocked ? 'border-transparent text-slate-500 cursor-not-allowed' : 'border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {statusDisplayLabel(s.id)}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-semibold border ${CONTROL_STATUS_OPTIONS.find((o) => o.id === storedStatus)?.active ?? 'bg-slate-800 text-white border-slate-600'}`}>
+                {statusDisplayLabel(storedStatus)}
+              </span>
+            )}
+            {canEdit && !notesEditable && <p className="text-xs text-amber-300 md:text-right">Not loaded from the server yet, so the status cannot be changed.</p>}
+            {statusEditable && header.metRefusal && storedStatus !== 'MET' && (
+              <p id={metReasonId} className="text-xs text-slate-400 md:text-right">{header.metRefusal}</p>
+            )}
+            {header.note && (
+              <div id={statusNoteId} className={`flex flex-wrap items-center gap-2 text-xs md:justify-end ${header.note.tone === 'warn' ? 'text-amber-300' : 'text-slate-400'}`}>
+                {header.note.tone === 'warn' ? <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> : <Info className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+                <span>{header.note.text}</span>
+                {header.note.fixTo && statusEditable && !activeProgram?.archived && (
+                  <button
+                    type="button"
+                    onClick={() => handleFixStatus(header.note!.fixTo!)}
+                    className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                  >
+                    Set to {statusDisplayLabel(header.note.fixTo)}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -670,12 +739,13 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label htmlFor={notesTextareaId} className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                    Compiled SSP Implementation Narrative
+                    {statementLabel.label}
                   </label>
                   <span className="text-xs text-slate-400">
                     {ctrlState.lastUpdated ? `Last modified ${new Date(ctrlState.lastUpdated).toLocaleDateString()}` : ''}
                   </span>
                 </div>
+                <p className="text-xs text-slate-400">{statementLabel.help}</p>
                 <textarea
                   id={notesTextareaId}
                   aria-describedby={notesNotSavedReason ? notesNotSavedId : undefined}
@@ -698,6 +768,27 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 <OdpPanel control={control} notes={ctrlState.implementationNotes || ''} canEdit={canEdit && notesEditable} tenantId={currentTenant.id} onNotesChange={(next) => updateControlNotes(control.id, next)} />
               </div>
               )}
+
+              <section aria-labelledby={sspPreviewHeadingId} className="space-y-2 pt-4 border-t border-slate-800">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 id={sspPreviewHeadingId} className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <FileCheck className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" /><span>What the SSP prints for this control</span>
+                  </h4>
+                  <span className="text-xs text-slate-400">Read-only preview</span>
+                </div>
+                {composed.text.trim() === '' ? (
+                  <p className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/40 p-4 text-xs text-slate-400 italic">Nothing prints for this control yet.</p>
+                ) : (
+                  <div
+                    tabIndex={0}
+                    aria-labelledby={sspPreviewHeadingId}
+                    className="max-h-80 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-sm text-slate-200 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                  >
+                    {composed.text}
+                  </div>
+                )}
+                <p className="text-xs text-slate-400">{sspPreviewCaption(control.id, activeFramework, composed.objectiveLetters)}</p>
+              </section>
 
               {/* Starter Templates */}
               {starterTemplates.length > 0 && (

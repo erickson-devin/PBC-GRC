@@ -7,6 +7,7 @@ import type { AssessmentObjective, ObjectiveStatus } from '../../types/assessmen
 import type { AssessmentState } from '../../types/cmmc';
 import { controlIdOfObjective, isObjectiveStatus, type CatalogUpdateChanges } from '../../types/controlObjectives';
 import type { ControlStatusChange, ObjectiveStatusChange } from './migration';
+import { statusDisplayLabel } from '../statusLabels';
 import { cmmcDisplayId, cmmcGuideObjectiveId } from './displayId';
 import { cmmcNumberOf, guideObjectives } from './guide';
 import { legacyObjectives } from './objectives';
@@ -136,15 +137,7 @@ export function catalogRevLabel(rev: string | null): string {
   return m ? `CMMC Assessment Guide v${m[1]}` : 'CMMC Assessment Guide';
 }
 
-const STATUS_LABELS: Record<ObjectiveStatus, string> = {
-  MET: 'Met',
-  NOT_MET: 'Not met',
-  IN_PROGRESS: 'In progress',
-  NOT_STARTED: 'Not started',
-  NOT_APPLICABLE: 'Not applicable',
-};
-
-export const objectiveStatusLabel = (s: ObjectiveStatus): string => STATUS_LABELS[s] ?? s;
+export const objectiveStatusLabel = (s: ObjectiveStatus): string => statusDisplayLabel(s);
 
 export const previousStatusBadge = (s: ObjectiveStatus): string => `Was ${objectiveStatusLabel(s)} before the objective update`;
 

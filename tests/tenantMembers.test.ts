@@ -73,7 +73,7 @@ async function run() {
   const bob = jwt({ sub: 'u_bob', roles: { tenant_elsewhere: 'VIEWER' } });
   assert((await call('GET', '/controls', bob, T_A)).status === 403, 'non-member with claims for another tenant -> 403');
   assert((await call('GET', '/controls', alice(), T_A)).status === 200, 'member (added via POST) can read the tenant -> 200');
-  const put = { status: 'MET', implementationNotes: 'members test' };
+  const put = { status: 'IN_PROGRESS', implementationNotes: 'members test' };
   assert((await call('PUT', '/controls/AC.L1-3.1.1', alice(), T_A, put)).status === 403, 'role VIEWER from tenant_users => write 403');
   await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ role: 'TENANT_OWNER' }));
   assert((await call('PUT', '/controls/AC.L1-3.1.1', alice(), T_A, put)).status === 200, 'after promotion to TENANT_OWNER => write 200 (role read from tenant_users)');

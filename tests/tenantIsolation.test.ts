@@ -128,14 +128,14 @@ async function runTests() {
         'x-tenant-id': tenantA,
       },
       body: {
-        status: 'MET',
+        status: 'IN_PROGRESS',
         implementationNotes: 'Company A implements centralized identity via Azure AD / Google Cloud Identity with MFA enforced on all accounts.',
         responsibleRole: 'CISO / Lead Security Engineer',
       },
     });
 
-    assert(updateRes.status === 200, 'Company A updates AC.L1-3.1.1 to MET (HTTP 200)');
-    assert(updateRes.body?.control?.status === 'MET', 'Control status is persisted as MET');
+    assert(updateRes.status === 200, 'Company A updates AC.L1-3.1.1 to IN_PROGRESS (HTTP 200)');
+    assert(updateRes.body?.control?.status === 'IN_PROGRESS', 'Control status is persisted as IN_PROGRESS');
     assert(
       updateRes.body?.control?.implementationNotes?.toLowerCase().includes('centralized identity'),
       'Implementation notes recorded accurately'

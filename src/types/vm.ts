@@ -189,6 +189,13 @@ export interface VmPoamItem {
   programId?: string | null;
   /** The finding's first_seen_at (episode) the item was created for; null for an item created before #275. */
   findingFirstSeenAt?: string | null;
+  /** Who last edited the item (a person's display name, or the worker); null for an item never edited. */
+  updatedBy?: string | null;
+  /** Who last changed the status, and when; null while the status is the one the item was created with. */
+  statusChangedBy?: string | null;
+  statusChangedAt?: string | null;
+  /** False once a person reopened the item: the worker no longer completes it automatically. */
+  autoComplete?: boolean;
 }
 
 /** Most affected packages one POA&M row of GET /vm/poam carries (the count is always the true one). */
@@ -204,6 +211,13 @@ export interface VmPoamRow {
   createdAt: string;
   updatedAt: string;
   findingFirstSeenAt: string | null;
+  createdBy: string;
+  owner: string;
+  mitigation: string;
+  updatedBy: string | null;
+  statusChangedBy: string | null;
+  statusChangedAt: string | null;
+  autoComplete: boolean;
   /** null when the finding was deleted with its asset (the key sets finding_id NULL). */
   finding: null | {
     id: string;
@@ -220,6 +234,48 @@ export interface VmPoamRow {
     affectedPackageCount: number;
     asset: { id: string; name: string } | null;
   };
+}
+
+/** One status or field change of a POA&M item (vm_poam_item_events). Never carries the owner or mitigation text, nor a digest or user id. */
+export interface VmPoamItemEvent {
+  id: string;
+  itemId: string;
+  source: 'human' | 'system';
+  actor: string;
+  oldStatus: VmPoamStatus | null;
+  newStatus: VmPoamStatus;
+  oldScheduledCompletion: string | null;
+  newScheduledCompletion: string | null;
+  ownerChanged: boolean;
+  mitigationChanged: boolean;
+  runId: string | null;
+  createdAt: string;
+}
+
+/** What PATCH .../vm/poam/:itemId may change (the body also carries `expectedUpdatedAt`). An empty owner or mitigation clears it; a null date clears the date. */
+export interface VmPoamItemPatch {
+  owner?: string;
+  mitigation?: string;
+  /** Calendar date (YYYY-MM-DD) or null. */
+  scheduledCompletion?: string | null;
+  status?: VmPoamStatus;
+}
+
+/** GET .../programs/:id/vm-target/preview: what choosing the program as the VM target would mean (nothing is changed). */
+export interface VmTargetPreview {
+  programId: string;
+  /** The program already is the VM target (explicit or the implicit default). */
+  isTarget: boolean;
+  eligible: boolean;
+  ineligibleReason: 'invalid_vm_target' | 'program_archived' | null;
+  /** The program that receives the data now; null when there is none. */
+  currentTargetId: string | null;
+  currentTargetExplicit: boolean;
+  /** Open POA&M items the current target holds (they stay there after a switch). */
+  openPoamInCurrent: number;
+  /** About how many open findings of the program are past their deadline and have no item (deadlines can pass before the next run). */
+  overdueWithoutItem: number;
+  autocreateEnabled: boolean;
 }
 
 /** An open finding whose deadline has not passed yet (no POA&M item is due for it). */

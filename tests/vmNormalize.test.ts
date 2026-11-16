@@ -17,6 +17,7 @@ import {
   foldRun,
   getVmSlaConfig,
   isPoamAutocreateEnabled,
+  planPoamCompletions,
   planPoamItems,
   poamWeakness,
   slaDueAt,
@@ -24,6 +25,7 @@ import {
   worstSeverity,
   type ApplyRunInput,
   type LinkedPoamItem,
+  type OpenAutoPoamItem,
   type OtherSourceReport,
   type PoamCandidate,
   type VmSlaConfig,
@@ -31,7 +33,7 @@ import {
 import { findingsNormalizerFor } from '../server/vm/adapters/registry';
 import { agentKey, kindKey, migrateLegacyAgentIds, normalizeMac, planAssetMatches, type AgentAssetCandidate } from '../server/vm/assetMatch';
 import { validateIngestPayload, type IngestPayload } from '../server/vm/ingestSchema';
-import { VM_MAX_AFFECTED_PACKAGES, type VmFinding, type VmRun } from '../src/types/vm';
+import { VM_MAX_AFFECTED_PACKAGES, type VmFinding, type VmFindingStatus, type VmRun } from '../src/types/vm';
 
 /**
  * Pure checks (no server, no database): the Wazuh adapter, the finding lifecycle reducer, SLA and POA&M planning, stale run
@@ -852,6 +854,44 @@ function payload(hosts: Array<Record<string, unknown>>, kind = 'WAZUH'): IngestP
   assert(normalizeMac('AA:BB:CC:DD:EE:FF') === 'aabbccddeeff', 'normalizeMac strips colons and lower-cases');
   assert(normalizeMac('aa-bb-cc-dd-ee-ff') === 'aabbccddeeff' && normalizeMac('aabb.ccdd.eeff') === 'aabbccddeeff' && normalizeMac(' aa bb cc dd ee ff ') === 'aabbccddeeff', 'normalizeMac strips dashes, dots and spaces');
   assert(normalizeMac('') === '' && normalizeMac('00:00:00:00:00:00') === '' && normalizeMac('0000.0000.0000') === '', "normalizeMac '' and all-zero -> ''");
+}
+
+// ---------- planPoamCompletions (#295) ----------
+{
+  const EP1 = '2026-01-01T00:00:00.000Z';
+  const EP2 = '2026-02-01T00:00:00.000Z';
+  const item = (over: Partial<OpenAutoPoamItem> = {}): OpenAutoPoamItem => ({
+    id: 'i1',
+    status: 'OPEN',
+    createdBy: VM_WORKER_ACTOR,
+    createdAt: '2026-01-20T00:00:00.000Z',
+    findingFirstSeenAt: EP1,
+    autoComplete: true,
+    scheduledCompletion: null,
+    finding: { status: 'RESOLVED', firstSeenAt: EP1 },
+    ...over,
+  });
+  const fin = (status: VmFindingStatus, firstSeenAt: string) => ({ status, firstSeenAt });
+  assert(eq(planPoamCompletions([item()]), ['i1']), 'C1 OPEN item, finding RESOLVED in the same episode -> completes');
+  assert(eq(planPoamCompletions([item({ status: 'IN_PROGRESS' })]), ['i1']), 'C2 IN_PROGRESS item completes too');
+  assert(eq(planPoamCompletions([item({ finding: fin('OPEN', EP1) })]), []), 'C3 finding still OPEN in the same episode -> stays');
+  assert(eq(planPoamCompletions([item({ finding: fin('OPEN', EP2) })]), ['i1']), 'C4 finding OPEN but in a later episode -> the old item completes');
+  assert(eq(planPoamCompletions([item({ finding: fin('RESOLVED', EP2) })]), ['i1']), 'C4b finding RESOLVED in a later episode -> completes');
+  assert(eq(planPoamCompletions([item({ autoComplete: false })]), []), 'C5 autoComplete false (a person reopened it) -> stays');
+  assert(eq(planPoamCompletions([item({ status: 'COMPLETED' })]), []) && eq(planPoamCompletions([item({ status: 'RISK_ACCEPTED' })]), []), 'C6 COMPLETED and RISK_ACCEPTED items are never touched');
+  assert(eq(planPoamCompletions([item({ createdBy: 'u1' })]), []), 'C7 a person-created item is never auto-completed');
+  assert(eq(planPoamCompletions([item({ finding: null })]), []), 'C8 an item whose finding was deleted is never auto-completed');
+  for (const status of ['RISK_ACCEPTED', 'FALSE_POSITIVE'] as const) {
+    assert(eq(planPoamCompletions([item({ finding: fin(status, EP1) })]), []), `C9 finding ${status} in the same episode -> stays (a person decided)`);
+    assert(eq(planPoamCompletions([item({ finding: fin(status, EP2) })]), []), `C9b finding ${status} in a later episode -> stays`);
+  }
+  // legacy item: no recorded episode, the creation time decides
+  const legacy = (createdAt: string, status: VmFindingStatus, firstSeenAt: string) => item({ findingFirstSeenAt: null, createdAt, finding: fin(status, firstSeenAt) });
+  assert(eq(planPoamCompletions([legacy('2026-01-20T00:00:00.000Z', 'RESOLVED', EP1)]), ['i1']), 'C10 legacy item created at/after first_seen, finding RESOLVED -> completes');
+  assert(eq(planPoamCompletions([legacy('2026-01-20T00:00:00.000Z', 'OPEN', EP2)]), ['i1']), 'C10b legacy item created before first_seen, finding OPEN -> completes (earlier episode)');
+  assert(eq(planPoamCompletions([legacy('2026-02-20T00:00:00.000Z', 'OPEN', EP2)]), []), 'C10c legacy item created at/after first_seen, finding OPEN -> stays');
+  assert(eq(planPoamCompletions([item({ id: 'a' }), item({ id: 'b', finding: fin('OPEN', EP1) }), item({ id: 'c', status: 'IN_PROGRESS' })]), ['a', 'c']), 'C11 several items: only the eligible ids, in input order');
+  assert(eq(planPoamCompletions([]), []), 'C12 no items -> none');
 }
 
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);

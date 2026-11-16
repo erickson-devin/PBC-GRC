@@ -3,6 +3,7 @@ import path from 'path';
 import { overlayLockReason } from '../src/data/overlayScoping';
 import { matchesBoundaryFilter, planBoundaryChange, rowChangeNeedsConfirm, describeBoundaryChange, boundaryEditBlock, boundaryErrorMessage, summaryCaption, emptyTableMessage, exportBoundaryLine } from '../src/data/boundaryView';
 import { declaredAssetsView } from '../src/data/programAssets';
+import { resolveVmTargetProgramId, vmTargetArchiveLine, vmTargetCardNote, vmTargetConfirmLines, vmTargetIneligibleReason } from '../src/data/vmTargetView';
 import { emptyScopeSummary } from '../src/data/telemetry/assetScope';
 
 /**
@@ -209,7 +210,7 @@ const noProgramCtx = { supported: true, canEdit: true, hasActiveProgram: false, 
 assert(boundaryEditBlock({ ...noProgramCtx, noProgram: true }) === 'no_program' && boundaryEditBlock({ ...noProgramCtx, canEdit: false, noProgram: true }) === 'viewer' && boundaryEditBlock({ ...noProgramCtx, supported: false, noProgram: true }) === 'unsupported' && boundaryEditBlock(noProgramCtx) === 'loading', 'BV6b no program blocks the boundary after the viewer check, otherwise it stays loading');
 assert(read('src/data/boundaryView.ts').includes('No program exists yet, so no assets can be declared inside a boundary. Create a program first.') && read('src/components/telemetry/AssetInventoryManager.tsx').includes("noProgram: programsStatus === 'ready' && activeProgram === null"), 'BV6c the no-program message and the inventory passing noProgram');
 assert(!programsPage.includes('The default program cannot be archived or deleted.') && !programsPage.includes('program.isDefault || Boolean(busyId)') && !programsPage.includes('program_is_default'), 'PV-D1 the programs page no longer blocks archiving or deleting the default program');
-assert(programsPage.includes('program_is_vm_target') && programsPage.includes('program.vmTarget || Boolean(busyId)') && programsPage.includes('Choose another VM target before archiving it.'), 'PV-D2 only the VM target blocks archive (with a described-by note)');
+assert(programsPage.includes('program_is_vm_target') && programsPage.includes('program.vmTarget || Boolean(busyId)') && read('src/data/vmTargetView.ts').includes('Choose another vulnerability target before archiving it.') && programsPage.includes('vmTargetCardNote('), 'PV-D2 only the vulnerability target blocks archive (with a described-by note)');
 assert(programsPage.includes('Set as My Default') && programsPage.includes('Clear My Default') && programsPage.includes('Make Organization Default') && programsPage.includes('Organization default') && programsPage.includes('My default'), 'PV-D3 the card has the two default actions and badges');
 assert(programsPage.includes('role="group"') && programsPage.includes('Default program settings for') && programsPage.includes('role="status" aria-live="polite" className="sr-only"'), 'PV-D4 the default actions are a labelled group and results are announced');
 assert(programsPage.includes('You will land on it the next time you sign in.') && programsPage.includes('Your default program was cleared.') && programsPage.includes('is now the organization default.'), 'PV-D5 the announcements say it takes effect at the next sign-in');
@@ -227,6 +228,43 @@ const tenantSrc = read('src/context/TenantContext.tsx');
 assert(tenantSrc.includes('programsReady && !noOpenProgram') && tenantSrc.includes("const noOpenProgram = programsStatus === 'ready' && !programs.some(p => !p.archived);") && tenantSrc.includes('onProgramRequired('), 'PV-D12 no live data is requested without an open program, and a 409 program_required refreshes the programs');
 assert(tenantSrc.includes('setMyDefaultProgram') && tenantSrc.includes('setOrganizationDefaultProgram') && read('src/hooks/useProgram.ts').includes('setMyDefaultProgram'), 'PV-D13 the context and the hook expose both default setters');
 assert(read('src/components/layout/ProgramSwitcher.tsx').includes('<ProgramFormModal mode="create" variant="first"'), 'PV-D14 the switcher can create the first program from its no-program chip');
+
+console.log('--- vulnerability target (#296) ---');
+const tp = (id: string, name: string, o: { vmTarget?: boolean; isDefault?: boolean; archived?: boolean; framework?: string; createdAt?: string } = {}) =>
+  ({ id, name, vmTarget: o.vmTarget ?? false, isDefault: o.isDefault ?? false, archived: o.archived ?? false, framework: (o.framework ?? 'CMMC_L2') as never, createdAt: o.createdAt ?? '2026-01-01T00:00:00Z' });
+const tpA = tp('a', 'Prog A', { isDefault: true });
+assert(JSON.stringify(resolveVmTargetProgramId([tpA, tp('b', 'Prog B', { vmTarget: true })])) === JSON.stringify({ programId: 'b', explicit: true }), 'T1 the flagged program is the explicit target');
+assert(JSON.stringify(resolveVmTargetProgramId([tpA, tp('b', 'Prog B')])) === JSON.stringify({ programId: 'a', explicit: false }), 'T1 without a flag the CMMC organization default is the implicit target');
+assert(resolveVmTargetProgramId([tp('a', 'Prog A', { isDefault: true, framework: 'NIST_800_53' })]) === null, 'T1 a non-CMMC default is no target');
+assert(resolveVmTargetProgramId([]) === null, 'T1 no programs, no target');
+assert(JSON.stringify(resolveVmTargetProgramId([tpA, tp('b', 'Prog B', { vmTarget: true, archived: true })])) === JSON.stringify({ programId: 'a', explicit: false }), 'T1 an archived flagged program is ignored');
+assert((vmTargetIneligibleReason({ framework: 'NIST_800_53' as never, archived: false }) ?? '').includes('Only a CMMC Level 1 or Level 2 program'), 'T2 another framework is refused with the framework text');
+assert(vmTargetIneligibleReason({ framework: 'CMMC_L1' as never, archived: false }) === null, 'T2 CMMC Level 1 is eligible');
+assert((vmTargetIneligibleReason({ framework: 'CMMC_L2' as never, archived: true }) ?? '').includes('Restore this program'), 'T2 an archived program is refused with the archived text');
+assert(vmTargetCardNote({ explicit: true, canManage: true }).includes('Choose another vulnerability target before archiving it.') && !vmTargetCardNote({ explicit: true, canManage: false }).includes('before archiving') && vmTargetCardNote({ explicit: false, canManage: false }).includes('organization default'), 'T3 the card note adds the archive hint for managers only and names the implicit case');
+const tpPreview = { eligible: true, ineligibleReason: null, openPoamInCurrent: 5, overdueWithoutItem: 3, autocreateEnabled: true };
+const tpCur = { name: 'Prog A', explicit: true };
+const tpText = (lines: Array<{ text: string }>) => lines.map((l) => l.text).join('\n');
+const tpFull = tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: tpPreview, current: tpCur }));
+assert(tpFull.includes('About 3 open vulnerabilities') && tpFull.includes('Prog A keeps its 5 open') && tpFull.includes('still completed automatically') && tpFull.includes('can be archived afterwards'), 'T4 the confirmation states the counts and what happens to the old target');
+assert(tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: { ...tpPreview, overdueWithoutItem: 1 }, current: tpCur })).includes('About 1 open vulnerability is past its deadline'), 'T4 one overdue vulnerability is singular');
+assert(tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: { ...tpPreview, overdueWithoutItem: 0 }, current: tpCur })).includes('No open vulnerability'), 'T4 zero overdue says so');
+assert(tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: { ...tpPreview, autocreateEnabled: false }, current: tpCur })).includes('VM_POAM_AUTOCREATE'), 'T4 automatic items off is stated');
+const tpNone = vmTargetConfirmLines({ programName: 'Prog B', preview: null, current: tpCur });
+assert(tpNone.some((l) => l.tone === 'warn' && l.text.includes('could not be loaded')) && !/\d/.test(tpNone.find((l) => l.text.startsWith('Prog A keeps'))?.text ?? '0'), 'T4 a missing preview warns and invents no number');
+assert(tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: tpPreview, current: tpCur, previousAutoComplete: false })).includes('no longer completed automatically'), 'T4 the completion sentence flips with previousAutoComplete');
+assert(tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: tpPreview, current: null })).includes('No program receives'), 'T4 no current target says so');
+assert(vmTargetConfirmLines({ programName: 'Prog B', preview: { ...tpPreview, eligible: false, ineligibleReason: 'invalid_vm_target' }, current: tpCur }).some((l) => l.tone === 'warn' && l.text.includes('Only a CMMC Level 1 or Level 2')), 'T4 an ineligible preview adds the reason');
+assert(!tpFull.includes('—') && !tpText(vmTargetConfirmLines({ programName: 'Prog B', preview: null, current: null })).includes('—'), 'T4 no em dash in the confirmation');
+const tpNist = tp('c', 'Prog C', { framework: 'NIST_800_53' });
+assert((vmTargetArchiveLine(tpA, [tpA, tp('b', 'Prog B', { createdAt: '2026-02-01T00:00:00Z' })]) ?? '').includes('Prog B becomes the organization default and the vulnerability target'), 'T5 the implicit target being archived names the next CMMC default');
+assert((vmTargetArchiveLine(tpA, [tpA, tpNist]) ?? '').includes('no program receives new'), 'T5 a non-CMMC next default leaves no target');
+assert(vmTargetArchiveLine(tp('b', 'Prog B'), [tpA, tp('b', 'Prog B')]) === null, 'T5 a program that is not the target has no line');
+assert(vmTargetArchiveLine(tp('b', 'Prog B', { vmTarget: true }), [tpA, tp('b', 'Prog B', { vmTarget: true })]) === null, 'T5 an explicit target has no line (the server refuses to archive it)');
+for (const pin of ['ApiClient.setVmTargetProgram(', 'ApiClient.getVmTargetProgramPreview(', 'resolveVmTargetProgramId(programs)', 'aria-disabled={targetReason ? true : undefined}', '${nameId}-vm-reason', 'focusTargetNote.current = program.id', 'VM_TARGET_COPY.announced(', 'vmTargetArchiveLine(', "preview.status === 'error'"]) {
+  assert(programsPage.includes(pin), `PV-T6 the page has ${pin}`);
+}
+assert(!/console\./.test(read('src/data/vmTargetView.ts')) && !/localStorage|sessionStorage/.test(read('src/data/vmTargetView.ts')), 'PV-T6 the helper logs nothing and stores nothing');
 
 console.log('--- no stale scope identifiers ---');
 for (const rel of FILES) assert(!read(rel).includes('liveControlsTenantId'), `${path.basename(rel)} does not reference liveControlsTenantId`);

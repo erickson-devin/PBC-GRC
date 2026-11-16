@@ -33,6 +33,7 @@ import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import { getControlObjectives } from '../src/data/cmmcGuide/objectives';
 import { guideObjectives } from '../src/data/cmmcGuide/guide';
+import { composeImplementationStatement } from '../src/data/cmmcGuide/sspStatement';
 import fs from 'fs';
 import path from 'path';
 import { ControlState, EvidenceItem, AssessmentState } from '../src/types/cmmc';
@@ -618,6 +619,41 @@ async function runArtifactGeneratorTests() {
     const sspMdControls = getFrameworkControls('CMMC_L1');
     const sspMd = buildSspMarkdown(sspMdState, sspMdControls, 'CMMC_L1');
     assert(headingsHaveBlankLine(sspMd) && sspMd.includes('- **Organization:** ') && sspMd.split('\n### ').length - 1 === sspMdControls.length, 'S200-5 the SSP Markdown has a blank line after every heading, bulleted metadata and one section per control');
+
+    // #293: the SSP prints the control-level notes, then the objective narratives (CMMC only)
+    const agCtrl = sspMdControls.find((c) => c.id === 'AC.L1-3.1.1')!;
+    const agLetter = guideObjectives('3.1.1', 'CMMC_L1')[0].letter;
+    const agObjId = `${agCtrl.id}[${agLetter}]`;
+    const agNarrative = 'Narrative text for the first objective AG1.';
+    const agObjectives = { [agObjId]: { id: agObjId, controlId: agCtrl.id, letter: agLetter, text: '', status: 'MET', prefilledTemplate: '', implementationNarrative: agNarrative, linkedEvidenceIds: [], isAutoVerifiedByTelemetry: false } } as const;
+    const agStates: Record<string, ControlState> = { [agCtrl.id]: { ...createInitialState(stackTenant, 'CMMC_L1').controls[agCtrl.id], implementationNotes: 'Control-level statement.' } };
+    const agDoc = compileNistSSP({ ...mockMetadata, framework: 'CMMC_L1' }, [agCtrl], agStates, [], agObjectives as any);
+    const agRow = (agDoc.sections.find((s) => s.id === 'sec-3-control-narratives')?.subsections || []).flatMap((s) => ((s.table?.rows || []) as (string | number)[][]).map((r) => (Array.isArray(r) ? r : (r as unknown as { cells: (string | number)[] }).cells)))[0];
+    const agExpected = composeImplementationStatement(agCtrl.id, 'Control-level statement.', agObjectives as any, 'CMMC_L1').text;
+    assert(agExpected.startsWith('Control-level statement.\n\n[') && agExpected.includes(agNarrative) && agRow[4] === agExpected, 'AG1 the compiled SSP row holds the notes then the objective narrative');
+    const agNoObjectives = compileNistSSP({ ...mockMetadata, framework: 'CMMC_L1' }, [agCtrl], agStates, []);
+    const agRowPlain = (agNoObjectives.sections.find((s) => s.id === 'sec-3-control-narratives')?.subsections || []).flatMap((s) => ((s.table?.rows || []) as (string | number)[][]).map((r) => (Array.isArray(r) ? r : (r as unknown as { cells: (string | number)[] }).cells)))[0];
+    assert(agRowPlain[4] === 'Control-level statement.', 'AG1b without objectives the row is the notes byte for byte');
+    const agMdState = { ...sspMdState, controls: { ...sspMdState.controls, ...agStates }, objectives: agObjectives } as unknown as AssessmentState;
+    const agMd = buildSspMarkdown(agMdState, [agCtrl], 'CMMC_L1');
+    assert(agMd.includes(`[${agLetter}] ${agNarrative}`) && agMd.includes('Control-level statement.'), 'AG2 the Markdown SSP prints the objective narrative');
+    const agMdPlain = buildSspMarkdown({ ...agMdState, objectives: undefined }, [agCtrl], 'CMMC_L1');
+    assert(!agMdPlain.includes(agNarrative) && agMdPlain.includes('Control-level statement.\n\n'), 'AG3 without objectives the Markdown holds the notes only');
+    const normSrc = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
+    const compilersSrc = normSrc('src/data/reports/documentCompilers.ts');
+    const nistSlice = compilersSrc.slice(compilersSrc.indexOf('export function compileNistSSP('), compilersSrc.indexOf('export function compilePOAM('));
+    assert(nistSlice.includes('composeImplementationStatement(') && nistSlice.indexOf('composeImplementationStatement(') < nistSlice.indexOf('applyFipsModules('), 'AG4 compileNistSSP composes the statement before the FIPS modules are applied');
+    const storageSrc = normSrc('src/services/storageService.ts');
+    assert(storageSrc.slice(storageSrc.indexOf('export function buildSspMarkdown(')).includes('composeImplementationStatement('), 'AG5 buildSspMarkdown composes the statement');
+    assert(normSrc('src/components/ssp/SSPBuilder.tsx').split('composeImplementationStatement(').length - 1 === 2, 'AG6 the SSP page composes the statement on screen and in the plaintext copy');
+    assert(/compileNistSSP\([\s\S]*?objectivesForReport\s*\);/.test(normSrc('src/data/storage/offboardingEngine.ts')), 'AG7 the handover SSP receives the objectives');
+
+    // #294 (U5): the SSP prints the display label of a status, never the enum; the machine-readable outputs keep the enum
+    const u5Labels = new Set(['Met', 'In progress', 'Not met', 'Not started']);
+    const u5Cells = sectionRows(compileNistSSP(mockMetadata, cmmcL1Controls, s236States(cmmcL1Controls, false), mockEvidence), 'sec-3-control-narratives').map(r => r[3]);
+    assert(u5Cells.length === cmmcL1Controls.length && u5Cells.every(c => u5Labels.has(c)) && new Set(u5Cells).size === 4, `U5-1 the section 3 status cells are display labels, all four in use (${[...new Set(u5Cells)].join(', ')})`);
+    assert(sspMd.includes('- **Evaluation Status:** **Not started**\n') && !/\*\*(NOT_STARTED|IN_PROGRESS|NOT_MET|MET)\*\*/.test(sspMd), 'U5-2 the SSP Markdown prints "Not started", not the enum');
+    assert(Object.values(pkg.controls).every(c => ['MET', 'IN_PROGRESS', 'NOT_MET', 'NOT_STARTED'].includes(c.status)), 'U5-3 the machine-readable package keeps the status enum');
 
     const attestDocs = [fullSsp, poamDoc, soc2Doc, hipaaDoc];
     const SUFFIXES_197 = ['(Signature on Record)', '(Attested)', '(Approved)', '(Concurred)', '(Signed)', '(Verified)'];

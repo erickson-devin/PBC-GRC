@@ -28,6 +28,7 @@ export type StatusBadgeClass = 'status-met' | 'status-in-progress' | 'status-not
 
 const STATUS_BADGES: Record<string, StatusBadgeClass> = {
   'MET': 'status-met',
+  'Met': 'status-met',
   'Met (self-assessed)': 'status-met',
   'Compliant / Implemented': 'status-met',
   'Compliant': 'status-met',

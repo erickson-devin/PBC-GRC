@@ -9,6 +9,8 @@ import type { Program } from '../../types/program';
 import type { ControlState, EvidenceItem } from '../../types/cmmc';
 import type { EnclaveAsset } from '../../types/telemetry';
 import type { SspMetadataFields } from '../../types/sspMetadata';
+import type { AssessmentObjective } from '../../types/assessment';
+import type { ObjectiveRecord } from '../../types/controlObjectives';
 import { computeSha256, canonicalJson } from '../audit/auditLogger';
 import { boundaryAssets } from '../programAssets';
 import { generateEnclaveHandoverPackage, type EnclaveHandoverPackage } from './offboardingEngine';
@@ -24,6 +26,8 @@ export interface HandoverDeps {
   getProgramAssets?: (tenantId: string, programId: string) => Promise<{ declared: boolean; assetIds: string[] }>;
   /** The program's SSP details (issue #84). A failure rejects the export: never a package that silently states no environment. */
   getSspMetadata?: (tenantId: string, programId: string) => Promise<{ metadata: SspMetadataFields | null }>;
+  /** The program's objective answers (#293). Optional: a failure leaves the SSP with the control-level notes only, it does not reject the export. */
+  getObjectives?: (tenantId: string, programId: string) => Promise<ObjectiveRecord[]>;
 }
 
 export interface EnclaveHandoverBundle {
@@ -74,7 +78,23 @@ export async function buildProgramHandover(
     }
     // The program's own SSP details (environment, cloud providers, boundary text), or none while the server holds no row
     const sspMetadata = deps.getSspMetadata ? (await deps.getSspMetadata(tenant.id, program.id)).metadata ?? undefined : undefined;
-    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single, sspMetadata }));
+    // The program's objective narratives, once per program. Nothing in the failure is kept: the SSP then prints the control-level notes only.
+    let objectives: Record<string, AssessmentObjective> | undefined;
+    if (deps.getObjectives) {
+      try {
+        const records = await deps.getObjectives(tenant.id, program.id);
+        objectives = Object.fromEntries(
+          records.map((r) => [
+            r.objectiveId,
+            // The guide supplies the text, letter and starter template when the SSP is composed
+            { id: r.objectiveId, controlId: r.controlId, letter: '', text: '', status: r.status, prefilledTemplate: '', implementationNarrative: r.narrative, linkedEvidenceIds: r.linkedEvidenceIds, isAutoVerifiedByTelemetry: false } satisfies AssessmentObjective,
+          ])
+        );
+      } catch {
+        objectives = undefined;
+      }
+    }
+    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single, sspMetadata, objectives }));
   }
   if (single) return { packages, bundle: null };
 

@@ -19,16 +19,21 @@ import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
 import { getControlImpactBadge } from '../../data/frameworks';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
+import { hasSspStatement } from '../../data/cmmcGuide/sspStatementView';
+import { statusDisplayLabel } from '../../data/statusLabels';
 interface ControlCardProps {
   control: FrameworkControlDefinition;
   domainInfo: DomainInfo | FrameworkDomainInfo | any;
   onOpenDetailModal?: () => void;
+  /** Set when the control is recorded as Met while its objectives do not add up to Met (#292): how many objectives are open. */
+  metMismatch?: { open: number; total: number } | null;
 }
 
 export const ControlCard: React.FC<ControlCardProps> = ({
   control,
   domainInfo,
   onOpenDetailModal,
+  metMismatch,
 }) => {
   const {
     state,
@@ -42,7 +47,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
   const ctrlState = state.controls[control.id];
   const status: ControlStatus = ctrlState?.status || 'NOT_STARTED';
-  const hasNotes = (ctrlState?.implementationNotes || '').trim().length > 0;
+  const hasNotes = hasSspStatement(control.id, ctrlState?.implementationNotes, state.objectives, activeFramework);
   const notesNotLoaded = notesStatus === 'loading' || notesStatus === 'unavailable';
   const evidenceCount = state.evidenceIndex.filter((e) => e.controlId === control.id).length;
   const mappedStigRules = getStigRulesForControl(control.id);
@@ -58,24 +63,24 @@ export const ControlCard: React.FC<ControlCardProps> = ({
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 ring-1 ring-emerald-500/20 shadow-sm shadow-emerald-950/40">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none" />
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>MET</span>
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+            <span>{statusDisplayLabel(status)}</span>
           </span>
         );
       case 'NOT_MET':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30 ring-1 ring-rose-500/20 shadow-sm shadow-rose-950/40">
             <span className="w-2 h-2 rounded-full bg-rose-400" />
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-            <span>NOT_MET</span>
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400" aria-hidden="true" />
+            <span>{statusDisplayLabel(status)}</span>
           </span>
         );
       case 'IN_PROGRESS':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30 ring-1 ring-amber-500/20 shadow-sm shadow-amber-950/40">
             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>IN_PROGRESS</span>
+            <Clock className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+            <span>{statusDisplayLabel(status)}</span>
           </span>
         );
       case 'NOT_STARTED':
@@ -83,8 +88,8 @@ export const ControlCard: React.FC<ControlCardProps> = ({
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold font-mono bg-slate-800 text-slate-300 border border-slate-700 shadow-sm">
             <span className="w-2 h-2 rounded-full bg-slate-500" />
-            <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-            <span>NOT_STARTED</span>
+            <HelpCircle className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+            <span>{statusDisplayLabel(status)}</span>
           </span>
         );
     }
@@ -143,6 +148,12 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 
             {/* Status Badge */}
             {renderStatusBadge()}
+            {metMismatch && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+                {metMismatch.open} of {metMismatch.total} objectives open
+              </span>
+            )}
 
             {/* Domain Tag */}
             <span

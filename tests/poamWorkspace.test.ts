@@ -9,7 +9,8 @@ import { VM_POAM_COPY, poamEmptyState, vmPoamNotices, type VmPoamLoad } from '..
 import { PoamControlsSection } from '../src/components/reports/PoamControlsSection';
 import { PoamVulnerabilitiesSection } from '../src/components/reports/PoamVulnerabilitiesSection';
 import type { ControlState } from '../src/types/cmmc';
-import type { VmPoamResponse, VmPoamRow, VmSeverity } from '../src/types/vm';
+import type { VmPoamResponse, VmPoamRow, VmPoamStatus, VmSeverity } from '../src/types/vm';
+import type { PoamVulnerabilitiesSectionProps } from '../src/components/reports/PoamVulnerabilitiesSection';
 
 /**
  * #278 / #274 (WP-3): the POA&M screen's two sections rendered on the server (no browser), and source pins on the wiring.
@@ -40,10 +41,15 @@ const entriesFor = (pick: (c: (typeof l2)[number]) => ControlState['status']) =>
 };
 const loading: VmPoamLoad = { status: 'loading' };
 
-function row(id: string, o: { severity?: VmSeverity; kev?: boolean; asset?: { id: string; name: string } } = {}): VmPoamRow {
+function row(id: string, o: {
+  severity?: VmSeverity; kev?: boolean; asset?: { id: string; name: string }; status?: VmPoamStatus; owner?: string; sched?: string | null;
+  statusChangedBy?: string | null; statusChangedAt?: string | null;
+} = {}): VmPoamRow {
   return {
-    id, status: 'OPEN', controlId: 'RA.L2-3.11.3', weakness: `Weakness of ${id}`, scheduledCompletion: null,
+    id, status: o.status ?? 'OPEN', controlId: 'RA.L2-3.11.3', weakness: `Weakness of ${id}`, scheduledCompletion: o.sched ?? null,
     createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', findingFirstSeenAt: '2026-01-01T00:00:00Z',
+    createdBy: 'system:vm-worker', owner: o.owner ?? '', mitigation: '', updatedBy: null,
+    statusChangedBy: o.statusChangedBy ?? null, statusChangedAt: o.statusChangedAt ?? null, autoComplete: true,
     finding: {
       id: `f-${id}`, vulnId: `CVE-2024-${id}`, severity: o.severity ?? 'HIGH', status: 'OPEN', kev: o.kev ?? false,
       firstSeenAt: '2026-01-01T00:00:00Z', lastSeenAt: '2026-01-02T00:00:00Z', slaDueAt: '2026-02-01T00:00:00Z', resolvedAt: null,
@@ -52,7 +58,7 @@ function row(id: string, o: { severity?: VmSeverity; kev?: boolean; asset?: { id
     },
   };
 }
-function response(items: VmPoamRow[], o: Partial<{ openItemsTotal: number; target: string | null; isTarget: boolean; upcomingTotal: number; overdue: number }> = {}): VmPoamResponse {
+function response(items: VmPoamRow[], o: Partial<{ openItemsTotal: number; itemsTotal: number; target: string | null; isTarget: boolean; upcomingTotal: number; overdue: number }> = {}): VmPoamResponse {
   const upcomingTotal = o.upcomingTotal ?? 0;
   return {
     tenantId: 't', programId: 'p', generatedAt: '2026-01-10T00:00:00Z',
@@ -60,7 +66,7 @@ function response(items: VmPoamRow[], o: Partial<{ openItemsTotal: number; targe
       controlId: 'RA.L2-3.11.3', autocreateEnabled: true, vmTargetProgramId: o.target === undefined ? 'p' : o.target,
       isVmTarget: o.isTarget ?? true, slaDays: { CRITICAL: 30, HIGH: 60, MEDIUM: 90, LOW: 180 },
     },
-    items, itemsTotal: items.length, openItemsTotal: o.openItemsTotal ?? items.length, overdueWithoutItemCount: o.overdue ?? 0,
+    items, itemsTotal: o.itemsTotal ?? items.length, openItemsTotal: o.openItemsTotal ?? items.filter((r) => r.status === 'OPEN' || r.status === 'IN_PROGRESS').length, overdueWithoutItemCount: o.overdue ?? 0,
     upcoming: Array.from({ length: upcomingTotal }, (_, i) => ({
       findingId: `u${i}`, vulnId: `CVE-2025-${i}`, severity: 'MEDIUM' as VmSeverity, kev: false, firstSeenAt: '2026-01-05T00:00:00Z',
       slaDueAt: '2026-03-01T00:00:00Z', daysRemaining: 5, assetId: 'a-1', assetName: 'host-1',
@@ -74,6 +80,12 @@ const controlsHtml = (entries: ReturnType<typeof entriesFor>, vmLoad: VmPoamLoad
   renderToStaticMarkup(React.createElement(PoamControlsSection, { entries, framework: 'CMMC_L2', controls: l2, vmLoad, onOpenControl }));
 const vulnHtml = (load: VmPoamLoad, targetProgramName: string | null = null) =>
   renderToStaticMarkup(React.createElement(PoamVulnerabilitiesSection, { load, onRetry: () => undefined, framework: 'CMMC_L2', targetProgramName }));
+
+// The item API stub: every call rejects, so a render that reached the network would fail loudly
+const rejecting = () => Promise.reject(new Error('not used in a static render'));
+const itemApi = { save: rejecting, loadEvents: rejecting, refreshItem: rejecting } as unknown as NonNullable<PoamVulnerabilitiesSectionProps['itemApi']>;
+const vulnHtmlX = (load: VmPoamLoad, props: Partial<PoamVulnerabilitiesSectionProps> = {}, targetProgramName: string | null = null) =>
+  renderToStaticMarkup(React.createElement(PoamVulnerabilitiesSection, { load, onRetry: () => undefined, framework: 'CMMC_L2', targetProgramName, ...props }));
 
 console.log('--- W1 controls section: chips, live region, label ---');
 {
@@ -165,6 +177,34 @@ console.log('--- W6-W10 vulnerabilities section ---');
   assert(empty.includes('No vulnerability POA&amp;M items are open') && !empty.includes('<table'), 'W10 ready with no items says so');
 }
 
+console.log('--- W11-W16 editing, closed items, markers ---');
+{
+  const mixed = response([row('1'), row('2', { status: 'COMPLETED', statusChangedBy: 'system:vm-worker', statusChangedAt: '2026-11-10T00:00:00Z' })]);
+  const html = vulnHtmlX({ status: 'ready', data: mixed }, { itemApi, canEdit: true, includeClosed: true });
+  assert(html.includes('Not in exports') && html.includes('Completed automatically by a scan on 2026-11-10'), 'W11 closed row: not in exports, automatic completion marker');
+  assert(html.includes('aria-label="Edit POA&amp;M item POAM-VM-001, CVE-2024-1"'), 'W11 the Edit button names the item by weakness id and CVE');
+  assert(html.includes('Target Date') && html.includes('<span class="sr-only">Actions</span>') && html.includes('1 open, 1 closed'), 'W11 target date column, actions header, group counts');
+  assert(html.includes('aria-label="Edit POA&amp;M item CVE-2024-2"'), 'W11 the closed row has a button named by its CVE only (it has no weakness id)');
+  assert(html.includes('type="checkbox"') && html.includes('checked=""'), 'W11 the closed-items checkbox is on');
+  const view = vulnHtmlX({ status: 'ready', data: mixed }, { itemApi, canEdit: false, includeClosed: true });
+  assert(view.includes('>View<') && !view.includes('>Edit<') && view.includes('aria-label="View POA&amp;M item POAM-VM-001'), 'W12 a read-only role gets View, not Edit');
+  const plain = vulnHtml({ status: 'ready', data: mixed });
+  assert(!plain.includes('>View<') && !plain.includes('>Edit<'), 'W12 without itemApi: no button');
+  const hidden = vulnHtmlX({ status: 'ready', data: response([], { itemsTotal: 2 }) }, { itemApi, canEdit: true });
+  assert(hidden.includes('2 completed or risk-accepted items are hidden.') && hidden.includes('type="checkbox"') && hidden.includes('Show completed and risk-accepted items (2)') && !hidden.includes('<table'), 'W13 closed items hidden: text, toggle with count, no table');
+  const nt = response([row('1')], { isTarget: false, target: 'q' });
+  const withLink = vulnHtmlX({ status: 'ready', data: nt }, { onOpenPrograms: () => undefined }, 'Prog B');
+  const withoutLink = vulnHtmlX({ status: 'ready', data: nt }, {}, 'Prog B');
+  assert(withLink.includes('Open Programs &amp; Boundaries') && !withoutLink.includes('Open Programs &amp; Boundaries'), 'W14 the Programs link appears only with onOpenPrograms');
+  const failed = vulnHtmlX({ status: 'ready', data: response([row('1')]) }, { refreshFailed: true });
+  assert(failed.includes('role="alert"') && failed.includes(esc(VM_POAM_COPY.refreshFailed)), 'W15 a failed refresh is an alert');
+  const late = vulnHtmlX({ status: 'ready', data: response([row('1', { status: 'IN_PROGRESS', owner: 'IT Lead', sched: '2026-01-05' })]) }, { itemApi, canEdit: true });
+  assert(late.includes('Past target date') && late.includes('IT Lead'), 'W16 past the target date, owner shown');
+  const done = vulnHtmlX({ status: 'ready', data: response([row('1', { status: 'COMPLETED', owner: 'IT Lead', sched: '2026-01-05' }), row('2')]) }, { includeClosed: true });
+  assert(!done.includes('Past target date'), 'W16 a closed item is never past its target date');
+  assert(vulnHtmlX({ status: 'ready', data: response([row('1')]) }, { itemApi, canEdit: true }).includes(esc(VM_POAM_COPY.exportFields).replace(/'/g, '&#x27;')), 'W16 the export field mapping is stated');
+}
+
 console.log('--- S1-S4 source pins ---');
 {
   const app = read('src/App.tsx').split('\n');
@@ -179,15 +219,23 @@ console.log('--- S1-S4 source pins ---');
     'src/hooks/useVmPoam.ts', 'src/components/reports/PoamWorkspace.tsx', 'src/components/reports/PoamControlsSection.tsx',
     'src/components/reports/PoamVulnerabilitiesSection.tsx', 'src/components/reports/PoamGroupPanel.tsx',
     'src/data/reports/poamView.ts', 'src/data/reports/vmPoamView.ts',
+    'src/components/reports/VmPoamItemDialog.tsx', 'src/components/reports/VmPoamStatusBadge.tsx', 'src/data/reports/vmPoamItemForm.ts',
   ];
   for (const f of files) {
     const src = read(f);
     assert(!/console\.|localStorage|sessionStorage|dangerouslySetInnerHTML/.test(src), `S3 ${f} has no console, browser storage or raw HTML`);
   }
   const hook = read('src/hooks/useVmPoam.ts');
-  assert(hook.includes('ApiClient.getVmPoam(') && hook.includes('request !== latest.current') && hook.includes('[tenantId, programId, supported, enabled]'), 'S4 the hook calls the API, drops stale answers and depends on tenant, program, support and enabled');
+  // S4 changed deliberately (#297): the closed-items toggle (includeClosed) is a dependency and picks the status the list is read with
+  assert(hook.includes('ApiClient.getVmPoam(') && hook.includes('request !== latest.current') && hook.includes('[tenantId, programId, supported, enabled, includeClosed]'), 'S4 the hook calls the API, drops stale answers and depends on tenant, program, support, enabled and includeClosed');
+  assert(hook.includes("includeClosed ? 'all' : 'open'") && hook.includes('shown.current?.scope === scope'), 'S4 the hook reads status=all with closed items, and keeps the items on screen only for the same tenant and program');
+  assert(hook.includes('ApiClient.updateVmPoamItem(') && hook.includes('ApiClient.getVmPoamItemEvents(') && hook.includes('ApiClient.getVmPoamItem('), 'S4 the item API goes through ApiClient');
   const ws = read('src/components/reports/PoamWorkspace.tsx');
   assert(ws.includes('onOpenControl={setSelectedControlId}'), 'B3 the workspace opens a control through setSelectedControlId');
+  assert(ws.includes('onOpenPrograms={openPrograms}') && ws.includes("setActiveTab('programs')") && ws.includes('itemApi={vm.itemApi}') && ws.includes('canEdit={canEdit}'), 'B4 the workspace wires the item API, the role and the Programs link');
+  assert(modal.includes('onNavigateAway={embedded ? undefined : onClose}'), 'B4 the export modal closes itself before the Programs page opens');
+  const dialog = read('src/components/reports/VmPoamItemDialog.tsx');
+  assert(dialog.includes('z-[60]') && dialog.includes('onClose={saving ? undefined : requestClose}'), 'B4 the item dialog sits above the export modal and cannot be dismissed while saving');
 }
 
 console.log('\n================================================================');

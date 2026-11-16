@@ -194,24 +194,24 @@ async function run() {
   const p01 = await put(T1, owner1, SI, { status: 'IN_PROGRESS', implementationNotes: 'Human notes one.' });
   const c1 = await controlOf(T1, owner1, SI);
   assert(p01.status === 200 && c1?.status === 'IN_PROGRESS' && c1?.implementationNotes === 'Human notes one.' && c1?.responsibleRole === 'IT / Security Lead', 'P01 the first PUT of a control writes status and notes; the role takes its default', [p01.body, c1]);
-  const p02 = await put(T1, owner1, SI, { status: 'MET' });
+  const p02 = await put(T1, owner1, SI, { status: 'NOT_MET' });
   const c2 = await controlOf(T1, owner1, SI);
-  assert(p02.status === 200 && c2?.status === 'MET' && c2?.implementationNotes === 'Human notes one.', 'P02 a status-only PUT keeps the notes', c2);
+  assert(p02.status === 200 && c2?.status === 'NOT_MET' && c2?.implementationNotes === 'Human notes one.', 'P02 a status-only PUT keeps the notes', c2);
   const p03 = await put(T1, owner1, SI, { implementationNotes: 'Changed text.' });
   const c3 = await controlOf(T1, owner1, SI);
-  assert(p03.status === 200 && c3?.status === 'MET' && c3?.implementationNotes === 'Changed text.', 'P03 a notes-only PUT keeps the status', c3);
+  assert(p03.status === 200 && c3?.status === 'NOT_MET' && c3?.implementationNotes === 'Changed text.', 'P03 a notes-only PUT keeps the status', c3);
   const p04 = await put(T1, owner1, SI, { responsibleRole: 'CISO' });
   const c4 = await controlOf(T1, owner1, SI);
-  assert(p04.status === 200 && c4?.responsibleRole === 'CISO' && c4?.status === 'MET' && c4?.implementationNotes === 'Changed text.', 'P04 a role-only PUT keeps status and notes', c4);
+  assert(p04.status === 200 && c4?.responsibleRole === 'CISO' && c4?.status === 'NOT_MET' && c4?.implementationNotes === 'Changed text.', 'P04 a role-only PUT keeps status and notes', c4);
   const p05 = await put(T1, owner1, SI, { status: null, implementationNotes: null, responsibleRole: null });
   const c5 = await controlOf(T1, owner1, SI);
-  assert(p05.status === 200 && c5?.status === 'MET' && c5?.implementationNotes === 'Changed text.' && c5?.responsibleRole === 'CISO', 'P05 null for every field keeps everything', c5);
+  assert(p05.status === 200 && c5?.status === 'NOT_MET' && c5?.implementationNotes === 'Changed text.' && c5?.responsibleRole === 'CISO', 'P05 null for every field keeps everything', c5);
   const p06 = await put(T1, owner1, SI, { status: '', responsibleRole: '', implementationNotes: 'Human notes two.', updatedBy: 'Someone Else' });
   const c6 = await controlOf(T1, owner1, SI);
-  assert(p06.status === 200 && c6?.status === 'MET' && c6?.responsibleRole === 'CISO' && c6?.implementationNotes === 'Human notes two.' && c6?.updatedBy === 'Someone Else', 'P06 an empty status or role keeps it; the body updatedBy still shows in the control', c6);
+  assert(p06.status === 200 && c6?.status === 'NOT_MET' && c6?.responsibleRole === 'CISO' && c6?.implementationNotes === 'Human notes two.' && c6?.updatedBy === 'Someone Else', 'P06 an empty status or role keeps it; the body updatedBy still shows in the control', c6);
   const p07 = await put(T1, owner1, SI, { implementationNotes: '' });
   const c7 = await controlOf(T1, owner1, SI);
-  assert(p07.status === 200 && c7?.implementationNotes === '' && c7?.status === 'MET', 'P07 an empty string clears the notes only', c7);
+  assert(p07.status === 200 && c7?.implementationNotes === '' && c7?.status === 'NOT_MET', 'P07 an empty string clears the notes only', c7);
 
   const bad = [
     await put(T1, owner1, SI, { status: 'BOGUS' }),
@@ -220,7 +220,7 @@ async function run() {
   ];
   const c8 = await controlOf(T1, owner1, SI);
   assert(
-    bad[0].status === 400 && String(bad[0].body?.error).startsWith('Invalid status: BOGUS. Must be one of:') && bad[1].status === 400 && bad[1].body?.error === 'implementationNotes must be text' && bad[2].status === 400 && bad[2].body?.error === 'responsibleRole must be text' && c8?.status === 'MET' && c8?.implementationNotes === '',
+    bad[0].status === 400 && String(bad[0].body?.error).startsWith('Invalid status: BOGUS. Must be one of:') && bad[1].status === 400 && bad[1].body?.error === 'implementationNotes must be text' && bad[2].status === 400 && bad[2].body?.error === 'responsibleRole must be text' && c8?.status === 'NOT_MET' && c8?.implementationNotes === '',
     'P08 a bad status, notes or role is refused (400) and nothing changes',
     bad.map((b) => b.body),
   );
@@ -232,10 +232,10 @@ async function run() {
   const times = ev1.map((e) => Date.parse(e.createdAt));
   assert(times.every((t, i) => i === 0 || times[i - 1] >= t) && ev1.every((e) => e.source === 'human'), 'H01 newest first, all from a human', ev1.map((e) => e.createdAt));
   assert(ev1[6].oldStatus === null && ev1[6].oldRole === null && ev1[6].oldNotesSha256 === null && ev1[6].newStatus === 'IN_PROGRESS' && ev1[6].notesChanged === true, 'H01 the oldest event (P01) has no old values', ev1[6]);
-  assert(ev1[5].oldStatus === 'IN_PROGRESS' && ev1[5].newStatus === 'MET' && ev1[5].notesChanged === false, 'H02 P02: IN_PROGRESS to MET, notes unchanged', ev1[5]);
+  assert(ev1[5].oldStatus === 'IN_PROGRESS' && ev1[5].newStatus === 'NOT_MET' && ev1[5].notesChanged === false, 'H02 P02: IN_PROGRESS to NOT_MET, notes unchanged', ev1[5]);
   assert(ev1[0].notesChanged === true && ev1[0].newNotesLength === 0 && ev1[0].newNotesSha256 === SHA_EMPTY, 'H02 P07: notes changed, new length 0', ev1[0]);
   assert(ev1[1].actor === 'u_hist_o1' && ev1[1].actorUserId === 'u_hist_o1' && ev1[1].actor !== 'Someone Else', 'H03 the actor of the PUT that sent updatedBy "Someone Else" is the signed-in user', ev1[1]);
-  assert(ev1[2].notesChanged === false && ev1[2].oldStatus === 'MET' && ev1[2].newStatus === 'MET', 'H01 the all-null PUT (P05) is recorded as a no-op', ev1[2]);
+  assert(ev1[2].notesChanged === false && ev1[2].oldStatus === 'NOT_MET' && ev1[2].newStatus === 'NOT_MET', 'H01 the all-null PUT (P05) is recorded as a no-op', ev1[2]);
 
   const p09 = await put(T1, owner1, SI, { implementationNotes: 'Human.' });
   const p09b = await put(T2, owner2, 'AC.L1-3.1.2', { implementationNotes: 'T2 only.' });
@@ -248,7 +248,7 @@ async function run() {
   const snap = await snapshot(T1, owner1);
   const cSnap = await controlOf(T1, owner1, SI);
   const notesSnap = String(cSnap?.implementationNotes);
-  assert(snap.status === 201 && cSnap?.status === 'MET', 'a snapshot is taken on T1 (201) and the status stays MET', [snap.status, snap.body]);
+  assert(snap.status === 201 && cSnap?.status === 'NOT_MET', 'a snapshot is taken on T1 (201) and the status stays NOT_MET', [snap.status, snap.body]);
   assert(notesSnap.startsWith('Human.') && count(notesSnap, VM_NOTES_BEGIN) === 1 && count(notesSnap, VM_NOTES_END) === 1, 'P10 after the snapshot: one begin marker and the notes start with "Human."', notesSnap);
   const block1 = blockOf(notesSnap);
 
@@ -262,14 +262,14 @@ async function run() {
   assert(cm1.status === 200 && cm1.body?.committed?.length === 2 && cm1.body?.conflicts?.length === 0, 'S02 both accepted suggestions commit', cm1.body);
   const siAfter = await controlOf(T1, owner1, SI);
   const acAfter = await controlOf(T1, owner1, AC);
-  assert(siAfter?.implementationNotes === `${siItem.suggestedNotes}\n\n${block1}` && count(siAfter?.implementationNotes, VM_NOTES_BEGIN) === 1 && siAfter?.status === 'MET', 'S03 SI.L1-3.14.1 gets the document text, then the snapshot block once; status stays MET', siAfter?.implementationNotes);
+  assert(siAfter?.implementationNotes === `${siItem.suggestedNotes}\n\n${block1}` && count(siAfter?.implementationNotes, VM_NOTES_BEGIN) === 1 && siAfter?.status === 'NOT_MET', 'S03 SI.L1-3.14.1 gets the document text, then the snapshot block once; status stays NOT_MET', siAfter?.implementationNotes);
   assert(acAfter?.implementationNotes === acItem.suggestedNotes && !String(acAfter?.implementationNotes).includes(VM_NOTES_BEGIN), 'S04 AC.L1-3.1.1 (not a snapshot control) gets exactly the document text', acAfter?.implementationNotes);
 
   const ev4 = await eventsOf(T1, owner1, SI);
   assert(same(ev4.slice(0, 3).map((e) => e.source), ['ssp-commit', 'vm-snapshot', 'human']), 'H04 the SI history starts ssp-commit, vm-snapshot, human', ev4.slice(0, 3).map((e) => e.source));
   const snapEv = ev4[1];
   assert(
-    snapEv.oldStatus === 'MET' && snapEv.newStatus === 'MET' && snapEv.notesChanged === true && ((snapEv.actor === 'system:vm-snapshot' && snapEv.actorUserId === null) || (snapEv.actor === 'u_hist_o1' && snapEv.actorUserId === 'u_hist_o1')),
+    snapEv.oldStatus === 'NOT_MET' && snapEv.newStatus === 'NOT_MET' && snapEv.notesChanged === true && ((snapEv.actor === 'system:vm-snapshot' && snapEv.actorUserId === null) || (snapEv.actor === 'u_hist_o1' && snapEv.actorUserId === 'u_hist_o1')),
     'H04 the snapshot event: status MET to MET, notes changed, actor the system or the user who triggered it',
     snapEv,
   );
@@ -390,7 +390,7 @@ async function run() {
 
   const noExp = await put(T1, owner1, SC, { implementationNotes: 'V3' });
   assert(noExp.status === 200, 'S70-05 a PUT without expectedUpdatedAt still succeeds', noExp.body);
-  const staleStatus = await put(T1, owner1, SC, { status: 'MET', expectedUpdatedAt: u0 });
+  const staleStatus = await put(T1, owner1, SC, { status: 'NOT_MET', expectedUpdatedAt: u0 });
   assert(staleStatus.status === 409 && staleStatus.body?.code === 'stale_write', 'S70-06 a status-only PUT with a stale updatedAt -> 409 too', staleStatus.body);
   const nullOnExisting = await put(T1, owner1, SC, { implementationNotes: 'V4', expectedUpdatedAt: null });
   assert(nullOnExisting.status === 409 && (await controlOf(T1, owner1, SC))?.implementationNotes === 'V3', 'S70-07 expectedUpdatedAt null on a stored row -> 409', nullOnExisting.body);

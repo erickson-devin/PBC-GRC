@@ -16,6 +16,8 @@ import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/framewor
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { NOT_RECORDED } from '../../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
+import { composeImplementationStatement } from '../../data/cmmcGuide/sspStatement';
+import { statusDisplayLabel } from '../../data/statusLabels';
 import { SSP_METADATA_NEED_OWNER_MESSAGE } from '../../data/sspMetadataSync';
 export const SSPBuilder: React.FC = () => {
   const {
@@ -81,8 +83,9 @@ export const SSPBuilder: React.FC = () => {
       const evidence = state.evidenceIndex.filter(e => e.controlId === ctrl.id);
       const authority = ctrl.authorityReference || cmmcDisplayId(ctrl.id, activeFramework);
       text += `\n[${cmmcDisplayId(ctrl.id, activeFramework)}] ${ctrl.title} (${authority})\n`;
-      text += `Status: ${cState?.status || 'NOT_STARTED'}\n`;
-      text += `Implementation Statement:\n${cState?.implementationNotes || 'No implementation notes provided.'}\n`;
+      text += `Status: ${statusDisplayLabel(cState?.status)}\n`;
+      const statement = composeImplementationStatement(ctrl.id, cState?.implementationNotes, state.objectives, activeFramework).text;
+      text += `Implementation Statement:\n${statement.trim() !== '' ? statement : 'No implementation notes provided.'}\n`;
       if (evidence.length > 0) {
         text += `Evidence Artifacts: ${evidence.map(e => `${e.name} (SHA-256: ${e.fileHash || 'N/A'})`).join(', ')}\n`;
       }
@@ -554,12 +557,14 @@ export const SSPBuilder: React.FC = () => {
                 const status = cState?.status || 'NOT_STARTED';
                 const evidenceList = state.evidenceIndex.filter((e) => e.controlId === ctrl.id);
                 const authority = ctrl.authorityReference || cmmcDisplayId(ctrl.id, activeFramework);
+                const statement = composeImplementationStatement(ctrl.id, cState?.implementationNotes, state.objectives, activeFramework).text;
 
                 return (
                   <div
                     key={ctrl.id}
-                    className="p-4 rounded-xl border border-slate-300 bg-white space-y-2.5 print-avoid-break shadow-sm"
+                    className="p-4 rounded-xl border border-slate-300 bg-white space-y-2.5 shadow-sm"
                   >
+                    <div className="print-avoid-break space-y-2.5">
                     {/* Control Bar */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -584,7 +589,7 @@ export const SSPBuilder: React.FC = () => {
                           ? 'bg-rose-100 text-rose-800 border border-rose-300'
                           : 'bg-slate-100 text-slate-700 border border-slate-300'
                       }`}>
-                        Status: {status}
+                        Status: {statusDisplayLabel(status)}
                       </span>
                     </div>
 
@@ -592,14 +597,15 @@ export const SSPBuilder: React.FC = () => {
                     <p className="text-[11px] text-slate-600 italic">
                       Requirement: {ctrl.plainEnglishSummary || ctrl.discussion}
                     </p>
+                    </div>
 
                     {/* Implementation Narrative */}
                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
                         Implementation Statement:
                       </span>
-                      <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
-                        {cState?.implementationNotes || (
+                      <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                        {statement.trim() !== '' ? statement : (
                           <span className="text-slate-400 italic">No implementation notes documented.</span>
                         )}
                       </p>

@@ -11,6 +11,8 @@ import { normalizeFindings } from './adapters/wazuh';
 import { findingsNormalizerFor } from './adapters/registry';
 import { agentKey, kindKey, planAssetMatches } from './assetMatch';
 import {
+  completeResolvedPoamItems,
+  completeResolvedPoamItemsInOtherPrograms,
   insertMissingVulns,
   insertPoamItems,
   insertRunAssets,
@@ -129,6 +131,7 @@ interface RunSummary {
   resolved: number;
   sightings: number;
   poam: number;
+  poamCompleted: number;
   configResults: number;
   softwareItems: number;
 }
@@ -278,19 +281,26 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       checkpoint();
 
       let poam = 0;
-      if (programId && isPoamAutocreateEnabled()) {
-        const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client, programId);
-        const drafts = planPoamItems(overdue, linked, now);
-        poam = await insertPoamItems(tenantId, drafts, client, programId);
+      let poamCompleted = 0;
+      if (programId) {
+        // Items a later scan confirmed fixed complete whatever VM_POAM_AUTOCREATE says (the switch is about creating items); the closure above is in this transaction.
+        poamCompleted = await completeResolvedPoamItems(tenantId, run.id, now, client, programId);
+        if (isPoamAutocreateEnabled()) {
+          const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client, programId);
+          const drafts = planPoamItems(overdue, linked, now);
+          poam = await insertPoamItems(tenantId, drafts, client, programId);
+        }
+        // Last: it switches the transaction's program setting and restores it to the target.
+        poamCompleted += await completeResolvedPoamItemsInOtherPrograms(tenantId, run.id, now, client, programId);
       }
 
       const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;
       await markRunNormalized(tenantId, run, now, warning, client);
-      return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam, configResults, softwareItems };
+      return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam, poamCompleted, configResults, softwareItems };
     }, programId);
 
     console.log(
-      `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M, ${summary.configResults} configuration results, ${summary.softwareItems} software items)`,
+      `[VM Worker] run ${run.id} in ${tenantId}: NORMALIZED (${summary.created}/${summary.updated}/${summary.resolved} findings, ${summary.sightings} sightings, ${summary.poam} POA&M, ${summary.poamCompleted} POA&M completed, ${summary.configResults} configuration results, ${summary.softwareItems} software items)`,
     );
   } catch (err: unknown) {
     // The transaction (if any) rolled back; the run's status is written on its own.
@@ -305,7 +315,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       return;
     }
     console.error('[VM Worker]', errorMessage(err));
-    console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (0/0/0 findings, 0 sightings, 0 POA&M, 0 configuration results, 0 software items)`);
+    console.log(`[VM Worker] run ${runId} in ${tenantId}: FAILED (0/0/0 findings, 0 sightings, 0 POA&M, 0 POA&M completed, 0 configuration results, 0 software items)`);
     await fail(tenantId, runId, GENERIC);
   }
 }

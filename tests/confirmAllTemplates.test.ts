@@ -69,10 +69,10 @@ function main() {
   assert(p.filled.length === 2 && p.skipped.length === 0, 'the default fills every objective');
 
   console.log('\n--- confirmAllResultMessage ---');
-  assert(confirmAllResultMessage(2, 4) === 'Starter templates written to 2 of 6 objectives. Review each one, then mark it MET. 4 objectives have no template and were left unchanged.', 'message (2, 4)', confirmAllResultMessage(2, 4));
-  assert(confirmAllResultMessage(6, 0) === 'Starter templates written to 6 of 6 objectives. Review each one, then mark it MET.', 'message (6, 0)', confirmAllResultMessage(6, 0));
-  assert(confirmAllResultMessage(1, 1) === 'Starter templates written to 1 of 2 objectives. Review each one, then mark it MET. 1 objective has no template and was left unchanged.', 'message (1, 1)', confirmAllResultMessage(1, 1));
-  assert(confirmAllResultMessage(1, 0) === 'Starter templates written to 1 of 1 objective. Review it, then mark it MET.', 'message (1, 0)', confirmAllResultMessage(1, 0));
+  assert(confirmAllResultMessage(2, 4) === 'Starter templates written to 2 of 6 objectives. Review each one, then mark it Met. 4 objectives have no template and were left unchanged.', 'message (2, 4)', confirmAllResultMessage(2, 4));
+  assert(confirmAllResultMessage(6, 0) === 'Starter templates written to 6 of 6 objectives. Review each one, then mark it Met.', 'message (6, 0)', confirmAllResultMessage(6, 0));
+  assert(confirmAllResultMessage(1, 1) === 'Starter templates written to 1 of 2 objectives. Review each one, then mark it Met. 1 objective has no template and was left unchanged.', 'message (1, 1)', confirmAllResultMessage(1, 1));
+  assert(confirmAllResultMessage(1, 0) === 'Starter templates written to 1 of 1 objective. Review it, then mark it Met.', 'message (1, 0)', confirmAllResultMessage(1, 0));
   assert(confirmAllResultMessage(0, 3) === 'No starter template was written: none of the 3 objectives has one.', 'message (0, 3)', confirmAllResultMessage(0, 3));
 
   console.log('\n--- hasWrittenTemplate ---');

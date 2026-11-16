@@ -221,7 +221,7 @@ async function run() {
   assert(created.status === 201 && created.body?.role === 'TENANT_OWNER', 'a local user bootstraps a tenant and becomes its owner');
   await firstProgram(tenantId); // a tenant starts with no program
   assert((await call('GET', '/controls', { token: annToken, tenant: tenantId })).status === 200, 'GET /controls with the local token + x-tenant-id');
-  assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: annToken, tenant: tenantId, body: { status: 'MET', implementationNotes: 'local auth' } })).status === 200, 'owner can write (role read from tenant_users)');
+  assert((await call('PUT', '/controls/AC.L1-3.1.1', { token: annToken, tenant: tenantId, body: { status: 'IN_PROGRESS', implementationNotes: 'local auth' } })).status === 200, 'owner can write (role read from tenant_users)');
 
   const bobToken = signLocalToken({ id: bob.id, email: 'bob@enclave.mil', name: 'Bob' }).token; // no `ver` claim: what a token minted before 5.9 looks like
   assert((await call('GET', '/controls', { token: bobToken, tenant: tenantId })).status === 403, 'a valid local user who is not a member gets 403');

@@ -9,6 +9,7 @@ import {
   StaleWriteError,
   writeControlAssessment,
 } from '../controlAssessments';
+import { readObjectives } from '../controlObjectives';
 import { ensureObjectiveCatalogCurrent } from '../objectiveCatalogMigration';
 import { ensureControlInFrameworkPolicy, ensureFrameworkEnabled } from '../middleware/frameworkGuard';
 import { requireWriteRole } from '../middleware/roleGuard';
@@ -27,6 +28,7 @@ import {
 } from '../../src/data/frameworks';
 import { programFrameworkControls, scopingToOverlays } from '../../src/data/programScope';
 import { errorMessage } from '../../src/utils/errors';
+import { checkControlStatusWrite, metRefusalMessage } from '../../src/data/cmmcGuide/controlStatusGuard';
 
 const router = Router();
 
@@ -361,6 +363,18 @@ router.put('/:controlId', async (req: Request, res: Response): Promise<void> => 
   if (!(await ensureControlInFrameworkPolicy(req, res, String(controlId)))) return;
 
   try {
+    // #292: a CMMC control is Met only when its stored objectives roll up to Met. The 409 carries counts and a status, never text.
+    const frameworkId = req.program?.frameworkId;
+    if (status === 'MET' && (frameworkId === 'CMMC_L1' || frameworkId === 'CMMC_L2')) {
+      await ensureObjectiveCatalogCurrent(scopeOf(req), frameworkId, req.program);
+      const stored = await readObjectives(scopeOf(req), String(controlId));
+      const decision = checkControlStatusWrite(String(controlId), 'MET', Object.fromEntries(stored.map((o) => [o.objectiveId, o.status])), frameworkId);
+      if (!decision.allowed) {
+        res.status(409).json({ error: metRefusalMessage(decision), code: 'objectives_not_met', total: decision.total, open: decision.open, rolledUp: decision.rolledUp });
+        return;
+      }
+    }
+
     const written = await writeControlAssessment(
       scopeOf(req),
       String(controlId),

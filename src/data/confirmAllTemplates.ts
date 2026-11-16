@@ -53,7 +53,7 @@ export const confirmAllResultMessage = (filled: number, skipped: number): string
   const total = filled + skipped;
   const objectivesWord = `objective${total === 1 ? '' : 's'}`;
   if (filled === 0) return `No starter template was written: none of the ${total} ${objectivesWord} has one.`;
-  const head = `Starter templates written to ${filled} of ${total} ${objectivesWord}. Review ${total === 1 ? 'it' : 'each one'}, then mark it MET.`;
+  const head = `Starter templates written to ${filled} of ${total} ${objectivesWord}. Review ${total === 1 ? 'it' : 'each one'}, then mark it Met.`;
   if (skipped === 0) return head;
   return `${head} ${skipped} ${skipped === 1 ? 'objective has' : 'objectives have'} no template and ${skipped === 1 ? 'was' : 'were'} left unchanged.`;
 };

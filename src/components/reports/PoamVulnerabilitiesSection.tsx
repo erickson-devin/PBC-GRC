@@ -1,5 +1,5 @@
-import React, { useId, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Info, Loader2, Search, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Eye, Info, Loader2, Pencil, Search, ShieldAlert } from 'lucide-react';
 import { Badge } from '../common/Badge';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { POAM_GROUP_PAGE, groupOpen, initialExpanded, poamQueryTerms, showMoreText } from '../../data/reports/poamView';
@@ -9,18 +9,27 @@ import {
   daysRemainingText,
   filterVmPoamRows,
   groupVmPoamByAsset,
+  isOpenVmPoamStatus,
   isoDate,
+  vmClosedCount,
+  vmClosedToggleText,
+  vmGroupCountText,
   vmItemsEmptyText,
   vmPackagesView,
+  vmPastTargetDate,
   vmPoamNotices,
   vmResultsText,
   vmRulesText,
   vmWeaknessIds,
   type VmPoamLoad,
 } from '../../data/reports/vmPoamView';
+import { vmPoamItemLabel, vmPoamSavedText, vmPoamStatusMarker } from '../../data/reports/vmPoamItemForm';
+import type { VmPoamItemApi } from '../../hooks/useVmPoam';
 import { SEVERITY_BADGE, SEVERITY_LABEL, fixText, moreText, packageLabel } from '../../data/telemetry/vmFindingsView';
-import type { VmAffectedPackage, VmPoamResponse, VmPoamStatus, VmSeverity } from '../../types/vm';
+import type { VmAffectedPackage, VmPoamResponse, VmPoamRow, VmSeverity } from '../../types/vm';
 import { PoamGroupPanel, SMALL_BUTTON } from './PoamGroupPanel';
+import { VmPoamItemDialog } from './VmPoamItemDialog';
+import { VmPoamStatusBadge } from './VmPoamStatusBadge';
 
 export interface PoamVulnerabilitiesSectionProps {
   load: VmPoamLoad;
@@ -28,9 +37,22 @@ export interface PoamVulnerabilitiesSectionProps {
   framework: string;
   targetProgramName: string | null;
   headingRef?: React.Ref<HTMLHeadingElement>;
+  /** Tenant Owner and MSP Admin: the Edit button; other roles get View. */
+  canEdit?: boolean;
+  /** Without it the rows have no Edit / View button. */
+  itemApi?: VmPoamItemApi;
+  includeClosed?: boolean;
+  onIncludeClosedChange?: (on: boolean) => void;
+  /** A quiet reload is running. */
+  refreshing?: boolean;
+  /** The last quiet reload failed. */
+  refreshFailed?: boolean;
+  onRefresh?: () => void;
+  /** Called with the saved row after a change was saved. */
+  onItemSaved?: (row: VmPoamRow) => void;
+  /** Opens the Programs page (where the vulnerability target is chosen). */
+  onOpenPrograms?: () => void;
 }
-
-const STATUS_LABEL: Record<VmPoamStatus, string> = { OPEN: 'Open', IN_PROGRESS: 'In progress', COMPLETED: 'Completed', RISK_ACCEPTED: 'Risk accepted' };
 
 const NOTE_CLASS = 'rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-400';
 
@@ -66,7 +88,10 @@ const packagesLine = (f: PackageSource): string => {
  * create them, and (for the vulnerability target) a collapsed list of what is coming due. Props only; read-only; weakness text and
  * asset names are rendered as text and held in React state only. A failed load never claims there are no items.
  */
-export const PoamVulnerabilitiesSection: React.FC<PoamVulnerabilitiesSectionProps> = ({ load, onRetry, framework, targetProgramName, headingRef }) => {
+export const PoamVulnerabilitiesSection: React.FC<PoamVulnerabilitiesSectionProps> = ({
+  load, onRetry, framework, targetProgramName, headingRef, canEdit = false, itemApi, includeClosed = false, onIncludeClosedChange,
+  refreshing = false, refreshFailed = false, onRefresh, onItemSaved, onOpenPrograms,
+}) => {
   const uid = useId();
   const headingId = `${uid}-heading`;
   return (
@@ -94,14 +119,42 @@ export const PoamVulnerabilitiesSection: React.FC<PoamVulnerabilitiesSectionProp
         </div>
       )}
       {load.status === 'no_program' && <p role="note" className={NOTE_CLASS}>{VM_POAM_COPY.noProgram}</p>}
-      {load.status === 'ready' && <PoamVulnerabilitiesReady data={load.data} framework={framework} targetProgramName={targetProgramName} />}
+      {load.status === 'ready' && (
+        <PoamVulnerabilitiesReady
+          data={load.data}
+          framework={framework}
+          targetProgramName={targetProgramName}
+          headingId={headingId}
+          canEdit={canEdit}
+          itemApi={itemApi}
+          includeClosed={includeClosed}
+          onIncludeClosedChange={onIncludeClosedChange}
+          refreshing={refreshing}
+          refreshFailed={refreshFailed}
+          onRefresh={onRefresh}
+          onItemSaved={onItemSaved}
+          onOpenPrograms={onOpenPrograms}
+        />
+      )}
     </section>
   );
 };
 
-const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: string; targetProgramName: string | null }> = ({ data, framework, targetProgramName }) => {
+type ReadyProps = Pick<PoamVulnerabilitiesSectionProps, 'framework' | 'targetProgramName' | 'itemApi' | 'onIncludeClosedChange' | 'onRefresh' | 'onItemSaved' | 'onOpenPrograms'> & {
+  data: VmPoamResponse;
+  headingId: string;
+  canEdit: boolean;
+  includeClosed: boolean;
+  refreshing: boolean;
+  refreshFailed: boolean;
+};
+
+const PoamVulnerabilitiesReady: React.FC<ReadyProps> = ({
+  data, framework, targetProgramName, headingId, canEdit, itemApi, includeClosed, onIncludeClosedChange, refreshing, refreshFailed, onRefresh, onItemSaved, onOpenPrograms,
+}) => {
   const uid = useId();
   const searchId = `${uid}-search`;
+  const closedId = `${uid}-closed`;
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string> | null>(null);
   const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(new Set());
@@ -111,8 +164,14 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
   const searchRef = useRef<HTMLInputElement>(null);
   const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
   const upcomingToggleRef = useRef<HTMLButtonElement | null>(null);
+  const [openItem, setOpenItem] = useState<{ row: VmPoamRow; weaknessId: string | null; groupKey: string } | null>(null);
+  const [announcement, setAnnouncement] = useState('');
+  const itemButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const focusAfterClose = useRef<{ rowId: string; groupKey: string } | null>(null);
+  const closedTotal = vmClosedCount(data);
+  const openShown = useMemo(() => data.items.filter((r) => isOpenVmPoamStatus(r.status)).length, [data.items]);
 
-  const notices = useMemo(() => vmPoamNotices(data, { framework, targetProgramName }), [data, framework, targetProgramName]);
+  const notices = useMemo(() => vmPoamNotices(data, { framework, targetProgramName, includeClosed }), [data, framework, targetProgramName, includeClosed]);
   const ids = useMemo(() => vmWeaknessIds(data.items), [data.items]);
   const filtered = useMemo(() => filterVmPoamRows(data.items, query), [data.items, query]);
   const groups = useMemo(() => groupVmPoamByAsset(filtered), [filtered]);
@@ -151,30 +210,88 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
     if (next >= total) requestAnimationFrame(() => toggleRefs.current.get(key)?.focus());
   };
 
+  const closeItem = (saved?: { before: VmPoamRow; after: VmPoamRow; changed: boolean }) => {
+    if (!openItem) return;
+    focusAfterClose.current = { rowId: openItem.row.id, groupKey: openItem.groupKey };
+    setOpenItem(null);
+    if (saved) {
+      if (saved.changed) onItemSaved?.(saved.after);
+      setAnnouncement(vmPoamSavedText(saved.before, saved.after, saved.changed, includeClosed));
+    }
+  };
+  // After the commit that removed the dialog (and maybe the row): the row's button, else its group's toggle, else the section heading
+  useEffect(() => {
+    const f = focusAfterClose.current;
+    if (!f || openItem) return;
+    focusAfterClose.current = null;
+    requestAnimationFrame(() => {
+      const btn = itemButtonRefs.current.get(f.rowId);
+      if (btn?.isConnected) { btn.focus(); return; }
+      const toggle = toggleRefs.current.get(f.groupKey);
+      if (toggle?.isConnected) { toggle.focus(); return; }
+      document.getElementById(headingId)?.focus();
+    });
+  }, [openItem, data.items, headingId]);
+
   const tableWrap = 'overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400';
   const headClass = 'bg-slate-950 text-slate-400 uppercase text-xs tracking-wider border-b border-slate-800';
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400 leading-relaxed">{vmRulesText(data.rules, framework)}</p>
+      <p className="text-xs text-slate-400 leading-relaxed">{VM_POAM_COPY.exportFields}</p>
       {notices.map((n) => (
         <p
           key={n.id}
           role="note"
           className={n.tone === 'amber'
-            ? 'flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200'
-            : 'flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300'}
+            ? 'flex flex-wrap items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200'
+            : 'flex flex-wrap items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300'}
         >
           {n.tone === 'amber'
             ? <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" aria-hidden="true" />
             : <Info className="w-4 h-4 shrink-0 text-slate-400" aria-hidden="true" />}
-          <span>{n.text}</span>
+          <span className="flex-1">{n.text}</span>
+          {n.action === 'open_programs' && onOpenPrograms && (
+            <button type="button" onClick={onOpenPrograms} className={`${SMALL_BUTTON} shrink-0`}>{VM_POAM_COPY.openPrograms}</button>
+          )}
         </p>
       ))}
+      <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
+      {refreshFailed && (
+        <div className="space-y-2">
+          <ErrorNotice message={VM_POAM_COPY.refreshFailed} />
+          <button type="button" onClick={onRefresh} className={SMALL_BUTTON}>{VM_POAM_COPY.retry}</button>
+        </div>
+      )}
+      {(closedTotal > 0 || includeClosed) && (
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <label htmlFor={closedId} className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input
+              id={closedId}
+              type="checkbox"
+              checked={includeClosed}
+              disabled={!onIncludeClosedChange}
+              onChange={(e) => onIncludeClosedChange?.(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            {vmClosedToggleText(closedTotal)}
+          </label>
+          <p role="status" aria-live="polite" className="text-xs text-slate-400 flex items-center gap-2">
+            {refreshing && (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                {includeClosed ? VM_POAM_COPY.closedLoading : VM_POAM_COPY.loading}
+              </>
+            )}
+          </p>
+        </div>
+      )}
 
-      {data.items.length === 0 ? (
-        <p className="p-6 text-center rounded-2xl bg-slate-900/60 border border-slate-800 text-sm text-slate-300">{vmItemsEmptyText(data)}</p>
-      ) : (
+      {openShown === 0 && (
+        <p className="p-6 text-center rounded-2xl bg-slate-900/60 border border-slate-800 text-sm text-slate-300">{vmItemsEmptyText(data, { includeClosed })}</p>
+      )}
+      {data.items.length > 0 && (
         <>
           <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
             <div className="relative">
@@ -225,7 +342,7 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
                   <PoamGroupPanel
                     key={g.key}
                     title={g.assetName}
-                    countText={`${g.items.length} ${g.items.length === 1 ? 'item' : 'items'}`}
+                    countText={vmGroupCountText(g)}
                     badges={(
                       <>
                         {g.worstSeverity && <SeverityBadge severity={g.worstSeverity} prefix="Most severe: " />}
@@ -240,7 +357,7 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
                     }}
                   >
                     <div className={tableWrap} tabIndex={0} role="region" aria-label={caption}>
-                      <table className="w-full min-w-[560px] lg:min-w-0 text-left text-xs">
+                      <table className="w-full min-w-[720px] lg:min-w-0 text-left text-xs">
                         <caption className="sr-only">{caption}</caption>
                         <thead className={headClass}>
                           <tr>
@@ -250,15 +367,23 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
                             <th scope="col" className="p-3 hidden md:table-cell">Affected Packages</th>
                             <th scope="col" className="p-3 hidden lg:table-cell">First Seen</th>
                             <th scope="col" className="p-3">Deadline</th>
+                            <th scope="col" className="p-3">Target Date</th>
+                            <th scope="col" className="p-3 hidden lg:table-cell">Owner</th>
                             <th scope="col" className="p-3">Status</th>
+                            {itemApi && <th scope="col" className="p-3"><span className="sr-only">Actions</span></th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800">
                           {rows.map((row) => {
                             const f = row.finding;
+                            const closed = !isOpenVmPoamStatus(row.status);
+                            const wid = ids.get(row.id) ?? null;
+                            const marker = vmPoamStatusMarker(row);
                             return (
-                              <tr key={row.id} className="hover:bg-slate-850/50">
-                                <th scope="row" className="p-3 font-mono font-bold text-amber-300 whitespace-nowrap text-left">{ids.get(row.id) ?? ''}</th>
+                              <tr key={row.id} className={`hover:bg-slate-850/50${closed ? ' bg-slate-950/40' : ''}`}>
+                                <th scope="row" className="p-3 font-mono font-bold text-amber-300 whitespace-nowrap text-left">
+                                  {wid ?? <span className="font-sans font-normal text-slate-400">{VM_POAM_COPY.notInExports}</span>}
+                                </th>
                                 <td className="p-3 text-slate-300 max-w-xs">
                                   {f ? (
                                     <>
@@ -277,7 +402,30 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
                                 <td className="p-3 text-slate-300 hidden md:table-cell">{f ? <PackageLines f={f} /> : <span className="text-slate-400">None recorded</span>}</td>
                                 <td className="p-3 font-mono text-slate-300 hidden lg:table-cell">{isoDate(f?.firstSeenAt ?? row.findingFirstSeenAt)}</td>
                                 <td className="p-3 font-mono text-slate-300">{isoDate(f?.slaDueAt ?? null)}</td>
-                                <td className="p-3 text-slate-300">{STATUS_LABEL[row.status]}</td>
+                                <td className="p-3 font-mono text-slate-300 whitespace-nowrap">{row.scheduledCompletion ?? 'None'}</td>
+                                <td className="p-3 text-slate-300 hidden lg:table-cell max-w-[10rem] break-words">{row.owner.trim() ? row.owner : <span className="text-slate-400">Not recorded</span>}</td>
+                                <td className="p-3 text-slate-300">
+                                  <VmPoamStatusBadge status={row.status} />
+                                  {marker && <p className="mt-1 text-slate-400">{marker}</p>}
+                                  {vmPastTargetDate(row, data.generatedAt) && (
+                                    <p className="mt-1 text-amber-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" aria-hidden="true" />Past target date</p>
+                                  )}
+                                  <p className="mt-1 text-slate-400 lg:hidden break-words">Owner: {row.owner.trim() || 'Not recorded'}</p>
+                                </td>
+                                {itemApi && (
+                                  <td className="p-3 text-right">
+                                    <button
+                                      type="button"
+                                      ref={(el) => { if (el) itemButtonRefs.current.set(row.id, el); else itemButtonRefs.current.delete(row.id); }}
+                                      onClick={() => setOpenItem({ row, weaknessId: wid, groupKey: g.key })}
+                                      aria-label={`${canEdit ? 'Edit' : 'View'} ${vmPoamItemLabel(row, wid)}`}
+                                      className={`${SMALL_BUTTON} inline-flex items-center gap-1.5`}
+                                    >
+                                      {canEdit ? <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> : <Eye className="w-3.5 h-3.5" aria-hidden="true" />}
+                                      <span>{canEdit ? 'Edit' : 'View'}</span>
+                                    </button>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
@@ -354,6 +502,10 @@ const PoamVulnerabilitiesReady: React.FC<{ data: VmPoamResponse; framework: stri
             </div>
           )}
         </PoamGroupPanel>
+      )}
+
+      {openItem && itemApi && (
+        <VmPoamItemDialog row={openItem.row} weaknessId={openItem.weaknessId} canEdit={canEdit} includeClosed={includeClosed} api={itemApi} onClose={closeItem} />
       )}
     </div>
   );

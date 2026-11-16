@@ -334,6 +334,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             getEvidence: (t, p) => ApiClient.getEvidence(t, p),
             getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p),
             getSspMetadata: (t, p) => ApiClient.getSspMetadata(t, p),
+            getObjectives: (t, p) => ApiClient.getObjectives(t, undefined, p),
           });
         } catch (err: unknown) {
           // The membership check in authMiddleware answers 403 for an administrator who is not a member of the tenant.

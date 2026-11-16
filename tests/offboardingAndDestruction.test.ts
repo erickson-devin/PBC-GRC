@@ -20,6 +20,7 @@ import { boundaryNarrative, summarizeScope } from '../src/data/telemetry/assetSc
 import { createInitialState } from '../src/services/storageService';
 import { NO_CSP_RECORDED } from '../src/data/reports/documentCompilers';
 import { NOT_RECORDED, NO_BOUNDARY_RECORDED, NO_ASSESSOR_RECORDED } from '../src/data/reports/documentDefaults';
+import { guideObjectives, cmmcNumberOf } from '../src/data/cmmcGuide/guide';
 import { copyText, COPY_FAILED_MESSAGE } from '../src/utils/clipboard';
 
 // Polyfill minimal localStorage for Node environment if absent
@@ -287,6 +288,20 @@ async function runTests() {
       one.packages.length === 1 && one.bundle === null && controlCalls.join() === 'p-b' && one.packages[0].evidenceIndex[0]?.id === 'ev-p-b' && evidenceCalls.join() === 'p-b',
       'OB-P7: one program fetches only its own controls and evidence'
     );
+
+    // #293: the program's objective narratives reach its SSP; a failed fetch leaves the control-level notes
+    const obCtrl = programFrameworkControls(programs[1], scopingToOverlays({}))[0];
+    const obLetter = guideObjectives(cmmcNumberOf(obCtrl.id)!, 'CMMC_L1')[0].letter;
+    const obDeps = {
+      ...deps,
+      getControls: async () => [{ id: obCtrl.id, implementationNotes: 'Control-level statement.' } as any],
+      getObjectives: async () => [{ objectiveId: `${obCtrl.id}[${obLetter}]`, controlId: obCtrl.id, status: 'MET' as const, narrative: 'Objective narrative OB-293.', linkedEvidenceIds: [], updatedBy: 'u', updatedAt: null }],
+    };
+    const sspText = (r: { packages: { reports: { systemSecurityPlan: unknown } }[] }) => JSON.stringify(r.packages[0].reports.systemSecurityPlan);
+    const obWith = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, obDeps);
+    assert(sspText(obWith).includes(`[${obLetter}] Objective narrative OB-293.`) && sspText(obWith).includes('Control-level statement.'), 'OB-293a: the handover SSP prints the objective narratives after the control notes');
+    const obFailed = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...obDeps, getObjectives: async () => { throw new Error('boom'); } });
+    assert(sspText(obFailed).includes('Control-level statement.') && !sspText(obFailed).includes('OB-293'), 'OB-293b: a failed objectives fetch does not fail the handover; the SSP keeps the control-level notes');
 
     // OB-P10: the package states the program's declared assets, or the whole inventory while it declares none (issue #26)
     const bAssets = [

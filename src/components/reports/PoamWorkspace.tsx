@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { AlertTriangle, FileSpreadsheet } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
+import { useTenant } from '../../context/TenantContext';
 import type { FrameworkControlDefinition } from '../../types/framework';
 import type { POAMEntry } from '../../types/report';
 import type { Program } from '../../types/program';
@@ -19,11 +20,21 @@ export interface PoamWorkspaceProps {
   vmEntries: POAMEntry[];
   programs: Program[];
   onExportCsv: () => void;
+  /** Called before the Programs page opens (the export modal closes itself here). */
+  onNavigateAway?: () => void;
 }
 
-/** The POA&M tab: the control entries (#278) and the vulnerability items (#274). Read-only; the exports always hold every entry. */
-export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework, frameworkControls, vm, vmEntries, programs, onExportCsv }) => {
-  const { setSelectedControlId } = useAssessment();
+/**
+ * The POA&M tab: the control entries (#278) and the vulnerability items (#274). Control entries are read-only here; a vulnerability
+ * item can be edited by a Tenant Owner or MSP Admin (#297). The exports always hold every open entry.
+ */
+export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework, frameworkControls, vm, vmEntries, programs, onExportCsv, onNavigateAway }) => {
+  const { setSelectedControlId, setActiveTab } = useAssessment();
+  const { canEdit } = useTenant();
+  const openPrograms = () => {
+    onNavigateAway?.();
+    setActiveTab('programs');
+  };
   const controlsHeadingRef = useRef<HTMLHeadingElement>(null);
   const vulnHeadingRef = useRef<HTMLHeadingElement>(null);
   const jump = (r: React.RefObject<HTMLHeadingElement | null>) => {
@@ -76,6 +87,15 @@ export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework
         framework={framework}
         targetProgramName={targetProgramName}
         headingRef={vulnHeadingRef}
+        canEdit={canEdit}
+        itemApi={vm.itemApi}
+        includeClosed={vm.includeClosed}
+        onIncludeClosedChange={vm.setIncludeClosed}
+        refreshing={vm.refreshing}
+        refreshFailed={vm.refreshFailed}
+        onRefresh={() => { void vm.reload(true); }}
+        onItemSaved={vm.applySaved}
+        onOpenPrograms={openPrograms}
       />
     </div>
   );

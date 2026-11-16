@@ -2,7 +2,8 @@ import './testEnv';
 import { createHash } from 'node:crypto';
 import { server } from '../server/index';
 import { __objectiveCatalogRevForTests, __seedLegacyObjectivesForTests, latestHumanEventAt, listCatalogUpdateObjectiveEvents, readObjectives, type CatalogUpdateObjectiveEvent } from '../server/controlObjectives';
-import { listCatalogUpdateControlEvents } from '../server/controlAssessments';
+import { listCatalogUpdateControlEvents, writeControlAssessment } from '../server/controlAssessments';
+import { cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import { buildCatalogUpdateChanges, CATALOG_UPDATE_ACTOR } from '../server/objectiveCatalogMigration';
 import type { ObjectiveRecord, ObjectiveStatus } from '../src/types/controlObjectives';
 
@@ -242,8 +243,8 @@ async function run() {
     legacy('AC.L1-3.1.2[b]', 'MET'),
     legacy('AC.L2-3.1.8[c]', 'NOT_MET'),
   ]);
-  await call('PUT', '/controls/CA.L2-3.12.4', owner, T, { status: 'MET' }, M);
-  await call('PUT', '/controls/AC.L2-3.1.5', owner, T, { status: 'MET' }, M);
+  // seeded through the store: the route refuses a Met whose objectives are not Met (#292), and its catalog-update call would migrate the program before C0
+  for (const id of ['CA.L2-3.12.4', 'AC.L2-3.1.5']) await writeControlAssessment(MS, id, () => ({ status: 'MET', notes: null, role: null, updatedBy: 'seed' }), { source: 'human', actor: 'seed', userId: null });
   assert(__objectiveCatalogRevForTests(MS, 'CA.L2-3.12.4[a]') === null, 'C0 the seeded rows are legacy (no catalog revision) before the first read');
   const controlsBefore = ((await call('GET', '/controls', owner, T, undefined, M)).body?.controls ?? []) as Json[]; // reads the controls first: this migrates the program
   const cList = await list(M);
@@ -360,6 +361,47 @@ async function run() {
     buildCatalogUpdateChanges([tie(2)], [], markAfter, new Map(), 10).objectives[0].reviewed === true && buildCatalogUpdateChanges([tie(7)], [], markAfter, new Map(), 10).objectives[0].reviewed === false,
     'CU11 in memory mode "reviewed" compares positions in the history, so a human event in the same millisecond still counts when it came later'
   );
+
+  console.log('\n--- 18: a CMMC control is Met only when its objectives are (#292) ---');
+  const P18 = (await newProgram(T, 'Obj Met Guard')).id;
+  const G_CTRL = 'AC.L2-3.1.5';
+  const gLetters = guideObjectives(cmmcNumberOf(G_CTRL)!, 'CMMC_L2').map((g) => g.letter);
+  const gN = gLetters.length;
+  const putControl = (program: string, id: string, body: Json) => call('PUT', `/controls/${enc(id)}`, owner, T, body, program);
+  const controlOf = async (program: string, id: string) => (((await call('GET', '/controls', owner, T, undefined, program)).body?.controls ?? []) as Json[]).find((c) => c.id === id);
+  const controlEvents = async (program: string, id: string) => ((await call('GET', `/controls/${enc(id)}/history`, owner, T, undefined, program)).body?.events ?? []) as Json[];
+  const setAll = (program: string, status: string, narrative?: string) =>
+    call('PUT', '/objectives', owner, T, { objectives: gLetters.map((l) => ({ objectiveId: `${G_CTRL}[${l}]`, controlId: G_CTRL, status, ...(narrative === undefined ? {} : { narrative }) })) }, program);
+  assert(gN >= 2, 'A0 the control has several guide objectives', gN);
+  const eventsBefore = (await controlEvents(P18, G_CTRL)).length;
+  const a1 = await putControl(P18, G_CTRL, { status: 'MET' });
+  assert(
+    a1.status === 409 && a1.body?.code === 'objectives_not_met' && a1.body?.total === gN && a1.body?.open === gN && a1.body?.rolledUp === 'NOT_STARTED' && typeof a1.body?.error === 'string',
+    'A1 Met with no stored objectives -> 409 objectives_not_met with the counts',
+    a1.body
+  );
+  assert((await controlOf(P18, G_CTRL))?.status === 'NOT_STARTED' && (await controlEvents(P18, G_CTRL)).length === eventsBefore, 'A1 the control keeps its status and the history has no new event');
+  const a2put = await setAll(P18, 'MET');
+  const a2 = await putControl(P18, G_CTRL, { status: 'MET' });
+  assert(a2put.status === 200 && a2.status === 200 && (await controlOf(P18, G_CTRL))?.status === 'MET', 'A2 every objective Met (bulk PUT) -> the control may be set Met', [a2put.body, a2.body]);
+  await put(P18, `${G_CTRL}[${gLetters[0]}]`, { controlId: G_CTRL, status: 'NOT_MET' });
+  const a3 = await putControl(P18, G_CTRL, { status: 'MET' });
+  assert(a3.status === 409 && a3.body?.code === 'objectives_not_met' && a3.body?.rolledUp === 'NOT_MET' && a3.body?.open === 1, 'A3 one objective Not met -> 409, rolled up NOT_MET, open 1', a3.body);
+  const a4a = await putControl(P18, G_CTRL, { status: 'NOT_MET' });
+  const a4b = await putControl(P18, G_CTRL, { implementationNotes: 'Notes only.' });
+  const a4c = await putControl(P18, G_CTRL, { status: 'IN_PROGRESS', implementationNotes: 'Both.' });
+  assert(a4a.status === 200 && a4b.status === 200 && a4c.status === 200 && (await controlOf(P18, G_CTRL))?.status === 'IN_PROGRESS', 'A4 a downward status and a notes-only write are not refused', [a4a.status, a4b.status, a4c.status]);
+  const P18b = (await newProgram(T, 'Obj Met Guard Text')).id;
+  await setAll(P18b, 'IN_PROGRESS', 'CUI-MARK-292');
+  const a5 = await putControl(P18b, G_CTRL, { status: 'MET', implementationNotes: 'CUI-NOTES-292' });
+  assert(a5.status === 409 && !JSON.stringify(a5.body).includes('CUI-MARK-292') && !JSON.stringify(a5.body).includes('CUI-NOTES-292') && (await controlOf(P18b, G_CTRL))?.status === 'NOT_STARTED', 'A5 the refusal carries no objective narrative or notes, and stores nothing', a5.body);
+  const stale = await putControl(P18b, G_CTRL, { status: 'MET', expectedUpdatedAt: '2000-01-01T00:00:00.000Z' });
+  assert(stale.status === 409 && stale.body?.code === 'objectives_not_met', 'A6 a stale Met write on a refused control answers objectives_not_met, not stale_write', stale.body);
+  const a7 = await putControl(P18b, 'NOT-A-CONTROL', { status: 'MET' });
+  assert(a7.status !== 409 || a7.body?.code !== 'objectives_not_met', 'A7 an unknown control keeps its own answer (the framework check runs first)', [a7.status, a7.body]);
+  const nistMet = await call('PUT', '/controls/AC-2', owner, T, { status: 'MET' }, NIST);
+  assert(nistMet.status === 200 && (await controlOf(NIST, 'AC-2'))?.status === 'MET', 'A8 a NIST SP 800-53 control can still be set Met by hand (no objectives needed)', nistMet.body);
+
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');
