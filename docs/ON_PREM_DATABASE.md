@@ -372,6 +372,34 @@ like any other (this operator backfill is the one place a default program is sti
 The unused `ssp_documents` table is dropped at startup when it is empty; a table that still holds rows is kept and logs a
 warning (`ssp_documents still holds rows and was not dropped`).
 
+### Upgrading from 0.4.0 to 0.5.0
+
+Take the backup in step 1 below first. The schema changes apply themselves at startup; what follows is what people will see
+afterwards, and it is all intended.
+
+* **CMMC objectives follow the DoD assessment guides (v2.13).** The first time each CMMC program is opened, objective answers
+  that were Met or Not applicable on an objective whose wording changed are set to In progress, and a control that was Met
+  with such answers is rolled down. Narratives and evidence are kept and each change is in the history. Met counts and the
+  SPRS score can drop. The control matrix shows a notice with the list ("The assessment objectives were updated ..."). An
+  archived program is left alone until it is unarchived.
+* **Met needs its objectives.** A CMMC control can be recorded as Met only when every objective is Met or Not applicable; the
+  API answers 409 `objectives_not_met` otherwise. Controls already recorded as Met with open objectives are not changed: the
+  control matrix lists them ("Met controls with open objectives") until someone answers the objectives or sets the control
+  to its objectives' status. Until then they still count as Met in the scores and the SSP.
+* **Control ids are shown as the guides write them** (`AC.L2-3.1.1`, `AC.L1-b.1.i`). Stored ids, saved answers, evidence and
+  history are unchanged, and a search accepts either form.
+* **Vulnerability POA&M items.** The first scan processed after the upgrade completes every item whose vulnerability a scan
+  has since confirmed fixed, in one go. If the vulnerability target is not the organization default program, that scan also
+  creates an item there for every finding already past its deadline (before, those were dropped without a trace).
+* **The SSP prints objective narratives** after the control-level statement for CMMC controls, so an SSP exported after the
+  upgrade can be longer than one exported before it from the same answers.
+* **No going back without the backup.** 0.5.0 replaces the unique index on `vm_poam_items` (one automatic item per finding)
+  with one per finding episode and program, and adds columns and the table `vm_poam_item_events`. A 0.4.0 image re-creates
+  the old index at startup, which fails as soon as one finding has two items, so it may not start on the upgraded database.
+  Roll back as in step 4: restore the dump, then set `IMAGE_TAG` back.
+
+No environment variable is added or changed, and the image and database versions are the same as in 0.4.0.
+
 What makes an upgrade safe is the release routine around it:
 
 1. **Back up first.** Create the backup folder once, then before every deploy, and on a schedule in between (nightly is the
