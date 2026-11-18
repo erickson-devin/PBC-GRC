@@ -139,8 +139,13 @@ jobs:
             if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::health not 200 connected within 90 s"; docker logs pbc-smoke; exit 1; fi
             sleep 2
           done
-          if docker logs pbc-smoke 2>&1 | grep -F '[FATAL]'; then echo "::error::[FATAL] in the container log"; exit 1; fi
-          docker logs pbc-smoke 2>&1 | grep -qF '[PostgreSQL] Database schema, control mappings, and RLS policies verified.'
+          # Read the log from a file, never through a pipe: this step runs with pipefail, and piping docker logs into a quiet grep
+          # fails with exit 141 (SIGPIPE) whenever grep finds its line and closes the pipe while docker is still writing the log.
+          docker logs pbc-smoke > "$RUNNER_TEMP/pbc-smoke.log" 2>&1
+          if grep -F '[FATAL]' "$RUNNER_TEMP/pbc-smoke.log"; then echo "::error::[FATAL] in the container log"; exit 1; fi
+          if ! grep -qF '[PostgreSQL] Database schema, control mappings, and RLS policies verified.' "$RUNNER_TEMP/pbc-smoke.log"; then
+            echo "::error::the schema verification line is missing from the container log"; cat "$RUNNER_TEMP/pbc-smoke.log"; exit 1
+          fi
           docker exec pbc-smoke npm run db:verify-rls
           docker rm -f pbc-smoke
 

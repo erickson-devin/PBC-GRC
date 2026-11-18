@@ -640,6 +640,12 @@ const publishWf = fs.readFileSync(path.join(root, '.github', 'workflows', 'docke
 const publishNeeds = ['tags: [ "v[0-9]+.[0-9]+.[0-9]+" ]', 'latest=false', 'type=raw,value=latest,enable={{is_default_branch}}', 'type=sha,enable={{is_default_branch}}', 'type=semver,pattern=v{{version}}', 'type=semver,pattern=v{{major}}.{{minor}}', 'type=semver,pattern=v{{major}}', 'git merge-base --is-ancestor HEAD origin/main', 'jq -r .version package.json', 'steps.build.outputs.digest'];
 assert(publishNeeds.every((s) => publishWf.includes(s)), 'docker-publish.yml publishes SemVer tags, checks the release tag against main and package.json, and records the digest', publishNeeds.filter((s) => !publishWf.includes(s)));
 assert(!publishWf.includes('type=raw,value=latest\n'), 'docker-publish.yml never tags latest unconditionally');
+// The v0.5.0 tag build failed with exit 141: under pipefail, `docker logs | grep -q` is killed by SIGPIPE when grep exits at its first match.
+for (const wf of ['ci.yml', 'docker-publish.yml']) {
+  const text = fs.readFileSync(path.join(root, '.github', 'workflows', wf), 'utf8');
+  assert(!/\|\s*grep\s+-[a-zA-Z]*q/.test(text), `${wf}: no command is piped into grep -q (SIGPIPE under pipefail); grep a file instead`);
+}
+assert(publishWf.includes('docker logs pbc-smoke > "$RUNNER_TEMP/pbc-smoke.log" 2>&1') && publishWf.includes("grep -qF '[PostgreSQL] Database schema, control mappings, and RLS policies verified.' \"$RUNNER_TEMP/pbc-smoke.log\""), 'the smoke test reads the container log from a file');
 
 console.log('\n--- Live PostgreSQL CI and image smoke (#159, #156) ---');
 function jobsOf(wf: string): Map<string, string> {
