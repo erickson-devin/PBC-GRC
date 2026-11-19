@@ -1,8 +1,8 @@
 # SSP import
 
 Upload an existing System Security Plan (PDF or Word), see which controls it describes, review each suggestion next to the
-control's current answer, and commit the ones you accept. **Nothing changes in a tenant's controls until a Tenant Owner or
-MSP Admin commits suggestions they accepted.**
+control's current answer, and commit the ones you accept. **Nothing changes in a tenant's controls until a Tenant Owner,
+Admin or MSP Admin commits suggestions they accepted.**
 
 Two ways to read a document, chosen per import:
 
@@ -23,7 +23,7 @@ Two ways to read a document, chosen per import:
 
 | Role | See imports and suggestions, download the original | Upload, accept / edit / reject, commit, delete |
 |---|---|---|
-| Tenant Owner, MSP Admin | yes | yes |
+| Tenant Owner, Admin, MSP Admin | yes | yes |
 | Assessor | yes (read-only) | no |
 | Viewer | no (the document may contain CUI) | no |
 
@@ -202,7 +202,7 @@ so it is saved, exported and assessed with the rest of the text. The panel never
 three explicit options, e.g. "reviewed periodically" -> "reviewed every 90 days". Only the control's public text and the one
 sentence or parameter go to the model. Every option is checked by the server first (no vague words, an explicit value, a
 Selection answered with its own listed choices, a rewrite that keeps the sentence's facts); failures are dropped. A person
-applies an option with one click and can undo it. Endpoint: `POST /api/v1/tenants/:id/ai-assist/parameter-wording` (owner/MSP
+applies an option with one click and can undo it. Endpoint: `POST /api/v1/tenants/:id/ai-assist/parameter-wording` (owner/admin/MSP
 roles; 20 requests a minute per person); `GET .../ai-assist/status` tells the editor whether to offer it.
 
 ## NIST SP 800-53 Rev. 5 (Phase 3)

@@ -105,7 +105,7 @@ The Action1 and SentinelOne endpoints and field names are likewise from vendor d
 
 ## 5. Creating the service token
 
-A TENANT_OWNER or MSP_ADMIN creates it over HTTPS in the app (profile menu, "API Keys & Service Tokens": name, expiry 1 to 730 days, default 90) or with `POST /api/v1/tenants/:tenantId/vm/tokens`. The token is shown once. Through the API alone the default expiry is 365 days. Rotate before it expires. See `docs/VULNERABILITY_MANAGEMENT.md`.
+A TENANT_OWNER, TENANT_ADMIN or MSP_ADMIN creates it over HTTPS in the app (profile menu, "API Keys & Service Tokens": name, expiry 1 to 730 days, default 90) or with `POST /api/v1/tenants/:tenantId/vm/tokens`. The token is shown once. Through the API alone the default expiry is 365 days. Rotate before it expires. See `docs/VULNERABILITY_MANAGEMENT.md`.
 
 ## 6. TLS requirements
 

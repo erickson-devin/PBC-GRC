@@ -58,7 +58,7 @@ boundary and scope, system environment, cloud service providers, version, princi
 
 * `GET /api/v1/ssp-metadata` (program from the `x-program-id` header, default program without it) returns
   `{ metadata, updatedAt, updatedBy }`; `metadata` is `null` while nothing has been saved. Every role can read it.
-* `PUT` on the same path takes `{ metadata, expectedUpdatedAt }` and is for TENANT_OWNER and MSP_ADMIN. `metadata` is the full set
+* `PUT` on the same path takes `{ metadata, expectedUpdatedAt }` and is for TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN. `metadata` is the full set
   of fields to keep (only the twelve known text fields; 255 characters for names, 32 for codes, date and version, 20 000 for the
   boundary, environment, cloud-provider and service-commitments text), `expectedUpdatedAt` is the `updatedAt` last seen (`null` for the first save) and
   is required. A stale stamp is `409 stale_write` (it names no text), a bad body `400 invalid_ssp_metadata` (names the field,
@@ -80,7 +80,7 @@ Assets stay in one tenant-wide inventory. A program can declare which of them li
 * `GET /api/v1/tenants/:tenantId/programs/:id/assets` returns `{ programId, declared, assetIds, summary }`. A program that has
   declared no asset (`declared: false`) uses the **whole inventory**, so existing tenants see no change; its `summary` is then the
   summary of the inventory.
-* `PATCH` on the same path takes `{ add?: string[], remove?: string[] }` (deltas) and is for TENANT_OWNER and MSP_ADMIN. An id that is
+* `PATCH` on the same path takes `{ add?: string[], remove?: string[] }` (deltas) and is for TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN. An id that is
   not in the tenant's inventory is `400 unknown_assets`, a malformed body `400 invalid_asset_ids`, an archived program `409 program_archived`.
 * `GET /api/v1/tenants/:tenantId/programs/asset-memberships` lists the declared ids of every program, archived ones included.
   The Programs page uses it to show an archived program's declared assets read-only (count and host names, on screen only).

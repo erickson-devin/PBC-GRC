@@ -15,7 +15,7 @@ So there are two sets of credentials, and they live in two different places:
 
 | Credential | Issued by | Lives on | Never goes to |
 | --- | --- | --- | --- |
-| PBC-GRC service token (`pbcvm_…`) | PBC-GRC, by a Tenant Owner or MSP Admin | the exporter host, in its env file | the scanner, a ticket, email, a command line |
+| PBC-GRC service token (`pbcvm_…`) | PBC-GRC, by a Tenant Owner, Admin or MSP Admin | the exporter host, in its env file | the scanner, a ticket, email, a command line |
 | Scanner credentials (Wazuh indexer or API user, Action1 API client, SentinelOne API token) | the scanner | the exporter host, in the same env file | PBC-GRC |
 
 What is supported **today**:
@@ -35,9 +35,9 @@ what the first live run must confirm.
 
 1. The app must be reached over **HTTPS** (TLS proxy in front, `TRUST_PROXY` set; `docs/GO_LIVE_CHECKLIST.md` section 3). Over plain
    HTTP the app refuses to create a token and says "Service tokens can only be created over HTTPS".
-2. Sign in as a **Tenant Owner or MSP Admin** of the organization the scanner belongs to.
+2. Sign in as a **Tenant Owner, Admin or MSP Admin** of the organization the scanner belongs to.
 3. Profile menu (top right) → **API Keys & Service Tokens** → **VM service tokens** → New service token:
-   * **Token name**: what will use it, e.g. `Wazuh exporter on scan-host-01`. Owners and admins can see the name.
+   * **Token name**: what will use it, e.g. `Wazuh exporter on scan-host-01`. Owners, admins and MSP admins can see the name.
    * **Expires after**: the screen proposes 90 days; the go-live checklist says 90 to 180. Put the expiry in your calendar.
 4. Press **Create token**. The value (`pbcvm_` + 43 characters) is shown **once**. Copy it straight into the exporter's env
    file (section 2.3 or 3). The screen then shows **Set up the exporter**: pick the scanner, check the PBC-GRC address
@@ -432,7 +432,7 @@ differs. The dry run against a real tenant prints what would be pushed; compare 
 | Item | Location |
 | --- | --- |
 | Service token value | only in the exporter host's env file (`/etc/pbc-vm-exporter/env`, mode 0600) |
-| Service token list, create, revoke | app → profile menu → API Keys & Service Tokens (Owner / MSP Admin, HTTPS) |
+| Service token list, create, revoke | app → profile menu → API Keys & Service Tokens (Owner / Admin / MSP Admin, HTTPS) |
 | Scanner credentials | the same env file: `WAZUH_*`, `ACTION1_*` (client ID and secret) or `S1_*` (API token) variables |
 | Optional egress proxy for Action1 / SentinelOne | `ACTION1_PROXY_URL` / `S1_PROXY_URL` in the env file (vendor calls only, never PBC-GRC) |
 | Where the vendor field names live (one-line fixes) | `pbc_vm_exporter/action1.py` (`ACTION1_PATHS`, `ACTION1_FIELDS`), `pbc_vm_exporter/sentinelone.py` (`S1_PATHS`, `S1_FIELDS`) |
