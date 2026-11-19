@@ -1,0 +1,39 @@
+[
+  {
+    "agent_id": "001",
+    "hostname": "web-01.example",
+    "ip": "192.0.2.21",
+    "os": {"name": "Ubuntu", "version": "22.04"},
+    "configuration": [
+      {
+        "benchmark": {"id": "cis_ubuntu22-04", "title": "CIS Ubuntu Linux 22.04 LTS Benchmark v1.0.0"},
+        "scanner": {"name": "Wazuh SCA"},
+        "started_at": "2026-11-01T02:00:00Z",
+        "scanned_at": "2026-11-01T02:03:30Z",
+        "results": [
+          {"rule_id": "28500", "result": "pass", "title": "Ensure mounting of cramfs filesystems is disabled."},
+          {"rule_id": "28501", "result": "fail", "title": "Ensure SSH root login is disabled."},
+          {"rule_id": "28502", "result": "notapplicable", "title": "Ensure the bootloader password is set."},
+          {"rule_id": "28503", "result": "error", "title": "Ensure the audit log retention is configured."}
+        ]
+      }
+    ]
+  },
+  {
+    "agent_id": "002",
+    "hostname": "db-01.example",
+    "ip": "198.51.100.7",
+    "os": {"name": "Debian", "version": "12"},
+    "configuration": [
+      {
+        "benchmark": {"id": "cis_debian12", "title": "CIS Debian Linux 12 Benchmark v1.0.0"},
+        "scanner": {"name": "Wazuh SCA"},
+        "scanned_at": "2026-11-01T02:10:00Z",
+        "results": [
+          {"rule_id": "29000", "result": "pass", "title": "Ensure address space layout randomization is enabled."},
+          {"rule_id": "29001", "result": "fail", "title": "Ensure core dumps are restricted."}
+        ]
+      }
+    ]
+  }
+]

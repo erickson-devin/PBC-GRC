@@ -1,0 +1,9 @@
+{
+  "data": {
+    "affected_items": [
+      { "id": 9001, "title": "Ensure the server tokens directive is set to Prod.", "result": " FAILED ", "status": "Applicable" },
+      { "id": 9002, "title": "Ensure the trace method is disabled.", "result": "weird", "status": "Applicable" }
+    ],
+    "total_affected_items": 2
+  }
+}

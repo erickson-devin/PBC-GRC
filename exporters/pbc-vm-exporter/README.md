@@ -190,6 +190,7 @@ The two values must be equal; tests and the Node test suite check it. Contract c
 * `--print-contract-sha256` prints the contract hash and exits.
 * `--sample --source action1` and `--sample --source sentinelone` (require `--dry-run`) use the bundled synthetic data (`samples/action1_sample.json`, `samples/sentinelone_sample.json`: `*.example` hostnames, documentation addresses, public CVE ids).
 * `--sample --source xccdf` (requires `--dry-run`) uses the bundled synthetic XCCDF file (`samples/xccdf_sample.xml`, documentation addresses only). The dry-run document then has `"results"` (rule results in the chunk) next to `"findings"` (always 0).
+* `--sample --source wazuh-sca` (requires `--dry-run`) uses the bundled synthetic SCA data (`samples/wazuh_sca_sample.json`: `*.example` hostnames, documentation addresses). The dry-run document has `"results"` next to `"findings"` (always 0), as for `--source xccdf`.
 * `--skipped-report PATH`: on a partial export (exit code 7) the skipped agent ids are written to this file, one per line, created owner-only (0600 on POSIX; on Windows it takes the folder's ACL). Without it nothing names the skipped hosts: the log, stderr and the dry-run document (`"skipped_hosts"` is a count for every source) carry counts only. The file is written only when a host was skipped.
 
 ## 10a. Configuration results from XCCDF / ARF files (`--source xccdf`)
@@ -253,6 +254,37 @@ With Wazuh 4.14 or later the exporter also reads the inventory indices `wazuh-st
 * `check` adds "PBC-GRC accepts inventory" (PASS, or NOTE for an older server) and, when inventory is wanted and the server advertises it (or `PBC_SEND_INVENTORY=true`), "Wazuh inventory indices" (the number of system documents; 0 is a NOTE, never a failure).
 * The log stays counts-only: no agent id, host name, package name or serial number.
 * The inventory contract is part of the vendored contract: a PBC-GRC older than this exporter reports a different contract hash, so `check` fails the "contract matches the server" step (exit 4) until the server is upgraded; pushes keep working.
+
+## 10e. Wazuh SCA results (`--source wazuh-sca`)
+
+`--source wazuh-sca` reads the Security Configuration Assessment (SCA) results of every Wazuh agent from the manager API and pushes them as a source of kind `SCAP`, the same way `--source xccdf` does: each host carries a `configuration` list (one scan per SCA policy) and no findings. It reads the manager API only (port 55000); the indexer is not used and `--mode` is refused.
+
+**Use a separate label.** The SCA run needs its own `PBC_SOURCE_LABEL`, different from the label of the Wazuh vulnerability run. A label belongs to one source kind, and the server refuses a label that already belongs to another one (the vulnerability run is kind `WAZUH`, this run is kind `SCAP`). Use a separate env file for it (see `docs/SCANNER_INTEGRATIONS.md`, section 2.8). It reuses `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD` and `WAZUH_CA_BUNDLE`; there are no new settings.
+
+**Manager API user.** Create a dedicated read-only user on the manager (port 55000), with a role that holds `sca:read` and `agent:read` and nothing else. Do not reuse the administrator account.
+
+Run `pbc-vm-exporter check --source wazuh-sca` to test PBC-GRC and the manager API login, and `pbc-vm-exporter --dry-run --source wazuh-sca` to read Wazuh and print what would be sent. `--sample --dry-run --source wazuh-sca` uses the bundled synthetic data (`samples/wazuh_sca_sample.json`) and sends nothing.
+
+Field map (the Wazuh names are in one table, `SCA_FIELDS` in `pbc_vm_exporter/wazuh_sca.py`):
+
+| PBC-GRC field | Wazuh source |
+| --- | --- |
+| host `agent_id` | agent `id` (`GET /agents`) |
+| host `hostname`, `ip`, `os` | agent `name`, `ip`, `os.name` and `os.version`. The host name is the agent name, so the host matches the asset the vulnerability run created |
+| scan `benchmark.id` | policy `policy_id` (`GET /sca/{agent_id}`), with characters outside `A-Za-z0-9._:-` replaced by `_` |
+| scan `benchmark.title` | policy `name` |
+| scan `scanner.name` | the fixed text `Wazuh SCA` |
+| scan `scanned_at` | policy `end_scan`, else `start_scan`. A policy with neither is skipped |
+| scan `started_at` | policy `start_scan`, only when both times are present |
+| result `rule_id`, `title` | check `id`, `title` (`GET /sca/{agent_id}/checks/{policy_id}`) |
+| result `result` | check `result`: `passed` is `pass`, `failed` is `fail`, `not applicable` is `notapplicable`, anything else is `error`. When `result` is empty and `status` is `Not applicable`, the result is `notapplicable` |
+
+* Times without an offset (`YYYY-MM-DD HH:MM:SS`) are read as **UTC**.
+* A check id that occurs more than once in one policy is folded to its worst outcome (fail, error, unknown, pass).
+* A policy with more than 5000 checks, or a host with more than 20 policies, refuses the whole run (exit 3, nothing is sent), like the XCCDF reader.
+* Agents that never connected are skipped, and so are agents with no SCA policy. If no agent has SCA results the run stops with exit 3 and "nothing was sent".
+* Messages and logs carry counts only: never a host name, an address or an agent id, and a failed request is reported by its error class, not by its URL.
+* Exit codes are the ones in section 11: 2 for a missing `WAZUH_API_URL` or label, 3 for a read error or zero hosts, 4 for a payload that breaks the contract, 5 and 6 for the push.
 
 ## 11. Exit codes
 
@@ -320,6 +352,7 @@ When a Wazuh or PBC-GRC connection fails, the exporter (and `check`) appends a `
 * Keep `PBC_SOURCE_LABEL` stable. A new label is a new source, and the old source's findings never close.
 * One exporter and one label per Wazuh manager or cluster.
 * Wazuh field names are unverified against a running system (see section 4).
+* **`--source wazuh-sca` is unverified against a live Wazuh manager.** The SCA endpoints and field names are assumed from the Wazuh 4.x documentation (section 10e); the first live run must confirm them. SCA checks produce no control suggestions yet: the results are stored and shown as configuration results, but nothing maps them to controls.
 * Action1 and SentinelOne endpoints and field names are unverified against a live tenant (sections 10b and 10c): this support is dry-run tested only until a first live run is recorded.
 * Action1 and SentinelOne export only hosts that have findings (see above), and an Action1 patch is a finding keyed by CVE (or KB id), not an installed-software inventory.
 * A host with more than 5000 findings (a developer machine in SentinelOne, for example) is skipped whole with exit code 7; the number of skipped hosts is on stderr.

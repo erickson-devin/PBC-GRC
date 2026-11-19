@@ -1,6 +1,7 @@
 """Command line entry point. Subcommands: `check` (test the connections) and `init` (create the env file).
 
-Sources: wazuh (default), xccdf (XCCDF / ARF files), action1 and sentinelone (vendor cloud APIs).
+Sources: wazuh (default), xccdf (XCCDF / ARF files), wazuh-sca (Wazuh SCA results from the manager API, sent as
+configuration results), action1 and sentinelone (vendor cloud APIs).
 
 Exit codes: 0 success, 2 configuration, 3 source read error (Wazuh, Action1 or SentinelOne, including a run that reads
 zero hosts) or an unreadable / refused XCCDF / ARF file (including inputs with no results), 4 payload validation, 5 rejected by PBC-GRC, 6 transport or hash mismatch, 7 partial (every POST succeeded but hosts were
@@ -35,6 +36,7 @@ from .transport import make_session
 from .validate import contract_sha256, validate_payload
 from .wazuh_api import ApiReader
 from .wazuh_indexer import INVENTORY_KINDS, IndexerReader, group_documents, group_inventory
+from .wazuh_sca import ScaReader, load_sca_sample
 from .xccdf import expand_inputs, read_xccdf
 
 log = logging.getLogger("pbc_vm_exporter")
@@ -43,7 +45,8 @@ SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "indexer_sample.json
 XCCDF_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "xccdf_sample.xml"
 ACTION1_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "action1_sample.json"
 SENTINELONE_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "sentinelone_sample.json"
-INVENTORY_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "indexer_inventory_sample.json"
+SCA_SAMPLE_PATH = Path(__file__).resolve().parent / "samples" / "wazuh_sca_sample.json"
+INVENTORY_SAMPLE_PATH =Path(__file__).resolve().parent / "samples" / "indexer_inventory_sample.json"
 
 KINDS = {"wazuh": "WAZUH", "action1": "ACTION1", "sentinelone": "SENTINELONE"}
 VENDOR_NAMES = {"action1": "Action1", "sentinelone": "SentinelOne"}
@@ -77,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source", choices=SOURCES, default="wazuh",
         help="wazuh (default): read Wazuh vulnerability state; xccdf: read XCCDF / ARF result files (needs --input); "
+        "wazuh-sca: read Wazuh SCA results from the manager API (needs its own PBC_SOURCE_LABEL); "
         "action1: read missing updates from Action1; sentinelone: read vulnerabilities from SentinelOne",
     )
     parser.add_argument(
@@ -196,8 +200,27 @@ def _report_skipped(args: argparse.Namespace, skipped: list[str], stderr: TextIO
 def _run_xccdf(args: argparse.Namespace, cfg: Config, stdout: TextIO, stderr: TextIO) -> int:
     """Configuration results from XCCDF / ARF files. Nothing here names a file, host, address or agent id."""
     paths = [XCCDF_SAMPLE_PATH] if args.sample else expand_inputs(args.input)
-    hosts = read_xccdf(paths)
-    label = cfg.source_label or "sample-scap"
+    return _send_config_hosts(args, cfg, read_xccdf(paths), cfg.source_label or "sample-scap", ScanFileError, stdout, stderr)
+
+
+def _run_wazuh_sca(args: argparse.Namespace, cfg: Config, stdout: TextIO, stderr: TextIO) -> int:
+    """Wazuh SCA results from the manager API. Nothing here names a host, address or agent id."""
+    if args.sample:
+        hosts = load_sca_sample(SCA_SAMPLE_PATH)
+    else:
+        if not cfg.api_url:
+            raise ConfigError("WAZUH_API_URL is required for --source wazuh-sca")
+        hosts = ScaReader(cfg.api_url, cfg.api_user, cfg.api_password, cfg.wazuh_verify, cfg.timeout).fetch_hosts()
+    if not hosts:
+        raise WazuhReadError("Wazuh returned zero hosts with SCA results; nothing was sent")
+    return _send_config_hosts(args, cfg, hosts, cfg.source_label or "sample-wazuh-sca", WazuhReadError, stdout, stderr)
+
+
+def _send_config_hosts(
+    args: argparse.Namespace, cfg: Config, hosts: list[dict], label: str, empty_error: type[ExporterError],
+    stdout: TextIO, stderr: TextIO,
+) -> int:
+    """Builds, validates and sends (or, with --dry-run, prints) SCAP payloads for configuration-only hosts."""
     payloads, skipped = build_config_payloads(
         hosts, label=label, max_hosts=cfg.max_hosts, max_bytes=cfg.max_bytes
     )
@@ -219,7 +242,7 @@ def _run_xccdf(args: argparse.Namespace, cfg: Config, stdout: TextIO, stderr: Te
     if skipped:
         log.warning("%d host(s) skipped whole: too large to send in one payload", len(skipped))
     if not payloads:
-        raise ScanFileError("no host could be exported; nothing was sent")
+        raise empty_error("no host could be exported; nothing was sent")
 
     if args.dry_run:
         out = {
@@ -266,6 +289,8 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
     flt.secrets = cfg.secrets()
     if args.source == "xccdf":
         return _run_xccdf(args, cfg, stdout, stderr)
+    if args.source == "wazuh-sca":
+        return _run_wazuh_sca(args, cfg, stdout, stderr)
 
     vendor = args.source in VENDOR_SOURCES  # vendor cloud sources: their own error types and zero-host messages
     send_inventory = args.source == "wazuh" and wants_inventory(args, cfg)
@@ -488,11 +513,13 @@ def _run_check(args: argparse.Namespace, environ: Mapping[str, str], stdout: Tex
         urls.append(cfg.action1.base_url)
     if cfg.sentinelone is not None:
         urls.append(cfg.sentinelone.console_url)
-    if args.source != "wazuh":
+    if args.source not in ("wazuh", "wazuh-sca"):
         emit("SKIP", "Wazuh checks", f"not used by --source {args.source}")
     else:
-        mode = cfg.wazuh_mode
-        if mode == "api":
+        mode = "api" if args.source == "wazuh-sca" else cfg.wazuh_mode  # SCA is read from the manager API only
+        if args.source == "wazuh-sca":
+            emit("SKIP", "Wazuh indexer", "not used by --source wazuh-sca")
+        elif mode == "api":
             emit("SKIP", "Wazuh indexer", "api mode does not use it")
         elif not cfg.indexer_url:
             if mode == "indexer":
@@ -638,7 +665,7 @@ def main(
         if args.print_contract_sha256:
             stdout.write(contract_sha256() + "\n")
             return 0
-        if args.mode and args.source in VENDOR_SOURCES:
+        if args.mode and (args.source in VENDOR_SOURCES or args.source == "wazuh-sca"):
             fail("--mode applies to --source wazuh only")
             return 2
         if args.source != "xccdf" and args.input:

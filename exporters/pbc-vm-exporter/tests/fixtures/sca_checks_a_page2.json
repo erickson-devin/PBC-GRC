@@ -1,0 +1,9 @@
+{
+  "data": {
+    "affected_items": [
+      { "id": 28502, "title": "Ensure the bootloader password is set.", "result": "not applicable", "status": "Applicable" },
+      { "id": 28503, "title": "Ensure the audit log retention is configured.", "result": "", "status": "Not applicable" }
+    ],
+    "total_affected_items": 4
+  }
+}

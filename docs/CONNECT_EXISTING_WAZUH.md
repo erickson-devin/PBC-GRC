@@ -46,6 +46,10 @@ Send this list before the visit.
    Copy `root-ca.pem` to the host that runs the exporter **before** you run `init`: `init` refuses a CA file that does
    not exist. TLS verification cannot be turned off in the exporter, so a private CA must be supplied.
 6. **SSH access to the Wazuh host**, if a tunnel is the plan (section 3).
+7. **Only if you also want the Wazuh SCA results** (`--source wazuh-sca`, unverified against a live manager): a
+   dedicated read-only **manager API user** on port 55000 (not the indexer user), with a role that holds `sca:read` and
+   `agent:read` and nothing else. This run needs its own env file and its own `PBC_SOURCE_LABEL`, different from the
+   vulnerability run (see `docs/SCANNER_INTEGRATIONS.md`, section 2.8).
 
 ## 2. Test that the indexer is reachable
 

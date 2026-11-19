@@ -1,0 +1,9 @@
+{
+  "data": {
+    "affected_items": [
+      { "id": 28500, "title": "Ensure mounting of cramfs filesystems is disabled.", "result": "passed", "status": "Applicable", "compliance": [{ "key": "cis", "value": "1.1.1" }] },
+      { "id": 28501, "title": "Ensure SSH root login is disabled.", "result": "failed", "status": "Applicable" }
+    ],
+    "total_affected_items": 4
+  }
+}
