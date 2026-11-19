@@ -26,7 +26,7 @@ export interface PoamWorkspaceProps {
 
 /**
  * The POA&M tab: the control entries (#278) and the vulnerability items (#274). Control entries are read-only here; a vulnerability
- * item can be edited by a Tenant Owner or MSP Admin (#297). The exports always hold every open entry.
+ * item can be edited by a write role (Tenant Owner, Admin or MSP Admin) (#297). The exports always hold every open entry.
  */
 export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework, frameworkControls, vm, vmEntries, programs, onExportCsv, onNavigateAway }) => {
   const { setSelectedControlId, setActiveTab } = useAssessment();

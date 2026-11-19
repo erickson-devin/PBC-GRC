@@ -8,7 +8,7 @@ import { cmmcGuideObjectiveId } from '../../data/cmmcGuide/displayId';
 import { errorMessage } from '../../utils/errors';
 
 /**
- * Shown to an owner / MSP admin when this browser held an objective narrative that differs from the one the server already has
+ * Shown to a write role (Tenant Owner, Admin or MSP Admin) when this browser held an objective narrative that differs from the one the server already has
  * (found by the one-time move of the browser's narratives to the server). Both texts are shown side by side as plain text (never
  * markup); the user keeps one. Nothing is overwritten until a button is pressed, and the narrative stays in this browser until then.
  */

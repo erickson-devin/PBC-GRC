@@ -73,7 +73,7 @@ export const ComplianceOverview: React.FC = () => {
       {/* SSP gate: the SPRS score is locked until a System Security Plan exists; point the user at the SSP + POA&M */}
       {sprsResult && <SspGateBanner sprs={sprsResult} />}
 
-      {/* A tenant that exists only in this browser: offer to move it to the server (owners only) */}
+      {/* A tenant that exists only in this browser: offer to move it to the server (write roles only) */}
       {canEdit && <LegacyTenantNotice tenant={currentTenant} />}
 
       {/* The objective update set some answers back to In progress: say so where the score that dropped is shown (#287) */}

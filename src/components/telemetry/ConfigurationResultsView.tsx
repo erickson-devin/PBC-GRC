@@ -1,6 +1,6 @@
 /**
  * Configuration results (#103): the configuration (XCCDF / ARF) scans the server received, and the control statuses they suggest for the
- * active program. Everybody reads; a Tenant Owner / MSP Admin may record a suggested status, one control at a time, after confirming it.
+ * active program. Everybody reads; a write role (Tenant Owner, Admin or MSP Admin) may record a suggested status, one control at a time, after confirming it.
  * Nothing here is kept in browser storage or logged: the server is the source of truth.
  */
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';

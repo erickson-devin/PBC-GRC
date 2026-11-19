@@ -177,7 +177,7 @@ export const SoftwareInventoryPanel: React.FC = () => {
           {!canEdit && (
             <div role="status" className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">
               <Lock className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true" />
-              <span>Read-only: only a Tenant Owner or MSP Admin can change the software inventory.</span>
+              <span>Read-only: only a Tenant Owner or Admin can change the software inventory.</span>
             </div>
           )}
 

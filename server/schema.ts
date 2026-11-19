@@ -256,6 +256,9 @@ export const TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_tenant_invitations_tenant ON tenant_invitations(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_tenant_invitations_email ON tenant_invitations(tenant_id, email);
+  -- Older databases have the CHECK from the CREATE TABLE above, which predates TENANT_ADMIN: widen it from the same role list.
+  ALTER TABLE tenant_invitations DROP CONSTRAINT IF EXISTS tenant_invitations_role_check;
+  ALTER TABLE tenant_invitations ADD CONSTRAINT tenant_invitations_role_check CHECK (role IN (${roleList}));
 
   -- CMMC scoping: the assets that make up the assessment boundary, each with its CMMC asset category. Server-owned so the
   -- SSP boundary summary and scoring do not depend on one person's browser.

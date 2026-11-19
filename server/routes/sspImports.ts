@@ -27,7 +27,7 @@ import { logDetail } from '../ssp/logDetail';
 
 /**
  * SSP import, mounted at /api/v1/tenants/:tenantId/ssp-imports AFTER requireWriteRole: uploading, reviewing and committing
- * are writes and so are limited to a Tenant Owner / MSP Admin. An Assessor can READ everything (jobs, suggestions, the
+ * are writes and so are limited to a Tenant Owner, Admin or MSP Admin. An Assessor can READ everything (jobs, suggestions, the
  * document) but cannot change or commit anything; a Viewer sees none of it (the document may contain CUI).
  */
 const router = Router({ mergeParams: true });

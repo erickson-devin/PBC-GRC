@@ -92,7 +92,7 @@ function main() {
 
   // SW11
   assert(softwareEmptyMessage({ total: 0, shown: 0, canEdit: true }) === 'No software recorded yet. Add the applications in your assessment boundary, tenant-wide or per asset, and record whether each is approved.', 'SW11 empty, can edit');
-  assert(softwareEmptyMessage({ total: 0, shown: 0, canEdit: false }) === 'No software recorded yet. A Tenant Owner or MSP Admin can add entries.', 'SW11 empty, read-only');
+  assert(softwareEmptyMessage({ total: 0, shown: 0, canEdit: false }) === 'No software recorded yet. A Tenant Owner or Admin can add entries.', 'SW11 empty, read-only');
   assert(softwareEmptyMessage({ total: 4, shown: 0, canEdit: true }) === 'No software entries match your search and filter.', 'SW11 no match');
 
   // SW12
@@ -104,7 +104,7 @@ function main() {
   assert(msg({ reason: 'asset_not_found' }) === 'That asset is not in this tenant. Choose another asset or Tenant-wide. Nothing was saved.', 'SW13 asset_not_found');
   assert(msg({ reason: 'not_found' }) === 'This software entry was removed meanwhile. The list has been refreshed.', 'SW13 not_found');
   assert(msg({ reason: 'limit' }) === 'This organization already has 5,000 software entries, the most it can hold. Remove entries you no longer need, then try again.', 'SW13 limit');
-  assert(msg({ status: 403 }) === 'Only a Tenant Owner or MSP Admin can change the software inventory. Nothing was saved.', 'SW13 403');
+  assert(msg({ status: 403 }) === 'Only a Tenant Owner or Admin can change the software inventory. Nothing was saved.', 'SW13 403');
   assert(msg({ status: 0 }) === 'The server could not be reached. Nothing was saved; try again.', 'SW13 unreachable');
   assert(msg({ status: 500 }) === 'The software entry could not be saved. Try again.' && msg(new Error('Acme Corp secret'), 'delete') === 'The software entry could not be removed. Try again.', 'SW13 fallbacks');
   assert(!msg(new Error('Acme Corp secret')).includes('Acme'), 'SW13 never echoes the error text');

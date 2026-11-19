@@ -1,20 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import {
   X,
   Mail,
   Building2,
-  Shield,
   Calendar,
   Sparkles,
   CheckCircle2,
-  Lock,
   Clock,
   CalendarPlus,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { ErrorNotice } from '../common/ErrorNotice';
-import { errorMessage } from '../../utils/errors';
 import { Tenant, TenantInvitation, TenantRole } from '../../types/tenant';
+import { ROLE_LABELS } from '../../utils/roles';
+import { radioGroupKeyDown } from '../../utils/a11y';
+import { MEMBER_ROLE_ORDER, ROLE_OPTION_HINTS, teamActionErrorMessage } from '../../data/roleView';
+import { ROLE_STYLES } from '../common/RoleBadge';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 interface EditInvitationModalProps {
@@ -33,6 +34,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
   onSaved,
 }) => {
   const { updateInvitation, extendInvitationExpiration } = useTenant();
+  const uid = useId();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [email, setEmail] = useState('');
@@ -118,8 +120,7 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
         onClose();
       }, 700);
     } catch (err: unknown) {
-      console.error('Failed to update invitation:', err);
-      setSubmitError(errorMessage(err) || 'Could not update the invitation.');
+      setSubmitError(teamActionErrorMessage(err, null, 'invite', 'Could not update the invitation.'));
       setIsSubmitting(false);
     }
   };
@@ -199,67 +200,38 @@ export const EditInvitationModal: React.FC<EditInvitationModalProps> = ({
 
             {/* Target Role Selector */}
             <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              <span id={`${uid}-role`} className="block text-xs font-bold uppercase tracking-wider text-slate-300">
                 Enclave Access Role & Permissions *
-              </label>
+              </span>
 
-              <div className="grid grid-cols-3 gap-2.5">
-                {/* TENANT_OWNER */}
-                <button
-                  type="button"
-                  onClick={() => setRole('TENANT_OWNER')}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    role === 'TENANT_OWNER'
-                      ? 'bg-purple-500/15 border-purple-500/50 ring-1 ring-purple-500/40 text-white'
-                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-purple-300 mb-1">
-                    <Shield className="w-3.5 h-3.5 text-purple-400" />
-                    <span>Tenant Owner</span>
-                  </div>
-                  <p className="text-xs text-slate-400 line-clamp-2">
-                    Full enclave admin & team control
-                  </p>
-                </button>
-
-                {/* ASSESSOR */}
-                <button
-                  type="button"
-                  onClick={() => setRole('ASSESSOR')}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    role === 'ASSESSOR'
-                      ? 'bg-cyan-500/15 border-cyan-500/50 ring-1 ring-cyan-500/40 text-white'
-                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-300 mb-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Assessor</span>
-                  </div>
-                  <p className="text-xs text-slate-400 line-clamp-2">
-                    Evaluate controls & upload evidence
-                  </p>
-                </button>
-
-                {/* VIEWER */}
-                <button
-                  type="button"
-                  onClick={() => setRole('VIEWER')}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    role === 'VIEWER'
-                      ? 'bg-slate-800 border-slate-600 ring-1 ring-slate-500 text-white'
-                      : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 mb-1">
-                    <Lock className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Viewer</span>
-                  </div>
-                  <p className="text-xs text-slate-400 line-clamp-2">
-                    Read-only audit observer
-                  </p>
-                </button>
+              <div role="radiogroup" aria-labelledby={`${uid}-role`} onKeyDown={radioGroupKeyDown} className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {MEMBER_ROLE_ORDER.filter(r => r !== 'MSP_ADMIN' || invitation.role === 'MSP_ADMIN').map(r => {
+                  const selected = role === r;
+                  const { Icon, iconText, cardSelected } = ROLE_STYLES[r];
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      tabIndex={selected ? 0 : -1}
+                      onClick={() => setRole(r)}
+                      className={`p-3 rounded-xl border text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+                        selected
+                          ? `${cardSelected} text-white`
+                          : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-200 mb-1">
+                        <Icon className={`w-3.5 h-3.5 ${iconText}`} aria-hidden="true" />
+                        <span>{ROLE_LABELS[r]}</span>
+                      </div>
+                      <p className="text-xs text-slate-400 line-clamp-2">
+                        {ROLE_OPTION_HINTS[r]}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

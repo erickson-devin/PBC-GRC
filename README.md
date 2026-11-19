@@ -18,7 +18,7 @@ Type II, and the HIPAA Security Rule.
   and the export dialog lists the gaps before you export.
 * **SSP import.** Upload an existing SSP (PDF or Word) and review which controls it describes. Reading is rule-based, or
   with a local Ollama model when one is installed. Suggestions are staged for a person to accept; nothing changes a control
-  until a Tenant Owner or MSP Admin commits it. [docs/SSP_IMPORT.md](docs/SSP_IMPORT.md)
+  until a Tenant Owner, Admin or MSP Admin commits it. [docs/SSP_IMPORT.md](docs/SSP_IMPORT.md)
 * **Vulnerability and configuration results.** Scanner data arrives through a push model: an exporter inside the enclave
   reads your scanner and posts to the platform with a service token. Vulnerability findings get lifecycle tracking,
   remediation deadlines and draft POA&M items; configuration-scan results (XCCDF / ARF from any SCAP-capable scanner)

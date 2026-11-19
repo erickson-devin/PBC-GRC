@@ -13,7 +13,7 @@ export interface UseSoftwareItems {
   reload: () => Promise<void>;
   /** The software inventory lives on the server: a tenant stored only in this browser has none. */
   supported: boolean;
-  /** TENANT_OWNER / MSP_ADMIN: the only roles whose changes the server accepts. */
+  /** The write roles (TENANT_OWNER, TENANT_ADMIN, MSP_ADMIN): the only roles whose changes the server accepts. */
   canEdit: boolean;
 }
 

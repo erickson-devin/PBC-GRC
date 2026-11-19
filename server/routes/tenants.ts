@@ -16,7 +16,7 @@ import { requireWriteRole } from '../middleware/roleGuard';
 import { isPlatformAdminUser } from '../auth/platformAdmin';
 import { recordAccountEventBestEffort } from '../auth/accountEvents';
 import { invalidateMfaRequirement } from '../auth/mfaEnforcement';
-import { ensureActiveTenant } from './tenantGuards';
+import { ensureActiveTenant, roleNotGrantableBody } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
 import tenantSoftwareRouter from './software';
@@ -26,7 +26,7 @@ import vmRouter from './vm';
 import programsRouter from './programs';
 import { optionalProgramContext, programContext } from '../middleware/programContext';
 import { clearUserProgramDefault } from '../userProgramDefaults';
-import { isTenantRole } from '../../src/utils/roles';
+import { TENANT_ROLES, canChangeMemberRole, canManageRole, canRemoveMember, isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
 import { validateStackProfile } from '../../src/data/stackProfileSchema';
@@ -262,9 +262,11 @@ router.get('/:tenantId/members', async (req: Request, res: Response): Promise<vo
  * POST /api/v1/tenants/:tenantId/members
  * Adds a user to the tenant, or changes the role of an existing member (upsert on user + tenant).
  * Body: { userId, email, name?, role }.
- * Caller must be a TENANT_OWNER or MSP_ADMIN (enforced by requireWriteRole). Additional rules:
- *   - only an MSP_ADMIN may grant or change the MSP_ADMIN role (no self-service privilege escalation);
- *   - nobody may change their own role.
+ * Caller must be a TENANT_OWNER, TENANT_ADMIN or MSP_ADMIN (enforced by requireWriteRole). Additional rules:
+ *   - the caller may only set a role it can grant and only change a member whose current role it can manage
+ *     (canChangeMemberRole): an Admin manages Assessors and Viewers, an Owner everything but MSP_ADMIN, an MSP_ADMIN all;
+ *   - nobody may change their own role;
+ *   - the last TENANT_OWNER cannot be demoted.
  */
 router.post('/:tenantId/members', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -281,7 +283,7 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
     return;
   }
   if (!isTenantRole(role)) {
-    res.status(400).json({ error: 'Invalid role: expected TENANT_OWNER, MSP_ADMIN, ASSESSOR or VIEWER' });
+    res.status(400).json({ error: 'Invalid role: expected one of ' + TENANT_ROLES.join(', ') });
     return;
   }
   if (name !== undefined && (typeof name !== 'string' || name.length > 255)) {
@@ -295,10 +297,17 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
   }
 
   const existingRole = await getTenantRole(userId, tenantId);
-  const callerIsMspAdmin = req.tenantRole === 'MSP_ADMIN';
-  if ((role === 'MSP_ADMIN' || existingRole === 'MSP_ADMIN') && !callerIsMspAdmin) {
-    res.status(403).json({ error: 'Forbidden: only an MSP Admin can grant or change the MSP Admin role' });
+  // The caller's role is req.tenantRole, never the body: the new role and the member's current role must both be ones it may manage.
+  if (!canChangeMemberRole(req.tenantRole, existingRole, role)) {
+    res.status(403).json(roleNotGrantableBody(req.tenantRole, existingRole && !canManageRole(req.tenantRole, existingRole) ? existingRole : role));
     return;
+  }
+  if (existingRole === 'TENANT_OWNER' && role !== 'TENANT_OWNER') {
+    const owners = (await listTenantMembers(tenantId)).filter((m) => m.role === 'TENANT_OWNER');
+    if (owners.length <= 1) {
+      res.status(409).json({ error: 'The last Tenant Owner cannot be demoted. Promote another member first.', code: 'last_owner' });
+      return;
+    }
   }
 
   try {
@@ -330,7 +339,8 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
 
 /**
  * DELETE /api/v1/tenants/:tenantId/members/:userId
- * Removes a member. Owner / MSP admin only. You cannot remove yourself, only an MSP admin can remove an MSP admin,
+ * Removes a member. Write roles only. You cannot remove yourself, you can only remove a member whose role you can manage
+ * (canRemoveMember: an Admin cannot remove an Owner or another Admin, only an MSP admin removes an MSP admin),
  * and the last TENANT_OWNER cannot be removed (the tenant would be left with nobody able to manage it).
  */
 router.delete('/:tenantId/members/:userId', async (req: Request, res: Response): Promise<void> => {
@@ -353,14 +363,14 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
       res.status(404).json({ error: 'Member not found' });
       return;
     }
-    if (targetRole === 'MSP_ADMIN' && req.tenantRole !== 'MSP_ADMIN') {
-      res.status(403).json({ error: 'Forbidden: only an MSP Admin can remove an MSP Admin' });
+    if (!canRemoveMember(req.tenantRole, targetRole)) {
+      res.status(403).json(roleNotGrantableBody(req.tenantRole, targetRole));
       return;
     }
     if (targetRole === 'TENANT_OWNER') {
       const owners = (await listTenantMembers(tenantId)).filter((m) => m.role === 'TENANT_OWNER');
       if (owners.length <= 1) {
-        res.status(409).json({ error: 'The last Tenant Owner cannot be removed. Promote another member first.' });
+        res.status(409).json({ error: 'The last Tenant Owner cannot be removed. Promote another member first.', code: 'last_owner' });
         return;
       }
     }
@@ -378,7 +388,7 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
 /**
  * PATCH /api/v1/tenants/:tenantId
  * Updates the tenant's settings (name, CAGE code, SAM status, system name/owner, industry, frameworks).
- * Owner / MSP admin only (requireWriteRole). The assessment program (primaryFramework / enabledFrameworks) can only be
+ * Write roles only (requireWriteRole: Owner, Admin, MSP admin). The assessment program (primaryFramework / enabledFrameworks) can only be
  * changed by a platform administrator: a tenant owner cannot widen their own tenant's scope.
  */
 router.patch('/:tenantId', async (req: Request, res: Response): Promise<void> => {

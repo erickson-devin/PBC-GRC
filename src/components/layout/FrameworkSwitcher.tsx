@@ -10,7 +10,7 @@ import type { OverlayFilters } from '../../types/framework';
 
 /**
  * The "Overlays" menu of the header: the four operational overlays that tailor which controls apply, for NIST SP 800-53
- * programs only. Server-backed tenant: saved with the active program, changed by owners and admins after a confirmation, and
+ * programs only. Server-backed tenant: saved with the active program, changed by a write role (Tenant Owner, Admin or MSP Admin) after a confirmation, and
  * recorded on the server. Browser-only tenant: saved in this browser for this organization.
  */
 export const FrameworkSwitcher: React.FC = () => {

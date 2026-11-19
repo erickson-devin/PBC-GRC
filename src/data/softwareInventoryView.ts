@@ -55,7 +55,7 @@ export function softwareEmptyMessage({ total, canEdit }: { total: number; shown:
   if (total === 0) {
     return canEdit
       ? 'No software recorded yet. Add the applications in your assessment boundary, tenant-wide or per asset, and record whether each is approved.'
-      : 'No software recorded yet. A Tenant Owner or MSP Admin can add entries.';
+      : 'No software recorded yet. A Tenant Owner or Admin can add entries.';
   }
   return 'No software entries match your search and filter.';
 }
@@ -79,7 +79,7 @@ export function softwareErrorMessage(err: unknown, action: 'save' | 'delete'): s
     default:
       break;
   }
-  if (e.status === 403) return 'Only a Tenant Owner or MSP Admin can change the software inventory. Nothing was saved.';
+  if (e.status === 403) return 'Only a Tenant Owner or Admin can change the software inventory. Nothing was saved.';
   if (e.status === 0) return 'The server could not be reached. Nothing was saved; try again.';
   return action === 'save' ? 'The software entry could not be saved. Try again.' : 'The software entry could not be removed. Try again.';
 }

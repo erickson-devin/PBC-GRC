@@ -10,7 +10,7 @@ import type { HandoverSelection } from '../../data/storage/offboardingPrograms';
 
 /** The membership check answers 403 for an administrator who is not a member of the tenant. */
 export const NOT_MEMBER_MESSAGE =
-  'You are not a member of this tenant, so its implementation notes cannot be read. Add yourself to the tenant (or ask an owner to export) before generating the handover package.';
+  'You are not a member of this tenant, so its implementation notes cannot be read. Add yourself to the tenant before generating the handover package.';
 
 interface OffboardingProgramDialogProps {
   tenant: Tenant;

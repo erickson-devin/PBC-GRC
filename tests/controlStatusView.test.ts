@@ -62,7 +62,7 @@ const c1 = metMismatchNoticeCopy(1, w);
 const c3 = metMismatchNoticeCopy(3, r);
 assert(c0.heading === 'Met controls with open objectives.' && c0.count === 'None left: every control recorded as Met now has its objectives Met or Not applicable.', 'N1a: zero');
 assert(c1.count === '1 control is recorded as Met, but not every objective is Met or Not applicable.' && c1.explain === ex && c1.action === 'Open each one to answer its objectives, or set it to the status its objectives add up to.', 'N1b: one, write role');
-assert(c3.count === '3 controls are recorded as Met, but not every objective is Met or Not applicable.' && c3.action === 'A Tenant Owner or MSP Admin can update them.', 'N1c: three, read-only role');
+assert(c3.count === '3 controls are recorded as Met, but not every objective is Met or Not applicable.' && c3.action === 'A Tenant Owner or Admin can update them.', 'N1c: three, read-only role');
 const list = [{ controlId: 'A', total: 2, open: 1, rolledUp: 'IN_PROGRESS' as const }, { controlId: 'B', total: 3, open: 3, rolledUp: 'NOT_STARTED' as const }];
 const kept = metMismatchesInView(list, new Set(['B']));
 assert(kept.length === 1 && kept[0].controlId === 'B' && list.length === 2, 'N2: ids outside the baseline are dropped, the input is untouched');

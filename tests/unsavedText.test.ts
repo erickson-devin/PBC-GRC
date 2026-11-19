@@ -26,6 +26,7 @@ import {
   INVITE_PREVIEW_SERVER_ERROR,
   INVITE_PREVIEW_UNREACHABLE,
   invitePreviewErrorMessage,
+  inviteMfaMode,
 } from '../src/utils/invitePreview';
 
 /**
@@ -302,6 +303,14 @@ assert(invitePreviewErrorMessage({ status: 500 }) === INVITE_PREVIEW_SERVER_ERRO
 assert(
   [{ status: 400 }, { status: 403 }, new Error('x'), null, undefined, 's', { status: '500' }].every((e) => invitePreviewErrorMessage(e) === INVITE_PREVIEW_FAILED),
   'U2-21 any other failure gets the generic text'
+);
+assert(
+  inviteMfaMode({ mfaMode: 'all' }) === 'all' && inviteMfaMode({ mfaMode: 'privileged' }) === 'privileged' && inviteMfaMode({ mfaMode: 'off' }) === 'off',
+  'U2-22 the preview mfaMode is read as all, privileged or off'
+);
+assert(
+  [{}, { mfaMode: 'maybe' }, { mfaMode: 1 }, { mfaMode: null }, null, undefined, 'all'].every((p) => inviteMfaMode(p) === null),
+  'U2-23 a missing or unrecognised mfaMode (an older server) is unknown: null'
 );
 assert(!invitePreviewErrorMessage({ status: 500, message: 'tok-secret' }).includes('tok-secret'), 'U2-22 the server message is never echoed');
 assert(

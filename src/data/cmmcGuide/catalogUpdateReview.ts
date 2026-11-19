@@ -162,7 +162,7 @@ export function catalogUpdateNoticeCopy(
     heading: `The assessment objectives were updated to the ${catalogRevLabel(o.rev)}.`,
     count: `${n} ${n === 1 ? 'answer' : 'answers'} on ${m} ${m === 1 ? 'control' : 'controls'} ${n === 1 ? 'needs' : 'need'} another look.`,
     explain: 'Answers that were Met or Not applicable on an objective whose wording changed were set to In progress. Narratives and evidence were kept.',
-    action: o.canEdit ? 'Check each answer against the new wording and set its status again.' : 'A Tenant Owner or MSP Admin can set the status again.',
+    action: o.canEdit ? 'Check each answer against the new wording and set its status again.' : 'A Tenant Owner or Admin can set the status again.',
     orphanNote:
       s.orphans === 0
         ? null

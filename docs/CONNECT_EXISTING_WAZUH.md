@@ -119,7 +119,7 @@ The server refuses service tokens over plain http: creating the token, `whoami` 
 
 ## 5. Create the service token in PBC-GRC
 
-1. Sign in as a Tenant Owner or MSP Admin of the organization (over HTTPS, or the development setting above).
+1. Sign in as a Tenant Owner, Admin or MSP Admin of the organization (over HTTPS, or the development setting above).
 2. Profile menu, **API Keys & Service Tokens**, **VM service tokens**, New service token. Name it after its use (for
    example `Wazuh exporter on <pbc-grc-host>`) and pick an expiry (the screen proposes 90 days).
 3. Press **Create token** and copy the value now: it is shown **once** and starts with `pbcvm_`.

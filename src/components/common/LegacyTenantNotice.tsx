@@ -40,7 +40,7 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
           {moved.evidenceFailed > 0 ? ` Warning: ${moved.evidenceFailed} evidence file${moved.evidenceFailed === 1 ? '' : 's'} could not be uploaded; ${moved.evidenceFailed === 1 ? 'it stays' : 'they stay'} in this browser and ${moved.evidenceFailed === 1 ? 'is' : 'are'} listed under "Only in this browser" in the evidence vault.` : ''}
           {moved.controlsFailed > 0 ? ` Warning: ${moved.controlsFailed} control answer${moved.controlsFailed === 1 ? ' could' : 's could'} not be saved to the server; ${moved.controlsFailed === 1 ? 'it stays' : 'they stay'} in this browser and you can retry from the control matrix.` : ''}
           {movedLoweredNote(moved.controlsLowered)}
-          {moved.registryFieldsFailed > 0 ? ' Warning: the stack profile or the boundary text could not be saved to the server; it stays in this browser and is sent again the next time an owner opens the tenant.' : ''}
+          {moved.registryFieldsFailed > 0 ? ' Warning: the stack profile or the boundary text could not be saved to the server; it stays in this browser and is sent again the next time a Tenant Owner or Admin opens the tenant.' : ''}
         </span>
       </div>
     );

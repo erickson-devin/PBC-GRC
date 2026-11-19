@@ -3,6 +3,8 @@ import { previewInvitation, redeemInvitation } from '../invitations';
 import { authOnlyMiddleware } from '../middleware/authMiddleware';
 import { recordAccountEventBestEffort } from '../auth/accountEvents';
 import { invalidateMfaRequirement } from '../auth/mfaEnforcement';
+import { getMfaRequirement } from '../auth/localAuth';
+import type { MfaRequirement } from '../auth/mfaPolicy';
 import { createRateLimiter } from '../middleware/rateLimit';
 import { errorMessage } from '../../src/utils/errors';
 
@@ -36,7 +38,15 @@ router.post('/preview', async (req: Request, res: Response): Promise<void> => {
       res.status(404).json({ error: 'Invitation not found' });
       return;
     }
-    res.json({ invitation: preview });
+    // The install-wide two-step-verification mode (not a secret, and nothing else about the tenant) so the accept page can say
+    // whether the invited role needs it. A misconfigured MFA_REQUIRED only leaves it out; the page then treats it as unknown.
+    let mfaMode: MfaRequirement | undefined;
+    try {
+      mfaMode = getMfaRequirement();
+    } catch {
+      mfaMode = undefined;
+    }
+    res.json({ invitation: { ...preview, ...(mfaMode ? { mfaMode } : {}) } });
   } catch (err: unknown) {
     console.error('[Invites API] preview failed:', errorMessage(err));
     res.status(500).json({ error: 'Failed to look up the invitation' });

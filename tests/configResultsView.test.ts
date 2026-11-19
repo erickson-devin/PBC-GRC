@@ -108,7 +108,7 @@ function main() {
       msg('archived') === 'AC.L1-3.1.1 was not saved: this program is archived and its controls are read-only.' &&
       msg('unreachable') === 'The server could not be reached, so AC.L1-3.1.1 was not saved.' &&
       msg('failed') === 'AC.L1-3.1.1 was not saved. Try again, or set the status in the control matrix.' &&
-      msg('read_only') === 'AC.L1-3.1.1 was not saved: only a Tenant Owner or MSP Admin can record a control status.' &&
+      msg('read_only') === 'AC.L1-3.1.1 was not saved: only a Tenant Owner or Admin can record a control status.' &&
       msg('not_loaded') === 'AC.L1-3.1.1 was not saved: the controls are not loaded from the server yet.',
     'V5p applyResultMessage, all seven outcomes'
   );

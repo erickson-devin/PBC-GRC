@@ -14,7 +14,7 @@ import { VmFindingsList } from './VmFindingsList';
 interface AssetScannerDataDialogProps {
   asset: EnclaveAsset;
   tenantId: string;
-  /** A Tenant Owner or MSP Admin: can copy a reported package to the software list; everything else is read-only. */
+  /** A write role (Tenant Owner, Admin or MSP Admin): can copy a reported package to the software list; everything else is read-only. */
   canEdit: boolean;
   assets: EnclaveAsset[];
   assetsLoading: boolean;

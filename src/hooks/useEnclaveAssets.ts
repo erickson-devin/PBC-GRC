@@ -15,7 +15,7 @@ export interface UseEnclaveAssets {
   reload: () => Promise<void>;
   backend: AssetBackend;
   mode: AssetBackendMode;
-  /** TENANT_OWNER / MSP_ADMIN: the only roles whose changes the server accepts. */
+  /** The write roles (TENANT_OWNER, TENANT_ADMIN, MSP_ADMIN): the only roles whose changes the server accepts. */
   canEdit: boolean;
 }
 

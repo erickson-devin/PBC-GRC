@@ -170,7 +170,7 @@ interface AssessmentContextType {
   sspMetadataConflict: { fields: SspField[] } | null;
   /** Settles that conflict: 'server' keeps the server's details, 'browser' saves this browser's to the server. Rejects when the save fails. */
   resolveSspMetadataConflict: (choice: 'browser' | 'server') => Promise<void>;
-  /** True while this browser holds SSP details that are not on the server and this user cannot save them (an owner has to open the program). */
+  /** True while this browser holds SSP details that are not on the server and this user cannot save them (a Tenant Owner or Admin has to open the program). */
   sspMetadataNeedsOwner: boolean;
   uploadEvidence: (controlId: string, file: File, description?: string) => Promise<EvidenceItem>;
   /** Resolves true when the evidence was removed, false when it was refused (no permission, or the server could not delete it). */
@@ -190,13 +190,13 @@ interface AssessmentContextType {
   applyAllObjectiveTemplatesForControl: (controlId: string) => void;
   linkEvidenceToObjective: (objectiveId: string, evidenceId: string) => void;
   recalculateControlStatusFromObjectives: (controlId: string) => ControlStatus;
-  /** True while this browser holds objective narratives that are not on the server and this user cannot move them (an owner has to open the organization). */
+  /** True while this browser holds objective narratives that are not on the server and this user cannot move them (a Tenant Owner or Admin has to open the organization). */
   objectivesNeedOwner: boolean;
   /** True once the objectives on screen are the server's (browser-only tenants: always). Until then a cached status must not be flagged against them. */
   objectivesReady: boolean;
   /** The save state of each objective answer saved in this program (saving, saved, failed); ids, statuses and times only. */
   objectiveSaves: ObjectiveSaveMap;
-  /** Objective ids whose cached narrative differs from the server's (owner / MSP only; empty for everybody else). */
+  /** Objective ids whose cached narrative differs from the server's (write roles only; empty for everybody else). */
   objectivePendingReview: string[];
   /** The server's narrative for an objective ('' when it has none). */
   serverObjectiveNarrative: (objectiveId: string) => string;
@@ -897,8 +897,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [getObjectivesForControl]);
 
   // -------------------------------------------------------------------------
-  // Objectives held by the server. A server-backed tenant's objective status, narrative and evidence links live on the server (owner /
-  // MSP write, everybody reads); this browser keeps only status, evidence links and times for offline reading. Every writer updates the
+  // Objectives held by the server. A server-backed tenant's objective status, narrative and evidence links live on the server (Tenant Owner, Admin and
+  // MSP Admin write, everybody reads); this browser keeps only status, evidence links and times for offline reading. Every writer updates the
   // screen at once and saves through the audited server call: a failed save is reported and rolled back. A browser-only tenant keeps
   // everything in its own cache.
   // -------------------------------------------------------------------------
@@ -922,7 +922,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Merge the server's objectives into the state, only for the scope on screen and only into a state of that scope. The server's
   // narratives reach the state only once the marker is set (or is set in the same step because nothing is left to upload): before that
   // the cache is the only copy of its narratives, and the cache would keep the server's too. Cached objectives that are not on the
-  // server yet are uploaded first (owner / MSP), or left alone with a notice (everybody else).
+  // server yet are uploaded first (write roles), or left alone with a notice (everybody else).
   useEffect(() => {
     if (!currentTenant.serverBacked || !liveObjectives || liveScopeKey !== programScope || stateScope !== programScope) return;
     const reconcileOptions = { canWrite: canEdit, now: new Date().toISOString(), seedFor: seedObjective, isKnownControl };
@@ -1115,7 +1115,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const serverObjectiveNarrative = useCallback((objectiveId: string): string => liveObjectives?.[objectiveId]?.narrative ?? '', [liveObjectives]);
 
   const resolveObjectiveConflict = useCallback(async (objectiveId: string, choice: 'browser' | 'server'): Promise<void> => {
-    if (!canEdit) throw new Error('Read-Only access: only a tenant owner can resolve this.');
+    if (!canEdit) throw new Error('Read-only access: only a Tenant Owner or Admin can resolve this.');
     const s = writableState();
     if (!s) throw new Error('The program on screen changed; open it again.');
     const serverText = liveObjectivesRef.current?.[objectiveId]?.narrative ?? '';
@@ -1455,7 +1455,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // -------------------------------------------------------------------------
   // SSP metadata held by the server (#84). A server-backed program's system name, boundary text, environment and the other SSP details
-  // live on the server (owner / MSP write, everybody reads); this browser keeps them only until the one-time upload has run. The edit
+  // live on the server (write roles write, everybody reads); this browser keeps them only until the one-time upload has run. The edit
   // shows at once and is saved a moment after the last keystroke, one save at a time, each carrying the stamp of the last answer.
   // The values can be CUI: no message, notice or log line below ever contains one (field names at most).
   // -------------------------------------------------------------------------
@@ -1561,7 +1561,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Merge the server's SSP details into the state, only for the scope on screen and only into a state of that scope. They reach the
   // state's cache only through the marker: before it is set, the cache is the only copy of anything it holds. Cache text the server
-  // lacks is uploaded first (owner / MSP), or left alone with a notice (everybody else); a field set differently on both sides asks
+  // lacks is uploaded first (write roles), or left alone with a notice (everybody else); a field set differently on both sides asks
   // the user which to keep and changes nothing until they choose.
   useEffect(() => {
     if (!currentTenant.serverBacked || !liveSspMetadata || liveScopeKey !== programScope || stateScope !== programScope) return;
@@ -1607,7 +1607,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [currentTenant.serverBacked, liveSspMetadata, liveScopeKey, programScope, stateScope, state.sspMetadataMigratedAt, canEdit, sspStaleScope, sspKey, programId, updateLiveSspMetadata]);
 
   const resolveSspMetadataConflict = useCallback(async (choice: 'browser' | 'server'): Promise<void> => {
-    if (!canEdit) throw new Error('Read-Only access: only a tenant owner can resolve this.');
+    if (!canEdit) throw new Error('Read-only access: only a Tenant Owner or Admin can resolve this.');
     const s = stateRef.current;
     const live = liveSspMetadataRef.current;
     if (programScopeKey(s.tenantId, s.programId) !== programScope || !live) throw new Error('The program on screen changed; open it again.');

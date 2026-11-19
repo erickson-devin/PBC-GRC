@@ -65,7 +65,7 @@ export function metMismatchNoticeCopy(count: number, o: { canEdit: boolean }): {
     explain: 'They count as Met in the scores, the Met count and the SSP until their status matches their objectives. Nothing was changed automatically.',
     action: o.canEdit
       ? 'Open each one to answer its objectives, or set it to the status its objectives add up to.'
-      : 'A Tenant Owner or MSP Admin can update them.',
+      : 'A Tenant Owner or Admin can update them.',
   };
 }
 

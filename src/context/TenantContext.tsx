@@ -11,7 +11,7 @@ import {
 } from '../types/tenant';
 import { errorMessage } from '../utils/errors';
 import { mayLoadServerData, outcomeFromSyncError, type SyncOutcome } from '../data/sessionVerification';
-import { canRoleWrite, isTenantRole } from '../utils/roles';
+import { canRoleWrite, isOwnerLevel, isTenantRole, rolesGrantableBy } from '../utils/roles';
 import {
   applyRoleSync,
   isValidCageCode,
@@ -248,6 +248,10 @@ interface TenantContextType {
   currentRole: TenantRole;
   canEdit: boolean;
   canManageTenant: boolean;
+  /** TENANT_OWNER and MSP_ADMIN: what an Admin (TENANT_ADMIN) may not do (delete programs, manage owners and other Admins). */
+  isOwnerLevel: boolean;
+  /** The roles the signed-in user may give to an invitation or a member in this tenant (see rolesGrantableBy). Stable between renders. */
+  grantableRoles: TenantRole[];
   isMspUser: boolean;
   isSuperAdmin: boolean;
   needsOnboarding: boolean;
@@ -295,7 +299,7 @@ interface TenantContextType {
   inviteStaffMember: (
     tenantId: string,
     email: string,
-    role: 'ASSESSOR' | 'VIEWER'
+    role: Exclude<TenantRole, 'MSP_ADMIN'>
   ) => Promise<{ invitation: TenantInvitation; inviteUrl: string }>;
   revokeInvitation: (invitationId: string) => Promise<void>;
   resendInvitation: (invitationId: string) => Promise<{ inviteUrl: string }>;
@@ -370,10 +374,12 @@ interface TenantContextType {
   deleteProgram: (programId: string) => Promise<void>;
   /** The signed-in user's own landing program (null clears it). It takes effect the next time they sign in; any role. */
   setMyDefaultProgram: (programId: string | null) => Promise<void>;
-  /** The organization default program (TENANT_OWNER and MSP_ADMIN). */
+  /** The organization default program (every write role: TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN). */
   setOrganizationDefaultProgram: (programId: string) => Promise<void>;
-  /** Who may create, edit, archive and delete programs (TENANT_OWNER and MSP_ADMIN). */
+  /** Who may create, edit and archive programs (TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN). */
   canManagePrograms: boolean;
+  /** Who may delete a program (TENANT_OWNER and MSP_ADMIN; an Admin may not). */
+  canDeletePrograms: boolean;
   isSyncing: boolean;
   syncError: string | null;
   /** State of the last sync of the tenant list (and the user's roles in it) with GET /api/v1/tenants. */
@@ -642,7 +648,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // A user who already has tenants on the server does not need the first-run wizard
         if (server.length > 0) setIsOnboardingModalOpen(false);
         setTenantSync({ status: 'synced', lastSyncedAt: new Date().toISOString(), error: null, outcome: 'verified' });
-        // #84: a stack profile only this browser holds is sent to the server once (owners and MSP admins; the server keeps the first one
+        // #84: a stack profile only this browser holds is sent to the server once (write roles: Tenant Owner, Admin and MSP Admin; the server keeps the first one
         // until somebody edits it). Nothing is awaited: the sync result does not depend on it, and a failure retries on the next load.
         const cachedTenants = liveTenantsRef.current;
         for (const s of server) {
@@ -733,7 +739,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [syncTenantsFromServer]);
 
   /**
-   * Loads a server-backed tenant's members and (for owners / MSP admins) pending invitations from the server and shows
+   * Loads a server-backed tenant's members and (for write roles: Tenant Owner, Admin, MSP Admin) pending invitations from the server and shows
    * them in the team list. Anyone may see who is on the team; invitations are administrative, so only admins fetch them.
    */
   const teamEpoch = useRef(0);
@@ -1422,11 +1428,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return isSuperAdminUser(currentUser) ? 'TENANT_OWNER' : 'VIEWER';
   }, [currentUser, currentTenant.id]);
 
-  // Only TENANT_OWNER and MSP_ADMIN may edit; ASSESSOR and VIEWER are read-only.
+  // TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN may edit; ASSESSOR and VIEWER are read-only.
   const canEdit = useMemo(() => canRoleWrite(currentRole), [currentRole]);
 
-  // Creating, editing, archiving and deleting programs: TENANT_OWNER and MSP_ADMIN (the server enforces it)
+  // Creating, editing and archiving programs: TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN; deleting one is owner-level only (the server enforces both)
   const canManagePrograms = canEdit;
+  const canDeletePrograms = isOwnerLevel(currentRole);
+  const grantableRoles = useMemo(() => rolesGrantableBy(currentRole), [currentRole]);
 
   // #84: the boundary text and stack profile this browser holds move to the server once, then leave the browser's registry cache.
   // The stack profile goes up in syncTenantsFromServer; the boundary text becomes the default program's boundary summary, and only
@@ -1491,9 +1499,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toggleNonNetworkedOverlay = useCallback((seen?: OverlayFilters): Promise<void> => toggleOverlayFilter('nonNetworkedOnly', seen), [toggleOverlayFilter]);
 
-  const canManageTenant = useMemo(() => {
-    return currentRole === 'TENANT_OWNER' || currentRole === 'MSP_ADMIN';
-  }, [currentRole]);
+  const canManageTenant = useMemo(() => canRoleWrite(currentRole), [currentRole]);
 
   // A server-backed tenant's team and invitations live on the server: load them when it becomes active (or the role changes)
   useEffect(() => {
@@ -2025,12 +2031,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [syncTenantsFromServer]);
 
   /**
-   * Invite an assessor or viewer staff member to the specified tenant enclave
+   * Invite a staff member to the specified tenant enclave (the server refuses a role the caller may not grant)
    */
   const inviteStaffMember = useCallback(async (
     tenantId: string,
     email: string,
-    role: 'ASSESSOR' | 'VIEWER'
+    role: Exclude<TenantRole, 'MSP_ADMIN'>
   ): Promise<{ invitation: TenantInvitation; inviteUrl: string }> => {
     // Invitations are issued and verified by the server. A browser-only tenant must be moved to the server first.
     const target = liveTenantsRef.current.find(t => t.id === tenantId);
@@ -2205,6 +2211,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
+    isOwnerLevel: isOwnerLevel(currentRole),
+    grantableRoles,
+    canDeletePrograms,
     isMspUser,
     isSuperAdmin,
     needsOnboarding,
@@ -2295,6 +2304,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     currentRole,
     canEdit,
     canManageTenant,
+    grantableRoles,
+    canDeletePrograms,
     isMspUser,
     isSuperAdmin,
     needsOnboarding,

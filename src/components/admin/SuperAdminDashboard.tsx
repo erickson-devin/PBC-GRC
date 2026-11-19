@@ -39,6 +39,7 @@ import { Tenant, TenantInvitation } from '../../types/tenant';
 import { frameworkLabel, frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
 import { ApiClient, ApiError, type LocalAccount } from '../../services/apiClient';
 import { ErrorNotice } from '../common/ErrorNotice';
+import { RoleBadge } from '../common/RoleBadge';
 import { NewTenantModal } from './NewTenantModal';
 import { AccountEventsPanel } from './AccountEventsPanel';
 import { SystemUseNoticeSection } from './SystemUseNoticeSection';
@@ -1169,19 +1170,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-200 text-xs">{inv.tenantName}</div>
-                        {inv.role === 'TENANT_OWNER' ? (
-                          <span className="badge inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                            <Shield className="w-3 h-3" /> Tenant Owner
-                          </span>
-                        ) : inv.role === 'ASSESSOR' ? (
-                          <span className="badge inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                            <CheckCircle2 className="w-3 h-3" /> Assessor
-                          </span>
-                        ) : (
-                          <span className="badge inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50">
-                            <Lock className="w-3 h-3" /> Viewer
-                          </span>
-                        )}
+                        <RoleBadge role={inv.role} className="mt-1" />
                       </td>
 
                       <td className="py-3.5 px-4">

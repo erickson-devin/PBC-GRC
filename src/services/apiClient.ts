@@ -23,6 +23,7 @@ import {
   parseServerMembers,
 } from '../data/teamSync';
 import type { TenantRole } from '../types/tenant';
+import type { InviteMfaMode } from '../utils/invitePreview';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
@@ -221,6 +222,8 @@ export interface InvitePreview {
   /** The tenant's assessment program as the server holds it. */
   primaryFramework: string;
   enabledFrameworks: string[];
+  /** Which of the tenant's sign-ins this invitation requires a second factor for (the server's preview route returns it). */
+  mfaMode?: InviteMfaMode;
 }
 
 /** Authenticated JSON request that throws ApiError (with a user-safe message) on any failure. */
@@ -554,7 +557,7 @@ export const ApiClient = {
     return Array.isArray(data?.jobs) ? data.jobs : [];
   },
 
-  /** POST /api/v1/tenants/:id/ssp-imports (multipart). Owner / MSP admin only. */
+  /** POST /api/v1/tenants/:id/ssp-imports (multipart). Write roles only (Tenant Owner, Admin, MSP Admin). */
   async sspUpload(tenantId: string, file: File, framework: SspImportFramework, analysis: SspAnalysisMode = 'rules', baseline?: SspBaseline, programId?: string | null): Promise<SspImportJob> {
     const ref = ApiClient.getSessionRef();
     if (!ref) throw new ApiError(401, 'You need to be signed in to do that.');
@@ -631,7 +634,7 @@ export const ApiClient = {
     return parseProgramList(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs${query}`, { tenantId }));
   },
 
-  /** POST /api/v1/tenants/:id/programs. Owner / MSP admin only. Framework and baseline cannot be changed afterwards. */
+  /** POST /api/v1/tenants/:id/programs. Write roles only (Tenant Owner, Admin, MSP Admin). Framework and baseline cannot be changed afterwards. */
   async createProgram(tenantId: string, input: ProgramInput): Promise<Program> {
     const checked = validateProgramInput(input, { tenantFrameworks: [String(input.framework)], existing: [] });
     const body = programCreateBody(checked.value);
@@ -669,7 +672,7 @@ export const ApiClient = {
     await authedJson('PUT', '/me/default-program', { tenantId, body: { programId } });
   },
 
-  /** PUT .../programs/:programId/default: the organization default. Owner / MSP admin only; an archived program is refused. */
+  /** PUT .../programs/:programId/default: the organization default. Write roles only (Tenant Owner, Admin, MSP Admin); an archived program is refused. */
   async setOrganizationDefaultProgram(tenantId: string, programId: string): Promise<void> {
     await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/default`, { tenantId, body: {} });
   },
@@ -681,7 +684,7 @@ export const ApiClient = {
     return data;
   },
 
-  /** PUT .../programs/:programId/vm-target (owner / MSP admin): makes the program the VM target. Existing items stay in the previous target (`openPoamInPrevious`). Refresh the programs after success. */
+  /** PUT .../programs/:programId/vm-target (write roles: Tenant Owner, Admin, MSP Admin): makes the program the VM target. Existing items stay in the previous target (`openPoamInPrevious`). Refresh the programs after success. */
   async setVmTargetProgram(tenantId: string, programId: string): Promise<{ previousId: string | null; openPoamInPrevious: number }> {
     const data = await authedJson<{ previousId?: string | null; openPoamInPrevious?: number }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/vm-target`, { tenantId, body: {} });
     return { previousId: typeof data?.previousId === 'string' ? data.previousId : null, openPoamInPrevious: typeof data?.openPoamInPrevious === 'number' ? data.openPoamInPrevious : 0 };
@@ -707,7 +710,7 @@ export const ApiClient = {
     return parseProgramAssets(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}/assets`, { tenantId }));
   },
 
-  /** PATCH .../programs/:programId/assets with ids to add and remove. Owner / MSP admin only; an archived program refuses it. */
+  /** PATCH .../programs/:programId/assets with ids to add and remove. Write roles only (Tenant Owner, Admin, MSP Admin); an archived program refuses it. */
   async updateProgramAssets(tenantId: string, programId: string, change: { add?: string[]; remove?: string[] }): Promise<ProgramAssets> {
     const body: { add?: string[]; remove?: string[] } = {};
     if (change.add?.length) body.add = change.add;
@@ -722,7 +725,7 @@ export const ApiClient = {
     return parseServerMembers(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/members`, { sessionRef, tenantId }));
   },
 
-  /** POST /api/v1/tenants/:id/members: sets (or changes) an existing person's role. Owner / MSP admin only. */
+  /** POST /api/v1/tenants/:id/members: sets (or changes) an existing person's role. Write roles may call it; the server limits which roles each caller may grant or change (an Admin only Assessor and Viewer). */
   async setMemberRole(tenantId: string, member: { userId: string; email: string; name?: string; role: TenantRole }, sessionRef?: string): Promise<void> {
     await authedJson('POST', `/tenants/${encodeURIComponent(tenantId)}/members`, { sessionRef, tenantId, body: member });
   },
@@ -741,7 +744,7 @@ export const ApiClient = {
     return { assets, summary: summarizeScope(assets) };
   },
 
-  /** POST /api/v1/tenants/:id/assets (owner / MSP admin). */
+  /** POST /api/v1/tenants/:id/assets (write roles: Tenant Owner, Admin, MSP Admin). */
   async createAsset(tenantId: string, asset: AssetInput, sessionRef?: string): Promise<EnclaveAsset> {
     const data = await authedJson<{ asset?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/assets`, { sessionRef, tenantId, body: asset });
     return requireAsset(data?.asset);
@@ -764,7 +767,7 @@ export const ApiClient = {
     return parseServerSoftwareItems(data?.items);
   },
 
-  /** POST /api/v1/tenants/:id/software (owner / MSP admin). */
+  /** POST /api/v1/tenants/:id/software (write roles: Tenant Owner, Admin, MSP Admin). */
   async createSoftwareItem(tenantId: string, input: SoftwareItemInput, sessionRef?: string): Promise<SoftwareItem> {
     const data = await authedJson<{ item?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/software`, { sessionRef, tenantId, body: input });
     return requireSoftwareItem(data?.item);
@@ -900,7 +903,7 @@ export const ApiClient = {
     return data.item;
   },
 
-  /** PATCH /api/v1/tenants/:id/vm/poam/:itemId for the program (x-program-id), owner / MSP admin: edits owner, mitigation, scheduled completion or status. `expectedUpdatedAt` is the item's updatedAt as loaded (409 reason `stale_write` when it changed). Other reasons: `finding_still_open`, `mitigation_required`, `invalid_poam_patch`, `program_archived`. Never cached in browser storage. */
+  /** PATCH /api/v1/tenants/:id/vm/poam/:itemId for the program (x-program-id), write roles (Tenant Owner, Admin, MSP Admin): edits owner, mitigation, scheduled completion or status. `expectedUpdatedAt` is the item's updatedAt as loaded (409 reason `stale_write` when it changed). Other reasons: `finding_still_open`, `mitigation_required`, `invalid_poam_patch`, `program_archived`. Never cached in browser storage. */
   async updateVmPoamItem(tenantId: string, itemId: string, patch: VmPoamItemPatch, expectedUpdatedAt: string, programId?: string | null): Promise<{ item: VmPoamRow; changed: boolean }> {
     const data = await authedJson<{ item?: VmPoamRow; changed?: boolean }>('PATCH', `/tenants/${encodeURIComponent(tenantId)}/vm/poam/${encodeURIComponent(itemId)}`, { tenantId, programId, body: { ...patch, expectedUpdatedAt } });
     if (!data?.item || typeof data.item !== 'object' || typeof data.changed !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
@@ -914,7 +917,7 @@ export const ApiClient = {
     return data.events;
   },
 
-  /** GET /api/v1/tenants/:id/vm/tokens (owner / MSP admin): the organization's service tokens, newest first. Never includes a token value. */
+  /** GET /api/v1/tenants/:id/vm/tokens (write roles: Tenant Owner, Admin, MSP Admin): the organization's service tokens, newest first. Never includes a token value. */
   async listVmTokens(tenantId: string): Promise<VmServiceToken[]> {
     const data = await authedJson<{ tokens?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/tokens`, { tenantId });
     if (!Array.isArray(data?.tokens)) throw new ApiError(502, 'The server returned an unexpected response.');
@@ -949,7 +952,7 @@ export const ApiClient = {
     return data.runs as VmRun[];
   },
 
-  /** GET /api/v1/tenants/:id/invites (owner / MSP admin). Never includes tokens. */
+  /** GET /api/v1/tenants/:id/invites (write roles: Tenant Owner, Admin, MSP Admin; the server limits which roles each caller may grant or manage). Never includes tokens. */
   async listInvites(tenantId: string, sessionRef?: string): Promise<ServerInvitation[]> {
     return parseServerInvitations(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/invites`, { sessionRef, tenantId }));
   },
@@ -1120,7 +1123,7 @@ export const ApiClient = {
 
   /**
    * PATCH /api/v1/tenants/:tenantId
-   * Updates tenant settings. Owner / MSP admin only. Throws ApiError.
+   * Updates tenant settings. Write roles only (Tenant Owner, Admin, MSP Admin); the licensed frameworks only a platform administrator may change. Throws ApiError.
    */
   async updateTenant(tenantId: string, patch: TenantSettingsInput, sessionRef?: string): Promise<void> {
     const ref = sessionRef ?? this.getSessionRef();
@@ -1485,7 +1488,7 @@ export const ApiClient = {
 
   /**
    * PUT /api/v1/ssp-metadata
-   * Replaces the program's SSP metadata (owner / MSP only); expectedUpdatedAt is null for the first write, else the stamp last read
+   * Replaces the program's SSP metadata (write roles only: Tenant Owner, Admin, MSP Admin); expectedUpdatedAt is null for the first write, else the stamp last read
    */
   async putSspMetadata(tenantId: string, metadata: SspMetadataFields, expectedUpdatedAt: string | null, programId?: string | null): Promise<SspMetadataRecord & { changed: boolean }> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata`, {
@@ -1499,7 +1502,7 @@ export const ApiClient = {
 
   /**
    * PUT /api/v1/objectives/:objectiveId
-   * Saves one objective (owner / MSP only); a field left out keeps its stored value, an empty narrative clears it
+   * Saves one objective (write roles only: Tenant Owner, Admin, MSP Admin); a field left out keeps its stored value, an empty narrative clears it
    */
   async putObjective(tenantId: string, input: ObjectiveInput & { expectedUpdatedAt?: string | null }, programId?: string | null): Promise<{ objective: ObjectiveRecord; changed: boolean }> {
     const { objectiveId, ...body } = input;

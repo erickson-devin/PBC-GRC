@@ -14,7 +14,7 @@ import { retryableNotes } from '../../data/controlSave';
  * same two-step inline confirmation) and is shown only to users who can edit a configured tenant.
  *
  * For a server-backed tenant it shows the other notice instead: a viewer or assessor whose browser still holds objective narratives
- * the server does not have (an owner moves them by opening the organization), and mounts the dialog where owners settle conflicts.
+ * the server does not have (a write role moves them by opening the organization), and mounts the dialog where a write role settles conflicts.
  */
 export const BrowserOnlyNotesBanner: React.FC = () => {
   const { currentTenant, canEdit, activeProgram, migrateLocalTenantToServer } = useTenant();

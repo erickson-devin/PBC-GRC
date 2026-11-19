@@ -1,7 +1,7 @@
 /**
  * Asset lists an earlier move left in this browser under a tenant id the registry no longer holds (#112).
  *
- * Nothing links such a list to a tenant, so the start-up scrub skips it. A Tenant Owner or MSP Admin may claim one (it
+ * Nothing links such a list to a tenant, so the start-up scrub skips it. A write role (Tenant Owner, Admin or MSP Admin) may claim one (it
  * then follows the #92 retry path into the current tenant) or discard it. Ids and counts only: an asset's name, host or
  * address is never read into a result or handed to the ledger. Pure module: the storage and the ledger writer are
  * injected. Every function is defensive and never throws.

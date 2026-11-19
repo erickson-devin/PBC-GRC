@@ -12,7 +12,7 @@ import {
 import type { VmServiceToken } from '../../types/vm';
 
 /**
- * VM service tokens (#190): list, create (name and 1-730 days), one-time copy and revoke with confirmation, for a Tenant Owner or MSP Admin of a
+ * VM service tokens (#190): list, create (name and 1-730 days), one-time copy and revoke with confirmation, for a Tenant Owner, Admin or MSP Admin of a
  * server-backed organization. The new token value is held in state until the person confirms they stored it: it is never written to the console,
  * the audit ledger, storage, history or a URL, and it appears only in the read-only field and the copy call. Names are rendered as text.
  */

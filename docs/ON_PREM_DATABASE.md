@@ -91,7 +91,7 @@ the password step succeeded; the proof works once.
 | Value | Who must hold a second factor |
 | --- | --- |
 | `all` (default, also when empty) | every local account |
-| `privileged` | platform administrators (`PLATFORM_ADMIN_EMAILS` and the first administrator), tenant owners (`TENANT_OWNER`) and MSP administrators (`MSP_ADMIN`) |
+| `privileged` | platform administrators (`PLATFORM_ADMIN_EMAILS` and the first administrator), tenant owners (`TENANT_OWNER`), tenant admins (`TENANT_ADMIN`) and MSP administrators (`MSP_ADMIN`) |
 | `off` | nobody is required to. Anyone who has already enrolled is still asked for a code at sign-in |
 
 Any other value stops the server at startup. With `off` outside development or test (`NODE_ENV` unset counts as
@@ -107,8 +107,8 @@ everyone signs in again.
 **First administrator and invitations.** The first-time setup wizard enrols the first administrator inline (a platform
 administrator is always privileged), unless `MFA_REQUIRED=off`: the wizard returns the enrolment step instead of a session
 and continues once the first code is confirmed. A person who registers through an invitation is asked to enrol straight away
-when `MFA_REQUIRED` requires it for them (always under `all`; under `privileged` when the invited role is `TENANT_OWNER` or
-`MSP_ADMIN`).
+when `MFA_REQUIRED` requires it for them (always under `all`; under `privileged` when the invited role is `TENANT_OWNER`,
+`TENANT_ADMIN` or `MSP_ADMIN`).
 
 **Lockout.** A wrong or replayed code counts like a wrong password: five consecutive failures lock the account for 15
 minutes (the same counter as password failures). The password step no longer resets that counter on success when a second
@@ -399,6 +399,28 @@ afterwards, and it is all intended.
   Roll back as in step 4: restore the dump, then set `IMAGE_TAG` back.
 
 No environment variable is added or changed, and the image and database versions are the same as in 0.4.0.
+
+### Upgrading from 0.5.0 to 0.6.0
+
+Take the backup in step 1 below first. The schema change applies itself at startup; what follows is what people will see
+afterwards, and it is all intended.
+
+* **A new role, Admin (`TENANT_ADMIN`).** An Admin can do all compliance work (controls, objectives, evidence, SSP details,
+  assets, SSP imports, vulnerability data), create, edit and archive programs, invite and manage Assessors and Viewers, and
+  create and revoke scanner service tokens. An Admin cannot grant, change or remove an Owner or another Admin, and cannot
+  delete a program: those need a Tenant Owner or an MSP Admin. Under `MFA_REQUIRED=privileged` an Admin is required to hold a
+  second factor, like an Owner.
+* **Existing members keep their roles.** Nothing is changed for any current Owner, MSP Admin, Assessor or Viewer. To give a
+  teammate write access after the upgrade, invite them as Admin, or change an existing member's role in Team settings.
+* **The last Tenant Owner can no longer be demoted.** Removing the last Owner was already refused; changing their role to
+  another one is now refused too (409). Promote another member to Owner first.
+* **The schema change.** The role check on `tenant_invitations` is dropped and added again at startup so that it accepts
+  Admin invitations, and the role check on `tenant_users` now includes `TENANT_ADMIN`. No rows are changed.
+* **No going back without the backup.** An older image re-creates the four-role check on `tenant_users` at startup, which fails
+  as soon as one member holds Admin, so it will not start on that database. Roll back as in step 4: restore the dump, then
+  set `IMAGE_TAG` back. Or, before rolling back, change every Admin to another role and revoke the pending Admin invitations.
+
+No environment variable is added or changed.
 
 What makes an upgrade safe is the release routine around it:
 

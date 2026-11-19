@@ -51,7 +51,7 @@ export const VM_POAM_COPY = {
   refreshFailed: 'The vulnerability items could not be refreshed. The list below may be out of date.',
   openPrograms: 'Open Programs & Boundaries',
   notInExports: 'Not in exports',
-  readOnlyNote: 'Only a Tenant Owner or MSP Admin can edit POA&M items.',
+  readOnlyNote: 'Only a Tenant Owner or Admin can edit POA&M items.',
 };
 
 const SEVERITY_RANK: Record<VmSeverity, number> = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, UNKNOWN: 2, LOW: 1 };

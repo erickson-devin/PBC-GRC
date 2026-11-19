@@ -204,7 +204,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
         <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
           {!isEdit && createsOrganizationDefault(programs) && (
             <p className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
-              This program becomes the organization default: people land on it when they sign in unless they choose their own default. A tenant owner or MSP administrator can change it later, and it can be archived like any other program.
+              This program becomes the organization default: people land on it when they sign in unless they choose their own default. A Tenant Owner or Admin can change it later, and it can be archived like any other program.
             </p>
           )}
           <div>
@@ -318,7 +318,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
             <fieldset className="space-y-2 rounded-xl border border-slate-800 p-3" disabled={isSaving} aria-describedby={`${fieldId('scoping')}-help`}>
               <legend className="px-1 text-xs font-medium text-slate-300">Operational overlays (optional)</legend>
               <p id={`${fieldId('scoping')}-help`} className="text-xs text-slate-400">
-                Tick the ones that describe this system. Each removes the controls that cannot apply to it, for everyone who works in this program, and lowers its control count. A Tenant Owner or MSP Admin can change them later from the Overlays menu in the header; every change is recorded.
+                Tick the ones that describe this system. Each removes the controls that cannot apply to it, for everyone who works in this program, and lowers its control count. A Tenant Owner or Admin can change them later from the Overlays menu in the header; every change is recorded.
               </p>
               {OVERLAY_KEYS.map((key) => {
                 const piiLocked = key === 'noPiiProcessing' && privacyBaseline;

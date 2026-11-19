@@ -727,7 +727,7 @@ async function run() {
       { userId: X.id, email: X.email, name: 'Both' }
     );
     await upsertTenantMember('tenant-mfa-a', { userId: X.id, email: X.email, name: 'Both', role: 'ASSESSOR' });
-    const member = async (email: string, role: 'VIEWER' | 'MSP_ADMIN') => {
+    const member = async (email: string, role: 'VIEWER' | 'MSP_ADMIN' | 'TENANT_ADMIN') => {
       const a = await mk(email);
       await upsertTenantMember('tenant-mfa-a', { userId: a.id, email, name: email, role });
       return a;
@@ -736,21 +736,22 @@ async function run() {
     const M = await member('msp14@mfa.mil', 'MSP_ADMIN');
     const E = await member('enrolled14@mfa.mil', 'VIEWER');
     await enrol(E);
+    const A = await member('admin14@mfa.mil', 'TENANT_ADMIN');
     const P = await mk('stored14@mfa.mil');
     await addPlatformAdmin({ userId: P.id, email: P.email });
     const Pc = await mk('pc@mfa.mil');
     const L = await mk('loner14@mfa.mil');
-    const users: Record<string, Acct> = { V, O, M, P, Pc, L, X, E };
+    const users: Record<string, Acct> = { V, O, M, P, Pc, L, X, E, A };
     const expected: Record<string, Record<string, string>> = {
-      off: { V: 'session', O: 'session', M: 'session', P: 'session', Pc: 'session', L: 'session', X: 'session', E: 'verify' },
-      all: { V: 'enrol', O: 'enrol', M: 'enrol', P: 'enrol', Pc: 'enrol', L: 'enrol', X: 'enrol', E: 'verify' },
-      privileged: { V: 'session', O: 'enrol', M: 'enrol', P: 'enrol', Pc: 'enrol', L: 'session', X: 'enrol', E: 'verify' },
+      off: { V: 'session', O: 'session', M: 'session', P: 'session', Pc: 'session', L: 'session', X: 'session', E: 'verify', A: 'session' },
+      all: { V: 'enrol', O: 'enrol', M: 'enrol', P: 'enrol', Pc: 'enrol', L: 'enrol', X: 'enrol', E: 'verify', A: 'enrol' },
+      privileged: { V: 'session', O: 'enrol', M: 'enrol', P: 'enrol', Pc: 'enrol', L: 'session', X: 'enrol', E: 'verify', A: 'enrol' },
     };
     for (const mode of ['off', 'all', 'privileged']) {
       setMode(mode);
       const got: Record<string, string> = {};
       for (const [name, acct] of Object.entries(users)) got[name] = outcome(await login(acct.email));
-      assert(JSON.stringify(got) === JSON.stringify(expected[mode]), `MFA_REQUIRED=${mode}: viewer, owner, MSP admin, stored admin, configured admin, no-tenant user, mixed roles, enrolled user`, got);
+      assert(JSON.stringify(got) === JSON.stringify(expected[mode]), `MFA_REQUIRED=${mode}: viewer, owner, MSP admin, stored admin, configured admin, no-tenant user, mixed roles, enrolled user, Admin`, got);
     }
     setMode('yes');
     assert((await login(V.email)).status === 503, 'MFA_REQUIRED=yes (invalid) -> login 503, never a session');

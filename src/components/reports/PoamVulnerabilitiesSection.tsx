@@ -37,7 +37,7 @@ export interface PoamVulnerabilitiesSectionProps {
   framework: string;
   targetProgramName: string | null;
   headingRef?: React.Ref<HTMLHeadingElement>;
-  /** Tenant Owner and MSP Admin: the Edit button; other roles get View. */
+  /** The write roles (Tenant Owner, Admin, MSP Admin): the Edit button; other roles get View. */
   canEdit?: boolean;
   /** Without it the rows have no Edit / View button. */
   itemApi?: VmPoamItemApi;
