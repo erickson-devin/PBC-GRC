@@ -131,7 +131,8 @@ export function buildSspMarkdown(
     md += `- **Evaluation Status:** **${statusDisplayLabel(cState?.status)}**\n`;
     md += `- **Responsible Role:** ${cState?.responsibleRole || NOT_RECORDED}\n`;
     md += `\n**Implementation Statement:**\n\n`;
-    md += `${composeImplementationStatement(ctrl.id, cState?.implementationNotes, state.objectives, framework).text || '_No implementation narrative provided._'}\n\n`;
+    const statement = composeImplementationStatement(ctrl.id, cState?.implementationNotes, state.objectives, framework).text;
+    md += `${statement.trim() !== '' ? statement : '_No implementation narrative provided._'}\n\n`;
 
     if (ctrlEvidence.length > 0) {
       md += `**Audit Evidence Artifacts:**\n\n`;

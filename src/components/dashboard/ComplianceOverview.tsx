@@ -29,9 +29,12 @@ import { SspGateBanner } from './SspGateBanner';
 import { CatalogUpdateOverviewNotice } from './CatalogUpdateNotice';
 import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
 import { catalogUpdateNoticeMode, catalogUpdateOverviewText } from '../../data/cmmcGuide/catalogUpdateReview';
+import { MetMismatchOverviewNotice } from './MetMismatchNotice';
+import { refusedMetControls } from '../../data/cmmcGuide/controlStatusGuard';
+import { metMismatchesInView, metMismatchOverviewText } from '../../data/cmmcGuide/controlStatusView';
 
 export const ComplianceOverview: React.FC = () => {
-  const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId } = useAssessment();
+  const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId, objectivesReady, notesEditable } = useAssessment();
   const { currentTenant, canEdit, currentRole, activeFramework } = useTenant();
   const storageConfig = useStorageConfig(currentTenant);
   const catalogUpdate = useCatalogUpdateChanges();
@@ -63,7 +66,14 @@ export const ComplianceOverview: React.FC = () => {
     [activeFramework, frameworkControls, state.controls]
   );
 
-  const handleRemediateControl = (controlId: string) => {
+  // The same count as the matrix: hidden until the server's objectives are merged and the notes are loaded
+  const metMismatchCount = useMemo(() => {
+    if (!objectivesReady || !notesEditable) return 0;
+    const ids = new Set(frameworkControls.map((c) => c.id));
+    return metMismatchesInView(refusedMetControls(state.controls, state.objectives, activeFramework), ids).length;
+  }, [objectivesReady, notesEditable, state.controls, state.objectives, activeFramework, frameworkControls]);
+
+  const handleRemediateControl =(controlId: string) => {
     setSelectedControlId(controlId);
     setActiveTab('controls');
   };
@@ -79,6 +89,11 @@ export const ComplianceOverview: React.FC = () => {
       {/* The objective update set some answers back to In progress: say so where the score that dropped is shown (#287) */}
       {catalogUpdateNoticeMode(catalogUpdate) === 'review' && (
         <CatalogUpdateOverviewNotice text={catalogUpdateOverviewText(catalogUpdate.summary, { rev: catalogUpdate.rev, sprs: activeFramework === 'CMMC_L2' })} onOpenMatrix={() => setActiveTab('matrix')} />
+      )}
+
+      {/* Controls recorded as Met while their objectives are not all Met or Not applicable: they still count, so say so where the score is shown (#305) */}
+      {metMismatchCount > 0 && (
+        <MetMismatchOverviewNotice text={metMismatchOverviewText(metMismatchCount, { sprs: showSprs })} onOpenMatrix={() => setActiveTab('matrix')} />
       )}
 
       {/* RBAC Read-Only Banner for Viewers */}

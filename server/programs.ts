@@ -3,12 +3,15 @@ import type pg from 'pg';
 import { getDbMode, getTenantFrameworkPolicy, pool, queryWithProgram, queryWithTenant, type ProgramScope, type SqlParam } from './db';
 import { PROGRAM_FRAMEWORK_IDS } from './schema';
 import { notesDigest, readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
-import { __deleteProgramObjectivesForMemory, cloneObjectives } from './controlObjectives';
+import { __deleteProgramObjectivesForMemory, cloneObjectives, readObjectives } from './controlObjectives';
 import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
 import { getFrameworkControls } from '../src/data/frameworks';
+import { GUARDED_FRAMEWORKS } from '../src/data/cmmcGuide/sspStatement';
+import type { ObjectiveAnswer } from '../src/data/cmmcGuide/sspStatement';
+import { hasSspStatement } from '../src/data/cmmcGuide/sspStatementView';
 import { getEquivalentControlIds } from '../src/data/frameworks/controlMappings';
 import { PROGRAM_SCOPING_KEYS, normalizeProgramScoping, programFrameworkControls, scopingToOverlays } from '../src/data/programScope';
 import type { ComplianceFramework, OverlayFilters } from '../src/types/framework';
@@ -592,7 +595,7 @@ export async function cloneProgramContent(source: Program, target: Program, who:
 
 /**
  * The numbers a program card shows. total: the controls of the program's framework and baseline; documented: those with notes
- * (outside the vulnerability-management snapshot blocks) or the status MET; evidence: files uploaded to the program (not inherited
+ * (outside the vulnerability-management snapshot blocks), the status MET or, for CMMC Level 1 / 2, an objective narrative the SSP prints; evidence: files uploaded to the program (not inherited
  * copies); openPoam: open and in-progress POA&M items.
  */
 export async function getProgramMetrics(program: Program): Promise<ProgramMetrics> {
@@ -606,9 +609,15 @@ export async function getProgramMetrics(program: Program): Promise<ProgramMetric
         ).map((c) => c.id)
       )
     : catalogIds(program);
+  // CMMC Level 1 / 2 print objective narratives in the SSP (#293), so a control documented only through them counts; other frameworks keep the notes-or-MET rule.
+  const guarded = GUARDED_FRAMEWORKS.includes(program.frameworkId);
+  const [assessments, objectiveRows] = await Promise.all([readControlAssessments(scope), guarded ? readObjectives(scope) : Promise.resolve([])]);
+  const objectives: Record<string, ObjectiveAnswer> = {};
+  for (const o of objectiveRows) objectives[o.objectiveId] = { status: o.status, implementationNarrative: o.narrative };
   let documented = 0;
-  for (const [controlId, a] of await readControlAssessments(scope)) {
-    if (catalog.has(controlId) && (a.status === 'MET' || stripDelimitedBlocks(a.notes).trim() !== '')) documented++;
+  for (const controlId of catalog) {
+    const a = assessments.get(controlId);
+    if (a?.status === 'MET' || hasSspStatement(controlId, stripDelimitedBlocks(a?.notes ?? ''), guarded ? objectives : undefined, program.frameworkId)) documented++;
   }
   const usage = await countProgramUsage(scope);
   return { documented, total: catalog.size, evidence: usage.evidence, openPoam: await countOpenPoamItems(scope) };

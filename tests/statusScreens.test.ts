@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MetMismatchNotice } from '../src/components/dashboard/MetMismatchNotice';
-import { metMismatchNoticeCopy } from '../src/data/cmmcGuide/controlStatusView';
+import { MetMismatchNotice, MetMismatchOverviewNotice } from '../src/components/dashboard/MetMismatchNotice';
+import { metMismatchNoticeCopy, metMismatchOverviewText } from '../src/data/cmmcGuide/controlStatusView';
 
 /**
  * #292 / #293 / #294: the screens that show a status (control dialog, objective checklist, control matrix and card, import and move
@@ -30,6 +30,8 @@ const card = src('src/components/dashboard/ControlCard.tsx');
 const noticeSrc = src('src/components/dashboard/MetMismatchNotice.tsx');
 const header = src('src/components/layout/Header.tsx');
 const legacy = src('src/components/common/LegacyTenantNotice.tsx');
+const banner = src('src/components/common/BrowserOnlyNotesBanner.tsx');
+const overview = src('src/components/dashboard/ComplianceOverview.tsx');
 const sspPage = src('src/components/ssp/SSPBuilder.tsx');
 const storage = src('src/services/storageService.ts');
 
@@ -60,6 +62,11 @@ assert(
   'M9 a read-only role gets a status pill, not buttons'
 );
 assert(modal.includes('<span role="status" aria-live="polite" className="sr-only">{statusAnnouncement}</span>'), 'M10 the status announcement is a polite live region');
+
+assert(
+  modal.split('verified as Met or Not applicable').length - 1 === 2 && !modal.includes('MET or N/A') && !modal.includes('NOT_MET objective'),
+  'M11 the assessment-method banner says Met and Not applicable in words, in both variants'
+);
 
 console.log('--- Objective checklist ---');
 assert(
@@ -114,6 +121,15 @@ assert(
   matrix.split('{statusDisplayLabel(status)}').length - 1 === 4 && ['MET', 'NOT_MET', 'IN_PROGRESS', 'NOT_STARTED'].every((s) => !new RegExp(`aria-hidden="true" /> ${s}\\s*<`).test(matrix)),
   'X7 the four table status badges print the display label, not the enum'
 );
+assert(
+  ['MET', 'IN_PROGRESS', 'NOT_STARTED', 'NOT_MET'].every((s) => matrix.includes(`{statusDisplayLabel('${s}')} ({metrics.`))
+    && !matrix.includes('> In Progress (') && !matrix.includes('> Not Started (') && !matrix.includes('> Not Met ('),
+  'X8 the progress summary prints the display labels, not title-case literals'
+);
+assert(
+  matrix.includes('objectiveNarrativeIndex(state.objectives)') && matrix.includes('narrativeIndex.get(ctrl.id)') && matrix.includes('narrativeIndex, catalogUpdateFilter'),
+  'X9 the matrix search reads the objective narratives and re-filters when they change'
+);
 assert(card.includes('hasSspStatement(') && card.includes('statusDisplayLabel(status)') && card.includes('metMismatch?: { open: number; total: number } | null;'), 'K1 the card prints the display label and takes the open-objectives marker');
 assert(
   card.includes('{metMismatch.open} of {metMismatch.total} objectives open') && !card.includes('Set to'),
@@ -140,12 +156,31 @@ const done = render(0, true, true);
 assert(done.includes('None left') && done.includes('aria-pressed="true"'), 'N5 all fixed with the filter on: "None left" and the toggle stays');
 assert(render(1, true, true).includes('Showing only the controls recorded as Met with open objectives.'), 'N6 the filter state is announced');
 
+const overviewNotice = renderToStaticMarkup(React.createElement(MetMismatchOverviewNotice, { text: metMismatchOverviewText(2, { sprs: true }), onOpenMatrix: () => undefined }));
+assert(
+  noticeSrc.includes('aria-label="Met controls with open objectives"') && overviewNotice.includes('role="region"') && overviewNotice.includes('aria-label="Met controls with open objectives"')
+    && overviewNotice.includes('Review in the control matrix') && overviewNotice.includes(metMismatchOverviewText(2, { sprs: true })) && !overviewNotice.includes('role="alert"'),
+  'N7 the overview pointer is a labelled region with the text and a button to the matrix'
+);
+assert(
+  overview.includes('metMismatchOverviewText(') && overview.includes('<MetMismatchOverviewNotice') && overview.includes('!objectivesReady || !notesEditable') && overview.includes('metMismatchCount > 0'),
+  'N8 the overview shows the pointer only once the objectives are merged and the notes are loaded'
+);
+
 console.log('--- Import and move results ---');
 assert(
   header.includes('importResultMessage(') && header.includes('importControlsLowered()') && !header.includes('successfully imported for'),
   'R1 the import result is read through the getter after the import and built by the helper'
 );
+assert(
+  !header.includes('alert(') && header.includes('setImportNotice(') && header.includes('aria-live="polite"'),
+  'R1b the import result is a polite status message, not a blocking alert'
+);
 assert(legacy.includes('movedLoweredNote(') && legacy.includes('moved.controlsLowered'), 'R2 the move result names the controls that were lowered');
+assert(
+  legacy.includes('export const MoveResultNotice') && banner.includes('setMoved(result)') && banner.includes('<MoveResultNotice') && banner.includes('moved.tenantId === currentTenant.id'),
+  'R3 the banner shows the move result for the current tenant'
+);
 
 console.log('--- SSP page and exports ---');
 assert(sspPage.includes('statusDisplayLabel(') && !sspPage.includes('Status: {status}') && !sspPage.includes('Status: ${cState?.status'), 'S1 the SSP page prints the display label');
@@ -174,6 +209,7 @@ const checked: Record<string, string> = {
   'SSPBuilder.tsx': sspPage,
   'Header.tsx': header,
   'LegacyTenantNotice.tsx': legacy,
+  'BrowserOnlyNotesBanner.tsx': banner,
 };
 for (const [name, text] of Object.entries(checked)) {
   const bad = [/console\./, /\blocalStorage\b/, /\bsessionStorage\b/, /dangerouslySetInnerHTML/].filter((re) => re.test(text)).map(String);

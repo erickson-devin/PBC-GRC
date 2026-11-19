@@ -261,7 +261,7 @@ assert((vmTargetArchiveLine(tpA, [tpA, tp('b', 'Prog B', { createdAt: '2026-02-0
 assert((vmTargetArchiveLine(tpA, [tpA, tpNist]) ?? '').includes('no program receives new'), 'T5 a non-CMMC next default leaves no target');
 assert(vmTargetArchiveLine(tp('b', 'Prog B'), [tpA, tp('b', 'Prog B')]) === null, 'T5 a program that is not the target has no line');
 assert(vmTargetArchiveLine(tp('b', 'Prog B', { vmTarget: true }), [tpA, tp('b', 'Prog B', { vmTarget: true })]) === null, 'T5 an explicit target has no line (the server refuses to archive it)');
-for (const pin of ['ApiClient.setVmTargetProgram(', 'ApiClient.getVmTargetProgramPreview(', 'resolveVmTargetProgramId(programs)', 'aria-disabled={targetReason ? true : undefined}', '${nameId}-vm-reason', 'focusTargetNote.current = program.id', 'VM_TARGET_COPY.announced(', 'vmTargetArchiveLine(', "preview.status === 'error'"]) {
+for (const pin of ['ApiClient.setVmTargetProgram(', 'ApiClient.getVmTargetProgramPreview(', 'resolveVmTargetProgramId(programs)', 'aria-disabled={targetReason ? true : undefined}', '${nameId}-vm-reason', 'focusTargetNote.current = program.id', 'await refreshPrograms().catch(() => undefined);', 'a failed refresh is not a failed switch', 'VM_TARGET_COPY.announced(', 'vmTargetArchiveLine(', "preview.status === 'error'"]) {
   assert(programsPage.includes(pin), `PV-T6 the page has ${pin}`);
 }
 assert(!/console\./.test(read('src/data/vmTargetView.ts')) && !/localStorage|sessionStorage/.test(read('src/data/vmTargetView.ts')), 'PV-T6 the helper logs nothing and stores nothing');

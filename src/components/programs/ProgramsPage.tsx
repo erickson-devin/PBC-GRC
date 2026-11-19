@@ -299,7 +299,8 @@ export const ProgramsPage: React.FC = () => {
         if (mounted.current) setAnnouncement(`${program.name} is now the organization default.`);
       } else if (kind === 'vm-target') {
         await ApiClient.setVmTargetProgram(currentTenant.id, program.id);
-        await refreshPrograms();
+        // the target changed; a failed refresh is not a failed switch
+        await refreshPrograms().catch(() => undefined);
         if (mounted.current) {
           setAnnouncement(VM_TARGET_COPY.announced(program.name));
           focusTargetNote.current = program.id;

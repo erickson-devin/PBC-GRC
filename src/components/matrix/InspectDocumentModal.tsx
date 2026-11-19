@@ -590,8 +590,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             </p>
             <p className="text-xs text-slate-400">
               {control.framework === 'NIST_800_53_REV5'
-                ? 'Under NIST SP 800-53A, each determination statement of the control must be evaluated and verified as MET or N/A. Any NOT_MET objective drops the parent control to NOT_MET.'
-                : 'Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as MET or N/A. Any NOT_MET objective drops the parent control to NOT_MET.'}
+                ? 'Under NIST SP 800-53A, each determination statement of the control must be evaluated and verified as Met or Not applicable. Any objective that is Not met drops the parent control to Not met.'
+                :'Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as Met or Not applicable. Any objective that is Not met drops the parent control to Not met.'}
             </p>
           </div>
         </div>

@@ -60,6 +60,8 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
   const ownerRef = useRef<HTMLInputElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
   const mitigationRef = useRef<HTMLTextAreaElement>(null);
+  // Focus the Owner field once the dialog has opened: the focus attribute loses to the focus trap, which focuses the dialog root afterwards
+  useEffect(() => { if (canEdit) ownerRef.current?.focus({ preventScroll: true }); }, []);
 
   // Owner and plan typed here and not saved yet are reported to the unsaved-text rescue (labels carry the CVE only)
   useUnsavedTextProvider(() => vmPoamUnsavedText(base, form));
@@ -238,7 +240,6 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
                   id={`${uid}-owner`}
                   ref={ownerRef}
                   type="text"
-                  autoFocus
                   autoComplete="off"
                   spellCheck={false}
                   maxLength={VM_POAM_OWNER_MAX}

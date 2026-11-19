@@ -175,6 +175,14 @@ async function run() {
   assert(!listed.some((p) => p.id === A) && listedAll.some((p) => p.id === A && p.archivedAt) && listed[0].id === DEFAULT, '27 the list leaves archived A out; ?includeArchived=true has it; the default is first', [listed.map((p) => p.id), listedAll.length]);
   assert(listed.every((p) => p.metrics && typeof p.metrics.documented === 'number' && typeof p.metrics.total === 'number'), '27 every listed program carries its metrics');
 
+  // #305: a control documented only through an objective narrative prints an SSP statement, so it counts as documented
+  const docBefore = (await call('GET', `/tenants/${T}/programs/${B}/metrics`, owner, T)).body?.documented as number;
+  assert((await ctrl(T, B))?.implementationNotes === 'B text' && ((await call('GET', '/controls?framework=CMMC_L2', owner, T, undefined, B)).body?.controls ?? []).find((x: Json) => x.id === 'AC.L2-3.1.3')?.implementationNotes === '', '27b setup: AC.L2-3.1.3 has no notes in program B', docBefore);
+  const putObj = await call('PUT', `/objectives/${encodeURIComponent('AC.L2-3.1.3[a]')}`, owner, T, { controlId: 'AC.L2-3.1.3', status: 'IN_PROGRESS', narrative: 'Flow control narrative' }, B);
+  const docAfter = (await call('GET', `/tenants/${T}/programs/${B}/metrics`, owner, T)).body?.documented as number;
+  const listedB = (((await progs(T)).body?.programs ?? []) as Json[]).find((p) => p.id === B);
+  assert(putObj.status === 200 && docAfter === docBefore + 1 && listedB?.metrics?.documented === docAfter, '27b a narrative written for a control with no notes raises documented by one (metrics and list)', [putObj.status, docBefore, docAfter, listedB?.metrics?.documented]);
+
   console.log('\n--- 28-29: immutability, seeding ---');
   const immut = await call('PUT', `/tenants/${T}/programs/${B}`, owner, T, { frameworkId: 'NIST_800_53_REV5' });
   const immutBaseline = await call('PUT', `/tenants/${T}/programs/${B}`, owner, T, { baseline: 'HIGH' });

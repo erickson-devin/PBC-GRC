@@ -40,7 +40,7 @@ import { refusedMetControls } from '../../data/cmmcGuide/controlStatusGuard';
 import { metMismatchesInView } from '../../data/cmmcGuide/controlStatusView';
 import { hasSspStatement } from '../../data/cmmcGuide/sspStatementView';
 import { statusDisplayLabel } from '../../data/statusLabels';
-import { matrixEmptyFilterMessage, matrixSearchPlaceholder } from '../../data/matrixView';
+import { matrixEmptyFilterMessage, matrixSearchPlaceholder, objectiveNarrativeIndex } from '../../data/matrixView';
 
 interface AssessmentMatrixProps {
   onSelectControl?: (controlId: string) => void;
@@ -144,6 +144,9 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     return { five, three, one };
   }, [activeFramework, frameworkControls]);
 
+  // The search also reads the objective narratives (#305)
+  const narrativeIndex = useMemo(() => objectiveNarrativeIndex(state.objectives), [state.objectives]);
+
   // Filtered Controls
   const filteredControls = useMemo(() => {
     return frameworkControls.filter((ctrl) => {
@@ -196,7 +199,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         const matchesRef = refText.includes(query);
         const matchesSummary = (ctrl.plainEnglishSummary || '').toLowerCase().includes(query);
         const matchesNotes = (ctrlState?.implementationNotes || '').toLowerCase().includes(query);
-        if (!matchesId && !matchesTitle && !matchesRef && !matchesSummary && !matchesNotes) {
+        const matchesObjectives = (narrativeIndex.get(ctrl.id) ?? '').includes(query); // objective narratives, held in memory only
+        if (!matchesId && !matchesTitle && !matchesRef && !matchesSummary && !matchesNotes && !matchesObjectives) {
           return false;
         }
       }
@@ -211,7 +215,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
       return true;
     });
-  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls, catalogUpdateFilter, metMismatchFilter]);
+  }, [frameworkControls, selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, state.controls, narrativeIndex, catalogUpdateFilter, metMismatchFilter]);
 
   // A new filter starts again at the first page
   useEffect(() => {
@@ -363,29 +367,29 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           <div
             className="bg-amber-500 transition-all duration-500"
             style={{ width: `${totalControlsCount > 0 ? (metrics.inProgressCount / totalControlsCount) * 100 : 0}%` }}
-            title={`${metrics.inProgressCount} In Progress`}
+            title={`${metrics.inProgressCount} ${statusDisplayLabel('IN_PROGRESS')}`}
           />
           <div
             className="bg-rose-500 transition-all duration-500"
             style={{ width: `${totalControlsCount > 0 ? (metrics.notMetCount / totalControlsCount) * 100 : 0}%` }}
-            title={`${metrics.notMetCount} Not Met`}
+            title={`${metrics.notMetCount} ${statusDisplayLabel('NOT_MET')}`}
           />
         </div>
 
         <div className="flex items-center justify-between text-xs text-slate-400 pt-0.5 flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" /> Met ({metrics.metCount})
+              <span className="w-2 h-2 rounded-full bg-emerald-500" /> {statusDisplayLabel('MET')} ({metrics.metCount})
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-500" /> In Progress ({metrics.inProgressCount})
+              <span className="w-2 h-2 rounded-full bg-amber-500" /> {statusDisplayLabel('IN_PROGRESS')} ({metrics.inProgressCount})
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-slate-600" /> Not Started ({metrics.notStartedCount})
+              <span className="w-2 h-2 rounded-full bg-slate-600" /> {statusDisplayLabel('NOT_STARTED')} ({metrics.notStartedCount})
             </span>
             {metrics.notMetCount > 0 && (
               <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-rose-500" /> Not Met ({metrics.notMetCount})
+                <span className="w-2 h-2 rounded-full bg-rose-500" /> {statusDisplayLabel('NOT_MET')} ({metrics.notMetCount})
               </span>
             )}
           </div>
