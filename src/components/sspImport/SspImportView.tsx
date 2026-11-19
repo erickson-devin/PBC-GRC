@@ -17,7 +17,7 @@ import { isCrossReferenceOnly } from '../../utils/sspImportHints';
 import { ApiClient } from '../../services/apiClient';
 import { getFrameworkControls } from '../../data/frameworks';
 import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
-import { checklistLetterOf } from '../../data/cmmcGuide/importLetters';
+import { checklistLetterOf, uncoveredChecklistLetters, uncoveredChecklistText } from '../../data/cmmcGuide/importLetters';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import { canRoleReviewSspImports } from '../../utils/roles';
@@ -738,6 +738,10 @@ export const SspImportView: React.FC = () => {
                                   {current.gapAnalysis.objectives && current.gapAnalysis.objectives.length > 0 && cmmcNumberOf(current.controlId) && (
                                     <p className="mt-2 text-xs text-slate-400">The import compares the document with its own list of objectives (NIST SP 800-171A), so its letters can differ from the control's objective checklist (CMMC Assessment Guide). Match objectives by their wording.</p>
                                   )}
+                                  {current.gapAnalysis.objectives && current.gapAnalysis.objectives.length > 0 && (() => {
+                                    const uncovered = uncoveredChecklistText(uncoveredChecklistLetters(current.controlId, current.framework, current.gapAnalysis.objectives.map((o) => o.text)) ?? []);
+                                    return uncovered ? <p className="mt-1 text-xs text-slate-400">{uncovered}</p> : null;
+                                  })()}
                                   {current.gapAnalysis.gaps.length > 0 && (
                                     <ul className="mt-2 space-y-1.5">
                                       {current.gapAnalysis.gaps.map((g, i) => (

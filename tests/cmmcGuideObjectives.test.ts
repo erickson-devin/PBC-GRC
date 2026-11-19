@@ -5,7 +5,7 @@ import l1Json from '../src/data/cmmcGuide/cmmcL1Guide.generated.json';
 import { CMMC_L1_GUIDE, CMMC_L2_GUIDE, CMMC_OBJECTIVE_CATALOG_REV, cmmcGuideTitle, cmmcNumberOf, guideObjectives, withGuideTitle } from '../src/data/cmmcGuide/guide';
 import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, normalizeObjectiveText } from '../src/data/cmmcGuide/objectives';
 import { controlStatusAfterCatalogUpdate, migrateCachedObjectives, objectiveStatusAfterCatalogUpdate } from '../src/data/cmmcGuide/migration';
-import { checklistLetterOf } from '../src/data/cmmcGuide/importLetters';
+import { checklistLetterOf, uncoveredChecklistLetters, uncoveredChecklistText } from '../src/data/cmmcGuide/importLetters';
 import { validateGuideData } from '../src/data/cmmcGuide/validate';
 import type { L1GuideFile, L2GuideFile } from '../src/data/cmmcGuide/validate';
 import { buildGuideFiles, parseGuideLines } from '../scripts/generateCmmcObjectives';
@@ -354,6 +354,21 @@ console.log(`  (gap-analysis objectives that match a checklist objective by word
 assert(listed > 0 && neverUndefined, 'checklistLetterOf: never undefined for a Level 2 control', listed);
 assert(countsAgree, 'checklistLetterOf: finds a letter exactly when one guide objective has the wording (independent count)');
 
+// #284: the checklist objectives the import did not compare
+const guide313 = guideObjectives('3.1.3', 'CMMC_L2').map((g) => g.letter);
+assert(guide313.length > 0 && same(uncoveredChecklistLetters('AC.L2-3.1.3', 'CMMC_L2', reg313.map((o) => o.text)), guide313), 'uncoveredChecklistLetters: with no matching wording (3.1.3) every guide letter is uncovered, in guide order', guide313);
+const guide317 = guideObjectives('3.1.7', 'CMMC_L2').map((g) => g.letter);
+const matched317 = new Set(reg317.map((o) => checklistLetterOf('AC.L2-3.1.7', 'CMMC_L2', o.text)).filter((l): l is string => typeof l === 'string'));
+assert(matched317.size > 0 && matched317.size < guide317.length && same(uncoveredChecklistLetters('AC.L2-3.1.7', 'CMMC_L2', reg317.map((o) => o.text)), guide317.filter((l) => !matched317.has(l))), 'uncoveredChecklistLetters: the guide letters minus the ones the texts are worded like (3.1.7)');
+assert(same(uncoveredChecklistLetters('AC.L2-3.1.7', 'CMMC_L2', []), guide317), 'uncoveredChecklistLetters: no texts leaves every letter uncovered');
+assert(uncoveredChecklistLetters('AC-2', 'NIST_800_53_REV5', ['x']) === undefined, 'uncoveredChecklistLetters: undefined for a control that is not a CMMC requirement');
+assert(
+  uncoveredChecklistText([]) === '' &&
+    uncoveredChecklistText(['c']) === 'Checklist objective the import did not compare: [c]. Mark it yourself.' &&
+    uncoveredChecklistText(['c', 'd', 'e']) === 'Checklist objectives the import did not compare: [c], [d], [e]. Mark them yourself.',
+  'uncoveredChecklistText: nothing, one letter, several letters'
+);
+
 const readSrc = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
 const panelSrc = readSrc('src/components/matrix/ImportAnalysisPanel.tsx');
 const viewSrc = readSrc('src/components/sspImport/SspImportView.tsx');
@@ -362,6 +377,7 @@ assert(/checklistLetterOf\(controlId, staged\.framework, o\.text\)/.test(panelSr
 assert(panelSrc.includes('Mark each objective below yourself.'), 'the panel keeps its closing line');
 assert(/checklistLetterOf\(current\.controlId, current\.framework, o\.text\)/.test(viewSrc) && viewSrc.includes('can differ from the control\'s objective checklist (CMMC Assessment Guide)'), 'the review screen matches by wording and explains why the letters can differ');
 assert([panelSrc, viewSrc].every((s) => s.includes('(not worded like a checklist objective)') && s.includes('(checklist [')), 'both screens carry the two per-objective notes');
+assert([panelSrc, viewSrc].every((s) => s.includes('uncoveredChecklistLetters(') && s.includes('uncoveredChecklistText(')), 'both screens show the checklist objectives the import did not compare');
 
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 if (passed !== total) process.exitCode = 1;

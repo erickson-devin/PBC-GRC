@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { FileSearch } from 'lucide-react';
 import { ApiClient } from '../../services/apiClient';
 import { cmmcNumberOf } from '../../data/cmmcGuide/guide';
-import { checklistLetterOf } from '../../data/cmmcGuide/importLetters';
+import { checklistLetterOf, uncoveredChecklistLetters, uncoveredChecklistText } from '../../data/cmmcGuide/importLetters';
 import type { ObjectiveStatus, SspImportJob, StagedControlView } from '../../types/sspImport';
 
 interface Props {
@@ -58,6 +58,7 @@ export const ImportAnalysisPanel: React.FC<Props> = ({ controlId, tenantId, prog
   const { job, staged } = found;
   const gap = staged.gapAnalysis;
   const objectives = gap.objectives ?? [];
+  const uncovered = objectives.length > 0 ? uncoveredChecklistText(uncoveredChecklistLetters(controlId, staged.framework, objectives.map((o) => o.text)) ?? []) : '';
 
   return (
     <section aria-label="Found in the last SSP import" className="rounded-2xl border border-violet-500/30 bg-violet-950/20 p-4 space-y-3">
@@ -100,6 +101,7 @@ export const ImportAnalysisPanel: React.FC<Props> = ({ controlId, tenantId, prog
       {objectives.length > 0 && cmmcNumberOf(controlId) && (
         <p className="text-[11px] text-slate-400">The import compares the document with its own list of objectives (NIST SP 800-171A), so its letters can differ from the CMMC Assessment Guide checklist below. Match objectives by their wording.</p>
       )}
+      {uncovered && <p className="text-[11px] text-slate-400">{uncovered}</p>}
       <p className="text-[11px] text-slate-500">This is what the AI found in the uploaded document, not an assessment. Mark each objective below yourself.</p>
     </section>
   );
