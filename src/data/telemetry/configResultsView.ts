@@ -29,12 +29,13 @@ export const CONFIG_RESULTS_COPY = {
   programUnavailable: 'The programs could not be loaded, so no suggestions are shown.',
   readOnly: 'Read-only: only a Tenant Owner or Admin can record a control status. The suggestions are shown for information.',
   notLoaded: 'The controls of this program are not loaded from the server yet, so a status cannot be recorded right now.',
+  objectivesLoading: 'Met can be offered once the objectives of this control are loaded.',
 } as const;
 
 /** How a person's Apply ended (AssessmentContext.decideControlStatus). */
 export type ControlDecisionOutcome = 'saved' | 'stale' | 'archived' | 'failed' | 'unreachable' | 'read_only' | 'not_loaded' | 'objectives_not_met';
 /** Why a row offers no Apply (null: it does). Checked in this order. */
-export type ApplyBlock = 'review' | 'matches' | 'read_only' | 'archived' | 'not_loaded';
+export type ApplyBlock = 'review' | 'matches' | 'read_only' | 'archived' | 'not_loaded' | 'objectives_loading' | 'objectives_open';
 
 export const UNKNOWN_ASSET = 'Unknown asset';
 
@@ -57,6 +58,10 @@ export function applyBlock(a: {
   canEdit: boolean;
   archived: boolean;
   controlsLoaded: boolean;
+  /** False while the objectives of a guarded framework are not the server's yet (default true). */
+  objectivesLoaded?: boolean;
+  /** The refusal the Met rule gives this control (#292), counts only; null or absent when Met is allowed. */
+  metRefusal?: { open: number; total: number } | null;
 }): ApplyBlock | null {
   const next = suggestionStatus(a.suggestion);
   if (next === null) return 'review';
@@ -64,7 +69,13 @@ export function applyBlock(a: {
   if (!a.canEdit) return 'read_only';
   if (a.archived) return 'archived';
   if (!a.controlsLoaded) return 'not_loaded';
+  if (next === 'MET' && a.objectivesLoaded === false) return 'objectives_loading';
+  if (next === 'MET' && a.metRefusal) return 'objectives_open';
   return null;
+}
+
+export function objectivesOpenMessage(open: number, total: number): string {
+  return `Suggests Met. ${open} of ${total} ${total === 1 ? 'objective' : 'objectives'} ${open === 1 ? 'is' : 'are'} still open: answer ${open === 1 ? 'it' : 'them'} in the control.`;
 }
 
 export function archivedMessage(name: string): string {

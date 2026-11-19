@@ -8,6 +8,7 @@ import { AlertTriangle, CheckCircle2, CloudOff, HelpCircle, Info, ListChecks, Lo
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
+import { GUARDED_FRAMEWORKS, checkControlStatusWrite } from '../../data/cmmcGuide/controlStatusGuard';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { ApiClient } from '../../services/apiClient';
 import type { VmConfigRuleResultRow } from '../../services/apiClient';
@@ -16,11 +17,12 @@ import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { frameworkLabel } from '../../data/tenantFrameworkPolicy';
 import {
   CONFIG_RESULTS_COPY, EXPORTER_XCCDF_COMMAND, applyBlock, applyConfirmText, applyResultMessage, archivedMessage, assetLabel, boundaryCaption,
-  countSummary, failingAssetNames, groupResultCounts, noSuggestionsMessage, outsideNote, ruleSummary, shownCaption, sortScanRows,
+  countSummary, failingAssetNames, groupResultCounts, noSuggestionsMessage, objectivesOpenMessage, outsideNote, ruleSummary, shownCaption, sortScanRows,
   sortSuggestions, splitByProgramControls, statusLabel, suggestionLabel, suggestionStatus, unmappedNote, unsupportedMessage,
 } from '../../data/telemetry/configResultsView';
 import type { ControlDecisionOutcome } from '../../data/telemetry/configResultsView';
 import type { VmConfigScan, VmConfigSuggestion, VmConfigSuggestionsResponse, VmConfigSuggestionValue } from '../../types/vm';
+import type { ObjectiveStatus } from '../../types/assessment';
 import type { ControlStatus } from '../../types/cmmc';
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -43,7 +45,7 @@ const TABLE_HEAD_CLASS = 'border-b border-slate-800 bg-slate-900/80 text-slate-4
 
 export const ConfigurationResultsView: React.FC = () => {
   const { currentTenant, activeProgram, programsStatus, canEdit, refreshLiveData, activeFramework } = useTenant();
-  const { state, notesEditable, decideControlStatus, frameworkControls, setSelectedControlId } = useAssessment();
+  const { state, notesEditable, decideControlStatus, frameworkControls, setSelectedControlId, objectivesReady } = useAssessment();
   const { assets, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
   const tenantId = currentTenant.id;
   const serverBacked = Boolean(currentTenant.serverBacked);
@@ -59,6 +61,12 @@ export const ConfigurationResultsView: React.FC = () => {
   const names = useMemo(() => new Map(assets.map((a) => [a.id, a.hostName] as const)), [assets]);
   const titles = useMemo(() => new Map(frameworkControls.map((c) => [c.id, c.title] as const)), [frameworkControls]);
   const programControlIds = useMemo(() => new Set(frameworkControls.map((c) => c.id)), [frameworkControls]);
+  // The stored status of each objective, for the Met rule (#292): a Met suggestion is not offered where the rule would refuse it.
+  const objectiveStatuses = useMemo(() => {
+    const out: Record<string, ObjectiveStatus> = {};
+    for (const [id, o] of Object.entries(state.objectives ?? {})) if (o) out[id] = o.status;
+    return out;
+  }, [state.objectives]);
 
   // ── Scans: tenant-wide ──
   const [scans, setScans] = useState<{ status: LoadStatus; list: VmConfigScan[]; total: number }>({ status: 'idle', list: [], total: 0 });
@@ -389,7 +397,12 @@ export const ConfigurationResultsView: React.FC = () => {
                             const current: ControlStatus = state.controls[s.controlId]?.status ?? 'NOT_STARTED';
                             const next = suggestionStatus(s.suggestion);
                             const shownId = cmmcDisplayId(s.controlId, activeFramework);
-                            const block = applyBlock({ suggestion: s.suggestion, currentStatus: current, canEdit, archived, controlsLoaded: notesEditable });
+                            const refusal = next === 'MET' && objectivesReady ? checkControlStatusWrite(s.controlId, 'MET', objectiveStatuses, activeFramework) : null;
+                            const block = applyBlock({
+                              suggestion: s.suggestion, currentStatus: current, canEdit, archived, controlsLoaded: notesEditable,
+                              objectivesLoaded: objectivesReady || !GUARDED_FRAMEWORKS.includes(activeFramework),
+                              metRefusal: refusal && !refusal.allowed ? { open: refusal.open, total: refusal.total } : null,
+                            });
                             const style = SUGGESTION_STYLE[s.suggestion];
                             const failing = failingAssetNames(s.failingAssetIds, names, 5);
                             const result = rowResults[s.controlId];
@@ -471,6 +484,19 @@ export const ConfigurationResultsView: React.FC = () => {
                                       <span className="text-slate-400">Matches the recorded status</span>
                                     ) : block === 'review' ? (
                                       <span className="text-slate-400">No status suggested</span>
+                                    ) : block === 'objectives_open' && refusal && !refusal.allowed ? (
+                                      <div className="ml-auto max-w-xs space-y-2 text-left">
+                                        <p className="text-xs text-slate-300">{objectivesOpenMessage(refusal.open, refusal.total)}</p>
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedControlId(s.controlId)}
+                                          className="px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800 whitespace-nowrap"
+                                        >
+                                          Answer the objectives<span className="sr-only"> of {shownId}</span>
+                                        </button>
+                                      </div>
+                                    ) : block === 'objectives_loading' ? (
+                                      <span className="text-slate-400">{CONFIG_RESULTS_COPY.objectivesLoading}</span>
                                     ) : next ? (
                                       <button
                                         type="button"
