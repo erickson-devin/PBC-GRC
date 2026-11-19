@@ -19,6 +19,7 @@ import {
   insertSightings,
   listPoamCandidates,
   loadFindingsForAssets,
+  loadEmptyPreviousReports,
   loadKevVulnIds,
   loadOtherSourceReports,
   loadSightedBySource,
@@ -237,6 +238,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         existing.filter((f) => f.status === 'OPEN').map((f) => f.id),
         client,
       );
+      const emptyBefore = await loadEmptyPreviousReports(tenantId, run.sourceId, reportedAssetIds, run.id, run.receivedAt, client);
       const vulnIds = [...new Set(reported.flatMap((r) => r.host.findings.map((f) => f.vulnId)))];
       const kev = await loadKevVulnIds(vulnIds, client);
 
@@ -247,6 +249,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         existing,
         sightedBySource,
         otherSourceReports,
+        emptyBefore,
         kev,
         sla: getVmSlaConfig(),
         newId: () => crypto.randomUUID(),
@@ -294,7 +297,13 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         poamCompleted += await completeResolvedPoamItemsInOtherPrograms(tenantId, run.id, now, client, programId);
       }
 
-      const warning = plan.skipped.length > 0 ? `${plan.skipped.length} host(s) skipped: asset limit reached.` : null;
+      // Counts only: no host name, finding id or text goes into the warning (viewers read it).
+      const warnings: string[] = [];
+      if (plan.skipped.length > 0) warnings.push(`${plan.skipped.length} host(s) skipped: asset limit reached.`);
+      if (result.held.hosts > 0) {
+        warnings.push(`${result.held.hosts} host(s) reported no findings while ${result.held.findings} finding(s) were open: kept open until the next scan confirms.`);
+      }
+      const warning = warnings.length > 0 ? warnings.join(' ') : null;
       await markRunNormalized(tenantId, run, now, warning, client);
       return { created: result.created.length, updated: result.updated.length, resolved: result.resolved.length, sightings: result.sightings.length, poam, poamCompleted, configResults, softwareItems };
     }, programId);

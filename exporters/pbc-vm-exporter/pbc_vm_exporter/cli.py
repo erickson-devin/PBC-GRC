@@ -353,6 +353,9 @@ def _run(args: argparse.Namespace, environ: Mapping[str, str], stdout: TextIO, s
         log.warning("%d host(s) skipped whole", len(stats.skipped_hosts))
     if stats.dropped_rows:
         log.warning("%d row(s) dropped (unusable vulnerability id)", stats.dropped_rows)
+    if stats.emptied_hosts:
+        log.warning("%d host(s) had only unusable rows: sent without a findings list so nothing is marked fixed",
+                    stats.emptied_hosts)
     if not payloads:
         raise (VENDOR_ERRORS[args.source] if vendor else WazuhReadError)("no host could be exported; nothing was sent")
 

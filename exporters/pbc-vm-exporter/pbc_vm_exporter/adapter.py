@@ -44,6 +44,7 @@ class AdapterStats:
     dropped_hosts: int = 0
     skipped_hosts: list[str] = field(default_factory=list)
     software_overflow_hosts: int = 0
+    emptied_hosts: int = 0  # hosts whose rows were all unusable: a failed read, never sent as "no findings" (#303)
 
 
 def map_severity(v: Any) -> str:
@@ -303,8 +304,13 @@ def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list
             if len(software) > MAX_SOFTWARE_PER_HOST:
                 stats.software_overflow_hosts += 1
                 software = None
-        if inventory_only and hardware is None and software is None:
-            continue  # reported by inventory alone and nothing sendable: not a host the contract accepts
+        # Rows were reported but none survived: that is a failed read, not a clean host. An empty findings list would
+        # make the server mark everything the source had open on it as fixed, so the key is left out (#303).
+        emptied = not inventory_only and bool(entry["rows"]) and not findings
+        if emptied:
+            stats.emptied_hosts += 1
+        if (inventory_only or emptied) and hardware is None and software is None:
+            continue  # nothing sendable: not a host the contract accepts
         if len(findings) > MAX_FINDINGS_PER_HOST:
             if name_hosts:
                 log.warning("skipping agent %s: %d findings exceed the %d per host limit", agent_id, len(findings),
@@ -336,7 +342,7 @@ def build_hosts(raw_hosts: list[dict], *, name_hosts: bool = True) -> tuple[list
                 os_info[key] = text
         if os_info:
             host["os"] = os_info
-        if not inventory_only:
+        if not inventory_only and not emptied:
             host["findings"] = findings
         if hardware is not None:
             host["hardware"] = hardware

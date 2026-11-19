@@ -111,6 +111,8 @@ export interface ApplyRunInput {
   sightedBySource: ReadonlySet<string>;
   /** Each other source's latest report of the reported assets: one that still lists a finding blocks its closure. */
   otherSourceReports: readonly OtherSourceReport[];
+  /** Ids of the reported assets whose previous report by this source sighted nothing on them: a second empty report confirms the closure. */
+  emptyBefore: ReadonlySet<string>;
   /** Vulnerability ids on the CISA KEV list. */
   kev: ReadonlySet<string>;
   sla: VmSlaConfig;
@@ -133,7 +135,12 @@ export interface ApplyRunResult {
   sightings: SightingDraft[];
   /** Sorted, unique canonical ids seen in the run. */
   vulnIds: string[];
+  /** Hosts reported with no findings whose open findings were kept open until the next report confirms, and how many findings that is. */
+  held: { hosts: number; findings: number };
 }
+
+/** A host reported with no findings closes nothing unless the source's previous report of it was empty too, once it has at least this many closable findings. */
+export const VM_EMPTY_HOST_HOLD_MIN_OPEN = 1;
 
 const maxIso = (a: string, b: string): string => (Date.parse(b) > Date.parse(a) ? b : a);
 
@@ -143,7 +150,7 @@ const same = (a: VmFinding, b: VmFinding): boolean => JSON.stringify(a) === JSON
 export function applyRun(input: ApplyRunInput): ApplyRunResult {
   const { tenantId, run, existing, sightedBySource, kev, sla, newId } = input;
   const received = run.receivedAt;
-  const result: ApplyRunResult = { created: [], updated: [], resolved: [], sightings: [], vulnIds: [] };
+  const result: ApplyRunResult = { created: [], updated: [], resolved: [], sightings: [], vulnIds: [], held: { hosts: 0, findings: 0 } };
 
   const byKey = new Map<string, VmFinding>();
   for (const f of existing) byKey.set(`${f.assetId}\u0000${f.vulnId}`, f);
@@ -151,6 +158,7 @@ export function applyRun(input: ApplyRunInput): ApplyRunResult {
   const vulnIds = new Set<string>();
   const sightedIds = new Set<string>();
   const reportedAssets = new Set<string>();
+  const sightedAssets = new Set<string>(); // assets with at least one finding sighted in this run
 
   for (const { assetId, host } of input.hosts) {
     reportedAssets.add(assetId);
@@ -229,6 +237,7 @@ export function applyRun(input: ApplyRunInput): ApplyRunResult {
       }
 
       sightedIds.add(finding.id);
+      sightedAssets.add(assetId);
       result.sightings.push({
         findingId: finding.id,
         runId: run.id,
@@ -258,6 +267,7 @@ export function applyRun(input: ApplyRunInput): ApplyRunResult {
   }
 
   // Closure: this source reported the asset, and no longer reports a finding it once did.
+  const closable = new Map<string, VmFinding[]>(); // asset id -> findings this run could resolve
   for (const f of existing) {
     if (f.status !== 'OPEN') continue;
     if (!reportedAssets.has(f.assetId)) continue;
@@ -274,7 +284,18 @@ export function applyRun(input: ApplyRunInput): ApplyRunResult {
         Date.parse(r.receivedAt) >= Date.parse(received) - VM_OTHER_SOURCE_GRACE_INTERVALS * r.expectedIntervalMinutes * 60000,
     );
     if (heldByOther) continue;
-    result.resolved.push({ ...f, status: 'RESOLVED', resolvedAt: received, resolvedRunId: run.id });
+    const list = closable.get(f.assetId) ?? [];
+    list.push(f);
+    closable.set(f.assetId, list);
+  }
+  for (const [assetId, list] of closable) {
+    // A host reported with no findings may be a failed scan: nothing closes until this source's next report of it is empty too.
+    if (!sightedAssets.has(assetId) && list.length >= VM_EMPTY_HOST_HOLD_MIN_OPEN && !input.emptyBefore.has(assetId)) {
+      result.held.hosts += 1;
+      result.held.findings += list.length;
+      continue;
+    }
+    for (const f of list) result.resolved.push({ ...f, status: 'RESOLVED', resolvedAt: received, resolvedRunId: run.id });
   }
 
   result.vulnIds = [...vulnIds].sort();
