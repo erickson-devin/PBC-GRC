@@ -55,6 +55,21 @@ export function checkControlStatusWrite(
   };
 }
 
+/**
+ * What a control's status is after an objective write (#307): a Met control that the rule would now refuse is lowered to what its objectives
+ * roll up to. Never raises: any other current status, and any control the rule does not guard, comes back as it is.
+ */
+export function controlStatusAfterObjectiveWrite(
+  controlId: string,
+  current: ControlStatus,
+  objectiveStatuses: ObjectiveStatuses,
+  framework: string
+): ControlStatus {
+  if (current !== 'MET') return current;
+  const d = checkControlStatusWrite(controlId, 'MET', objectiveStatuses, framework);
+  return d.allowed ? current : d.rolledUp;
+}
+
 /** The sentence shown for a refusal: counts only. */
 export function metRefusalMessage(d: ControlStatusRefusal): string {
   return `Met needs every objective Met or Not applicable: ${d.open} of ${d.total} are not.`;

@@ -6,14 +6,16 @@ import {
   OBJECTIVE_CHANGE_SOURCES,
   type ObjectiveChangeSource,
   type ObjectiveEvent,
+  type LoweredControl,
   type ObjectiveImportResult,
   type ObjectiveInput,
   type ObjectiveRecord,
   type ObjectiveStatus,
 } from '../src/types/controlObjectives';
 import { getDbMode, nextStamp, pool, queryWithProgram, type ProgramScope } from './db';
-import { matchesExpected, notesDigest, StaleWriteError } from './controlAssessments';
+import { matchesExpected, notesDigest, StaleWriteError, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
 import { CMMC_OBJECTIVE_CATALOG_REV, cmmcNumberOf } from '../src/data/cmmcGuide/guide';
+import { controlStatusAfterObjectiveWrite, GUARDED_FRAMEWORKS } from '../src/data/cmmcGuide/controlStatusGuard';
 
 /**
  * Read and write access to a program's control_objectives rows (800-171A / 800-53A objectives: status, narrative, evidence links), and
@@ -111,25 +113,75 @@ async function applyWrite(
   input: ObjectiveInput,
   who: ObjectiveActor,
   expected?: string | null
-): Promise<{ record: ObjectiveRecord; changed: boolean }> {
+): Promise<{ record: ObjectiveRecord; changed: boolean; statusChanged: boolean }> {
   const before = await tx.find(input.objectiveId);
   const after = merge(input, before, who);
-  if (before && unchanged(before, after)) return { record: before, changed: false };
+  if (before && unchanged(before, after)) return { record: before, changed: false, statusChanged: false };
   if (expected !== undefined && !matchesExpected(before ? before.updatedAt : null, expected)) {
     throw new StaleWriteError({ updatedAt: before?.updatedAt ?? null, updatedBy: before?.updatedBy || null });
   }
   const stored = await tx.save(after);
   await tx.addEvent(buildEvent(scope, input, before, after, who));
-  return { record: stored, changed: true };
+  return { record: stored, changed: true, statusChanged: statusDiffers(before, after) };
 }
 
-async function applyImport(tx: Tx, scope: ProgramScope, input: ObjectiveInput, who: ObjectiveActor): Promise<ObjectiveImportResult> {
+/** True when the write moves the objective's status (a row that does not exist yet counts as Not started). */
+const statusDiffers = (before: ObjectiveRecord | null, after: ObjectiveRecord): boolean => (before?.status ?? 'NOT_STARTED') !== after.status;
+
+async function applyImport(
+  tx: Tx,
+  scope: ProgramScope,
+  input: ObjectiveInput,
+  who: ObjectiveActor
+): Promise<{ result: ObjectiveImportResult; statusChanged: boolean }> {
   const before = await tx.find(input.objectiveId);
   const incoming = merge(input, null, who);
-  if (before) return unchanged(before, incoming) ? 'unchanged' : 'conflict';
-  if (!(await tx.insertOnly(incoming))) return 'conflict'; // a concurrent writer got there first: nothing is overwritten
+  if (before) return { result: unchanged(before, incoming) ? 'unchanged' : 'conflict', statusChanged: false };
+  if (!(await tx.insertOnly(incoming))) return { result: 'conflict', statusChanged: false }; // a concurrent writer got there first: nothing is overwritten
   await tx.addEvent(buildEvent(scope, input, null, incoming, who));
-  return 'created';
+  return { result: 'created', statusChanged: statusDiffers(null, incoming) };
+}
+
+/**
+ * Lowers each of `controlIds` that is recorded as Met in a CMMC program to what its objectives now roll up to (#307), as a control history
+ * event 'objective-rollup' under the signed-in user. Downward only. Notes and role are left as they are. It reads the objective statuses as
+ * this transaction sees them and must be the LAST step of the transaction: in memory mode a control write is not rolled back with the objectives.
+ */
+async function lowerMetControls(
+  tx: Tx,
+  client: pg.PoolClient | null,
+  scope: ProgramScope,
+  framework: string | undefined,
+  controlIds: readonly string[],
+  who: ObjectiveActor
+): Promise<LoweredControl[]> {
+  if (!framework || !GUARDED_FRAMEWORKS.includes(framework) || !controlIds.length) return [];
+  const ids = dedupe(controlIds);
+  const statuses = await tx.statusesOf(ids);
+  const by: ControlChangeActor = { source: 'objective-rollup', actor: who.actor, userId: who.userId };
+  const lowered: LoweredControl[] = [];
+  for (const controlId of ids) {
+    const row = await writeControlAssessment(
+      scope,
+      controlId,
+      (current) => {
+        if (!current || current.status !== 'MET') return null;
+        const to = controlStatusAfterObjectiveWrite(controlId, 'MET', statuses, framework);
+        return to === 'MET' ? null : { status: to, notes: null, role: null, updatedBy: who.actor.slice(0, 255) };
+      },
+      by,
+      client
+    );
+    if (row) {
+      lowered.push({
+        controlId,
+        status: row.status,
+        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        updatedBy: row.updated_by ?? '',
+      });
+    }
+  }
+  return lowered;
 }
 
 function toRecord(row: pg.QueryResultRow): ObjectiveRecord {
@@ -347,8 +399,9 @@ async function pgTransaction<T>(scope: ProgramScope, fn: (tx: Tx, client: pg.Poo
   }
 }
 
-const transaction = <T>(scope: ProgramScope, fn: (tx: Tx) => Promise<T>): Promise<T> =>
-  getDbMode() === 'memory' ? memoryTransaction(scope, fn) : pgTransaction(scope, fn);
+/** `fn` also gets the PostgreSQL connection of the transaction, for writes that must commit with it (null in memory mode). */
+const transaction = <T>(scope: ProgramScope, fn: (tx: Tx, client: pg.PoolClient | null) => Promise<T>): Promise<T> =>
+  getDbMode() === 'memory' ? memoryTransaction(scope, (tx) => fn(tx, null)) : pgTransaction(scope, fn);
 
 // ---- catalog update (used by objectiveCatalogMigration.ts) ----
 
@@ -411,23 +464,41 @@ export async function readObjectives(scope: ProgramScope, controlId?: string): P
   return records.filter((r) => controlId === undefined || r.controlId === controlId).sort((a, b) => (a.objectiveId < b.objectiveId ? -1 : a.objectiveId > b.objectiveId ? 1 : 0));
 }
 
-/** Writes one objective and records the change, atomically. A field left out keeps the stored value; an empty narrative clears it. `changed` is false (and nothing is written) when nothing differs. */
+/**
+ * Writes one objective and records the change, atomically. A field left out keeps the stored value; an empty narrative clears it. `changed` is false (and nothing is written) when nothing differs.
+ * In a CMMC program (`opts.framework`), a status change that leaves a Met control's objectives short of Met lowers the control in the same transaction (`controls`, see lowerMetControls).
+ */
 export async function writeObjective(
   scope: ProgramScope,
   item: ObjectiveInput,
   who: ObjectiveActor,
-  opts: { expectedUpdatedAt?: string | null } = {}
-): Promise<{ record: ObjectiveRecord; changed: boolean }> {
-  return transaction(scope, (tx) => applyWrite(tx, scope, item, who, opts.expectedUpdatedAt));
+  opts: { expectedUpdatedAt?: string | null; framework?: string } = {}
+): Promise<{ record: ObjectiveRecord; changed: boolean; controls: LoweredControl[] }> {
+  return transaction(scope, async (tx, client) => {
+    const { record, changed, statusChanged } = await applyWrite(tx, scope, item, who, opts.expectedUpdatedAt);
+    const controls = await lowerMetControls(tx, client, scope, opts.framework, statusChanged ? [item.controlId] : [], who);
+    return { record, changed, controls };
+  });
 }
 
-/** Writes up to MAX_OBJECTIVE_BULK objectives in one transaction: all of them, or none when any fails. Returns how many changed. */
-export async function writeObjectivesBulk(scope: ProgramScope, items: ObjectiveInput[], who: ObjectiveActor): Promise<{ total: number; changed: number }> {
+/** Writes up to MAX_OBJECTIVE_BULK objectives in one transaction: all of them, or none when any fails. Returns how many changed, and the Met controls it lowered. */
+export async function writeObjectivesBulk(
+  scope: ProgramScope,
+  items: ObjectiveInput[],
+  who: ObjectiveActor,
+  framework?: string
+): Promise<{ total: number; changed: number; controls: LoweredControl[] }> {
   if (items.length > MAX_OBJECTIVE_BULK) throw new Error(`At most ${MAX_OBJECTIVE_BULK} objectives per request`);
-  return transaction(scope, async (tx) => {
+  return transaction(scope, async (tx, client) => {
     let changed = 0;
-    for (const item of items) if ((await applyWrite(tx, scope, item, who)).changed) changed++;
-    return { total: items.length, changed };
+    const touched: string[] = [];
+    for (const item of items) {
+      const r = await applyWrite(tx, scope, item, who);
+      if (r.changed) changed++;
+      if (r.statusChanged) touched.push(item.controlId);
+    }
+    const controls = await lowerMetControls(tx, client, scope, framework, touched, who);
+    return { total: items.length, changed, controls };
   });
 }
 
@@ -438,14 +509,22 @@ export async function writeObjectivesBulk(scope: ProgramScope, items: ObjectiveI
 export async function importObjectives(
   scope: ProgramScope,
   items: ObjectiveInput[],
-  who: ObjectiveActor
-): Promise<{ objectiveId: string; result: ObjectiveImportResult }[]> {
+  who: ObjectiveActor,
+  framework?: string
+): Promise<{ results: { objectiveId: string; result: ObjectiveImportResult }[]; controls: LoweredControl[] }> {
   if (items.length > MAX_OBJECTIVE_IMPORT) throw new Error(`At most ${MAX_OBJECTIVE_IMPORT} objectives per import`);
   const by: ObjectiveActor = { ...who, source: 'browser-import' };
-  return transaction(scope, async (tx) => {
+  return transaction(scope, async (tx, client) => {
     const results: { objectiveId: string; result: ObjectiveImportResult }[] = [];
-    for (const item of items) results.push({ objectiveId: item.objectiveId, result: await applyImport(tx, scope, item, by) });
-    return results;
+    const touched: string[] = [];
+    for (const item of items) {
+      const r = await applyImport(tx, scope, item, by);
+      results.push({ objectiveId: item.objectiveId, result: r.result });
+      if (r.statusChanged) touched.push(item.controlId);
+    }
+    // the control's change is the signed-in user's own (source 'objective-rollup'), not the import marker's
+    const controls = await lowerMetControls(tx, client, scope, framework, touched, who);
+    return { results, controls };
   });
 }
 

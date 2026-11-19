@@ -57,7 +57,7 @@ import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
 import { catalogUpdateKeyPrefix } from '../data/cmmcGuide/catalogUpdateReview';
 import { tabOwnsStoredSession } from '../services/tabSession';
 import { isTabLocked, waitForUnlock } from '../services/idleLock';
-import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
+import { MAX_OBJECTIVE_BULK, MAX_OBJECTIVE_IMPORT, type LoweredControl, type ObjectiveImportResult, type ObjectiveInput, type ObjectiveRecord } from '../types/controlObjectives';
 import { lowerRefusedMet } from '../data/cmmcGuide/controlStatusGuard';
 import { OBJECTIVE_CASCADE_EVENT, applyImportResult, chunkItems, objectivesToUpload, stackCascadeFill } from '../data/objectiveSync';
 import {
@@ -1311,6 +1311,20 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return updated;
   },[currentTenant.id, scopeNow, programIdFor]);
 
+  /** Shows the Met controls the server lowered after an objective write (#307), unless the scope on screen has changed since the request started. */
+  const applyLoweredControls = useCallback((scope: string, lowered: LoweredControl[] | undefined): void => {
+    if (!lowered || lowered.length === 0 || scopeNow(currentTenant.id) !== scope) return;
+    setLiveControls(prev => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      for (const l of lowered) {
+        const existing = next[l.controlId];
+        if (existing) next[l.controlId] = { ...existing, status: l.status, updatedAt: l.updatedAt, updatedBy: l.updatedBy, lastUpdated: l.updatedAt ?? existing.lastUpdated };
+      }
+      return next;
+    });
+  }, [currentTenant.id, scopeNow]);
+
   /** Re-reads the objectives of `scope` and shows them, unless the scope on screen has changed meanwhile. */
   const reloadLiveObjectives = useCallback(async (scope: string, programId: string | null): Promise<Record<string, ObjectiveRecord>> => {
     const list = await ApiClient.getObjectives(currentTenant.id, undefined, programId);
@@ -1330,12 +1344,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // The program (and so the scope) is fixed when the edit starts. A save that waits in a queue passes the program it was made in.
     const program = programId !== undefined ? programId : programIdFor(currentTenant.id);
     const scope = programId !== undefined ? programScopeKey(currentTenant.id, programId) : scopeNow(currentTenant.id);
-    const { objective } = await ApiClient.putObjective(currentTenant.id, { objectiveId, controlId, ...patch }, program);
+    const { objective, controls } = await ApiClient.putObjective(currentTenant.id, { objectiveId, controlId, ...patch }, program);
     if (scopeNow(currentTenant.id) === scope) {
       setLiveObjectives(prev => ({ ...(prev ?? {}), [objectiveId]: objective }));
     }
+    applyLoweredControls(scope, controls);
     return objective;
-  }, [currentTenant.id, scopeNow, programIdFor]);
+  }, [currentTenant.id, scopeNow, programIdFor, applyLoweredControls]);
 
   // The SSP metadata writer rejects like the objective ones: the text is only on the server, so the UI must be able to say it was not saved
   const updateLiveSspMetadata = useCallback(async (
@@ -1358,11 +1373,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const scope = scopeNow(currentTenant.id);
     const programId = programIdFor(currentTenant.id);
     for (const chunk of chunkItems(items, MAX_OBJECTIVE_BULK)) {
-      await ApiClient.putObjectivesBulk(currentTenant.id, chunk, programId);
+      const { controls } = await ApiClient.putObjectivesBulk(currentTenant.id, chunk, programId);
+      applyLoweredControls(scope, controls);
     }
-    // The bulk answer carries counts only: read the program's records back
+    // The bulk answer carries counts (and the lowered controls) only: read the program's records back
     await reloadLiveObjectives(scope, programId);
-  }, [currentTenant.id, scopeNow, programIdFor, reloadLiveObjectives]);
+  }, [currentTenant.id, scopeNow, programIdFor, reloadLiveObjectives, applyLoweredControls]);
 
   const importLiveObjectives = useCallback(async (
     items: ObjectiveInput[]
@@ -1371,13 +1387,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const programId = programIdFor(currentTenant.id);
     const results: { objectiveId: string; result: ObjectiveImportResult }[] = [];
     for (const chunk of chunkItems(items, MAX_OBJECTIVE_IMPORT)) {
-      results.push(...(await ApiClient.importObjectives(currentTenant.id, chunk, programId)));
+      const chunkResults = await ApiClient.importObjectives(currentTenant.id, chunk, programId);
+      results.push(...chunkResults);
+      applyLoweredControls(scope, chunkResults.controls);
     }
     // What the import created is on the server now: show it (the caller's marker keeps it out of this browser's cache). The records
     // also tell the caller which conflicts are about the narrative text; a failed read rejects, and the next load retries.
     const records = await reloadLiveObjectives(scope, programId);
     return { results, records };
-  }, [currentTenant.id, scopeNow, programIdFor, reloadLiveObjectives]);
+  }, [currentTenant.id, scopeNow, programIdFor, reloadLiveObjectives, applyLoweredControls]);
 
   const createLiveEvidenceUploadUrl = useCallback(async (payload: {
     controlId: string;
