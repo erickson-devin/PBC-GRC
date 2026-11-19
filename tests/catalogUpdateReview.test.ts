@@ -143,7 +143,7 @@ const copy = catalogUpdateNoticeCopy(sum(), { canEdit: true, rev: REV });
 assert(copy.heading === 'The assessment objectives were updated to the CMMC Assessment Guide v2.13.' && copy.count === '12 answers on 7 controls need another look.' && copy.action === 'Check each answer against the new wording and set its status again.' && copy.orphanNote === null, 'R9 heading, count and action', copy);
 assert(copy.explain === 'Answers that were Met or Not applicable on an objective whose wording changed were set to In progress. Narratives and evidence were kept.', 'R9 the explanation');
 assert(catalogUpdateNoticeCopy(sum({ answers: 1, controls: 1, unreviewedAnswers: 1, unreviewedControls: 1 }), { canEdit: true, rev: REV }).count === '1 answer on 1 control needs another look.', 'R10 singular');
-assert(catalogUpdateNoticeCopy(sum(), { canEdit: false, rev: REV }).action === 'A Tenant Owner or MSP Admin can set the status again.', 'R11 read-only action');
+assert(catalogUpdateNoticeCopy(sum(), { canEdit: false, rev: REV }).action === 'A Tenant Owner or Admin can set the status again.', 'R11 read-only action');
 assert(catalogUpdateNoticeCopy(sum({ orphans: 2 }), { canEdit: true, rev: REV }).orphanNote === '2 more answers are kept for objectives the guide no longer has. They are in the list.'
   && catalogUpdateNoticeCopy(sum({ orphans: 1 }), { canEdit: true, rev: REV }).orphanNote === '1 more answer is kept for an objective the guide no longer has. It is in the list.', 'R12 orphan note, plural and singular');
 assert(catalogUpdateNoticeCopy(sum({ answers: 5, unreviewedAnswers: 0, unreviewedControls: 0 }), { canEdit: true, rev: REV }).allDone === 'All 5 answers the objective update set to In progress have been updated since.'

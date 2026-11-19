@@ -10,7 +10,7 @@ import type { ComplianceFramework } from '../types/framework';
 import { copyText } from '../utils/clipboard';
 import { errorMessage } from '../utils/errors';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
-import type { TenantRole } from '../types/tenant';
+import { INVITE_ROLE_ORDER, roleOptionLabel, roleSummaryLine, type InviteRole } from '../data/roleView';
 
 interface SetupPageProps {
   /** The setup token is only asked for when the server was started with SETUP_TOKEN. */
@@ -24,11 +24,7 @@ const MIN_PASSWORD_LENGTH = 12;
 const MAX_INVITES = 50;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 
-const INVITE_ROLES: Array<{ value: Exclude<TenantRole, 'MSP_ADMIN'>; label: string }> = [
-  { value: 'ASSESSOR', label: 'Assessor: can work on controls and evidence' },
-  { value: 'VIEWER', label: 'Viewer: read-only' },
-  { value: 'TENANT_OWNER', label: 'Owner: full control of the tenant' },
-];
+const INVITE_ROLES: Array<{ value: InviteRole; label: string }> = INVITE_ROLE_ORDER.map((value) => ({ value, label: roleOptionLabel(value) }));
 
 const inputClass =
   'w-full px-3 py-2.5 text-sm bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-400/60';
@@ -57,7 +53,7 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [inviteText, setInviteText] = useState('');
-  const [inviteRole, setInviteRole] = useState<Exclude<TenantRole, 'MSP_ADMIN'>>('ASSESSOR');
+  const [inviteRole, setInviteRole] = useState<InviteRole>('TENANT_ADMIN');
   const [setupToken, setSetupToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -248,11 +244,12 @@ export const SetupPage: React.FC<SetupPageProps> = ({ tokenRequired = false, onF
                   {teammates.length > 0 && (
                     <div>
                       <label htmlFor={ids.role} className={label}>Their role</label>
-                      <select id={ids.role} className={inputClass} value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Exclude<TenantRole, 'MSP_ADMIN'>)}>
+                      <select id={ids.role} className={inputClass} value={inviteRole} aria-describedby={`${ids.role}-hint`} onChange={(e) => setInviteRole(e.target.value as InviteRole)}>
                         {INVITE_ROLES.map((r) => (
                           <option key={r.value} value={r.value}>{r.label}</option>
                         ))}
                       </select>
+                      <p id={`${ids.role}-hint`} className={hint}>{roleSummaryLine(inviteRole)}</p>
                     </div>
                   )}
                 </fieldset>

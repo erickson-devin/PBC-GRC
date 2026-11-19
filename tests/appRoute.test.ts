@@ -74,6 +74,7 @@ const logFormat = /log_format[^;]*;/.exec(nginxCode);
 assert(!!logFormat && !/\$request\b|\$args|\$query_string|\$http_referer/.test(logFormat[0]), 'the nginx log_format carries no query string and no Referer (invitation tokens travel in the URL)');
 assert(!/location[^{]*\{[^}]*add_header/.test(nginxCode), 'no add_header inside a location block (it would drop the server-level HSTS header there)');
 const tenantCtx = fs.readFileSync(path.join(root, 'src/context/TenantContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
+assert(tenantCtx.includes('isOwnerLevel(currentRole)') && tenantCtx.includes('canDeletePrograms') && tenantCtx.includes('canManageTenant = useMemo(() => canRoleWrite(currentRole)'), 'TenantContext derives canManageTenant from canRoleWrite (an Admin gets the team screen) and exposes isOwnerLevel and canDeletePrograms');
 const financeLog = fs.readFileSync(path.join(root, 'src/components/admin/FinanceProvisioningLog.tsx'), 'utf8').replace(/\r\n/g, '\n');
 for (const [name, src] of [['TenantContext.tsx', tenantCtx], ['FinanceProvisioningLog.tsx', financeLog]] as const) {
   assert(src.includes('#accept-invite?token=') && !/(?<!#)accept-invite\?token=/.test(src), `${name} builds invitation links with the #accept-invite?token= fragment route, never a path`);
@@ -98,7 +99,7 @@ assert(uncapped.length === 0, 'heuristic: every <DialogOverlay> call site has a 
 assert(!/guidance\.standardRef/.test(read('src/components/layout/Sidebar.tsx')), 'Sidebar: the audit-trail item carries no standard badge that squeezes its label');
 const profileMenu = read('src/components/auth/UserProfileDropdown.tsx');
 assert(profileMenu.includes('Programs') && !profileMenu.includes('Switch Organization'), 'UserProfileDropdown: a "Programs" menu item replaces "Switch Organization"');
-assert(profileMenu.includes('ROLE_LABELS[currentRole]') && /case 'MSP_ADMIN'/.test(profileMenu), 'UserProfileDropdown: the role line uses ROLE_LABELS and MSP_ADMIN has its own badge');
+assert(profileMenu.includes('ROLE_LABELS[currentRole]') && profileMenu.includes('<RoleBadge role={currentRole}') && /MSP_ADMIN:\s*\{ Icon/.test(read('src/components/common/RoleBadge.tsx')), 'UserProfileDropdown: the role line uses ROLE_LABELS and the badge comes from RoleBadge, which styles MSP_ADMIN');
 const accountModal = read('src/components/auth/AccountSettingsModal.tsx');
 assert(!/>\s*Verified\s*</.test(accountModal) && accountModal.includes('ROLE_LABELS[currentRole]'), 'AccountSettingsModal: no hard-coded "Verified" badge; the role shows its label');
 assert(!read('src/components/layout/TenantSwitcher.tsx').includes('/17 Met'), 'TenantSwitcher: the met count is not hard-coded to 17');

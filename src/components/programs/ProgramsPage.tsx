@@ -16,6 +16,7 @@ import { resolveVmTargetProgramId, vmTargetArchiveLine, vmTargetCardNote, vmTarg
 import type { Program, ProgramMetrics } from '../../types/program';
 import type { VmTargetPreview } from '../../types/vm';
 import { errorMessage } from '../../utils/errors';
+import { ROLE_TEXT } from '../../data/roleView';
 
 /** The server's refusals for archive / restore / delete, in plain language (its own message is used for anything else). */
 const ACTION_MESSAGES: Record<string, string> = {
@@ -26,6 +27,7 @@ const ACTION_MESSAGES: Record<string, string> = {
   program_not_found: 'This program no longer exists. The list has been refreshed.',
   program_archived: 'An archived program cannot be edited. Restore it first.',
   program_limit: 'This organization has reached the maximum number of programs. Archive and delete one that is no longer needed first.',
+  owner_required: ROLE_TEXT.programDeleteRefused,
 };
 
 function actionError(err: unknown, fallback: string): string {
@@ -220,13 +222,13 @@ function currentTargetFor(preview: PreviewState, resolved: { programId: string; 
 
 /**
  * The programs page (#programs): every program (authorization boundary) of the organization as a card, with its framework,
- * baseline, coverage, open POA&M and evidence counts, and the actions the person may take. Create, edit, archive, restore and
- * delete are for the tenant owner and MSP administrators; everyone else reads. Archived programs are kept in a collapsed list.
+ * baseline, coverage, open POA&M and evidence counts, and the actions the person may take. Create, edit, archive and restore
+ * are for a Tenant Owner, Admin or MSP Admin; delete is Owner-level only (Tenant Owner or MSP Admin); everyone else reads. Archived programs are kept in a collapsed list.
  * Programs live on the server: a browser-only organization gets an explanation instead.
  */
 export const ProgramsPage: React.FC = () => {
   const { currentTenant } = useTenant();
-  const { programs, activeProgram, programsStatus, switchProgram, refreshPrograms, archiveProgram, unarchiveProgram, setMyDefaultProgram, setOrganizationDefaultProgram, deleteProgram, canManagePrograms } = useProgram();
+  const { programs, activeProgram, programsStatus, switchProgram, refreshPrograms, archiveProgram, unarchiveProgram, setMyDefaultProgram, setOrganizationDefaultProgram, deleteProgram, canManagePrograms, canDeletePrograms } = useProgram();
   const uid = useId();
 
   const [modal, setModal] = useState<{ mode: 'create' | 'edit'; program?: Program } | null>(null);
@@ -462,7 +464,7 @@ export const ProgramsPage: React.FC = () => {
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" /> : <ArchiveRestore className="w-3.5 h-3.5" aria-hidden="true" />}
                   Restore
                 </button>
-                {!program.vmTarget && (
+                {canDeletePrograms && !program.vmTarget && (
                   <button type="button" onClick={() => startAction('delete', program)} disabled={Boolean(busyId)} className={DANGER_BUTTON}>
                     <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                     Delete
@@ -544,7 +546,7 @@ export const ProgramsPage: React.FC = () => {
 
       {readOnly && (
         <p role="note" className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-400">
-          Programs are read-only for your role. The tenant owner or an MSP administrator creates, edits, archives and deletes them.
+          {ROLE_TEXT.programsReadOnly}
         </p>
       )}
       {programsStatus === 'error' && <ErrorNotice message="The programs could not be refreshed. The list below may be out of date." />}
@@ -580,6 +582,7 @@ export const ProgramsPage: React.FC = () => {
             {archivedOpen ? <ChevronDown className="w-4 h-4" aria-hidden="true" /> : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
             Archived ({archivedList.length})
           </button>
+          {archivedOpen && canManagePrograms && !canDeletePrograms && <p role="note" className="text-xs text-slate-400">{ROLE_TEXT.archivedDeleteOwnerOnly}</p>}
           {archivedOpen && <ArchivedProgramList id={`${uid}-archived`} programs={archivedList} renderCard={renderCard} />}
         </section>
       )}

@@ -92,7 +92,7 @@ export function boundaryEditBlock(ctx: {
 export function boundaryBlockMessage(block: BoundaryBlock, programName: string): string {
   switch (block) {
     case 'unsupported': return 'This organization is kept in this browser only: it has no programs, so its boundary is the whole inventory.';
-    case 'viewer': return 'Read-only: only a Tenant Owner or MSP Admin can change which assets a program declares.';
+    case 'viewer': return 'Read-only: only a Tenant Owner or Admin can change which assets a program declares.';
     case 'no_program': return 'No program exists yet, so no assets can be declared inside a boundary. Create a program first.';
     case 'archived': return `${programName} is archived, so its boundary is read-only.`;
     case 'error': return 'The program boundaries could not be loaded, so membership cannot be changed right now.';
@@ -108,7 +108,7 @@ export function boundaryErrorMessage(err: unknown): string {
   if (reason === 'program_not_found') return 'This program no longer exists. Nothing was saved.';
   if (reason === 'unknown_assets') return 'Some of these assets were removed from the inventory meanwhile. Nothing was saved; the list has been refreshed, so try again.';
   if (reason === 'invalid_asset_ids') return 'The server did not accept this change (too many or malformed asset ids). Nothing was saved.';
-  if (e.status === 403) return 'Only a Tenant Owner or MSP Admin can change which assets a program declares. Nothing was saved.';
+  if (e.status === 403) return 'Only a Tenant Owner or Admin can change which assets a program declares. Nothing was saved.';
   return 'The boundary change could not be saved. Nothing was changed; try again.';
 }
 

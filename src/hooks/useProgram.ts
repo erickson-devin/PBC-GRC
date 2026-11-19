@@ -20,6 +20,7 @@ export function useProgram() {
     setOrganizationDefaultProgram,
     deleteProgram,
     canManagePrograms,
+    canDeletePrograms,
   } = useTenant();
 
   /** Programs that can be switched to (archived ones stay readable on the programs page only). */
@@ -40,5 +41,6 @@ export function useProgram() {
     setOrganizationDefaultProgram,
     deleteProgram,
     canManagePrograms,
+    canDeletePrograms,
   };
 }

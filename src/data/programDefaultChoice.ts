@@ -3,7 +3,7 @@ import type { Program } from '../types/program';
 /**
  * What the screens say and do around "which program is the default" and "there is no program yet". Pure: no browser storage, no logging.
  * The organization default (`isDefault`) is where people land when they have not chosen; "My default" (`isMyDefault`) is one person's own
- * choice. A tenant starts with no program at all: the first one is created by a tenant owner or MSP administrator.
+ * choice. A tenant starts with no program at all: the first one is created by a Tenant Owner or Admin.
  */
 
 type ProgramLike = Pick<Program, 'id' | 'name' | 'archived' | 'isDefault'> & { isMyDefault?: boolean; createdAt?: string };
@@ -25,7 +25,7 @@ export const PROGRAM_SCOPED_TABS: ReadonlySet<string> = new Set([
 export type ProgramGateKind = 'none' | 'all-archived';
 export interface ProgramGate {
   kind: ProgramGateKind;
-  /** The viewer may create a program (tenant owner or MSP administrator). */
+  /** The viewer may create a program (Tenant Owner, Admin or MSP Admin). */
   canCreate: boolean;
 }
 
@@ -58,12 +58,12 @@ export function noProgramCopy(gate: ProgramGate): { title: string; body: string 
         }
       : {
           title: 'No program yet',
-          body: 'A tenant owner or an MSP administrator creates the first program. Until then there are no controls, evidence or plans to show.',
+          body: 'A Tenant Owner or Admin creates the first program. Until then there are no controls, evidence or plans to show.',
         };
   }
   return gate.canCreate
     ? { title: 'No active program', body: 'Every program is archived. Restore one on the Programs page, or create a new one.' }
-    : { title: 'No active program', body: 'Every program is archived. Ask a tenant owner or an MSP administrator to restore one or create a new one.' };
+    : { title: 'No active program', body: 'Every program is archived. Ask a Tenant Owner or Admin to restore one or create a new one.' };
 }
 
 const createdTime = (p: { createdAt?: string }): number => {

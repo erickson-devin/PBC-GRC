@@ -6,7 +6,7 @@ import { shouldPromptFirstProgram } from '../../data/programDefaultChoice';
 import type { Program } from '../../types/program';
 
 /**
- * "Create Your First Program": opens by itself for a tenant owner or MSP administrator when the organization has no program yet
+ * "Create Your First Program": opens by itself for a write role (Tenant Owner, Admin or MSP Admin) when the organization has no program yet
  * (never while onboarding is open). The name and the boundary description start from the onboarding answers; the framework is
  * not preselected. "Not Now" closes it for this visit only (memory, not storage): it comes back on reload while there is no program.
  */

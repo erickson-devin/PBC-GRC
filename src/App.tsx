@@ -357,7 +357,7 @@ const AppContent: React.FC = () => {
         isOpen={currentRoute === 'app' && (isOnboardingModalOpen || needsOnboarding)}
         onClose={() => setIsOnboardingModalOpen(false)}
       />
-      {/* An organization with no program yet: a tenant owner or MSP administrator is asked to create the first one (after onboarding) */}
+      {/* An organization with no program yet: a write role (Tenant Owner, Admin or MSP Admin) is asked to create the first one (after onboarding) */}
       {currentRoute === 'app' && <FirstProgramPrompt />}
       <TeamSettingsModal
         isOpen={isTeamModalOpen}

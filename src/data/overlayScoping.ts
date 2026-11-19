@@ -68,7 +68,7 @@ export function overlayLockText(lock: OverlayLock, framework: string): string {
         ? 'Overlays apply to NIST SP 800-53 programs only. CMMC assesses every requirement: if one does not apply, mark its assessment objectives N/A on the control instead.'
         : 'Overlays apply to NIST SP 800-53 programs only. If a control does not apply, record that on the control instead.';
     case 'privacy': return 'Not available: this program applies the SP 800-53B privacy baseline, so it processes PII.';
-    case 'cannot_manage': return 'Only a Tenant Owner or MSP Admin can change the overlays. The ones marked Active are applied to the control list and the score.';
+    case 'cannot_manage': return 'Only a Tenant Owner or Admin can change the overlays. The ones marked Active are applied to the control list and the score.';
   }
 }
 export function overlayScopeNote(serverBacked: boolean): string {
@@ -126,7 +126,7 @@ export function overlayBannerText(
     ? 'Some controls are removed by more than one overlay, so the counts above add up to more than the total.'
     : null;
   const pointer = lock === null ? 'Change them from the Overlays menu in the header.'
-    : lock === 'cannot_manage' ? 'They are listed in the Overlays menu in the header. Only a Tenant Owner or MSP Admin can change them.'
+    : lock === 'cannot_manage' ? 'They are listed in the Overlays menu in the header. Only a Tenant Owner or Admin can change them.'
     : lock === 'archived' ? 'This program is archived and read-only, so its overlays cannot be changed. They are listed in the Overlays menu in the header.'
     : 'They are listed in the Overlays menu in the header.';
   return { heading, summary, overlap, pointer };

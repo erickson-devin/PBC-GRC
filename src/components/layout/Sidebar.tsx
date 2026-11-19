@@ -25,6 +25,7 @@ import { getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/framewo
 import { BrandLogo } from '../common/BrandLogo';
 import { BuildStamp } from '../common/BuildStamp';
 import { canRoleReviewSspImports } from '../../utils/roles';
+import { roleShortLabel } from '../../data/roleView';
 
 // ─── Badge Design System ────────────────────────────────────────────────────
 type BadgeVariant = 'neutral' | 'status' | 'accent';
@@ -73,17 +74,6 @@ type SidebarItem = NavItem | ExternalNavItem;
 interface NavSection {
   title: string;
   items: SidebarItem[];
-}
-
-// ─── Role label helper ──────────────────────────────────────────────────────
-function getRoleLabel(role: string): string {
-  switch (role) {
-    case 'TENANT_OWNER': return 'Owner';
-    case 'MSP_ADMIN':    return 'MSP Admin';
-    case 'ASSESSOR':     return 'Assessor';
-    case 'VIEWER':       return 'Viewer';
-    default:             return role;
-  }
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -197,7 +187,7 @@ export const Sidebar: React.FC = () => {
           id: 'rbac',
           label: 'Team & Role RBAC',
           icon: Users,
-          badge: getRoleLabel(currentRole),
+          badge: roleShortLabel(currentRole),
           badgeVariant: 'accent',
         },
         {

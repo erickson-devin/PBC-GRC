@@ -63,7 +63,7 @@ const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text
 export const AssetInventoryManager: React.FC = () => {
   const { currentTenant, activeProgram, programs, programsStatus } = useTenant();
   const { openExportModal } = useAssessment();
-  // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a TENANT_OWNER / MSP_ADMIN can change it.
+  // The inventory comes from the server (the local store only backs tenants that have not been moved to the server yet). Only a write role (Tenant Owner, Admin or MSP Admin) can change it.
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
   const serverBacked = Boolean(currentTenant.serverBacked);
   const tenantId = currentTenant.id;
@@ -410,7 +410,7 @@ export const AssetInventoryManager: React.FC = () => {
           </p>
         </div>
 
-        {/* Action Buttons (changes are limited to Tenant Owners / MSP Admins; everyone else gets a read-only view) */}
+        {/* Action Buttons (changes are limited to write roles: Tenant Owners, Admins and MSP Admins; everyone else gets a read-only view) */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
@@ -468,7 +468,7 @@ export const AssetInventoryManager: React.FC = () => {
       {!canEdit && (
         <div role="status" className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300">
           <Lock className="w-4 h-4 text-slate-400 shrink-0" />
-          <span>Read-only: only a Tenant Owner or MSP Admin can change the asset inventory, the CMMC scoping{showBoundary ? ' and which assets a program declares' : ''}.</span>
+          <span>Read-only: only a Tenant Owner or Admin can change the asset inventory, the CMMC scoping{showBoundary ? ' and which assets a program declares' : ''}.</span>
         </div>
       )}
 
@@ -499,7 +499,7 @@ export const AssetInventoryManager: React.FC = () => {
           <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
           <p>
             <strong className="text-amber-100">{activeProgram.name}</strong> has not declared its assets: its SSP boundary uses the whole inventory.
-            {canEdit ? ' Tick "In this boundary" on the assets it covers, or filter the list and use "Add shown to boundary".' : ' A Tenant Owner or MSP Admin can declare them.'}
+            {canEdit ? ' Tick "In this boundary" on the assets it covers, or filter the list and use "Add shown to boundary".' : ' A Tenant Owner or Admin can declare them.'}
           </p>
         </div>
       )}

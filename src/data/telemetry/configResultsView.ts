@@ -21,13 +21,13 @@ export const CONFIG_RESULTS_COPY = {
   assetNamesUnavailable: 'The asset inventory could not be loaded, so asset names are not shown.',
   rulesLoading: 'Loading failing rules…',
   rulesUnavailable: 'The failing rules of this scan could not be loaded.',
-  suggestionNotice: 'These are suggestions worked out from the latest scan results, not recorded statuses. Nothing here changes a control until a Tenant Owner or MSP Admin chooses Apply and confirms it; that decision is saved under their name in the control history.',
+  suggestionNotice: 'These are suggestions worked out from the latest scan results, not recorded statuses. Nothing here changes a control until a Tenant Owner or Admin chooses Apply and confirms it; that decision is saved under their name in the control history.',
   notApplied: 'Suggestion, not applied',
   suggestionsLoading: 'Loading suggestions…',
   suggestionsUnavailable: 'Suggestions could not be loaded from the server. No control has been changed.',
   programLoading: 'Loading the active program…',
   programUnavailable: 'The programs could not be loaded, so no suggestions are shown.',
-  readOnly: 'Read-only: only a Tenant Owner or MSP Admin can record a control status. The suggestions are shown for information.',
+  readOnly: 'Read-only: only a Tenant Owner or Admin can record a control status. The suggestions are shown for information.',
   notLoaded: 'The controls of this program are not loaded from the server yet, so a status cannot be recorded right now.',
 } as const;
 
@@ -82,7 +82,7 @@ export function applyResultMessage(outcome: ControlDecisionOutcome, id: string, 
     case 'archived': return `${id} was not saved: this program is archived and its controls are read-only.`;
     case 'unreachable': return `The server could not be reached, so ${id} was not saved.`;
     case 'failed': return `${id} was not saved. Try again, or set the status in the control matrix.`;
-    case 'read_only': return `${id} was not saved: only a Tenant Owner or MSP Admin can record a control status.`;
+    case 'read_only': return `${id} was not saved: only a Tenant Owner or Admin can record a control status.`;
     case 'objectives_not_met': return `${id} was not recorded as Met: its objectives are not all Met or Not applicable yet. Answer them in the control matrix, then apply again.`;
     default: return `${id} was not saved: the controls are not loaded from the server yet.`;
   }

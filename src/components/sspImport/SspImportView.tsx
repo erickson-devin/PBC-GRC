@@ -44,7 +44,7 @@ import {
 
 /**
  * SSP import: upload a System Security Plan (PDF / Word), see which controls it describes, and review each suggestion next
- * to the control's current answer. Nothing here changes a control until a Tenant Owner / MSP Admin commits the suggestions
+ * to the control's current answer. Nothing here changes a control until a Tenant Owner or Admin commits the suggestions
  * they accepted. Assessors can read everything but cannot accept, edit or commit.
  */
 
@@ -393,7 +393,7 @@ export const SspImportView: React.FC = () => {
     return (
       <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300">
         <h2 className="text-lg font-bold text-white mb-2">SSP Import</h2>
-        Your role cannot see SSP imports. Ask a Tenant Owner for access.
+        Your role cannot see SSP imports. Ask a Tenant Owner or Admin for access.
       </section>
     );
   }
@@ -419,7 +419,7 @@ export const SspImportView: React.FC = () => {
 
       {caps && !canWrite && (
         <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm" role="note">
-          You can review imports, but only a Tenant Owner or MSP Admin can upload, accept, edit or commit suggestions.
+          You can review imports, but only a Tenant Owner or Admin can upload, accept, edit or commit suggestions.
         </div>
       )}
 

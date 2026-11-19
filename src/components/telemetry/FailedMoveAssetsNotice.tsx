@@ -7,8 +7,8 @@ import { ErrorNotice } from '../common/ErrorNotice';
 type OrphanAction = 'claim' | 'discard';
 
 /**
- * Offers a retry for assets that did not reach the server when a browser-only tenant was moved (#92), and, for a Tenant Owner or
- * MSP Admin, a claim or discard for asset lists an earlier move left under an unregistered tenant id (#112). Both orphan actions
+ * Offers a retry for assets that did not reach the server when a browser-only tenant was moved (#92), and, for a write role
+ * (Tenant Owner, Admin or MSP Admin), a claim or discard for asset lists an earlier move left under an unregistered tenant id (#112). Both orphan actions
  * need an inline confirmation; only the old id and a count are shown, never an asset's fields. Renders nothing when there is nothing to show.
  */
 export const FailedMoveAssetsNotice: React.FC = () => {

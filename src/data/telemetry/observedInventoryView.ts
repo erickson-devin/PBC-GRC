@@ -22,7 +22,7 @@ export const OBSERVED_COPY = {
   noHardware: 'This source has not reported hardware for this host.',
   editNote: 'What the scanner last reported. A value becomes part of the asset record only when you use it and save.',
   viewNoteEditor: 'What the scanner last reported. It does not change the asset record. To copy a value into the asset record, use Edit on the asset.',
-  viewNoteReadOnly: 'What the scanner last reported. It does not change the asset record. Read-only: only a Tenant Owner or MSP Admin can copy a value into the asset record.',
+  viewNoteReadOnly: 'What the scanner last reported. It does not change the asset record. Read-only: only a Tenant Owner or Admin can copy a value into the asset record.',
   differs: 'Differs from record',
   blank: 'Blank in record',
   useValue: 'Use scanner value',

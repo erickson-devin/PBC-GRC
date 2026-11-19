@@ -91,7 +91,7 @@ export function useFailedMoveAssets(): FailedMoveAssets {
     void check(tenantId, sessionRef);
   }, [currentTenant.id, currentTenant.serverBacked, check]);
 
-  // Asset lists an earlier move left under an unregistered id: only an owner or MSP admin of a server tenant is offered them
+  // Asset lists an earlier move left under an unregistered id: only a write role (Tenant Owner, Admin or MSP Admin) of a server tenant is offered them
   const orphanScope = currentTenant.serverBacked && canManageTenant;
   const refreshOrphans = useCallback(() => {
     setOrphans(orphanScope && ApiClient.getSessionRef() ? findOrphanAssetLists(localStorage, currentTenant.id) : []);

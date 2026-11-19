@@ -134,7 +134,7 @@ assert(
   'N1 three mismatches: a labelled region, an unpressed toggle and the count copy'
 );
 assert(!three.includes('Dismiss') && !three.includes('role="alert"'), 'N2 the notice cannot be dismissed and is not an alert');
-assert(three.includes(metMismatchNoticeCopy(3, { canEdit: true }).action) && render(3, false, false).includes('A Tenant Owner or MSP Admin can update them.'), 'N3 the action text follows the role');
+assert(three.includes(metMismatchNoticeCopy(3, { canEdit: true }).action) && render(3, false, false).includes('A Tenant Owner or Admin can update them.'), 'N3 the action text follows the role');
 assert(render(0, true, false) === '', 'N4 nothing to show and the filter off: nothing rendered');
 const done = render(0, true, true);
 assert(done.includes('None left') && done.includes('aria-pressed="true"'), 'N5 all fixed with the filter on: "None left" and the toggle stays');

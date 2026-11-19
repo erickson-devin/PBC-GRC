@@ -48,7 +48,7 @@ export const EnclaveSettings: React.FC = () => {
   const [copyFailed, setCopyFailed] = useState(false);
   const [previewMode, setPreviewMode] = useState<'formatted' | 'raw'>('formatted');
 
-  // The boundary statement belongs to the active program (owners and MSP admins edit it); a tenant without programs keeps the tenant's text
+  // The boundary statement belongs to the active program (a write role edits it: Tenant Owner, Admin or MSP Admin); a tenant without programs keeps the tenant's text
   const [editingBoundary, setEditingBoundary] = useState(false);
   const [boundaryDraft, setBoundaryDraft] = useState('');
   const [boundaryBusy, setBoundaryBusy] = useState(false);

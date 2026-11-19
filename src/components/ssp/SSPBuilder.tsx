@@ -242,7 +242,7 @@ export const SSPBuilder: React.FC = () => {
                   Use this browser&apos;s
                 </button>
               </div>
-              {!canEdit && <p>Only an owner or MSP administrator can choose.</p>}
+              {!canEdit && <p>Only a Tenant Owner or Admin can choose.</p>}
               {conflictFailed && <p>The choice could not be saved to the server. Try again.</p>}
             </div>
           )}

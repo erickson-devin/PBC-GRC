@@ -692,7 +692,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   <p className="text-xs text-slate-400 mt-0.5">
                     {canEdit
                       ? 'Modifications made here dynamically update the active audit document, live preview, and official cover page.'
-                      : 'Read-only: these values come from the program and its SSP metadata. Only an owner or MSP admin can change them.'}
+                      : 'Read-only: these values come from the program and its SSP metadata. Only a Tenant Owner or Admin can change them.'}
                   </p>
                 </div>
 
@@ -1150,7 +1150,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <div className="space-y-2 min-w-0">
                 <p>
                   {exportGaps.length === 1 ? '1 value is' : `${exportGaps.length} values are`} not recorded, so this document will print "not recorded" there. Exporting is still allowed.
-                  {canEdit ? ' Select a value to fill it in on Boundary Metadata.' : ' You have read-only access: ask an owner to record these values.'}
+                  {canEdit ? ' Select a value to fill it in on Boundary Metadata.' : ' You have read-only access: ask a Tenant Owner or Admin to record these values.'}
                 </p>
                 <ul className="flex flex-wrap gap-1.5" aria-label="Values not recorded">
                   {exportGaps.map((gap) => (

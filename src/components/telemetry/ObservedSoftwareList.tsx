@@ -30,7 +30,7 @@ interface ObservedSoftwareListProps {
   assetId: string;
   /** The tenant's software list, used to show which packages it already records. */
   softwareList: Pick<UseSoftwareItems, 'items' | 'loading' | 'error' | 'reload' | 'supported'>;
-  /** A Tenant Owner or MSP Admin: rows can be copied to the software list. */
+  /** A write role (Tenant Owner, Admin or MSP Admin): rows can be copied to the software list. */
   canAdd: boolean;
   assets: EnclaveAsset[];
   assetsLoading: boolean;

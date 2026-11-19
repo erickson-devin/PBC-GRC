@@ -14,7 +14,7 @@ export const SSP_METADATA_STALE_MESSAGE =
 
 /** Shown when this browser holds SSP details that the server does not and the signed-in role cannot save them. */
 export const SSP_METADATA_NEED_OWNER_MESSAGE =
-  'This browser holds SSP details that are not on the server yet. An owner or MSP administrator must open this program once to save them.';
+  'This browser holds SSP details that are not on the server yet. A Tenant Owner or Admin must open this program once to save them.';
 
 /** Fields that never count as something a person typed: the date defaults to today and is refreshed on every load. */
 const NON_CONTENT_FIELDS: readonly SspField[] = ['assessmentDate'];
@@ -77,7 +77,7 @@ export interface SspReconcileResult {
  * Decides what to do with a loaded server record and the cached state of one program:
  *  - marker set: the server copy is shown ('merged').
  *  - nothing typed in the cache: take the server copy and set the marker ('marked').
- *  - cache holds text, the role cannot write: 'blocked' (nothing changes, an owner has to open it).
+ *  - cache holds text, the role cannot write: 'blocked' (nothing changes, a Tenant Owner or Admin has to open it).
  *  - server has no row: 'upload' the cache (expected null).
  *  - server row exists: cache text only fills fields the server has empty ('upload' with the server's stamp, or 'marked' when
  *    there is nothing to add); a field set on both sides to different text is a 'conflict' (nothing changes).

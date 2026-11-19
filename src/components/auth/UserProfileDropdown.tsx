@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Shield,
-  CheckCircle2,
   Lock,
   ChevronDown,
   Building2,
@@ -13,8 +12,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
-import { TenantRole } from '../../types/tenant';
 import { ROLE_LABELS } from '../../utils/roles';
+import { ROLE_SHORT_LABELS, SIMULATED_ROLES } from '../../data/roleView';
+import { RoleBadge } from '../common/RoleBadge';
 import { AccountSettingsModal } from './AccountSettingsModal';
 import { ApiTokensModal } from './ApiTokensModal';
 
@@ -46,35 +46,6 @@ export const UserProfileDropdown: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const getRoleBadge = (role: TenantRole) => {
-    switch (role) {
-      case 'TENANT_OWNER':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-            <Shield className="w-3 h-3" /> Tenant Owner
-          </span>
-        );
-      case 'MSP_ADMIN':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-            <Shield className="w-3 h-3" /> MSP Admin
-          </span>
-        );
-      case 'ASSESSOR':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-            <CheckCircle2 className="w-3 h-3" /> Assessor / C3PAO
-          </span>
-        );
-      case 'VIEWER':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-slate-500/20 text-slate-300 border border-slate-500/30">
-            <Lock className="w-3 h-3" /> Read-Only
-          </span>
-        );
-    }
-  };
 
   return (
     <>
@@ -114,7 +85,7 @@ export const UserProfileDropdown: React.FC = () => {
             <div className="p-3.5 border-b border-slate-800 bg-slate-950/70">
               <p className="text-xs font-bold text-white flex items-center justify-between">
                 <span>{currentUser.name}</span>
-                {getRoleBadge(currentRole)}
+                <RoleBadge role={currentRole} />
               </p>
               <p className="text-xs text-slate-400 font-mono truncate mt-0.5">
                 {currentUser.email}
@@ -203,15 +174,19 @@ export const UserProfileDropdown: React.FC = () => {
             </div>
 
 
-            {/* Quick RBAC Role Simulation */}
+            {/* Quick RBAC Role Simulation: platform administrators only (it changes what this browser shows, not what the server allows) */}
+            {isSuperAdmin && (
             <div className="p-2 border-t border-slate-800 bg-slate-950/40">
-              <span className="text-xs uppercase tracking-wider font-bold text-slate-400 px-1 block mb-1">
-                Simulate CMMC Role:
+              <span id="simulate-role-label" className="text-xs uppercase tracking-wider font-bold text-slate-400 px-1 block">
+                Simulate role
               </span>
-              <div className="grid grid-cols-3 gap-1">
-                {(['TENANT_OWNER', 'ASSESSOR', 'VIEWER'] as TenantRole[]).map(role => (
+              <p className="text-[11px] text-slate-400 px-1 mb-1">Changes what this browser shows. The server still uses your real role.</p>
+              <div role="group" aria-labelledby="simulate-role-label" className="grid grid-cols-2 gap-1">
+                {SIMULATED_ROLES.map(role => (
                   <button
                     key={role}
+                    type="button"
+                    aria-pressed={currentRole === role}
                     onClick={() => {
                       switchUserRole(role);
                       setIsOpen(false);
@@ -222,11 +197,12 @@ export const UserProfileDropdown: React.FC = () => {
                         : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                     }`}
                   >
-                    {role === 'TENANT_OWNER' ? 'Owner' : role === 'ASSESSOR' ? 'Assessor' : 'Viewer'}
+                    {ROLE_SHORT_LABELS[role]}
                   </button>
                 ))}
               </div>
             </div>
+            )}
 
             {/* Sign Out */}
             <div className="p-1.5 border-t border-slate-800 bg-slate-950/80">

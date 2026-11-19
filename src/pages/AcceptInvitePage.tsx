@@ -18,7 +18,9 @@ import { AuthProviderType, TenantInvitation } from '../types/tenant';
 import { frameworkPolicySummary } from '../data/tenantFrameworkPolicy';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { ErrorNotice } from '../components/common/ErrorNotice';
-import { invitePreviewErrorMessage } from '../utils/invitePreview';
+import { invitePreviewErrorMessage, inviteMfaMode, type InviteMfaMode } from '../utils/invitePreview';
+import { canRoleWrite } from '../utils/roles';
+import { inviteTwoStepNote, roleLabel, roleSummaryLine, ROLE_TEXT } from '../data/roleView';
 import { MfaChallengeForm } from '../components/auth/MfaChallengeForm';
 import { MfaEnrolmentPanel } from '../components/auth/MfaEnrolmentPanel';
 import { SystemUseNoticeGate } from '../components/auth/SystemUseNoticeGate';
@@ -112,7 +114,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
 
   // What the server knows about the token (organisation, role, status), fetched with the token alone (it works
   // before sign-in).
-  type InviteView = Pick<TenantInvitation, 'token' | 'tenantName' | 'email' | 'role' | 'status' | 'expiresAt' | 'cageCode' | 'primaryFramework' | 'enabledFrameworks'>;
+  type InviteView = Pick<TenantInvitation, 'token' | 'tenantName' | 'email' | 'role' | 'status' | 'expiresAt' | 'cageCode' | 'primaryFramework' | 'enabledFrameworks'> & { mfaMode: InviteMfaMode | null };
   const [liveInvitation, setLiveInvitation] = useState<InviteView | undefined>(undefined);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -130,7 +132,7 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
     previewInvitation(token)
       .then((preview) => {
         if (cancelled) return;
-        setLiveInvitation(preview ? { token, tenantName: preview.tenantName, email: preview.email, role: preview.role, status: preview.status, expiresAt: preview.expiresAt, primaryFramework: preview.primaryFramework, enabledFrameworks: preview.enabledFrameworks } : undefined);
+        setLiveInvitation(preview ? { token, tenantName: preview.tenantName, email: preview.email, role: preview.role, status: preview.status, expiresAt: preview.expiresAt, primaryFramework: preview.primaryFramework, enabledFrameworks: preview.enabledFrameworks, mfaMode: inviteMfaMode(preview) } : undefined);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -160,6 +162,12 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
   };
 
   const invitation = liveInvitation;
+  // The two-step-verification note: exact when the server reported its mode, the generic sentence for a write role when it did not
+  const twoStepNote = !invitation
+    ? null
+    : invitation.mfaMode
+      ? inviteTwoStepNote(invitation.role, invitation.mfaMode)
+      : canRoleWrite(invitation.role) ? ROLE_TEXT.acceptTwoStep : null;
 
   // Auto-fill full name from email if invitation is present
   useEffect(() => {
@@ -472,9 +480,9 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                 <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-800/80 pt-2.5">
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Assigned Role</span>
-                    <span className="font-bold text-cyan-300 flex items-center gap-1 mt-0.5 font-mono text-xs">
+                    <span className="font-bold text-cyan-300 flex items-center gap-1 mt-0.5 text-xs">
                       <Shield className="w-3.5 h-3.5" />
-                      {invitation?.role === 'TENANT_OWNER' ? 'TENANT_OWNER' : invitation?.role === 'ASSESSOR' ? 'ASSESSOR' : 'VIEWER'}
+                      {invitation ? roleLabel(invitation.role) : ''}
                     </span>
                   </div>
 
@@ -485,6 +493,8 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {invitation && <p className="text-xs text-slate-300 leading-relaxed border-t border-slate-800/80 pt-2.5">{roleSummaryLine(invitation.role)}</p>}
 
                 <div className="text-[11px] text-slate-400 border-t border-slate-800/80 pt-2 flex items-center justify-between">
                   <span>Designated Recipient:</span>
@@ -519,11 +529,12 @@ export const AcceptInvitePage: React.FC<AcceptInvitePageProps> = ({
               {/* Error Alert */}
               <ErrorNotice message={claimError || authError} />
 
-              {/* An owner invitation: say beforehand that two-step verification may be asked for (the person is not signed in, so no lookup) */}
-              {invitation?.role === 'TENANT_OWNER' && !mfaChallenge && (
+              {/* A write-role invitation: say beforehand that two-step verification may be asked for. The person is not signed in, so the
+                  mode comes from the invitation preview; an older server that does not send it gets the generic "can require" sentence. */}
+              {invitation && twoStepNote && !mfaChallenge && (
                 <div role="note" className="flex items-start gap-2 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-200 text-xs leading-relaxed">
                   <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
-                  <span>Owners must use two-step verification on this installation; you may be asked to set it up right after accepting.</span>
+                  <span>{twoStepNote}</span>
                 </div>
               )}
 

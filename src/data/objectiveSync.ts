@@ -22,7 +22,7 @@ import { cmmcCascadeLetters, cmmcCascadeSource } from './cmmcGuide/objectives';
 
 /** The message a user who cannot write sees while this browser still holds narratives the server does not have. */
 export const OBJECTIVES_NEED_OWNER_MESSAGE =
-  'This browser holds objective narratives that are not on the server yet. Ask a tenant owner to open this organization in this browser to move them.';
+  'This browser holds objective narratives that are not on the server yet. Ask a Tenant Owner or Admin to open this organization in this browser to move them.';
 
 /** Splits a list into runs of at most `size` (the server accepts 500 per bulk write and 5000 per import). */
 export function chunkItems<T>(items: readonly T[], size: number): T[][] {
@@ -187,7 +187,7 @@ export type ReconcileOutcome =
   | 'marked'
   /** Cached narratives (or status / evidence) are not on the server and the user can write: upload them first; nothing was merged. */
   | 'upload'
-  /** They are not on the server and the user cannot write: leave the cache alone and tell the user to ask an owner. */
+  /** They are not on the server and the user cannot write: leave the cache alone and tell the user to ask a Tenant Owner or Admin. */
   | 'blocked';
 
 export interface ReconcileOptions extends MergeOptions {

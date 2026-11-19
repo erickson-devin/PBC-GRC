@@ -75,7 +75,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               ) : canEdit ? (
                 <>For scripts and scanners, create a VM service token below and send it to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).</>
               ) : (
-                <>For scripts and scanners, a Tenant Owner or MSP Admin creates a VM service token here; it is sent to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).</>
+                <>For scripts and scanners, a Tenant Owner or Admin creates a VM service token here; it is sent to <code className="text-cyan-400">POST /api/v1/vm/ingest</code> (see the vulnerability-management guide).</>
               )}
             </p>
           </div>

@@ -3,7 +3,6 @@ import {
   X,
   Users,
   Shield,
-  CheckCircle2,
   Lock,
   Plus,
   Copy,
@@ -20,7 +19,19 @@ import { ComplianceFramework } from '../../types/framework';
 import { InviteStaffModal } from './InviteStaffModal';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
-import { errorMessage } from '../../utils/errors';
+import { RoleBadge } from '../common/RoleBadge';
+import { ROLE_LABELS } from '../../utils/roles';
+import {
+  ROLE_DESCRIPTIONS,
+  ROLE_TEXT,
+  matrixRoles,
+  roleChangeConfirmText,
+  roleChangeNeedsConfirm,
+  teamActionErrorMessage,
+  teamIntroNote,
+  teamRowView,
+  type TeamOp,
+} from '../../data/roleView';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText } from '../../utils/clipboard';
@@ -48,6 +59,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const {
     currentTenant,
     currentUser,
+    currentRole,
+    isSuperAdmin,
     canManageTenant,
     getTenantMembers,
     updateMemberRole,
@@ -72,8 +85,31 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Destructive actions are confirmed inline (no blocking confirm() dialogs)
-  const [pendingAction, setPendingAction] = useState<{ type: 'revoke' | 'remove'; id: string; label: string } | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    type: 'revoke' | 'remove' | 'role';
+    id: string;
+    label: string;
+    from?: TenantRole;
+    to?: TenantRole;
+  } | null>(null);
   const [scopeError, setScopeError] = useState<string | null>(null);
+  const uid = React.useId();
+  // Focus: the result region takes it when the control that was used is gone (a removal, a revoke)
+  const resultRef = React.useRef<HTMLDivElement>(null);
+  const pendingCancelRef = React.useRef<HTMLButtonElement>(null);
+  const pendingTriggerRef = React.useRef<HTMLElement | null>(null);
+  React.useEffect(() => {
+    if (pendingAction) pendingCancelRef.current?.focus();
+  }, [pendingAction]);
+  const refocus = () =>
+    requestAnimationFrame(() => {
+      const t = pendingTriggerRef.current;
+      (t && t.isConnected ? t : resultRef.current)?.focus();
+    });
+  const cancelPending = () => {
+    setPendingAction(null);
+    refocus();
+  };
 
   // A server-backed tenant's team lives on the server: load it whenever this screen is opened
   React.useEffect(() => {
@@ -128,7 +164,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const filteredMembers = members.filter(m =>
     m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    m.role.toLowerCase().includes(searchQuery.toLowerCase())
+    m.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    ROLE_LABELS[m.role].toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleCopyInvite = async (token: string, memberId: string) => {
@@ -143,15 +180,18 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   };
 
   /** Runs a team action with a busy flag and a visible error (a failed call must never be silent). */
-  const runAction = async (action: () => Promise<void>, success?: string) => {
+  const runAction = async (action: () => Promise<void>, success?: string, op: TeamOp = 'member'): Promise<boolean> => {
     setBusy(true);
     setActionError(null);
     setNotice(null);
     try {
       await action();
       if (success) setNotice(success);
+      return true;
     } catch (err: unknown) {
-      setActionError(errorMessage(err) || 'That did not work. Please try again.');
+      // The server's role refusals are mapped to one plain sentence; other messages are user-safe as they are
+      setActionError(teamActionErrorMessage(err, currentRole, op, 'That did not work. Please try again.'));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -173,54 +213,42 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
         setNotice('New invitation link created. The previous link no longer works.');
         setCopyFailedUrl(res.inviteUrl);
       }
-    });
+    }, undefined, 'invite');
 
-  const askRevoke = (invitationId: string, email: string) =>
+  const askRevoke = (invitationId: string, email: string) => {
+    pendingTriggerRef.current = document.activeElement as HTMLElement | null;
     setPendingAction({ type: 'revoke', id: invitationId, label: email });
+  };
 
   const askRemove = (memberId: string, memberEmail: string) => {
     if (memberEmail.toLowerCase() === currentUser.email.toLowerCase()) {
       setActionError('You cannot remove yourself from this defense enclave.');
       return;
     }
+    pendingTriggerRef.current = document.activeElement as HTMLElement | null;
     setPendingAction({ type: 'remove', id: memberId, label: memberEmail });
   };
 
-  const confirmPending = () => {
+  const confirmPending = async () => {
     const action = pendingAction;
     if (!action) return;
     setPendingAction(null);
-    void runAction(
-      () => (action.type === 'revoke' ? revokeInvitation(action.id) : removeMember(currentTenant.id, action.id)),
-      action.type === 'revoke' ? 'Invitation revoked.' : 'Member removed. They have lost access.'
-    );
-  };
-
-  const getRoleBadge = (role: TenantRole) => {
-    switch (role) {
-      case 'TENANT_OWNER':
-        return (
-          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm">
-            <Shield className="w-3 h-3 text-purple-400" /> TENANT_OWNER
-          </span>
-        );
-      case 'ASSESSOR':
-        return (
-          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm">
-            <CheckCircle2 className="w-3 h-3 text-cyan-400" /> ASSESSOR
-          </span>
-        );
-      case 'VIEWER':
-      default:
-        return (
-          <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-slate-700/50 text-slate-300 border border-slate-600/50 shadow-sm">
-            <Lock className="w-3 h-3 text-slate-400" /> VIEWER
-          </span>
-        );
+    if (action.type === 'role') {
+      await runAction(
+        () => updateMemberRole(currentTenant.id, action.id, action.to!),
+        `${action.label} now has the ${ROLE_LABELS[action.to!]} role.`,
+        'member'
+      );
+    } else if (action.type === 'revoke') {
+      await runAction(() => revokeInvitation(action.id), 'Invitation revoked.', 'invite');
+    } else {
+      await runAction(() => removeMember(currentTenant.id, action.id), 'Member removed. They have lost access.', 'member');
     }
+    refocus();
   };
 
-  const isOwnerOrAdmin = canManageTenant || currentUser.roles?.[currentTenant.id] === 'TENANT_OWNER';
+  // Only a platform administrator can change the licensed frameworks (the server refuses everyone else)
+  const canEditScope = isSuperAdmin;
 
   const handlePrimaryChange = (fw: ComplianceFramework) => {
     setPrimaryFramework(fw);
@@ -288,15 +316,21 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => setShowRoleInfo(prev => !prev)}
+                  aria-expanded={showRoleInfo}
+                  aria-controls={`${uid}-roles`}
+                  aria-label="What each role can do"
                   className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-all duration-200 hover:scale-105 active:scale-95"
-                  title="View CMMC Role Matrix"
+                  title="What each role can do"
                 >
-                  <Info className="w-4 h-4 text-cyan-400" />
+                  <Info className="w-4 h-4 text-cyan-400" aria-hidden="true" />
                 </button>
                 <button
+                  type="button"
                   onClick={handleModalClose}
                   className="modal-close-trigger"
+                  aria-label="Close"
                   title="Close modal"
                 >
                   <X className="w-5 h-5" />
@@ -337,13 +371,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
             {/* Role Capabilities Matrix Accordion */}
             {showRoleInfo && (
-              <div className="p-4 rounded-2xl bg-slate-900/90 border border-brand-500/30 space-y-3 text-xs animate-fadeIn">
+              <div id={`${uid}-roles`} className="p-4 rounded-2xl bg-slate-900/90 border border-brand-500/30 space-y-3 text-xs animate-fadeIn">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Shield className="w-4 h-4 text-brand-400" />
-                    CMMC Level 1 Role-Based Access Control (RBAC) Architecture
-                  </span>
+                  <h3 className="font-bold text-white flex items-center gap-1.5">
+                    <Shield className="w-4 h-4 text-brand-400" aria-hidden="true" />
+                    {ROLE_TEXT.matrixTitle}
+                  </h3>
                   <button
+                    type="button"
                     onClick={() => setShowRoleInfo(false)}
                     className="text-xs text-slate-400 hover:text-white"
                   >
@@ -351,34 +386,17 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="p-3 rounded-xl bg-slate-950/70 border border-purple-500/20 space-y-1">
-                    <span className="font-bold text-purple-300 text-xs flex items-center gap-1">
-                      <Shield className="w-3.5 h-3.5" /> TENANT_OWNER
-                    </span>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Full control over enclave boundaries, team member invitations, role reassignments, and SSP exports.
-                    </p>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-slate-950/70 border border-blue-500/20 space-y-1">
-                    <span className="font-bold text-blue-300 text-xs flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> ASSESSOR
-                    </span>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Can edit all 17 CMMC controls, draft implementation statements, upload and delete SHA-256 evidence.
-                    </p>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-700/40 space-y-1">
-                    <span className="font-bold text-slate-300 text-xs flex items-center gap-1">
-                      <Lock className="w-3.5 h-3.5" /> VIEWER
-                    </span>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Read-only clearance for third-party C3PAO auditors or corporate stakeholders. Cannot edit practices.
-                    </p>
-                  </div>
-                </div>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {matrixRoles(currentRole, members.map(m => m.role)).map(r => (
+                    <li key={r} className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
+                      <RoleBadge role={r} />
+                      <p className="text-xs text-slate-300 leading-relaxed">{ROLE_DESCRIPTIONS[r].can}</p>
+                      {ROLE_DESCRIPTIONS[r].cannot && (
+                        <p className="text-xs text-slate-400 leading-relaxed">{ROLE_DESCRIPTIONS[r].cannot}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -412,10 +430,17 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                 </div>
 
                 {isBrowserOnlyTenant && <LegacyTenantNotice tenant={currentTenant} variant="inline" />}
-                <ErrorNotice message={actionError || teamError} />
-                {notice && (
-                  <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">{notice}</div>
+                {teamIntroNote(currentRole, canManageTenant) && (
+                  <p role="note" className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-400">
+                    {teamIntroNote(currentRole, canManageTenant)}
+                  </p>
                 )}
+                <div ref={resultRef} tabIndex={-1} className="space-y-2 focus:outline-none">
+                  <ErrorNotice message={actionError || teamError} />
+                  {notice && (
+                    <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">{notice}</div>
+                  )}
+                </div>
                 {copyFailedUrl && (
                   <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
                     <p role="alert">The link could not be copied. Select and copy it from the field.</p>
@@ -435,16 +460,30 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   </div>
                 )}
                 {pendingAction && (
-                  <div role="alertdialog" aria-label="Confirm" className="flex flex-col gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200 sm:flex-row sm:items-center sm:justify-between">
-                    <span>
+                  <div
+                    role="alertdialog"
+                    aria-labelledby={`${uid}-pending`}
+                    className={`flex flex-col gap-2 rounded-xl border p-3 text-xs sm:flex-row sm:items-center sm:justify-between ${
+                      pendingAction.type === 'role'
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                        : 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                    }`}
+                  >
+                    <span id={`${uid}-pending`}>
                       {pendingAction.type === 'revoke'
                         ? `Revoke the pending invitation for ${pendingAction.label}?`
+                        : pendingAction.type === 'role'
+                        ? roleChangeConfirmText(pendingAction.label, pendingAction.from!, pendingAction.to!)
                         : `Remove ${pendingAction.label} from ${currentTenant.name}? They will lose access immediately.`}
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      <button type="button" onClick={() => setPendingAction(null)} className="px-3 py-1.5 font-semibold text-slate-300 hover:text-white">Cancel</button>
-                      <button type="button" onClick={confirmPending} className="btn-danger rounded-lg px-3 py-1.5">
-                        {pendingAction.type === 'revoke' ? 'Revoke' : 'Remove'}
+                      <button type="button" ref={pendingCancelRef} onClick={cancelPending} className="px-3 py-1.5 font-semibold text-slate-300 hover:text-white">Cancel</button>
+                      <button type="button" onClick={() => void confirmPending()} className="btn-danger rounded-lg px-3 py-1.5">
+                        {pendingAction.type === 'revoke'
+                          ? 'Revoke'
+                          : pendingAction.type === 'role'
+                          ? pendingAction.to === 'TENANT_OWNER' ? 'Make Tenant Owner' : 'Change Role'
+                          : 'Remove'}
                       </button>
                     </span>
                   </div>
@@ -465,6 +504,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       {filteredMembers.map(member => {
                         const isSelf = member.email.toLowerCase() === currentUser.email.toLowerCase();
                         const isPending = member.status === 'PENDING_INVITE';
+                        const row = teamRowView({
+                          actor: currentRole,
+                          canManageTenant,
+                          isSelf,
+                          isPending,
+                          memberRole: member.role,
+                          hasInvitation: Boolean(inviteIdFor(member)),
+                        });
 
                         return (
                           <tr
@@ -493,21 +540,37 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
                             {/* Role Badge & Role Changer */}
                             <td className="py-3 px-4">
-                              {canManageTenant && !isSelf && !isPending ? (
+                              {row.control === 'select' ? (
                                 <div className="relative inline-block">
+                                  {/* Not disabled while busy: a disabled select drops keyboard focus. The controlled value restores the old role if a change is refused or waits for confirmation. */}
                                   <select
                                     value={member.role}
-                                    disabled={busy}
-                                    onChange={e => { const role = e.target.value as TenantRole; void runAction(() => updateMemberRole(currentTenant.id, member.id, role), 'Role updated.'); }}
+                                    aria-label={`Role of ${member.name || member.email}`}
+                                    aria-disabled={busy || undefined}
+                                    onChange={e => {
+                                      const next = e.target.value as TenantRole;
+                                      const el = e.currentTarget;
+                                      if (busy || next === member.role) return;
+                                      if (roleChangeNeedsConfirm(member.role, next)) {
+                                        pendingTriggerRef.current = el;
+                                        setPendingAction({ type: 'role', id: member.id, label: member.email, from: member.role, to: next });
+                                        return;
+                                      }
+                                      void runAction(
+                                        () => updateMemberRole(currentTenant.id, member.id, next),
+                                        `${member.email} now has the ${ROLE_LABELS[next]} role.`,
+                                        'member'
+                                      ).then(() => requestAnimationFrame(() => { if (!el.isConnected) resultRef.current?.focus(); }));
+                                    }}
                                     className="text-xs font-bold rounded-lg px-2.5 py-1 bg-slate-900 border border-slate-700 text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 cursor-pointer transition-colors"
                                   >
-                                    <option value="TENANT_OWNER">Tenant Owner</option>
-                                    <option value="ASSESSOR">Assessor</option>
-                                    <option value="VIEWER">Viewer (Auditor)</option>
+                                    {row.options.map(r => (
+                                      <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                    ))}
                                   </select>
                                 </div>
                               ) : (
-                                getRoleBadge(member.role)
+                                <RoleBadge role={member.role} />
                               )}
                             </td>
 
@@ -529,7 +592,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                             {/* Actions */}
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
-                                {isPending && inviteIdFor(member) && canManageTenant && (
+                                {row.note && <span className="text-xs text-slate-400">{row.note}</span>}
+                                {row.inviteActions && (
                                   <>
                                     {member.invitationToken && (
                                     <button
@@ -547,7 +611,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                     </button>
                                     )}
                                     <button
+                                      type="button"
                                       disabled={busy}
+                                      aria-label={`Resend the invitation to ${member.email}`}
                                       onClick={() => handleResend(inviteIdFor(member)!)}
                                       className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                       title="Resend: issue a new link"
@@ -555,7 +621,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                       <RotateCw className="w-3.5 h-3.5" />
                                     </button>
                                     <button
+                                      type="button"
                                       disabled={busy}
+                                      aria-label={`Revoke the invitation for ${member.email}`}
                                       onClick={() => askRevoke(inviteIdFor(member)!, member.email)}
                                       className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                       title="Revoke Invite"
@@ -565,9 +633,11 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   </>
                                 )}
 
-                                {!isPending && canManageTenant && !isSelf && (
+                                {row.remove && (
                                   <button
+                                    type="button"
                                     disabled={busy}
+                                    aria-label={`Remove ${member.email}`}
                                     onClick={() => askRemove(member.id, member.email)}
                                     className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all"
                                     title="Remove Member"
@@ -637,7 +707,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
                   <select
                     value={primaryFramework}
-                    disabled={!isOwnerOrAdmin}
+                    disabled={!canEditScope}
                     onChange={e => handlePrimaryChange(e.target.value as ComplianceFramework)}
                     className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-700/80 rounded-xl text-white focus:outline-none focus:border-brand-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
@@ -673,7 +743,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                         <label
                           key={fw.id}
                           className={`flex items-start gap-3 p-3 rounded-xl border text-xs transition-all ${
-                            !isOwnerOrAdmin
+                            !canEditScope
                               ? 'cursor-default'
                               : 'cursor-pointer'
                           } ${
@@ -687,7 +757,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                           <input
                             type="checkbox"
                             checked={isChecked}
-                            disabled={isPrimary || !isOwnerOrAdmin}
+                            disabled={isPrimary || !canEditScope}
                             onChange={() => handleToggleFramework(fw.id)}
                             className="mt-0.5 rounded border-slate-700 text-brand-500 focus:ring-0 focus:ring-offset-0 bg-slate-900 cursor-pointer disabled:cursor-not-allowed"
                           />
@@ -721,10 +791,10 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
                 {/* Save Section / Permissions Notice */}
                 <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-                  {!isOwnerOrAdmin ? (
+                  {!canEditScope ? (
                     <div className="text-xs text-amber-400/90 flex items-center gap-2">
                       <Lock className="w-3.5 h-3.5 shrink-0" />
-                      <span>Only TENANT_OWNER or Super Admins can update enclave framework scope.</span>
+                      <span>{ROLE_TEXT.scopePlatformOnly}</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -745,7 +815,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     >
                       Close
                     </button>
-                    {isOwnerOrAdmin && (
+                    {canEditScope && (
                       <button
                         type="button"
                         onClick={handleSaveScope}

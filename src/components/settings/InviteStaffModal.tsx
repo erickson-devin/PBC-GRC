@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   X,
   Mail,
@@ -9,11 +9,25 @@ import {
   Send,
   Sparkles,
   ExternalLink,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { ErrorNotice } from '../common/ErrorNotice';
-import { errorMessage } from '../../utils/errors';
+import { ROLE_STYLES } from '../common/RoleBadge';
 import { TenantInvitation } from '../../types/tenant';
+import { ApiClient } from '../../services/apiClient';
+import { ROLE_LABELS } from '../../utils/roles';
+import {
+  ROLE_TEXT,
+  defaultInviteRole,
+  inviteErrorMessage,
+  inviteRoleOptions,
+  inviteTwoStepNote,
+  roleLabel,
+  roleSummaryLine,
+  type InviteRole,
+} from '../../data/roleView';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { radioGroupKeyDown } from '../../utils/a11y';
@@ -29,10 +43,15 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   onClose,
   onInviteSent,
 }) => {
-  const { currentTenant, inviteStaffMember } = useTenant();
+  const { currentTenant, inviteStaffMember, currentRole, grantableRoles } = useTenant();
+  const uid = useId();
+  // What the signed-in user may grant, in display order (never MSP Admin); grantableRoles is memoised, so this is stable
+  const options = useMemo(() => inviteRoleOptions(grantableRoles), [grantableRoles]);
 
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'ASSESSOR' | 'VIEWER'>('ASSESSOR');
+  const [role, setRole] = useState<InviteRole | null>(() => defaultInviteRole(options));
+  // The install's two-step verification mode (session only); null when unknown, in which case no note is shown
+  const [mfaMode, setMfaMode] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -44,11 +63,27 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
     inviteUrl: string;
   } | null>(null);
 
+  useEffect(() => {
+    if (role === null || !options.includes(role)) setRole(defaultInviteRole(options));
+  }, [options, role]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    let cancelled = false;
+    ApiClient.getMfaStatus().then(
+      (s) => { if (!cancelled) setMfaMode(s.mode || null); },
+      () => { if (!cancelled) setMfaMode(null); }
+    );
+    return () => { cancelled = true; };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const handleReset = () => {
     setEmail('');
-    setRole('ASSESSOR');
+    setRole(defaultInviteRole(options));
+    setSubmitError(null);
+    setCopyFailed(false);
     setCreatedResult(null);
     setCopiedLink(false);
   };
@@ -60,7 +95,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim() || !role) return;
 
     setIsSubmitting(true);
     setSubmitError(null);
@@ -71,9 +106,9 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
         onInviteSent(result.invitation, result.inviteUrl);
       }
     } catch (err: unknown) {
-      console.error('Failed to dispatch staff invitation:', err);
       // ApiError messages are user-safe: expired session, no permission, tenant not on the server yet, offline...
-      setSubmitError(errorMessage(err) || 'Failed to generate the staff invitation. Please try again.');
+      // and the server's role refusals are mapped to one plain sentence
+      setSubmitError(inviteErrorMessage(err, currentRole, role, 'Failed to generate the staff invitation. Please try again.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -93,7 +128,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
   };
 
   return (
-    <DialogOverlay onClose={handleClose} className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={handleClose} className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
       {/* Double-Bezel Card */}
       <div className="w-full max-w-lg p-1.5 rounded-[2.25rem] bg-gradient-to-b from-brand-500/25 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="max-h-[calc(94vh-0.75rem)] overflow-y-auto p-6 sm:p-7 rounded-[calc(2.25rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
@@ -136,7 +171,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                   <span>Invitation Created for {createdResult.invitation.email}!</span>
                 </div>
                 <p className="text-xs text-slate-300">
-                  Role assigned: <strong className="text-white">{createdResult.invitation.role}</strong>. Share the link below with your staff member or external C3PAO auditor.
+                  Role assigned: <strong className="text-white">{roleLabel(createdResult.invitation.role)}</strong>. Share the link below with your staff member or external C3PAO auditor.
                 </p>
               </div>
 
@@ -224,12 +259,13 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
               <ErrorNotice message={submitError} />
               {/* Staff / Auditor Email */}
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                <label htmlFor={`${uid}-email`} className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
                   Staff / Auditor Work Email <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
+                    id={`${uid}-email`}
                     type="email"
                     required
                     placeholder="e.g. auditor@c3pao-partner.com or staff@company.com"
@@ -242,57 +278,56 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
 
               {/* Role Selection Cards */}
               <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Assigned CMMC Enclave Role <span className="text-rose-400">*</span>
-                </label>
-
-                <div role="radiogroup" aria-label="Assigned CMMC enclave role" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* ASSESSOR Option */}
-                  <button type="button" role="radio" aria-checked={role === 'ASSESSOR'} tabIndex={role === 'ASSESSOR' ? 0 : -1}
-                    onClick={() => setRole('ASSESSOR')}
-                    className={`w-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                      role === 'ASSESSOR'
-                        ? 'bg-blue-500/10 border-blue-500/40 ring-1 ring-blue-500/30'
-                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-xs text-white flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                        Assessor
-                      </span>
-                      {role === 'ASSESSOR' && (
-                        <span className="w-2 h-2 rounded-full bg-blue-400" />
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Can edit all 17 CMMC practices, draft implementation narratives, and upload/remove evidence.
-                    </p>
-                  </button>
-
-                  {/* VIEWER Option */}
-                  <button type="button" role="radio" aria-checked={role === 'VIEWER'} tabIndex={role === 'VIEWER' ? 0 : -1}
-                    onClick={() => setRole('VIEWER')}
-                    className={`w-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                      role === 'VIEWER'
-                        ? 'bg-slate-700/20 border-slate-500/40 ring-1 ring-slate-500/30'
-                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-xs text-white flex items-center gap-1.5">
-                        <Lock className="w-4 h-4 text-slate-400" />
-                        Viewer (Auditor)
-                      </span>
-                      {role === 'VIEWER' && (
-                        <span className="w-2 h-2 rounded-full bg-slate-400" />
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Read-only clearance for external C3PAO auditors or corporate executives. Cannot alter data.
-                    </p>
-                  </button>
-                </div>
+                <span id={`${uid}-role-label`} className="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                  Role <span className="text-rose-400" aria-hidden="true">*</span>
+                </span>
+                {options.length === 0 ? (
+                  <p role="note" className="text-xs text-slate-400">{ROLE_TEXT.noInviteRoles}</p>
+                ) : (
+                  <div role="radiogroup" aria-labelledby={`${uid}-role-label`} aria-required="true" onKeyDown={radioGroupKeyDown} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {options.map((r) => {
+                      const selected = role === r;
+                      const s = ROLE_STYLES[r];
+                      const Icon = s.Icon;
+                      return (
+                        <button key={r} type="button" role="radio" aria-checked={selected}
+                          tabIndex={selected || (role === null && r === options[0]) ? 0 : -1}
+                          aria-labelledby={`${uid}-role-${r}-name`} aria-describedby={`${uid}-role-${r}-desc`}
+                          onClick={() => setRole(r)}
+                          className={`w-full h-full text-left p-3.5 rounded-2xl border cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+                            selected ? s.cardSelected : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span id={`${uid}-role-${r}-name`} className="font-bold text-xs text-white flex items-center gap-1.5">
+                              <Icon className={`w-4 h-4 ${s.iconText}`} aria-hidden="true" />
+                              {ROLE_LABELS[r]}
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              {r === 'TENANT_ADMIN' && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">Most teammates</span>
+                              )}
+                              {selected && <span className={`w-2 h-2 rounded-full ${s.dot}`} aria-hidden="true" />}
+                            </span>
+                          </div>
+                          <p id={`${uid}-role-${r}-desc`} className="text-xs text-slate-400 leading-relaxed">{roleSummaryLine(r)}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {role === 'TENANT_OWNER' && (
+                  <div role="note" className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed">
+                    <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>{ROLE_TEXT.ownerCaution}</span>
+                  </div>
+                )}
+                {role && inviteTwoStepNote(role, mfaMode) && (
+                  <p className="flex items-start gap-2 text-xs text-cyan-200 leading-relaxed">
+                    <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>{inviteTwoStepNote(role, mfaMode)}</span>
+                  </p>
+                )}
               </div>
 
               {/* Form Buttons */}
@@ -306,7 +341,7 @@ export const InviteStaffModal: React.FC<InviteStaffModalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !email.trim()}
+                  disabled={isSubmitting || !email.trim() || role === null}
                   className="btn-primary px-6 py-2.5 text-xs rounded-xl flex items-center gap-2"
                 >
                   {isSubmitting ? (
