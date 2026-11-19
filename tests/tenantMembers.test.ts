@@ -92,6 +92,45 @@ async function run() {
   assert((await call('POST', `/tenants/${T_A}/members`, msp, T_A, newMember({ userId: 'u_carol', role: 'MSP_ADMIN' }))).status === 201, 'MSP_ADMIN can grant MSP_ADMIN -> 201');
   assert((await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ userId: 'u_carol', role: 'VIEWER' }))).status === 403, 'TENANT_OWNER cannot demote an MSP_ADMIN -> 403');
 
+  console.log('\n--- Admin role: manages Assessors and Viewers only ---');
+  const admin = caller('u_admin', 'TENANT_ADMIN', T_A);
+  const grantAdmin = await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ userId: 'u_dave', email: 'dave@example.mil', role: 'TENANT_ADMIN' }));
+  assert(grantAdmin.status === 201 && grantAdmin.body?.member?.role === 'TENANT_ADMIN', 'TENANT_OWNER can grant TENANT_ADMIN -> 201', grantAdmin);
+  const adminAdds = await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_erin', email: 'erin@example.mil', role: 'ASSESSOR' }));
+  assert(adminAdds.status === 201, 'an Admin can add an Assessor -> 201', adminAdds);
+  assert((await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_erin', email: 'erin@example.mil', role: 'VIEWER' }))).status === 200, 'an Admin can set an Assessor to Viewer -> 200');
+  for (const role of ['TENANT_ADMIN', 'TENANT_OWNER', 'MSP_ADMIN']) {
+    const r = await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_erin', email: 'erin@example.mil', role }));
+    assert(r.status === 403 && r.body?.code === 'role_not_grantable', `an Admin cannot raise a member to ${role} -> 403 role_not_grantable`, r);
+  }
+  const adminRaisesNew = await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_frank', email: 'frank@example.mil', role: 'TENANT_OWNER' }));
+  assert(adminRaisesNew.status === 403, 'an Admin cannot add a new member as Owner -> 403', adminRaisesNew);
+  assert((await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_alice', role: 'VIEWER' }))).status === 403, 'an Admin cannot demote an Owner -> 403');
+  assert((await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_dave', email: 'dave@example.mil', role: 'VIEWER' }))).status === 403, 'an Admin cannot demote another Admin -> 403');
+  assert((await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_carol', role: 'VIEWER' }))).status === 403, 'an Admin cannot demote an MSP_ADMIN -> 403');
+  assert((await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_admin', email: 'admin@example.mil', role: 'VIEWER' }))).status === 403, 'an Admin cannot change their own role -> 403');
+  const memberOf = async (id: string) => (await call('GET', `/tenants/${T_A}/members`, owner, T_A)).body?.members?.find((m: any) => m.userId === id);
+  assert((await memberOf('u_alice'))?.role === 'TENANT_OWNER' && (await memberOf('u_dave'))?.role === 'TENANT_ADMIN', 'the refused changes left the Owner and the Admin as they were');
+  const refusal = await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_erin', email: 'erin@example.mil', role: 'TENANT_ADMIN' }));
+  assert(refusal.body?.error === 'Forbidden: an Admin cannot grant, change or remove an Admin role', 'the refusal reads naturally (an Admin ... an Admin)', refusal.body);
+  const refusalOwner = await call('POST', `/tenants/${T_A}/members`, admin, T_A, newMember({ userId: 'u_alice', role: 'VIEWER' }));
+  assert(refusalOwner.body?.error === 'Forbidden: an Admin cannot grant, change or remove a Tenant Owner role', 'the refusal reads naturally (an Admin ... a Tenant Owner)', refusalOwner.body);
+  assert(escalate.body?.error === 'Forbidden: a Tenant Owner cannot grant, change or remove an MSP Admin role', 'the refusal reads naturally (a Tenant Owner ... an MSP Admin)', escalate.body);
+  assert((await call('DELETE', `/tenants/${T_A}/members/u_dave`, admin, T_A)).status === 403, 'an Admin cannot remove another Admin -> 403');
+  assert((await call('DELETE', `/tenants/${T_A}/members/u_alice`, admin, T_A)).status === 403, 'an Admin cannot remove an Owner -> 403');
+  assert((await call('DELETE', `/tenants/${T_A}/members/u_carol`, admin, T_A)).status === 403, 'an Admin cannot remove an MSP_ADMIN -> 403');
+  assert((await call('DELETE', `/tenants/${T_A}/members/u_admin`, admin, T_A)).status === 403, 'an Admin cannot remove themselves -> 403');
+  const adminRemoves = await call('DELETE', `/tenants/${T_A}/members/u_erin`, admin, T_A);
+  assert(adminRemoves.status === 200 && adminRemoves.body?.previousRole === 'VIEWER', 'an Admin can remove a Viewer -> 200', adminRemoves);
+  assert((await call('DELETE', `/tenants/${T_A}/members/u_alice`, owner, T_A)).status === 409, 'removing the last Owner is still 409 (an Owner may remove an Owner otherwise)');
+  const lastOwnerDemote = await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ userId: 'u_alice', role: 'TENANT_ADMIN' }));
+  assert(lastOwnerDemote.status === 409 && lastOwnerDemote.body?.code === 'last_owner', 'demoting the last Owner is 409 last_owner', lastOwnerDemote);
+  const lastOwnerRemove = await call('DELETE', `/tenants/${T_A}/members/u_alice`, owner, T_A);
+  assert(lastOwnerRemove.status === 409 && lastOwnerRemove.body?.code === 'last_owner', 'removing the last Owner carries last_owner too', lastOwnerRemove);
+  assert((await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ userId: 'u_dave', email: 'dave@example.mil', role: 'TENANT_OWNER' }))).status === 200, 'an Owner can make an Admin a second Owner -> 200');
+  assert((await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ userId: 'u_alice', role: 'TENANT_ADMIN' }))).status === 200, 'with a second Owner, the first can be demoted -> 200');
+  await call('POST', `/tenants/${T_A}/members`, msp, T_A, newMember({ userId: 'u_alice', role: 'TENANT_OWNER' })); // restore for the isolation checks below
+
   console.log('\n--- Validation ---');
   assert((await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ role: 'ADMIN' }))).status === 400, 'unknown role -> 400');
   assert((await call('POST', `/tenants/${T_A}/members`, owner, T_A, newMember({ email: 'not-an-email' }))).status === 400, 'bad email -> 400');
@@ -105,6 +144,12 @@ async function run() {
   await call('POST', `/tenants/${T_B}/members`, ownerB, T_B, newMember({ userId: 'u_alice', role: 'VIEWER' }));
   const aliceInA = (await call('GET', `/tenants/${T_A}/members`, owner, T_A)).body?.members?.find((m: any) => m.userId === 'u_alice');
   assert(aliceInA?.role === 'TENANT_OWNER', 'the same user can hold different roles in different tenants', aliceInA);
+
+  console.log('\n--- An MSP_ADMIN cannot demote the only Owner either ---');
+  const mspB = caller('u_msp_b', 'MSP_ADMIN', T_B);
+  assert((await call('POST', `/tenants/${T_B}/members`, mspB, T_B, newMember({ userId: 'u_solo', email: 'solo@example.mil', role: 'TENANT_OWNER' }))).status === 201, 'MSP_ADMIN adds the only Owner of tenant B -> 201');
+  const soloDemote = await call('POST', `/tenants/${T_B}/members`, mspB, T_B, newMember({ userId: 'u_solo', email: 'solo@example.mil', role: 'VIEWER' }));
+  assert(soloDemote.status === 409 && soloDemote.body?.code === 'last_owner', 'MSP_ADMIN demoting the only Owner -> 409 last_owner', soloDemote);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

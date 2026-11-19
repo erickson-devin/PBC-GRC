@@ -21,7 +21,7 @@ import {
 import { changeProgramAssets, getProgramBoundary, listAssetMemberships, parseAssetChange } from '../programAssets';
 import { getUserDefaultProgramId } from '../userProgramDefaults';
 import { requireWriteRole } from '../middleware/roleGuard';
-import { ensureActiveTenant } from './tenantGuards';
+import { ensureActiveTenant, ensureOwnerRole } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
 import { countOpenPoamItems, countOverdueWithoutItem } from '../vm/findingsStore';
 import { isPoamAutocreateEnabled } from '../vm/transitions';
@@ -30,7 +30,8 @@ import type { VmTargetPreview } from '../../src/types/vm';
 /**
  * The programs of a tenant (authorization boundaries): /api/v1/tenants/:tenantId/programs. Mounted by routes/tenants.ts after
  * authMiddleware, without the programContext middleware: a program is named in the URL here, and an archived one can be unarchived.
- * Creating, editing, archiving and deleting are for TENANT_OWNER and MSP_ADMIN only (requireWriteRole); every role may read.
+ * Creating, editing and archiving are for TENANT_OWNER, TENANT_ADMIN and MSP_ADMIN (requireWriteRole), deleting for TENANT_OWNER
+ * and MSP_ADMIN only; every role may read.
  */
 const router = Router({ mergeParams: true });
 
@@ -194,7 +195,7 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
 /**
  * PUT /api/v1/tenants/:tenantId/programs/:id/default
  * Makes the program the organization default (the fallback landing program of everyone who has no personal default). 200 { program }.
- * Owner / MSP admin only (the write guard of this router). 404 program_not_found, 409 program_archived.
+ * Owner, Admin or MSP admin only (the write guard of this router). 404 program_not_found, 409 program_archived.
  */
 router.put('/:id/default', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -329,11 +330,12 @@ router.post('/:id/unarchive', async (req: Request, res: Response): Promise<void>
 
 /**
  * DELETE /api/v1/tenants/:tenantId/programs/:id
+ * Tenant Owner or MSP admin only (an Admin can archive but not delete: 403 owner_required).
  * 204. Never one that holds evidence, SSP imports or POA&M items (409 program_not_empty, with the counts): archive those instead.
  * Deleting the default program makes the oldest active one the default.
  */
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
-  if (!ensureActiveTenant(req, res)) return;
+  if (!ensureActiveTenant(req, res) || !ensureOwnerRole(req, res)) return;
   try {
     await deleteProgram(req.tenantId!, idOf(req));
     res.status(204).end();

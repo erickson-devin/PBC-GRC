@@ -3,6 +3,7 @@ import { server } from '../server/index';
 import { firstProgram } from './programFixture';
 import { __expireInvitationForTests, hashInviteToken } from '../server/invitations';
 import { inviteRateLimiter } from '../server/routes/invites';
+import { getMfaRequirement } from '../server/auth/localAuth';
 
 /**
  * Server-side invitations: create / list / revoke / resend / extend / edit (owners), preview and accept (invitee),
@@ -89,6 +90,43 @@ async function run() {
   const msp = jwt({ sub: 'u_inv_msp', email: 'msp@test.mil', roles: { [tenantId]: 'MSP_ADMIN' } });
   assert((await inv(msp, { email: 'msp2@test.mil', role: 'MSP_ADMIN' })).status === 201, 'an MSP_ADMIN can invite an MSP_ADMIN (201)');
 
+  console.log('\n--- Admin role: invites Assessors and Viewers only ---');
+  await call('POST', `/tenants/${tenantId}/members`, owner, tenantId, { userId: 'u_inv_admin', email: 'adm@example.mil', role: 'TENANT_ADMIN' });
+  const admin = person('u_inv_admin', 'adm@example.mil');
+  assert((await inv(admin, { email: 'adminv@example.mil', role: 'VIEWER' })).status === 201, 'an Admin can invite a VIEWER (201)');
+  assert((await inv(admin, { email: 'adminas@example.mil', role: 'ASSESSOR' })).status === 201, 'an Admin can invite an ASSESSOR (201)');
+  for (const role of ['TENANT_ADMIN', 'TENANT_OWNER', 'MSP_ADMIN']) {
+    const r = await inv(admin, { email: `adminx-${role.toLowerCase()}@example.mil`, role });
+    assert(r.status === 403 && r.body?.code === 'role_not_grantable', `an Admin cannot invite as ${role} (403 role_not_grantable)`, r);
+  }
+  assert((await call('GET', `/tenants/${tenantId}/invites`, admin, tenantId)).status === 200, 'an Admin can list invitations (200)');
+  const adm2 = await inv(owner, { email: 'adm2@example.mil', role: 'TENANT_ADMIN' });
+  assert(adm2.status === 201, 'a TENANT_OWNER can invite an Admin (201)', adm2);
+  assert((await preview(adm2.body?.token)).body?.invitation?.role === 'TENANT_ADMIN', 'the preview shows the Admin role');
+  assert((await accept(person('u_inv_adm2', 'adm2@example.mil'), adm2.body?.token)).body?.role === 'TENANT_ADMIN', 'accepting an Admin invitation makes the person an Admin');
+  const own2 = await inv(owner, { email: 'own2@example.mil', role: 'TENANT_OWNER' });
+  const own2Path = `/tenants/${tenantId}/invites/${own2.body?.invitation?.id}`;
+  assert(own2.status === 201, 'a TENANT_OWNER can invite an Owner (201)', own2);
+  assert((await call('PATCH', own2Path, admin, tenantId, { role: 'VIEWER' })).status === 403, "an Admin cannot lower an Owner invitation's role (403)");
+  assert((await call('PATCH', own2Path, admin, tenantId, { email: 'x2@example.mil' })).status === 403, "an Admin cannot change an Owner invitation's email (403)");
+  assert((await call('POST', `${own2Path}/resend`, admin, tenantId, {})).status === 403, 'an Admin cannot resend an Owner invitation (403)');
+  assert((await call('POST', `${own2Path}/extend`, admin, tenantId, { days: 3 })).status === 403, 'an Admin cannot extend an Owner invitation (403)');
+  assert((await call('DELETE', own2Path, admin, tenantId)).status === 403, 'an Admin cannot revoke an Owner invitation (403)');
+  const replace = await inv(admin, { email: 'own2@example.mil', role: 'VIEWER' });
+  assert(replace.status === 403 && replace.body?.code === 'role_not_grantable', 'an Admin cannot replace a pending Owner invitation by inviting the same email (403)', replace);
+  assert((await list()).find((i) => i.id === own2.body?.invitation?.id)?.status === 'PENDING', 'and the Owner invitation is still PENDING');
+  assert(/^Forbidden: an Admin cannot grant, change or remove a Tenant Owner role$/.test(replace.body?.error), 'the refusal reads naturally', replace.body);
+  const adm3 = await inv(owner, { email: 'adm3@example.mil', role: 'TENANT_ADMIN' });
+  assert((await inv(admin, { email: 'adm3@example.mil', role: 'ASSESSOR' })).status === 403, 'an Admin cannot replace a pending Admin invitation either (403)');
+  assert((await call('DELETE', `/tenants/${tenantId}/invites/${adm3.body?.invitation?.id}`, admin, tenantId)).status === 403, 'an Admin cannot revoke an Admin invitation (403)');
+  const ownViewer = await inv(admin, { email: 'adminviewer2@example.mil', role: 'VIEWER' });
+  assert((await call('PATCH', `/tenants/${tenantId}/invites/${ownViewer.body?.invitation?.id}`, admin, tenantId, { role: 'TENANT_ADMIN' })).status === 403, "an Admin cannot raise their own Viewer invitation to Admin (403)");
+  assert((await call('PATCH', `/tenants/${tenantId}/invites/${ownViewer.body?.invitation?.id}`, admin, tenantId, { role: 'ASSESSOR' })).status === 200, 'but can change it between Assessor and Viewer (200)');
+  assert((await call('DELETE', own2Path, owner, tenantId)).status === 200, 'the Owner can revoke their own Owner invitation (200)');
+  const keepAdmin = await inv(owner, { email: 'adm@example.mil', role: 'VIEWER' });
+  const keepAccept = await accept(admin, keepAdmin.body?.token);
+  assert(keepAccept.body?.role === 'TENANT_ADMIN' && keepAccept.body?.previousRole === 'TENANT_ADMIN', 'accepting a Viewer invitation does not lower an Admin', keepAccept.body);
+
   console.log('\n--- Validation ---');
   assert((await inv(owner, { email: 'not-an-email', role: 'VIEWER' })).status === 400, 'bad email -> 400');
   assert((await inv(owner, { email: 'a@b.mil', role: 'ADMIN' })).status === 400, 'unknown role -> 400');
@@ -101,6 +139,12 @@ async function run() {
   console.log('\n--- Preview (public, token only) ---');
   const pv = await preview(aliceToken);
   assert(pv.status === 200 && pv.body?.invitation?.tenantName === 'Invite Org' && pv.body?.invitation?.role === 'ASSESSOR' && pv.body?.invitation?.status === 'PENDING', 'the accept page can show organisation and role without signing in', pv.body);
+  assert(['all', 'privileged', 'off'].includes(pv.body?.invitation?.mfaMode) && pv.body?.invitation?.mfaMode === getMfaRequirement(), "the preview carries the install's two-step-verification mode", pv.body);
+  assert(
+    Object.keys(pv.body?.invitation ?? {}).sort().join(',') === ['createdBy', 'email', 'enabledFrameworks', 'expiresAt', 'mfaMode', 'primaryFramework', 'role', 'status', 'tenantId', 'tenantName'].join(','),
+    'and nothing else about the tenant is added to the preview',
+    Object.keys(pv.body?.invitation ?? {})
+  );
   assert((await preview('inv_' + 'x'.repeat(43))).status === 404, 'an unknown token -> 404');
   assert((await preview('garbage')).status === 404 && (await call('POST', '/invites/preview', null, undefined, {})).status === 404, 'a malformed or missing token -> 404 (same answer as unknown)');
   assert(JSON.stringify(pv.body).includes(hashInviteToken(aliceToken)) === false, 'preview does not reveal the stored hash');

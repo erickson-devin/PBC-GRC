@@ -1598,6 +1598,30 @@ async function verifyUpgrade() {
   try {
     await setSearchPath(SCHEMA + ', public');
     await pool.query(buildSchemaSql());
+    // 8i. the Admin role: a database made before TENANT_ADMIN has the four-role invitation CHECK (it only exists inline in CREATE TABLE IF NOT EXISTS)
+    await pool.query('ALTER TABLE tenant_invitations DROP CONSTRAINT tenant_invitations_role_check');
+    await pool.query("ALTER TABLE tenant_invitations ADD CONSTRAINT tenant_invitations_role_check CHECK (role IN ('TENANT_OWNER', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'))");
+    await pool.query("ALTER TABLE tenant_users DROP CONSTRAINT tenant_users_role_check");
+    await pool.query("ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_role_check CHECK (role IN ('TENANT_OWNER', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'))");
+    await pool.query(buildSchemaSql());
+    const invitationCheck = await pool.query(
+      "SELECT pg_get_constraintdef(k.oid) AS def FROM pg_constraint k WHERE k.conname = 'tenant_invitations_role_check' AND k.conrelid = 'tenant_invitations'::regclass"
+    );
+    check(invitationCheck.rows.length === 1 && String(invitationCheck.rows[0].def).includes('TENANT_ADMIN'), '8i1. an upgraded database accepts Admin invitations (the invitation role check was widened)', JSON.stringify(invitationCheck.rows));
+    let adminInsert = 'accepted';
+    try {
+      await queryWithTenant(T, "INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role) VALUES ('rls_verify_up_admin', 'a@x.mil', 'a', $1, 'TENANT_ADMIN')", [T]);
+    } catch (err) {
+      adminInsert = 'code ' + (err as { code?: string }).code;
+    }
+    check(adminInsert === 'accepted', '8i2. an upgraded database accepts a TENANT_ADMIN member', adminInsert);
+    let bogusInsert = 'accepted';
+    try {
+      await queryWithTenant(T, "INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role) VALUES ('rls_verify_up_bogus', 'b@x.mil', 'b', $1, 'BOGUS')", [T]);
+    } catch (err) {
+      bogusInsert = 'code ' + (err as { code?: string }).code;
+    }
+    check(bogusInsert === 'code 23514', '8i3. an unknown role is still refused by the CHECK (23514)', bogusInsert);
     // the legacy state: program_id nullable and unchecked, no program policy yet (a fresh schema is already finalized)
     for (const t of ['control_assessments', 'evidence_metadata']) {
       await pool.query('ALTER TABLE ' + t + ' DROP CONSTRAINT IF EXISTS ' + t + '_program_required');

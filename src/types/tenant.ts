@@ -1,6 +1,6 @@
 import { ComplianceFramework } from './framework';
 
-export type TenantRole = 'TENANT_OWNER' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
+export type TenantRole = 'TENANT_OWNER' | 'TENANT_ADMIN' | 'ASSESSOR' | 'VIEWER' | 'MSP_ADMIN';
 
 export type SamStatus = 'ACTIVE' | 'PENDING' | 'EXPIRED' | 'NOT_REGISTERED';
 

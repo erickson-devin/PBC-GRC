@@ -250,6 +250,7 @@ async function main() {
   assert(subjects.every((x) => isMfaRequiredFor('all', x)), 'T17 all is always required, including a user with no tenant');
   assert(isMfaRequiredFor('privileged', { isPlatformAdmin: true, tenantRoles: [] }), 'T17 privileged: a platform admin');
   assert(isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: ['TENANT_OWNER'] }) && isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: ['MSP_ADMIN'] }), 'T17 privileged: TENANT_OWNER and MSP_ADMIN');
+  assert(isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: ['TENANT_ADMIN'] }), 'T17 privileged: TENANT_ADMIN');
   assert(!isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: ['ASSESSOR'] }) && !isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: ['VIEWER'] }) && !isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: [] }), 'T17 privileged: ASSESSOR, VIEWER and no tenant are not');
   assert(isMfaRequiredFor('privileged', { isPlatformAdmin: false, tenantRoles: ['VIEWER', 'TENANT_OWNER'] }), 'T17 privileged: one write role in any tenant is enough');
 

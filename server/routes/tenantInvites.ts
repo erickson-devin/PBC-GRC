@@ -11,14 +11,15 @@ import {
   updateInvitation,
 } from '../invitations';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
-import { ensureActiveTenant, ensureTenantAdmin } from './tenantGuards';
-import { isTenantRole } from '../../src/utils/roles';
+import { ensureActiveTenant, ensureTenantAdmin, roleNotGrantableBody } from './tenantGuards';
+import { TENANT_ROLES, canManageRole, isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 import type { TenantRole } from '../../src/types/tenant';
 
 /**
  * Tenant-scoped invitation management, mounted at /api/v1/tenants/:tenantId/invites by the tenants router, AFTER
- * requireWriteRole: every write is already limited to TENANT_OWNER / MSP_ADMIN, and reading the list is checked here.
+ * requireWriteRole: every write is already limited to the write roles (Owner, Admin, MSP Admin), each one further limited to
+ * invitations for roles the caller may manage (mayHandle: an Admin cannot touch an Owner or Admin invitation), and reading the list is checked here.
  * The plaintext token is only ever returned by create and resend, once. An address listed in PLATFORM_ADMIN_EMAILS can only be
  * invited (created or edited to) by a platform administrator; everyone else gets 403 platform_admin_email.
  */
@@ -26,10 +27,13 @@ const router = Router({ mergeParams: true });
 
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 
-/** Only an MSP admin may hand out (or touch an invitation for) the MSP_ADMIN role: no self-service escalation. */
+/**
+ * The caller (req.tenantRole, never the body) may only hand out, or touch an invitation for, a role it can grant
+ * (canManageRole): an Admin only Assessor and Viewer, an Owner everything but MSP_ADMIN, an MSP Admin all. No self-service escalation.
+ */
 function mayHandle(req: Request, res: Response, role: TenantRole): boolean {
-  if (role === 'MSP_ADMIN' && req.tenantRole !== 'MSP_ADMIN') {
-    res.status(403).json({ error: 'Forbidden: only an MSP Admin can invite or change an MSP Admin' });
+  if (!canManageRole(req.tenantRole, role)) {
+    res.status(403).json(roleNotGrantableBody(req.tenantRole, role));
     return false;
   }
   return true;
@@ -83,7 +87,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     return;
   }
   if (!isTenantRole(role)) {
-    res.status(400).json({ error: 'Invalid role: expected TENANT_OWNER, MSP_ADMIN, ASSESSOR or VIEWER' });
+    res.status(400).json({ error: 'Invalid role: expected one of ' + TENANT_ROLES.join(', ') });
     return;
   }
   if (expiresInDays !== undefined && (typeof expiresInDays !== 'number' || !Number.isFinite(expiresInDays) || expiresInDays < 1 || expiresInDays > MAX_INVITE_DAYS)) {
@@ -95,6 +99,10 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
   const user = req.user!;
   try {
+    // createInvitation revokes an earlier pending invitation for the same address: that must not be a way past mayHandle.
+    const normalized = email.trim().toLowerCase();
+    const replaced = (await listInvitations(req.tenantId!)).find((i) => i.status === 'PENDING' && i.email === normalized);
+    if (replaced && !mayHandle(req, res, replaced.role)) return;
     const { invitation, token } = await createInvitation(req.tenantId!, {
       email,
       role,

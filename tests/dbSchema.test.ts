@@ -41,7 +41,7 @@ assert(TABLES_SQL.includes('relnamespace = current_schema()::regnamespace'), 'D5
 assert(/CREATE TABLE IF NOT EXISTS local_users/.test(schema) && /password_hash/.test(schema) && !/\bpassword\s+VARCHAR/i.test(schema), 'local_users stores a password hash only, never a password column');
 assert(schema.includes('CONSTRAINT unq_local_users_email UNIQUE (email)'), 'local user emails are unique');
 assert(/UNIQUE \(user_id, tenant_id\)/.test(TABLES_SQL), 'tenant_users is unique per (user, tenant) so the upsert works');
-assert(/CHECK \(role IN \('TENANT_OWNER', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'\)\)/.test(TABLES_SQL), 'role check allows exactly the four TenantRoles (incl. MSP_ADMIN)');
+assert(/CHECK \(role IN \('TENANT_OWNER', 'TENANT_ADMIN', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'\)\)/.test(TABLES_SQL), 'role check allows exactly the five TenantRoles (incl. TENANT_ADMIN and MSP_ADMIN)');
 assert(/DROP CONSTRAINT IF EXISTS tenant_users_role_check/.test(TABLES_SQL), 'older tables get the corrected role check');
 
 console.log('\n--- FORCE ROW LEVEL SECURITY on every tenant-bound table ---');
@@ -128,7 +128,11 @@ const invBlock = schema.slice(schema.indexOf('CREATE TABLE IF NOT EXISTS tenant_
 assert(/token_hash CHAR\(64\) NOT NULL/.test(invBlock) && !/\btoken VARCHAR|\btoken TEXT/i.test(invBlock), 'only a SHA-256 hash of the token is stored, never the token');
 assert(invBlock.includes('CONSTRAINT unq_invitation_token_hash UNIQUE (token_hash)'), 'token hashes are unique');
 assert(/accepted_at TIMESTAMPTZ/.test(invBlock) && /revoked_at TIMESTAMPTZ/.test(invBlock) && /expires_at TIMESTAMPTZ NOT NULL/.test(invBlock), 'single-use, revocation and expiry columns exist');
-assert(/CHECK \(role IN \('TENANT_OWNER', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'\)\)/.test(invBlock), 'invited roles are limited to the four TenantRoles');
+assert(/CHECK \(role IN \('TENANT_OWNER', 'TENANT_ADMIN', 'MSP_ADMIN', 'ASSESSOR', 'VIEWER'\)\)/.test(invBlock), 'invited roles are limited to the five TenantRoles');
+{
+  const widen = TABLES_SQL.search(/DROP CONSTRAINT IF EXISTS tenant_invitations_role_check;\s*ALTER TABLE tenant_invitations ADD CONSTRAINT tenant_invitations_role_check CHECK \(role IN \([^)]*'TENANT_ADMIN'/);
+  assert(widen > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS tenant_invitations'), 'existing databases get the widened invitation role check (dropped and re-added after the CREATE TABLE)');
+}
 assert(protectedTables.has('tenant_invitations') && rls.includes('ALTER TABLE tenant_invitations FORCE ROW LEVEL SECURITY;'), 'tenant_invitations has tenant isolation with FORCE RLS');
 assert(byName('rls_tenant_invitations_redeem')?.using === `token_hash = ${tokenCtx}`, 'an invitation is visible to whoever presents its token hash, and only that one');
 assert(byName('rls_tenants_invite_redeem')?.using === `id IN (SELECT tenant_id FROM tenant_invitations WHERE token_hash = ${tokenCtx})`, 'the tenant it points at is visible too (for the accept-page preview)');

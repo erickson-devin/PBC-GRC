@@ -30,7 +30,7 @@ import type { VmConfigResult, VmFindingStatus, VmPoamResponse, VmSeverity, VmTok
 
 /**
  * Tenant-scoped vulnerability management, mounted at /api/v1/tenants/:tenantId/vm by the tenants router, AFTER
- * requireWriteRole: creating and revoking service tokens is already limited to TENANT_OWNER / MSP_ADMIN.
+ * requireWriteRole: creating and revoking service tokens is already limited to the write roles (TENANT_OWNER, TENANT_ADMIN, MSP_ADMIN).
  * The plaintext token is only ever returned by create, once.
  */
 const router = Router({ mergeParams: true });
