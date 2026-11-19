@@ -483,8 +483,13 @@ async function main() {
     check(JSON.stringify((await sharedFinding()).map((r) => r.status)) === '["OPEN"]', 'both managers report one host: one OPEN finding', JSON.stringify(await sharedFinding()));
     await runAs(TENANT_X, 'vm_verify_mgr_a', '2099-02-01T01:00:02Z', [{ agent: '500', name: 'vm-verify-shared', cves: [] }]);
     check((await sharedFinding())[0]?.status === 'OPEN', 'manager A drops the finding while manager B still lists it: it stays OPEN', JSON.stringify(await sharedFinding()));
-    const bDrops = await runAs(TENANT_X, 'vm_verify_mgr_b', '2099-02-01T01:00:03Z', [{ agent: '501', name: 'vm-verify-shared', cves: [] }]);
-    check((await sharedFinding())[0]?.status === 'RESOLVED' && (await sharedFinding())[0]?.resolved_run_id === bDrops, 'manager B drops it too: RESOLVED by that run', JSON.stringify(await sharedFinding()));
+    // #303: one empty report of a host closes nothing (it may be a failed scan); the same source's next empty report confirms it
+    const bHeld = await runAs(TENANT_X, 'vm_verify_mgr_b', '2099-02-01T01:00:03Z', [{ agent: '501', name: 'vm-verify-shared', cves: [] }]);
+    check((await sharedFinding())[0]?.status === 'OPEN', 'manager B drops it too, with an empty report: kept OPEN until its next report confirms (#303)', JSON.stringify(await sharedFinding()));
+    const heldWarning = (await getRun(TENANT_X, bHeld))?.warning ?? '';
+    check(heldWarning.startsWith('1 host(s) reported no findings while 1 finding(s) were open') && !heldWarning.includes('vm-verify') && !heldWarning.includes('CVE-'), 'the held run records a warning with counts only', heldWarning);
+    const bDrops = await runAs(TENANT_X, 'vm_verify_mgr_b', '2099-02-01T01:00:04Z', [{ agent: '501', name: 'vm-verify-shared', cves: [] }]);
+    check((await sharedFinding())[0]?.status === 'RESOLVED' && (await sharedFinding())[0]?.resolved_run_id === bDrops, 'manager B reports the host empty again: RESOLVED by that run', JSON.stringify(await sharedFinding()));
 
     console.log('\n--- 19. Legacy bare-kind agent id keys (#63) ---');
     for (const [name, agentId] of [['vm-verify-legacy-1', 'lg-1'], ['vm-verify-legacy-2', 'lg-2']] as const) {
@@ -662,9 +667,13 @@ async function main() {
     check((await episodesOf(scope, poamFinding)).length === 1, 'reprocessing the run keeps exactly one item for the episode (unique index and ON CONFLICT)');
 
     // close the episode, move its resolved_at into the past, then report the finding again: a new episode
+    // the first empty report is held (#303); the second one (poamRun2) confirms it and resolves the finding
+    const poamHeld = await writeFindingsRun('vm_verify_poam', '2099-06-01T12:00:00Z', hostPoam(null));
+    await processRun(poamHeld);
+    check((await queryWithTenant(TENANT_X, 'SELECT status FROM vm_findings WHERE tenant_id = $1 AND id = $2', [TENANT_X, poamFinding])).rows[0]?.status === 'OPEN' && (await episodesOf(scope, poamFinding)).length === 1, 'one empty report keeps the finding OPEN and its item as it was (#303)');
     const poamRun2 = await writeFindingsRun('vm_verify_poam', '2099-06-02T00:00:00Z', hostPoam(null));
     await processRun(poamRun2);
-    check((await queryWithTenant(TENANT_X, 'SELECT status FROM vm_findings WHERE tenant_id = $1 AND id = $2', [TENANT_X, poamFinding])).rows[0]?.status === 'RESOLVED', 'a run that no longer lists the finding resolves it');
+    check((await queryWithTenant(TENANT_X, 'SELECT status FROM vm_findings WHERE tenant_id = $1 AND id = $2', [TENANT_X, poamFinding])).rows[0]?.status === 'RESOLVED', 'a second run that no longer lists the finding resolves it');
     await queryWithTenant(TENANT_X, "UPDATE vm_findings SET resolved_at = '2025-06-01T00:00:00Z' WHERE tenant_id = $1 AND id = $2", [TENANT_X, poamFinding]);
     const poamRun3 = await writeFindingsRun('vm_verify_poam', '2099-06-03T00:00:00Z', hostPoam('2025-07-01T00:00:00Z'));
     await processRun(poamRun3);
@@ -795,6 +804,7 @@ async function main() {
     await processRun(poam2a);
     const finding2 = await findingIdOf('CVE-2099-0101');
     await queryWithProgram(scope, 'UPDATE vm_poam_items SET auto_complete = FALSE WHERE tenant_id = $1 AND program_id = $2 AND finding_id = $3', [TENANT_X, scope.programId, finding2]);
+    await processRun(await writeFindingsRun('vm_verify_poam2', '2099-06-04T12:00:00Z', [{ agent: 'vmv-poam2', name: 'vm-verify-poam2', findings: [] }])); // held (#303); poam2b confirms
     const poam2b = await writeFindingsRun('vm_verify_poam2', '2099-06-05T00:00:00Z', [{ agent: 'vmv-poam2', name: 'vm-verify-poam2', findings: [] }]);
     await processRun(poam2b);
     const items25c = await itemRowsOf(scope, finding2);
@@ -817,6 +827,12 @@ async function main() {
     ]);
     await processRun(poam3b); // target: the second program, which gets an item for each
     const finding4 = await findingIdOf('CVE-2099-0103');
+    // the first empty report of both hosts is held (#303). It runs while the second program is still the target, which already has an item for each, so it creates none.
+    await processRun(await writeFindingsRun('vm_verify_poam3', '2099-06-07T12:00:00Z', [
+      { agent: 'vmv-poam3', name: 'vm-verify-poam3', findings: [] },
+      { agent: 'vmv-poam4', name: 'vm-verify-poam4', findings: [] },
+    ]));
+    check((await itemRowsOf(scope, finding3))[0]?.status === 'OPEN' && (await itemRowsOf(scope2, finding4))[0]?.status === 'OPEN', 'the held run completes no item');
     await setVmTargetProgram(TENANT_X, target3.id, { actor: 'vm_verify', userId: null });
     await archiveProgram(TENANT_X, target2.id);
     const poam3c = await writeFindingsRun('vm_verify_poam3', '2099-06-08T00:00:00Z', [
@@ -874,6 +890,8 @@ async function main() {
     check(editCode === 'mitigation_required', 'RISK_ACCEPTED with no mitigation is refused (mitigation_required)', editCode);
 
     // 26d: the scan stops listing the finding: the worker completes the item; a person reopens it (auto_complete FALSE) and the next run leaves it alone
+    await processRun(await writeFindingsRun('vm_verify_poam5', '2099-06-09T12:00:00Z', [{ agent: 'vmv-poam5', name: 'vm-verify-poam5', findings: [] }])); // held (#303); poam5b confirms
+    check((await itemRowsOf(scope, finding5))[0]?.status === 'IN_PROGRESS', 'one empty report leaves the edited item IN_PROGRESS');
     const poam5b = await writeFindingsRun('vm_verify_poam5', '2099-06-10T00:00:00Z', [{ agent: 'vmv-poam5', name: 'vm-verify-poam5', findings: [] }]);
     await processRun(poam5b);
     const done5 = (await itemRowsOf(scope, finding5))[0];
