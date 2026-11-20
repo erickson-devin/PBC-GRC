@@ -32,6 +32,7 @@ import {
   sspRoleRows,
 } from '../ssp/sspOutput';
 import { dataInventorySubsection, systemDetailsSubsections } from '../inventory/sspInventory';
+import { documentsSubsection } from '../documents/sspDocuments';
 
 import {
   NO_CSP_RECORDED,
@@ -266,7 +267,10 @@ export function compileNistSSP(
         },
       },
       // 1.3 System Details and 1.4 Information Types: only when the register was loaded (nothing is printed without it)
-      ...(metadata.sspInventory ? [...systemDetailsSubsections(metadata.sspInventory), dataInventorySubsection(metadata.sspInventory, metadata.framework)] : []),
+      // 1.3.2 Governance documents sits between 1.3.1 and 1.4; only when the document register was loaded
+      ...(metadata.sspInventory ? systemDetailsSubsections(metadata.sspInventory) : []),
+      ...(metadata.sspDocuments ? [documentsSubsection(metadata.sspDocuments)] : []),
+      ...(metadata.sspInventory ? [dataInventorySubsection(metadata.sspInventory, metadata.framework)] : []),
     ],
   });
 

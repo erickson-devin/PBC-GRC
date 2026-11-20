@@ -110,9 +110,9 @@ const vEmpty = validateSspProfile({ maintenance: {} });
 assert(vEmpty.ok && vEmpty.value.maintenance?.hardwareOwnedByOrg === null && vEmpty.value.maintenance?.exceptions === '', 'V14 missing maintenance answers read as null');
 
 console.log('\n--- Registry and canonical text ---');
-assert(SSP_SECTIONS.map((s) => s.id).join() === 'identification,roles,system_details,data_inventory,environment,maintenance', 'E1 sections in display order (1.3 and 1.4 join after the roles)');
-assert(SSP_SECTIONS.map((s) => s.number).join() === '1.1,1.2,1.3,1.4,2.1,2.3', 'E2 section numbers follow the template');
-assert(SSP_SIGNABLE_SECTION_IDS.join() === 'identification,roles,environment,maintenance' && SSP_SECTIONS.filter((s) => !s.signable).map((s) => s.id).join() === 'system_details,data_inventory', 'E3 four of the six sections are signable: 1.3 and 1.4 are derived from the register and never signed');
+assert(SSP_SECTIONS.map((s) => s.id).join() === 'identification,roles,system_details,documents,data_inventory,environment,maintenance', 'E1 sections in display order (1.3, 1.3.2 and 1.4 join after the roles)');
+assert(SSP_SECTIONS.map((s) => s.number).join() === '1.1,1.2,1.3,1.3.2,1.4,2.1,2.3', 'E2 section numbers follow the template');
+assert(SSP_SIGNABLE_SECTION_IDS.join() === 'identification,roles,environment,maintenance' && SSP_SECTIONS.filter((s) => !s.signable).map((s) => s.id).join() === 'system_details,documents,data_inventory', 'E3 four of the seven sections are signable: 1.3, 1.3.2 and 1.4 are derived from the registers and never signed');
 assert(SSP_DIGEST_VERSION === 'ssp-section-v1' && MAINTENANCE_DOMAIN === 'MA', 'E4 the digest version and the maintenance domain are pinned');
 assert(Object.keys(SSP_ROLE_LABELS).length === 9, 'E5 every role key has a label');
 
@@ -167,7 +167,7 @@ assert(effectiveSspRoles(ownerProfile, 'Jane').length === 1 && effectiveSspRoles
 assert(effectiveSspRoles(null, '  ').length === 0 && effectiveSspRoles(null).length === 0, 'M2c a blank legacy owner adds nothing');
 
 console.log('\n--- Completeness ---');
-const order = ['identification', 'roles', 'system_details', 'data_inventory', 'environment', 'maintenance'].join();
+const order = ['identification', 'roles', 'system_details', 'documents', 'data_inventory', 'environment', 'maintenance'].join();
 for (const framework of ['CMMC_L2', 'CMMC_L1', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY']) {
   const c = computeSspCompleteness({ framework, metadata: {}, profile: null });
   const perSection = c.sections.every((s) => s.requiredMissing === s.items.filter((i) => i.severity === 'required').length && s.requiredMissing === s.requiredTotal);

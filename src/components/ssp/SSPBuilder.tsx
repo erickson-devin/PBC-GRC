@@ -15,6 +15,7 @@ import { useSspProfile } from '../../hooks/useSspProfile';
 import { useSspReviews } from '../../hooks/useSspReviews';
 import { useSspInventory } from '../../hooks/useSspInventory';
 import { useDataInventory } from '../../hooks/useDataInventory';
+import { useSspDocuments } from '../../hooks/useSspDocuments';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
@@ -53,11 +54,13 @@ import {
   dataInventoryTableRows,
 } from '../../data/inventory/sspInventory';
 import { informationTypesCopyLine, systemDetailsCopyLines, systemDetailsRows, yesNoLabel } from '../../data/ssp/sspInventoryView';
+import { DOCUMENTS_NOT_AVAILABLE, SSP_DOCUMENT_HEADERS, documentsSubsection, sspDocumentTableRows } from '../../data/documents/sspDocuments';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { SspSectionNav } from './SspSectionNav';
 import { SspSectionReview } from './SspSectionReview';
 import { SspSystemDetailsSection } from './SspSystemDetailsSection';
 import { SspDataInventorySection } from './SspDataInventorySection';
+import { SspDocumentsSection } from './SspDocumentsSection';
 import { SspIdentificationSection } from './SspIdentificationSection';
 import { SspRolesSection } from './SspRolesSection';
 import { SspEnvironmentSection } from './SspEnvironmentSection';
@@ -87,6 +90,8 @@ export const SSPBuilder: React.FC = () => {
   // 1.3 and 1.4: the Tools and Services register (read here) and the program's data inventory (edited in 1.4)
   const inv = useSspInventory({ enabled: true });
   const dataInv = useDataInventory();
+  // 1.3.2: the approved documents of the Document Register (read here, edited on the Documents page)
+  const docs = useSspDocuments({ enabled: true });
   const profile = profileHook.profile;
 
   // Another screen (the export modal's gap list) can ask for a section: then the builder opens on the edit view
@@ -145,10 +150,10 @@ export const SSPBuilder: React.FC = () => {
   const profileEditable = canEdit && profileHook.status === 'ready' && !archived;
   const serverBacked = Boolean(currentTenant.serverBacked);
   const completeness = useMemo(
-    () => computeSspCompleteness({ ...resolveSspCompletenessInput({ meta, tenant: currentTenant, program: activeProgram, framework: activeFramework, profile }), inventory: inv.completenessInput }),
-    [meta, currentTenant, activeProgram, activeFramework, profile, inv.completenessInput]
+    () => computeSspCompleteness({ ...resolveSspCompletenessInput({ meta, tenant: currentTenant, program: activeProgram, framework: activeFramework, profile }), inventory: inv.completenessInput, documents: docs.completenessInput }),
+    [meta, currentTenant, activeProgram, activeFramework, profile, inv.completenessInput, docs.completenessInput]
   );
-  const entries = navEntriesView(completeness, reviews, { inventoryStatus: inv.status });
+  const entries = navEntriesView(completeness, reviews, { inventoryStatus: inv.status, documentsStatus: docs.status });
   const sectionStatus = completeness.sections.find((s) => s.sectionId === activeSection);
   const savePending = sspMetadataStatus === 'saving' || profileHook.saving;
   const members = teamMembers[currentTenant.id] ?? [];
@@ -201,6 +206,7 @@ export const SSPBuilder: React.FC = () => {
   const identification = sspIdentificationItems(profile);
   const roleRows = sspRoleRows({ profile, legacySystemOwner: meta.systemOwner, framework: activeFramework });
   const maintenanceItems = sspMaintenanceItems(profile);
+  const docsSubsection = documentsSubsection(docs.snapshot);
 
   const handleCopyText = () => {
     let text = `SYSTEM SECURITY PLAN (SSP) - ${frameworkTitle.toUpperCase()} / ${guidance.authority.toUpperCase()}\n\n`;
@@ -219,6 +225,16 @@ export const SSPBuilder: React.FC = () => {
     text += `\nSYSTEM DETAILS (USERS):\n`;
     for (const line of systemDetailsCopyLines(inv.snapshot)) text += `${line}\n`;
     text += `INFORMATION TYPES: ${informationTypesCopyLine(inv.snapshot)}\n`;
+    text += `\nGOVERNANCE DOCUMENTS:\n`;
+    if (!docs.snapshot.supported) text += `${DOCUMENTS_NOT_AVAILABLE}\n`;
+    else if (docs.snapshot.rows.length === 0) text += `- none approved\n`;
+    else {
+      // the kind, version and approval date are worded as in the compiled SSP
+      const docCells = sspDocumentTableRows(docs.snapshot);
+      docs.snapshot.rows.forEach((r, i) => {
+        text += `- ${r.title} (${docCells[i][1]}), version ${docCells[i][3]}, approved ${docCells[i][4]}, review by ${r.reviewBy ?? 'not set'}\n`;
+      });
+    }
     text += `\nCLOUD SERVICE PROVIDERS: ${meta.cloudServiceProviders || NO_CSP_RECORDED}\n\n`;
     text += `HARDWARE AND SOFTWARE MAINTENANCE AND OWNERSHIP:\n`;
     for (const item of maintenanceItems) text += `- ${item.label}: ${item.value}\n`;
@@ -313,7 +329,7 @@ export const SSPBuilder: React.FC = () => {
           <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
           <button
-            onClick={() => exportAssessmentMarkdown(profileHook.profile, inv.status === 'loading' ? null : inv.snapshot)}
+            onClick={() => exportAssessmentMarkdown(profileHook.profile, inv.status === 'loading' ? null : inv.snapshot, docs.status === 'loading' ? null : docs.snapshot)}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
           >
             <Download className="w-3.5 h-3.5 text-slate-400" />
@@ -533,7 +549,17 @@ export const SSPBuilder: React.FC = () => {
                 />
               )}
 
-              {/* 1.3 and 1.4 are built from the register and the data inventory, so they are not signed off */}
+              {activeSection === 'documents' && (
+                <SspDocumentsSection
+                  status={docs.status}
+                  snapshot={docs.snapshot}
+                  section={sectionStatus}
+                  onOpenRegister={() => setActiveTab('documents')}
+                  onRetry={() => void docs.reload()}
+                />
+              )}
+
+              {/* 1.3, 1.3.2 and 1.4 are built from the registers and the data inventory, so they are not signed off */}
               {def.signable && (
                 <SspSectionReview
                   sectionId={activeSection}
@@ -691,6 +717,38 @@ export const SSPBuilder: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+            )}
+
+            <h4 className="text-xs font-semibold text-slate-700">1.3.2 Governance Documents</h4>
+            {docs.status === 'loading' ? (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">Loading the documents…</div>
+            ) : (
+              <>
+                {/* the same words and rows as the compiled SSP and the Markdown (documentsSubsection) */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">{docsSubsection.content}</div>
+                {docsSubsection.table && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border border-slate-200">
+                      <thead>
+                        <tr className="bg-slate-50 text-left">
+                          {SSP_DOCUMENT_HEADERS.map((h) => (
+                            <th key={h} scope="col" className="px-3 py-2 border-b border-slate-200 font-semibold text-slate-700">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sspDocumentTableRows(docs.snapshot).map((row, i) => (
+                          <tr key={docs.snapshot.rows[i].id} className="border-b border-slate-100 last:border-0">
+                            {row.map((cell, j) => (
+                              <td key={j} className={`px-3 py-2 ${j === 0 ? 'text-slate-900 font-semibold' : 'text-slate-700'}`}>{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
 
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 pt-2">1.4 Information Types (FCI and CUI)</h3>

@@ -319,7 +319,7 @@ console.log('\n--- Documents honesty (#196 to #200) ---');
 }
 {
   const m = (text.get('src/components/reports/ArtifactExportModal.tsx') ?? '').replace(/\r\n/g, '\n');
-  assert(m.includes("import { getExportGaps } from '../../data/reports/exportReadiness';") && m.includes('getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework, inventory: sspInventory.completenessInput })'), 'S151-25 the export modal lists the gaps of the selected document');
+  assert(m.includes("import { getExportGaps } from '../../data/reports/exportReadiness';") && m.includes('getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework, inventory: sspInventory.completenessInput, documents: sspDocs.completenessInput })'), 'S151-25 the export modal lists the gaps of the selected document');
   const region = m.slice(m.indexOf('data-testid="export-readiness"'), m.indexOf('{/* Modal Bottom Action Footer */}'));
   assert(region.length > 0 && m.includes('<div role="status" data-testid="export-readiness"'), 'S151-26 the readiness checklist is a status region above the footer');
   assert(!region.includes('formData.') && !region.includes('disabled='), 'S151-27 the checklist never echoes a value and never disables an export');

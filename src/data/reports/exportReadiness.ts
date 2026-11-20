@@ -1,6 +1,7 @@
 import type { ReportDocumentType, ReportMetadata } from '../../types/report';
 import type { SspProfile } from '../../types/sspProfile';
 import type { SspInventoryCompletenessInput } from '../inventory/sspInventory';
+import type { SspDocumentsCompletenessInput } from '../documents/sspDocuments';
 import { computeSspCompleteness, sspCompletenessFromReport } from '../ssp/sspCompleteness';
 import type { SspSectionId } from '../ssp/sspSections';
 
@@ -49,15 +50,16 @@ const ADVISORY: Partial<Record<ReportDocumentType, (keyof ReportMetadata)[]>> = 
  * categorization, the other roles, maintenance), each with the builder section to open; without it the result is the report fields only.
  * With `ssp.inventory` (the Tools and Services register and the data inventory) it also lists the items of sections 1.3 and 1.4: for a CMMC Level 2
  * program a missing CUI category is a gap that stops the export, missing user counts are advisory.
+ * With `ssp.documents` (the document register) it also lists the items of section 1.3.2, every one advisory: they never stop an export.
  */
-export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportMetadata>, ssp?: { profile: SspProfile | null; framework: string; inventory?: SspInventoryCompletenessInput }): ExportGap[] {
+export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportMetadata>, ssp?: { profile: SspProfile | null; framework: string; inventory?: SspInventoryCompletenessInput; documents?: SspDocumentsCompletenessInput }): ExportGap[] {
   const empty = (field: keyof ReportMetadata) => {
     const v = meta[field];
     return typeof v !== 'string' || v.trim() === '';
   };
   const gaps: ExportGap[] = [];
   if (docType === 'NIST_SP_800_18_SSP') {
-    const items = computeSspCompleteness(sspCompletenessFromReport({ ...meta, framework: (ssp?.framework ?? meta.framework) as ReportMetadata['framework'] }, ssp?.profile ?? null, ssp?.inventory)).sections.flatMap((s) => s.items);
+    const items = computeSspCompleteness(sspCompletenessFromReport({ ...meta, framework: (ssp?.framework ?? meta.framework) as ReportMetadata['framework'] }, ssp?.profile ?? null, ssp?.inventory, ssp?.documents)).sections.flatMap((s) => s.items);
     const byField = new Map(items.filter((i) => i.reportField).map((i) => [i.reportField as string, i]));
     for (const advisory of [false, true]) {
       for (const field of SSP_REPORT_FIELD_ORDER) {

@@ -1,0 +1,996 @@
+{
+  "_meta": {
+    "schemaVersion": 1,
+    "compiledBy": "Pitch Black Cyber, LLC",
+    "asOf": "2026-11-20",
+    "verified": false,
+    "notice": "Document type names and descriptions written by Pitch Black Cyber. Not copied from any assessment guide or template. The control mapping is our interpretation; an assessor may expect other documents.",
+    "method": "Each entry lists the controls whose requirements imply a written document.",
+    "reviewNote": "Not yet verified: each mapping must be checked by a person before release."
+  },
+  "frameworks": {
+    "CMMC_L1": [
+      {
+        "id": "cmmc-l1-access-control-policy",
+        "name": "Access control policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written rules for who may use company systems and how that access is given, changed and removed.",
+        "controls": [
+          "AC.L1-3.1.1"
+        ],
+        "keywords": [
+          "access control"
+        ],
+        "generator": {
+          "family": "AC"
+        }
+      },
+      {
+        "id": "cmmc-l1-identification-authentication-policy",
+        "name": "Identification and authentication policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written rules for identifying users and devices and for proving who they are before access.",
+        "controls": [
+          "IA.L1-3.5.1"
+        ],
+        "keywords": [
+          "identification",
+          "authentication"
+        ],
+        "generator": {
+          "family": "IA"
+        }
+      },
+      {
+        "id": "cmmc-l1-media-sanitization-procedure",
+        "name": "Media sanitization procedure",
+        "kind": "PROCEDURE",
+        "requirement": "EXPECTED",
+        "description": "The steps for wiping or destroying media that held company information before it is reused or discarded.",
+        "controls": [
+          "MP.L1-3.8.3"
+        ],
+        "keywords": [
+          "media",
+          "sanitization",
+          "disposal"
+        ]
+      },
+      {
+        "id": "cmmc-l1-physical-protection-policy",
+        "name": "Physical protection policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written rules for limiting physical access to facilities, equipment and operating environments.",
+        "controls": [
+          "PE.L1-3.10.1"
+        ],
+        "keywords": [
+          "physical"
+        ],
+        "generator": {
+          "family": "PE"
+        }
+      },
+      {
+        "id": "cmmc-l1-visitor-log",
+        "name": "Visitor log",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "A record of visitors to the facility and who escorted them.",
+        "controls": [
+          "PE.L1-3.10.3"
+        ],
+        "keywords": [
+          "visitor",
+          "log"
+        ]
+      },
+      {
+        "id": "cmmc-l1-boundary-diagram",
+        "name": "Network and boundary diagram",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "A diagram of the networks and boundary of the systems that handle federal contract information.",
+        "controls": [
+          "SC.L1-3.13.1"
+        ],
+        "keywords": [
+          "network",
+          "boundary",
+          "diagram"
+        ]
+      },
+      {
+        "id": "cmmc-l1-system-and-information-integrity-policy",
+        "name": "System and information integrity policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written rules for fixing flaws, protecting against malicious code and keeping protection current.",
+        "controls": [
+          "SI.L1-3.14.1"
+        ],
+        "keywords": [
+          "integrity",
+          "system and information"
+        ],
+        "generator": {
+          "family": "SI"
+        }
+      },
+      {
+        "id": "cmmc-l1-system-security-plan",
+        "name": "System security plan",
+        "kind": "PLAN",
+        "requirement": "RECOMMENDED",
+        "description": "Describes the system and how each practice is met. Helpful at Level 1 but not an assessed document.",
+        "controls": [
+          "SC.L1-3.13.1"
+        ],
+        "keywords": [
+          "system security plan",
+          "ssp"
+        ]
+      }
+    ],
+    "CMMC_L2": [
+      {
+        "id": "cmmc-l2-system-security-plan",
+        "name": "System security plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes the system boundary, its environment and how each security requirement is implemented.",
+        "controls": [
+          "CA.L2-3.12.4"
+        ],
+        "keywords": [
+          "system security plan",
+          "ssp"
+        ]
+      },
+      {
+        "id": "cmmc-l2-plan-of-action-and-milestones",
+        "name": "Plan of action and milestones",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Tracks each known deficiency with an owner, a target date and the steps to correct it.",
+        "controls": [
+          "CA.L2-3.12.2"
+        ],
+        "keywords": [
+          "plan of action",
+          "milestones",
+          "poa"
+        ]
+      },
+      {
+        "id": "cmmc-l2-incident-response-plan",
+        "name": "Incident response plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Sets out how security incidents are prepared for, detected, analyzed, contained, recovered from and reported.",
+        "controls": [
+          "IR.L2-3.6.1",
+          "IR.L2-3.6.2"
+        ],
+        "keywords": [
+          "incident response",
+          "incident"
+        ]
+      },
+      {
+        "id": "cmmc-l2-incident-response-test-record",
+        "name": "Incident response test record",
+        "kind": "REVIEW_ASSESSMENT",
+        "requirement": "EXPECTED",
+        "description": "Records when the incident response capability was exercised, what was found and what was changed.",
+        "controls": [
+          "IR.L2-3.6.3"
+        ],
+        "keywords": [
+          "incident response",
+          "test",
+          "exercise"
+        ]
+      },
+      {
+        "id": "cmmc-l2-configuration-management-plan",
+        "name": "Configuration management plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes how baselines are set, changes are reviewed and approved, and settings are kept secure.",
+        "controls": [
+          "CM.L2-3.4.1",
+          "CM.L2-3.4.2",
+          "CM.L2-3.4.3"
+        ],
+        "keywords": [
+          "configuration management",
+          "change"
+        ]
+      },
+      {
+        "id": "cmmc-l2-baseline-configurations",
+        "name": "Baseline configurations",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "The documented approved settings for systems in scope, such as hardening standards or benchmark selections.",
+        "controls": [
+          "CM.L2-3.4.1",
+          "CM.L2-3.4.2"
+        ],
+        "keywords": [
+          "baseline",
+          "hardening"
+        ]
+      },
+      {
+        "id": "cmmc-l2-hardware-and-software-inventory",
+        "name": "Hardware and software inventory",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "The current list of hardware and software that make up the system in scope.",
+        "controls": [
+          "CM.L2-3.4.1"
+        ],
+        "keywords": [
+          "inventory",
+          "asset"
+        ]
+      },
+      {
+        "id": "cmmc-l2-risk-assessment",
+        "name": "Risk assessment",
+        "kind": "REVIEW_ASSESSMENT",
+        "requirement": "EXPECTED",
+        "description": "A dated assessment of the risks to operations and information from the system, with its findings.",
+        "controls": [
+          "RA.L2-3.11.1"
+        ],
+        "keywords": [
+          "risk assessment",
+          "risk"
+        ]
+      },
+      {
+        "id": "cmmc-l2-security-assessment-results",
+        "name": "Security assessment results",
+        "kind": "REVIEW_ASSESSMENT",
+        "requirement": "EXPECTED",
+        "description": "The results of the periodic review of how well the security requirements are met.",
+        "controls": [
+          "CA.L2-3.12.1"
+        ],
+        "keywords": [
+          "security assessment",
+          "assessment"
+        ]
+      },
+      {
+        "id": "cmmc-l2-network-boundary-diagram",
+        "name": "Network and boundary diagram",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "A diagram of the networks, connections and boundary of the system in scope.",
+        "controls": [
+          "CA.L2-3.12.4",
+          "SC.L1-3.13.1"
+        ],
+        "keywords": [
+          "network",
+          "boundary",
+          "diagram"
+        ]
+      },
+      {
+        "id": "cmmc-l2-access-control-policy",
+        "name": "Access control policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for access control: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "AC.L1-3.1.1"
+        ],
+        "keywords": [
+          "access control"
+        ],
+        "generator": {
+          "family": "AC"
+        }
+      },
+      {
+        "id": "cmmc-l2-awareness-and-training-policy",
+        "name": "Awareness and training policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for awareness and training: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "AT.L2-3.2.1"
+        ],
+        "keywords": [
+          "awareness",
+          "training"
+        ],
+        "generator": {
+          "family": "AT"
+        }
+      },
+      {
+        "id": "cmmc-l2-audit-and-accountability-policy",
+        "name": "Audit and accountability policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for audit and accountability: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "AU.L2-3.3.1"
+        ],
+        "keywords": [
+          "audit",
+          "accountability"
+        ],
+        "generator": {
+          "family": "AU"
+        }
+      },
+      {
+        "id": "cmmc-l2-identification-and-authentication-policy",
+        "name": "Identification and authentication policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for identification and authentication: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "IA.L1-3.5.1"
+        ],
+        "keywords": [
+          "identification",
+          "authentication"
+        ],
+        "generator": {
+          "family": "IA"
+        }
+      },
+      {
+        "id": "cmmc-l2-maintenance-policy",
+        "name": "Maintenance policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for maintenance: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "MA.L2-3.7.1"
+        ],
+        "keywords": [
+          "maintenance"
+        ],
+        "generator": {
+          "family": "MA"
+        }
+      },
+      {
+        "id": "cmmc-l2-media-protection-policy",
+        "name": "Media protection policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for media protection: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "MP.L2-3.8.1"
+        ],
+        "keywords": [
+          "media protection",
+          "media"
+        ],
+        "generator": {
+          "family": "MP"
+        }
+      },
+      {
+        "id": "cmmc-l2-personnel-security-policy",
+        "name": "Personnel security policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for personnel security: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "PS.L2-3.9.1"
+        ],
+        "keywords": [
+          "personnel"
+        ],
+        "generator": {
+          "family": "PS"
+        }
+      },
+      {
+        "id": "cmmc-l2-physical-protection-policy",
+        "name": "Physical protection policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for physical protection: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "PE.L1-3.10.1"
+        ],
+        "keywords": [
+          "physical"
+        ],
+        "generator": {
+          "family": "PE"
+        }
+      },
+      {
+        "id": "cmmc-l2-system-and-communications-protection-policy",
+        "name": "System and communications protection policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for system and communications protection: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "SC.L1-3.13.1"
+        ],
+        "keywords": [
+          "communications protection",
+          "system and communications"
+        ],
+        "generator": {
+          "family": "SC"
+        }
+      },
+      {
+        "id": "cmmc-l2-system-and-information-integrity-policy",
+        "name": "System and information integrity policy",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The organization's written policy for system and information integrity: purpose, scope, roles and the rules staff follow.",
+        "controls": [
+          "SI.L1-3.14.1"
+        ],
+        "keywords": [
+          "information integrity",
+          "system and information"
+        ],
+        "generator": {
+          "family": "SI"
+        }
+      },
+      {
+        "id": "cmmc-l2-acceptable-use-policy",
+        "name": "Acceptable use policy",
+        "kind": "POLICY",
+        "requirement": "RECOMMENDED",
+        "description": "States what staff may and may not do with company systems and information; often signed by each user.",
+        "controls": [
+          "AT.L2-3.2.1"
+        ],
+        "keywords": [
+          "acceptable use",
+          "rules of behavior"
+        ]
+      },
+      {
+        "id": "cmmc-l2-shared-responsibility-matrix",
+        "name": "Shared responsibility matrix",
+        "kind": "REFERENCE",
+        "requirement": "RECOMMENDED",
+        "description": "Shows which security requirements are met by the organization and which by an external service provider.",
+        "controls": [
+          "CA.L2-3.12.4"
+        ],
+        "keywords": [
+          "responsibility",
+          "matrix",
+          "service provider"
+        ]
+      }
+    ],
+    "NIST_800_53_REV5": [
+      {
+        "id": "nist-80053-ac-policy",
+        "name": "Access control policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for access control: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "AC-1"
+        ],
+        "keywords": [
+          "access control"
+        ],
+        "generator": {
+          "family": "AC"
+        }
+      },
+      {
+        "id": "nist-80053-at-policy",
+        "name": "Awareness and training policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for awareness and training: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "AT-1"
+        ],
+        "keywords": [
+          "awareness",
+          "training"
+        ],
+        "generator": {
+          "family": "AT"
+        }
+      },
+      {
+        "id": "nist-80053-au-policy",
+        "name": "Audit and accountability policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for audit and accountability: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "AU-1"
+        ],
+        "keywords": [
+          "audit",
+          "accountability"
+        ],
+        "generator": {
+          "family": "AU"
+        }
+      },
+      {
+        "id": "nist-80053-ca-policy",
+        "name": "Assessment, authorization and monitoring policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for assessment, authorization and monitoring: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "CA-1"
+        ],
+        "keywords": [
+          "assessment",
+          "monitoring"
+        ],
+        "generator": {
+          "family": "CA"
+        }
+      },
+      {
+        "id": "nist-80053-cm-policy",
+        "name": "Configuration management policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for configuration management: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "CM-1"
+        ],
+        "keywords": [
+          "configuration management"
+        ],
+        "generator": {
+          "family": "CM"
+        }
+      },
+      {
+        "id": "nist-80053-cp-policy",
+        "name": "Contingency planning policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for contingency planning: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "CP-1"
+        ],
+        "keywords": [
+          "contingency planning"
+        ],
+        "generator": {
+          "family": "CP"
+        }
+      },
+      {
+        "id": "nist-80053-ia-policy",
+        "name": "Identification and authentication policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for identification and authentication: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "IA-1"
+        ],
+        "keywords": [
+          "identification",
+          "authentication"
+        ],
+        "generator": {
+          "family": "IA"
+        }
+      },
+      {
+        "id": "nist-80053-ir-policy",
+        "name": "Incident response policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for incident response: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "IR-1"
+        ],
+        "keywords": [
+          "incident response"
+        ],
+        "generator": {
+          "family": "IR"
+        }
+      },
+      {
+        "id": "nist-80053-ma-policy",
+        "name": "Maintenance policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for maintenance: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "MA-1"
+        ],
+        "keywords": [
+          "maintenance"
+        ],
+        "generator": {
+          "family": "MA"
+        }
+      },
+      {
+        "id": "nist-80053-mp-policy",
+        "name": "Media protection policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for media protection: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "MP-1"
+        ],
+        "keywords": [
+          "media protection"
+        ],
+        "generator": {
+          "family": "MP"
+        }
+      },
+      {
+        "id": "nist-80053-pe-policy",
+        "name": "Physical and environmental protection policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for physical and environmental protection: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "PE-1"
+        ],
+        "keywords": [
+          "physical",
+          "environmental protection"
+        ],
+        "generator": {
+          "family": "PE"
+        }
+      },
+      {
+        "id": "nist-80053-pl-policy",
+        "name": "Planning policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for planning: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "PL-1"
+        ],
+        "keywords": [
+          "planning"
+        ],
+        "generator": {
+          "family": "PL"
+        }
+      },
+      {
+        "id": "nist-80053-pm-policy",
+        "name": "Program management policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for program management: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "PM-1"
+        ],
+        "keywords": [
+          "program management"
+        ],
+        "generator": {
+          "family": "PM"
+        }
+      },
+      {
+        "id": "nist-80053-ps-policy",
+        "name": "Personnel security policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for personnel security: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "PS-1"
+        ],
+        "keywords": [
+          "personnel security"
+        ],
+        "generator": {
+          "family": "PS"
+        }
+      },
+      {
+        "id": "nist-80053-pt-policy",
+        "name": "PII processing and transparency policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for pii processing and transparency: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "PT-1"
+        ],
+        "keywords": [
+          "pii processing",
+          "transparency"
+        ],
+        "generator": {
+          "family": "PT"
+        }
+      },
+      {
+        "id": "nist-80053-ra-policy",
+        "name": "Risk assessment policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for risk assessment: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "RA-1"
+        ],
+        "keywords": [
+          "risk assessment"
+        ],
+        "generator": {
+          "family": "RA"
+        }
+      },
+      {
+        "id": "nist-80053-sa-policy",
+        "name": "System and services acquisition policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for system and services acquisition: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "SA-1"
+        ],
+        "keywords": [
+          "services acquisition"
+        ],
+        "generator": {
+          "family": "SA"
+        }
+      },
+      {
+        "id": "nist-80053-sc-policy",
+        "name": "System and communications protection policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for system and communications protection: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "SC-1"
+        ],
+        "keywords": [
+          "communications protection"
+        ],
+        "generator": {
+          "family": "SC"
+        }
+      },
+      {
+        "id": "nist-80053-si-policy",
+        "name": "System and information integrity policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for system and information integrity: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "SI-1"
+        ],
+        "keywords": [
+          "information integrity"
+        ],
+        "generator": {
+          "family": "SI"
+        }
+      },
+      {
+        "id": "nist-80053-sr-policy",
+        "name": "Supply chain risk management policy and procedures",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "The written policy and procedures for supply chain risk management: purpose, scope, roles and how the work is done.",
+        "controls": [
+          "SR-1"
+        ],
+        "keywords": [
+          "supply chain risk management"
+        ],
+        "generator": {
+          "family": "SR"
+        }
+      },
+      {
+        "id": "nist-80053-system-security-plan",
+        "name": "System security plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes the system, its boundary and how each selected control is implemented.",
+        "controls": [
+          "PL-2"
+        ],
+        "keywords": [
+          "system security plan",
+          "ssp"
+        ]
+      },
+      {
+        "id": "nist-80053-plan-of-action-and-milestones",
+        "name": "Plan of action and milestones",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Tracks each known weakness with an owner, a target date and the steps to correct it.",
+        "controls": [
+          "CA-5"
+        ],
+        "keywords": [
+          "plan of action",
+          "milestones",
+          "poa"
+        ]
+      },
+      {
+        "id": "nist-80053-incident-response-plan",
+        "name": "Incident response plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Sets out how incidents are prepared for, handled and reported, and who does what.",
+        "controls": [
+          "IR-8"
+        ],
+        "keywords": [
+          "incident response",
+          "incident"
+        ]
+      },
+      {
+        "id": "nist-80053-contingency-plan",
+        "name": "Contingency plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes how essential functions continue or are restored after a disruption, and who is responsible.",
+        "controls": [
+          "CP-2"
+        ],
+        "keywords": [
+          "contingency",
+          "continuity",
+          "recovery"
+        ]
+      },
+      {
+        "id": "nist-80053-configuration-management-plan",
+        "name": "Configuration management plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes how configuration items are identified, changes are controlled and the plan is kept current.",
+        "controls": [
+          "CM-9"
+        ],
+        "keywords": [
+          "configuration management",
+          "change"
+        ]
+      },
+      {
+        "id": "nist-80053-continuous-monitoring-strategy",
+        "name": "Continuous monitoring strategy",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes what is monitored, how often, how results are reported and who acts on them.",
+        "controls": [
+          "CA-7"
+        ],
+        "keywords": [
+          "continuous monitoring",
+          "monitoring"
+        ]
+      },
+      {
+        "id": "nist-80053-security-assessment-plan-and-report",
+        "name": "Security assessment plan and report",
+        "kind": "REVIEW_ASSESSMENT",
+        "requirement": "EXPECTED",
+        "description": "The plan for assessing the controls and the written report of what the assessment found.",
+        "controls": [
+          "CA-2"
+        ],
+        "keywords": [
+          "security assessment",
+          "assessment"
+        ]
+      },
+      {
+        "id": "nist-80053-risk-assessment",
+        "name": "Risk assessment",
+        "kind": "REVIEW_ASSESSMENT",
+        "requirement": "EXPECTED",
+        "description": "A dated assessment of the risks to operations and information from the system, with its results.",
+        "controls": [
+          "RA-3"
+        ],
+        "keywords": [
+          "risk assessment",
+          "risk"
+        ]
+      },
+      {
+        "id": "nist-80053-supply-chain-risk-management-plan",
+        "name": "Supply chain risk management plan",
+        "kind": "PLAN",
+        "requirement": "EXPECTED",
+        "description": "Describes how risks from suppliers, products and services are identified and managed.",
+        "controls": [
+          "SR-2"
+        ],
+        "keywords": [
+          "supply chain",
+          "scrm"
+        ]
+      },
+      {
+        "id": "nist-80053-rules-of-behavior",
+        "name": "Rules of behavior",
+        "kind": "POLICY",
+        "requirement": "EXPECTED",
+        "description": "States what users may and may not do on the system; usually acknowledged by each user.",
+        "controls": [
+          "PL-4"
+        ],
+        "keywords": [
+          "rules of behavior",
+          "acceptable use"
+        ]
+      },
+      {
+        "id": "nist-80053-interconnection-agreements",
+        "name": "Interconnection agreements",
+        "kind": "REFERENCE",
+        "requirement": "RECOMMENDED",
+        "description": "Agreements covering connections to other systems, where such connections exist.",
+        "controls": [
+          "CA-3"
+        ],
+        "keywords": [
+          "interconnection",
+          "agreement"
+        ]
+      },
+      {
+        "id": "nist-80053-baseline-configuration",
+        "name": "Baseline configuration",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "The documented approved settings and components for the system, kept under change control.",
+        "controls": [
+          "CM-2"
+        ],
+        "keywords": [
+          "baseline"
+        ]
+      },
+      {
+        "id": "nist-80053-component-inventory",
+        "name": "System component inventory",
+        "kind": "ARTIFACT",
+        "requirement": "EXPECTED",
+        "description": "The current list of hardware, software and firmware components that make up the system.",
+        "controls": [
+          "CM-8"
+        ],
+        "keywords": [
+          "inventory",
+          "component",
+          "asset"
+        ]
+      }
+    ]
+  }
+}

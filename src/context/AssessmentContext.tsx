@@ -39,6 +39,7 @@ import { unsavedControlNotes, unsavedSspMetadataFields } from '../services/unsav
 import { SSP_METADATA_FIELDS, type SspField, type SspMetadataFields } from '../types/sspMetadata';
 import { validateSspProfile, type SspProfile } from '../types/sspProfile';
 import type { SspInventorySnapshot } from '../data/inventory/sspInventory';
+import type { SspDocumentsSnapshot } from '../data/documents/sspDocuments';
 import type { SspSectionId } from '../data/ssp/sspSections';
 import {
   SSP_METADATA_STALE_MESSAGE,
@@ -99,6 +100,7 @@ export type NavigationTab =
   | 'evidence'    // Evidence Vault (renamed from 'vault')
   | 'vault'       // Legacy alias → renders same as 'evidence'
   | 'policies'    // Living Policy Library
+  | 'documents'   // Document Register and expected documents (#240, #250)
   | 'ssp'         // System Security Plan
   | 'configresults' // Configuration results: received XCCDF / ARF scans and the control statuses they suggest (#103)
   | 'sspimport'   // SSP import: upload an existing plan and review the controls it maps to
@@ -185,7 +187,7 @@ interface AssessmentContextType {
   importControlsLowered: () => number;
   exportAssessmentJSON: () => void;
   /** Downloads the Markdown SSP; `profile` is the program's SSP profile (identifier, categorization, roles, maintenance), null when none is recorded. */
-  exportAssessmentMarkdown: (profile?: SspProfile | null, inventory?: SspInventorySnapshot | null) => void;
+  exportAssessmentMarkdown: (profile?: SspProfile | null, inventory?: SspInventorySnapshot | null, documents?: SspDocumentsSnapshot | null) => void;
   /** Browser-only tenants: saves the SSP profile in this browser's cache. Does nothing for a server-backed tenant (its profile lives on the server) or a read-only role. */
   setBrowserSspProfile: (profile: SspProfile) => void;
   /** The SSP builder section another screen asked to open (the export modal's gap list). The builder consumes it and calls clearSspFocusSection. */
@@ -2008,8 +2010,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [state, activeFramework]);
 
   // Action: Export Markdown
-  const exportAssessmentMarkdown = useCallback((profile?: SspProfile | null, inventory?: SspInventorySnapshot | null) => {
-    StorageService.exportMarkdown(state, frameworkControls, activeFramework, profile ?? (currentTenant.serverBacked ? null : state.sspProfile ?? null), inventory);
+  const exportAssessmentMarkdown = useCallback((profile?: SspProfile | null, inventory?: SspInventorySnapshot | null, documents?: SspDocumentsSnapshot | null) => {
+    StorageService.exportMarkdown(state, frameworkControls, activeFramework, profile ?? (currentTenant.serverBacked ? null : state.sspProfile ?? null), inventory, documents);
   }, [state, frameworkControls, activeFramework, currentTenant.serverBacked]);
 
   // Browser-only tenants keep the SSP profile in the cache (a server-backed tenant's is on the server and never held here)

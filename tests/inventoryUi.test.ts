@@ -311,5 +311,17 @@ assert(capped, 'IU22 every dialog is height-capped');
 assert(src('src/context/AssessmentContext.tsx').includes("| 'tools'"), "IU23 the 'tools' tab is a navigation tab");
 assert(!src('src/data/programDefaultChoice.ts').includes("'tools'"), 'IU23 the register is not program-scoped');
 
+// IU24 the link helpers are generic: links without an evidence-source flag (documents) diff and rebase too
+const D = (c: string) => ({ controlId: c });
+const dd = linkDiff([D('c1'), D('c2')], [D('c1'), D('c3')]);
+assert(dd.added === 1 && dd.removed === 1 && dd.changed === 0, 'IU24 {controlId}-only links never produce a changed count', dd);
+assert(linkDiff([D('c1')], [{ controlId: 'c1', evidenceSource: false }]).changed === 0, 'IU24 a missing flag counts as false');
+assert(linkDiffText(linkDiff([D('c1')], [D('c1')])) === 'No changes.', 'IU24 no changes for documents');
+const rbd = rebaseLinks(['c1', 'c2'], [D('c1'), D('c3')], [D('c1'), D('c4')]);
+assert(rbd.map((l) => l.controlId).join() === 'c1,c3,c4' && rbd.every((l) => !('evidenceSource' in l)), 'IU24 rebaseLinks works on {controlId} objects and adds no flag', rbd);
+const shared = src('src/components/inventory/ControlLinksDialog.tsx');
+assert(!/console\.|localStorage|sessionStorage|dangerouslySetInnerHTML|\balert\(/.test(shared) && !/console\.|localStorage|sessionStorage|dangerouslySetInnerHTML|\balert\(/.test(src('src/components/inventory/EvidenceAttachFieldset.tsx')), 'IU24 the shared dialogs have no console, browser storage, alert or raw HTML');
+assert(src('src/components/inventory/ToolControlsEditor.tsx').includes('<ControlLinksDialog'), 'IU24 the tool editor is built on the shared dialog');
+
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 if (passed !== total) process.exitCode = 1;

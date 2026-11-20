@@ -10,6 +10,7 @@ import type { SspProfile, SspRoleKey, SspSectionReviewState } from '../../types/
 import type { Tenant } from '../../types/tenant';
 import { SSP_ROLE_LABELS, SSP_SECTIONS, effectiveSspRoles, type SspSectionId } from './sspSections';
 import { inventoryCompletenessItems, type SspInventoryCompletenessInput } from '../inventory/sspInventory';
+import { documentCompletenessItems, type SspDocumentsCompletenessInput } from '../documents/sspDocuments';
 
 export type SspItemSeverity = 'required' | 'advisory';
 
@@ -34,8 +35,8 @@ export interface SspSectionStatus {
   advisoryMissing: number;
   complete: boolean;
   /**
-   * False for 1.3 and 1.4 when the Tools and Services register is not available (a browser-only organization, or nothing loaded): the section then has
-   * no items and counts toward no total. Every other section is always available.
+   * False for 1.3 and 1.4 when the Tools and Services register is not available, and for 1.3.2 when the document register is not (a browser-only
+   * organization, or nothing loaded): the section then has no items and counts toward no total. Every other section is always available.
    */
   available: boolean;
 }
@@ -58,6 +59,11 @@ export interface SspCompletenessInput {
    * unavailable: no items, nothing counted. With it, a CMMC Level 2 program must select at least one CUI category (required); missing user counts are advisory.
    */
   inventory?: SspInventoryCompletenessInput;
+  /**
+   * The document register (section 1.3.2). Without it, or when `supported` is false, the section is unavailable: no items, nothing counted. With it every
+   * item is advisory (an approved document, none past its review date, the expected documents present).
+   */
+  documents?: SspDocumentsCompletenessInput;
 }
 
 /** Not a string, or whitespace only. */
@@ -135,14 +141,18 @@ function itemsFor(input: SspCompletenessInput): SspItemStatus[] {
 
   // 1.3 system details and 1.4 information types (from the Tools and Services register; nothing without it)
   if (input.inventory) for (const item of inventoryCompletenessItems(input.framework, input.inventory)) add(item);
+
+  // 1.3.2 governance documents (from the document register; nothing without it)
+  if (input.documents) for (const item of documentCompletenessItems(input.framework, input.documents)) add(item);
   return items;
 }
 
 export function computeSspCompleteness(input: SspCompletenessInput): SspCompleteness {
   const all = itemsFor(input);
   const inventorySupported = input.inventory?.supported === true;
+  const documentsSupported = input.documents?.supported === true;
   const sections: SspSectionStatus[] = SSP_SECTIONS.map((def) => {
-    const available = (def.id !== 'system_details' && def.id !== 'data_inventory') || inventorySupported;
+    const available = def.id === 'documents' ? documentsSupported : (def.id !== 'system_details' && def.id !== 'data_inventory') || inventorySupported;
     const items = available ? all.filter((i) => i.sectionId === def.id) : [];
     const requiredMissing = items.filter((i) => i.severity === 'required' && i.missing).length;
     return {
@@ -196,7 +206,7 @@ export function resolveSspCompletenessInput(a: {
 }
 
 /** The completeness input of an export form's values (ReportMetadata) and the program's profile. */
-export function sspCompletenessFromReport(meta: Partial<ReportMetadata>, profile: SspProfile | null, inventory?: SspInventoryCompletenessInput): SspCompletenessInput {
+export function sspCompletenessFromReport(meta: Partial<ReportMetadata>, profile: SspProfile | null, inventory?: SspInventoryCompletenessInput, documents?: SspDocumentsCompletenessInput): SspCompletenessInput {
   return {
     framework: meta.framework ?? '',
     metadata: {
@@ -213,6 +223,7 @@ export function sspCompletenessFromReport(meta: Partial<ReportMetadata>, profile
     },
     profile,
     ...(inventory ? { inventory } : {}),
+    ...(documents ? { documents } : {}),
   };
 }
 

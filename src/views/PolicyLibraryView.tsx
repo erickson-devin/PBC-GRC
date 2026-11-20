@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useId } from 'react';
 import {
   Sparkles,
   Download,
@@ -16,10 +16,18 @@ import {
   Sliders,
   CheckCircle2,
   Scroll,
+  FilePlus2,
+  LibraryBig,
 } from 'lucide-react';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { MarkdownPreview } from '../components/common/MarkdownPreview';
+import { ErrorNotice } from '../components/common/ErrorNotice';
 import { useTenant } from '../context/TenantContext';
+import { useAssessment } from '../context/AssessmentContext';
+import { useDocumentRegister } from '../hooks/useDocumentRegister';
+import { generatedSeedKey } from '../data/documents/generatedDrafts';
+import { statusChip, documentErrorMessage, DOCUMENT_UI_TEXT } from '../data/documents/documentUiView';
+import { requestDocumentFocus } from '../components/documents/documentFocus';
 import { withEffectiveStack } from '../data/effectiveStackProfile';
 import { PolicyControlReferenceDialog } from '../components/matrix/PolicyControlReferenceDialog';
 import { generateFamilyPolicyDocument } from '../data/reports/policyDocumentGenerator';
@@ -222,6 +230,39 @@ const PolicyLibraryViewContent: React.FC = () => {
       activeFamilies.find((f) => f.code === selectedFamilyCode) || activeFamilies[0] || NIST_800_53_FAMILIES[0]
     );
   }, [activeFamilies, selectedFamilyCode]);
+
+  // Register as draft: a DRAFT row in the Document Register whose text stays rendered live from the generator (nothing generated is stored)
+  const { setActiveTab } = useAssessment();
+  const reg = useDocumentRegister();
+  const registerHintId = useId();
+  const [registering, setRegistering] = useState(false);
+  const [registerMsg, setRegisterMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const seedKey = generatedSeedKey(activeFramework, selectedFamily.code);
+  const registered = reg.documents.find((d) => d.seedKey === seedKey && d.status !== 'RETIRED') ?? null;
+  useEffect(() => {
+    setRegisterMsg(null);
+  }, [seedKey]);
+  const handleRegister = async () => {
+    setRegistering(true);
+    setRegisterMsg(null);
+    try {
+      await reg.create({ kind: 'POLICY', title: `${selectedFamily.name} Policy`, origin: 'GENERATED', seedKey });
+      setRegisterMsg({ ok: true, text: DOCUMENT_UI_TEXT.registeredDraft });
+    } catch (err: unknown) {
+      if ((err as { reason?: unknown })?.reason === 'duplicate_seed') {
+        await reg.reload();
+        setRegisterMsg({ ok: true, text: 'This policy is already in the Document Register.' });
+      } else {
+        setRegisterMsg({ ok: false, text: documentErrorMessage(err, 'register') });
+      }
+    } finally {
+      setRegistering(false);
+    }
+  };
+  const openRegister = (id: string) => {
+    requestDocumentFocus(id);
+    setActiveTab('documents');
+  };
 
   // Generate living policy markdown on the fly
   const markdown = useMemo(() => {
@@ -568,6 +609,29 @@ const PolicyLibraryViewContent: React.FC = () => {
                 <span>Export .MD</span>
               </button>
 
+              {/* Register the generated policy as a draft in the Document Register */}
+              {reg.supported && registered && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${registered.status === 'APPROVED' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-amber-500/15 border-amber-500/30 text-amber-300'}`}>{`In the register: ${statusChip(registered).text}`}</span>
+                  <button type="button" onClick={() => openRegister(registered.id)} className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+                    <LibraryBig className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Open in Document Register</span>
+                  </button>
+                </span>
+              )}
+              {reg.supported && canEdit && !registered && (
+                <button
+                  type="button"
+                  onClick={() => void handleRegister()}
+                  disabled={registering || reg.status !== 'ready'}
+                  aria-describedby={registerHintId}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-dashed border-amber-500/50 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                >
+                  <FilePlus2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>{registering ? 'Registering…' : 'Register as draft'}</span>
+                </button>
+              )}
+
               {/* SP 800-53 reference (read-only, never switches the program) */}
               <button
                 type="button"
@@ -582,6 +646,10 @@ const PolicyLibraryViewContent: React.FC = () => {
               </button>
             </div>
           </div>
+          {reg.supported && canEdit && !registered && (
+            <p id={registerHintId} className="text-[11px] text-slate-400">Adds a draft entry to the Document Register. The text is not stored: it is rendered from the generator until a person uploads the reviewed copy and approves it.</p>
+          )}
+          {registerMsg && (registerMsg.ok ? <p role="status" className="text-xs text-emerald-300">{registerMsg.text}</p> : <ErrorNotice message={registerMsg.text} />)}
 
           {/* Recompile Notice */}
           {recompileNotice && (

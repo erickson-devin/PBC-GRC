@@ -19,6 +19,7 @@ import { statusDisplayLabel } from '../data/statusLabels';
 import type { SspProfile } from '../types/sspProfile';
 import { sspIdentificationItems, sspMaintenanceExceptions, sspMaintenanceItems, sspRoleLines } from '../data/ssp/sspOutput';
 import { sspInventoryMarkdown, type SspInventorySnapshot } from '../data/inventory/sspInventory';
+import { sspDocumentsMarkdown, type SspDocumentsSnapshot } from '../data/documents/sspDocuments';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -105,7 +106,8 @@ export function buildSspMarkdown(
   controls: FrameworkControlDefinition[] | undefined,
   framework: ComplianceFramework = 'CMMC_L1',
   profile?: SspProfile | null,
-  inventory?: SspInventorySnapshot | null
+  inventory?: SspInventorySnapshot | null,
+  documents?: SspDocumentsSnapshot | null
 ): string {
   const meta = state.sspMetadata;
   const sspProfile = profile ?? null;
@@ -125,7 +127,13 @@ export function buildSspMarkdown(
   md += `## 1.2 Responsible Organization & Roles\n\n`;
   for (const line of sspRoleLines({ profile: sspProfile, legacySystemOwner: meta.systemOwner, framework })) md += `- **${line.label}:** ${line.value}\n`;
   md += `\n`;
-  if (inventory) md += sspInventoryMarkdown(inventory, framework);
+  // 1.3.2 Governance documents goes between 1.3.1 and 1.4; without the register's snapshot nothing is printed
+  if (inventory) {
+    const invMd = sspInventoryMarkdown(inventory, framework);
+    const at = documents ? invMd.indexOf('## 1.4 ') : -1;
+    md += at >= 0 && documents ? invMd.slice(0, at) + sspDocumentsMarkdown(documents) + invMd.slice(at) : invMd;
+    if (documents && at < 0) md += sspDocumentsMarkdown(documents);
+  } else if (documents) md += sspDocumentsMarkdown(documents);
   md += `## 2.1 System Scope & Boundary Description\n\n${meta.systemBoundaryScope}\n\n`;
   md += `## 2.2 Operating Environment & Cloud Service Providers (CSPs)\n\n`;
   md += `- **Environment:** ${meta.systemEnvironment}\n`;
@@ -314,9 +322,10 @@ export const StorageService = {
     controls?: FrameworkControlDefinition[],
     framework: ComplianceFramework = 'CMMC_L1',
     profile?: SspProfile | null,
-    inventory?: SspInventorySnapshot | null
+    inventory?: SspInventorySnapshot | null,
+    documents?: SspDocumentsSnapshot | null
   ): void {
-    const md = buildSspMarkdown(state, controls, framework, profile, inventory);
+    const md = buildSspMarkdown(state, controls, framework, profile, inventory, documents);
     const meta = state.sspMetadata;
 
     const blob = new Blob([md], { type: 'text/markdown' });

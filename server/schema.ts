@@ -73,6 +73,11 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_remediation_policy_events', tenantColumn: 'tenant_id' },
   { table: 'vm_finding_decisions', tenantColumn: 'tenant_id' },
   { table: 'vm_finding_decision_events', tenantColumn: 'tenant_id' },
+  { table: 'governance_documents', tenantColumn: 'tenant_id' },
+  { table: 'program_governance_documents', tenantColumn: 'tenant_id' },
+  { table: 'program_document_controls', tenantColumn: 'tenant_id' },
+  { table: 'program_document_attachments', tenantColumn: 'tenant_id' },
+  { table: 'program_document_expectations', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -106,6 +111,10 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'program_cui_category_tools',
   'program_vendor_documents',
   'program_inventory_events',
+  'program_governance_documents',
+  'program_document_controls',
+  'program_document_attachments',
+  'program_document_expectations',
 ];
 
 /**
@@ -1694,6 +1703,103 @@ export const TABLES_SQL = `
   DROP TRIGGER IF EXISTS trg_vm_finding_decision_events_no_truncate ON vm_finding_decision_events;
   CREATE TRIGGER trg_vm_finding_decision_events_no_truncate BEFORE TRUNCATE ON vm_finding_decision_events
       FOR EACH STATEMENT EXECUTE FUNCTION vm_append_only_guard();
+
+  -- Document register (#240) and expected documents checklist (#250). Everything here is a NEW table (no existing table, CHECK or list is changed, and
+  -- every CHECK is inline: never added by an ALTER at start), so an image from before this release still starts against the upgraded database and
+  -- ignores these tables: there is no one-way upgrade. Titles, owners, locations and notes may be sensitive: never logged; the history goes to
+  -- inventory_events (entity_kind 'document') and program_inventory_events (document_* actions) as digests, ids, counts and flags.
+  -- Documents are tenant-wide like inventory_tools (one policy serves every program, approved once); membership, control links, attachments and the
+  -- checklist links are per program (control ids are framework-specific, evidence is per program).
+  CREATE TABLE IF NOT EXISTS governance_documents (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      kind VARCHAR(32) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      reference VARCHAR(64) NOT NULL DEFAULT '',
+      owner VARCHAR(255) NOT NULL DEFAULT '',
+      version VARCHAR(32) NOT NULL DEFAULT '',
+      status VARCHAR(16) NOT NULL DEFAULT 'DRAFT',
+      approval_date DATE,
+      review_by DATE,
+      approved_by VARCHAR(255),
+      approved_by_user_id VARCHAR(128),
+      approved_at TIMESTAMPTZ,
+      location_url VARCHAR(2048),
+      origin VARCHAR(16) NOT NULL DEFAULT 'MANUAL',
+      seed_key VARCHAR(96),
+      notes TEXT NOT NULL DEFAULT '',
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_governance_documents_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT governance_documents_title_check CHECK (length(btrim(title)) > 0),
+      CONSTRAINT governance_documents_enum_check CHECK (kind ~ '^[A-Z][A-Z_]{0,31}$' AND status ~ '^[A-Z][A-Z_]{0,15}$' AND origin ~ '^[A-Z][A-Z_]{0,15}$'),
+      CONSTRAINT governance_documents_approval_check CHECK (status <> 'APPROVED' OR (approval_date IS NOT NULL AND approved_at IS NOT NULL AND length(btrim(version)) > 0)),
+      CONSTRAINT governance_documents_location_check CHECK (location_url IS NULL OR (length(location_url) > 0 AND location_url !~ '[[:cntrl:]]')),
+      CONSTRAINT governance_documents_seed_check CHECK (seed_key IS NULL OR seed_key ~ '^generated:[A-Za-z0-9_.:-]{1,80}$'),
+      CONSTRAINT governance_documents_notes_check CHECK (length(notes) <= 4000)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_governance_documents_title ON governance_documents (tenant_id, lower(title)) WHERE status <> 'RETIRED';
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_governance_documents_seed ON governance_documents (tenant_id, seed_key) WHERE seed_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_governance_documents_kind ON governance_documents (tenant_id, kind);
+
+  -- Which documents a program declares (none declared = every document of the tenant applies, like program_tools).
+  CREATE TABLE IF NOT EXISTS program_governance_documents (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      document_id VARCHAR(64) NOT NULL,
+      added_by VARCHAR(255),
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_governance_documents PRIMARY KEY (tenant_id, program_id, document_id),
+      CONSTRAINT fk_program_governance_documents_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_governance_documents_document FOREIGN KEY (tenant_id, document_id) REFERENCES governance_documents (tenant_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_governance_documents_document ON program_governance_documents (tenant_id, document_id);
+
+  CREATE TABLE IF NOT EXISTS program_document_controls (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      document_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      linked_by VARCHAR(255),
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_document_controls PRIMARY KEY (tenant_id, program_id, document_id, control_id),
+      CONSTRAINT fk_program_document_controls_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_document_controls_document FOREIGN KEY (tenant_id, document_id) REFERENCES governance_documents (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_document_controls_control_check CHECK (control_id ~ '^[A-Za-z0-9._-]{1,64}$')
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_document_controls_control ON program_document_controls (tenant_id, program_id, control_id);
+
+  -- A document's copies in this program: evidence ids of the same program (checked by the server; no foreign key, like program_vendor_documents), at most one primary.
+  CREATE TABLE IF NOT EXISTS program_document_attachments (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      document_id VARCHAR(64) NOT NULL,
+      evidence_id VARCHAR(64) NOT NULL,
+      is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+      linked_by VARCHAR(255),
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_document_attachments PRIMARY KEY (tenant_id, program_id, document_id, evidence_id),
+      CONSTRAINT fk_program_document_attachments_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_document_attachments_document FOREIGN KEY (tenant_id, document_id) REFERENCES governance_documents (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_document_attachments_evidence_check CHECK (evidence_id ~ '^[A-Za-z0-9_-]{1,64}$')
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_program_document_attachments_primary ON program_document_attachments (tenant_id, program_id, document_id) WHERE is_primary;
+
+  -- Which documents satisfy an entry of the expected documents checklist (the entry id is a catalog code shipped with the app, so no foreign key).
+  CREATE TABLE IF NOT EXISTS program_document_expectations (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      expected_id VARCHAR(64) NOT NULL,
+      document_id VARCHAR(64) NOT NULL,
+      linked_by VARCHAR(255),
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_document_expectations PRIMARY KEY (tenant_id, program_id, expected_id, document_id),
+      CONSTRAINT fk_program_document_expectations_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_document_expectations_document FOREIGN KEY (tenant_id, document_id) REFERENCES governance_documents (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_document_expectations_id_check CHECK (expected_id ~ '^[a-z0-9][a-z0-9-]{1,63}$')
+  );
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

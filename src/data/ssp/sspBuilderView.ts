@@ -103,10 +103,24 @@ export interface NavEntryView {
   unavailableText: string | null;
 }
 
+/** What the nav says of 1.3.2 while the document register is not available (its own wording: the register is not the tools register). */
+export function documentsNavText(status: 'unsupported' | 'loading' | 'ready' | 'error'): string | null {
+  switch (status) {
+    case 'unsupported':
+      return 'Not available';
+    case 'loading':
+      return 'Loading…';
+    case 'error':
+      return 'Could not load';
+    default:
+      return null;
+  }
+}
+
 export function navEntriesView(
   c: SspCompleteness,
   r: { supported: boolean; status: 'loading' | 'ready' | 'error'; sections: Partial<Record<SspSectionId, SspSectionReviewState>> },
-  opts?: { inventoryStatus?: 'unsupported' | 'loading' | 'ready' | 'error' }
+  opts?: { inventoryStatus?: 'unsupported' | 'loading' | 'ready' | 'error'; documentsStatus?: 'unsupported' | 'loading' | 'ready' | 'error' }
 ): NavEntryView[] {
   return c.sections.map((s) => {
     const state = r.sections[s.sectionId] ?? null;
@@ -123,7 +137,7 @@ export function navEntriesView(
       // 1.3 and 1.4 are derived from the register and the data inventory: they are not signed off
       review: signable ? reviewChipView(sectionReviewStatus(state, r.supported), state?.latest ?? null, r.status === 'loading') : null,
       available,
-      unavailableText: available ? null : inventoryNavText(opts?.inventoryStatus ?? 'unsupported'),
+      unavailableText: available ? null : s.sectionId === 'documents' ? documentsNavText(opts?.documentsStatus ?? 'unsupported') : inventoryNavText(opts?.inventoryStatus ?? 'unsupported'),
     };
   });
 }

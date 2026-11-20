@@ -19,6 +19,7 @@ import {
   Scroll,
   FileUp,
   ListChecks,
+  LibraryBig,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -156,6 +157,11 @@ export const Sidebar: React.FC = () => {
     {
       title: 'Compliance Documents & Exports',
       items: [
+        {
+          id: 'documents',
+          label: 'Document Register',
+          icon: LibraryBig,
+        },
         {
           id: 'policies',
           label: 'Living Policy Library',

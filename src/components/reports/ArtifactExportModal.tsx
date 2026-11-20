@@ -59,6 +59,7 @@ import { exportGapTarget } from '../../data/ssp/sspBuilderView';
 import type { SspSectionId } from '../../data/ssp/sspSections';
 import { useSspProfile } from '../../hooks/useSspProfile';
 import { useSspInventory } from '../../hooks/useSspInventory';
+import { useSspDocuments } from '../../hooks/useSspDocuments';
 import {
   calculateSprsScore,
   formatSprsScore,
@@ -147,6 +148,9 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   // The Tools and Services register and the data inventory (SSP 1.3 and 1.4), for the SSP only
   const sspInventory = useSspInventory({ enabled: isOpen && selectedDocType === 'NIST_SP_800_18_SSP' });
   const inventorySnapshot = selectedDocType === 'NIST_SP_800_18_SSP' && sspInventory.status !== 'loading' ? sspInventory.snapshot : undefined;
+  // The approved governance documents of the Document Register (SSP 1.3.2), for the SSP only
+  const sspDocs = useSspDocuments({ enabled: isOpen && selectedDocType === 'NIST_SP_800_18_SSP' });
+  const documentsSnapshot = selectedDocType === 'NIST_SP_800_18_SSP' && sspDocs.status !== 'loading' ? sspDocs.snapshot : undefined;
   // The vulnerability remediation policy (#268) of a server-backed organization, for the paragraph a CMMC SSP appends to RA.L2-3.11.3 and SI.L1-3.14.1
   const vmPolicyApplies = isOpen && Boolean(currentTenant.serverBacked) && (activeFramework === 'CMMC_L1' || activeFramework === 'CMMC_L2');
   const vmPolicy = useVmRemediationPolicy({ enabled: vmPolicyApplies });
@@ -215,6 +219,16 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       return inventorySnapshot ? { ...next, sspInventory: inventorySnapshot } : next;
     });
   }, [inventorySnapshot]);
+
+  // The documents snapshot rides on the form values the same way, so the compiled SSP and the Markdown print 1.3.2
+  useEffect(() => {
+    setFormData((prev) => {
+      if (prev.sspDocuments === documentsSnapshot) return prev;
+      const next = { ...prev };
+      delete next.sspDocuments;
+      return documentsSnapshot ? { ...next, sspDocuments: documentsSnapshot } : next;
+    });
+  }, [documentsSnapshot]);
 
   // The policy rides on the form values too (set only while it is loaded, never saved with the metadata) so the compiled SSP appends its labelled paragraph
   const vmPolicyData = vmPolicy.load.status === 'ready' ? vmPolicy.load.data.policy : null;
@@ -313,7 +327,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const metaIdBase = useId();
   const metaId = (field: string) => `${metaIdBase}-meta-${field}`;
   const metaHeadingId = `${metaIdBase}-meta-heading`;
-  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework, inventory: sspInventory.completenessInput }), [selectedDocType, formData, sspProfile.profile, activeFramework, sspInventory.completenessInput]);
+  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework, inventory: sspInventory.completenessInput, documents: sspDocs.completenessInput }), [selectedDocType, formData, sspProfile.profile, activeFramework, sspInventory.completenessInput, sspDocs.completenessInput]);
   const requiredGapCount = exportGaps.filter((g) => !g.advisory).length;
   const [pendingFocusField, setPendingFocusField] = useState<string | null>(null);
   const handleGapClick = useCallback((field: string) => {
@@ -609,6 +623,17 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                         : sspInventory.status === 'error'
                           ? 'Tools and data inventory: could not be loaded, so sections 1.3 and 1.4 say not available.'
                           : `Tools and data inventory: ${sspInventory.snapshot.tools.length} tools, ${sspInventory.snapshot.categories.length} CUI categories.`}
+                  </p>
+                )}
+                {selectedDocType === 'NIST_SP_800_18_SSP' && (
+                  <p data-testid="ssp-documents-scope" aria-live="polite" className="text-xs text-slate-400">
+                    {sspDocs.status === 'loading'
+                      ? 'Governance documents: loading…'
+                      : sspDocs.status === 'unsupported'
+                        ? 'Governance documents: not available for an organization stored only in this browser.'
+                        : sspDocs.status === 'error'
+                          ? 'Governance documents: could not be loaded, so section 1.3.2 says not available.'
+                          : `Governance documents: ${sspDocs.snapshot.rows.length} approved, ${sspDocs.snapshot.draftCount} drafts not listed.`}
                   </p>
                 )}
                 {selectedDocType === 'SOFTWARE_INVENTORY' && (

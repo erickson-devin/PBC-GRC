@@ -7,7 +7,6 @@ import type { CmmcAssetCategory } from '../../types/telemetry';
 import type {
   FedrampStatus,
   InventoryTool,
-  ToolControlLink,
   ToolDeployment,
   ToolInput,
   ToolOrigin,
@@ -293,9 +292,12 @@ export function controlsCell(n: number | null, programName: string | null): { te
   return { text: String(n), sr: `${n} ${plural(n, 'control', 'controls')} linked in ${programName ?? 'this program'}` };
 }
 
-export function linkDiff(before: ToolControlLink[], after: ToolControlLink[]): { added: number; removed: number; changed: number } {
-  const was = new Map(before.map((l) => [l.controlId, l.evidenceSource]));
-  const now = new Map(after.map((l) => [l.controlId, l.evidenceSource]));
+/** A control link of any register: tools carry the evidence-source flag, documents do not (a missing flag counts as false). */
+export type GenericControlLink = { controlId: string; evidenceSource?: boolean };
+
+export function linkDiff<L extends GenericControlLink>(before: L[], after: L[]): { added: number; removed: number; changed: number } {
+  const was = new Map(before.map((l) => [l.controlId, l.evidenceSource === true]));
+  const now = new Map(after.map((l) => [l.controlId, l.evidenceSource === true]));
   let added = 0;
   let removed = 0;
   let changed = 0;
@@ -321,16 +323,16 @@ export function linkDiffText(d: ReturnType<typeof linkDiff>): string {
  * After a stale write: the server's links, with what the person did on top. A control they added is added, a control they removed (it was in
  * `oldIds` and is not in the draft) is removed, and on a control both hold the person's evidence-source setting wins.
  */
-export function rebaseLinks(oldIds: string[], server: ToolControlLink[], draft: ToolControlLink[]): ToolControlLink[] {
+export function rebaseLinks<L extends GenericControlLink>(oldIds: string[], server: L[], draft: L[]): L[] {
   const old = new Set(oldIds);
   const draftById = new Map(draft.map((l) => [l.controlId, l]));
   const removed = new Set(oldIds.filter((id) => !draftById.has(id)));
-  const out: ToolControlLink[] = [];
+  const out: L[] = [];
   const seen = new Set<string>();
   for (const l of server) {
     if (removed.has(l.controlId)) continue;
     const mine = draftById.get(l.controlId);
-    out.push(mine ? { ...l, evidenceSource: mine.evidenceSource } : l);
+    out.push(mine && 'evidenceSource' in mine ? { ...l, evidenceSource: mine.evidenceSource } : l);
     seen.add(l.controlId);
   }
   for (const l of draft) {

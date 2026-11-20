@@ -218,15 +218,15 @@ const detailsSection = l2Full.sections.find((s) => s.sectionId === 'system_detai
 const requiredMissingItems = dataSection.items.filter((i) => i.severity === 'required' && i.missing).length;
 assert(dataSection.available && detailsSection.available && dataSection.requiredMissing === requiredMissingItems && requiredMissingItems >= 1 && dataSection.items.some((i) => i.id === 'inventory:cui' && i.missing), 'V9f with an inventory both sections are available and the section count is the number of required missing items');
 const without = computeSspCompleteness({ framework: 'CMMC_L2', metadata: {}, profile: null });
-const withoutOthers = without.sections.filter((s) => s.sectionId !== 'system_details' && s.sectionId !== 'data_inventory');
+const withoutOthers = without.sections.filter((s) => s.sectionId !== 'system_details' && s.sectionId !== 'documents' && s.sectionId !== 'data_inventory');
 assert(
-  without.sections.filter((s) => !s.available).map((s) => s.sectionId).join() === 'system_details,data_inventory' && without.sections.every((s) => (s.available ? true : s.items.length === 0 && s.requiredTotal === 0 && s.requiredMissing === 0 && s.advisoryMissing === 0))
+  without.sections.filter((s) => !s.available).map((s) => s.sectionId).join() === 'system_details,documents,data_inventory' && without.sections.every((s) => (s.available ? true : s.items.length === 0 && s.requiredTotal === 0 && s.requiredMissing === 0 && s.advisoryMissing === 0))
     && without.requiredMissing === withoutOthers.reduce((n, s) => n + s.requiredMissing, 0) && without.advisoryMissing === withoutOthers.reduce((n, s) => n + s.advisoryMissing, 0) && withoutOthers.every((s) => s.available),
-  'V9g without an inventory 1.3 and 1.4 are unavailable and the totals are the sum over the other four sections'
+  'V9g without an inventory 1.3 and 1.4 (and, with no document data, 1.3.2) are unavailable and the totals are the sum over the other four sections'
 );
 const unsupportedC = computeSspCompleteness({ framework: 'CMMC_L2', metadata: {}, profile: null, inventory: inputOf({ supported: false }) });
-assert(unsupportedC.requiredMissing === without.requiredMissing && unsupportedC.sections.filter((s) => !s.available).length === 2, 'V9h an unsupported inventory counts for nothing, like none');
-assert(SSP_SECTIONS.filter((s) => !s.signable).map((s) => s.id).join() === 'system_details,data_inventory', 'V9i 1.3 and 1.4 are not signable');
+assert(unsupportedC.requiredMissing === without.requiredMissing && unsupportedC.sections.filter((s) => !s.available).length === 3, 'V9h an unsupported inventory counts for nothing, like none (1.3.2 is unavailable without document data)');
+assert(SSP_SECTIONS.filter((s) => !s.signable).map((s) => s.id).join() === 'system_details,documents,data_inventory', 'V9i 1.3, 1.3.2 and 1.4 are not signable');
 const meta: Partial<ReportMetadata> = { framework: 'CMMC_L2', systemName: 'S', organizationName: 'O', primaryAssessor: 'A', boundaryDescription: 'B', systemOwner: 'Jane', cageCode: 'C', samStatus: 'ACTIVE' };
 const gapsNoInv = getExportGaps('NIST_SP_800_18_SSP', meta, { profile: null, framework: 'CMMC_L2' });
 const gapsInv = getExportGaps('NIST_SP_800_18_SSP', meta, { profile: null, framework: 'CMMC_L2', inventory: inputOf({ categories: [], tools: [{ id: 'u', name: 'U', assetCategory: 'CUI_ASSET', endUsers: null, privilegedUsers: null }] }) });
