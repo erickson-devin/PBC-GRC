@@ -191,6 +191,14 @@ assert(!/FOREIGN KEY|REFERENCES/.test(poamEvents), 'no foreign key: the history 
 assert(!/\b(owner|mitigation) (TEXT|VARCHAR)/.test(poamEvents), 'no owner or mitigation text column: only digests, lengths and changed flags');
 assert(poamEvents.includes('new_owner_sha256 VARCHAR(64)') && poamEvents.includes('new_mitigation_sha256 VARCHAR(64)') && poamEvents.includes('owner_changed BOOLEAN NOT NULL DEFAULT FALSE') && poamEvents.includes('mitigation_changed BOOLEAN NOT NULL DEFAULT FALSE'), 'digests and changed flags exist');
 assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_vm_poam_item_events_item ON vm_poam_item_events (tenant_id, program_id, item_id, created_at DESC);'), 'the per-item history index exists');
+for (const col of ["milestones JSONB NOT NULL DEFAULT '[]'::jsonb", 'item_number INTEGER']) {
+  assert(TABLES_SQL.indexOf(`ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ${col};`) > at('vm_poam_items'), `vm_poam_items column is added idempotently (#304, #305): ${col}`);
+}
+for (const col of ['milestones_changed BOOLEAN NOT NULL DEFAULT FALSE', 'new_milestone_count INTEGER', 'new_milestones_completed INTEGER', 'new_milestones_sha256 VARCHAR(64)']) {
+  assert(TABLES_SQL.indexOf(`ALTER TABLE vm_poam_item_events ADD COLUMN IF NOT EXISTS ${col};`) > at('vm_poam_item_events'), `vm_poam_item_events column is added idempotently (#304): ${col}`);
+}
+assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_number ON vm_poam_items (tenant_id, program_id, item_number);'), 'one item number per tenant and program (unique index, #305)');
+assert(!/\b(description|milestones) (TEXT|VARCHAR)/.test(poamEvents) && !poamEvents.includes('milestones JSONB'), 'the events hold no milestone text: only the changed flag, the counts and a digest');
 
 console.log('\n--- vm_config_scans, vm_config_results (issue #103) ---');
 const configScans = block('vm_config_scans');

@@ -6,7 +6,9 @@ import type { FrameworkControlDefinition } from '../../types/framework';
 import type { POAMEntry } from '../../types/report';
 import type { Program } from '../../types/program';
 import type { UseVmPoam } from '../../hooks/useVmPoam';
+import type { UseControlPoam } from '../../hooks/useControlPoam';
 import { poamExportNote, poamHeaderText } from '../../data/reports/vmPoamView';
+import { CONTROL_POAM_COPY, controlPoamExportNotice } from '../../data/reports/controlPoamForm';
 import { PoamControlsSection } from './PoamControlsSection';
 import { PoamVulnerabilitiesSection } from './PoamVulnerabilitiesSection';
 import { SMALL_BUTTON } from './PoamGroupPanel';
@@ -16,6 +18,8 @@ export interface PoamWorkspaceProps {
   framework: string;
   frameworkControls: FrameworkControlDefinition[];
   vm: UseVmPoam;
+  /** The recorded POA&M fields of the control entries (#304); without it the control rows are read-only. */
+  controlPoam?: UseControlPoam;
   /** The open vulnerability items as the exports carry them (for the CSV button). */
   vmEntries: POAMEntry[];
   programs: Program[];
@@ -25,10 +29,10 @@ export interface PoamWorkspaceProps {
 }
 
 /**
- * The POA&M tab: the control entries (#278) and the vulnerability items (#274). Control entries are read-only here; a vulnerability
- * item can be edited by a write role (Tenant Owner, Admin or MSP Admin) (#297). The exports always hold every open entry.
+ * The POA&M tab: the control entries (#278) and the vulnerability items (#274). A write role (Tenant Owner, Admin or MSP Admin) can edit a
+ * vulnerability item (#297) and a control entry's owner, date, resources, plan and milestones (#304); other roles can view them. The exports always hold every open entry.
  */
-export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework, frameworkControls, vm, vmEntries, programs, onExportCsv, onNavigateAway }) => {
+export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework, frameworkControls, vm, controlPoam, vmEntries, programs, onExportCsv, onNavigateAway }) => {
   const { setSelectedControlId, setActiveTab } = useAssessment();
   const { canEdit } = useTenant();
   const openPrograms = () => {
@@ -42,6 +46,7 @@ export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework
     r.current?.focus();
   };
   const { load } = vm;
+  const exportNotice = controlPoam ? controlPoamExportNotice(controlPoam.load) : null;
   const targetProgramName = load.status === 'ready' ? programs.find((p) => p.id === load.data.rules.vmTargetProgramId)?.name ?? null : null;
 
   return (
@@ -54,6 +59,13 @@ export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework
           </h3>
           <p className="text-xs text-slate-400">{poamHeaderText(entries.length, load)}</p>
           <p className="text-xs text-slate-400">{poamExportNote(load)}</p>
+          {exportNotice && (
+            <div role="note" className="flex flex-wrap items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" aria-hidden="true" />
+              <span className="flex-1">{exportNotice.text}</span>
+              {exportNotice.retry && <button type="button" onClick={() => { void controlPoam?.reload(); }} className={`${SMALL_BUTTON} shrink-0`}>{CONTROL_POAM_COPY.retry}</button>}
+            </div>
+          )}
           <nav aria-label="POA&M sections" className="flex flex-wrap gap-2 pt-1">
             <button type="button" onClick={() => jump(controlsHeadingRef)} className={SMALL_BUTTON}>Controls ({entries.length})</button>
             {load.status !== 'unsupported' && (
@@ -80,6 +92,8 @@ export const PoamWorkspace: React.FC<PoamWorkspaceProps> = ({ entries, framework
         vmLoad={load}
         onOpenControl={setSelectedControlId}
         headingRef={controlsHeadingRef}
+        controlPoam={controlPoam}
+        canEdit={canEdit}
       />
       <PoamVulnerabilitiesSection
         load={load}

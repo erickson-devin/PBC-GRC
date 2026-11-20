@@ -346,6 +346,36 @@ async function headers() {
     try { await ApiClient.updateVmPoamItem('t1', 'i1', { owner: 'IT' }, '2026-11-01T10:00:00.000Z', 'p1'); } catch (e) { staleReason = (e as { reason?: unknown }).reason; }
     assert(staleReason === 'stale_write', 'H3h a refused edit carries the server code as the error reason', staleReason);
 
+    // #304: the control POA&M fields
+    stub(200, { entries: [] });
+    const cpList = await ApiClient.listControlPoam('t1', 'p1');
+    assert(calls[0].url === '/api/v1/control-poam' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === 'p1' && Array.isArray(cpList.entries), 'CP-H1 listControlPoam reads GET /control-poam with x-tenant-id and x-program-id', calls[0].url);
+    await ApiClient.listControlPoam('t1', null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined, 'CP-H1b listControlPoam with a null program sends no x-program-id');
+    stub(200, { entry: { controlId: 'AC.L1-3.1.1' }, changed: true });
+    const cpSaved = await ApiClient.updateControlPoam('t1', 'AC.L2-3.1.1(a)', { owner: 'IT', milestones: [{ description: 'd', targetDate: '2027-01-01' }] }, null, 'p1');
+    const cpSent = JSON.parse(String(calls[0].init.body));
+    assert(
+      calls[0].url === '/api/v1/control-poam/AC.L2-3.1.1(a)' && calls[0].init.method === 'PATCH' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === 'p1' &&
+        cpSent.owner === 'IT' && cpSent.expectedUpdatedAt === null && cpSent.milestones.length === 1 && cpSaved.changed === true && cpSaved.entry?.controlId === 'AC.L1-3.1.1',
+      'CP-H2 updateControlPoam sends PATCH /control-poam/:controlId with the patch and expectedUpdatedAt (null = no entry yet), x-tenant-id and x-program-id',
+      [calls[0].url, calls[0].init.method, cpSent]
+    );
+    await ApiClient.updateControlPoam('t1', 'AC.L1-3.1.1', { plan: 'p' }, '2026-11-01T10:00:00.000Z', null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined && JSON.parse(String(calls[1].init.body)).expectedUpdatedAt === '2026-11-01T10:00:00.000Z', 'CP-H2b updateControlPoam with a null program sends no x-program-id');
+    stub(200, { entry: null, changed: false });
+    const cpNone = await ApiClient.updateControlPoam('t1', 'AC.L1-3.1.1', { owner: '' }, null, 'p1');
+    assert(cpNone.entry === null && cpNone.changed === false, 'CP-H2c a write that stored nothing returns entry null');
+    stub(409, { error: 'x', code: 'stale_write' });
+    let cpStale: unknown;
+    try { await ApiClient.updateControlPoam('t1', 'AC.L1-3.1.1', { owner: 'IT' }, null, 'p1'); } catch (e) { cpStale = (e as { reason?: unknown }).reason; }
+    assert(cpStale === 'stale_write', 'CP-H2d a refused control edit carries the server code as the error reason', cpStale);
+    stub(200, { events: [] });
+    const cpEvents = await ApiClient.getControlPoamEvents('t1', 'AC.L1-3.1.1', 'p1');
+    assert(calls[0].url === '/api/v1/control-poam/AC.L1-3.1.1/events' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && Array.isArray(cpEvents), 'CP-H3 getControlPoamEvents reads GET /control-poam/:controlId/events with x-program-id', calls[0].url);
+    await ApiClient.getControlPoamEvents('t1', 'AC.L1-3.1.1', null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined, 'CP-H3b getControlPoamEvents with a null program sends no x-program-id');
+
     stub(200, { programId: 'p2', isTarget: false, eligible: true, ineligibleReason: null, currentTargetId: 'p1', currentTargetExplicit: false, openPoamInCurrent: 2, overdueWithoutItem: 3, autocreateEnabled: true });
     const prev = await ApiClient.getVmTargetProgramPreview('t1', 'p2');
     assert(calls[0].url.endsWith('/api/v1/tenants/t1/programs/p2/vm-target/preview') && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && prev.overdueWithoutItem === 3, 'H3i getVmTargetProgramPreview reads GET /programs/:id/vm-target/preview', calls[0].url);
@@ -689,7 +719,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;

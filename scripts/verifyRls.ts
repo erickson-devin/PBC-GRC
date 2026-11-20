@@ -27,8 +27,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile and program_ssp_section_reviews are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata' && t !== 'vm_poam_item_events' && t !== 'program_ssp_profile' && t !== 'program_ssp_section_reviews');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries and control_poam_events are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata' && t !== 'vm_poam_item_events' && t !== 'program_ssp_profile' && t !== 'program_ssp_section_reviews' && t !== 'control_poam_entries' && t !== 'control_poam_events');
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -1646,6 +1646,82 @@ async function verifyProgramIsolation() {
     const srCascade = await queryWithProgram(srCascadeScope, 'SELECT 1 FROM program_ssp_section_reviews WHERE program_id = $1', [srCascadeProgram.id]);
     check(srCascade.rows.length === 0, '8q. program_ssp_section_reviews: deleting a program removes its sign-offs through the cascade (DELETE is allowed)', 'saw ' + srCascade.rows.length);
 
+    // 8y. control POA&M entries (#304): control_poam_entries isolation, the composite foreign key, the primary key, the CHECKs and the cascade
+    const insertCpe = 'INSERT INTO control_poam_entries (tenant_id, program_id, control_id, owner, scheduled_completion, required_resources, plan, milestones, updated_by) VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8::jsonb, $9) RETURNING control_id';
+    const cpeArgs = (program: string, control = 'AC.L2-3.1.1', over: Partial<{ owner: string; date: string | null; resources: string; plan: string; milestones: string }> = {}) =>
+      [TENANT_X, program, control, over.owner ?? 'rls_verify_owner', over.date === undefined ? '2027-01-15' : over.date, over.resources ?? 'rls_verify_resources', over.plan ?? 'rls_verify_plan', over.milestones ?? '[]', 'rls_verify_actor'];
+    const cp1 = await queryWithProgram(scopeA, insertCpe, cpeArgs(programA));
+    check(cp1.rows.length === 1, '8y. control_poam_entries: under program A the row is inserted');
+    const cpBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM control_poam_entries WHERE program_id = $1', [programA]);
+    const cpBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM control_poam_entries WHERE tenant_id = $1', [TENANT_X]);
+    check(cpBSeesA.rows.length === 0 && cpBSeesAny.rows.length === 0, "8y. control_poam_entries: program B cannot read program A's row (0 rows, by program or by tenant)", 'saw ' + cpBSeesA.rows.length + ' / ' + cpBSeesAny.rows.length);
+    const cpBUpdates = await queryWithProgram(scopeB, "UPDATE control_poam_entries SET updated_by = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const cpBDeletes = await queryWithProgram(scopeB, 'DELETE FROM control_poam_entries WHERE program_id = $1', [programA]);
+    check((cpBUpdates.rowCount ?? 0) === 0 && (cpBDeletes.rowCount ?? 0) === 0, "8y. control_poam_entries: program B can neither update nor delete program A's row (0 rows)", 'updated ' + cpBUpdates.rowCount + ', deleted ' + cpBDeletes.rowCount);
+    const cpBInserts = await rejectsIn(scopeB, insertCpe, cpeArgs(programA, 'SC.L2-3.13.1'), { code: '42501' });
+    check(cpBInserts.ok, '8y. control_poam_entries: program B cannot insert a row into program A (WITH CHECK, 42501)', cpBInserts.detail);
+    const cpNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM control_poam_entries WHERE tenant_id = $1', [TENANT_X]);
+    check(cpNoCtx.rows.length === 0, '8y. control_poam_entries: a tenant context with no program context sees zero rows', 'saw ' + cpNoCtx.rows.length);
+    let cpNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertCpe, cpeArgs(programA, 'SC.L2-3.13.1'));
+    } catch (err) {
+      cpNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(cpNoCtxInsert === '42501', '8y. control_poam_entries: no program context cannot insert a row (42501)', cpNoCtxInsert);
+    const cpForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertCpe, cpeArgs(defaultY), { code: '23503', constraint: 'fk_control_poam_entries_program' });
+    check(cpForeignProgram.ok, "8y. control_poam_entries: tenant X cannot attach a row to tenant Y's program (composite foreign key, 23503)", cpForeignProgram.detail);
+    const cpDuplicate = await rejectsIn(scopeA, insertCpe, cpeArgs(programA), { code: '23505', constraint: 'pk_control_poam_entries' });
+    check(cpDuplicate.ok, '8y. control_poam_entries: a second row for the same control and program is refused (primary key, 23505)', cpDuplicate.detail);
+    const cpTextCheck = { code: '23514', constraint: 'control_poam_entries_text_check' };
+    const cpOwnerLong = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { owner: 'x'.repeat(256) }), { code: '22001' });
+    const cpResLong = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { resources: 'x'.repeat(2001) }), cpTextCheck);
+    const cpPlanLong = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { plan: 'x'.repeat(4001) }), cpTextCheck);
+    check(cpOwnerLong.ok && cpResLong.ok && cpPlanLong.ok, '8y. control_poam_entries: an owner over 255, resources over 2000 and a plan over 4000 characters are each refused (22001 / 23514 control_poam_entries_text_check)', [cpOwnerLong.detail, cpResLong.detail, cpPlanLong.detail].join(' | '));
+    const cpDate = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { date: '2100-01-01' }), { code: '23514', constraint: 'control_poam_entries_date_check' });
+    check(cpDate.ok, '8y. control_poam_entries: a date after 2099-12-31 is refused (23514, control_poam_entries_date_check)', cpDate.detail);
+    const cpMs = { code: '23514', constraint: 'control_poam_entries_milestones_check' };
+    const cpMsObject = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { milestones: '{}' }), cpMs);
+    const cpMsMany = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { milestones: JSON.stringify(Array.from({ length: 21 }, (_, i) => ({ id: 'ms-' + i }))) }), cpMs);
+    const cpMsBig = await rejectsIn(scopeB, insertCpe, cpeArgs(programB, 'AC.L2-3.1.2', { milestones: JSON.stringify([{ description: 'x'.repeat(65536) }]) }), cpMs);
+    check(cpMsObject.ok && cpMsMany.ok && cpMsBig.ok, '8y. control_poam_entries: a milestone value that is not an array, more than 20 milestones and a value over 64 KB are each refused (23514, control_poam_entries_milestones_check)', [cpMsObject.detail, cpMsMany.detail, cpMsBig.detail].join(' | '));
+    const cpCascadeProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_control_poam_cascade', frameworkId: 'CMMC_L2' }, null);
+    const cpCascadeScope = { tenantId: TENANT_X, programId: cpCascadeProgram.id };
+    await queryWithProgram(cpCascadeScope, insertCpe, cpeArgs(cpCascadeProgram.id));
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, cpCascadeProgram.id]);
+    const cpCascade = await queryWithProgram(cpCascadeScope, 'SELECT 1 FROM control_poam_entries WHERE program_id = $1', [cpCascadeProgram.id]);
+    check(cpCascade.rows.length === 0, '8y. control_poam_entries: deleting a program removes its entries through the cascade', 'saw ' + cpCascade.rows.length);
+
+    // 8z. control POA&M history (#304): control_poam_events isolation, its CHECK, no foreign key, program_id NOT NULL (same pattern as 8x)
+    const insertCpEvent = 'INSERT INTO control_poam_events (tenant_id, program_id, control_id, actor, actor_user_id, control_status, new_owner_sha256) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id';
+    const cpEvArgs = (program: string | null, sha: string | null = 'b'.repeat(64)) => [TENANT_X, program, 'AC.L2-3.1.1', 'rls_verify_actor', 'rls_verify_user', 'NOT_MET', sha];
+    const ce1 = await queryWithProgram(scopeA, insertCpEvent, cpEvArgs(programA));
+    check(ce1.rows.length === 1, '8z. control_poam_events: under program A the event is inserted');
+    const ceBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM control_poam_events WHERE program_id = $1', [programA]);
+    const ceBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM control_poam_events WHERE tenant_id = $1', [TENANT_X]);
+    check(ceBSeesA.rows.length === 0 && ceBSeesAny.rows.length === 0, "8z. control_poam_events: program B cannot read program A's event (0 rows, by program or by tenant)", 'saw ' + ceBSeesA.rows.length + ' / ' + ceBSeesAny.rows.length);
+    const ceBUpdates = await queryWithProgram(scopeB, "UPDATE control_poam_events SET actor = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const ceBDeletes = await queryWithProgram(scopeB, 'DELETE FROM control_poam_events WHERE program_id = $1', [programA]);
+    check((ceBUpdates.rowCount ?? 0) === 0 && (ceBDeletes.rowCount ?? 0) === 0, "8z. control_poam_events: program B can neither update nor delete program A's event (0 rows)", 'updated ' + ceBUpdates.rowCount + ', deleted ' + ceBDeletes.rowCount);
+    const ceBInserts = await rejectsIn(scopeB, insertCpEvent, cpEvArgs(programA), { code: '42501' });
+    check(ceBInserts.ok, '8z. control_poam_events: program B cannot insert an event into program A (WITH CHECK, 42501)', ceBInserts.detail);
+    const ceNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM control_poam_events WHERE tenant_id = $1', [TENANT_X]);
+    check(ceNoCtx.rows.length === 0, '8z. control_poam_events: a tenant context with no program context sees zero rows', 'saw ' + ceNoCtx.rows.length);
+    let ceNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertCpEvent, cpEvArgs(programA));
+    } catch (err) {
+      ceNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(ceNoCtxInsert === '42501', '8z. control_poam_events: no program context cannot insert an event (42501)', ceNoCtxInsert);
+    const ceBadSha = await rejectsIn(scopeA, insertCpEvent, cpEvArgs(programA, 'not-a-digest'), { code: '23514', constraint: 'control_poam_events_sha_check' });
+    check(ceBadSha.ok, '8z. control_poam_events: a digest that is not 64 hex characters is refused (23514, control_poam_events_sha_check)', ceBadSha.detail);
+    const ceFk = await pool.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'control_poam_events'::regclass AND contype = 'f'");
+    check(ceFk.rows[0]?.n === 0, '8z. control_poam_events: no foreign key (the history outlives the entry and the program)', JSON.stringify(ceFk.rows[0]));
+    const ceNotNull = await pool.query("SELECT attnotnull FROM pg_attribute WHERE attrelid = 'control_poam_events'::regclass AND attname = 'program_id' AND NOT attisdropped");
+    check(ceNotNull.rows.length === 1 && ceNotNull.rows[0].attnotnull === true, '8z. control_poam_events: program_id is NOT NULL (attnotnull)', JSON.stringify(ceNotNull.rows));
+    await queryWithProgram(scopeA, "DELETE FROM control_poam_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
@@ -1657,6 +1733,7 @@ async function verifyProgramIsolation() {
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_objective_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM program_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM vm_poam_item_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_poam_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
     }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the rows cascade with their program

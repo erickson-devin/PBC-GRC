@@ -28,6 +28,8 @@ import {
 import { ReportMetadata, ReportSection } from '../src/types/report';
 import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED, NOT_RECORDED, NO_MILESTONES_RECORDED, NO_CUECS_RECORDED, NO_STACK_PROFILE_RECORDED, NO_FAMILY_IMPLEMENTATION_RECORDED, UNSIGNED_ATTESTATION_NOTE } from '../src/data/reports/documentDefaults';
 import { getExportGaps } from '../src/data/reports/exportReadiness';
+import { controlPoamMap } from '../src/data/reports/controlPoamView';
+import type { ControlPoamRecord } from '../src/types/controlPoam';
 import { generateEmassControlMatrixCsv } from '../src/data/reports/sprsCompiler';
 import { computeSspCompleteness, sspCompletenessFromReport } from '../src/data/ssp/sspCompleteness';
 import { NO_MAINTENANCE_EXCEPTIONS_RECORDED } from '../src/data/ssp/sspOutput';
@@ -262,6 +264,71 @@ async function runArtifactGeneratorTests() {
 
       const modalSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'reports', 'ArtifactExportModal.tsx'), 'utf8');
       assert(/compileReportDocument\([\s\S]*?state\.objectives[\s\S]*?\)/.test(modalSrc), 'P10 the export modal passes the objective answers to the compiler');
+    }
+
+    // -------------------------------------------------------------
+    // Test 3c: #304 recorded control POA&M fields (owner, date, resources, plan, milestones)
+    // -------------------------------------------------------------
+    console.log('\n--- Test 3c: recorded control POA&M fields in the exports (#304) ---');
+    {
+      const l2 = getFrameworkControls('CMMC_L2');
+      const [cNotMet, cMet, cStarted] = [l2[0], l2[1], l2[2]];
+      const st = (id: string, status: ControlState['status'], role = 'Compliance Lead'): ControlState => ({ id, status, implementationNotes: '', responsibleRole: role, lastUpdated: '', tags: [] });
+      const states: Record<string, ControlState> = { [cNotMet.id]: st(cNotMet.id, 'NOT_MET'), [cMet.id]: st(cMet.id, 'MET'), [cStarted.id]: st(cStarted.id, 'IN_PROGRESS') };
+      const three = [cNotMet, cMet, cStarted];
+      const rec = (controlId: string, over: Partial<ControlPoamRecord> = {}): ControlPoamRecord => ({
+        controlId, owner: '', scheduledCompletion: null, requiredResources: '', plan: '', milestones: [], createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', updatedBy: 'u', ...over,
+      });
+      const ms = [
+        { id: 'ms-aaaaaaaaaaaa', description: 'Write the policy', targetDate: '2027-01-10', completed: true },
+        { id: 'ms-bbbbbbbbbbbb', description: 'Enforce it', targetDate: '2027-02-10', completed: false },
+      ];
+      const base = generatePOAMEntries(three, states, undefined, 'CMMC_L2');
+      const full = generatePOAMEntries(three, states, undefined, 'CMMC_L2', {
+        [cNotMet.id]: rec(cNotMet.id, { owner: ' Jane Smith ', scheduledCompletion: '2027-03-31', requiredResources: ' 2 engineers ', plan: ' Roll out MFA ', milestones: ms }),
+      });
+      const e = full.find((x) => x.controlId === cNotMet.id)!;
+      assert(
+        e.scheduledCompletionDate === '2027-03-31' && e.requiredResources === '2 engineers' && e.responsibleRole === 'Jane Smith' && e.remediationPlan === 'Roll out MFA',
+        'R1 a record on a NOT_MET control sets the date, the resources, the owner (replacing the role) and the plan',
+        e
+      );
+      assert(e.milestones?.length === 2 && e.milestones[0].id === 'M1' && e.milestones[1].id === 'M2' && e.milestones[0].completed === true && e.milestones[1].description === 'Enforce it', 'R2 the milestones print as M1, M2 with their dates and completed flags', e.milestones);
+      const other = full.find((x) => x.controlId === cStarted.id)!;
+      assert(JSON.stringify(other) === JSON.stringify(base.find((x) => x.controlId === cStarted.id)), 'R3 a control with no record prints exactly as before');
+      const emptyRec = generatePOAMEntries(three, states, undefined, 'CMMC_L2', { [cNotMet.id]: rec(cNotMet.id, { owner: '  ', requiredResources: ' ', plan: '' }) });
+      assert(JSON.stringify(emptyRec) === JSON.stringify(base) && emptyRec[0].scheduledCompletionDate === NOT_RECORDED && emptyRec[0].requiredResources === NOT_RECORDED, 'R4 a record with empty values prints Not recorded: the output equals the no-record output');
+      const onMet = generatePOAMEntries(three, states, undefined, 'CMMC_L2', { [cMet.id]: rec(cMet.id, { owner: 'Nobody', scheduledCompletion: '2027-01-01', plan: 'Never printed' }) });
+      assert(onMet.length === three.filter((c) => states[c.id].status !== 'MET').length && !onMet.some((x) => x.controlId === cMet.id) && JSON.stringify(onMet) === JSON.stringify(base), 'R5 a record on a MET control adds no entry: the length is the number of controls that are not MET');
+      assert(JSON.stringify(generatePOAMEntries(three, states, undefined, 'CMMC_L2', undefined)) === JSON.stringify(base) && JSON.stringify(generatePOAMEntries(three, states, undefined, 'CMMC_L2', {})) === JSON.stringify(base), 'R6 without the fifth argument (or with an empty one) the output is byte-identical');
+      assert(JSON.stringify(full.map((x) => x.weaknessId)) === JSON.stringify(base.map((x) => x.weaknessId)), 'R7 the weakness ids do not change with a record');
+      const protoSafe = generatePOAMEntries(three, states, undefined, 'CMMC_L2', JSON.parse('{"__proto__":{"owner":"x"}}') as Record<string, ControlPoamRecord>);
+      assert(JSON.stringify(protoSafe) === JSON.stringify(base), 'R7b a record keyed like an object property name is never read as a control');
+
+      const recorded = controlPoamMap([rec(cNotMet.id, { owner: 'Jane Smith', scheduledCompletion: '2027-03-31', requiredResources: '2 engineers', plan: 'Roll out MFA', milestones: ms })]);
+      const meta = { ...mockMetadata, framework: 'CMMC_L2' as const };
+      const doc = compilePOAM(meta, three, states, undefined, undefined, recorded);
+      const matrix = doc.sections.find((s) => s.id === 'poam-sec-2-matrix')!;
+      const firstRow = (matrix.table!.rows as (string | number)[][])[0];
+      assert(firstRow[5] === '2027-03-31' && firstRow[6] === 'Jane Smith' && firstRow[7] === '2 engineers' && firstRow[8] === 'Roll out MFA', 'R8 the POA&M master table row carries the date (cell 5), owner, resources and plan', firstRow);
+      const csv = generatePoamCsv(doc.poamEntries ?? []);
+      assert(csv.includes('"2027-03-31"') && csv.includes('"Jane Smith"') && csv.includes('"2 engineers"'), 'R9 the CSV carries the recorded date, owner and resources');
+      const milestoneSec = doc.sections.find((s) => s.id === 'poam-sec-3-milestones')!;
+      const block = milestoneSec.subsections!.find((s) => s.title.includes(e.weaknessId))!;
+      assert(Boolean(block.table) && (block.table!.rows as (string | number)[][]).length === 2 && (block.table!.rows as (string | number)[][])[0][3] === 'COMPLETED' && (block.table!.rows as (string | number)[][])[1][3] === 'PENDING' && !block.content!.includes(NO_MILESTONES_RECORDED), 'R10 the milestone section lists the milestones with COMPLETED and PENDING');
+      const viaRouter = compileReportDocument('POAM', meta, three, states, [], undefined, undefined, { controlPoam: recorded });
+      assert(JSON.stringify(viaRouter.poamEntries) === JSON.stringify(doc.poamEntries), 'R11 compileReportDocument forwards extras.controlPoam to the POA&M document');
+      const viaSsp = compileReportDocument('NIST_SP_800_18_SSP', meta, three, states, [], undefined, undefined, { controlPoam: recorded });
+      const viaSoc2 = compileReportDocument('SOC_2_SYSTEM_DESCRIPTION', { ...mockMetadata, framework: 'SOC_2_TYPE_II' }, three, states, [], undefined, undefined, { controlPoam: recorded });
+      const viaHipaa = compileReportDocument('HIPAA_SECURITY_ASSESSMENT', { ...mockMetadata, framework: 'HIPAA_SECURITY' }, three, states, [], undefined, undefined, { controlPoam: recorded });
+      assert(
+        viaSsp.poamEntries?.find((x) => x.controlId === cNotMet.id)?.scheduledCompletionDate === '2027-03-31' &&
+          viaSoc2.poamEntries?.find((x) => x.controlId === cNotMet.id)?.responsibleRole === 'Jane Smith' &&
+          viaHipaa.poamEntries?.find((x) => x.controlId === cNotMet.id)?.requiredResources === '2 engineers',
+        'R12 the SSP, SOC 2 and HIPAA documents carry the recorded fields too'
+      );
+      const noExtras = compileReportDocument('POAM', meta, three, states, []);
+      assert(JSON.stringify(noExtras.poamEntries) === JSON.stringify(compilePOAM(meta, three, states).poamEntries), 'R13 without extras the POA&M document is what it was');
     }
 
     // -------------------------------------------------------------
@@ -655,7 +722,7 @@ async function runArtifactGeneratorTests() {
     const storageSrc = normSrc('src/services/storageService.ts');
     assert(storageSrc.slice(storageSrc.indexOf('export function buildSspMarkdown(')).includes('composeImplementationStatement('), 'AG5 buildSspMarkdown composes the statement');
     assert(normSrc('src/components/ssp/SSPBuilder.tsx').split('composeImplementationStatement(').length - 1 === 2, 'AG6 the SSP page composes the statement on screen and in the plaintext copy');
-    assert(/compileNistSSP\([\s\S]*?objectivesForReport\s*\);/.test(normSrc('src/data/storage/offboardingEngine.ts')), 'AG7 the handover SSP receives the objectives');
+    assert(/compileNistSSP\([\s\S]*?objectivesForReport,\s*options\.controlPoam\s*\);/.test(normSrc('src/data/storage/offboardingEngine.ts')), 'AG7 the handover SSP receives the objectives and the recorded control POA&M fields (#304)');
 
     // #294 (U5): the SSP prints the display label of a status, never the enum; the machine-readable outputs keep the enum
     const u5Labels = new Set(['Met', 'In progress', 'Not met', 'Not started']);

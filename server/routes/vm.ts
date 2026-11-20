@@ -5,6 +5,7 @@ import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store
 import { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, loadVmPoamView, updateVmPoamItem } from '../vm/findingsStore';
 import { StaleWriteError } from '../controlAssessments';
 import { parseVmPoamPatch } from '../../src/data/vmPoamEdit';
+import { PoamMilestoneError } from '../../src/data/poamMilestones';
 import { VM_POAM_CONTROL_ID, getVmSlaConfig, isPoamAutocreateEnabled } from '../vm/transitions';
 import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults, summarizeConfigScansByAsset } from '../vm/configStore';
 import { computeConfigSuggestions } from '../vm/configSuggestions';
@@ -363,9 +364,9 @@ router.get('/poam/:itemId', async (req: Request, res: Response): Promise<void> =
 });
 
 /**
- * PATCH .../vm/poam/:itemId (owner / admin, by requireWriteRole). Body { expectedUpdatedAt, owner?, mitigation?, scheduledCompletion?, status? }
- * (parseVmPoamPatch). 200 { item, changed } (a change that alters nothing: changed false, no event, the stamp stays). 400 invalid_poam_patch
- * with `field` (never the value), 400 mitigation_required, 404 for a malformed, unknown, other-tenant or other-program id (all look the same),
+ * PATCH .../vm/poam/:itemId (owner / admin, by requireWriteRole). Body { expectedUpdatedAt, owner?, mitigation?, scheduledCompletion?, status?, milestones? }
+ * (parseVmPoamPatch; milestones replaces the whole list, #304). 200 { item, changed } (a change that alters nothing: changed false, no event, the stamp stays). 400 invalid_poam_patch
+ * with `field` (never the value; `milestones` also for an id the item does not hold), 400 mitigation_required, 404 for a malformed, unknown, other-tenant or other-program id (all look the same),
  * 409 program_required / program_archived / stale_write / finding_still_open. The log line and the events carry ids, statuses and dates only.
  */
 router.patch('/poam/:itemId', async (req: Request, res: Response): Promise<void> => {
@@ -398,6 +399,10 @@ router.patch('/poam/:itemId', async (req: Request, res: Response): Promise<void>
   } catch (err: unknown) {
     if (err instanceof StaleWriteError) {
       res.status(409).json({ error: 'This POA&M item was saved by someone else after you loaded it.', code: 'stale_write', current: err.current });
+      return;
+    }
+    if (err instanceof PoamMilestoneError) {
+      res.status(400).json({ error: 'Invalid milestones', code: 'invalid_poam_patch', field: 'milestones' });
       return;
     }
     if (err instanceof VmPoamEditError) {

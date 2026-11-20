@@ -441,6 +441,28 @@ afterwards, and it is all intended.
   Accounts with no sign-in for 90 days are disabled from the first daily sweep after their grace period; set
   `ACCOUNT_DORMANT_DAYS` before upgrading if your policy differs.
 
+* **POA&M dates, owners, resources and milestones (issues #304, #305).** This release adds two tables, `control_poam_entries`
+  (what a person records for a control in a program: owner, scheduled completion, required resources, plan, milestones) and
+  `control_poam_events` (its history: changed flags, lengths, counts and digests, never the text), and columns on existing
+  tables: `vm_poam_items.milestones` and `vm_poam_items.item_number`, and four milestone columns on `vm_poam_item_events`.
+  Both new tables follow the program row-level-security pattern; the database role needs nothing new. Nothing is lost or
+  rewritten: no existing value is changed, apart from the numbering below.
+* **Vulnerability item numbers.** Each vulnerability POA&M item now has a stored number, per program. At the first start after
+  the upgrade the existing items are numbered once, oldest first (this briefly lifts and restores row security on
+  `vm_poam_items` inside one statement, like the earlier one-time data fixes; the item timestamps are not touched). In the
+  exports, the weakness id `POAM-VM-001` was the item's position among the open items; it is now `POAM-VM-` and the stored
+  number, so completing an item no longer renumbers the later ones. After the upgrade the ids in an export can therefore differ
+  once from the ids of an earlier export. An item an older image created has no number yet and is numbered after the stored
+  ones in the export until a newer image numbers it.
+* **An older image still starts and runs** on the upgraded database. The new columns are nullable or have a default
+  (`milestones` defaults to `[]`, `item_number` to `NULL`), the new checks apply to the new columns only (no existing check
+  is widened or dropped), an older image reads items with `SELECT p.*` and ignores the extra columns, and it inserts items
+  without them. It does not show the new fields (its exports print "Not recorded" for the date, owner, resources and
+  milestones of a control) and the items it creates stay unnumbered. Nothing in this change is one-way.
+* **The fields live on the server only.** An organization stored only in the browser does not get them; its exports keep
+  printing "Not recorded". The offboarding handover package fails (it does not print "Not recorded" for fields that exist)
+  when a program's fields cannot be read.
+
 One environment variable is added: `ACCOUNT_DORMANT_DAYS` (empty means the default, 90).
 
 What makes an upgrade safe is the release routine around it:

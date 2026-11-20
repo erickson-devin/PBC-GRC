@@ -230,6 +230,28 @@ console.log('--- F15 source pins ---');
   assert(!/console\.|localStorage|sessionStorage|ApiClient/.test(form), 'F15 the form helpers have no console, storage or ApiClient');
 }
 
+console.log('--- F16 milestones on a vulnerability item (#304) ---');
+{
+  const base = { ...row(), milestones: [{ id: 'ms-1', description: 'Patch', targetDate: '2027-01-01', completed: false }] } as VmPoamRow;
+  const f = vmPoamFormFrom(base);
+  assert(f.milestones.length === 1 && f.milestones[0].id === 'ms-1', 'F16 the form carries the milestone rows');
+  assert(same(vmPoamFormPatch(base, f), {}), 'F16 untouched milestones give no patch');
+  const done = { ...f, milestones: f.milestones.map((m) => ({ ...m, completed: true })) };
+  assert(same(vmPoamFormPatch(base, done), { milestones: [{ id: 'ms-1', description: 'Patch', targetDate: '2027-01-01', completed: true }] }), 'F16 completing a milestone sends the whole list');
+  const bad = { ...f, milestones: [{ ...f.milestones[0], targetDate: '' }] };
+  assert(vmPoamFormErrors(base, bad).milestones === VM_POAM_ITEM_COPY.milestonesError, 'F16 a milestone without a date is an error');
+  // a row from an older image has no milestones at all
+  assert(vmPoamFormFrom(row()).milestones.length === 0 && same(vmPoamFormPatch(row(), vmPoamFormFrom(row())), {}), 'F16 an item without a milestone list gives an empty list and no patch');
+  const merged = rebaseVmPoamForm(base, { ...base, milestones: [...base.milestones, { id: 'ms-2', description: 'More', targetDate: '2027-02-01', completed: false }] }, f);
+  assert(merged.form.milestones.length === 2 && merged.conflicts.length === 0, 'F16 untouched milestones take the server list after a stale write');
+  const ev = vmPoamEventView({ id: 'e', itemId: 'i', controlId: 'c', actor: 'Ann', source: 'user', oldStatus: 'OPEN', newStatus: 'OPEN', oldScheduledCompletion: null, newScheduledCompletion: null, ownerChanged: false, mitigationChanged: false, milestonesChanged: true, milestoneCount: 2, milestonesCompleted: 1, runId: null, createdAt: '2026-11-19T10:30:00Z' } as unknown as VmPoamItemEvent);
+  assert(ev.what === 'Milestones: 2 recorded, 1 completed.', 'F16 the history names counts, never text', ev.what);
+  const un = vmPoamUnsavedText(base, { ...f, milestones: [{ ...f.milestones[0], description: 'SECRET-text' }] });
+  assert(un.length === 1 && un[0].text.includes('SECRET-text') && !un[0].label.includes('SECRET') && !un[0].key.includes('SECRET'), 'F16 unsaved milestone text is kept for the rescue, labels carry no text');
+  const dlg = read('src/components/reports/VmPoamItemDialog.tsx');
+  assert(dlg.includes('<PoamMilestonesEditor') && dlg.includes('pendingMilestoneWarning(form.milestones, form.status)'), 'F16 the dialog has the milestones editor and the pending-milestones warning');
+}
+
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);
 console.log('================================================================\n');

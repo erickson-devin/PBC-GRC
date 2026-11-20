@@ -15,6 +15,7 @@ import { NOT_RECORDED } from '../src/data/reports/documentDefaults';
 import type { ReportMetadata } from '../src/types/report';
 import type { ControlState, AssessmentState } from '../src/types/cmmc';
 import type { VmPoamResponse, VmPoamRow, VmSeverity, VmPoamStatus } from '../src/types/vm';
+import type { PoamMilestone } from '../src/types/poamMilestone';
 
 /**
  * #274 (WP-2): the vulnerability side of the POA&M screen as pure functions, and the POA&M document, CSV and JSON package built from it.
@@ -36,6 +37,7 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
 function row(id: string, o: {
   status?: VmPoamStatus; severity?: VmSeverity; kev?: boolean; asset?: { id: string; name: string } | null; vulnId?: string;
   weakness?: string; sched?: string | null; pkgs?: string[]; pkgCount?: number; noFinding?: boolean; owner?: string; mitigation?: string;
+  itemNumber?: number | null; milestones?: PoamMilestone[];
 } = {}): VmPoamRow {
   const pkgs = (o.pkgs ?? ['openssl']).map((name) => ({ name, version: '1.0', fixedVersion: null }));
   return {
@@ -54,6 +56,8 @@ function row(id: string, o: {
     statusChangedBy: null,
     statusChangedAt: null,
     autoComplete: true,
+    milestones: o.milestones ?? [],
+    itemNumber: o.itemNumber ?? null,
     finding: o.noFinding ? null : {
       id: `f-${id}`,
       vulnId: o.vulnId ?? `CVE-2024-${id}`,
@@ -127,6 +131,38 @@ console.log('\n--- VP1-VP3 vmPoamEntries ---');
   assert(l1[0].controlTitle.includes(cmmcGuideId('SI.L2-3.14.1', 'CMMC_L1')) && l1[0].controlTitle.startsWith('Vulnerability remediation (no Level 1 practice; related: '), 'VP2 L1 title names the computed related practice', l1[0].controlTitle);
   assert(l1[0].controlId === 'RA.L2-3.11.3', 'VP2 L1 stored control id is unchanged');
   assert(VM_POAM_CONTROL_TITLE === CMMC_LEVEL_2_CONTROLS.find((c) => c.id === 'RA.L2-3.11.3')!.title, 'VP3 control title equals the catalog title');
+}
+
+console.log('\n--- VP17 stored item numbers (#305) and milestones (#304) ---');
+{
+  const stored = [row('2001', { itemNumber: 1 }), row('2002', { itemNumber: 2 }), row('2003', { itemNumber: 3 })];
+  assert(same([...vmWeaknessIds(stored).values()], ['POAM-VM-001', 'POAM-VM-002', 'POAM-VM-003']), 'VP17 stored numbers print as POAM-VM-<number padded to 3>');
+  const done = stored.map((r, i) => (i === 0 ? { ...r, status: 'COMPLETED' as VmPoamStatus } : r));
+  assert(same([...vmWeaknessIds(done).entries()].map(([id, w]) => `${id}:${w}`), ['2002:POAM-VM-002', '2003:POAM-VM-003']), 'VP17 completing the first item does not renumber the later ones');
+  const doneEntries = vmPoamEntries(done, 'CMMC_L2');
+  assert(same(doneEntries.map((e) => e.weaknessId), ['POAM-VM-002', 'POAM-VM-003']), 'VP17 the export entries use the stored numbers');
+  assert(same([...vmWeaknessIds([row('2101', { itemNumber: 7 }), row('2102', { itemNumber: 120 })]).values()], ['POAM-VM-007', 'POAM-VM-120']), 'VP17 a stored number is padded to three digits and never renumbered');
+  assert(same([...vmWeaknessIds([row('2201'), row('2202')]).values()], ['POAM-VM-001', 'POAM-VM-002']), 'VP17 rows with no stored number fall back to their position, as before');
+  const mixed = vmWeaknessIds([row('2301'), row('2302', { itemNumber: 4 }), row('2303'), row('2304', { itemNumber: 2, status: 'COMPLETED' })]);
+  assert(same([...mixed.values()], ['POAM-VM-005', 'POAM-VM-004', 'POAM-VM-006']) && new Set(mixed.values()).size === 3, 'VP17 a row with no number is numbered after the largest stored number, so ids never repeat', [...mixed.values()]);
+  const ms: PoamMilestone[] = [
+    { id: 'ms-aaaaaaaaaaaa', description: 'Patch the hosts', targetDate: '2027-01-01', completed: true },
+    { id: 'ms-bbbbbbbbbbbb', description: 'Verify with a scan', targetDate: '2027-02-01', completed: false },
+  ];
+  const withMs = vmPoamEntries([row('2401', { itemNumber: 1, milestones: ms })], 'CMMC_L2')[0];
+  assert(
+    withMs.milestones?.length === 2 && withMs.milestones[0].id === 'M1' && withMs.milestones[1].id === 'M2' && withMs.milestones[0].description === 'Patch the hosts' &&
+      withMs.milestones[0].targetDate === '2027-01-01' && withMs.milestones[0].completed === true && withMs.milestones[1].completed === false,
+    'VP17 the entry carries the item\'s milestones, ids M1 and M2',
+    withMs.milestones
+  );
+  const docMs = compilePOAM(meta, l2.slice(0, 2), states, undefined, { status: 'ready', entries: [withMs], openItemsTotal: 1 });
+  const sec3 = docMs.sections.find((s) => s.id === 'poam-sec-3-milestones');
+  const blockFor = sec3?.subsections?.find((s) => s.title.includes('POAM-VM-001'));
+  assert(Boolean(blockFor?.table) && blockFor?.table?.rows.length === 2, 'VP17 the milestone section of the POA&M document lists the vulnerability item\'s milestones', sec3?.subsections?.map((s) => s.title));
+  const docNone = compilePOAM(meta, l2.slice(0, 2), states, undefined, { status: 'ready', entries: vmPoamEntries([row('2501', { itemNumber: 1 })], 'CMMC_L2'), openItemsTotal: 1 });
+  const docBase = compilePOAM(meta, l2.slice(0, 2), states);
+  assert(docNone.sections.find((s) => s.id === 'poam-sec-3-milestones')?.subsections?.length === docBase.sections.find((s) => s.id === 'poam-sec-3-milestones')?.subsections?.length, 'VP17 a vulnerability item with no milestones adds no block to the milestone section');
 }
 
 console.log('\n--- VP4-VP10 documents and exports ---');

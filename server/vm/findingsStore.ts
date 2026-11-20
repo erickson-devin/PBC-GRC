@@ -7,6 +7,8 @@ import type { ApplyRunResult, LinkedPoamItem, OpenAutoPoamItem, PoamCandidate, P
 import { planPoamCompletions, VM_WORKER_ACTOR, type OtherSourceReport } from './transitions';
 import { matchesExpected, notesDigest, StaleWriteError } from '../controlAssessments';
 import { planVmPoamStatus, vmPoamFindingOpenInEpisode } from '../../src/data/vmPoamEdit';
+import { canonicalMilestones, milestoneCounts, newMilestoneId, normalizeStoredMilestones, PoamMilestoneError, resolveMilestones, sameMilestones } from '../../src/data/poamMilestones';
+import type { PoamMilestone } from '../../src/types/poamMilestone';
 import { VM_POAM_PACKAGES_RETURNED } from '../../src/types/vm';
 import type { VmAffectedPackage, VmFinding, VmFindingStatus, VmPoamItem, VmPoamItemEvent, VmPoamItemPatch, VmPoamRow, VmPoamStatus, VmRun, VmSeverity, VmSighting, VmUpcomingFinding, VmVuln, VmVulnSource } from '../../src/types/vm';
 
@@ -161,6 +163,8 @@ export function rowToPoamItem(r: pg.QueryResultRow): VmPoamItem {
     statusChangedBy: r.status_changed_by ?? null,
     statusChangedAt: iso(r.status_changed_at),
     autoComplete: r.auto_complete ?? true,
+    milestones: normalizeStoredMilestones(r.milestones),
+    itemNumber: typeof r.item_number === 'number' ? r.item_number : null,
   };
 }
 
@@ -547,6 +551,11 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
       inserted++;
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
+      // The next number of the tenant and program (#305); an item with no program is not numbered. Synchronous, so no other insert interleaves.
+      const itemNumber =
+        programId === null
+          ? null
+          : Math.max(0, ...[...memoryPoam.values()].filter((p) => p.tenantId === tenantId && p.programId === programId).map((p) => p.itemNumber ?? 0)) + 1;
       memoryPoam.set(id, {
         id,
         tenantId,
@@ -566,18 +575,29 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
         statusChangedBy: null,
         statusChangedAt: null,
         autoComplete: true,
+        milestones: [],
+        itemNumber,
       });
     }
     return inserted;
   }
   const c = need(client);
+  if (programId !== null) {
+    // Item numbers (#305): one transaction at a time numbers a program's new items. The advisory lock is held to the end of this transaction, so
+    // the largest number read below is still the largest when the rows land; the unique index (tenant, program, item_number) is the backstop.
+    await c.query('SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))', [`vm_poam_items:${tenantId}`, programId]);
+  }
   let inserted = 0;
   for (const part of chunks(drafts)) {
+    // The numbers continue after the program's largest (a chunk skipped by the episode index leaves a gap, never a repeat)
+    const first = programId === null
+      ? null
+      : Number((await c.query('SELECT COALESCE(MAX(item_number), 0)::int AS n FROM vm_poam_items WHERE tenant_id = $1::text AND program_id = $2::text', [tenantId, programId])).rows[0]?.n ?? 0) + 1;
     const res = await c.query(
-      `INSERT INTO vm_poam_items (tenant_id, finding_id, control_id, weakness, mitigation, owner, scheduled_completion, status, created_by, program_id, finding_first_seen_at)
-       VALUES ${placeholders(part.length, 11)}
+      `INSERT INTO vm_poam_items (tenant_id, finding_id, control_id, weakness, mitigation, owner, scheduled_completion, status, created_by, program_id, finding_first_seen_at, item_number)
+       VALUES ${placeholders(part.length, 12)}
        ON CONFLICT DO NOTHING`,
-      part.flatMap((d) => [tenantId, d.findingId, d.controlId, d.weakness, d.mitigation, d.owner, d.scheduledCompletion, d.status, d.createdBy, programId, d.findingFirstSeenAt]),
+      part.flatMap((d, i) => [tenantId, d.findingId, d.controlId, d.weakness, d.mitigation, d.owner, d.scheduledCompletion, d.status, d.createdBy, programId, d.findingFirstSeenAt, first === null ? null : first + i]),
     );
     inserted += res.rowCount ?? 0;
   }
@@ -633,6 +653,8 @@ function poamRowOf(item: VmPoamItem, f: VmFinding | null, assetName: string | nu
     statusChangedBy: item.statusChangedBy ?? null,
     statusChangedAt: item.statusChangedAt ?? null,
     autoComplete: item.autoComplete ?? true,
+    milestones: (item.milestones ?? []).map((m) => ({ ...m })),
+    itemNumber: item.itemNumber ?? null,
     finding: f
       ? {
           id: f.id,
@@ -837,6 +859,9 @@ async function completeInProgram(tenantId: string, runId: string, nowIso: string
         newScheduledCompletion: p.scheduledCompletion,
         ownerChanged: false,
         mitigationChanged: false,
+        milestonesChanged: false,
+        milestoneCount: null,
+        milestonesCompleted: null,
         runId,
         createdAt: new Date().toISOString(),
       });
@@ -990,18 +1015,26 @@ function planEdit(p: VmPoamItem, findingOpenInEpisode: boolean, patch: VmPoamIte
   const mitigation = patch.mitigation ?? p.mitigation;
   const scheduledCompletion = patch.scheduledCompletion === undefined ? p.scheduledCompletion : patch.scheduledCompletion;
   const status = patch.status ?? p.status;
+  const storedMilestones = p.milestones ?? [];
+  let milestones: PoamMilestone[] = storedMilestones;
+  if (patch.milestones !== undefined) {
+    const resolved = resolveMilestones(storedMilestones, patch.milestones, newMilestoneId);
+    if (!resolved.ok) throw new PoamMilestoneError();
+    milestones = resolved.milestones;
+  }
   const ownerChanged = owner !== p.owner;
   const mitigationChanged = mitigation !== p.mitigation;
   const dateChanged = scheduledCompletion !== p.scheduledCompletion;
   const statusChanged = status !== p.status;
-  const changed = ownerChanged || mitigationChanged || dateChanged || statusChanged;
+  const milestonesChanged = !sameMilestones(milestones, storedMilestones);
+  const changed = ownerChanged || mitigationChanged || dateChanged || statusChanged || milestonesChanged;
   let reopen = false;
   if (changed) {
     const plan = planVmPoamStatus({ status: p.status, findingOpenInEpisode }, status, mitigation);
     if (!plan.ok) throw new VmPoamEditError(plan.code);
     reopen = plan.reopen;
   }
-  return { owner, mitigation, scheduledCompletion, status, ownerChanged, mitigationChanged, dateChanged, statusChanged, changed, reopen };
+  return { owner, mitigation, scheduledCompletion, status, milestones, ownerChanged, mitigationChanged, dateChanged, statusChanged, milestonesChanged, changed, reopen };
 }
 
 const ACTOR_MAX = 255;
@@ -1036,6 +1069,7 @@ export async function updateVmPoamItem(
       mitigation: plan.mitigation,
       scheduledCompletion: plan.scheduledCompletion,
       status: plan.status,
+      milestones: plan.milestones.map((m) => ({ ...m })),
       updatedBy: actor,
       updatedAt: nextStamp(p.updatedAt),
       ...(plan.statusChanged ? { statusChangedBy: actor, statusChangedAt: now } : {}),
@@ -1055,6 +1089,9 @@ export async function updateVmPoamItem(
       newScheduledCompletion: plan.scheduledCompletion,
       ownerChanged: plan.ownerChanged,
       mitigationChanged: plan.mitigationChanged,
+      milestonesChanged: plan.milestonesChanged,
+      milestoneCount: plan.milestonesChanged ? milestoneCounts(plan.milestones).count : null,
+      milestonesCompleted: plan.milestonesChanged ? milestoneCounts(plan.milestones).completed : null,
       runId: null,
       createdAt: now,
     });
@@ -1085,22 +1122,27 @@ export async function updateVmPoamItem(
                 updated_at = GREATEST(NOW(), updated_at + interval '1 millisecond'),
                 status_changed_by = CASE WHEN $9::boolean THEN $8::text ELSE status_changed_by END,
                 status_changed_at = CASE WHEN $9::boolean THEN NOW() ELSE status_changed_at END,
-                auto_complete = CASE WHEN $10::boolean THEN FALSE ELSE auto_complete END
+                auto_complete = CASE WHEN $10::boolean THEN FALSE ELSE auto_complete END,
+                milestones = $11::jsonb
           WHERE tenant_id = $1::text AND program_id = $2::text AND id = $3::text`,
-        [scope.tenantId, scope.programId, itemId, plan.owner, plan.mitigation, plan.scheduledCompletion, plan.status, actor, plan.statusChanged, plan.reopen],
+        [scope.tenantId, scope.programId, itemId, plan.owner, plan.mitigation, plan.scheduledCompletion, plan.status, actor, plan.statusChanged, plan.reopen, JSON.stringify(plan.milestones)],
       );
       const ownerDigest = plan.ownerChanged ? notesDigest(plan.owner) : null;
       const mitigationDigest = plan.mitigationChanged ? notesDigest(plan.mitigation) : null;
+      const counts = milestoneCounts(plan.milestones);
       await c.query(
         `INSERT INTO vm_poam_item_events (tenant_id, program_id, item_id, source, actor, actor_user_id, old_status, new_status,
                                           old_scheduled_completion, new_scheduled_completion, owner_changed, new_owner_sha256, new_owner_length,
-                                          mitigation_changed, new_mitigation_sha256, new_mitigation_length)
+                                          mitigation_changed, new_mitigation_sha256, new_mitigation_length,
+                                          milestones_changed, new_milestone_count, new_milestones_completed, new_milestones_sha256)
          VALUES ($1::text, $2::text, $3::text, 'human', $4::text, $5::text, $6::text, $7::text, $8::date, $9::date, $10::boolean, $11::text, $12::integer,
-                 $13::boolean, $14::text, $15::integer)`,
+                 $13::boolean, $14::text, $15::integer, $16::boolean, $17::integer, $18::integer, $19::text)`,
         [
           scope.tenantId, scope.programId, itemId, actor, who.userId ? who.userId.slice(0, USER_ID_MAX) : null, p.status, plan.status,
           p.scheduledCompletion, plan.scheduledCompletion, plan.ownerChanged, ownerDigest?.sha256 ?? null, ownerDigest?.length ?? null,
           plan.mitigationChanged, mitigationDigest?.sha256 ?? null, mitigationDigest?.length ?? null,
+          plan.milestonesChanged, plan.milestonesChanged ? counts.count : null, plan.milestonesChanged ? counts.completed : null,
+          plan.milestonesChanged ? notesDigest(canonicalMilestones(plan.milestones)).sha256 : null,
         ],
       );
       return { changed: true };
@@ -1126,7 +1168,7 @@ export async function listVmPoamItemEvents(scope: ProgramScope, itemId: string, 
     async (client) => {
       const res = await need(client).query(
         `SELECT id, item_id, source, actor, old_status, new_status, old_scheduled_completion, new_scheduled_completion, owner_changed,
-                mitigation_changed, run_id, created_at
+                mitigation_changed, milestones_changed, new_milestone_count, new_milestones_completed, run_id, created_at
            FROM vm_poam_item_events
           WHERE tenant_id = $1::text AND program_id = $2::text AND item_id = $3::text
           ORDER BY created_at DESC, id DESC
@@ -1144,6 +1186,9 @@ export async function listVmPoamItemEvents(scope: ProgramScope, itemId: string, 
         newScheduledCompletion: dateOnly(r.new_scheduled_completion),
         ownerChanged: Boolean(r.owner_changed),
         mitigationChanged: Boolean(r.mitigation_changed),
+        milestonesChanged: Boolean(r.milestones_changed),
+        milestoneCount: r.new_milestone_count ?? null,
+        milestonesCompleted: r.new_milestones_completed ?? null,
         runId: r.run_id ?? null,
         createdAt: iso(r.created_at) as string,
       }));

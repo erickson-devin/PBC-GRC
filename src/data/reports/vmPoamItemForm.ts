@@ -5,6 +5,9 @@ import {
   parseVmPoamPatch, planVmPoamStatus, vmPoamFindingOpenInEpisode,
 } from '../vmPoamEdit';
 import { isOpenVmPoamStatus, isoDate } from './vmPoamView';
+import {
+  milestoneDrafts, milestoneListInvalid, milestonesChanged, milestonesPatch, milestonesUnsavedText, rebaseMilestones, type MilestoneDraft,
+} from './poamMilestoneForm';
 
 /**
  * #297: the edit form of a vulnerability POA&M item as pure functions: the form values and the patch they make, the field errors, the
@@ -24,8 +27,11 @@ export interface VmPoamForm {
   /** '' = no date. */
   scheduledCompletion: string;
   status: VmPoamStatus;
+  /** The milestone rows (#304). */
+  milestones: MilestoneDraft[];
 }
-export type VmPoamFormField = 'owner' | 'mitigation' | 'scheduledCompletion' | 'status';
+export type VmPoamFormField = 'owner' | 'mitigation' | 'scheduledCompletion' | 'status' | 'milestones';
+type ScalarField = Exclude<VmPoamFormField, 'milestones'>;
 
 const MITIGATION_REQUIRED = 'Risk accepted needs a plan: describe the mitigation and why the risk is accepted.';
 const COMPLETED_BLOCKED_AUTO = 'Completed is not available while the scanner still reports this vulnerability. The item is completed automatically when a later scan no longer reports it. To close it now, choose Risk accepted and describe the mitigation.';
@@ -35,6 +41,7 @@ export const VM_POAM_ITEM_COPY = {
   ownerError: `Owner: at most ${VM_POAM_OWNER_MAX} characters, with no control characters.`,
   mitigationError: `Plan: at most ${VM_POAM_MITIGATION_MAX} characters. Line breaks and tabs are allowed; other control characters are not.`,
   dateError: `Target date: a real date from ${VM_POAM_DATE_MIN} to ${VM_POAM_DATE_MAX}.`,
+  milestonesError: 'Check the milestones marked below.',
   mitigationRequired: MITIGATION_REQUIRED,
   completedBlockedAuto: COMPLETED_BLOCKED_AUTO,
   completedBlocked: COMPLETED_BLOCKED,
@@ -61,7 +68,7 @@ export const VM_POAM_ITEM_COPY = {
   notRecorded: 'Not recorded',
 };
 
-const FIELD_NAME: Record<VmPoamFormField, string> = { owner: 'owner', mitigation: 'plan', scheduledCompletion: 'target date', status: 'status' };
+const FIELD_NAME: Record<VmPoamFormField, string> = { owner: 'owner', mitigation: 'plan', scheduledCompletion: 'target date', status: 'status', milestones: 'milestones' };
 
 /** Field names for a note, in the order the form shows them. */
 export function vmPoamFieldNames(fields: readonly VmPoamFormField[]): string {
@@ -69,7 +76,7 @@ export function vmPoamFieldNames(fields: readonly VmPoamFormField[]): string {
 }
 
 export function vmPoamFormFrom(row: VmPoamRow): VmPoamForm {
-  return { owner: row.owner, mitigation: row.mitigation, scheduledCompletion: row.scheduledCompletion ?? '', status: row.status };
+  return { owner: row.owner, mitigation: row.mitigation, scheduledCompletion: row.scheduledCompletion ?? '', status: row.status, milestones: milestoneDrafts(row.milestones) };
 }
 
 const findingOpen = (row: VmPoamRow): boolean => vmPoamFindingOpenInEpisode(row, row.finding);
@@ -82,6 +89,7 @@ export function vmPoamFormPatch(base: VmPoamRow, form: VmPoamForm): VmPoamItemPa
   if (form.mitigation.trim() !== base.mitigation.trim()) patch.mitigation = form.mitigation;
   if ((form.scheduledCompletion || null) !== base.scheduledCompletion) patch.scheduledCompletion = form.scheduledCompletion || null;
   if (form.status !== base.status) patch.status = form.status;
+  if (milestonesChanged(base.milestones, form.milestones)) patch.milestones = milestonesPatch(form.milestones);
   return patch;
 }
 
@@ -101,6 +109,7 @@ export function vmPoamFormErrors(base: VmPoamRow, form: VmPoamForm): Partial<Rec
   check('owner', VM_POAM_ITEM_COPY.ownerError);
   check('mitigation', VM_POAM_ITEM_COPY.mitigationError);
   check('scheduledCompletion', VM_POAM_ITEM_COPY.dateError);
+  if ('milestones' in patch && milestoneListInvalid(form.milestones)) errors.milestones = VM_POAM_ITEM_COPY.milestonesError;
   if (Object.keys(patch).length > 0) {
     // The server runs the status rules on every real change, with the plan the item will hold afterwards
     const plan = planVmPoamStatus({ status: base.status, findingOpenInEpisode: findingOpen(base) }, form.status, (patch.mitigation ?? base.mitigation).trim());
@@ -138,11 +147,11 @@ export function vmPoamReopenWarning(base: VmPoamRow, form: VmPoamForm): string |
 }
 
 /** Normalised value of one field, for comparing what a person typed with what the server holds. */
-function fieldValue(f: VmPoamForm, k: VmPoamFormField): string {
+function fieldValue(f: VmPoamForm, k: ScalarField): string {
   return k === 'owner' || k === 'mitigation' ? f[k].trim() : f[k];
 }
 
-const FIELDS: VmPoamFormField[] = ['owner', 'scheduledCompletion', 'mitigation', 'status'];
+const FIELDS: ScalarField[] = ['owner', 'scheduledCompletion', 'mitigation', 'status'];
 
 /** Three-way merge after a stale write: fields the person did not touch take the new server value; conflicts = touched by both, to different values. */
 export function rebaseVmPoamForm(oldBase: VmPoamRow, newBase: VmPoamRow, form: VmPoamForm): { form: VmPoamForm; conflicts: VmPoamFormField[] } {
@@ -157,6 +166,9 @@ export function rebaseVmPoamForm(oldBase: VmPoamRow, newBase: VmPoamRow, form: V
     const serverChanged = fieldValue(now, k) !== fieldValue(was, k);
     if (serverChanged && fieldValue(now, k) !== fieldValue(form, k)) conflicts.push(k);
   }
+  const ms = rebaseMilestones(oldBase.milestones, newBase.milestones, form.milestones);
+  next.milestones = ms.drafts;
+  if (ms.conflict) conflicts.push('milestones');
   return { form: next, conflicts };
 }
 
@@ -213,6 +225,7 @@ export function vmPoamEventView(e: VmPoamItemEvent): { what: string; who: string
   if (e.oldScheduledCompletion !== e.newScheduledCompletion) parts.push(`Target date: ${e.oldScheduledCompletion ?? 'None'} to ${e.newScheduledCompletion ?? 'None'}`);
   if (e.ownerChanged) parts.push('Owner changed');
   if (e.mitigationChanged) parts.push('Plan changed');
+  if (e.milestonesChanged) parts.push(e.milestoneCount === 0 ? 'Milestones cleared' : `Milestones: ${e.milestoneCount ?? 0} recorded, ${e.milestonesCompleted ?? 0} completed`);
   return {
     what: parts.length > 0 ? `${parts.join('. ')}.` : 'Recorded without a visible change.',
     who: system ? 'Scanner integration' : e.actor,
@@ -245,5 +258,8 @@ export function vmPoamUnsavedText(base: VmPoamRow, form: VmPoamForm): UnsavedTex
   const out: UnsavedTextEntry[] = [];
   if (form.owner !== base.owner) out.push({ key: `vmpoam:${base.id}:owner`, label: `Vulnerability POA&M owner, ${name}`, text: form.owner });
   if (form.mitigation !== base.mitigation) out.push({ key: `vmpoam:${base.id}:mitigation`, label: `Vulnerability POA&M plan, ${name}`, text: form.mitigation });
+  if (milestonesChanged(base.milestones, form.milestones) && form.milestones.length > 0) {
+    out.push(milestonesUnsavedText(`vmpoam:${base.id}:milestones`, `Vulnerability POA&M milestones, ${name}`, form.milestones));
+  }
   return out;
 }

@@ -7,6 +7,8 @@ import { __drainVmWorkerForTests } from '../server/vm/worker';
 import { getVmSlaConfig } from '../server/vm/transitions';
 import { createProgram } from '../server/programs';
 import { firstProgram } from './programFixture';
+import { vmWeaknessIds } from '../src/data/reports/vmPoamView';
+import type { VmPoamRow } from '../src/types/vm';
 
 /**
  * Vulnerability management, the POA&M read API (#274): GET /tenants/:id/vm/poam. Items of the program with their finding and host, the
@@ -382,6 +384,56 @@ async function run() {
   const e14b = await patchItem(A, ownerA, id1001, { expectedUpdatedAt: row14.updatedAt, status: 'COMPLETED' });
   assert(e14b.status === 200 && e14b.body?.item?.status === 'COMPLETED' && e14b.body?.item?.autoComplete === false, 'E14 a person can complete it again (the finding is RESOLVED)', e14b.body);
 
+  say('\n--- N01-N06: stable item numbers (#305) and milestones (#304) ---');
+  const allRows = async (): Promise<Json[]> => ((await poamOf(A, ownerA, '?status=all')).body?.items ?? []) as Json[];
+  const rowsN = await allRows();
+  const numbersN = rowsN.map((r) => r.itemNumber as number).sort((a, b) => a - b);
+  assert(rowsN.length === 3 && same(numbersN, [1, 2, 3]), 'N01 the three items of the program carry the numbers 1, 2 and 3 (assigned when each was created)', numbersN);
+  const created1004 = rowsN.find((r) => r.id === id1004) as Json;
+  assert(created1004?.itemNumber === 3, 'N01 the item created by the later run (reprocessing) is number 3', created1004?.itemNumber);
+  const rowDone = rowsN.find((r) => r.id === id1001) as Json;
+  assert(rowDone?.status === 'COMPLETED' && rowDone.itemNumber === row1001.itemNumber && typeof row1001.itemNumber === 'number', 'N02 completing item CVE-2024-1001 (E13, E14) left its number as it was', [rowDone?.status, rowDone?.itemNumber, row1001.itemNumber]);
+  const idsOpen = vmWeaknessIds(rowsN as unknown as VmPoamRow[]);
+  const openRowsN = rowsN.filter((r) => r.status === 'OPEN' || r.status === 'IN_PROGRESS');
+  assert(
+    openRowsN.length >= 1 && openRowsN.every((r) => idsOpen.get(r.id) === `POAM-VM-00${r.itemNumber}`) && !idsOpen.has(id1001) && !idsOpen.has(id1004),
+    'N03 the exported weakness id of an open item is POAM-VM-<its stored number>, whichever items are completed or risk accepted',
+    [...idsOpen.entries()]
+  );
+
+  const MS_MARK = 'MILESTONE-MARK';
+  const stampN = created1004.updatedAt as string;
+  const n04a = await patchItem(A, ownerA, id1004, { expectedUpdatedAt: stampN, milestones: [{ description: `${MS_MARK} one`, targetDate: '2027-01-01' }, { description: `${MS_MARK} two`, targetDate: '2027-02-01', completed: true }] });
+  const msN = (n04a.body?.item?.milestones ?? []) as Json[];
+  assert(n04a.status === 200 && n04a.body?.changed === true && msN.length === 2 && msN.every((m) => /^ms-[0-9a-f]{12}$/.test(m.id)) && msN[1].completed === true && n04a.body?.item?.itemNumber === 3, 'N04 the PATCH stores two milestones with server ids and returns them on the item (number unchanged)', n04a.body);
+  const n04b = await itemOf(A, viewer, id1004);
+  assert(n04b.status === 200 && same(n04b.body?.item?.milestones, msN), 'N04 a VIEWER reads the same milestones', n04b.body?.item?.milestones);
+  const evN = ((await eventsOf(A, viewer, id1004)).body?.events ?? []) as Json[];
+  const msEvent = evN.find((e) => e.milestonesChanged === true) ?? {};
+  assert(msEvent.milestoneCount === 2 && msEvent.milestonesCompleted === 1 && msEvent.ownerChanged === false && !JSON.stringify(evN).includes(MS_MARK), 'N05 the history has milestonesChanged with the count and the completed count, and no description text', evN);
+  const n05a = await patchItem(A, ownerA, id1004, { expectedUpdatedAt: n04a.body?.item?.updatedAt, milestones: [{ id: 'ms-000000000000', description: 'x', targetDate: '2027-01-01' }] });
+  const n05b = await patchItem(A, ownerA, id1004, { expectedUpdatedAt: n04a.body?.item?.updatedAt, milestones: [{ description: 'two\nlines', targetDate: '2027-01-01' }] });
+  assert(n05a.status === 400 && n05a.body?.code === 'invalid_poam_patch' && n05a.body?.field === 'milestones' && n05b.status === 400 && n05b.body?.field === 'milestones' && !n05a.text.includes(MS_MARK), 'N05 an unknown milestone id and a multi-line description -> 400 invalid_poam_patch naming milestones', [n05a.body, n05b.body]);
+  const n05c = await patchItem(A, ownerA, id1004, { expectedUpdatedAt: n04a.body?.item?.updatedAt, milestones: msN });
+  assert(n05c.status === 200 && n05c.body?.changed === false, 'N05 the same list again (with the ids) -> changed false', n05c.body);
+
+  // N06: another program numbers on its own. The VM target moves to a new program, a new host is ingested, and the target moves back.
+  const programN = await createProgram(A, { name: 'Poam numbering program', frameworkId: 'CMMC_L1' }, 'test');
+  const toN = await call('PUT', `/tenants/${A}/programs/${programN.id}/vm-target`, ownerA, A);
+  const hostN = (id: string, host: string, vulns: string[]) => ({ agent_id: id, hostname: host, findings: vulns.map((v) => ({ vuln_id: v, severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' })) });
+  const runN = await ingest(tokenA, { ...payload(collectedAt(58_000)), hosts: [hostN('p1', 'host-p1', ['CVE-2024-1001', 'CVE-2024-1003', 'CVE-2024-1004']), hostN('n1', 'host-n1', ['CVE-2024-2001', 'CVE-2024-2002'])] });
+  await __drainVmWorkerForTests();
+  const rowsInN = (((await poamOf(A, ownerA, '?status=all', { 'x-program-id': programN.id })).body?.items ?? []) as Json[]);
+  const numbersInN = rowsInN.map((r) => r.itemNumber as number).sort((a, b) => a - b);
+  const backToA = await call('PUT', `/tenants/${A}/programs/${programA.id}/vm-target`, ownerA, A);
+  const rowsA2 = await allRows();
+  assert(
+    toN.status === 200 && runN.status === 202 && rowsInN.length > 0 && same(numbersInN, rowsInN.map((_, i) => i + 1)) && backToA.status === 200,
+    'N06 a second program numbers from 1 on its own',
+    [toN.status, runN.status, numbersInN]
+  );
+  assert(same(rowsA2.map((r) => [r.id, r.itemNumber]).sort(), rowsN.map((r) => [r.id, r.itemNumber]).sort()), 'N06 the first program\'s items and numbers are untouched by the other program\'s items', rowsA2.map((r) => r.itemNumber));
+
   say('\n--- V01-V04: the VM target preview (GET /programs/:id/vm-target/preview) ---');
   const programA3 = await createProgram(A, { name: 'Poam third program', frameworkId: 'CMMC_L1' }, 'test');
   const previewOf = (tenant: string, who: string, programId: string) => call('GET', `/tenants/${tenant}/programs/${programId}/vm-target/preview`, who, tenant);
@@ -409,7 +461,7 @@ async function run() {
   assert(v06.status === 401, 'V06 no session -> 401', v06.status);
 
   say('\n--- P13: nothing about a finding reaches the console ---');
-  const leaked = captured.filter((l) => /host-p1|pkg01|CVE-2024-100|OWNER-MARK|MITIGATION-MARK/.test(l));
+  const leaked = captured.filter((l) => /host-p1|host-n1|pkg01|CVE-2024-100|CVE-2024-200|OWNER-MARK|MITIGATION-MARK|MILESTONE-MARK/.test(l));
   assert(captured.length > 0 && leaked.length === 0, 'P13 no host name, package, CVE id, owner or mitigation text in the console output of the ingests, the worker, the edits and the reads', { lines: captured.length, leaked: leaked.length });
 
   console.log = rawLog;

@@ -88,6 +88,20 @@ assert(field({ owner: 'x', expectedUpdatedAt: 'yesterday' }) === 'expectedUpdate
   assert(refusals.every((r) => !r.ok && !JSON.stringify(r).includes(secret)), 'E-P28 a refusal names the field and never the value');
 }
 
+console.log('\n--- Milestones (#304) ---');
+{
+  const ms = [{ description: ' Patch the host ', targetDate: '2027-01-01' }, { id: 'ms-aaaaaaaaaaaa', description: 'Verify', targetDate: '2027-02-01', completed: true }];
+  const r = parseVmPoamPatch({ expectedUpdatedAt: STAMP, milestones: ms });
+  assert(r.ok && r.patch.milestones?.length === 2 && r.patch.milestones[0].description === 'Patch the host' && r.patch.milestones[1].id === 'ms-aaaaaaaaaaaa' && r.patch.milestones[1].completed === true, 'E-M01 the milestones key is accepted, read through the shared parser', r);
+  assert(parseVmPoamPatch({ expectedUpdatedAt: STAMP, milestones: [] }).ok, 'E-M02 an empty list is accepted (it clears the milestones)');
+  assert(field({ expectedUpdatedAt: STAMP, milestones: 'x' }) === 'milestones' && field({ expectedUpdatedAt: STAMP, milestones: [{ description: '', targetDate: '2027-01-01' }] }) === 'milestones' && field({ expectedUpdatedAt: STAMP, milestones: [{ description: 'a\nb', targetDate: '2027-01-01' }] }) === 'milestones' && field({ expectedUpdatedAt: STAMP, milestones: Array.from({ length: 21 }, () => ({ description: 'x', targetDate: '2027-01-01' })) }) === 'milestones', 'E-M03 a bad list, an empty or multi-line description and 21 milestones are refused, naming milestones');
+  const secret = 'MILESTONE-SECRET-TEXT';
+  const refused = parseVmPoamPatch({ expectedUpdatedAt: STAMP, milestones: [{ description: secret + 'x'.repeat(500), targetDate: '2027-01-01' }] });
+  assert(!refused.ok && !JSON.stringify(refused).includes(secret), 'E-M04 a refusal never echoes the description');
+  const both = parseVmPoamPatch({ expectedUpdatedAt: STAMP, owner: 'a', milestones: [{ description: 'x', targetDate: '2027-01-01' }] });
+  assert(both.ok && both.patch.owner === 'a' && both.patch.milestones?.length === 1, 'E-M05 milestones can be sent together with the other fields', both);
+}
+
 console.log('\n--- Status transitions ---');
 const MIT = 'Patch the host';
 let table = 0;

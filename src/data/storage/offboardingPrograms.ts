@@ -10,6 +10,8 @@ import type { ControlState, EvidenceItem } from '../../types/cmmc';
 import type { EnclaveAsset } from '../../types/telemetry';
 import type { SspMetadataFields } from '../../types/sspMetadata';
 import type { SspProfile } from '../../types/sspProfile';
+import type { ControlPoamRecord } from '../../types/controlPoam';
+import { controlPoamMap } from '../reports/controlPoamView';
 import type { AssessmentObjective } from '../../types/assessment';
 import type { ObjectiveRecord } from '../../types/controlObjectives';
 import { computeSha256, canonicalJson } from '../audit/auditLogger';
@@ -31,6 +33,8 @@ export interface HandoverDeps {
   getObjectives?: (tenantId: string, programId: string) => Promise<ObjectiveRecord[]>;
   /** The program's SSP profile (identifier, categorization, roles, maintenance). A failure rejects the export: never a package that silently states none. */
   getSspProfile?: (tenantId: string, programId: string) => Promise<{ profile: SspProfile | null }>;
+  /** The program's recorded control POA&M fields (#304: dates, owners, resources, plans, milestones). A failure rejects the export: never a package that silently prints "Not recorded" for fields that exist. */
+  getControlPoam?: (tenantId: string, programId: string) => Promise<ControlPoamRecord[]>;
 }
 
 export interface EnclaveHandoverBundle {
@@ -83,6 +87,8 @@ export async function buildProgramHandover(
     const sspMetadata = deps.getSspMetadata ? (await deps.getSspMetadata(tenant.id, program.id)).metadata ?? undefined : undefined;
     // The program's SSP profile, or none while the server holds no row
     const sspProfile = deps.getSspProfile ? (await deps.getSspProfile(tenant.id, program.id)).profile ?? undefined : undefined;
+    // The program's recorded POA&M fields (#304). A failure rejects the handover (the error propagates): the package never silently loses them.
+    const controlPoam = deps.getControlPoam ? controlPoamMap(await deps.getControlPoam(tenant.id, program.id)) : undefined;
     // The program's objective narratives, once per program. Nothing in the failure is kept: the SSP then prints the control-level notes only.
     let objectives: Record<string, AssessmentObjective> | undefined;
     if (deps.getObjectives) {
@@ -99,7 +105,7 @@ export async function buildProgramHandover(
         objectives = undefined;
       }
     }
-    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single, sspMetadata, objectives, ...(sspProfile ? { sspProfile } : {}) }));
+    packages.push(await generateEnclaveHandoverPackage(tenant.id, tenant, programAssets, states, evidence, { program, download: single, sspMetadata, objectives, ...(sspProfile ? { sspProfile } : {}), ...(controlPoam ? { controlPoam } : {}) }));
   }
   if (single) return { packages, bundle: null };
 

@@ -11,6 +11,9 @@ import { PoamVulnerabilitiesSection } from '../src/components/reports/PoamVulner
 import type { ControlState } from '../src/types/cmmc';
 import type { VmPoamResponse, VmPoamRow, VmPoamStatus, VmSeverity } from '../src/types/vm';
 import type { PoamVulnerabilitiesSectionProps } from '../src/components/reports/PoamVulnerabilitiesSection';
+import type { PoamControlsSectionProps } from '../src/components/reports/PoamControlsSection';
+import { CONTROL_POAM_COPY } from '../src/data/reports/controlPoamForm';
+import type { ControlPoamLoad } from '../src/data/reports/controlPoamView';
 
 /**
  * #278 / #274 (WP-3): the POA&M screen's two sections rendered on the server (no browser), and source pins on the wiring.
@@ -213,13 +216,14 @@ console.log('--- S1-S4 source pins ---');
   assert(poamLine.includes('initialDocType="POAM" initialTab="poam" embedded'), 'S1 the POA&M entry opens on the table');
   assert(exportLine.length > 0 && !exportLine.includes('initialTab'), 'S1 Export Audit Package keeps opening on Live Preview');
   const modal = read('src/components/reports/ArtifactExportModal.tsx');
-  assert(modal.includes("(propInitialTab ?? 'preview')") && modal.includes('<PoamWorkspace') && modal.includes("key={activeProgram?.id ?? 'no-program'}") && modal.includes('{ vmPoam: vmPoamExport }'), 'S2 the modal wiring');
+  assert(modal.includes("(propInitialTab ?? 'preview')") && modal.includes('<PoamWorkspace') && modal.includes("key={activeProgram?.id ?? 'no-program'}") && modal.includes('{ vmPoam: vmPoamExport, controlPoam: controlPoamRecorded }') && modal.includes('useControlPoam({ enabled: isOpen && !isInventoryDoc })'), 'S2 the modal wiring (the vulnerability items and the recorded control POA&M fields, #304)');
   assert(!modal.includes('Zero Open Deficiencies') && !modal.includes('console.') && !modal.includes('localStorage'), 'S2 no old all-clear text, no console, no localStorage');
   const files = [
     'src/hooks/useVmPoam.ts', 'src/components/reports/PoamWorkspace.tsx', 'src/components/reports/PoamControlsSection.tsx',
     'src/components/reports/PoamVulnerabilitiesSection.tsx', 'src/components/reports/PoamGroupPanel.tsx',
     'src/data/reports/poamView.ts', 'src/data/reports/vmPoamView.ts',
     'src/components/reports/VmPoamItemDialog.tsx', 'src/components/reports/VmPoamStatusBadge.tsx', 'src/data/reports/vmPoamItemForm.ts',
+    'src/components/reports/ControlPoamDialog.tsx', 'src/components/reports/PoamMilestonesEditor.tsx', 'src/data/reports/controlPoamForm.ts', 'src/data/reports/poamMilestoneForm.ts',
   ];
   for (const f of files) {
     const src = read(f);
@@ -236,6 +240,36 @@ console.log('--- S1-S4 source pins ---');
   assert(modal.includes('onNavigateAway={embedded ? undefined : onClose}'), 'B4 the export modal closes itself before the Programs page opens');
   const dialog = read('src/components/reports/VmPoamItemDialog.tsx');
   assert(dialog.includes('z-[60]') && dialog.includes('onClose={saving ? undefined : requestClose}'), 'B4 the item dialog sits above the export modal and cannot be dismissed while saving');
+}
+
+console.log('--- C1-C4 control entries: Edit / View, notices, dialog pins (#304) ---');
+{
+  const iaId = l2.find((c) => c.domain === 'IA')!.id;
+  const oneEntry = entriesFor((c) => (c.id === iaId ? 'NOT_MET' : 'MET'));
+  const stubApi = { save: rejecting, loadEvents: rejecting, refreshRecord: rejecting } as unknown as NonNullable<PoamControlsSectionProps['controlPoam']>['api'];
+  const withPoam = (load: ControlPoamLoad, canEdit = true) => renderToStaticMarkup(React.createElement(PoamControlsSection, {
+    entries: oneEntry, framework: 'CMMC_L2', controls: l2, vmLoad: loading, canEdit,
+    controlPoam: { load, reload: () => Promise.resolve(true), applySaved: () => undefined, api: stubApi },
+  }));
+  const ready = withPoam({ status: 'ready', entries: [] });
+  assert(ready.includes('<span class="sr-only">Actions</span>') && ready.includes('aria-label="Edit POA&amp;M fields for control'), 'C1 a server-backed organization gets the Actions column and an Edit button named by the control');
+  assert(withPoam({ status: 'ready', entries: [] }, false).includes('aria-label="View POA&amp;M fields for control') && !withPoam({ status: 'ready', entries: [] }, false).includes('aria-label="Edit POA&amp;M'), 'C1 a read-only role gets View');
+  const browserOnly = withPoam({ status: 'unsupported' });
+  assert(browserOnly.includes(esc(CONTROL_POAM_COPY.browserOnly)) && browserOnly.includes('role="note"') && !browserOnly.includes('>Actions<'), 'C2 a browser-only organization gets the note and no editor');
+  const loadingHtml = withPoam({ status: 'loading' });
+  assert(loadingHtml.includes(esc(CONTROL_POAM_COPY.loading)) && /<button[^>]*disabled=""[^>]*aria-label="Edit POA&amp;M/.test(loadingHtml.replace(/\n/g, ' ')), 'C2 while loading the notice shows and the Edit buttons are disabled');
+  const errorHtml = withPoam({ status: 'error' });
+  assert(errorHtml.includes(esc(CONTROL_POAM_COPY.loadError).replace(/'/g, '&#x27;')) && errorHtml.includes('>Retry<'), 'C2 after an error the notice and Retry show');
+  assert(!controlsHtml(oneEntry, loading).includes('>Actions<') && !controlsHtml(oneEntry, loading).includes('Edit POA&amp;M'), 'C3 without the hook the section is read-only, as before');
+  const warned = renderToStaticMarkup(React.createElement(PoamControlsSection, {
+    entries: oneEntry.map((e) => ({ ...e, scheduledCompletionDate: '2001-01-01', milestones: [{ id: 'M1', description: 'x', targetDate: '2001-01-01', completed: true }, { id: 'M2', description: 'y', targetDate: '2001-01-01', completed: false }] })),
+    framework: 'CMMC_L2', controls: l2, vmLoad: loading,
+  }));
+  assert(warned.includes('Past target date') && warned.includes('1 of 2 milestones completed'), 'C3 a past date on an open entry and the milestone progress show in the row');
+  const sec = read('src/components/reports/PoamControlsSection.tsx');
+  assert(sec.includes('itemButtonRefs.current.set(entry.controlId') && sec.includes('key={entry.controlId}') && sec.includes('<ControlPoamDialog'), 'C4 the rows are keyed by control id (weakness ids shift), focus returns to the row button, and the dialog is wired');
+  const dlg = read('src/components/reports/ControlPoamDialog.tsx');
+  assert(dlg.includes('z-[60]') && dlg.includes('max-h-[90vh]') && !dlg.includes('dangerouslySetInnerHTML'), 'C4 the dialog sits above the export modal and uses no raw HTML');
 }
 
 console.log('\n================================================================');

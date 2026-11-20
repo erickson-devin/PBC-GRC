@@ -1,5 +1,7 @@
 import { VM_POAM_STATUSES } from '../types/vm';
 import type { VmFindingStatus, VmPoamItemPatch, VmPoamStatus } from '../types/vm';
+import { isValidPoamDate } from './poamDates';
+import { parseMilestonesInput } from './poamMilestones';
 
 /**
  * Editing a vulnerability POA&M item (#297): the request body of PATCH .../vm/poam/:itemId and the status rules, pure so the server, the
@@ -8,31 +10,19 @@ import type { VmFindingStatus, VmPoamItemPatch, VmPoamStatus } from '../types/vm
 
 export const VM_POAM_OWNER_MAX = 255;
 export const VM_POAM_MITIGATION_MAX = 4000;
-/** Fixed bounds (not clock-dependent) for a scheduled completion date. */
-export const VM_POAM_DATE_MIN = '2000-01-01';
-export const VM_POAM_DATE_MAX = '2099-12-31';
+/** Fixed bounds (not clock-dependent) for a scheduled completion date: defined in poamDates.ts, shared with the control POA&M edit. */
+export { VM_POAM_DATE_MIN, VM_POAM_DATE_MAX, isValidPoamDate } from './poamDates';
 
-const PATCH_KEYS = ['owner', 'mitigation', 'scheduledCompletion', 'status'] as const;
+const PATCH_KEYS = ['owner', 'mitigation', 'scheduledCompletion', 'status', 'milestones'] as const;
 const OWNER_CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 /** Every C0 control character and DEL except line feed and tab. */
 const MITIGATION_CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f]/;
-const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export type VmPoamPatchResult = { ok: true; patch: VmPoamItemPatch; expectedUpdatedAt: string } | { ok: false; field: string };
 
-/** True for a real calendar date in YYYY-MM-DD form between VM_POAM_DATE_MIN and VM_POAM_DATE_MAX. */
-export function isValidPoamDate(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const m = DATE_PATTERN.exec(value);
-  if (!m) return false;
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  if (d.getUTCFullYear() !== Number(m[1]) || d.getUTCMonth() !== Number(m[2]) - 1 || d.getUTCDate() !== Number(m[3])) return false;
-  return value >= VM_POAM_DATE_MIN && value <= VM_POAM_DATE_MAX;
-}
-
 /**
  * Reads the body of the edit request: `expectedUpdatedAt` (required, the item's updatedAt the editor loaded) and at least one of `owner`,
- * `mitigation`, `scheduledCompletion` (a date or null to clear) and `status`. Strings are trimmed; an empty owner or mitigation clears it.
+ * `mitigation`, `scheduledCompletion` (a date or null to clear), `status` and `milestones` (the whole list; poamMilestones.ts). Strings are trimmed; an empty owner or mitigation clears it.
  * On failure returns the name of the first offending field ('body' when the body is not an object or carries nothing to change).
  */
 export function parseVmPoamPatch(body: unknown): VmPoamPatchResult {
@@ -63,6 +53,11 @@ export function parseVmPoamPatch(body: unknown): VmPoamPatchResult {
   if ('status' in input) {
     if (typeof input.status !== 'string' || !(VM_POAM_STATUSES as readonly string[]).includes(input.status)) return { ok: false, field: 'status' };
     patch.status = input.status as VmPoamStatus;
+  }
+  if ('milestones' in input) {
+    const parsed = parseMilestonesInput(input.milestones);
+    if (!parsed.ok) return { ok: false, field: 'milestones' };
+    patch.milestones = parsed.milestones;
   }
   if (Object.keys(patch).length === 0) return { ok: false, field: 'body' };
   return { ok: true, patch, expectedUpdatedAt: expected };

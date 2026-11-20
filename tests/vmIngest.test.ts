@@ -1027,7 +1027,7 @@ async function run() {
   assert((await itemsOf(progOld.id, ac7Finding.id))[0].status === 'OPEN', 'AC5 the item in an archived program is frozen: untouched', (await itemsOf(progOld.id, ac7Finding.id))[0].status);
   assert(completedCountOf(ac5Close.lines, ac5CloseId) === '1', 'AC5 the worker line counts the completions of the other programs', ac5Close.lines.filter((l) => l.includes('NORMALIZED')));
   assert(memoryPoamEvents.filter((e) => e.runId === ac5CloseId).every((e) => e.programId === defaultA.id) && memoryPoamEvents.some((e) => e.runId === ac5CloseId), 'AC5 the event is recorded under the item\'s own program', memoryPoamEvents.filter((e) => e.runId === ac5CloseId).length);
-  assert(memoryPoamEvents.every((e) => Object.keys(e).sort().join() === ['actor', 'createdAt', 'id', 'itemId', 'mitigationChanged', 'newScheduledCompletion', 'newStatus', 'oldScheduledCompletion', 'oldStatus', 'ownerChanged', 'programId', 'runId', 'source', 'tenantId'].join()), 'AC events carry statuses, dates, flags and ids only (no owner, mitigation or weakness text)');
+  assert(memoryPoamEvents.every((e) => Object.keys(e).sort().join() === ['actor', 'createdAt', 'id', 'itemId', 'milestoneCount', 'milestonesChanged', 'milestonesCompleted', 'mitigationChanged', 'newScheduledCompletion', 'newStatus', 'oldScheduledCompletion', 'oldStatus', 'ownerChanged', 'programId', 'runId', 'source', 'tenantId'].join()), 'AC events carry statuses, dates, flags, counts and ids only (no owner, mitigation, milestone or weakness text)');
   assert((await call('PUT', `/tenants/${A}/programs/${defaultA.id}/vm-target`, ownerA, A)).status === 200, 'AC the VM target is restored to the default program');
   console.log('\n--- Rate limiting (unauthenticated ingest) ---');
   resetLimiters();

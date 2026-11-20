@@ -42,6 +42,7 @@ const { runVmSchedulerTick } = await import('../server/vm/scheduler');
 const { runVmSnapshot, latestSnapshotAt, loadSnapshotInput, __setVmSnapshotFaultForTests } = await import('../server/vm/snapshotWriter');
 const { StaleWriteError, writeControlAssessment, listControlAssessmentEvents, readControlAssessments } = await import('../server/controlAssessments');
 const { archiveProgram, createProgram, listPrograms, resolveVmTargetProgram, setVmTargetProgram } = await import('../server/programs');
+const { PoamMilestoneError } = await import('../src/data/poamMilestones');
 const { VM_NOTES_BEGIN, computeSnapshot, getVmSnapshotConfig } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
@@ -918,6 +919,78 @@ async function main() {
     await reprocessRun(poam5b);
     const after5 = (await itemRowsOf(scope, finding5))[0];
     check(after5.status === 'OPEN' && new Date(after5.updated_at).toISOString() === reopened!.item.updatedAt, 'the next worker run leaves the reopened item OPEN and untouched', JSON.stringify(after5));
+
+    console.log('\n--- 27. Stable item numbers (#305) and milestones (#304) ---');
+    const numberRows = async (s: { tenantId: string; programId: string }) =>
+      (await queryWithProgram(s, 'SELECT id, item_number FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2', [s.tenantId, s.programId])).rows;
+    const numberOf = async (s: { tenantId: string; programId: string }, vulnId: string): Promise<number | null> =>
+      ((await queryWithProgram(s, 'SELECT item_number FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2 AND finding_id = $3', [s.tenantId, s.programId, await findingIdOf(vulnId)])).rows[0]?.item_number ?? null) as number | null;
+    // 27a: every item the worker created in the target program carries a number, and no two share one
+    const rows27 = await numberRows(scope);
+    const numbers27 = rows27.map((r) => r.item_number as number | null);
+    check(rows27.length >= 2 && numbers27.every((n) => typeof n === 'number' && n > 0) && new Set(numbers27).size === numbers27.length, 'every item of the target program has a positive number and no number repeats', JSON.stringify(numbers27));
+    const maxBefore27 = Math.max(...(numbers27 as number[]));
+
+    // 27b: two new items; a later scan that confirms the first one fixed completes it; the second keeps its number and the next new item never reuses one
+    await processRun(await writeFindingsRun('vm_verify_num', '2099-06-11T00:00:00Z', [
+      { agent: 'vmv-num1', name: 'vm-verify-num1', findings: [{ vuln_id: 'CVE-2099-0201', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+      { agent: 'vmv-num2', name: 'vm-verify-num2', findings: [{ vuln_id: 'CVE-2099-0202', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]));
+    const numA = await numberOf(scope, 'CVE-2099-0201');
+    const numB = await numberOf(scope, 'CVE-2099-0202');
+    check(typeof numA === 'number' && typeof numB === 'number' && numA !== numB && numA > maxBefore27 && numB > maxBefore27, 'two new items get two new numbers above the largest one of the program', JSON.stringify([maxBefore27, numA, numB]));
+    // the first empty report of host 1 is held (#303), the second consecutive one confirms the fix; host 2 keeps reporting its finding
+    await processRun(await writeFindingsRun('vm_verify_num', '2099-06-11T12:00:00Z', [
+      { agent: 'vmv-num1', name: 'vm-verify-num1', findings: [] },
+      { agent: 'vmv-num2', name: 'vm-verify-num2', findings: [{ vuln_id: 'CVE-2099-0202', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]));
+    check((await itemRowsOf(scope, await findingIdOf('CVE-2099-0201')))[0]?.status === 'OPEN', 'one empty report leaves the first item OPEN (held)');
+    await processRun(await writeFindingsRun('vm_verify_num', '2099-06-12T00:00:00Z', [
+      { agent: 'vmv-num1', name: 'vm-verify-num1', findings: [] },
+      { agent: 'vmv-num2', name: 'vm-verify-num2', findings: [{ vuln_id: 'CVE-2099-0202', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]));
+    check((await itemRowsOf(scope, await findingIdOf('CVE-2099-0201')))[0]?.status === 'COMPLETED' && (await itemRowsOf(scope, await findingIdOf('CVE-2099-0202')))[0]?.status === 'OPEN', 'the second consecutive empty report completes the first item; the second stays OPEN');
+    check((await numberOf(scope, 'CVE-2099-0201')) === numA && (await numberOf(scope, 'CVE-2099-0202')) === numB, 'completing the first item left both numbers as they were');
+    await processRun(await writeFindingsRun('vm_verify_num', '2099-06-13T00:00:00Z', [
+      { agent: 'vmv-num2', name: 'vm-verify-num2', findings: [{ vuln_id: 'CVE-2099-0202', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+      { agent: 'vmv-num3', name: 'vm-verify-num3', findings: [{ vuln_id: 'CVE-2099-0203', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]));
+    const numC = await numberOf(scope, 'CVE-2099-0203');
+    check(typeof numC === 'number' && numC > Math.max(numA as number, numB as number), 'the next new item is numbered after the largest, never reusing the completed item\'s number', JSON.stringify([numA, numB, numC]));
+
+    // 27c: another program numbers on its own, and a repeated number in one program is refused by the unique index
+    const numbersOther = (await numberRows(scope2)).map((r) => r.item_number as number | null);
+    check(numbersOther.every((n) => typeof n === 'number' && n > 0) && new Set(numbersOther).size === numbersOther.length, 'the second program\'s items are numbered on their own, positive and distinct', JSON.stringify(numbersOther));
+    let duplicate = 'no error';
+    try {
+      await queryWithProgram(scope, "INSERT INTO vm_poam_items (tenant_id, program_id, control_id, weakness, item_number) VALUES ($1, $2, 'RA.L2-3.11.3', 'vm-verify duplicate number', $3)", [scope.tenantId, scope.programId, numB as number]);
+    } catch (err) {
+      duplicate = String((err as { code?: string; constraint?: string }).code) + ' ' + String((err as { constraint?: string }).constraint);
+    }
+    check(duplicate === '23505 unq_vm_poam_items_number', 'a second item with the same number in the program is refused (23505, unq_vm_poam_items_number)', duplicate);
+    let nullNumber = 'no error';
+    try {
+      const older = await queryWithProgram(scope, "INSERT INTO vm_poam_items (tenant_id, program_id, control_id, weakness) VALUES ($1, $2, 'RA.L2-3.11.3', 'vm-verify older image row') RETURNING item_number", [scope.tenantId, scope.programId]);
+      nullNumber = String(older.rows[0]?.item_number);
+    } catch (err) {
+      nullNumber = 'error ' + String((err as { code?: string }).code);
+    }
+    check(nullNumber === 'null', 'an insert that names no item number (an older image) is accepted and stays unnumbered (NULL)', nullNumber);
+    await queryWithProgram(scope, "DELETE FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2 AND weakness = 'vm-verify older image row'", [scope.tenantId, scope.programId]);
+
+    // 27d: milestones on an item: stored as a list, the history records the count and a digest only
+    const itemB = (await itemRowsOf(scope, await findingIdOf('CVE-2099-0202')))[0];
+    const stampB = new Date(itemB.updated_at).toISOString();
+    const editorB = { actor: 'vm_verify editor', userId: 'vm_verify_user' };
+    const withMs = await updateVmPoamItem(scope, itemB.id as string, { milestones: [{ description: 'vm-verify milestone one', targetDate: '2099-11-01' }, { description: 'vm-verify milestone two', targetDate: '2099-11-15', completed: true }] }, stampB, editorB);
+    check(withMs?.changed === true && withMs.item.milestones.length === 2 && withMs.item.milestones[1].completed === true && withMs.item.itemNumber === numB, 'a milestone edit stores two milestones with ids and keeps the item number', JSON.stringify(withMs?.item.milestones));
+    const msEvent = (await queryWithProgram(scope, 'SELECT milestones_changed, new_milestone_count, new_milestones_completed, new_milestones_sha256, owner_changed FROM vm_poam_item_events WHERE tenant_id = $1 AND item_id = $2 AND milestones_changed ORDER BY created_at DESC', [TENANT_X, itemB.id])).rows;
+    check(msEvent.length === 1 && msEvent[0].new_milestone_count === 2 && msEvent[0].new_milestones_completed === 1 && /^[0-9a-f]{64}$/.test(String(msEvent[0].new_milestones_sha256)) && msEvent[0].owner_changed === false, 'one history event records the milestone count, the completed count and a digest', JSON.stringify(msEvent));
+    const msNoText = (await queryWithProgram(scope, 'SELECT row_to_json(e)::text AS t FROM vm_poam_item_events e WHERE tenant_id = $1 AND item_id = $2', [TENANT_X, itemB.id])).rows.every((r) => !String(r.t).includes('vm-verify milestone'));
+    check(msNoText, 'no event row holds a milestone description');
+    let badMs = '';
+    try { await updateVmPoamItem(scope, itemB.id as string, { milestones: [{ id: 'ms-000000000000', description: 'x', targetDate: '2099-11-01' }] }, withMs!.item.updatedAt, editorB); } catch (err) { badMs = err instanceof PoamMilestoneError ? err.code : 'other'; }
+    check(badMs === 'invalid_milestones', 'a milestone id the item does not hold is refused', badMs);
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
