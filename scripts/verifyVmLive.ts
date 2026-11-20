@@ -30,10 +30,11 @@ const crypto = await import('crypto');
 const fs = await import('fs');
 const path = await import('path');
 const { pool, initDb, queryWithTenant, queryWithProgram, checkDatabaseConnection } = await import('../server/db');
-const { createVmToken, listVmTokens, revokeVmToken, lookupVmTokenByHash, sha256Hex, VmTokenError, VM_TOKEN_PATTERN, MAX_ACTIVE_TOKENS_PER_TENANT } =
+const { createVmToken, listVmTokens, revokeVmToken, revokeVmTokenOutcome, lookupVmTokenByHash, sha256Hex, VmTokenError, VM_TOKEN_PATTERN, MAX_ACTIVE_TOKENS_PER_TENANT } =
   await import('../server/vm/tokens');
 const { recordReceivedRun, findRunBySha, getRun, listRuns, listSources, resetRunForReprocess, updateRun, enumerateSchedulerSources, VmStoreError } = await import('../server/vm/store');
 const { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, loadSnapshotFindings, loadVmPoamView, updateVmPoamItem, withVmTenantTx } = await import('../server/vm/findingsStore');
+const { summarizeConfigScansByAsset } = await import('../server/vm/configStore');
 const { createAgentReportedAsset } = await import('../server/assets');
 const { replaceHostInventory, aggregateObservedSoftware, listObservedHostsForAssets } = await import('../server/vm/inventoryStore');
 const { enqueueVmRun, __drainVmWorkerForTests, __setVmWorkerFaultForTests } = await import('../server/vm/worker');
@@ -137,10 +138,13 @@ async function main() {
     check(isTokenError(overLimit, 'limit'), 'one more token is refused with VmTokenError "limit"', describe(overLimit));
 
     const victim = extra[0];
-    const revoked = await revokeVmToken(TENANT_X, victim.id);
+    const revokedOutcome = await revokeVmTokenOutcome(TENANT_X, victim.id);
+    const revoked = revokedOutcome.token;
     check(Boolean(revoked.revokedAt), 'revokeVmToken sets revokedAt', JSON.stringify(revoked));
-    const revokedAgain = await revokeVmToken(TENANT_X, victim.id);
+    const revokedAgainOutcome = await revokeVmTokenOutcome(TENANT_X, victim.id);
+    const revokedAgain = revokedAgainOutcome.token;
     check(revokedAgain.revokedAt === revoked.revokedAt, 'a second revoke is idempotent (same revokedAt)', `${revoked.revokedAt} vs ${revokedAgain.revokedAt}`);
+    check(revokedOutcome.changed === true && revokedAgainOutcome.changed === false, 'revokeVmTokenOutcome reports changed on the first revoke and not on the second', `${revokedOutcome.changed} then ${revokedAgainOutcome.changed}`);
     const afterRevoke = await thrown(() => createVmToken(TENANT_X, { name: 'vm_verify_token_again', scopes: ['vm:ingest'], createdBy: 'vm_verify', createdByUserId: null }));
     check(afterRevoke === null, 'after a revoke a new token can be created again', describe(afterRevoke));
     const crossRevoke = await thrown(() => revokeVmToken(TENANT_Y, record.id));
@@ -582,6 +586,18 @@ async function main() {
     check((await scansOfRun(scapRun2)) === 0 && (await resultsOfRun(scapRun2)) === 0, 'no scan or result of the failed run survived (the transaction rolled back)');
     check((await count("SELECT count(*)::int AS n FROM enclave_assets WHERE tenant_id = $1 AND asset_name = 'vm-verify-cfg-2'", [TENANT_X])) === 0, 'the asset created by the failed run was rolled back too');
     check((await scansOfRun(scapRun1)) === 1, 'the earlier run keeps its scan');
+
+    // The per-asset summary (#215) runs the DISTINCT ON / jsonb SQL: the fixture is one pass, one fail and one notapplicable rule.
+    const cfgScanAsset = await queryWithTenant(TENANT_X, 'SELECT asset_id FROM vm_config_scans WHERE tenant_id = $1 AND run_id = $2', [TENANT_X, scapRun1]);
+    const cfgAssetId = String(cfgScanAsset.rows[0]?.asset_id ?? '');
+    const cfgSummary = cfgAssetId ? await summarizeConfigScansByAsset(TENANT_X, { assetId: cfgAssetId }) : [];
+    check(
+      cfgSummary.length === 1 && cfgSummary[0].assetId === cfgAssetId && cfgSummary[0].scans === 1 && cfgSummary[0].pass === 1 && cfgSummary[0].fail === 1 &&
+        cfgSummary[0].error === 0 && cfgSummary[0].other === 1 && cfgSummary[0].score === 50 && cfgSummary[0].lastScannedAt === '2099-04-01T00:00:00.000Z',
+      'summarizeConfigScansByAsset returns one row with pass 1, fail 1, error 0, other 1, score 50 and the scan time',
+      JSON.stringify(cfgSummary)
+    );
+    check((await summarizeConfigScansByAsset(TENANT_Y, { assetId: cfgAssetId })).length === 0, "tenant Y's summaries do not include tenant X's asset");
 
     console.log('\n--- 21. Affected packages (#267) ---');
     const pkgOf = async () => (await listFindings(TENANT_X, { limit: 100 })).filter((x) => x.vulnId === 'CVE-2099-0005');

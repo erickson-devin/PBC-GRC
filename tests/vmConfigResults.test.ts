@@ -6,7 +6,8 @@ import { CONFIG_RULE_MAPPINGS, controlsForRule, mapConfigRule, normalizeRuleId }
 import { validateIngestPayload } from '../server/vm/ingestSchema';
 import { emptyResultCounts, normalizeConfiguration } from '../server/vm/adapters/config';
 import { computeConfigSuggestions, selectLatestScans, type SuggestionAsset, type SuggestionResultRow } from '../server/vm/configSuggestions';
-import { __resetVmConfigForTests, getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults, replaceRunConfigScans } from '../server/vm/configStore';
+import { __resetVmConfigForTests, getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults, replaceRunConfigScans, summarizeConfigScansByAsset } from '../server/vm/configStore';
+import { configScore, groupConfigResultCounts } from '../src/data/telemetry/configScore';
 import { VM_CONFIG_RESULTS } from '../src/types/vm';
 import type { VmConfigResult, VmConfigScan } from '../src/types/vm';
 
@@ -205,6 +206,26 @@ async function main() {
   const loaded = await loadLatestConfigResults('t1', ['A']);
   assert(loaded.scans.length === 1 && loaded.results.length === 5, 'loadLatestConfigResults loads the newest scans of the given assets only', [loaded.scans.length, loaded.results.length]);
   assert((await loadLatestConfigResults('t1', [])).scans.length === 0, 'no assets, nothing loaded');
+  // Per-asset summaries (#215): the latest scan per (asset, source, benchmark, profile), summed, scored in TypeScript.
+  const g = groupConfigResultCounts(scans[0].counts);
+  const m1 = await summarizeConfigScansByAsset('t1');
+  assert(
+    m1.map((r) => r.assetId).join() === 'A,B' && m1.every((r) => r.scans === 1 && r.pass === g.pass && r.fail === g.fail && r.error === g.error && r.other === g.other && r.score === configScore(g.pass, g.fail, g.error)) &&
+      m1[0].lastScannedAt === scans[0].scannedAt,
+    'M1: one row per scanned asset in asset id order; a repeat of the same (asset, source, benchmark, profile) is not double counted',
+    m1
+  );
+  await replaceRunConfigScans('t1', { ...run, id: 'run-3' }, [{ assetId: 'A', scan: { ...scans[0], benchmarkId: 'bench-b' } }], null);
+  const m2 = await summarizeConfigScansByAsset('t1');
+  assert(
+    m2.length === 2 && m2[0].assetId === 'A' && m2[0].scans === 2 && m2[0].pass === g.pass * 2 && m2[0].fail === g.fail * 2 && m2[0].other === g.other * 2 && m2[0].score === configScore(g.pass * 2, g.fail * 2, g.error * 2) &&
+      m2[1].assetId === 'B' && m2[1].scans === 1,
+    'M2: another benchmark for the same asset adds its counts',
+    m2
+  );
+  const m3 = await summarizeConfigScansByAsset('t1', { assetId: 'B' });
+  assert(m3.length === 1 && m3[0].assetId === 'B' && (await summarizeConfigScansByAsset('t1', { assetId: 'nope' })).length === 0, 'M3: the asset filter returns exactly that asset');
+  assert((await summarizeConfigScansByAsset('t2')).length === 0, 'M3: summaries are tenant scoped');
   await replaceRunConfigScans('t1', run, [], null);
   assert((await listConfigScans('t1', { assetId: 'B', latestOnly: false, limit: 100 })).totalCount === 0, 'reprocessing a run that now has no scans removes its old ones');
   __resetVmConfigForTests();

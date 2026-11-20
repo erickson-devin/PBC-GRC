@@ -9,6 +9,7 @@ import {
   FileEdit,
   ChevronRight,
   Terminal,
+  ListChecks,
 } from 'lucide-react';
 import { ControlStatus, DomainInfo } from '../../types/cmmc';
 import { FrameworkControlDefinition, FrameworkDomainInfo } from '../../types/framework';
@@ -21,12 +22,22 @@ import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 import { hasSspStatement } from '../../data/cmmcGuide/sspStatementView';
 import { statusDisplayLabel } from '../../data/statusLabels';
+import { cardSuggestionText, type CardSuggestionValue } from '../../data/telemetry/configResultsView';
+
+/** A configuration-scan suggestion is dashed, as on the Configuration Results screen: never mistaken for a recorded status. */
+export const CONFIG_SUGGESTION_CLASS: Record<CardSuggestionValue, string> = {
+  NOT_MET: 'border-dashed border-rose-500/50 bg-rose-950/30 text-rose-300',
+  MET: 'border-dashed border-emerald-500/50 bg-emerald-950/30 text-emerald-300',
+};
+
 interface ControlCardProps {
   control: FrameworkControlDefinition;
   domainInfo: DomainInfo | FrameworkDomainInfo | any;
   onOpenDetailModal?: () => void;
   /** Set when the control is recorded as Met while its objectives do not add up to Met (#292): how many objectives are open. */
   metMismatch?: { open: number; total: number } | null;
+  /** What the latest configuration scans suggest when it differs from the recorded status (#205). Text only: the card never applies it. */
+  configSuggestion?: CardSuggestionValue | null;
 }
 
 export const ControlCard: React.FC<ControlCardProps> = ({
@@ -34,6 +45,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
   domainInfo,
   onOpenDetailModal,
   metMismatch,
+  configSuggestion,
 }) => {
   const {
     state,
@@ -152,6 +164,12 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
                 <AlertTriangle className="w-3 h-3" aria-hidden="true" />
                 {metMismatch.open} of {metMismatch.total} objectives open
+              </span>
+            )}
+            {configSuggestion && (
+              <span data-testid="card-config-suggestion" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${CONFIG_SUGGESTION_CLASS[configSuggestion]}`}>
+                <ListChecks className="w-3 h-3 shrink-0" aria-hidden="true" />
+                <span>{cardSuggestionText(configSuggestion)}</span>
               </span>
             )}
 

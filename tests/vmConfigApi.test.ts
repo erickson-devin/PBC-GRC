@@ -173,6 +173,15 @@ async function run() {
   assert(scans1?.totalCount === 1 && scan1?.resultCounts?.pass === 1 && scan1.resultCounts.fail === 1 && scan1.resultCounts.notapplicable === 1, 'A2 GET config/scans: one scan with pass 1, fail 1, notapplicable 1', scans1);
   assert(Boolean(scan1) && !('rawPath' in scan1) && !JSON.stringify(scans1).includes('rawPath') && scan1.runId === runId, 'A2 the scan carries no raw path and names its run');
 
+  const sums1 = (await call('GET', `/tenants/${T1}/vm/config/asset-summaries`, admin, T1)).body as Json;
+  const sum1 = (sums1?.summaries ?? [])[0] as Json;
+  assert(
+    sums1?.totalCount === 1 && Boolean(sum1) && sum1.assetId === scan1?.assetId && sum1.scans === 1 && sum1.pass === 1 && sum1.fail === 1 && sum1.error === 0 && sum1.other === 1 && sum1.score === 50 && sum1.lastScannedAt === scan1?.scannedAt,
+    'A2b GET config/asset-summaries: one asset with scans 1, pass 1, fail 1, error 0, other 1, score 50 and the scan time',
+    [sums1, scan1?.assetId, scan1?.scannedAt],
+  );
+  assert(!JSON.stringify(sums1).includes(CFG_HOST) && !JSON.stringify(sums1).includes(CFG_IP), 'A2c the summaries carry neither the host name nor the address');
+
   const res1 = (await call('GET', `/tenants/${T1}/vm/config/scans/${scan1?.id}/results`, admin, T1)).body as Json;
   const rows1 = (res1?.results ?? []) as Json[];
   const rowOf = (id: string) => rows1.find((r) => r.ruleId === id);
@@ -216,11 +225,16 @@ async function run() {
   console.log('\n--- A8-A9: access and validation ---');
   assert((await call('GET', `/tenants/${T1}/vm/config/scans`, viewer, T1)).status === 200, 'A8 a VIEWER can read the scans');
   assert((await call('GET', `/tenants/${T1}/vm/config/suggestions`, viewer, T1)).status === 200, 'A8 a VIEWER can read the suggestions');
+  assert((await call('GET', `/tenants/${T1}/vm/config/asset-summaries`, viewer, T1)).status === 200, 'A8b a VIEWER can read the asset summaries');
+  assert((await call('GET', `/tenants/${T1}/vm/config/asset-summaries`, owner2, T1)).status === 403, 'A8b a non-member is refused the asset summaries (403)');
+  assert((await call('GET', `/tenants/${T1}/vm/config/asset-summaries`, null, T1)).status === 401, 'A8b no session => 401 on the asset summaries');
+  assert(((await call('GET', `/tenants/${T2}/vm/config/asset-summaries`, owner2, T2)).body?.totalCount) === 0, "A8b another tenant sees none of T1's summaries");
   assert((await call('GET', `/tenants/${T1}/vm/config/scans`, owner2, T1)).status === 403, 'A8 a non-member is refused (403)');
   assert((await call('GET', `/tenants/${T1}/vm/config/scans`, null, T1)).status === 401, 'no session => 401');
   assert((await call('GET', `/tenants/${T2}/vm/config/scans/${scan1.id}/results`, owner2, T2)).status === 404, "another tenant's scan id -> 404");
   assert(((await scansOf(T2, owner2))?.totalCount) === 0, "another tenant sees none of T1's scans");
   assert((await call('GET', `/tenants/${T1}/vm/config/scans?assetId=a%20b`, admin, T1)).status === 400, 'A9 assetId "a b" -> 400');
+  assert((await call('GET', `/tenants/${T1}/vm/config/asset-summaries?assetId=a%20b`, admin, T1)).status === 400, 'A9b asset-summaries assetId "a b" -> 400');
   assert((await call('GET', `/tenants/${T1}/vm/config/scans?limit=0`, admin, T1)).status === 400, 'A9 limit=0 -> 400');
   assert((await call('GET', `/tenants/${T1}/vm/config/scans?limit=501`, admin, T1)).status === 400, 'A9 limit=501 -> 400');
   assert((await call('GET', `/tenants/${T1}/vm/config/scans?latest=maybe`, admin, T1)).status === 400, 'A9 latest=maybe -> 400');

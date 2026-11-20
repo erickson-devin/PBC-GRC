@@ -6,7 +6,7 @@ import { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, load
 import { StaleWriteError } from '../controlAssessments';
 import { parseVmPoamPatch } from '../../src/data/vmPoamEdit';
 import { VM_POAM_CONTROL_ID, getVmSlaConfig, isPoamAutocreateEnabled } from '../vm/transitions';
-import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults } from '../vm/configStore';
+import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults, summarizeConfigScansByAsset } from '../vm/configStore';
 import { computeConfigSuggestions } from '../vm/configSuggestions';
 import { aggregateObservedSoftware, getObservedHosts, listObservedHostsForAssets, listObservedSoftware } from '../vm/inventoryStore';
 import { getAsset, listAssets } from '../assets';
@@ -582,6 +582,25 @@ router.get('/config/scans', async (req: Request, res: Response): Promise<void> =
     res.json({ tenantId: req.tenantId, totalCount, scans });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the configuration scans');
+  }
+});
+
+/**
+ * GET .../vm/config/asset-summaries?assetId=: one row per asset with the result counts of its newest scans and a score (issue #215).
+ * Open to every role and tenant-wide, like /config/scans. Ids and counts only: never a host name or address.
+ */
+router.get('/config/asset-summaries', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const { assetId } = req.query;
+  if (assetId !== undefined && (typeof assetId !== 'string' || !TOKEN_ID_PATTERN.test(assetId))) {
+    res.status(400).json({ error: 'Invalid assetId' });
+    return;
+  }
+  try {
+    const summaries = await summarizeConfigScansByAsset(req.tenantId!, { assetId: assetId as string | undefined });
+    res.json({ tenantId: req.tenantId, totalCount: summaries.length, summaries });
+  } catch (err: unknown) {
+    sendError(res, err, 'Failed to summarise the configuration scans');
   }
 });
 

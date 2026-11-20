@@ -65,8 +65,6 @@ export interface AssetFields extends FipsFields {
   sourceOrigin: AssetSourceOrigin;
   discoveryStatus: AssetDiscoveryStatus;
   accretionMetadata: AccretionMetadata | null;
-  lastScannedAt: string | null;
-  complianceScore: number | null;
 }
 
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -174,18 +172,7 @@ export function validateAssetInput(body: unknown, partial: boolean): Validation<
   if (!discovery.ok) return discovery;
   if (discovery.value) out.discoveryStatus = discovery.value;
 
-  if (body.complianceScore !== undefined) {
-    const s = body.complianceScore;
-    if (s === null) out.complianceScore = null;
-    else if (typeof s === 'number' && Number.isInteger(s) && s >= 0 && s <= 100) out.complianceScore = s;
-    else return { ok: false, error: 'Compliance score must be a whole number from 0 to 100, or null' };
-  }
-  if (body.lastScannedAt !== undefined) {
-    const t = body.lastScannedAt;
-    if (t === null) out.lastScannedAt = null;
-    else if (typeof t === 'string' && !Number.isNaN(Date.parse(t))) out.lastScannedAt = new Date(t).toISOString();
-    else return { ok: false, error: 'Last scanned time must be an ISO date or null' };
-  }
+  // complianceScore / lastScannedAt are retired (#216): a request that still carries them is accepted and they are ignored.
   if (body.accretionMetadata !== undefined) {
     const m = body.accretionMetadata;
     if (m === null) out.accretionMetadata = null;
@@ -263,8 +250,6 @@ const withDefaults = (f: Partial<AssetFields>): AssetFields => ({
   sourceOrigin: f.sourceOrigin ?? 'MANUAL_ENTRY',
   discoveryStatus: f.discoveryStatus ?? 'ACTIVE',
   accretionMetadata: f.accretionMetadata ?? null,
-  lastScannedAt: f.lastScannedAt ?? null,
-  complianceScore: f.complianceScore ?? null,
   fipsValidationStatus: f.fipsValidationStatus ?? null,
   fipsCertificateNumber: f.fipsCertificateNumber ?? null,
   fipsModuleName: f.fipsModuleName ?? null,
@@ -300,8 +285,8 @@ const toRecord = (m: MemoryAsset): AssetRecord => ({
   sourceOrigin: m.sourceOrigin,
   discoveryStatus: m.discoveryStatus,
   ...(m.accretionMetadata ? { accretionMetadata: m.accretionMetadata } : {}),
-  lastScannedAt: m.lastScannedAt,
-  complianceScore: m.complianceScore,
+  lastScannedAt: null, // retired (#216): never stored, always null
+  complianceScore: null,
   notes: m.notes,
   owner: m.owner,
   manufacturer: m.manufacturer,
@@ -341,8 +326,6 @@ function rowToRecord(row: pg.QueryResultRow): AssetRecord {
     sourceOrigin: row.source_origin,
     discoveryStatus: row.discovery_status,
     accretionMetadata: row.accretion_metadata ?? null,
-    lastScannedAt: iso(row.last_scanned_at),
-    complianceScore: row.compliance_score ?? null,
     createdBy: row.created_by ?? '',
     createdAt: iso(row.created_at) as string,
     updatedBy: row.updated_by ?? '',
@@ -381,15 +364,15 @@ const duplicate = (name: string): AssetError => new AssetError('duplicate', `An 
 
 const INSERT_SQL = `INSERT INTO enclave_assets
   (tenant_id, asset_name, description, cmmc_category, owner, ip_address, mac_address, os_profile, status, source_origin,
-   discovery_status, accretion_metadata, last_scanned_at, compliance_score, created_by, updated_by,
+   discovery_status, accretion_metadata, created_by, updated_by,
    fips_validation_status, fips_certificate_number, fips_module_name, fips_standard,
    manufacturer, model, serial_number, location)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING *`;
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`;
 
 const insertParams = (tenantId: string, f: AssetFields, actor: string): unknown[] => [
   tenantId, f.hostName, f.notes, f.cmmcAssetCategory, f.owner, f.ipAddress, f.macAddress, f.osProfile, f.status,
   f.sourceOrigin, f.discoveryStatus, f.accretionMetadata ? JSON.stringify(f.accretionMetadata) : null,
-  f.lastScannedAt, f.complianceScore, actor, f.fipsValidationStatus, f.fipsCertificateNumber, f.fipsModuleName, f.fipsStandard,
+  actor, f.fipsValidationStatus, f.fipsCertificateNumber, f.fipsModuleName, f.fipsStandard,
   f.manufacturer, f.model, f.serialNumber, f.location,
 ];
 
@@ -460,8 +443,8 @@ export async function updateAsset(tenantId: string, id: string, patch: Partial<A
   const columns: Record<Exclude<keyof AssetFields, never>, string> = {
     hostName: 'asset_name', notes: 'description', cmmcAssetCategory: 'cmmc_category', owner: 'owner', ipAddress: 'ip_address',
     macAddress: 'mac_address', osProfile: 'os_profile', status: 'status', sourceOrigin: 'source_origin',
-    discoveryStatus: 'discovery_status', accretionMetadata: 'accretion_metadata', lastScannedAt: 'last_scanned_at',
-    complianceScore: 'compliance_score', fipsValidationStatus: 'fips_validation_status', fipsCertificateNumber: 'fips_certificate_number',
+    discoveryStatus: 'discovery_status', accretionMetadata: 'accretion_metadata',
+    fipsValidationStatus: 'fips_validation_status', fipsCertificateNumber: 'fips_certificate_number',
     fipsModuleName: 'fips_module_name', fipsStandard: 'fips_standard', manufacturer: 'manufacturer', model: 'model',
     serialNumber: 'serial_number', location: 'location',
   };

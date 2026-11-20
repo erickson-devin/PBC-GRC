@@ -36,8 +36,8 @@ import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, summarizeScope } from '../../data
 import { describeFipsModule } from '../../data/telemetry/fipsValidation';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { ApiClient } from '../../services/apiClient';
-import type { VmConfigScan } from '../../types/vm';
-import { INVENTORY_COPY, assetConfigSummary, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption, latestScansByAsset, shownCaption } from '../../data/telemetry/configResultsView';
+import type { VmAssetConfigSummary } from '../../types/vm';
+import { INVENTORY_COPY, assetConfigSummaryOf, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption } from '../../data/telemetry/configResultsView';
 import type { InventoryScanStatus } from '../../data/telemetry/configResultsView';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -101,17 +101,17 @@ export const AssetInventoryManager: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Latest configuration scans (#206): one tenant-wide request, grouped by asset. Server-backed organizations only (the server receives the scans).
-  const [scanState, setScanState] = useState<{ status: InventoryScanStatus; byAsset: Map<string, VmConfigScan[]>; shown: number; total: number }>({ status: 'idle', byAsset: new Map(), shown: 0, total: 0 });
+  // Latest configuration scans (#206, #215): one tenant-wide request for the server's per-asset summaries. Server-backed organizations only (the server receives the scans).
+  const [scanState, setScanState] = useState<{ status: InventoryScanStatus; byAsset: Map<string, VmAssetConfigSummary> }>({ status: 'idle', byAsset: new Map() });
   const scanTenantRef = useRef(tenantId);
   const loadScans = useCallback(async (): Promise<void> => {
     if (!serverBacked) return;
     const at = tenantId;
     setScanState((st) => ({ ...st, status: 'loading' }));
     try {
-      const r = await ApiClient.listConfigScans(tenantId, { latest: true, limit: 500 });
+      const r = await ApiClient.listConfigAssetSummaries(tenantId);
       if (scanTenantRef.current !== at) return;
-      setScanState({ status: 'ready', byAsset: latestScansByAsset(r.scans), shown: r.scans.length, total: r.totalCount });
+      setScanState({ status: 'ready', byAsset: new Map(r.summaries.map((s) => [s.assetId, s])) });
     } catch {
       if (scanTenantRef.current !== at) return;
       setScanState((st) => ({ ...st, status: 'error' }));
@@ -119,11 +119,10 @@ export const AssetInventoryManager: React.FC = () => {
   }, [tenantId, serverBacked]);
   useEffect(() => {
     scanTenantRef.current = tenantId;
-    setScanState({ status: 'idle', byAsset: new Map(), shown: 0, total: 0 });
+    setScanState({ status: 'idle', byAsset: new Map() });
     setScannerAsset(null);
     void loadScans();
   }, [tenantId, serverBacked, loadScans]);
-  const truncated = scanState.status === 'ready' && scanState.total > scanState.shown;
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -282,7 +281,7 @@ export const AssetInventoryManager: React.FC = () => {
   );
   const cardSummary = useMemo(() => (cardAssets === assets ? summary : summarizeScope(cardAssets)), [cardAssets, assets, summary]);
   const totalCount = cardSummary.total;
-  const cardScores = cardAssets.map((a) => assetConfigSummary(scanState.byAsset.get(a.id)).score);
+  const cardScores = cardAssets.map((a) => assetConfigSummaryOf(scanState.byAsset.get(a.id)).score);
   const scoredCount = cardScores.filter((sc) => sc !== null).length;
   const avgScore = averageScore(cardScores); // nothing scanned yet: there is no average to show (never a flattering 100%)
 
@@ -710,9 +709,9 @@ export const AssetInventoryManager: React.FC = () => {
               </tr>
             ) : (
               filteredAssets.map(asset => {
-                const cfg = assetConfigSummary(scanState.byAsset.get(asset.id));
+                const cfg = assetConfigSummaryOf(scanState.byAsset.get(asset.id));
                 const hw = hardwareSummary(asset);
-                const view = assetScanView({ serverBacked, status: scanState.status, truncated, summary: cfg });
+                const view = assetScanView({ serverBacked, status: scanState.status, summary: cfg });
                 return (
                   <tr
                     key={asset.id}
@@ -842,8 +841,6 @@ export const AssetInventoryManager: React.FC = () => {
                         <span className="text-slate-400">{INVENTORY_COPY.loadingCell}</span>
                       ) : view === 'never' ? (
                         <span className="text-slate-400">{INVENTORY_COPY.never}</span>
-                      ) : view === 'notLoaded' ? (
-                        <span className="text-slate-400">{INVENTORY_COPY.notLoaded}</span>
                       ) : (
                         <>
                           <time dateTime={cfg.lastScannedAt!} className="font-mono text-slate-200 whitespace-nowrap">
@@ -987,9 +984,6 @@ export const AssetInventoryManager: React.FC = () => {
       {serverBacked && (
         <>
           <p className="text-xs text-slate-400">{INVENTORY_COPY.scoreNote}</p>
-          {shownCaption(scanState.shown, scanState.total, 'configuration scans') && (
-            <p className="text-xs text-slate-400">{shownCaption(scanState.shown, scanState.total, 'configuration scans')}</p>
-          )}
         </>
       )}
 

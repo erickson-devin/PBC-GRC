@@ -2,14 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   CONFIG_RESULTS_COPY, EXPORTER_XCCDF_COMMAND, INVENTORY_COPY, applyBlock, applyConfirmText, applyResultMessage, archivedMessage, assetLabel, boundaryCaption,
-  assetConfigSummary, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption, latestScansByAsset,
+  assetConfigSummary, assetConfigSummaryOf, assetScanCountsLabel, assetScanView, averageScore, inventoryScoreCaption, latestScansByAsset,
   countSummary, failingAssetNames, groupResultCounts, noSuggestionsMessage, outsideNote, ruleSummary, shownCaption, sortScanRows,
   sortSuggestions, splitByProgramControls, statusLabel, suggestionLabel, suggestionStatus, unmappedNote, unsupportedMessage,
 } from '../src/data/telemetry/configResultsView';
+import { configScore, summarizeConfigScans } from '../src/data/telemetry/configScore';
 import { objectivesOpenMessage } from '../src/data/telemetry/configResultsView';
 import { checkControlStatusWrite } from '../src/data/cmmcGuide/controlStatusGuard';
 import { guideObjectives } from '../src/data/cmmcGuide/guide';
-import type { ControlDecisionOutcome } from '../src/data/telemetry/configResultsView';
+import { cardSuggestionFor, cardSuggestionIndex, cardSuggestionText } from '../src/data/telemetry/configResultsView';
+import type { CardSuggestionValue, ControlDecisionOutcome } from '../src/data/telemetry/configResultsView';
 import type { VmConfigScan, VmConfigSuggestion, VmConfigSuggestionValue } from '../src/types/vm';
 
 /**
@@ -159,9 +161,12 @@ function main() {
   );
   const helperSrc = read('src/data/telemetry/configResultsView.ts');
   const nonTypeImports = helperSrc.split('\n').filter((l) => /^import /.test(l) && !/^import type /.test(l));
+  const scoreSrc = read('src/data/telemetry/configScore.ts');
   assert(
-    nonTypeImports.length === 1 && nonTypeImports[0].includes("from '../statusLabels'") && !/react|console\.|localStorage|sessionStorage|fetch\(/.test(helperSrc.replace(/\/\*[\s\S]*?\*\//, '')),
-    'V5v the helper module is pure: type imports plus the one status label helper, no react, console, storage or fetch'
+    nonTypeImports.length === 2 && nonTypeImports[0].includes("from '../statusLabels'") && nonTypeImports[1].includes("from './configScore'") &&
+      !/react|console\.|localStorage|sessionStorage|fetch\(/.test(helperSrc.replace(/\/\*[\s\S]*?\*\//, '')) &&
+      scoreSrc.split('\n').filter((l) => /^import /.test(l) && !/^import type /.test(l)).length === 0 && !/react|console\.|localStorage|sessionStorage|fetch\(/.test(scoreSrc.replace(/\/\*[\s\S]*?\*\//, '')),
+    'V5v the helper module is pure: type imports plus the status label helper and the pure score module, no react, console, storage or fetch'
   );
 
   console.log('\n--- source checks ---');
@@ -242,7 +247,28 @@ function main() {
     'V12 assetConfigSummary sums the results of every benchmark, scores pass over pass, fail and error, and has no score without them',
     { sum, none, empty, onlyNa }
   );
-  assert(averageScore([94, null, 50]) === 72 && averageScore([null]) === null && averageScore([]) === null, 'V13 averageScore rounds the scores that exist');
+  assert(
+    configScore(1, 1, 0) === 50 && configScore(0, 0, 0) === null && configScore(1, 7, 0) === 13 && configScore(51, 2, 1) === 94,
+    'C1 configScore is pass over pass, fail and error, rounded half up, and null without them'
+  );
+  const summed = summarizeConfigScans([
+    withCounts(g1, { pass: 40, fixed: 1, fail: 2, error: 1 }, '2026-10-01T00:00:00.000Z'),
+    withCounts(g2, { pass: 10, notapplicable: 5 }, '2026-10-03T00:00:00.000Z'),
+  ]);
+  assert(
+    summed.pass === 51 && summed.fail === 2 && summed.error === 1 && summed.other === 5 && summed.scans === 2 && summed.score === 94 && summed.lastScannedAt === '2026-10-03T00:00:00.000Z' &&
+      summarizeConfigScans([]).scans === 0 && summarizeConfigScans([]).lastScannedAt === null && summarizeConfigScans([]).score === null,
+    'C2 summarizeConfigScans sums the scans and keeps the newest scan time',
+    summed
+  );
+  const emptySummary = assetConfigSummaryOf(undefined);
+  assert(
+    emptySummary.lastScannedAt === null && emptySummary.score === null && emptySummary.pass === 0 && emptySummary.fail === 0 && emptySummary.error === 0 && emptySummary.benchmarks === 0,
+    'C3a no server row gives the empty summary'
+  );
+  const fromServer = assetConfigSummaryOf({ assetId: 'a1', lastScannedAt: 'X', scans: 2, pass: 51, fail: 2, error: 1, other: 5, score: 94 });
+  assert(fromServer.benchmarks === 2 && fromServer.score === 94 && fromServer.lastScannedAt === 'X' && fromServer.pass === 51 && fromServer.fail === 2 && fromServer.error === 1, 'C3b a server row becomes the view summary', fromServer);
+  assert(averageScore([94, null, 50]) === 72&& averageScore([null]) === null && averageScore([]) === null, 'V13 averageScore rounds the scores that exist');
   assert(
     assetScanCountsLabel(sum) === 'Rules: 2 failing, 51 passing, 1 with errors (2 benchmarks)' &&
       assetScanCountsLabel({ pass: 51, fail: 2, error: 1, benchmarks: 1 }) === 'Rules: 2 failing, 51 passing, 1 with errors',
@@ -258,19 +284,59 @@ function main() {
       inventoryScoreCaption({ serverBacked: true, status: 'ready', scored: 3 }) === 'Average of 3 scanned assets',
     'V14b inventoryScoreCaption covers every state'
   );
-  const scanView = (o: Partial<{ serverBacked: boolean; status: 'idle' | 'loading' | 'ready' | 'error'; truncated: boolean }>, summary = sum) => assetScanView({ serverBacked: true, status: 'ready', truncated: false, summary, ...o });
+  const scanView = (o: Partial<{ serverBacked: boolean; status: 'idle' | 'loading' | 'ready' | 'error' }>, summary = sum) => assetScanView({ serverBacked: true, status: 'ready', summary, ...o });
   assert(
     scanView({ serverBacked: false }) === 'unavailable' && scanView({ status: 'error' }) === 'unavailable' && scanView({ status: 'idle' }) === 'loading' && scanView({ status: 'loading' }) === 'loading' &&
-      scanView({}, none) === 'never' && scanView({ truncated: true }, none) === 'notLoaded' && scanView({}, onlyNa) === 'unscored' && scanView({}) === 'scored',
-    'V14c assetScanView tells unavailable, loading, never, not loaded, unscored and scored apart'
+      scanView({}, none) === 'never' && scanView({}, onlyNa) === 'unscored' && scanView({}) === 'scored',
+    'V14c assetScanView tells unavailable, loading, never, unscored and scored apart'
   );
+  assert(!('notLoaded' in INVENTORY_COPY), 'V14c2 the not-loaded copy is gone: the server sums every scan');
   assert(INVENTORY_COPY.scoreTitle === 'Configuration score' && INVENTORY_COPY.scanHeader === 'Last configuration scan' && INVENTORY_COPY.never === 'Never scanned' && INVENTORY_COPY.unscored === 'Unscored', 'V14d the inventory copy');
   assert(
-    !/STIG|PHOTON AGENT|Fleet Health/.test(inventory) && inventory.includes('ApiClient.listConfigScans(tenantId, { latest: true, limit: 500 })') && inventory.includes('assetConfigSummary(') && inventory.includes('assetScanView(') &&
+    !/STIG|PHOTON AGENT|Fleet Health/.test(inventory) && inventory.includes('ApiClient.listConfigAssetSummaries(tenantId)') && !inventory.includes('listConfigScans(') && inventory.includes('assetConfigSummaryOf(') && inventory.includes('assetScanView(') &&
       inventory.includes('INVENTORY_COPY.scanHeader') && inventory.includes('INVENTORY_COPY.scoreNote') && inventory.includes('aria-hidden="true" className="w-16') &&
       !inventory.includes('asset.complianceScore') && !inventory.includes('asset.lastScannedAt') &&
       !/console\.|localStorage|sessionStorage/.test(inventory) && inventory.split('colSpan={columnCount}').length - 1 === 2,
     'V15 the inventory reads the latest configuration scans, shows no stored score or scan time, and stores and logs nothing'
+  );
+
+  console.log('\n--- control card suggestion (#205) ---');
+  assert(
+    cardSuggestionText('NOT_MET') === 'Configuration scan suggests Not met (suggestion, not applied)' &&
+      cardSuggestionText('MET') === 'Configuration scan suggests Met (suggestion, not applied)',
+    'V16a the badge text'
+  );
+  const ids = new Set(['a', 'b', 'c']);
+  assert(
+    cardSuggestionIndex(null, ids).size === 0 &&
+      cardSuggestionIndex({ supported: false, controls: [sug('a', 'NOT_MET')] }, ids).size === 0 &&
+      same([...cardSuggestionIndex({ supported: true, controls: [sug('a', 'NOT_MET'), sug('b', 'REVIEW'), sug('c', 'MET'), sug('z', 'NOT_MET')] }, ids)], [['a', 'NOT_MET'], ['c', 'MET']]),
+    'V16b the index drops no data, unsupported frameworks, REVIEW and controls outside the program'
+  );
+  const idx = new Map<string, CardSuggestionValue>([['a', 'NOT_MET'], ['c', 'MET']]);
+  assert(
+    cardSuggestionFor(idx, 'a', 'MET', true) === 'NOT_MET' && cardSuggestionFor(idx, 'a', 'IN_PROGRESS', true) === 'NOT_MET' &&
+      cardSuggestionFor(idx, 'a', 'NOT_STARTED', true) === 'NOT_MET' && cardSuggestionFor(idx, 'a', 'NOT_MET', true) === null &&
+      cardSuggestionFor(idx, 'c', 'MET', true) === null && cardSuggestionFor(idx, 'c', 'NOT_STARTED', true) === 'MET' &&
+      cardSuggestionFor(idx, 'b', 'MET', true) === null && cardSuggestionFor(idx, 'a', 'MET', false) === null,
+    'V16c a card shows a suggestion only when it differs from the recorded status and the controls are loaded'
+  );
+  const hook = read('src/hooks/useConfigSuggestions.ts');
+  assert(
+    hook.includes('ApiClient.getConfigSuggestions(tenantId, programId)') && hook.includes('}, [tenantId, programId, supported]);') &&
+      hook.includes('request !== latest.current') && hook.includes('data.programId === programId') && !/console\.|localStorage|sessionStorage/.test(hook),
+    'V16d the hook reads once per program, ignores stale answers, checks the program, and stores and logs nothing'
+  );
+  const matrix = read('src/components/dashboard/AssessmentMatrix.tsx');
+  assert(
+    matrix.split('useConfigSuggestions()').length - 1 === 1 && matrix.includes('cardSuggestionIndex(') &&
+      matrix.includes('configSuggestion={cardSuggestionFor(suggestionIndex, ctrl.id,') && matrix.includes('cardSuggestionFor(suggestionIndex, ctrl.id, status, notesEditable)'),
+    'V16e the matrix reads the suggestions once and passes each card and row its own'
+  );
+  assert(
+    card.includes('configSuggestion?: CardSuggestionValue | null;') && card.includes('cardSuggestionText(configSuggestion)') && card.includes('border-dashed') &&
+      !card.includes('useConfigSuggestions') && !card.includes('ApiClient') && !card.includes('decideControlStatus') && !card.includes('updateControlStatus('),
+    'V16f the card only shows the suggestion: no fetch, no apply, no status write'
   );
 
   console.log('\n================================================================');

@@ -29,12 +29,14 @@ import { menuLockReason, overlayBannerText, overlayRemovals } from '../../data/o
 import { programFrameworkControls } from '../../data/programScope';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import type { OverlayFilters } from '../../types/framework';
-import { ControlCard } from './ControlCard';
+import { ControlCard, CONFIG_SUGGESTION_CLASS } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 import { CatalogUpdateNotice } from './CatalogUpdateNotice';
 import { CatalogUpdateList } from './CatalogUpdateList';
 import { MetMismatchNotice } from './MetMismatchNotice';
 import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
+import { useConfigSuggestions } from '../../hooks/useConfigSuggestions';
+import { cardSuggestionFor, cardSuggestionIndex, cardSuggestionText } from '../../data/telemetry/configResultsView';
 import { catalogUpdateNoticeCopy, catalogUpdateNoticeMode } from '../../data/cmmcGuide/catalogUpdateReview';
 import { refusedMetControls } from '../../data/cmmcGuide/controlStatusGuard';
 import { metMismatchesInView } from '../../data/cmmcGuide/controlStatusView';
@@ -117,6 +119,12 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     [objectivesReady, notesEditable, state.controls, state.objectives, activeFramework, frameworkIds]
   );
   const mismatchById = useMemo(() => new Map(metMismatches.map((m) => [m.controlId, m])), [metMismatches]);
+  // What the latest configuration scans suggest for this program (#205): one read per visit, looked up by control id. Text only: nothing here changes a status.
+  const configSuggestions = useConfigSuggestions();
+  const suggestionIndex = useMemo(
+    () => cardSuggestionIndex(configSuggestions.load.status === 'ready' ? configSuggestions.load.data : null, frameworkIds),
+    [configSuggestions.load, frameworkIds]
+  );
   const [metMismatchFilter, setMetMismatchFilter] = useState<Set<string> | null>(null); // a snapshot, like the catalog filter
   const toggleMetMismatchFilter = () => setMetMismatchFilter((f) => (f ? null : new Set(metMismatches.map((m) => m.controlId))));
 
@@ -649,6 +657,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 domainInfo={domainInfo}
                 onOpenDetailModal={() => handleControlClick(ctrl.id)}
                 metMismatch={mismatchById.get(ctrl.id) ?? null}
+                configSuggestion={cardSuggestionFor(suggestionIndex, ctrl.id, state.controls[ctrl.id]?.status ?? 'NOT_STARTED', notesEditable)}
               />
             );
           })}
@@ -684,6 +693,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 );
                 const hasNotes = hasSspStatement(ctrl.id, ctrlState?.implementationNotes, state.objectives, activeFramework);
                 const mismatch = mismatchById.get(ctrl.id);
+                const tableSuggestion = cardSuggestionFor(suggestionIndex, ctrl.id, status, notesEditable);
                 const authorityRef = ctrl.authorityReference || ctrl.farReference || 'Baseline';
                 const mappings = ctrl.mappings || [];
 
@@ -751,6 +761,12 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                       {mismatch && (
                         <span className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/30">
                           {mismatch.open} of {mismatch.total} objectives open
+                        </span>
+                      )}
+                      {tableSuggestion && (
+                        <span className={`mt-1 flex w-fit items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold border ${CONFIG_SUGGESTION_CLASS[tableSuggestion]}`}>
+                          <ListChecks className="w-3 h-3 shrink-0" aria-hidden="true" />
+                          <span>{cardSuggestionText(tableSuggestion)}</span>
                         </span>
                       )}
                     </td>

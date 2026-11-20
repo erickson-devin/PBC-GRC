@@ -6,7 +6,6 @@ import {
   getEnclaveAssets,
   importAssetsFromCsv,
   ingestAccretionDiscoveryPayload,
-  syncAssetScanResult,
   updateEnclaveAsset,
 } from '../data/telemetry/assetRegistry';
 import { AssetInput, parseAssetsCsv } from '../data/telemetry/assetScope';
@@ -43,8 +42,6 @@ export interface AssetBackend {
   importCsv(csv: string): Promise<{ imported: number; skipped: string[] }>;
   ingest(items: AccretionDiscoveryItem[]): Promise<AccretionIngestResult>;
   simulateDiscovery(): Promise<AccretionIngestResult>;
-  /** Stores the outcome of a scan against the matching asset (by host name or IP), if there is one. */
-  recordScan(hostName: string, ipAddress: string, score: number): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------------------------- change notification
@@ -134,17 +131,6 @@ function serverBackend(tenantId: string): AssetBackend {
       });
     },
     simulateDiscovery: () => backend.ingest(buildSimulatedDiscoveryBatch()),
-    recordScan: async (hostName, ipAddress, score) => {
-      const assets = (await ApiClient.listAssets(tenantId)).assets;
-      const match = assets.find((a) => nameKey(a.hostName) === nameKey(hostName) || (ipAddress && a.ipAddress === ipAddress));
-      if (!match) return;
-      await ApiClient.updateAsset(tenantId, match.id, {
-        lastScannedAt: new Date().toISOString(),
-        complianceScore: score,
-        status: score === 100 ? 'ACTIVE' : 'NON_COMPLIANT',
-      });
-      notifyAssetsChanged(tenantId);
-    },
   };
   return backend;
 }
@@ -192,10 +178,6 @@ function localBackend(tenantId: string): AssetBackend {
       const cleaned = getEnclaveAssets(tenantId).filter((a) => a.sourceOrigin !== 'ACCRETION_DISCOVERY');
       for (const gone of getEnclaveAssets(tenantId)) if (!cleaned.includes(gone)) deleteEnclaveAsset(gone.id, tenantId);
       return backend.ingest(buildSimulatedDiscoveryBatch());
-    },
-    recordScan: async (hostName, ipAddress, score) => {
-      syncAssetScanResult(tenantId, hostName, ipAddress, score);
-      notifyAssetsChanged(tenantId);
     },
   };
   return backend;

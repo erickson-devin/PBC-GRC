@@ -27,7 +27,7 @@ import type { InviteMfaMode } from '../utils/invitePreview';
 import type { AiAssistStatus, WordingSuggestionRequest, WordingSuggestions } from '../types/aiAssist';
 import type { SspAnalysisMode, SspCapabilities, SspBaseline, SspCommitOutcome, SspImportFramework, SspImportJob, SspReviewState, StagedControl, StagedControlView } from '../types/sspImport';
 import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmPoamItemEvent, VmPoamItemPatch, VmPoamResponse, VmPoamRow, VmRun, VmServiceToken, VmSeverity, VmSource, VmTargetPreview } from '../types/vm';
+import type { VmAssetConfigSummary, VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmPoamItemEvent, VmPoamItemPatch, VmPoamResponse, VmPoamRow, VmRun, VmServiceToken, VmSeverity, VmSource, VmTargetPreview } from '../types/vm';
 import { parseObservedHosts, parseObservedSoftware, parseObservedSoftwareGroups, parseProgramObservedHosts } from '../data/telemetry/observedInventory';
 import { parseVmFindings } from '../data/telemetry/vmFindingsView';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
@@ -849,6 +849,16 @@ export const ApiClient = {
     const qs = q.toString();
     const data = await authedJson<{ totalCount?: unknown; scans?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/scans${qs ? `?${qs}` : ''}`, { tenantId });
     return { totalCount: typeof data?.totalCount === 'number' ? data.totalCount : 0, scans: Array.isArray(data?.scans) ? (data.scans as VmConfigScan[]) : [] };
+  },
+
+  /** GET /api/v1/tenants/:id/vm/config/asset-summaries (#215): each asset's latest configuration scans summed and scored by the server, tenant-wide. */
+  async listConfigAssetSummaries(tenantId: string, options?: { assetId?: string }): Promise<{ totalCount: number; summaries: VmAssetConfigSummary[] }> {
+    const q = new URLSearchParams();
+    if (options?.assetId) q.set('assetId', options.assetId);
+    const qs = q.toString();
+    const data = await authedJson<{ totalCount?: unknown; summaries?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/config/asset-summaries${qs ? `?${qs}` : ''}`, { tenantId });
+    const summaries = Array.isArray(data?.summaries) ? (data.summaries as VmAssetConfigSummary[]) : [];
+    return { totalCount: typeof data?.totalCount === 'number' ? data.totalCount : summaries.length, summaries };
   },
 
   /** GET /api/v1/tenants/:id/vm/config/scans/:scanId/results: the rule results of one scan, tenant-wide. */

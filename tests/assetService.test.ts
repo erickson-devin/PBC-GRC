@@ -169,13 +169,6 @@ async function backendTests() {
   const csv = await be.importCsv('hostName,cmmcAssetCategory,notes\nCSV-1,SPECIALIZED_ASSET,x\nCSV-2,banana,x\nDB-1,CUI_ASSET,dup');
   assert(csv.imported === 1 && csv.skipped.length === 2 && csv.skipped.some((s) => /banana/.test(s)) && csv.skipped.some((s) => /DB-1/.test(s)), 'CSV import reports unknown categories and duplicates, and imports the rest', csv);
 
-  await be.recordScan('DB-1', '10.0.0.5', 87);
-  const scanned = (await be.list()).find((a) => a.id === db.id)!;
-  assert(scanned.complianceScore === 87 && scanned.status === 'NON_COMPLIANT' && Boolean(scanned.lastScannedAt), 'a scan result is stored on the matching asset');
-  const snapshot = JSON.stringify(await be.list());
-  await be.recordScan('NO-SUCH-HOST', '1.2.3.4', 100);
-  assert(JSON.stringify(await be.list()) === snapshot, 'a scan of an unregistered host changes nothing');
-
   const before = notified;
   await be.remove((await be.list()).find((a) => a.hostName === 'CSV-1')!.id);
   assert(notified > before && (await be.list()).every((a) => a.hostName !== 'CSV-1'), 'removing an asset works and notifies subscribers (so every view refreshes)');
@@ -189,8 +182,6 @@ async function backendTests() {
   assert(denied?.status === 403, 'a VIEWER cannot create (403 shown to the user)', denied);
   assert((await rejection(be.remove(db.id)))?.status === 403, 'a VIEWER cannot delete');
   assert((await rejection(be.classify(db.id, 'OUT_OF_SCOPE')))?.status === 403, 'a VIEWER cannot reclassify');
-  await be.recordScan('DB-1', '10.0.0.5', 100).catch(() => undefined);
-  assert((await be.list()).find((a) => a.id === db.id)?.complianceScore === 87, 'and a read-only scan result is not stored');
   localStorage.removeItem('pbc_session_ref_v3');
   assert((await rejection(be.list()))?.status === 401, 'without a session the backend says "sign in" (401)');
   unsubscribe();
@@ -210,10 +201,6 @@ async function backendTests() {
   assert(legacyLedger.includes('TELEMETRY_INGESTED') && !legacyLedger.includes('10.1.1.77') && !legacyLedger.includes('AA:BB:CC:DD:EE:01') && !legacyLedger.includes('accretion-ee01'), 'the legacy tenant ledger holds no IP, MAC or default host name');
   await legacy.remove(l1.id);
   assert((await legacy.list()).every((a) => a.id !== l1.id), 'local remove');
-  const blankIp = (await legacy.list()).find((x) => x.hostName === 'L-2')!;
-  const beforeBlankScan = JSON.stringify(await legacy.list());
-  await legacy.recordScan('NO-SUCH-HOST', '', 100);
-  assert(blankIp.ipAddress === '' && JSON.stringify(await legacy.list()) === beforeBlankScan, 'C3 a scan result with no IP never matches an asset whose IP is blank');
   assert((await getAssetBackend('tenant-other', 'local-legacy').list()).length === 0, "another tenant's local inventory is separate");
 }
 

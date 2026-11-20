@@ -11,8 +11,8 @@ export const toAssetInput = (a: EnclaveAsset): AssetInput => ({
   cmmcAssetCategory: a.cmmcAssetCategory, status: a.status,
   // browser-held data is not machine-attested; the server refuses machine origins from people
   sourceOrigin: isMachineAssetOrigin(a.sourceOrigin) ? 'MANUAL_ENTRY' : a.sourceOrigin,
-  discoveryStatus: a.discoveryStatus, accretionMetadata: a.accretionMetadata, lastScannedAt: a.lastScannedAt,
-  complianceScore: a.complianceScore, notes: a.notes, owner: a.owner ?? '',
+  discoveryStatus: a.discoveryStatus, accretionMetadata: a.accretionMetadata, lastScannedAt: null,
+  complianceScore: null, notes: a.notes, owner: a.owner ?? '',
   manufacturer: a.manufacturer ?? '', model: a.model ?? '', serialNumber: a.serialNumber ?? '', location: a.location ?? '',
   fipsValidationStatus: a.fipsValidationStatus, fipsCertificateNumber: a.fipsCertificateNumber,
   fipsModuleName: a.fipsModuleName, fipsStandard: a.fipsStandard,
