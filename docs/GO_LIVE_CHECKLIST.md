@@ -61,6 +61,8 @@ Recommended:
 - [ ] `MFA_REQUIRED` left at its default `all` (`privileged` is a rollout stage, `off` warns at startup and is not for production).
 - [ ] `LOCAL_AUTH_TOKEN_TTL_SECONDS` left at 28800 (8 h); the app warns above 43200 (12 h, NIST SP 800-63B AAL2).
 - [ ] `SESSION_IDLE_MINUTES` left at 15 or set by policy; never 0.
+- [ ] `ACCOUNT_DORMANT_DAYS` left at 90 or set by policy; never 0 in production (accounts with no sign-in for that long are
+      disabled, IA.L2-3.5.6). Know who restores them, and that `npm run auth:enable-user -- <email>` is the break-glass.
 - [ ] `ALLOW_TENANT_CREATION=false` for a single-organisation install (platform administrators provision tenants). Leave it
       on only for an MSP install where every signed-in person may create their own tenant.
 - [ ] `ASSESSMENT_EVENT_RETENTION_DAYS` left at 1095 (three years) unless your records policy says otherwise; `0` keeps

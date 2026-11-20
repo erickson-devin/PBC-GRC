@@ -1,9 +1,11 @@
 import { pruneAccountEvents, getAccountEventRetention, type AccountEventRetention } from './auth/accountEvents';
 import { pruneExpiredSessions } from './auth/sessionStore';
+import { getAccountDormantDays } from './auth/localAuth';
+import { disableDormantAccounts } from './auth/accountDormancy';
 
 /**
- * Daily housekeeping for the account event log (ACCOUNT_EVENT_RETENTION_DAYS, default 1095; 0 keeps everything) and the session table
- * (rows that expired more than a day ago). Same shape as assessmentEventRetention.ts: the first sweep runs FIRST_RUN_DELAY_MS after
+ * Daily housekeeping for the account event log (ACCOUNT_EVENT_RETENTION_DAYS, default 1095; 0 keeps everything), the session table
+ * (rows that expired more than a day ago) and the dormant account sweep (ACCOUNT_DORMANT_DAYS, issue #257). Same shape as assessmentEventRetention.ts: the first sweep runs FIRST_RUN_DELAY_MS after
  * boot, then every INTERVAL_MS, the timers never keep the process alive, and a sweep never throws or logs anything but counts and
  * SQLSTATE codes. The session sweep runs whatever the event retention is set to.
  */
@@ -17,7 +19,7 @@ const sqlState = (err: unknown): string => {
 };
 
 /** One sweep of both tables. Never throws. */
-export async function sweepAccountData(retentionDays: number): Promise<void> {
+export async function sweepAccountData(retentionDays: number, dormantDays = 0): Promise<void> {
   try {
     const sessions = await pruneExpiredSessions();
     if (sessions > 0) console.log(`[Retention] local_sessions: deleted ${sessions} expired row(s)`);
@@ -25,6 +27,7 @@ export async function sweepAccountData(retentionDays: number): Promise<void> {
     console.error(`[Retention] session sweep failed (code ${sqlState(err)})`);
   }
   if (retentionDays > 0) await pruneAccountEvents({ days: retentionDays });
+  if (dormantDays > 0) await disableDormantAccounts({ days: dormantDays });
 }
 
 let started = false;
@@ -36,8 +39,9 @@ export function startAccountRetention(env: NodeJS.ProcessEnv = process.env): Acc
   if (started) return null;
   started = true;
   const cfg = getAccountEventRetention(env);
+  const dormantDays = getAccountDormantDays(env);
   const sweep = (): void => {
-    void sweepAccountData(cfg.days).catch(() => console.error('[Retention] account sweep failed'));
+    void sweepAccountData(cfg.days, dormantDays).catch(() => console.error('[Retention] account sweep failed'));
   };
   firstRun = setTimeout(sweep, FIRST_RUN_DELAY_MS);
   firstRun.unref();

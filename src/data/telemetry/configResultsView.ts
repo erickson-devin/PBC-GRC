@@ -5,7 +5,8 @@
  */
 import type { ControlStatus } from '../../types/cmmc';
 import { statusDisplayLabel } from '../statusLabels';
-import type { VmConfigResult, VmConfigScan, VmConfigSuggestion, VmConfigSuggestionValue } from '../../types/vm';
+import { summarizeConfigScans } from './configScore';
+import type { VmAssetConfigSummary, VmConfigScan, VmConfigSuggestion, VmConfigSuggestionValue, VmConfigSuggestionsResponse } from '../../types/vm';
 
 export const EXPORTER_XCCDF_COMMAND = 'pbc-vm-exporter --source xccdf --input <file>';
 
@@ -109,15 +110,7 @@ export function ruleSummary(r: VmConfigSuggestion['rules']): string {
   return `${r.failing} of ${r.mapped} mapped ${r.mapped === 1 ? 'rule' : 'rules'} failing`;
 }
 
-export function groupResultCounts(counts: Partial<Record<VmConfigResult, number>>): { pass: number; fail: number; error: number; other: number } {
-  const n = (k: VmConfigResult): number => counts[k] ?? 0;
-  return {
-    pass: n('pass') + n('fixed'),
-    fail: n('fail'),
-    error: n('error') + n('unknown'),
-    other: n('notapplicable') + n('notchecked') + n('notselected') + n('informational'),
-  };
-}
+export { groupConfigResultCounts as groupResultCounts } from './configScore';
 
 export function assetLabel(id: string, names: ReadonlyMap<string, string>): string {
   return names.get(id) ?? UNKNOWN_ASSET;
@@ -165,6 +158,42 @@ export function noSuggestionsMessage(): string {
   return 'None of the latest results map to a control of this program, so there are no suggestions.';
 }
 
+// The control card and matrix row (#205): what the latest configuration scans suggest, as text. Never a recorded status and never an action.
+
+/** The statuses a card can show as a suggestion. */
+export type CardSuggestionValue = 'MET' | 'NOT_MET';
+
+/** The program's Met / Not met suggestions by control id. Nothing for no data or an unsupported framework; REVIEW and controls outside the program are dropped. */
+export function cardSuggestionIndex(
+  data: Pick<VmConfigSuggestionsResponse, 'supported' | 'controls'> | null,
+  programControlIds: ReadonlySet<string>
+): Map<string, CardSuggestionValue> {
+  const out = new Map<string, CardSuggestionValue>();
+  if (!data || !data.supported) return out;
+  for (const s of data.controls) {
+    if (s.suggestion === 'REVIEW' || !programControlIds.has(s.controlId)) continue;
+    out.set(s.controlId, s.suggestion);
+  }
+  return out;
+}
+
+/** What one card shows: the suggestion when it differs from the recorded status, else null. Nothing until the program's controls are loaded. */
+export function cardSuggestionFor(
+  index: ReadonlyMap<string, CardSuggestionValue>,
+  controlId: string,
+  current: ControlStatus,
+  controlsLoaded: boolean
+): CardSuggestionValue | null {
+  if (!controlsLoaded) return null;
+  const v = index.get(controlId);
+  return v && v !== current ? v : null;
+}
+
+/** The badge text, with the same status labels as the Configuration Results screen. */
+export function cardSuggestionText(v: CardSuggestionValue): string {
+  return `Configuration scan suggests ${statusDisplayLabel(v)} (suggestion, not applied)`;
+}
+
 export function unmappedNote(n: number): string {
   if (n <= 0) return '';
   return `${n} ${n === 1 ? 'rule' : 'rules'} in the latest scans ${n === 1 ? 'is' : 'are'} not mapped to a control yet and ${n === 1 ? 'does' : 'do'} not count toward any suggestion.`;
@@ -183,7 +212,6 @@ export const INVENTORY_COPY = {
   never: 'Never scanned',
   unscored: 'Unscored',
   unscoredHint: 'No pass or fail results',
-  notLoaded: 'Not among the loaded scans',
   notAvailable: 'Not available',
   loadingCell: 'Loading…',
   loadError: 'Configuration scan results could not be loaded. The inventory itself is unaffected.',
@@ -214,19 +242,14 @@ export function latestScansByAsset(scans: readonly VmConfigScan[]): Map<string, 
 
 /** One asset's scans summed: the score is the share of passing rules among passing, failing and errored ones (null when there are none). */
 export function assetConfigSummary(scans?: readonly VmConfigScan[]): AssetConfigSummary {
-  let pass = 0;
-  let fail = 0;
-  let error = 0;
-  let lastScannedAt: string | null = null;
-  for (const scan of scans ?? []) {
-    const g = groupResultCounts(scan.resultCounts);
-    pass += g.pass;
-    fail += g.fail;
-    error += g.error;
-    if (lastScannedAt === null || Date.parse(scan.scannedAt) > Date.parse(lastScannedAt)) lastScannedAt = scan.scannedAt;
-  }
-  const denominator = pass + fail + error;
-  return { lastScannedAt, score: denominator === 0 ? null : Math.round((100 * pass) / denominator), pass, fail, error, benchmarks: scans ? scans.length : 0 };
+  const s = summarizeConfigScans(scans ?? []);
+  return { lastScannedAt: s.lastScannedAt, score: s.score, pass: s.pass, fail: s.fail, error: s.error, benchmarks: s.scans };
+}
+
+/** The same summary from the server's per-asset row (#215); no row means the asset has no scan. */
+export function assetConfigSummaryOf(s?: VmAssetConfigSummary): AssetConfigSummary {
+  if (!s) return { lastScannedAt: null, score: null, pass: 0, fail: 0, error: 0, benchmarks: 0 };
+  return { lastScannedAt: s.lastScannedAt, score: s.score, pass: s.pass, fail: s.fail, error: s.error, benchmarks: s.scans };
 }
 
 /** The rounded average of the scores that exist (null when none does). */
@@ -247,12 +270,12 @@ export function inventoryScoreCaption(p: { serverBacked: boolean; status: Invent
   return `Average of ${p.scored} scanned asset${p.scored === 1 ? '' : 's'}`;
 }
 
-export type AssetScanView = 'unavailable' | 'loading' | 'never' | 'notLoaded' | 'unscored' | 'scored';
+export type AssetScanView = 'unavailable' | 'loading' | 'never' | 'unscored' | 'scored';
 
-/** What an asset's scan cells show. 'notLoaded': no scan among the loaded ones, but the server holds more than were loaded. */
-export function assetScanView(p: { serverBacked: boolean; status: InventoryScanStatus; truncated: boolean; summary: AssetConfigSummary }): AssetScanView {
+/** What an asset's scan cells show. */
+export function assetScanView(p: { serverBacked: boolean; status: InventoryScanStatus; summary: AssetConfigSummary }): AssetScanView {
   if (!p.serverBacked || p.status === 'error') return 'unavailable';
   if (p.status === 'idle' || p.status === 'loading') return 'loading';
-  if (p.summary.lastScannedAt === null) return p.truncated ? 'notLoaded' : 'never';
+  if (p.summary.lastScannedAt === null) return 'never';
   return p.summary.score === null ? 'unscored' : 'scored';
 }

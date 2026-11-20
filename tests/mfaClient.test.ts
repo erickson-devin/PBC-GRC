@@ -7,7 +7,7 @@ import { pinTabSession, resetTabSession } from '../src/services/tabSession';
 import { scrubLegacySessionToken } from '../src/services/legacySessionScrub';
 import { buildUserProfile } from '../src/utils/userProfile';
 import { groupSecret } from '../src/components/auth/MfaEnrolmentPanel';
-import { ACCOUNT_EVENTS_PAGE_SIZE, accountEventLabel, accountEventRows, accountEventsErrorText, formatEventTime } from '../src/utils/accountEvents';
+import { ACCOUNT_EVENTS_PAGE_SIZE, ACCOUNT_EVENT_FILTER_ACTIONS, ACCOUNT_EVENT_LABELS, ACCOUNT_EVENTS_FILTER_REJECTED, accountEventFilterActive, accountEventFilterSummary, accountEventLabel, accountEventRows, accountEventsErrorText, accountEventsLoadedText, accountFilterOptions, actionFilterOptions, formatEventTime } from '../src/utils/accountEvents';
 import { showOwnerMfaNotice } from '../src/utils/sessionLock';
 import type { AccountEvent } from '../src/services/apiClient';
 import { accountEventDetails } from '../src/utils/accountEvents';
@@ -350,6 +350,21 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
     stub(200, { events: [] });
     const empty = await ApiClient.listAccountEvents();
     assert(calls[0].url.endsWith('/platform/account-events') && empty.nextBefore === null, 'S163-M9 listAccountEvents without arguments has no query and no next page');
+    stub(200, { events: [] });
+    await ApiClient.listAccountEvents(50, '99', { target: 'u_1', action: 'account_disabled' });
+    assert(calls[0].url.endsWith('?limit=50&before=99&target=u_1&action=account_disabled'), 'S194-C1 listAccountEvents sends the account and event filters after limit and before', { url: calls[0].url });
+    stub(200, { events: [] });
+    await ApiClient.listAccountEvents(50, undefined, { target: '', action: null });
+    assert(calls[0].url.endsWith('?limit=50'), 'S194-C2 empty filter values send no query', { url: calls[0].url });
+    stub(200, { events: [] });
+    await ApiClient.listAccountEvents(50, undefined, { action: 'mfa_reset' });
+    assert(calls[0].url.endsWith('?limit=50&action=mfa_reset'), 'S194-C3 an event filter alone is sent alone', { url: calls[0].url });
+    stub(200, { users: [{ id: 'lu_3', email: 'cy@enclave.mil', name: 'Cy', disabled: true, disabledReason: 'dormant', disabledAt: '2030-02-01T00:00:00.000Z', mfaEnrolled: false, mustChangePassword: false, lockedUntil: null, lastLoginAt: null, createdAt: '2030-01-01T00:00:00.000Z' }], dormantDays: 90 });
+    const dormant = await ApiClient.listLocalUsersWithPolicy();
+    assert(dormant.dormantDays === 90 && dormant.users[0].disabled && dormant.users[0].disabledReason === 'dormant' && dormant.users[0].disabledAt === '2030-02-01T00:00:00.000Z', 'M257-1 listLocalUsersWithPolicy maps the reason, the date and the period', dormant);
+    stub(200, { users: [{ id: 'lu_4', email: 'di@enclave.mil', disabled: true, disabledReason: 'gone' }] });
+    const odd = await ApiClient.listLocalUsersWithPolicy();
+    assert(odd.dormantDays === null && odd.users[0].disabledReason === null && odd.users[0].disabledAt === null, 'M257-2 a bad reason and no period give null and null', odd);
     stub(200, { recoveryCodes: ['AAAAA-BBBBB'], enrolledAt: 'x', ...session, mfaEnrolled: true });
     const replaced = await ApiClient.confirmMfaEnrolment('123456');
     assert(replaced.session?.sessionRef === 'r' && replaced.session.mfaEnrolled === true, 'S163-M10 enrolment from a session returns the replacement session');
@@ -362,7 +377,7 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   console.log('\n--- S40 account events / S39 owner notice ---');
   {
     const readUi = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
-    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated'];
+    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked'];
     assert(codes.every((c) => accountEventLabel(c) !== c && !accountEventLabel(c).startsWith('Unrecognised')) && accountEventLabel('password_reset') === 'Password reset by an administrator' && accountEventLabel('x_y') === 'Unrecognised event (x_y)', 'S40-U1 every action code has a plain label; unknown codes are named as unrecognised');
     const ev = (over: Partial<AccountEvent>): AccountEvent => ({ id: '1', at: '2026-01-01T00:00:00Z', actorKind: 'admin', actorUserId: 'u_admin', targetUserId: 'u_t', action: 'account_disabled', tenantId: null, details: {}, ...over });
     const accounts = [{ id: 'u_admin', email: 'admin@x.test' }, { id: 'u_t', email: 't@x.test' }];
@@ -378,9 +393,33 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
     assert(JSON.stringify(accountEventRows([ev({ details: { attempted: 'disable' } })], [], [])[0].details) === JSON.stringify(['Attempted: disable account']), 'S40-U5 attempted actions read in words');
     assert(JSON.stringify(accountEventRows([ev({ details: { foo: 'bar', nested: { a: 1 } } })], [], [])[0].details) === JSON.stringify(['foo: bar']), 'S40-U5 unknown string keys follow; nested values are not shown');
     assert(accountEventsErrorText(403) === 'Only a platform administrator can read account events.' && accountEventsErrorText(0) === 'Cannot reach the server, so the account events could not be loaded.' && accountEventsErrorText(500) === 'The account events could not be loaded. Try again.' && formatEventTime('not-a-date') === 'not-a-date' && ACCOUNT_EVENTS_PAGE_SIZE === 50, 'S40-U6 error texts, time fallback and page size');
+    const rTok = accountEventRows([ev({ actorKind: 'user', actorUserId: 'u_t', targetUserId: 'u_t', action: 'vm_token_created', tenantId: 't1', details: { tokenId: 'vmt_0123456789abcdef' } })], accounts, [{ id: 't1', name: 'Acme' }])[0];
+    assert(rTok.actor === 't@x.test' && rTok.target.startsWith('Service token vmt_0123') && rTok.tenant === 'Acme' && JSON.stringify(rTok.details) === JSON.stringify(['Service token: vmt_0123456789abcdef']), 'S40-U6 a service token event names the person, the token id and the tenant', rTok);
     const panelSrc = readUi('src/components/admin/AccountEventsPanel.tsx');
     const dashSrc = readUi('src/components/admin/SuperAdminDashboard.tsx');
-    assert(['ApiClient.listAccountEvents(ACCOUNT_EVENTS_PAGE_SIZE, nextBefore)', 'Load older', 'No account events have been recorded yet.', '<caption className="sr-only">', 'scope="col"'].every((s) => panelSrc.includes(s)) && !/dangerouslySetInnerHTML|console\.|errorMessage\(|\.message/.test(panelSrc) && dashSrc.includes('<AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} />'), 'S40-U7 the panel pages, has a captioned table, shows no raw message; the console mounts it');
+    assert(['ApiClient.listAccountEvents(ACCOUNT_EVENTS_PAGE_SIZE, nextBefore, filter)', 'Load older', 'No account events have been recorded yet.', '<caption className="sr-only">', 'scope="col"'].every((s) => panelSrc.includes(s)) && !/dangerouslySetInnerHTML|console\.|errorMessage\(|\.message/.test(panelSrc) && dashSrc.includes('<AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} filter={eventFilter} onFilterChange={setEventFilter} headingRef={eventsHeadingRef} />'), 'S40-U7 the panel pages, has a captioned table, shows no raw message; the console mounts it');
+    // #194: the account / event filter
+    assert(ACCOUNT_EVENT_FILTER_ACTIONS.join() === Object.keys(ACCOUNT_EVENT_LABELS).join() && ACCOUNT_EVENT_FILTER_ACTIONS[0] === 'password_changed' && ACCOUNT_EVENT_FILTER_ACTIONS.includes('vm_token_revoked'), 'S194-U1 the event filter offers every labelled action in label order');
+    assert(!accountEventFilterActive({}) && !accountEventFilterActive({ target: '' }) && !accountEventFilterActive({ target: null, action: null }) && accountEventFilterActive({ target: 'u' }) && accountEventFilterActive({ action: 'x' }), 'S194-U2 an empty or blank filter is not active');
+    const fo = accountFilterOptions([{ id: 'b', email: 'b@x' }, { id: 'a', email: 'a@x' }], null);
+    assert(JSON.stringify(fo.map((o) => o.label)) === JSON.stringify(['All accounts', 'a@x', 'b@x']) && JSON.stringify(fo.map((o) => o.value)) === JSON.stringify(['', 'a', 'b']), 'S194-U3 accounts are listed by email after All accounts', fo);
+    const foGone = accountFilterOptions([{ id: 'b', email: 'b@x' }, { id: 'a', email: 'a@x' }], 'gone0123456789');
+    assert(foGone[1].value === 'gone0123456789' && foGone[1].label === 'Account no longer listed (gone0123…)' && foGone.length === 4, 'S194-U3 a target that is not listed stays selectable by short id', foGone);
+    assert(JSON.stringify(accountFilterOptions(null, 'u_1')) === JSON.stringify([{ value: '', label: 'All accounts' }, { value: 'u_1', label: 'Selected account (u_1)' }]), 'S194-U3 while the list is not loaded the target is called the selected account');
+    assert(accountFilterOptions([{ id: 'a', email: 'a@x' }], 'a').length === 2, 'S194-U3 a listed target adds no extra option');
+    const ao = actionFilterOptions(null);
+    assert(ao.length === 1 + ACCOUNT_EVENT_FILTER_ACTIONS.length && ao[0].value === '' && ao[0].label === 'All events', 'S194-U4 All events comes first, then every action');
+    const aoX = actionFilterOptions('x_y');
+    assert(aoX[aoX.length - 1].value === 'x_y' && aoX[aoX.length - 1].label === 'Unrecognised event (x_y)', 'S194-U4 an unknown action stays selectable');
+    assert(accountEventFilterSummary({}, []) === '' && accountEventFilterSummary({ target: 'a' }, [{ id: 'a', email: 'a@x' }]) === 'Showing all events for a@x.' && accountEventFilterSummary({ action: 'account_disabled' }, []) === 'Showing "Account disabled" events for every account.' && accountEventFilterSummary({ target: 'a', action: 'account_disabled' }, [{ id: 'a', email: 'a@x' }]) === 'Showing "Account disabled" events for a@x.', 'S194-U5 the filter summary names the account and the event');
+    assert(accountEventsLoadedText(0, false) === 'No matching account events.' && accountEventsLoadedText(1, false) === '1 matching event loaded.' && accountEventsLoadedText(3, true) === '3 matching events loaded. Older ones can be loaded with Load older.', 'S194-U6 the loaded-count announcement');
+    assert(accountEventsErrorText(400, true) === ACCOUNT_EVENTS_FILTER_REJECTED && accountEventsErrorText(400) === 'The account events could not be loaded. Try again.' && accountEventsErrorText(403, true) === 'Only a platform administrator can read account events.', 'S194-U7 a refused filter has its own text; other statuses are unchanged');
+    assert(['<legend className="sr-only">Filter account events</legend>', 'htmlFor={`${titleId}-target`}', 'htmlFor={`${titleId}-action`}', 'Clear filter', 'ACCOUNT_EVENTS_FILTERED_EMPTY', 'ApiClient.listAccountEvents(ACCOUNT_EVENTS_PAGE_SIZE, undefined, current)', 'tabIndex={-1}', 'gen !== generation.current'].every((s) => panelSrc.includes(s)), 'S194-S1 the panel has a labelled filter, a clear button, a focusable heading and drops stale pages');
+    assert(['useState<AccountEventFilter>({})', 'setEventFilter({ target: userId, action: null })', '>History</button>', 'h.focus({ preventScroll: true })'].every((s) => dashSrc.includes(s)), 'S194-S2 the console has a History button that sets the filter and moves focus');
+    // #257: dormant accounts in the event trail and the console
+    assert(JSON.stringify(accountEventDetails({ reason: 'dormant', via: 'sweep' })) === JSON.stringify(['Reason: account unused for too long', 'Via: automatic inactivity check']), 'M257-4 the inactivity check reads in words');
+    assert(JSON.stringify(accountEventDetails({ attempted: 'restore' })) === JSON.stringify(['Attempted: restore an account blocked for inactivity']), 'M257-4 a refused restore reads in words');
+    assert(['listLocalUsersWithPolicy()', 'dormancyPolicyText(dormantDays)', 'formatLastSignIn('].every((s) => dashSrc.includes(s)), 'M257-5 the console loads the period and shows the policy and the last sign-in');
     assert(showOwnerMfaNotice('privileged', false) && showOwnerMfaNotice('all', false) && !showOwnerMfaNotice('privileged', true) && !showOwnerMfaNotice('off', false) && !showOwnerMfaNotice(null, false), 'S39-U1 the owner notice shows only for a person without two-step verification under privileged or all');
     assert(readUi('src/components/onboarding/OnboardingModal.tsx').includes('<OwnerMfaNotice') && readUi('src/components/layout/TenantSwitcher.tsx').includes('<OwnerMfaNotice') && readUi('src/components/auth/OwnerMfaNotice.tsx').includes('ApiClient.getMfaStatus()') && readUi('src/pages/AcceptInvitePage.tsx').includes('ROLE_TEXT.acceptTwoStep') && readUi('src/pages/AcceptInvitePage.tsx').includes('canRoleWrite(invitation.role)') && readUi('src/data/roleView.ts').includes('two-step verification for Owners and Admins'), 'S39-U1 the notice is wired into onboarding, the tenant switcher and the invitation page');
   }

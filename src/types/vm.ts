@@ -337,6 +337,18 @@ export interface VmConfigScan {
   resultCounts: Record<VmConfigResult, number>;
 }
 
+/** One asset's configuration summary (#215): its latest scan per source, benchmark and profile, summed. Counts only. */
+export interface VmAssetConfigSummary {
+  assetId: string;
+  lastScannedAt: string;
+  scans: number;
+  pass: number;
+  fail: number;
+  error: number;
+  other: number;
+  score: number | null;
+}
+
 export interface VmConfigRuleResult {
   scanId: string;
   ruleId: string;

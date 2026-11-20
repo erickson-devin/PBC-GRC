@@ -1081,7 +1081,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
                   <div className="flex items-center gap-2.5 w-full sm:w-auto">
                     <button
-                      onClick={() => downloadEmassCsv(frameworkControls, state.controls, formData)}
+                      onClick={() => downloadEmassCsv(frameworkControls, state.controls, formData, state.objectives)}
                       className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm"
                     >
                       <FileSpreadsheet className="w-4 h-4" />
@@ -1123,7 +1123,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   </ul>
                 </div>
                 <div className="pt-4 border-t border-slate-800 flex justify-end">
-                  <button type="button" onClick={() => downloadEmassCsv(frameworkControls, state.controls, formData)}
+                  <button type="button" onClick={() => downloadEmassCsv(frameworkControls, state.controls, formData, state.objectives)}
                     className="w-full sm:w-auto px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm">
                     <FileSpreadsheet className="w-4 h-4" aria-hidden="true" />
                     <span>Download eMASS (CSV)</span>

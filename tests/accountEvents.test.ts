@@ -21,6 +21,7 @@ import {
   recordAccountEvent,
   sanitizeAccountEventDetails,
 } from '../server/auth/accountEvents';
+import { accountLogRef } from '../server/auth/loginThrottle';
 import { sessionCookieFrom } from './sessionCookieJar';
 
 /**
@@ -34,6 +35,7 @@ const NEWPW = 'a brand new long passphrase';
 const TEMPPW = 'temporary hand-out passphrase';
 const T = Math.floor(Date.now() / 30000) * 30000 + 1000;
 const STEP = 30000;
+const read = (p: string) => fs.readFileSync(new URL(p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const out = { log: console.log.bind(console), warn: console.warn.bind(console), error: console.error.bind(console) };
 
 let passed = 0;
@@ -134,6 +136,8 @@ async function run() {
 
   const captured: string[] = [];
   const grab = (...args: unknown[]) => void captured.push(util.format(...args));
+  let inviteLines: string[] = [];
+  let inviteStatus = 0;
 
   // Fixtures: a platform administrator holding a second factor (account management is a step-up), a tenant with an owner.
   const adm = await mk('admin40');
@@ -243,6 +247,12 @@ async function run() {
     const lo = await call('POST', '/auth/logout', { token: soTok });
     const e8 = (await forTarget(so.id))[0];
     assert(lo.status === 204 && e8?.action === 'signed_out' && e8.actorUserId === so.id, 'E40-8: signing out -> signed_out', [lo.status, e8]);
+
+    // E194-5 an invitation log line names the account by reference, never by address
+    const inviteMark = captured.length;
+    const invited = await call('POST', '/tenants/tenant-ev-40/invites', { token: ownerTok, tenant: 'tenant-ev-40', body: { email: 'invite16@events.mil', role: 'VIEWER' } });
+    inviteLines = captured.slice(inviteMark);
+    inviteStatus = invited.status;
   } finally {
     console.log = out.log;
     console.warn = out.warn;
@@ -272,6 +282,42 @@ async function run() {
   const hay = all.text + JSON.stringify(stored);
   assert(all.status === 200 && (all.body?.events ?? []).length > 10 && needles.every((n) => !hay.includes(n)) && !stored.some((e) => JSON.stringify(e.details).includes('@')), 'E40-10: the list response and every stored details object hold no test email, no account name and no "@"', needles.filter((n) => hay.includes(n)));
 
+  console.log('\n--- E194: filtering the list by account and action ---');
+  const tgt = accounts.find((a) => a.email === 'target40@events.mil')!;
+  const ids = (list: Array<Record<string, any>>) => list.map((e) => e.id as string);
+  const listAll = (await events(200)) as Array<Record<string, any>>;
+  const query = (q: string) => call('GET', `/platform/account-events?${q}`, { token: adminTok });
+  const byTarget = listAll.filter((e) => e.targetUserId === tgt.id);
+  const rT = await query(`target=${tgt.id}&limit=200`);
+  assert(rT.status === 200 && byTarget.length > 0 && JSON.stringify(ids(rT.body?.events ?? [])) === JSON.stringify(ids(byTarget)), 'E194-1: ?target=<id> returns exactly that account\'s events', [rT.status, ids(rT.body?.events ?? []), ids(byTarget)]);
+  const byAction = listAll.filter((e) => e.action === 'account_disabled');
+  const rA = await query('action=account_disabled&limit=200');
+  assert(rA.status === 200 && byAction.length > 0 && JSON.stringify(ids(rA.body?.events ?? [])) === JSON.stringify(ids(byAction)), 'E194-2: ?action=account_disabled returns exactly those events', [rA.status, ids(rA.body?.events ?? []), ids(byAction)]);
+  const both = listAll.filter((e) => e.targetUserId === tgt.id && e.action === 'account_disabled');
+  const rB = await query(`target=${tgt.id}&action=account_disabled&limit=200`);
+  assert(rB.status === 200 && both.length > 0 && JSON.stringify(ids(rB.body?.events ?? [])) === JSON.stringify(ids(both)), 'E194-3: target and action together return the intersection', [rB.status, ids(rB.body?.events ?? []), ids(both)]);
+  const pg1 = await query(`target=${tgt.id}&limit=2`);
+  const pg1Ids = ids(pg1.body?.events ?? []);
+  assert(pg1.status === 200 && JSON.stringify(pg1Ids) === JSON.stringify(ids(byTarget.slice(0, 2))) && pg1.body?.nextBefore === pg1Ids[1], 'E194-4: target with limit=2 -> the first two ids and nextBefore = the second id', [pg1Ids, pg1.body?.nextBefore]);
+  const pg2 = await query(`target=${tgt.id}&limit=2&before=${pg1.body?.nextBefore}`);
+  assert(pg2.status === 200 && byTarget.length >= 4 && JSON.stringify(ids(pg2.body?.events ?? [])) === JSON.stringify(ids(byTarget.slice(2, 4))), 'E194-4: before=<nextBefore> continues inside the filter', [ids(pg2.body?.events ?? []), ids(byTarget.slice(2, 4))]);
+  const nobody = await query('target=lu_nobody');
+  assert(nobody.status === 200 && (nobody.body?.events ?? []).length === 0 && nobody.body?.nextBefore === null, 'E194-1: an unknown account id -> 200, no events, nextBefore null', [nobody.status, nobody.body]);
+  assert((await call('GET', `/platform/account-events?target=${tgt.id}`, { token: ownerTok })).status === 403, 'E194-1: a non-administrator with ?target -> 403');
+  const badFilters = ['target=', 'target=a%40b', `target=${'x'.repeat(65)}`, 'target=a&target=b', 'action=made_up', 'action=', 'action=ACCOUNT_DISABLED'];
+  const badRes = [] as Array<Awaited<ReturnType<typeof query>>>;
+  for (const q of badFilters) badRes.push(await query(q));
+  assert(badRes.every((r) => r.status === 400 && r.body?.reason === 'invalid_request'), 'E194-2: an empty, malformed, repeated or unknown target or action -> 400 invalid_request', badRes.map((r, i) => [badFilters[i], r.status]));
+  assert(JSON.stringify(await listAccountEvents({ targetUserId: 'bad id!' })) === '[]' && JSON.stringify(await listAccountEvents({ action: 'made_up' })) === '[]', 'E194-3: the store returns [] for an invalid filter value, never the unfiltered list');
+
+  console.log('\n--- E194-5: the invitation log line ---');
+  const tiSrc = read('../server/routes/tenantInvites.ts');
+  const tiLogs = tiSrc.split('\n').filter((l) => l.includes('console.')).map((l) => l.replace(/accountLogRef\([^)]*\)/g, ''));
+  assert(inviteStatus === 201 && inviteLines.length > 0 && inviteLines.every((l) => !l.includes('invite16@events.mil')) && inviteLines.some((l) => l.includes(accountLogRef('invite16@events.mil'))), 'E194-5: inviting an address logs its account reference, never the address', [inviteStatus, inviteLines.length]);
+  assert(tiLogs.length > 0 && tiLogs.every((l) => !/\.email\b/.test(l)), 'E194-5: no console line of tenantInvites.ts interpolates an email', tiLogs.filter((l) => /\.email\b/.test(l)));
+  const setupLogs = read('../server/routes/setup.ts').split('\n').filter((l) => l.includes('console.')).map((l) => l.replace(/accountLogRef\([^)]*\)/g, ''));
+  assert(setupLogs.length > 0 && setupLogs.every((l) => !/\.email\b/.test(l)), 'E194-5: no console line of setup.ts interpolates an email', setupLogs.filter((l) => /\.email\b/.test(l)));
+
   console.log('\n--- E40-11: details sanitising ---');
   const thrown = (fn: () => unknown) => {
     try {
@@ -288,6 +334,11 @@ async function run() {
       (thrown(() => sanitizeAccountEventDetails({ reason: 'a@b.mil' })) as Error).message === 'Account event details accept ids and codes only' &&
       JSON.stringify(sanitizeAccountEventDetails(sameObject)) === JSON.stringify(sameObject),
     'E40-11: an unknown key and an address are refused with the fixed message; an allowed object passes unchanged'
+  );
+  assert(
+    JSON.stringify(sanitizeAccountEventDetails({ tokenId: 'vmt_0123456789abcdef' })) === JSON.stringify({ tokenId: 'vmt_0123456789abcdef' }) &&
+      thrown(() => sanitizeAccountEventDetails({ tokenName: 'x' })) instanceof AccountEventDetailsError,
+    'E214-1: a service token id is an allowed detail; a token name is refused'
   );
   let refusedAction = false;
   try {
@@ -317,7 +368,6 @@ async function run() {
   assert(dry.deleted === 1 && pruned.deleted === 1 && left.length === 2, 'E40-12: events at now-3 days, now-2 hours and now with days 1: the dry run counts 1, the sweep deletes 1, 2 remain', [dry, pruned, left.length]);
 
   console.log('\n--- E40-13: source checks ---');
-  const read = (p: string) => fs.readFileSync(new URL(p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const pu = read('../server/routes/platformUsers.ts');
   const cliSrc = read('../scripts/resetLocalUserMfa.ts');
   const indexSrc = read('../server/index.ts');

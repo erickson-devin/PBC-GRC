@@ -1,5 +1,6 @@
 import type { Tenant, TenantInvitation, TenantRole, TeamMember } from '../types/tenant';
 import { isTenantRole } from '../utils/roles';
+import { parseDisabledReason, type DisabledReason } from './dormancyView';
 
 /**
  * Pure mapping between the server's invitation / member records and the UI's TenantInvitation / TeamMember.
@@ -24,6 +25,9 @@ export interface ServerInvitation {
   status: ServerInvitationStatus;
 }
 
+/** The account facts a write role sees for a member (#257); absent for read-only callers. */
+export interface ServerMemberAccount { lastLoginAt: string | null; disabled: boolean; disabledReason: DisabledReason | null; disabledAt: string | null }
+
 export interface ServerMember {
   userId: string;
   email: string;
@@ -31,6 +35,7 @@ export interface ServerMember {
   tenantId: string;
   role: TenantRole;
   createdAt: string;
+  account?: ServerMemberAccount;
 }
 
 const STATUSES: readonly string[] = ['PENDING', 'ACCEPTED', 'REVOKED', 'EXPIRED'];
@@ -62,6 +67,12 @@ export function parseServerInvitation(item: unknown): ServerInvitation | null {
   };
 }
 
+export function parseMemberAccount(raw: unknown): ServerMemberAccount | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const a = raw as Record<string, unknown>;
+  return { lastLoginAt: strOrNull(a.lastLoginAt), disabled: a.disabled === true, disabledReason: parseDisabledReason(a.disabledReason), disabledAt: strOrNull(a.disabledAt) };
+}
+
 /** Defensive parse of GET .../members. */
 export function parseServerMembers(raw: unknown): ServerMember[] {
   const list = (raw as { members?: unknown } | null)?.members;
@@ -70,7 +81,10 @@ export function parseServerMembers(raw: unknown): ServerMember[] {
   for (const item of list) {
     const m = item as Record<string, unknown> | null;
     if (!m || typeof m.userId !== 'string' || !m.userId || !isTenantRole(m.role)) continue;
-    out.push({ userId: m.userId, email: str(m.email), name: str(m.name), tenantId: str(m.tenantId), role: m.role, createdAt: str(m.createdAt) });
+    const entry: ServerMember = { userId: m.userId, email: str(m.email), name: str(m.name), tenantId: str(m.tenantId), role: m.role, createdAt: str(m.createdAt) };
+    const account = parseMemberAccount(m.account);
+    if (account) entry.account = account;
+    out.push(entry);
   }
   return out;
 }
@@ -123,6 +137,7 @@ export function buildTeam(
     role: m.role,
     status: 'ACTIVE' as const,
     joinedAt: m.createdAt || undefined,
+    ...(m.account ? { lastLoginAt: m.account.lastLoginAt, accountDisabled: m.account.disabled, disabledReason: m.account.disabledReason, disabledAt: m.account.disabledAt } : {}),
   }));
 
   const pending: TeamMember[] = invitations

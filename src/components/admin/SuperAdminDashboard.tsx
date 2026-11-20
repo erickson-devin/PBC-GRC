@@ -37,7 +37,8 @@ import { useAuth } from '../../context/AuthContext';
 import { BrandLogo } from '../common/BrandLogo';
 import { Tenant, TenantInvitation } from '../../types/tenant';
 import { frameworkLabel, frameworkPolicySummary } from '../../data/tenantFrameworkPolicy';
-import { ApiClient, ApiError, type LocalAccount } from '../../services/apiClient';
+import { ApiClient, ApiError, type AccountEventFilter, type LocalAccount } from '../../services/apiClient';
+import { DORMANCY_TEXT, NEVER_SIGNED_IN, disabledDetail, dormancyPolicyText, formatLastSignIn, restoreSuccessText } from '../../data/dormancyView';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { RoleBadge } from '../common/RoleBadge';
 import { NewTenantModal } from './NewTenantModal';
@@ -123,12 +124,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountActionError, setAccountActionError] = useState<string | null>(null);
   const [accountNotice, setAccountNotice] = useState<string | null>(null);
+  const [dormantDays, setDormantDays] = useState<number | null>(null);
+  const [eventFilter, setEventFilter] = useState<AccountEventFilter>({});
+  const eventsHeadingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     let cancelled = false;
-    ApiClient.listLocalUsers().then(
-      (list) => {
+    ApiClient.listLocalUsersWithPolicy().then(
+      ({ users, dormantDays: days }) => {
         if (cancelled) return;
-        setLocalUsers(list);
+        setLocalUsers(users);
+        setDormantDays(days);
         setUsersError(null);
       },
       (err: unknown) => {
@@ -140,6 +145,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
       cancelled = true;
     };
   }, [usersVersion]);
+
+  // History on an account row: narrow the events to that account, then take the user to the panel heading
+  const showAccountHistory = (userId: string) => {
+    setEventFilter({ target: userId, action: null });
+    requestAnimationFrame(() => {
+      const h = eventsHeadingRef.current;
+      if (!h) return;
+      h.focus({ preventScroll: true });
+      h.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  };
 
   const closeAccountAction = () => {
     setAccountAction(null);
@@ -173,7 +189,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         setAccountNotice(`${user.email} is disabled and cannot sign in. Their sessions were signed out and their two-step verification was removed.`);
       } else {
         await ApiClient.enableUser(user.id, stepUpCode);
-        setAccountNotice(`${user.email} can sign in again. They will need to set up two-step verification again if it is required.`);
+        setAccountNotice(user.disabledReason === 'dormant' ? restoreSuccessText(user.email) : `${user.email} can sign in again. They will need to set up two-step verification again if it is required.`);
       }
       closeAccountAction();
       setUsersVersion((v) => v + 1);
@@ -972,6 +988,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               Everyone who can sign in to this installation. Resetting a password sets a temporary one the person must change at their next sign-in.
               Resetting two-step verification, resetting a password and disabling an account all sign the person out everywhere.
             </p>
+            {dormancyPolicyText(dormantDays) && <p className="text-xs text-slate-400 mt-1">{dormancyPolicyText(dormantDays)}</p>}
           </div>
 
           {usersError && <ErrorNotice message={usersError} />}
@@ -1011,24 +1028,28 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                       </td>
                       <td className="py-3.5 px-4 space-x-1.5">
                         {u.disabled ? (
-                          <span className="px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">Disabled</span>
+                          u.disabledReason === 'dormant'
+                            ? <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">{DORMANCY_TEXT.consoleBadge}</span>
+                            : <span className="px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">Disabled</span>
                         ) : (
                           <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">Active</span>
                         )}
                         {locked && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">Locked</span>}
                         {u.mustChangePassword && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">Must change password</span>}
+                        {u.disabled && disabledDetail(u.disabledReason, u.disabledAt) && <p className="text-slate-400 mt-1">{disabledDetail(u.disabledReason, u.disabledAt)}</p>}
                       </td>
                       <td className="py-3.5 px-4 text-slate-300">{u.mfaEnrolled ? 'On' : 'Off'}</td>
-                      <td className="py-3.5 px-4 text-slate-300">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : 'Never'}</td>
+                      <td className="py-3.5 px-4 text-slate-300">{u.lastLoginAt ? <time dateTime={u.lastLoginAt}>{formatLastSignIn(u.lastLoginAt)}</time> : NEVER_SIGNED_IN}</td>
                       <td className="py-3.5 px-4">
                         <div className="flex flex-wrap gap-1.5">
                           <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'reset-password', user: u })} className={actionClass}>Reset password</button>
                           <button type="button" disabled={isSelf || !u.mfaEnrolled} onClick={() => setAccountAction({ kind: 'reset-mfa', user: u })} className={actionClass}>Reset 2-step</button>
                           {u.disabled ? (
-                            <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'enable', user: u })} className={actionClass}>Enable</button>
+                            <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'enable', user: u })} className={actionClass}>{u.disabledReason === 'dormant' ? DORMANCY_TEXT.restoreButton : 'Enable'}</button>
                           ) : (
                             <button type="button" disabled={isSelf} onClick={() => setAccountAction({ kind: 'disable', user: u })} className={actionClass}>Disable</button>
                           )}
+                          <button type="button" onClick={() => showAccountHistory(u.id)} className={actionClass} aria-label={`History: account events of ${u.email}`}>History</button>
                         </div>
                         {isSelf && <p className="text-slate-400 mt-1">Use Account settings to change your own password.</p>}
                       </td>
@@ -1054,13 +1075,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                   {accountAction.kind === 'reset-password' && 'Reset password'}
                   {accountAction.kind === 'reset-mfa' && 'Reset two-step verification'}
                   {accountAction.kind === 'disable' && 'Disable account'}
-                  {accountAction.kind === 'enable' && 'Enable account'}
+                  {accountAction.kind === 'enable' && (accountAction.user.disabledReason === 'dormant' ? DORMANCY_TEXT.restoreTitle : 'Enable account')}
                 </DialogTitle>
                 <p className="text-slate-300 leading-relaxed">
                   {accountAction.kind === 'reset-password' && <>Set a temporary password for <strong className="text-white font-mono">{accountAction.user.email}</strong>. They are signed out everywhere, lose their two-step verification and recovery codes, and must change this password at their next sign-in.</>}
                   {accountAction.kind === 'reset-mfa' && <>Remove the authenticator and recovery codes of <strong className="text-white font-mono">{accountAction.user.email}</strong> and sign them out everywhere. They will set up two-step verification again at their next sign-in if it is required.</>}
                   {accountAction.kind === 'disable' && <>Block <strong className="text-white font-mono">{accountAction.user.email}</strong> from signing in. They are signed out everywhere and their two-step verification is removed.</>}
-                  {accountAction.kind === 'enable' && <>Allow <strong className="text-white font-mono">{accountAction.user.email}</strong> to sign in again. Their two-step verification is not restored.</>}
+                  {accountAction.kind === 'enable' && (accountAction.user.disabledReason === 'dormant'
+                    ? <>Allow <strong className="text-white font-mono">{accountAction.user.email}</strong> {DORMANCY_TEXT.adminRestoreBody}</>
+                    : <>Allow <strong className="text-white font-mono">{accountAction.user.email}</strong> to sign in again. Their two-step verification is not restored.</>)}
                 </p>
                 {accountAction.kind === 'reset-password' && (
                   <div>
@@ -1112,7 +1135,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
         )}
 
         {/* Section 2c: Account events (read-only, platform administrators) */}
-        <AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} />
+        <AccountEventsPanel localUsers={localUsers} tenants={tenants} refreshKey={usersVersion} filter={eventFilter} onFilterChange={setEventFilter} headingRef={eventsHeadingRef} />
 
         {/* Section 2d: System use notice shown before sign-in (issue #256) */}
         <SystemUseNoticeSection />

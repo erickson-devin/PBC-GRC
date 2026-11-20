@@ -101,7 +101,8 @@ function validationTests() {
   assert(!ok({ hostName: 'x'.repeat(256), cmmcAssetCategory: 'CUI_ASSET' }).ok, 'name length is bounded');
   assert(!ok({ hostName: 'bad\u0000name', cmmcAssetCategory: 'CUI_ASSET' }).ok, 'control characters are refused');
   assert(!ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', ipAddress: '10.0.0.1; DROP TABLE' }).ok, 'an address with unexpected characters is refused');
-  assert(!ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', complianceScore: 101 }).ok && !ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', complianceScore: 5.5 }).ok, 'the compliance score is a whole number from 0 to 100');
+  const retiredScan = ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', complianceScore: 101, lastScannedAt: 'x' });
+  assert(retiredScan.ok && !('complianceScore' in retiredScan.value) && !('lastScannedAt' in retiredScan.value), 'the retired complianceScore / lastScannedAt are accepted (ignored), never kept (#216)', retiredScan);
   assert(!ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', status: 'BROKEN' }).ok, 'status must be a known value');
   assert(!ok({ hostName: 'a', cmmcAssetCategory: 'CUI_ASSET', owner: 7 }).ok, 'owner must be text');
   assert(!ok('nope').ok && !ok(null).ok && !ok([]).ok, 'the body must be an object');
@@ -191,7 +192,11 @@ async function apiTests() {
   assert(upd.status === 200 && upd.body?.asset.cmmcAssetCategory === 'SPECIALIZED_ASSET' && upd.body?.asset.owner === 'OT team' && upd.body?.asset.hostName === 'DB-PRIMARY' && upd.body?.asset.notes === 'Primary CUI database', 'PUT changes only the fields sent');
   assert((await call('PUT', `${path()}/${db.id}`, owner, tenant, { hostName: 'fw-edge' })).status === 409, 'renaming onto an existing name -> 409');
   assert((await call('PUT', `${path()}/${db.id}`, owner, tenant, { cmmcAssetCategory: 'NOPE' })).status === 400, 'PUT validates too');
-  assert((await call('PUT', `${path()}/${db.id}`, owner, tenant, { complianceScore: 87, status: 'NON_COMPLIANT', lastScannedAt: '2026-01-01T00:00:00Z' })).body?.asset.complianceScore === 87, 'scan results can be recorded');
+  const retiredPut = await call('PUT', `${path()}/${db.id}`, owner, tenant, { complianceScore: 87, status: 'NON_COMPLIANT', lastScannedAt: '2026-01-01T00:00:00Z' });
+  assert(retiredPut.status === 200 && retiredPut.body?.asset.complianceScore === null && retiredPut.body?.asset.lastScannedAt === null && retiredPut.body?.asset.status === 'NON_COMPLIANT', 'a PUT carrying the retired scan fields succeeds, keeps neither and still sets the status (#216)', retiredPut.body);
+  const retiredPost = await call('POST', path(), owner, tenant, { hostName: 'RETIRED-SCAN', cmmcAssetCategory: 'CUI_ASSET', complianceScore: 50 });
+  assert(retiredPost.status === 201 && retiredPost.body?.asset.complianceScore === null && retiredPost.body?.asset.lastScannedAt === null, 'a POST carrying complianceScore 50 succeeds and stores null (#216)', retiredPost.body);
+  await call('DELETE', `${path()}/${retiredPost.body?.asset.id}`, owner, tenant);
   assert((await call('PUT', `${path()}/does-not-exist`, owner, tenant, { owner: 'x' })).status === 404, 'PUT unknown id -> 404');
   assert((await call('PUT', `${path()}/..%2Fevil`, owner, tenant, { owner: 'x' })).status === 404, 'a malformed id -> 404');
 

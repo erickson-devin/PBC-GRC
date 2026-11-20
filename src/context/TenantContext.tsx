@@ -306,6 +306,8 @@ interface TenantContextType {
   updateInvitation: (invitationId: string, updates: Partial<TenantInvitation>) => Promise<void>;
   updateMemberRole: (tenantId: string, memberId: string, newRole: TenantRole) => Promise<void>;
   removeMember: (tenantId: string, memberId: string) => Promise<void>;
+  /** Restores a member blocked for inactivity (#257) with the caller's own authenticator code, then reloads the team. The server allows MSP Admins and Tenant Owners. */
+  restoreDormantMember: (tenantId: string, userId: string, code: string) => Promise<void>;
   getTenantMembers: (tenantId: string) => TeamMember[];
   /** Re-fetches the members and invitations of a server-backed tenant (default: the active one). */
   refreshTeam: (tenantId?: string) => Promise<void>;
@@ -313,6 +315,8 @@ interface TenantContextType {
   refreshAllTeams: () => Promise<void>;
   /** The last team / invitation loading error, or null. */
   teamError: string | null;
+  /** The inactivity period per server-backed tenant, as its members listing reported it (0 = off, null = not reported). */
+  teamDormantDays: Record<string, number | null>;
   /** What the accept-invite page shows before sign-in; resolves null for an unknown token. */
   previewInvitation: (token: string) => Promise<InvitePreview | null>;
   /**
@@ -609,6 +613,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // The server keeps just a hash, so a link cannot be recovered later: use Resend to issue a fresh one.
   const inviteTokensRef = useRef<Record<string, string>>({});
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [teamDormantDays, setTeamDormantDays] = useState<Record<string, number | null>>({});
   // True while the forced password change is pending: the programs and team requests would all answer 403 (see mayLoadServerData)
   const [serverLoadsPaused, setServerLoadsPausedState] = useState(false);
   const serverLoadsPausedRef = useRef(false);
@@ -755,12 +760,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     try {
       const isAdmin = options.asAdmin || canRoleWrite(currentUserRef.current.roles?.[tenantId]);
-      const [members, invites] = await Promise.all([
-        ApiClient.listMembers(tenantId),
+      const [{ members, dormantDays }, invites] = await Promise.all([
+        ApiClient.listMembersWithPolicy(tenantId),
         isAdmin ? ApiClient.listInvites(tenantId) : Promise.resolve<ServerInvitation[]>([]),
       ]);
       if (!isCurrentResponse(epoch, teamEpoch.current) || !isCurrentResponse(seq, teamSeqByTenant.current[tenantId] ?? 0)) return;
       setTeamMembers(prev => ({ ...prev, [tenantId]: buildTeam(tenantId, members, invites, inviteTokensRef.current) }));
+      setTeamDormantDays(prev => ({ ...prev, [tenantId]: dormantDays }));
       if (isAdmin) {
         const mapped = invites.map(i => toTenantInvitation(i, tenant, inviteTokensRef.current[i.id]));
         setInvitations(prev => mergeServerInvitations(prev, tenantId, mapped));
@@ -1907,6 +1913,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setLiveActiveTenantId(DEFAULT_BLANK_TENANT.id);
     setCurrentUser(ANONYMOUS_USER);
     setTeamMembers({});
+    setTeamDormantDays({});
     setInvitations([]);
     setIsOnboardingModalOpen(false);
     setTenantSync({ status: 'idle', lastSyncedAt: null, error: null, outcome: null });
@@ -2192,6 +2199,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, [refreshTeam, teamMembers]);
 
+  /** Restores a member the inactivity check blocked (#257), with the caller's own authenticator code, then reloads the team. */
+  const restoreDormantMember = useCallback(async (tenantId: string, userId: string, code: string): Promise<void> => {
+    await ApiClient.restoreMember(tenantId, userId, code);
+    await refreshTeam(tenantId);
+  }, [refreshTeam]);
+
   /**
    * Query team members for active or specified tenant
    */
@@ -2257,6 +2270,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateInvitation,
     updateMemberRole,
     removeMember,
+    restoreDormantMember,
     getTenantMembers,
     initializeBlankTenant,
     completeTenantOnboarding,
@@ -2296,6 +2310,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshTeam,
     refreshAllTeams,
     teamError,
+    teamDormantDays,
     previewInvitation,
     migrateLocalTenantToServer,
     refreshLiveData,
@@ -2349,6 +2364,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateInvitation,
     updateMemberRole,
     removeMember,
+    restoreDormantMember,
     getTenantMembers,
     initializeBlankTenant,
     completeTenantOnboarding,
@@ -2388,6 +2404,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     refreshTeam,
     refreshAllTeams,
     teamError,
+    teamDormantDays,
     previewInvitation,
     migrateLocalTenantToServer,
     refreshLiveData,

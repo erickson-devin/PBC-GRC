@@ -1,6 +1,6 @@
 import { ROLE_LABELS } from './roles';
 import type { TenantRole } from '../types/tenant';
-import type { AccountEvent } from '../services/apiClient';
+import type { AccountEvent, AccountEventFilter } from '../services/apiClient';
 
 export const ACCOUNT_EVENTS_PAGE_SIZE = 50;
 export const ACCOUNT_EVENTS_OLDER_ERROR = 'Older account events could not be loaded. Try again.';
@@ -20,6 +20,8 @@ export const ACCOUNT_EVENT_LABELS: Record<string, string> = {
   step_up_failed: 'Administrator code refused',
   system_use_acknowledged: 'System use notice acknowledged',
   system_use_notice_updated: 'System use notice changed',
+  vm_token_created: 'Service token created',
+  vm_token_revoked: 'Service token revoked',
 };
 
 export function accountEventLabel(action: string): string {
@@ -45,6 +47,7 @@ const DETAIL_KEYS: Array<[string, string]> = [
   ['mustChangePassword', 'Must change password'],
   ['noticeVersion', 'Notice version'],
   ['noticeEnabled', 'Notice shown'],
+  ['tokenId', 'Service token'],
 ];
 const VIA_TEXT: Record<string, string> = {
   sign_in: 'sign-in',
@@ -53,18 +56,21 @@ const VIA_TEXT: Record<string, string> = {
   tenant_created: 'tenant created',
   invitation: 'invitation',
   invitation_registration: 'invitation sign-up',
+  sweep: 'automatic inactivity check',
 };
 const REASON_TEXT: Record<string, string> = {
   mfa_required: 'two-step verification required',
   signed_out: 'signed out',
   idle: 'inactivity',
   admin: 'administrator',
+  dormant: 'account unused for too long',
 };
 const ATTEMPTED_TEXT: Record<string, string> = {
   'reset-password': 'reset password',
   'reset-mfa': 'reset two-step verification',
   disable: 'disable account',
   enable: 'enable account',
+  restore: 'restore an account blocked for inactivity',
   'system-use-notice': 'change the system use notice',
 };
 
@@ -109,7 +115,9 @@ export function accountEventRows(
   const nameById = new Map(tenants.map((t) => [t.id, t.name] as [string, string]));
   return events.map((e) => {
     let actor: string;
-    if (e.actorKind === 'cli') actor = 'Command line';
+    const isVmToken = e.action.startsWith('vm_token_');
+    if (isVmToken) actor = accountName(e.actorUserId, emailById);
+    else if (e.actorKind === 'cli') actor = 'Command line';
     else if (e.actorKind === 'system') actor = 'System';
     else if (e.actorKind === 'admin') actor = `${accountName(e.actorUserId, emailById)} (administrator)`;
     else if (e.actorKind === 'user' && e.actorUserId && e.actorUserId === e.targetUserId) actor = 'The account itself';
@@ -119,7 +127,7 @@ export function accountEventRows(
       at: e.at,
       action: accountEventLabel(e.action),
       actor,
-      target: accountName(e.targetUserId, emailById),
+      target: isVmToken ? `Service token ${shortId(String(e.details?.tokenId ?? ''))}` : accountName(e.targetUserId, emailById),
       tenant: e.tenantId === null ? 'None' : (nameById.get(e.tenantId) ?? e.tenantId),
       details: accountEventDetails(e.details ?? {}),
     };
@@ -131,8 +139,40 @@ export function formatEventTime(at: string): string {
   return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
 }
 
-export function accountEventsErrorText(status: number): string {
+export function accountEventsErrorText(status: number, filtered = false): string {
+  if (filtered && status === 400) return ACCOUNT_EVENTS_FILTER_REJECTED;
   if (status === 403) return 'Only a platform administrator can read account events.';
   if (status === 0) return 'Cannot reach the server, so the account events could not be loaded.';
   return 'The account events could not be loaded. Try again.';
+}
+
+export const ACCOUNT_EVENT_FILTER_ACTIONS: readonly string[] = Object.keys(ACCOUNT_EVENT_LABELS);
+export const ACCOUNT_EVENTS_FILTERED_EMPTY = 'No account events match this filter. Choose another account or event, or clear the filter.';
+export const ACCOUNT_EVENTS_FILTER_REJECTED = 'The server did not accept this filter. Clear the filter and try again.';
+export const ACCOUNT_EVENTS_OLDEST = 'This is the oldest recorded event.';
+export const ACCOUNT_EVENTS_OLDEST_MATCHING = 'This is the oldest matching event.';
+export interface FilterOption { value: string; label: string }
+export function accountEventFilterActive(f: AccountEventFilter): boolean { return Boolean(f.target) || Boolean(f.action); }
+/** '' = all; accounts sorted by email; a target that is not in the list (deleted, or the list is not loaded) stays selectable by short id. */
+export function accountFilterOptions(accounts: Array<{ id: string; email: string }> | null, target: string | null | undefined): FilterOption[] {
+  const sorted = [...(accounts ?? [])].sort((a, b) => a.email.localeCompare(b.email));
+  const out: FilterOption[] = [{ value: '', label: 'All accounts' }];
+  if (target && !sorted.some((a) => a.id === target)) out.push({ value: target, label: accounts === null ? `Selected account (${shortId(target)})` : `Account no longer listed (${shortId(target)})` });
+  for (const a of sorted) out.push({ value: a.id, label: a.email });
+  return out;
+}
+export function actionFilterOptions(action: string | null | undefined): FilterOption[] {
+  const out: FilterOption[] = [{ value: '', label: 'All events' }, ...ACCOUNT_EVENT_FILTER_ACTIONS.map((a) => ({ value: a, label: ACCOUNT_EVENT_LABELS[a] }))];
+  if (action && !ACCOUNT_EVENT_FILTER_ACTIONS.includes(action)) out.push({ value: action, label: accountEventLabel(action) });
+  return out;
+}
+export function accountEventFilterSummary(f: AccountEventFilter, accounts: Array<{ id: string; email: string }>): string {
+  if (!accountEventFilterActive(f)) return '';
+  const emailById = new Map(accounts.map((a) => [a.id, a.email] as [string, string]));
+  const who = f.target ? accountName(f.target, emailById) : 'every account';
+  return `Showing ${f.action ? `"${accountEventLabel(f.action)}"` : 'all'} events for ${who}.`;
+}
+export function accountEventsLoadedText(count: number, more: boolean): string {
+  const base = count === 0 ? 'No matching account events.' : `${count} matching event${count === 1 ? '' : 's'} loaded.`;
+  return more ? `${base} Older ones can be loaded with Load older.` : base;
 }

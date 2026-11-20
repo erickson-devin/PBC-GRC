@@ -12,8 +12,10 @@ import {
   Search,
   Info,
   Save,
+  Clock,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl } from '../../context/TenantContext';
+import { useAuth } from '../../context/AuthContext';
 import { TenantRole } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { InviteStaffModal } from './InviteStaffModal';
@@ -32,6 +34,19 @@ import {
   teamRowView,
   type TeamOp,
 } from '../../data/roleView';
+import {
+  DORMANCY_TEXT,
+  blockedMemberRows,
+  memberAccountBadge,
+  memberSignInText,
+  restoreCodeReady,
+  restoreErrorMessage,
+  restoreRefreshesTeam,
+  restoreSuccessText,
+  showLastSignInColumn,
+  teamDormancyPolicyText,
+  type BlockedMemberRow,
+} from '../../data/dormancyView';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText } from '../../utils/clipboard';
@@ -71,7 +86,10 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     updateTenantFrameworkScope,
     refreshTeam,
     teamError,
+    restoreDormantMember,
+    teamDormantDays,
   } = useTenant();
+  const { mfaEnrolled } = useAuth();
 
   const [activeModalTab, setActiveModalTab] = useState<'team' | 'scope'>('team');
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -93,6 +111,11 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     to?: TenantRole;
   } | null>(null);
   const [scopeError, setScopeError] = useState<string | null>(null);
+  // Restoring a member the inactivity check blocked (#257): the owner's own authenticator code is the step-up
+  const [restoreTarget, setRestoreTarget] = useState<BlockedMemberRow | null>(null);
+  const [restoreCode, setRestoreCode] = useState('');
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const uid = React.useId();
   // Focus: the result region takes it when the control that was used is gone (a removal, a revoke)
   const resultRef = React.useRef<HTMLDivElement>(null);
@@ -118,6 +141,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
       setActionError(null);
       setScopeError(null);
       setPendingAction(null);
+      setRestoreTarget(null);
       setCopyFailedUrl(null);
       void refreshTeam(currentTenant.id);
     }
@@ -159,6 +183,26 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   }, [copyFailedUrl]);
 
   const members = getTenantMembers(currentTenant.id);
+  const showSignIn = showLastSignInColumn(canManageTenant, !isBrowserOnlyTenant);
+  const blockedRows = showSignIn ? blockedMemberRows(members, currentRole, currentUser.email) : [];
+  const dormantDays = teamDormantDays[currentTenant.id] ?? null;
+
+  const openRestore = (row: BlockedMemberRow) => { setRestoreError(null); setRestoreCode(''); setRestoreTarget(row); };
+  const closeRestore = () => { setRestoreTarget(null); setRestoreCode(''); setRestoreError(null); };
+  const runRestore = async () => {
+    if (!restoreTarget || restoreBusy) return;
+    if (!restoreCodeReady(restoreCode)) { setRestoreError(DORMANCY_TEXT.codeFormat); return; }
+    const target = restoreTarget;
+    setRestoreBusy(true); setRestoreError(null);
+    try {
+      await restoreDormantMember(currentTenant.id, target.userId, restoreCode);
+      closeRestore(); setActionError(null); setNotice(restoreSuccessText(target.email));
+      requestAnimationFrame(() => resultRef.current?.focus()); // the Restore button is gone once the row leaves the section
+    } catch (err: unknown) {
+      setRestoreError(restoreErrorMessage(err));
+      if (restoreRefreshesTeam(err)) void refreshTeam(currentTenant.id);
+    } finally { setRestoreBusy(false); setRestoreCode(''); }
+  };
 
   // Filter members by search
   const filteredMembers = members.filter(m =>
@@ -488,6 +532,27 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     </span>
                   </div>
                 )}
+                {blockedRows.length > 0 && (
+                  <section aria-labelledby={`${uid}-blocked`} className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+                    <div>
+                      <h3 id={`${uid}-blocked`} className="text-xs font-bold text-amber-200 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /><span>{DORMANCY_TEXT.sectionTitle} ({blockedRows.length})</span></h3>
+                      <p className="text-xs text-slate-400 mt-1">{teamDormancyPolicyText(dormantDays)}{currentRole === 'TENANT_ADMIN' ? ` ${DORMANCY_TEXT.adminCannotRestore}` : ''}</p>
+                    </div>
+                    <ul className="divide-y divide-slate-800/80">
+                      {blockedRows.map(b => (
+                        <li key={b.id} className="flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="font-mono text-xs text-slate-200 truncate">{b.email}</p>
+                            <p className="text-xs text-slate-400">Last sign-in: {b.lastSignIn} · Blocked: {b.blockedOn}</p>
+                          </div>
+                          {b.canRestore
+                            ? <button type="button" disabled={busy} onClick={() => openRestore(b)} aria-label={`Restore ${b.email}`} className="btn-secondary text-xs px-3 py-1.5 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">{DORMANCY_TEXT.restoreButton}</button>
+                            : <span className="text-xs text-slate-400">{b.note}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
 
                 {/* Members Table */}
                 <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
@@ -497,6 +562,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                         <th className="py-3 px-4">Member Name & Email</th>
                         <th className="py-3 px-4">Enclave Role</th>
                         <th className="py-3 px-4">Status</th>
+                        {showSignIn && <th className="py-3 px-4 hidden md:table-cell">Last sign-in</th>}
                         <th className="py-3 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -504,6 +570,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       {filteredMembers.map(member => {
                         const isSelf = member.email.toLowerCase() === currentUser.email.toLowerCase();
                         const isPending = member.status === 'PENDING_INVITE';
+                        const accountBadge = memberAccountBadge(member);
                         const row = teamRowView({
                           actor: currentRole,
                           canManageTenant,
@@ -534,6 +601,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                     )}
                                   </div>
                                   <p className="text-xs font-mono text-slate-400 truncate">{member.email}</p>
+                                  {showSignIn && <p className="md:hidden text-xs text-slate-400">Last sign-in: {memberSignInText(member)}</p>}
                                 </div>
                               </div>
                             </td>
@@ -581,6 +649,11 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
                                   Pending Invite
                                 </span>
+                              ) : accountBadge ? (
+                                <span className={`badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${accountBadge.tone === 'amber' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${accountBadge.tone === 'amber' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                                  {accountBadge.label}
+                                </span>
                               ) : (
                                 <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
@@ -588,6 +661,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                 </span>
                               )}
                             </td>
+                            {showSignIn && <td className="py-3 px-4 hidden md:table-cell text-slate-300 whitespace-nowrap">{memberSignInText(member)}</td>}
 
                             {/* Actions */}
                             <td className="py-3 px-4 text-right">
@@ -672,6 +746,37 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                     Close
                   </button>
                 </div>
+
+                {/* Restore a member the inactivity check blocked (#257) */}
+                {restoreTarget && (
+                  <DialogOverlay onClose={restoreBusy ? undefined : closeRestore} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+                    <div className="w-full max-w-md p-1.5 rounded-[2rem] bg-gradient-to-b from-amber-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
+                      <form onSubmit={(e) => { e.preventDefault(); void runRestore(); }} className="max-h-[calc(94vh-0.75rem)] overflow-y-auto p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-4 text-xs">
+                        <DialogTitle as="h3" className="text-base font-bold text-white">{DORMANCY_TEXT.restoreTitle}</DialogTitle>
+                        <p className="text-slate-300 leading-relaxed"><strong className="text-white font-mono">{restoreTarget.email}</strong> {DORMANCY_TEXT.restoreLead}</p>
+                        <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-slate-300">
+                          <dt className="text-slate-400">Last sign-in</dt><dd>{restoreTarget.lastSignIn}</dd>
+                          <dt className="text-slate-400">Blocked</dt><dd>{restoreTarget.blockedOn}</dd>
+                        </dl>
+                        <p className="text-slate-400 leading-relaxed">{DORMANCY_TEXT.restoreBody}</p>
+                        {mfaEnrolled ? (
+                          <div>
+                            <label htmlFor="team-restore-code" className="block text-xs font-semibold text-slate-300 mb-1">{DORMANCY_TEXT.codeLabel}</label>
+                            <input id="team-restore-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus value={restoreCode}
+                              onChange={(e) => setRestoreCode(e.target.value.replace(/\D/g, ''))} aria-describedby="team-restore-code-help" aria-invalid={restoreError ? true : undefined}
+                              className="w-full px-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white font-mono tracking-widest focus:outline-none focus:border-brand-500" />
+                            <p id="team-restore-code-help" className="mt-1 text-slate-400">{DORMANCY_TEXT.codeHelp}</p>
+                          </div>
+                        ) : <p className="text-amber-300 leading-relaxed">{DORMANCY_TEXT.ownerNeedsMfa}</p>}
+                        <ErrorNotice message={restoreError} />
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={closeRestore} disabled={restoreBusy} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold">Cancel</button>
+                          <button type="submit" disabled={restoreBusy || !mfaEnrolled || !restoreCodeReady(restoreCode)} className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-bold">{restoreBusy ? DORMANCY_TEXT.restoreBusy : DORMANCY_TEXT.restoreButton}</button>
+                        </div>
+                      </form>
+                    </div>
+                  </DialogOverlay>
+                )}
               </div>
             )}
 

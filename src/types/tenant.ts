@@ -93,5 +93,11 @@ export interface TeamMember {
   invitationId?: string;
   /** The member's user id, for server-backed members. */
   userId?: string;
+  /** #257, write roles only (undefined when the server did not send it): the account's last sign-in, null when never. */
+  lastLoginAt?: string | null;
+  /** The account (not the membership) is disabled; disabledReason says why. */
+  accountDisabled?: boolean;
+  disabledReason?: 'admin' | 'dormant' | null;
+  disabledAt?: string | null;
   avatarUrl?: string;
 }

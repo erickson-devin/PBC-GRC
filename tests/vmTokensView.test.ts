@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   VM_TOKENS_COPY, VM_TOKEN_ACTIVE_LIMIT, VM_TOKEN_DEFAULT_DAYS, VM_TOKEN_MAX_DAYS, activeTokenCaption, countActiveTokens, createdByLabel,
   newTokenFor, normalizeTokenName, parseExpiryDays, revokeConfirmText, revokedMessage, tokenNameError, tokenPrefixLabel, tokenState,
-  tokenStateLabel, vmTokenErrorMessage, vmTokenLoadErrorMessage,
+  tokenCloseGuard, tokenStateLabel, vmTokenErrorMessage, vmTokenLoadErrorMessage,
 } from '../src/data/telemetry/vmTokensView';
 import type { VmServiceToken } from '../src/types/vm';
 
@@ -114,6 +114,32 @@ function main() {
   assert(!accretion.includes('create a VM service token and send it') && /API Keys (&|&amp;) Service Tokens/.test(accretion), 'TK10e the integration modal points to the new screen');
   const dropdown = read('src/components/auth/UserProfileDropdown.tsx');
   assert(dropdown.includes('API Keys & Service Tokens') && !dropdown.includes('API Session Token'), 'TK10f the profile menu label');
+
+  console.log('\n--- closing the window with a new token on screen (#213) ---');
+  assert(
+    tokenCloseGuard({ creating: false, revealing: false }) === 'none' && tokenCloseGuard({ creating: false, revealing: true }) === 'confirm'
+      && tokenCloseGuard({ creating: true, revealing: false }) === 'busy' && tokenCloseGuard({ creating: true, revealing: true }) === 'busy',
+    'TK11a the close guard: none, confirm, busy, busy'
+  );
+  assert(
+    VM_TOKENS_COPY.closeConfirm === 'Close without storing the token? It is not shown again. If it is lost, revoke it and create a new one.'
+      && VM_TOKENS_COPY.keepToken === 'Keep the token on screen' && VM_TOKENS_COPY.closeAnyway === 'Close without storing',
+    'TK11b the close confirmation copy'
+  );
+  const modalNeeds = [
+    'onCreatingChange={setCreating}', 'onRevealChange={setRevealing}', 'tokenCloseGuard({ creating, revealing })',
+    "onClose={guard === 'busy' ? undefined : confirmClose ? keepToken : requestClose}", 'aria-labelledby={closeConfirmId}', 'VM_TOKENS_COPY.closeConfirm', 'ref={keepRef}',
+  ].filter((s) => !modal.includes(s));
+  const modalBanned = ['onClick={onClose}', '<DialogOverlay onClose={onClose}', 'newToken'].filter((s) => modal.includes(s));
+  assert(
+    modalNeeds.length === 0 && modalBanned.length === 0 && occurrences(modal, 'onClick={requestClose}') === 2 && occurrences(modal, "disabled={guard === 'busy'}") === 2,
+    'TK11c the modal guards every close path and never references the token', { modalNeeds, modalBanned }
+  );
+  const firstRef = modal.indexOf('useRef<HTMLButtonElement>(null)');
+  const firstEffect = modal.indexOf('useEffect(');
+  const earlyReturn = modal.indexOf('if (!isOpen) return null;');
+  assert(firstRef > -1 && firstEffect > -1 && firstRef < earlyReturn && firstEffect < earlyReturn, 'TK11d the new hooks sit before the early return');
+  assert(section.includes('onCreatingChange?.(creating);') && section.includes('return () => onCreatingChange?.(false);'), 'TK11e the section reports the in-flight create');
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

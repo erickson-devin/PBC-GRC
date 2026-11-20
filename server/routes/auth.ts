@@ -51,6 +51,7 @@ import {
 } from '../auth/localUsers';
 import { isPlatformAdmin } from '../auth/platformAdmin';
 import { previewInvitation, redeemInvitation } from '../invitations';
+import { disableIfDormant } from '../auth/accountDormancy';
 import { accountLogRef, createLoginThrottle, loginAccountKey } from '../auth/loginThrottle';
 import { clearSessionCookie, issueSession, readSessionCookie, rejectCrossSite } from '../auth/session';
 import { adoptSession, revokeSession } from '../auth/sessionStore';
@@ -250,8 +251,11 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
 
     const matches = await verifyPassword(password, user?.passwordHash ?? (await getDummyHash()));
 
-    if (!user || user.disabled || !matches) {
-      if (user && !user.disabled) await registerFailedLogin(user);
+    // A dormant account (IA.L2-3.5.6) is disabled here, only once the password is right (a wrong one writes nothing); the answer is the same generic 401.
+    const dormantNow = Boolean(user && !user.disabled && matches && (await disableIfDormant(user)));
+
+    if (!user || user.disabled || dormantNow || !matches) {
+      if (user && !user.disabled && !dormantNow) await registerFailedLogin(user);
       loginThrottle.recordAccountFailure(accountKey);
       console.warn(`[Auth] Failed local login (account ${accountLogRef(email)}) from ${req.ip}`);
       res.status(401).json(INVALID_CREDENTIALS);
@@ -379,6 +383,7 @@ router.post('/register-with-invite', async (req: Request, res: Response): Promis
       res.status(201).json({ ...pendingBody(user, 'enrol'), tenantId: result.tenantId, role: result.role });
       return;
     }
+    await registerSuccessfulLogin(user); // a session issued here is a sign-in: "Last sign-in" and the inactivity clock count it (#257)
     res.status(201).json({ ...await issueSession(req, res, user, ['pwd'], false), tenantId: result.tenantId, role: result.role });
   } catch (err: unknown) {
     respondWithError(res, err, 'Registration');

@@ -36,7 +36,11 @@ const sspProbe = TABLES_SQL.indexOf('IF NOT EXISTS (SELECT 1 FROM ssp_documents)
 const sspDrop = TABLES_SQL.indexOf('DROP TABLE ssp_documents;');
 const sspReforce = TABLES_SQL.indexOf('ALTER TABLE ssp_documents FORCE ROW LEVEL SECURITY;');
 assert(0 < sspNoForce && sspNoForce < sspProbe && sspProbe < sspDrop && sspDrop < sspReforce, 'D3: ssp_documents is dropped only after an empty probe, and FORCE RLS is restored when rows remain', [sspNoForce, sspProbe, sspDrop, sspReforce]);
-assert((schema.match(/NO FORCE ROW LEVEL SECURITY/g) || []).length === 1, 'D4: the ssp_documents probe is the only NO FORCE in the schema');
+assert(
+  (schema.match(/NO FORCE ROW LEVEL SECURITY/g) || []).length === 2 &&
+    (schema.match(/ALTER TABLE (\w+) NO FORCE ROW LEVEL SECURITY/g) || []).join('|') === 'ALTER TABLE ssp_documents NO FORCE ROW LEVEL SECURITY|ALTER TABLE enclave_assets NO FORCE ROW LEVEL SECURITY',
+  'D4: the ssp_documents probe and the enclave_assets retired-column fix (#216) are the only NO FORCE in the schema'
+);
 assert(TABLES_SQL.includes('relnamespace = current_schema()::regnamespace'), 'D5: the ssp_documents lookup is limited to the current schema');
 assert(/CREATE TABLE IF NOT EXISTS local_users/.test(schema) && /password_hash/.test(schema) && !/\bpassword\s+VARCHAR/i.test(schema), 'local_users stores a password hash only, never a password column');
 assert(schema.includes('CONSTRAINT unq_local_users_email UNIQUE (email)'), 'local user emails are unique');
@@ -169,6 +173,19 @@ assert(
   addConstraints
 );
 assert((luBlock.match(/CREATE TABLE/g) || []).length === 1 && !/\btenant_id\b/.test(luBlock), 'S2: the block creates only local_users and has no tenant_id (global identity data)');
+const dormantLines = [
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS disabled_reason VARCHAR(16);',
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;',
+  'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS dormancy_reset_at TIMESTAMPTZ NOT NULL DEFAULT NOW();',
+];
+const actionBlockAt = TABLES_SQL.indexOf("ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed'", TABLES_SQL.indexOf('LIKE \'%vm_token_revoked%\''));
+const reasonDrop = TABLES_SQL.indexOf('ALTER TABLE local_users DROP CONSTRAINT IF EXISTS local_users_disabled_reason_check;');
+const reasonAdd = TABLES_SQL.indexOf('ALTER TABLE local_users ADD CONSTRAINT local_users_disabled_reason_check');
+assert(
+  dormantLines.every((l) => TABLES_SQL.includes(l) && TABLES_SQL.indexOf(l) > actionBlockAt) && actionBlockAt > 0 && reasonDrop > actionBlockAt && reasonAdd > reasonDrop && TABLES_SQL.includes("disabled_reason IS NULL OR disabled_reason IN ('admin', 'dormant')"),
+  'DA1: the dormant account columns are added idempotently after the account events action block, with the reason check dropped before it is added (#257)',
+  [actionBlockAt, reasonDrop, reasonAdd]
+);
 assert(!/totp_secret\s+(TEXT|VARCHAR)/i.test(TABLES_SQL) && !/recovery_codes\s+(TEXT|JSONB)/i.test(TABLES_SQL), 'S3: no plaintext secret or recovery-code column (only totp_secret_enc and recovery_code_hashes)');
 assert(!buildRlsSql().includes('local_users'), 'S4: buildRlsSql() does not mention local_users');
 assert(
@@ -473,9 +490,21 @@ const addMatch = /ADD CONSTRAINT local_account_events_action_check CHECK \(actio
 const dropAt = TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS local_account_events_action_check;');
 assert(
   JSON.stringify(listOf(inlineList)) === JSON.stringify([...ACCOUNT_EVENT_ACTIONS]) && !!addMatch && JSON.stringify(listOf(addMatch[1])) === JSON.stringify([...ACCOUNT_EVENT_ACTIONS]) &&
-    dropAt > 0 && dropAt < (addMatch?.index ?? -1) && TABLES_SQL.slice(0, dropAt).includes("LIKE '%system_use_notice_updated%'"),
+    dropAt > 0 && dropAt < (addMatch?.index ?? -1) && TABLES_SQL.slice(0, dropAt).includes("LIKE '%vm_token_revoked%'"),
   'AE5: the new-install and the migrated action lists both equal ACCOUNT_EVENT_ACTIONS; the old check is dropped before the new one is added, only while it lacks the newest action',
   [listOf(inlineList).length, addMatch ? listOf(addMatch[1]).length : null, ACCOUNT_EVENT_ACTIONS.length]
+);
+const eaAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS enclave_assets (');
+const eaBlock = eaAt < 0 ? '' : TABLES_SQL.slice(eaAt, TABLES_SQL.indexOf('\n  );', eaAt));
+const noForceAt = TABLES_SQL.indexOf('ALTER TABLE enclave_assets NO FORCE ROW LEVEL SECURITY', eaAt);
+const nullAt = TABLES_SQL.indexOf('UPDATE enclave_assets SET compliance_score = NULL, last_scanned_at = NULL', eaAt);
+const forceAt = TABLES_SQL.indexOf('ALTER TABLE enclave_assets FORCE ROW LEVEL SECURITY', eaAt);
+const retiredGate = TABLES_SQL.slice(eaAt, forceAt);
+assert(
+  eaAt >= 0 && noForceAt > eaAt && nullAt > noForceAt && forceAt > nullAt && retiredGate.includes('col_description(') && retiredGate.includes("'Retired (#216): not written or shown'") &&
+    eaBlock.includes('last_scanned_at TIMESTAMPTZ') && eaBlock.includes('compliance_score INTEGER'),
+  'AS216: the retired scan columns stay in the table; a gated startup fix lifts FORCE RLS, nulls them and restores FORCE, in that order',
+  [eaAt, noForceAt, nullAt, forceAt]
 );
 
 console.log('\n--- Pool configuration ---');

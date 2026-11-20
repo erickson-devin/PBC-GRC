@@ -9,7 +9,6 @@
 import {
   EnclaveAsset,
   CmmcAssetCategory,
-  EnclaveAssetStatus,
   AccretionDiscoveryItem,
   AccretionIngestResult,
 } from '../../types/telemetry';
@@ -166,34 +165,6 @@ export function importAssetsFromCsv(tenantId: string, csvContent: string): { imp
   }
   if (imported.length > 0) saveEnclaveAssets([...imported, ...existing], tenantId);
   return { imported, errors };
-}
-
-// ---------------------------------------------------------------------------
-// 5. Real-Time Scan Synchronization
-// ---------------------------------------------------------------------------
-
-export function syncAssetScanResult(
-  tenantId: string,
-  hostName: string,
-  ipAddress: string,
-  score: number,
-  forcedStatus?: EnclaveAssetStatus
-): void {
-  const currentAssets = getEnclaveAssets(tenantId);
-  const matchIdx = currentAssets.findIndex(
-    a => a.hostName.toLowerCase() === hostName.toLowerCase() || (ipAddress !== '' && a.ipAddress === ipAddress)
-  );
-
-  if (matchIdx >= 0) {
-    const computedStatus: EnclaveAssetStatus = forcedStatus || (score === 100 ? 'ACTIVE' : 'NON_COMPLIANT');
-    currentAssets[matchIdx] = {
-      ...currentAssets[matchIdx],
-      lastScannedAt: new Date().toISOString(),
-      complianceScore: score,
-      status: computedStatus,
-    };
-    saveEnclaveAssets(currentAssets, tenantId);
-  }
 }
 
 // ---------------------------------------------------------------------------

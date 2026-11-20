@@ -11,6 +11,7 @@ import {
   updateInvitation,
 } from '../invitations';
 import { isPlatformAdminUser, platformAdminEmails } from '../auth/platformAdmin';
+import { accountLogRef } from '../auth/loginThrottle';
 import { ensureActiveTenant, ensureTenantAdmin, roleNotGrantableBody } from './tenantGuards';
 import { TENANT_ROLES, canManageRole, isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
@@ -110,7 +111,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       createdBy: user.name ? user.name + ' (' + (user.email ?? user.uid) + ')' : user.email ?? user.uid,
       createdByUserId: user.uid,
     });
-    console.log('[Invitations API] ' + user.uid + ' invited ' + invitation.email + ' as ' + role + ' to ' + req.tenantId);
+    console.log('[Invitations API] ' + user.uid + ' invited account ' + accountLogRef(invitation.email) + ' as ' + role + ' to ' + req.tenantId);
     res.status(201).json({ invitation: publicView(invitation), token });
   } catch (err: unknown) {
     sendInvitationError(res, err, 'Failed to create invitation');

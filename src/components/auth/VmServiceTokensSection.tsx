@@ -21,6 +21,8 @@ interface VmServiceTokensSectionProps {
   tenantName: string;
   /** Called with true while the one-time reveal (and the exporter setup under it) is open, so the parent does not show a second setup panel. */
   onRevealChange?: (revealing: boolean) => void;
+  /** Called with true while the create request is in flight, so the parent refuses to close mid-request. */
+  onCreatingChange?: (creating: boolean) => void;
 }
 
 const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700';
@@ -36,7 +38,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleDateString([], { year: 'n
 
 type ListState = { status: 'loading' | 'ready' | 'error'; tokens: VmServiceToken[]; message: string | null };
 
-export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ tenantId, onRevealChange }) => {
+export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ tenantId, onRevealChange, onCreatingChange }) => {
   const [list, setList] = useState<ListState>({ status: 'loading', tokens: [], message: null });
   const [name, setName] = useState('');
   const [days, setDays] = useState(String(VM_TOKEN_DEFAULT_DAYS));
@@ -91,6 +93,11 @@ export const VmServiceTokensSection: React.FC<VmServiceTokensSectionProps> = ({ 
     onRevealChange?.(revealing);
     return () => onRevealChange?.(false);
   }, [revealing, onRevealChange]);
+
+  useEffect(() => {
+    onCreatingChange?.(creating);
+    return () => onCreatingChange?.(false);
+  }, [creating, onCreatingChange]);
 
   useEffect(() => { if (confirmId) confirmRef.current?.focus(); }, [confirmId]);
 

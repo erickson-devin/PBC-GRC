@@ -16,7 +16,10 @@ import { requireWriteRole } from '../middleware/roleGuard';
 import { isPlatformAdminUser } from '../auth/platformAdmin';
 import { recordAccountEventBestEffort } from '../auth/accountEvents';
 import { invalidateMfaRequirement } from '../auth/mfaEnforcement';
-import { ensureActiveTenant, roleNotGrantableBody } from './tenantGuards';
+import { getAccountDormantDays } from '../auth/localAuth';
+import { findLocalUserById, getLocalUserAccountSummaries, setLocalUserDisabled, type LocalUserAccountSummary } from '../auth/localUsers';
+import { requireAdminStepUp } from './auth';
+import { ensureActiveTenant, ensureOwnerRole, roleNotGrantableBody } from './tenantGuards';
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
 import tenantSoftwareRouter from './software';
@@ -26,7 +29,7 @@ import vmRouter from './vm';
 import programsRouter from './programs';
 import { optionalProgramContext, programContext } from '../middleware/programContext';
 import { clearUserProgramDefault } from '../userProgramDefaults';
-import { TENANT_ROLES, canChangeMemberRole, canManageRole, canRemoveMember, isTenantRole } from '../../src/utils/roles';
+import { TENANT_ROLES, canChangeMemberRole, canManageRole, canRemoveMember, canRoleWrite, isTenantRole } from '../../src/utils/roles';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
 import { validateStackProfile } from '../../src/data/stackProfileSchema';
@@ -241,17 +244,34 @@ router.use('/:tenantId/vm', optionalProgramContext, vmRouter);
 const USER_ID_PATTERN = /^[A-Za-z0-9._:@-]{1,128}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 
+/** What the member list shows of a local account (ISO times, no email or name): sign-in history and why it is disabled. */
+function accountView(s: LocalUserAccountSummary) {
+  return {
+    lastLoginAt: s.lastLoginAt ? s.lastLoginAt.toISOString() : null,
+    disabled: s.disabled,
+    disabledReason: s.disabled ? (s.disabledReason ?? 'admin') : null,
+    disabledAt: s.disabledAt ? s.disabledAt.toISOString() : null,
+  };
+}
+
 /**
  * GET /api/v1/tenants/:tenantId/members
- * Lists the members of the active tenant and their roles.
+ * Lists the members of the active tenant and their roles. For the write roles each member also carries `account`: the sign-in and
+ * disabled state of their local account (null when there is none); the read roles always get `account: null`. `dormantDays` is the
+ * inactivity limit (0 = off), issue #257.
  */
 router.get('/:tenantId/members', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
   const tenantId = req.tenantId!;
 
   try {
-    const members = await listTenantMembers(tenantId);
-    res.json({ tenantId, totalCount: members.length, members });
+    const listed = await listTenantMembers(tenantId);
+    const summaries = canRoleWrite(req.tenantRole) ? await getLocalUserAccountSummaries(listed.map((m) => m.userId)) : new Map<string, LocalUserAccountSummary>();
+    const members = listed.map((m) => {
+      const summary = summaries.get(m.userId);
+      return { ...m, account: summary ? accountView(summary) : null };
+    });
+    res.json({ tenantId, totalCount: members.length, members, dormantDays: getAccountDormantDays() });
   } catch (err: unknown) {
     console.error(`[Tenants API] Failed to list members for ${tenantId}:`, errorMessage(err));
     res.status(500).json({ error: 'Failed to list tenant members' });
@@ -382,6 +402,65 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
   } catch (err: unknown) {
     console.error('[Tenants API] Failed to remove member:', errorMessage(err));
     res.status(500).json({ error: 'Failed to remove member' });
+  }
+});
+
+/**
+ * POST /api/v1/tenants/:tenantId/members/:userId/restore   Body: { code }
+ * Restores a member whose account was disabled for inactivity (IA.L2-3.5.6). Tenant Owner or MSP Admin only, for a member whose role the
+ * caller can manage, and with the caller's own fresh second-factor code (requireAdminStepUp, checked last so a refused request does not
+ * spend the code). Only an account disabled for inactivity: an administrator's disable stays with the platform administrators.
+ * Answers { restored: true, userId, account }; logs ids only.
+ */
+router.post('/:tenantId/members/:userId/restore', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const userId = String(req.params.userId);
+
+  if (!USER_ID_PATTERN.test(userId)) {
+    res.status(400).json({ error: 'Invalid userId' });
+    return;
+  }
+  if (userId === req.user?.uid) {
+    res.status(403).json({ error: 'Forbidden: you cannot restore your own account' });
+    return;
+  }
+  if (!ensureOwnerRole(req, res)) return;
+
+  try {
+    const targetRole = await getTenantRole(userId, tenantId);
+    if (!targetRole) {
+      res.status(404).json({ error: 'Member not found' });
+      return;
+    }
+    if (!canManageRole(req.tenantRole, targetRole)) {
+      res.status(403).json(roleNotGrantableBody(req.tenantRole, targetRole));
+      return;
+    }
+    const target = await findLocalUserById(userId);
+    if (!target) {
+      res.status(404).json({ error: 'No such account', reason: 'not_found' });
+      return;
+    }
+    if (!(target.disabled && target.disabledReason === 'dormant')) {
+      res.status(409).json({ error: 'This account is not blocked for inactivity', reason: 'not_dormant' });
+      return;
+    }
+    if (!(await requireAdminStepUp(req, res, 'restore'))) return;
+    await setLocalUserDisabled(userId, false, {
+      actorKind: 'user',
+      actorUserId: req.user!.uid,
+      targetUserId: userId,
+      action: 'account_enabled',
+      scopeTenantId: tenantId,
+      details: { reason: 'dormant', via: 'member_update' },
+    });
+    console.log(`[Tenants API] ${req.user!.uid} restored ${userId} in ${tenantId}`);
+    const summary = (await getLocalUserAccountSummaries([userId])).get(userId);
+    res.json({ restored: true, userId, account: summary ? accountView(summary) : null });
+  } catch (err: unknown) {
+    console.error('[Tenants API] Failed to restore member:', errorMessage(err));
+    res.status(500).json({ error: 'Failed to restore member' });
   }
 });
 

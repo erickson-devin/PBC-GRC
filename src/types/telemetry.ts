@@ -97,9 +97,9 @@ export interface EnclaveAsset {
   discoveryStatus: AssetDiscoveryStatus;
   /** Detailed metadata from Elijah's Accretion tool */
   accretionMetadata?: AccretionMetadata;
-  /** Timestamp of most recent OpenSCAP / STIG scan, or null */
+  /** Retired (#216): always null from the server */
   lastScannedAt: string | null;
-  /** STIG benchmark compliance percentage (0-100), or null */
+  /** Retired (#216): always null from the server */
   complianceScore: number | null;
   /** Hardware specifications, role, or administrative notes (the server's ) */
   notes: string;

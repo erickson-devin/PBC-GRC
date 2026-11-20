@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { hashPassword, validateNewPassword } from '../auth/localAuth';
+import { getAccountDormantDays, hashPassword, validateNewPassword } from '../auth/localAuth';
 import { accountLogRef } from '../auth/loginThrottle';
 import type { AccountEventInput } from '../auth/accountEvents';
 import {
@@ -42,12 +42,15 @@ router.use(async (req: Request, res: Response, next: NextFunction): Promise<void
 });
 
 /** What the console may see of an account: never a hash, a secret or a recovery digest. */
-function summarize(u: Pick<LocalUser, 'id' | 'email' | 'name' | 'disabled' | 'lockedUntil' | 'lastLoginAt' | 'createdAt' | 'mustChangePassword'> & { mfaEnrolled: boolean }) {
+function summarize(u: Pick<LocalUser, 'id' | 'email' | 'name' | 'disabled' | 'disabledReason' | 'disabledAt' | 'lockedUntil' | 'lastLoginAt' | 'createdAt' | 'mustChangePassword'> & { mfaEnrolled: boolean }) {
   return {
     id: u.id,
     email: u.email,
     name: u.name,
     disabled: u.disabled,
+    // Why it is disabled: 'admin' (a disable, or a row from before the reason was recorded) or 'dormant' (IA.L2-3.5.6); null while enabled.
+    disabledReason: u.disabled ? (u.disabledReason ?? 'admin') : null,
+    disabledAt: u.disabledAt ? u.disabledAt.toISOString() : null,
     mfaEnrolled: u.mfaEnrolled,
     mustChangePassword: u.mustChangePassword,
     lockedUntil: u.lockedUntil ? u.lockedUntil.toISOString() : null,
@@ -91,10 +94,10 @@ const failed = (res: Response, err: unknown, what: string): void => {
   res.status(500).json({ error: what + ' failed' });
 };
 
-/** GET /api/v1/platform/users: every local account, for the administration console. */
+/** GET /api/v1/platform/users: every local account, for the administration console, and the dormancy limit in days (0 = off). */
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
-    res.json({ users: (await listLocalUsers()).map(summarize) });
+    res.json({ users: (await listLocalUsers()).map(summarize), dormantDays: getAccountDormantDays() });
   } catch (err: unknown) {
     failed(res, err, 'Listing accounts');
   }
@@ -158,13 +161,17 @@ router.post('/:userId/disable', async (req: Request, res: Response): Promise<voi
   }
 });
 
-/** POST /api/v1/platform/users/:userId/enable: allows sign-in again and clears a lockout. The factor is not restored. */
+/**
+ * POST /api/v1/platform/users/:userId/enable: allows sign-in again and clears a lockout. The factor is not restored (an account
+ * disabled for inactivity kept its factor). Restarts the inactivity clock; the event says 'dormant' when that was the reason.
+ */
 router.post('/:userId/enable', async (req: Request, res: Response): Promise<void> => {
   try {
     const target = await resolveTarget(req, res);
     if (!target) return;
     if (!(await requireAdminStepUp(req, res, 'enable'))) return;
-    await setLocalUserDisabled(target.id, false, adminEvent(req, target, 'account_enabled'));
+    const wasDormant = target.disabled && target.disabledReason === 'dormant';
+    await setLocalUserDisabled(target.id, false, adminEvent(req, target, 'account_enabled', wasDormant ? { reason: 'dormant' } : undefined));
     console.log(`[PlatformUsers] ${accountLogRef(req.user!.email ?? '')} enabled ${accountLogRef(target.email)}`);
     res.json({ user: summarizeStored((await findLocalUserById(target.id)) ?? target) });
   } catch (err: unknown) {

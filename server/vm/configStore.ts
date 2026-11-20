@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import type pg from 'pg';
 import { getDbMode } from '../db';
 import { VM_CONFIG_RESULTS } from '../../src/types/vm';
-import type { VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSeverity } from '../../src/types/vm';
+import type { VmAssetConfigSummary, VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSeverity } from '../../src/types/vm';
+import { configScore, summarizeConfigScans } from '../../src/data/telemetry/configScore';
 import type { NormalizedConfigScan } from './adapters/config';
 import { emptyResultCounts } from './adapters/config';
 import { selectLatestScans } from './configSuggestions';
@@ -212,6 +213,59 @@ export async function listConfigScans(tenantId: string, f: ConfigScanFilter): Pr
     );
     // The window count is taken before the limit; the limit is at least 1, so no row means an empty set.
     return { totalCount: rows.length > 0 ? Number(rows[0].total_count) : 0, scans: rows.map(rowToScan) };
+  });
+}
+
+/**
+ * Each asset's latest scans (the newest per source, benchmark and profile, as listConfigScans selects them) summed, by asset id (#215).
+ * The score is worked out in TypeScript with the one rule the inventory view uses, never by SQL rounding. Counts only.
+ */
+export async function summarizeConfigScansByAsset(tenantId: string, f: { assetId?: string } = {}): Promise<VmAssetConfigSummary[]> {
+  if (isMemory()) {
+    const latest = selectLatestScans([...memoryScans.values()].filter((s) => s.tenantId === tenantId && (!f.assetId || s.assetId === f.assetId)));
+    const byAsset = new Map<string, VmConfigScan[]>();
+    for (const s of latest) {
+      const list = byAsset.get(s.assetId);
+      if (list) list.push(s);
+      else byAsset.set(s.assetId, [s]);
+    }
+    return [...byAsset.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([assetId, list]) => {
+        const s = summarizeConfigScans(list);
+        return { assetId, lastScannedAt: s.lastScannedAt as string, scans: s.scans, pass: s.pass, fail: s.fail, error: s.error, other: s.other, score: s.score };
+      });
+  }
+  const params: unknown[] = [tenantId];
+  let where = 'tenant_id = $1';
+  if (f.assetId) {
+    params.push(f.assetId);
+    where += ` AND asset_id = $${params.length}`;
+  }
+  const count = (k: string): string => `COALESCE((result_counts->>'${k}')::int, 0)`;
+  return withVmTenantTx(tenantId, async (client) => {
+    const { rows } = await need(client).query(
+      `SELECT asset_id, max(scanned_at) AS last_scanned_at, count(*)::int AS scans,
+              sum(${count('pass')} + ${count('fixed')})::int AS pass,
+              sum(${count('fail')})::int AS fail,
+              sum(${count('error')} + ${count('unknown')})::int AS error,
+              sum(${count('notapplicable')} + ${count('notchecked')} + ${count('notselected')} + ${count('informational')})::int AS other
+         FROM (SELECT DISTINCT ON (asset_id, source_id, benchmark_id, profile_id) asset_id, scanned_at, result_counts
+                 FROM vm_config_scans WHERE ${where}
+                ORDER BY asset_id, source_id, benchmark_id, profile_id, scanned_at DESC, received_at DESC, id) latest
+        GROUP BY asset_id ORDER BY asset_id`,
+      params,
+    );
+    return rows.map((r) => ({
+      assetId: r.asset_id as string,
+      lastScannedAt: iso(r.last_scanned_at) as string,
+      scans: Number(r.scans),
+      pass: Number(r.pass),
+      fail: Number(r.fail),
+      error: Number(r.error),
+      other: Number(r.other),
+      score: configScore(Number(r.pass), Number(r.fail), Number(r.error)),
+    }));
   });
 }
 

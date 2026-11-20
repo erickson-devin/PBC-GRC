@@ -11,6 +11,7 @@ import {
   parseServerInvitations,
   parseServerMembers,
   pendingMemberId,
+  ServerMember,
   toTenantInvitation,
   ServerInvitation,
 } from '../src/data/teamSync';
@@ -64,6 +65,15 @@ function pureTests() {
   assert(parseServerInvitations(null).length === 0 && parseServerInvitations({}).length === 0, 'non-list payloads parse to empty');
   const members = parseServerMembers({ members: [{ userId: 'u1', email: 'e', name: 'N', tenantId: 't1', role: 'VIEWER', createdAt: 'c' }, { userId: 'u2', role: 'GOD' }, { role: 'VIEWER' }] });
   assert(members.length === 1 && members[0].userId === 'u1', 'members without a user id or with an unknown role are dropped');
+  const baseMember = { userId: 'u1', email: 'e', name: 'N', tenantId: 't1', role: 'VIEWER', createdAt: 'c' };
+  const acct = { lastLoginAt: '2026-01-02T00:00:00.000Z', disabled: true, disabledReason: 'dormant', disabledAt: '2026-04-02T00:00:00.000Z' };
+  assert(JSON.stringify(parseServerMembers({ members: [{ ...baseMember, account: acct }] })[0].account) === JSON.stringify(acct), 'T1 a member account (last sign-in, disabled, reason, date) parses to the same object');
+  assert(!('account' in parseServerMembers({ members: [{ ...baseMember, account: null }] })[0]) && !('account' in parseServerMembers({ members: [{ ...baseMember, account: [] }] })[0]), 'T2 a null or array account leaves no account key');
+  assert(JSON.stringify(parseServerMembers({ members: [{ ...baseMember, account: { disabled: 'yes', disabledReason: 'gone', lastLoginAt: 5 } }] })[0].account) === JSON.stringify({ lastLoginAt: null, disabled: false, disabledReason: null, disabledAt: null }), 'T3 malformed account fields become null / false');
+  const withAcct: ServerMember = { userId: 'u1', email: 'a@b.mil', name: 'A', tenantId: 't1', role: 'VIEWER', createdAt: '', account: { lastLoginAt: '2026-01-02T00:00:00.000Z', disabled: true, disabledReason: 'dormant', disabledAt: null } };
+  const noAcct: ServerMember = { userId: 'u2', email: 'c@b.mil', name: 'C', tenantId: 't1', role: 'VIEWER', createdAt: '' };
+  const acctTeam = buildTeam('t1', [withAcct, noAcct], []);
+  assert(acctTeam[0].lastLoginAt === '2026-01-02T00:00:00.000Z' && acctTeam[0].accountDisabled === true && acctTeam[0].disabledReason === 'dormant' && !('lastLoginAt' in acctTeam[1]), 'T4 buildTeam copies the account facts; a member without an account has no lastLoginAt key');
 
   console.log('\n--- toTenantInvitation ---');
   const ui = toTenantInvitation(srvInv({ id: 'i1', role: 'TENANT_OWNER' }), tenant, 'inv_secret');

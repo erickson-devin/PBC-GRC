@@ -1050,6 +1050,17 @@ async function verifyAccountEvents() {
       'a second platform_system_use_notice row (id 2) is refused (singleton check)', lastRejection
     );
 
+    // V30c (issue #214): the migrated action list accepts the service token actions.
+    await recordAccountEvent({ actorKind: 'user', actorUserId: TARGET, targetUserId: TARGET, action: 'vm_token_created', scopeTenantId: 'rls_verify_t', details: { tokenId: 'vmt_0123456789abcdef' } });
+    const tokEvents = (await listAccountEvents({ limit: 200 })).filter((e) => e.targetUserId === TARGET && e.action === 'vm_token_created');
+    check(tokEvents.length === 1 && tokEvents[0].details.tokenId === 'vmt_0123456789abcdef' && tokEvents[0].tenantId === 'rls_verify_t', 'the action list (migrated or new) accepts vm_token_created', JSON.stringify(tokEvents));
+
+    // V-216 (issue #216): the simulator-era scan columns are retired: kept, marked, and (by the startup fix) nulled.
+    const retired = await pool.query(
+      "SELECT col_description('enclave_assets'::regclass, attnum) AS marker FROM pg_attribute WHERE attrelid = 'enclave_assets'::regclass AND attname IN ('compliance_score', 'last_scanned_at')"
+    );
+    check(retired.rows.length === 2 && retired.rows.every((r) => r.marker === 'Retired (#216): not written or shown'), 'V-216 compliance_score and last_scanned_at carry the retirement marker', JSON.stringify(retired.rows));
+
     // V31: the retention sweep is the only way to delete. The test row is backdated far enough (about 11 years) that no real event can match the cutoff.
     await pool.query(
       "INSERT INTO local_account_events (at, actor_kind, target_user_id, action) VALUES (NOW() - INTERVAL '4000 days', 'system', $1, 'session_revoked')",

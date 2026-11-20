@@ -363,6 +363,18 @@ async function headers() {
     stub(200, { members: [] });
     await ApiClient.listMembers('t1');
     assert(headerOf(calls[0], 'x-program-id') === undefined && headerOf(calls[0], 'x-tenant-id') === 't1', 'H5 listMembers sends no x-program-id');
+    stub(200, { members: [], dormantDays: 90 });
+    const withPolicy = await ApiClient.listMembersWithPolicy('t1');
+    stub(200, { members: [] });
+    const plainMembers = await ApiClient.listMembers('t1');
+    assert(withPolicy.dormantDays === 90 && Array.isArray(withPolicy.members) && Array.isArray(plainMembers), 'H5c listMembersWithPolicy reads dormantDays; listMembers still returns an array');
+    stub(200, { restored: true, userId: 'u 1' });
+    const restored = await ApiClient.restoreMember('t1', 'u 1', '123456');
+    assert(calls[0].url === '/api/v1/tenants/t1/members/u%201/restore' && calls[0].init.method === 'POST' && calls[0].init.body === '{"code":"123456"}' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === undefined && restored.restored === true, 'H5d restoreMember sends POST /members/:userId/restore with only the code and x-tenant-id', [calls[0].url, calls[0].init.method, calls[0].init.body]);
+    stub(409, { error: 'x', reason: 'not_dormant' });
+    let restoreReason: unknown;
+    try { await ApiClient.restoreMember('t1', 'u1', '123456'); } catch (e) { restoreReason = (e as { reason?: unknown }).reason; }
+    assert(restoreReason === 'not_dormant', 'H5e a refused restore carries the server reason', restoreReason);
     stub(200, { assets: [] });
     await ApiClient.listAssets('t1');
     assert(headerOf(calls[0], 'x-program-id') === undefined, 'H6 listAssets sends no x-program-id');

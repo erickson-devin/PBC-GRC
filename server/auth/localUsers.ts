@@ -27,6 +27,11 @@ export interface LocalUser {
   mustChangePassword: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
+  /** Why the account is disabled (null while enabled; a disabled row from before the column existed reads as 'admin'). */
+  disabledReason: 'admin' | 'dormant' | null;
+  disabledAt: Date | null;
+  /** When the inactivity clock last restarted: creation, or the last restore of a disabled account (IA.L2-3.5.6). */
+  dormancyResetAt: Date;
 }
 
 export type PublicLocalUser = Omit<LocalUser, 'passwordHash' | 'totpSecretEnc' | 'recoveryCodeHashes'>;
@@ -71,7 +76,14 @@ async function updateWithEvent(sql: string, params: unknown[], event?: AccountEv
 
 const asDate = (value: unknown): Date | null => (value ? new Date(value as string) : null);
 
+/** null while enabled; a disabled row with no recorded reason (disabled before the column existed) counts as 'admin'. */
+function disabledReasonOf(disabled: unknown, reason: unknown): 'admin' | 'dormant' | null {
+  if (!disabled) return null;
+  return reason === 'dormant' ? 'dormant' : 'admin';
+}
+
 function mapRow(row: Record<string, unknown>): LocalUser {
+  const createdAt = asDate(row.created_at) ?? new Date();
   return {
     id: row.id as string,
     email: row.email as string,
@@ -88,7 +100,10 @@ function mapRow(row: Record<string, unknown>): LocalUser {
     recoveryCodeHashes: (row.recovery_code_hashes as string[] | null) ?? [],
     mustChangePassword: Boolean(row.must_change_password),
     lastLoginAt: asDate(row.last_login_at),
-    createdAt: (asDate(row.created_at) ?? new Date()),
+    createdAt,
+    disabledReason: disabledReasonOf(row.disabled, row.disabled_reason),
+    disabledAt: asDate(row.disabled_at),
+    dormancyResetAt: asDate(row.dormancy_reset_at) ?? createdAt,
   };
 }
 
@@ -112,6 +127,7 @@ export async function createLocalUser(
 
   if (getDbMode() === 'memory') {
     if (memoryUsers.has(email)) throw new LocalUserExistsError(email);
+    const createdAt = new Date();
     const user: LocalUser = {
       id: `lu_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       email,
@@ -127,7 +143,10 @@ export async function createLocalUser(
       recoveryCodeHashes: [],
       mustChangePassword,
       lastLoginAt: null,
-      createdAt: new Date(),
+      createdAt,
+      disabledReason: null,
+      disabledAt: null,
+      dormancyResetAt: createdAt,
     };
     memoryUsers.set(email, user);
     return toPublicUser(user);
@@ -206,7 +225,7 @@ export async function registerFailedLogin(user: LocalUser): Promise<void> {
   ]);
 }
 
-export async function registerSuccessfulLogin(user: LocalUser): Promise<void> {
+export async function registerSuccessfulLogin(user: Pick<LocalUser, 'id' | 'email'>): Promise<void> {
   if (getDbMode() === 'memory') {
     const stored = memoryUsers.get(user.email);
     if (stored) {
@@ -424,8 +443,8 @@ export async function setMustChangePassword(userId: string, value: boolean): Pro
 }
 
 /**
- * Disabling bumps the token version and removes the factor; enabling clears the lockout (the factor is not restored).
- * Returns false for an unknown id.
+ * Disabling bumps the token version, removes the factor and records the reason 'admin'; enabling clears the lockout and the
+ * reason and restarts the inactivity clock (the factor is not restored). Returns false for an unknown id.
  */
 export async function setLocalUserDisabled(userId: string, disabled: boolean, event?: AccountEventInput): Promise<boolean> {
   if (getDbMode() === 'memory') {
@@ -435,17 +454,86 @@ export async function setLocalUserDisabled(userId: string, disabled: boolean, ev
     if (disabled) {
       u.tokenVersion += 1;
       clearFactor(u);
+      u.disabledReason = 'admin';
+      u.disabledAt = new Date();
     } else {
       u.failedAttempts = 0;
       u.lockedUntil = null;
+      u.disabledReason = null;
+      u.disabledAt = null;
+      u.dormancyResetAt = new Date();
     }
     if (event) await recordAccountEvent(event);
     return true;
   }
   const sql = disabled
-    ? `UPDATE local_users SET disabled = TRUE, token_version = token_version + 1, ${CLEARED_FACTOR_SQL} WHERE id = $1 RETURNING 1`
-    : 'UPDATE local_users SET disabled = FALSE, failed_attempts = 0, locked_until = NULL WHERE id = $1 RETURNING 1';
+    ? `UPDATE local_users SET disabled = TRUE, disabled_reason = 'admin', disabled_at = NOW(), token_version = token_version + 1, ${CLEARED_FACTOR_SQL} WHERE id = $1 RETURNING 1`
+    : 'UPDATE local_users SET disabled = FALSE, disabled_reason = NULL, disabled_at = NULL, dormancy_reset_at = NOW(), failed_attempts = 0, locked_until = NULL WHERE id = $1 RETURNING 1';
   return (await updateWithEvent(sql, [userId], event)).changed;
+}
+
+// ----------------------------------------------------------------------------- dormant accounts (IA.L2-3.5.6)
+
+const latestActivity = (u: Pick<LocalUser, 'lastLoginAt' | 'createdAt' | 'dormancyResetAt'>): number =>
+  Math.max(u.lastLoginAt?.getTime() ?? 0, u.createdAt.getTime(), u.dormancyResetAt.getTime());
+
+/** Enabled accounts whose latest sign-in, creation or restore is older than `cutoff`, by id. */
+export async function listDormantCandidates(cutoff: Date, limit = 1000): Promise<LocalUser[]> {
+  if (getDbMode() === 'memory') {
+    return [...memoryUsers.values()]
+      .filter((u) => !u.disabled && latestActivity(u) < cutoff.getTime())
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, limit);
+  }
+  const res = await pool.query(
+    'SELECT * FROM local_users WHERE disabled = FALSE AND GREATEST(last_login_at, created_at, dormancy_reset_at) < $1 ORDER BY id LIMIT $2',
+    [cutoff.toISOString(), limit]
+  );
+  return res.rows.map(mapRow);
+}
+
+/**
+ * Disables one account for inactivity, only if it is still enabled and still dormant at `cutoff` (a sign-in that raced the sweep wins).
+ * Bumps the token version (sessions end) but KEEPS the second factor. The event shares the transaction. False when nothing changed.
+ */
+export async function disableDormantLocalUser(userId: string, cutoff: Date, event: AccountEventInput): Promise<boolean> {
+  if (getDbMode() === 'memory') {
+    const u = memoryUserById(userId);
+    if (!u || u.disabled || !(latestActivity(u) < cutoff.getTime())) return false;
+    u.disabled = true;
+    u.disabledReason = 'dormant';
+    u.disabledAt = new Date();
+    u.tokenVersion += 1;
+    await recordAccountEvent(event);
+    return true;
+  }
+  return (
+    await updateWithEvent(
+      `UPDATE local_users SET disabled = TRUE, disabled_reason = 'dormant', disabled_at = NOW(), token_version = token_version + 1
+        WHERE id = $1 AND disabled = FALSE AND GREATEST(last_login_at, created_at, dormancy_reset_at) < $2 RETURNING 1`,
+      [userId, cutoff.toISOString()],
+      event
+    )
+  ).changed;
+}
+
+/** What an operator sees about an account's sign-in history and state: no email, no name. */
+export interface LocalUserAccountSummary {
+  lastLoginAt: Date | null;
+  disabled: boolean;
+  disabledReason: 'admin' | 'dormant' | null;
+  disabledAt: Date | null;
+}
+
+export async function getLocalUserAccountSummaries(ids: readonly string[]): Promise<Map<string, LocalUserAccountSummary>> {
+  const out = new Map<string, LocalUserAccountSummary>();
+  if (ids.length === 0) return out;
+  const users: LocalUser[] =
+    getDbMode() === 'memory'
+      ? [...memoryUsers.values()].filter((u) => ids.includes(u.id))
+      : (await pool.query('SELECT * FROM local_users WHERE id = ANY($1::text[])', [[...ids]])).rows.map(mapRow);
+  for (const u of users) out.set(u.id, { lastLoginAt: u.lastLoginAt, disabled: u.disabled, disabledReason: u.disabledReason, disabledAt: u.disabledAt });
+  return out;
 }
 
 /** Removes the factor and recovery codes and bumps the token version. Returns false for an unknown id. */
@@ -523,4 +611,13 @@ export async function deleteLocalUser(id: string): Promise<void> {
 export function __resetMemoryLocalUsersForTests(): void {
   memoryUsers.clear();
   memoryPasswordHistory.clear();
+}
+
+/** Test hook (memory mode only): moves an account's sign-in, creation or inactivity-clock time, to build dormant accounts without waiting. */
+export function __setLocalUserTimesForTests(id: string, times: { lastLoginAt?: Date | null; createdAt?: Date; dormancyResetAt?: Date }): void {
+  const u = memoryUserById(id);
+  if (!u) return;
+  if (times.lastLoginAt !== undefined) u.lastLoginAt = times.lastLoginAt;
+  if (times.createdAt !== undefined) u.createdAt = times.createdAt;
+  if (times.dormancyResetAt !== undefined) u.dormancyResetAt = times.dormancyResetAt;
 }
