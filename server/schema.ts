@@ -58,6 +58,16 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_ssp_section_reviews', tenantColumn: 'tenant_id' },
   { table: 'control_poam_entries', tenantColumn: 'tenant_id' },
   { table: 'control_poam_events', tenantColumn: 'tenant_id' },
+  { table: 'inventory_vendors', tenantColumn: 'tenant_id' },
+  { table: 'inventory_tools', tenantColumn: 'tenant_id' },
+  { table: 'inventory_events', tenantColumn: 'tenant_id' },
+  { table: 'program_tools', tenantColumn: 'tenant_id' },
+  { table: 'program_tool_controls', tenantColumn: 'tenant_id' },
+  { table: 'program_data_inventory', tenantColumn: 'tenant_id' },
+  { table: 'program_cui_categories', tenantColumn: 'tenant_id' },
+  { table: 'program_cui_category_tools', tenantColumn: 'tenant_id' },
+  { table: 'program_vendor_documents', tenantColumn: 'tenant_id' },
+  { table: 'program_inventory_events', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -84,6 +94,13 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'program_ssp_section_reviews',
   'control_poam_entries',
   'control_poam_events',
+  'program_tools',
+  'program_tool_controls',
+  'program_data_inventory',
+  'program_cui_categories',
+  'program_cui_category_tools',
+  'program_vendor_documents',
+  'program_inventory_events',
 ];
 
 /**
@@ -1325,6 +1342,200 @@ export const TABLES_SQL = `
   DROP TRIGGER IF EXISTS trg_program_ssp_section_reviews_no_truncate ON program_ssp_section_reviews;
   CREATE TRIGGER trg_program_ssp_section_reviews_no_truncate BEFORE TRUNCATE ON program_ssp_section_reviews
       FOR EACH STATEMENT EXECUTE FUNCTION program_ssp_section_reviews_guard();
+  -- Tools and services register (#239, #247, #249) and vendors / external service providers (#248): tenant-wide like enclave_assets.
+  -- Names, vendors, missions, services and notes may be CUI: never logged; history holds digests. Every CHECK is inline (never dropped and re-added at start:
+  -- the enum columns are pattern checks and the application validates the exact lists, so a later image may add a value and an older one still starts).
+  CREATE TABLE IF NOT EXISTS inventory_vendors (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      kind VARCHAR(16) NOT NULL DEFAULT 'VENDOR',
+      services TEXT NOT NULL DEFAULT '',
+      contract_start DATE,
+      contract_end DATE,
+      renewal_date DATE,
+      fedramp_status VARCHAR(24) NOT NULL DEFAULT 'UNKNOWN',
+      fedramp_reference VARCHAR(128) NOT NULL DEFAULT '',
+      fedramp_verified_on DATE,
+      crm_on_file BOOLEAN,
+      last_review_date DATE,
+      notes TEXT NOT NULL DEFAULT '',
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_inventory_vendors_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT inventory_vendors_name_check CHECK (length(btrim(name)) > 0),
+      CONSTRAINT inventory_vendors_enum_check CHECK (kind ~ '^[A-Z][A-Z_]{0,15}$' AND fedramp_status ~ '^[A-Z][A-Z_]{0,23}$'),
+      CONSTRAINT inventory_vendors_contract_check CHECK (contract_end IS NULL OR contract_start IS NULL OR contract_end >= contract_start)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_vendors_name ON inventory_vendors (tenant_id, lower(name));
+
+  CREATE TABLE IF NOT EXISTS inventory_tools (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      vendor_name VARCHAR(255) NOT NULL DEFAULT '',
+      vendor_id VARCHAR(64),
+      mission VARCHAR(1000) NOT NULL DEFAULT '',
+      tool_type VARCHAR(32),
+      deployment VARCHAR(16),
+      asset_category VARCHAR(32),
+      fedramp_status VARCHAR(24) NOT NULL DEFAULT 'UNKNOWN',
+      fedramp_verified_on DATE,
+      crm_on_file BOOLEAN,
+      end_users INTEGER,
+      privileged_users INTEGER,
+      recovery_rank INTEGER,
+      annual_cost_cents BIGINT,
+      renewal_date DATE,
+      origin VARCHAR(16) NOT NULL DEFAULT 'MANUAL',
+      seed_key VARCHAR(96),
+      notes TEXT NOT NULL DEFAULT '',
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_inventory_tools_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT fk_inventory_tools_vendor FOREIGN KEY (tenant_id, vendor_id) REFERENCES inventory_vendors (tenant_id, id) ON DELETE SET NULL (vendor_id),
+      CONSTRAINT inventory_tools_name_check CHECK (length(btrim(name)) > 0),
+      CONSTRAINT inventory_tools_enum_check CHECK ((tool_type IS NULL OR tool_type ~ '^[A-Z][A-Z0-9_]{0,31}$') AND (deployment IS NULL OR deployment ~ '^[A-Z][A-Z_]{0,15}$') AND (asset_category IS NULL OR asset_category ~ '^[A-Z][A-Z_]{0,31}$') AND fedramp_status ~ '^[A-Z][A-Z_]{0,23}$' AND origin ~ '^[A-Z]{1,16}$'),
+      CONSTRAINT inventory_tools_counts_check CHECK ((end_users IS NULL OR end_users BETWEEN 0 AND 10000000) AND (privileged_users IS NULL OR privileged_users BETWEEN 0 AND 10000000)),
+      CONSTRAINT inventory_tools_rank_check CHECK (recovery_rank IS NULL OR recovery_rank BETWEEN 1 AND 100000),
+      CONSTRAINT inventory_tools_cost_check CHECK (annual_cost_cents IS NULL OR annual_cost_cents BETWEEN 0 AND 100000000000),
+      CONSTRAINT inventory_tools_seed_check CHECK (seed_key IS NULL OR seed_key ~ '^(survey|catalog):[A-Za-z0-9_.-]{1,80}$')
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_tools_name ON inventory_tools (tenant_id, lower(name));
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_tools_seed ON inventory_tools (tenant_id, seed_key) WHERE seed_key IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_tools_rank ON inventory_tools (tenant_id, recovery_rank) WHERE recovery_rank IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_inventory_tools_vendor ON inventory_tools (tenant_id, vendor_id);
+
+  -- Register history: ids, field names, enum values, dates and digests only (never a name, mission, note or cost value). Append-only; DELETE stays allowed (a later retention sweep).
+  CREATE TABLE IF NOT EXISTS inventory_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      entity_kind VARCHAR(16) NOT NULL,
+      entity_id VARCHAR(64),
+      action VARCHAR(32) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT inventory_events_shape_check CHECK (entity_kind ~ '^[a-z][a-z_]{0,15}$' AND action ~ '^[a-z][a-z_]{0,31}$' AND jsonb_typeof(fields) = 'object' AND octet_length(fields::text) <= 16384)
+  );
+  CREATE INDEX IF NOT EXISTS idx_inventory_events_entity ON inventory_events (tenant_id, entity_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_inventory_events_created ON inventory_events (tenant_id, created_at DESC);
+
+  -- Program side: boundary membership (ids only; none declared = the whole register), control links, data inventory (#243), vendor documents.
+  CREATE TABLE IF NOT EXISTS program_tools (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      tool_id VARCHAR(64) NOT NULL,
+      added_by VARCHAR(255),
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_tools PRIMARY KEY (tenant_id, program_id, tool_id),
+      CONSTRAINT fk_program_tools_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_tools_tool FOREIGN KEY (tenant_id, tool_id) REFERENCES inventory_tools (tenant_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_tools_tool ON program_tools (tenant_id, tool_id);
+
+  CREATE TABLE IF NOT EXISTS program_tool_controls (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      tool_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      evidence_source BOOLEAN NOT NULL DEFAULT FALSE,
+      linked_by VARCHAR(255),
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_tool_controls PRIMARY KEY (tenant_id, program_id, tool_id, control_id),
+      CONSTRAINT fk_program_tool_controls_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_tool_controls_tool FOREIGN KEY (tenant_id, tool_id) REFERENCES inventory_tools (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_tool_controls_control_check CHECK (control_id ~ '^[A-Za-z0-9._-]{1,64}$')
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_tool_controls_control ON program_tool_controls (tenant_id, program_id, control_id);
+
+  -- The data inventory of a program (#243): the FCI answer, the CUI categories it handles (ids of the shipped CUI Registry; the application validates them) and the tools that store, process or transmit each.
+  CREATE TABLE IF NOT EXISTS program_data_inventory (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      handles_fci BOOLEAN,
+      updated_by VARCHAR(255),
+      updated_by_user_id VARCHAR(128),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_data_inventory PRIMARY KEY (tenant_id, program_id),
+      CONSTRAINT fk_program_data_inventory_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS program_cui_categories (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      category_id VARCHAR(48) NOT NULL,
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_cui_categories PRIMARY KEY (tenant_id, program_id, category_id),
+      CONSTRAINT fk_program_cui_categories_inventory FOREIGN KEY (tenant_id, program_id) REFERENCES program_data_inventory (tenant_id, program_id) ON DELETE CASCADE,
+      CONSTRAINT program_cui_categories_id_check CHECK (category_id ~ '^[A-Z][A-Z0-9_-]{0,47}$')
+  );
+  CREATE TABLE IF NOT EXISTS program_cui_category_tools (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      category_id VARCHAR(48) NOT NULL,
+      tool_id VARCHAR(64) NOT NULL,
+      stores BOOLEAN NOT NULL DEFAULT FALSE,
+      processes BOOLEAN NOT NULL DEFAULT FALSE,
+      transmits BOOLEAN NOT NULL DEFAULT FALSE,
+      CONSTRAINT pk_program_cui_category_tools PRIMARY KEY (tenant_id, program_id, category_id, tool_id),
+      CONSTRAINT fk_program_cui_category_tools_category FOREIGN KEY (tenant_id, program_id, category_id) REFERENCES program_cui_categories (tenant_id, program_id, category_id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_cui_category_tools_tool FOREIGN KEY (tenant_id, tool_id) REFERENCES inventory_tools (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_cui_category_tools_role_check CHECK (stores OR processes OR transmits)
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_cui_category_tools_tool ON program_cui_category_tools (tenant_id, tool_id);
+
+  -- A vendor's CRM / SRM / contract in this program: an evidence id of the same program (checked by the server; no foreign key, like control_objectives.linked_evidence_ids).
+  CREATE TABLE IF NOT EXISTS program_vendor_documents (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      vendor_id VARCHAR(64) NOT NULL,
+      evidence_id VARCHAR(64) NOT NULL,
+      doc_kind VARCHAR(16) NOT NULL,
+      linked_by VARCHAR(255),
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_vendor_documents PRIMARY KEY (tenant_id, program_id, vendor_id, evidence_id),
+      CONSTRAINT fk_program_vendor_documents_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT fk_program_vendor_documents_vendor FOREIGN KEY (tenant_id, vendor_id) REFERENCES inventory_vendors (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_vendor_documents_check CHECK (doc_kind ~ '^[A-Z][A-Z_]{0,15}$' AND evidence_id ~ '^[A-Za-z0-9_-]{1,64}$')
+  );
+
+  -- The program's side of the register history: ids, counts and flags only. No foreign key (the history outlives the program), program_id NOT NULL from creation.
+  CREATE TABLE IF NOT EXISTS program_inventory_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      action VARCHAR(32) NOT NULL,
+      entity_id VARCHAR(64),
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT program_inventory_events_shape_check CHECK (action ~ '^[a-z][a-z_]{0,31}$' AND jsonb_typeof(detail) = 'object' AND octet_length(detail::text) <= 32768)
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_inventory_events_program ON program_inventory_events (tenant_id, program_id, created_at DESC);
+
+  CREATE OR REPLACE FUNCTION inventory_events_guard() RETURNS trigger AS $$
+  BEGIN
+    RAISE EXCEPTION 'inventory history is append-only' USING ERRCODE = '42501';
+  END;
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_inventory_events_guard ON inventory_events;
+  CREATE TRIGGER trg_inventory_events_guard BEFORE UPDATE ON inventory_events
+      FOR EACH ROW EXECUTE FUNCTION inventory_events_guard();
+  DROP TRIGGER IF EXISTS trg_inventory_events_no_truncate ON inventory_events;
+  CREATE TRIGGER trg_inventory_events_no_truncate BEFORE TRUNCATE ON inventory_events
+      FOR EACH STATEMENT EXECUTE FUNCTION inventory_events_guard();
+  DROP TRIGGER IF EXISTS trg_program_inventory_events_guard ON program_inventory_events;
+  CREATE TRIGGER trg_program_inventory_events_guard BEFORE UPDATE ON program_inventory_events
+      FOR EACH ROW EXECUTE FUNCTION inventory_events_guard();
+  DROP TRIGGER IF EXISTS trg_program_inventory_events_no_truncate ON program_inventory_events;
+  CREATE TRIGGER trg_program_inventory_events_no_truncate BEFORE TRUNCATE ON program_inventory_events
+      FOR EACH STATEMENT EXECUTE FUNCTION inventory_events_guard();
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

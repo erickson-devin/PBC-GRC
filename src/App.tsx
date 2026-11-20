@@ -27,6 +27,7 @@ import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
 import { AssetInventoryManager } from './components/telemetry/AssetInventoryManager';
 import { SoftwareInventoryPanel } from './components/telemetry/SoftwareInventoryPanel';
+import { ToolsServicesPage } from './components/inventory/ToolsServicesPage';
 import { ConfigurationResultsView } from './components/telemetry/ConfigurationResultsView';
 import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
@@ -304,6 +305,7 @@ const AppContent: React.FC = () => {
                     <SoftwareInventoryPanel />
                   </div>
                 )}
+                {activeTab === 'tools' && <ToolsServicesPage />}
                 {activeTab === 'ssp' && <SSPBuilder />}
                 {activeTab === 'sspimport' && <SspImportView />}
                 {activeTab === 'configresults' && <ConfigurationResultsView />}

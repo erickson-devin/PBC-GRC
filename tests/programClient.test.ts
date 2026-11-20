@@ -495,6 +495,98 @@ async function headers() {
     let revStale = '';
     try { await ApiClient.postSspReview('t1', 'roles', 'b'.repeat(64)); } catch (err) { revStale = String((err as { code?: unknown }).code ?? (err as Error).message); }
     assert(revStale !== '' && !revStale.includes('bbbb'), 'SSP-H4b a changed section rejects without echoing the digest', revStale);
+    // #239, #243, #248, #249: the Tools and Services register is tenant-wide (no x-program-id); the boundary, control links, data inventory and vendor documents are program-scoped
+    const noProgram = (c: Call) => headerOf(c, 'x-program-id') === undefined && headerOf(c, 'x-tenant-id') === 't1';
+    stub(200, { tools: [{ id: 'k1', name: 'Falcon' }], limit: 1000 });
+    const invTools = await ApiClient.listInventoryTools('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools' && (calls[0].init.method ?? 'GET') === 'GET' && noProgram(calls[0]) && invTools.tools.length === 1 && invTools.limit === 1000, 'INV-H1 listInventoryTools is GET /tenants/:id/inventory/tools with x-tenant-id and no x-program-id', calls[0].url);
+    stub(200, { tools: [{ id: 'k1', name: 'Falcon' }] });
+    const invFallback = await ApiClient.listInventoryTools('t1');
+    assert(invFallback.limit === 1000 && !('annualCostCents' in invFallback.tools[0]), 'INV-H1b a missing limit reads as the register limit, and a row without the cost key keeps it absent (not available, never zero)');
+    stub(201, { tool: { id: 'k2', name: 'X' } });
+    const invMade = await ApiClient.createInventoryTool('t1', { name: 'X', endUsers: 4 });
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools' && calls[0].init.method === 'POST' && calls[0].init.body === '{"name":"X","endUsers":4}' && noProgram(calls[0]) && invMade.id === 'k2', 'INV-H2 createInventoryTool is POST with exactly the input', calls[0].init.body);
+    stub(200, { created: [{ id: 'k3' }], skipped: [{ index: 1, reason: 'duplicate_name' }] });
+    const invBatch = await ApiClient.createInventoryToolsBatch('t1', [{ name: 'A', seedKey: 'survey:edrSolution' }, { name: 'a' }]);
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools/batch' && calls[0].init.method === 'POST' && calls[0].init.body === '{"items":[{"name":"A","seedKey":"survey:edrSolution"},{"name":"a"}]}' && invBatch.created.length === 1 && invBatch.skipped[0].reason === 'duplicate_name', 'INV-H3 createInventoryToolsBatch is POST /tools/batch with the items and returns created and skipped', calls[0].init.body);
+    stub(200, { tool: { id: 'k 1' }, changed: true });
+    const invUpd = await ApiClient.updateInventoryTool('t1', 'k 1', { mission: 'm' }, '2026-11-01T00:00:00.000Z');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools/k%201' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"mission":"m","expectedUpdatedAt":"2026-11-01T00:00:00.000Z"}' && noProgram(calls[0]) && invUpd.changed === true, 'INV-H4 updateInventoryTool is PUT with the fields and expectedUpdatedAt', calls[0].init.body);
+    stub(200, { removed: 'k1' });
+    await ApiClient.deleteInventoryTool('t1', 'k1');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools/k1' && calls[0].init.method === 'DELETE' && noProgram(calls[0]), 'INV-H5 deleteInventoryTool is DELETE on the id');
+    stub(200, { programs: 2, controlLinks: 5, cuiLinks: 1 });
+    const invUsage = await ApiClient.getInventoryToolUsage('t1', 'k1');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools/k1/usage' && invUsage.programs === 2 && invUsage.controlLinks === 5 && invUsage.cuiLinks === 1, 'INV-H6 getInventoryToolUsage is GET /tools/:id/usage');
+    stub(200, { order: ['b', 'a'] });
+    const invOrder = await ApiClient.setToolRecoveryOrder('t1', ['b', 'a'], ['a', 'b']);
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tools/recovery-order' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"order":["b","a"],"expectedOrder":["a","b"]}' && invOrder.join() === 'b,a', 'INV-H7 setToolRecoveryOrder is PUT with the order and the order it replaces', calls[0].init.body);
+    stub(200, { memberships: [{ programId: 'p1', archived: false, declared: true, toolIds: ['k1'] }] });
+    const invMembers = await ApiClient.listToolMemberships('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/tool-memberships' && noProgram(calls[0]) && invMembers[0].toolIds[0] === 'k1', 'INV-H8 listToolMemberships is GET /tool-memberships with no x-program-id');
+    stub(200, { vendors: [{ id: 'v1' }], limit: 500 });
+    const invVendors = await ApiClient.listInventoryVendors('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/vendors' && noProgram(calls[0]) && invVendors.vendors.length === 1 && invVendors.limit === 500, 'INV-H9 listInventoryVendors is GET /vendors');
+    stub(201, { vendor: { id: 'v2' } });
+    await ApiClient.createInventoryVendor('t1', { name: 'V', kind: 'CSP' });
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/vendors' && calls[0].init.method === 'POST' && calls[0].init.body === '{"name":"V","kind":"CSP"}', 'INV-H10 createInventoryVendor is POST with exactly the input', calls[0].init.body);
+    stub(200, { vendor: { id: 'v2' }, changed: false });
+    await ApiClient.updateInventoryVendor('t1', 'v2', { notes: 'n' }, '2026-11-01T00:00:00.000Z');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/vendors/v2' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"notes":"n","expectedUpdatedAt":"2026-11-01T00:00:00.000Z"}', 'INV-H11 updateInventoryVendor is PUT with the fields and expectedUpdatedAt', calls[0].init.body);
+    stub(200, { removed: 'v2' });
+    await ApiClient.deleteInventoryVendor('t1', 'v2');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/vendors/v2' && calls[0].init.method === 'DELETE', 'INV-H12 deleteInventoryVendor is DELETE on the id');
+    stub(200, { events: [] });
+    await ApiClient.listInventoryEvents('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/inventory/events' && calls[0].init.method === 'GET' && noProgram(calls[0]), 'INV-H13 listInventoryEvents is GET /events with no query unless given', calls[0].url);
+    await ApiClient.listInventoryEvents('t1', { entityId: 'k1', limit: 20 });
+    assert(calls[1].url === '/api/v1/tenants/t1/inventory/events?entityId=k1&limit=20', 'INV-H13b the entity and limit are query parameters', calls[1].url);
+    stub(409, { error: 'This entry was changed by someone else after you loaded it.', code: 'stale_write', current: { updatedAt: 'x', updatedBy: 'SECRET-MARK' } });
+    let invStale: { message: string; reason?: string; status: number } | null = null;
+    try { await ApiClient.updateInventoryTool('t1', 'k1', { name: 'SECRET-MARK' }, '2026-11-01T00:00:00.000Z'); } catch (err) { invStale = err as { message: string; reason?: string; status: number }; }
+    assert(invStale !== null && invStale.status === 409 && invStale.reason === 'stale_write' && !JSON.stringify({ m: invStale.message, r: invStale.reason, i: (invStale as { inUse?: unknown }).inUse }).includes('MARK'), 'INV-H14 a stale tool write rejects with the reason and without echoing the request or the other writer');
+
+    stub(200, { programId: 'p1', declared: false, toolIds: [], controlLinks: [], vendorDocuments: [] });
+    const pinv = await ApiClient.getProgramInventory('t1', 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === 'p1' && pinv.declared === false, 'PINV-H1 getProgramInventory is GET /program-inventory with x-program-id', calls[0].url);
+    await ApiClient.getProgramInventory('t1', null);
+    assert(headerOf(calls[1], 'x-program-id') === undefined, 'PINV-H1b a null program sends no x-program-id');
+    stub(200, { programId: 'p1', declared: true, toolIds: ['k1'], added: 1, removed: 0, linksRemoved: 0, cuiLinksRemoved: 0 });
+    const patched = await ApiClient.patchProgramTools('t1', { add: ['k1'], force: true }, 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/tools' && calls[0].init.method === 'PATCH' && calls[0].init.body === '{"add":["k1"],"force":true}' && headerOf(calls[0], 'x-program-id') === 'p1' && patched.added === 1 && patched.toolIds.join() === 'k1', 'PINV-H2 patchProgramTools is PATCH /program-inventory/tools with exactly the change and x-program-id', calls[0].init.body);
+    stub(409, { error: 'The tool still has links.', code: 'tool_in_use', controlLinks: 2, cuiLinks: 1 });
+    let inUseErr: { message: string; reason?: string; inUse?: { controlLinks: number; cuiLinks: number } } | null = null;
+    try { await ApiClient.patchProgramTools('t1', { remove: ['SECRET-MARK'] }, 'p1'); } catch (err) { inUseErr = err as typeof inUseErr; }
+    assert(inUseErr !== null && inUseErr.reason === 'tool_in_use' && JSON.stringify(inUseErr.inUse) === '{"controlLinks":2,"cuiLinks":1}' && !inUseErr.message.includes('MARK'), 'PINV-H2b a 409 tool_in_use carries the counts (numbers only) and does not echo the request', inUseErr);
+    stub(200, { toolId: 'k1', controls: [{ controlId: 'AC.L2-3.1.1', evidenceSource: true }], changed: true });
+    const putLinks = await ApiClient.putToolControls('t1', 'k1', [{ controlId: 'AC.L2-3.1.1', evidenceSource: true }], [], 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/tools/k1/controls' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"controls":[{"controlId":"AC.L2-3.1.1","evidenceSource":true}],"expectedControlIds":[]}' && headerOf(calls[0], 'x-program-id') === 'p1' && putLinks.changed === true && putLinks.controls.length === 1, 'PINV-H3 putToolControls is PUT with the links and the set it replaces', calls[0].init.body);
+    stub(409, { error: 'The links were changed.', code: 'stale_write', currentControlIds: ['SECRET-MARK'] });
+    let linkStale: { message: string; reason?: string } | null = null;
+    try { await ApiClient.putToolControls('t1', 'k1', [], ['AC.L2-3.1.1']); } catch (err) { linkStale = err as typeof linkStale; }
+    assert(linkStale !== null && linkStale.reason === 'stale_write' && !JSON.stringify(linkStale).includes('MARK'), 'PINV-H3b a stale link write rejects without echoing the other writer', linkStale);
+    stub(200, { handlesFci: null, categories: [], updatedAt: null, updatedBy: null });
+    const dataGot = await ApiClient.getDataInventory('t1', 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/data-inventory' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && dataGot.handlesFci === null && dataGot.updatedAt === null, 'PINV-H4 getDataInventory is GET /program-inventory/data-inventory with x-program-id', calls[0].url);
+    stub(200, { handlesFci: true, categories: [], updatedAt: '2026-11-19T00:00:00.000Z', updatedBy: 'u', changed: true });
+    const dataPut = await ApiClient.putDataInventory('t1', { handlesFci: true, categories: [{ categoryId: 'CTI', tools: [{ toolId: 'k1', stores: true, processes: false, transmits: false }] }] }, null, 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/data-inventory' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"handlesFci":true,"categories":[{"categoryId":"CTI","tools":[{"toolId":"k1","stores":true,"processes":false,"transmits":false}]}],"expectedUpdatedAt":null}' && headerOf(calls[0], 'x-program-id') === 'p1' && dataPut.changed === true && dataPut.updatedAt === '2026-11-19T00:00:00.000Z', 'PINV-H5 putDataInventory is PUT with the whole record and expectedUpdatedAt (null on a first write)', calls[0].init.body);
+    stub(409, { error: 'The data inventory was saved by someone else after you loaded it.', code: 'stale_write', current: { updatedAt: 'x', updatedBy: 'SECRET-MARK' } });
+    let dataStale: { message: string; reason?: string } | null = null;
+    try { await ApiClient.putDataInventory('t1', { handlesFci: false, categories: [{ categoryId: 'NOPE-MARK', tools: [] }] }, '2026-11-19T00:00:00.000Z'); } catch (err) { dataStale = err as typeof dataStale; }
+    assert(dataStale !== null && dataStale.reason === 'stale_write' && !JSON.stringify(dataStale).includes('MARK'), 'PINV-H5b a stale data inventory write rejects without echoing the record or the other writer', dataStale);
+    stub(201, { document: { vendorId: 'v1', evidenceId: 'ev_1', docKind: 'CRM', linkedAt: 'x', linkedBy: null }, changed: true });
+    const docLinked = await ApiClient.linkVendorDocument('t1', { vendorId: 'v1', evidenceId: 'ev_1', docKind: 'CRM' }, 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/vendor-documents' && calls[0].init.method === 'POST' && calls[0].init.body === '{"vendorId":"v1","evidenceId":"ev_1","docKind":"CRM"}' && headerOf(calls[0], 'x-program-id') === 'p1' && docLinked.changed === true && docLinked.document.docKind === 'CRM', 'PINV-H6 linkVendorDocument is POST with exactly the link and x-program-id', calls[0].init.body);
+    stub(200, { removed: 'ev_1', vendorId: 'v1' });
+    await ApiClient.unlinkVendorDocument('t1', 'v1', 'ev_1', 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/vendor-documents/v1/ev_1' && calls[0].init.method === 'DELETE' && headerOf(calls[0], 'x-program-id') === 'p1', 'PINV-H7 unlinkVendorDocument is DELETE /vendor-documents/:vendorId/:evidenceId with x-program-id', calls[0].url);
+    stub(200, { events: [{ id: 'e1', action: 'controls_changed' }] });
+    const pevents = await ApiClient.getProgramInventoryEvents('t1', 20, 'p1');
+    assert(calls[0].url === '/api/v1/program-inventory/events?limit=20' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && pevents.length === 1, 'PINV-H8 getProgramInventoryEvents is GET /program-inventory/events with the limit and x-program-id', calls[0].url);
+    await ApiClient.getProgramInventoryEvents('t1');
+    assert(calls[1].url === '/api/v1/program-inventory/events' && headerOf(calls[1], 'x-program-id') === undefined, 'PINV-H8b no limit and no program: no query and no x-program-id');
+
     stub(201, { program: { id: 'p9', framework: 'NIST_800_53_REV5', baseline: 'HIGH', name: 'N' } });
     const created = await ApiClient.createProgram('t1', { name: 'N', framework: 'NIST_800_53_REV5', baseline: 'HIGH', seed: 'clone', sourceProgramId: 'p1' });
     const postBody = JSON.parse(String(calls[0].init.body)) as { seed?: { cloneFrom?: string }; frameworkId?: string };
@@ -719,7 +811,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware', 'getProgramInventory', 'patchProgramTools', 'putToolControls', 'getDataInventory', 'putDataInventory', 'linkVendorDocument', 'unlinkVendorDocument', 'getProgramInventoryEvents'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;

@@ -30,6 +30,7 @@ import {
   sspMaintenanceItems,
   sspRoleRows,
 } from '../ssp/sspOutput';
+import { dataInventorySubsection, systemDetailsSubsections } from '../inventory/sspInventory';
 
 import {
   NO_CSP_RECORDED,
@@ -263,6 +264,8 @@ export function compileNistSSP(
           rows: sspRoleRows({ profile: sspProfile, legacySystemOwner: metadata.systemOwner, framework: metadata.framework }).map((r) => [r.role, r.name, r.email]),
         },
       },
+      // 1.3 System Details and 1.4 Information Types: only when the register was loaded (nothing is printed without it)
+      ...(metadata.sspInventory ? [...systemDetailsSubsections(metadata.sspInventory), dataInventorySubsection(metadata.sspInventory, metadata.framework)] : []),
     ],
   });
 

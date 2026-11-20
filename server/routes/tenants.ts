@@ -23,6 +23,7 @@ import { ensureActiveTenant, ensureOwnerRole, roleNotGrantableBody } from './ten
 import tenantInvitesRouter from './tenantInvites';
 import tenantAssetsRouter from './assets';
 import tenantSoftwareRouter from './software';
+import tenantInventoryRouter from './inventory';
 import sspImportsRouter from './sspImports';
 import aiAssistRouter from './aiAssist';
 import vmRouter from './vm';
@@ -234,6 +235,8 @@ router.use(requireWriteRole);
 router.use('/:tenantId/invites', tenantInvitesRouter);
 router.use('/:tenantId/assets', tenantAssetsRouter);
 router.use('/:tenantId/software', tenantSoftwareRouter);
+// The Tools and Services register: tools, vendors and their history, tenant-wide (a program's boundary and links are /program-inventory)
+router.use('/:tenantId/inventory', tenantInventoryRouter);
 // SSP imports resolve the program from x-program-id (409 program_required when the tenant has none); the VM module only optionally (most of it
 // is tenant-wide); the programs API itself (it works on archived programs and names them in the URL) and ai-assist do not.
 router.use('/:tenantId/programs', programsRouter);

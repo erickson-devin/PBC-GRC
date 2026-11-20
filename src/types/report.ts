@@ -3,6 +3,7 @@ import { ControlStatus, ComplianceMetrics, DomainStat } from './cmmc';
 import type { AssetScopeSummary } from '../data/telemetry/assetScope';
 import type { FipsModuleRef } from '../data/telemetry/fipsValidation';
 import type { SspProfile } from './sspProfile';
+import type { SspInventorySnapshot } from '../data/inventory/sspInventory';
 
 export type ReportDocumentType =
   | 'NIST_SP_800_18_SSP'
@@ -58,6 +59,11 @@ export interface ReportMetadata {
    * recorded, so a package built without one is unchanged; the SSP states each item as not recorded otherwise.
    */
   sspProfile?: SspProfile;
+  /**
+   * The Tools and Services register and the data inventory as the SSP prints them (sections 1.3 and 1.4). Set only when it was loaded, so a package
+   * built without it is unchanged: the SSP prints nothing for 1.3 and 1.4 then. `supported: false` prints "not available".
+   */
+  sspInventory?: SspInventorySnapshot;
 }
 
 export interface POAMMilestone {

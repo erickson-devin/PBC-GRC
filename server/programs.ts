@@ -8,6 +8,7 @@ import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
 import { __deleteProgramSspProfileForMemory } from './sspProfile';
 import { __deleteProgramControlPoamForMemory } from './controlPoam';
 import { __deleteProgramSspReviewsForMemory } from './sspReviews';
+import { __deleteProgramInventoryForMemory } from './inventory/programInventoryStore';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
@@ -544,7 +545,7 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
 }
 
 /** The controls a program's framework and baseline define (the whole catalog without a baseline), the privacy baseline's included when it has one. */
-function catalogIds(program: Program): Set<string> {
+export function programCatalogIds(program: Program): Set<string> {
   const controls = program.privacyBaseline
     ? programFrameworkControls({ framework: program.frameworkId as ComplianceFramework, baseline: program.baseline, privacyBaseline: true }, {} as OverlayFilters)
     : getFrameworkControls(program.frameworkId, program.baseline ?? 'ALL_CONTROLS');
@@ -567,9 +568,9 @@ export async function cloneProgramContent(source: Program, target: Program, who:
   const tenantId = target.tenantId;
   const cloneActor: ControlChangeActor = { source: 'clone', actor: who.actor, userId: who.userId };
   const rows = await readControlAssessments({ tenantId, programId: source.id });
-  const inSource = catalogIds(source);
+  const inSource = programCatalogIds(source);
   let copied = 0;
-  for (const targetId of catalogIds(target)) {
+  for (const targetId of programCatalogIds(target)) {
     let sourceId: string | null = null;
     if (inSource.has(targetId)) sourceId = targetId;
     else {
@@ -590,7 +591,7 @@ export async function cloneProgramContent(source: Program, target: Program, who:
   }
   // The assessment objectives follow only a clone of the same framework (their ids belong to it): the narratives, never the status or evidence links.
   if (source.frameworkId === target.frameworkId) {
-    const inTarget = catalogIds(target);
+    const inTarget = programCatalogIds(target);
     await cloneObjectives({ tenantId, programId: source.id }, { tenantId, programId: target.id }, { source: 'clone', actor: who.actor, userId: who.userId }, (id) => inTarget.has(id));
   }
   return copied;
@@ -611,7 +612,7 @@ export async function getProgramMetrics(program: Program): Promise<ProgramMetric
           scopingToOverlays(program.scoping)
         ).map((c) => c.id)
       )
-    : catalogIds(program);
+    : programCatalogIds(program);
   // CMMC Level 1 / 2 print objective narratives in the SSP (#293), so a control documented only through them counts; other frameworks keep the notes-or-MET rule.
   const guarded = GUARDED_FRAMEWORKS.includes(program.frameworkId);
   const [assessments, objectiveRows] = await Promise.all([readControlAssessments(scope), guarded ? readObjectives(scope) : Promise.resolve([])]);
@@ -823,6 +824,7 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     __deleteProgramSspProfileForMemory({ tenantId, programId: id });
     __deleteProgramControlPoamForMemory({ tenantId, programId: id });
     __deleteProgramSspReviewsForMemory({ tenantId, programId: id });
+    __deleteProgramInventoryForMemory({ tenantId, programId: id });
     __deleteUserDefaultsForProgramMemory(tenantId, id);
     memoryPrograms.delete(id);
     promoteSuccessorInMemory(tenantId);

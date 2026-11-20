@@ -55,6 +55,7 @@ import { getExportGaps } from '../../data/reports/exportReadiness';
 import { exportGapTarget } from '../../data/ssp/sspBuilderView';
 import type { SspSectionId } from '../../data/ssp/sspSections';
 import { useSspProfile } from '../../hooks/useSspProfile';
+import { useSspInventory } from '../../hooks/useSspInventory';
 import {
   calculateSprsScore,
   formatSprsScore,
@@ -140,6 +141,9 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   // What the scanners report for the program (issue #279), for the two inventory documents
   const scanner = useProgramObservedInventory({ enabled: isOpen && isInventoryDoc });
   const scannerObserved = scanner.observed;
+  // The Tools and Services register and the data inventory (SSP 1.3 and 1.4), for the SSP only
+  const sspInventory = useSspInventory({ enabled: isOpen && selectedDocType === 'NIST_SP_800_18_SSP' });
+  const inventorySnapshot = selectedDocType === 'NIST_SP_800_18_SSP' && sspInventory.status !== 'loading' ? sspInventory.snapshot : undefined;
   const scannerAssetCount = useMemo(() => new Set(scannerObserved.hosts.filter((h) => h.softwareReported).map((h) => h.assetId)).size, [scannerObserved]);
   const scannerLine = scannerExportLine({ status: scanner.status, packages: scannerObserved.software.length, assets: scannerAssetCount, truncated: scannerObserved.truncated });
   useEffect(() => {
@@ -192,6 +196,16 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       return sspProfile.profile ? { ...next, sspProfile: sspProfile.profile } : next;
     });
   }, [sspProfile.profile]);
+
+  // The register snapshot rides on the form values the same way (set only while one exists) so the compiled SSP and the Markdown print 1.3 and 1.4
+  useEffect(() => {
+    setFormData((prev) => {
+      if (prev.sspInventory === inventorySnapshot) return prev;
+      const next = { ...prev };
+      delete next.sspInventory;
+      return inventorySnapshot ? { ...next, sspInventory: inventorySnapshot } : next;
+    });
+  }, [inventorySnapshot]);
 
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [isExportingJson, setIsExportingJson] = useState<boolean>(false);
@@ -278,7 +292,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const metaIdBase = useId();
   const metaId = (field: string) => `${metaIdBase}-meta-${field}`;
   const metaHeadingId = `${metaIdBase}-meta-heading`;
-  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework }), [selectedDocType, formData, sspProfile.profile, activeFramework]);
+  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework, inventory: sspInventory.completenessInput }), [selectedDocType, formData, sspProfile.profile, activeFramework, sspInventory.completenessInput]);
   const requiredGapCount = exportGaps.filter((g) => !g.advisory).length;
   const [pendingFocusField, setPendingFocusField] = useState<string | null>(null);
   const handleGapClick = useCallback((field: string) => {
@@ -559,6 +573,17 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   <Server className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
                   <span>{boundaryLine}</span>
                 </p>
+                {selectedDocType === 'NIST_SP_800_18_SSP' && (
+                  <p data-testid="ssp-inventory-scope" aria-live="polite" className="text-xs text-slate-400">
+                    {sspInventory.status === 'loading'
+                      ? 'Tools and data inventory: loading…'
+                      : sspInventory.status === 'unsupported'
+                        ? 'Tools and data inventory: not available for an organization stored only in this browser.'
+                        : sspInventory.status === 'error'
+                          ? 'Tools and data inventory: could not be loaded, so sections 1.3 and 1.4 say not available.'
+                          : `Tools and data inventory: ${sspInventory.snapshot.tools.length} tools, ${sspInventory.snapshot.categories.length} CUI categories.`}
+                  </p>
+                )}
                 {selectedDocType === 'SOFTWARE_INVENTORY' && (
                   <p data-testid="software-inventory-scope" aria-live="polite" className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300">
                     <Package className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />

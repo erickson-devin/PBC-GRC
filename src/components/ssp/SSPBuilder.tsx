@@ -13,6 +13,8 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { useSspProfile } from '../../hooks/useSspProfile';
 import { useSspReviews } from '../../hooks/useSspReviews';
+import { useSspInventory } from '../../hooks/useSspInventory';
+import { useDataInventory } from '../../hooks/useDataInventory';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
@@ -41,9 +43,21 @@ import {
   sspRoleLines,
   sspRoleRows,
 } from '../../data/ssp/sspOutput';
+import {
+  CMMC_L2_NEEDS_CUI_CATEGORY,
+  DATA_INVENTORY_HEADERS,
+  INVENTORY_NOT_AVAILABLE,
+  NO_CUI_CATEGORIES_SELECTED,
+  NO_TOOLS_RECORDED,
+  SYSTEM_DETAILS_HEADERS,
+  dataInventoryTableRows,
+} from '../../data/inventory/sspInventory';
+import { informationTypesCopyLine, systemDetailsCopyLines, systemDetailsRows, yesNoLabel } from '../../data/ssp/sspInventoryView';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { SspSectionNav } from './SspSectionNav';
 import { SspSectionReview } from './SspSectionReview';
+import { SspSystemDetailsSection } from './SspSystemDetailsSection';
+import { SspDataInventorySection } from './SspDataInventorySection';
 import { SspIdentificationSection } from './SspIdentificationSection';
 import { SspRolesSection } from './SspRolesSection';
 import { SspEnvironmentSection } from './SspEnvironmentSection';
@@ -64,11 +78,15 @@ export const SSPBuilder: React.FC = () => {
     sspFocusSection,
     clearSspFocusSection,
     setSelectedControlId,
+    setActiveTab,
   } = useAssessment();
 
   const { currentTenant, canEdit, activeFramework, activeProgram, teamMembers, teamError } = useTenant();
   const profileHook = useSspProfile();
   const reviews = useSspReviews();
+  // 1.3 and 1.4: the Tools and Services register (read here) and the program's data inventory (edited in 1.4)
+  const inv = useSspInventory({ enabled: true });
+  const dataInv = useDataInventory();
   const profile = profileHook.profile;
 
   // Another screen (the export modal's gap list) can ask for a section: then the builder opens on the edit view
@@ -127,10 +145,10 @@ export const SSPBuilder: React.FC = () => {
   const profileEditable = canEdit && profileHook.status === 'ready' && !archived;
   const serverBacked = Boolean(currentTenant.serverBacked);
   const completeness = useMemo(
-    () => computeSspCompleteness(resolveSspCompletenessInput({ meta, tenant: currentTenant, program: activeProgram, framework: activeFramework, profile })),
-    [meta, currentTenant, activeProgram, activeFramework, profile]
+    () => computeSspCompleteness({ ...resolveSspCompletenessInput({ meta, tenant: currentTenant, program: activeProgram, framework: activeFramework, profile }), inventory: inv.completenessInput }),
+    [meta, currentTenant, activeProgram, activeFramework, profile, inv.completenessInput]
   );
-  const entries = navEntriesView(completeness, reviews);
+  const entries = navEntriesView(completeness, reviews, { inventoryStatus: inv.status });
   const sectionStatus = completeness.sections.find((s) => s.sectionId === activeSection);
   const savePending = sspMetadataStatus === 'saving' || profileHook.saving;
   const members = teamMembers[currentTenant.id] ?? [];
@@ -198,6 +216,9 @@ export const SSPBuilder: React.FC = () => {
     text += `SYSTEM BOUNDARY & SCOPE:\n${boundaryScope}\n\n`;
     text += `RESPONSIBLE ROLES:\n`;
     for (const line of sspRoleLines({ profile, legacySystemOwner: meta.systemOwner, framework: activeFramework })) text += `- ${line.label}: ${line.value}\n`;
+    text += `\nSYSTEM DETAILS (USERS):\n`;
+    for (const line of systemDetailsCopyLines(inv.snapshot)) text += `${line}\n`;
+    text += `INFORMATION TYPES: ${informationTypesCopyLine(inv.snapshot)}\n`;
     text += `\nCLOUD SERVICE PROVIDERS: ${meta.cloudServiceProviders || NO_CSP_RECORDED}\n\n`;
     text += `HARDWARE AND SOFTWARE MAINTENANCE AND OWNERSHIP:\n`;
     for (const item of maintenanceItems) text += `- ${item.label}: ${item.value}\n`;
@@ -292,7 +313,7 @@ export const SSPBuilder: React.FC = () => {
           <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
           <button
-            onClick={() => exportAssessmentMarkdown(profileHook.profile)}
+            onClick={() => exportAssessmentMarkdown(profileHook.profile, inv.status === 'loading' ? null : inv.snapshot)}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
           >
             <Download className="w-3.5 h-3.5 text-slate-400" />
@@ -486,27 +507,56 @@ export const SSPBuilder: React.FC = () => {
                 />
               )}
 
-              <SspSectionReview
-                sectionId={activeSection}
-                supported={reviews.supported}
-                status={reviews.status}
-                state={reviews.sections[activeSection] ?? null}
-                history={reviews.history}
-                canEdit={canEdit}
-                disabledReason={signOffDisabledReason({
-                  savePending,
-                  reviewsStatus: reviews.status,
-                  profileStatus: profileHook.status,
-                  metadataEditable: sspMetadataEditable,
-                  canSignOff: reviews.canSignOff,
-                  signing,
-                })}
-                signing={signing}
-                error={reviewMsg?.section === activeSection ? reviewMsg.error : null}
-                notice={reviewMsg?.section === activeSection ? reviewMsg.notice : null}
-                onSignOff={() => void handleSignOff()}
-                onRetry={() => void reviews.reload()}
-              />
+              {activeSection === 'system_details' && (
+                <SspSystemDetailsSection
+                  status={inv.status}
+                  snapshot={inv.snapshot}
+                  section={sectionStatus}
+                  onOpenRegister={() => setActiveTab('tools')}
+                  onRetry={() => void inv.reload()}
+                />
+              )}
+              {activeSection === 'data_inventory' && (
+                <SspDataInventorySection
+                  key={sectionKey}
+                  framework={activeFramework}
+                  data={dataInv}
+                  editable={canEdit && dataInv.status === 'ready' && !archived}
+                  registry={inv.registry}
+                  registryStatus={inv.registryStatus}
+                  boundaryTools={inv.boundaryTools}
+                  section={sectionStatus}
+                  onChange={(r) => dataInv.save(r)}
+                  onReload={() => void dataInv.reload()}
+                  onRetryRegistry={inv.reloadRegistry}
+                  onOpenRegister={() => setActiveTab('tools')}
+                />
+              )}
+
+              {/* 1.3 and 1.4 are built from the register and the data inventory, so they are not signed off */}
+              {def.signable && (
+                <SspSectionReview
+                  sectionId={activeSection}
+                  supported={reviews.supported}
+                  status={reviews.status}
+                  state={reviews.sections[activeSection] ?? null}
+                  history={reviews.history}
+                  canEdit={canEdit}
+                  disabledReason={signOffDisabledReason({
+                    savePending,
+                    reviewsStatus: reviews.status,
+                    profileStatus: profileHook.status,
+                    metadataEditable: sspMetadataEditable,
+                    canSignOff: reviews.canSignOff,
+                    signing,
+                  })}
+                  signing={signing}
+                  error={reviewMsg?.section === activeSection ? reviewMsg.error : null}
+                  notice={reviewMsg?.section === activeSection ? reviewMsg.notice : null}
+                  onSignOff={() => void handleSignOff()}
+                  onRetry={() => void reviews.reload()}
+                />
+              )}
             </section>
           </div>
 
@@ -552,7 +602,7 @@ export const SSPBuilder: React.FC = () => {
             </div>
           </div>
 
-          {/* Section 1: System Identification & Governance (1.1 identification and categorization, 1.2 roles) */}
+          {/* Section 1: System Identification & Governance (1.1 identification and categorization, 1.2 roles, 1.3 system details, 1.4 information types) */}
           <div className="space-y-3">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg border-l-4 border-brand-600">
               1. System Identification & Governance
@@ -609,6 +659,78 @@ export const SSPBuilder: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 pt-2">1.3 System Details</h3>
+            <h4 className="text-xs font-semibold text-slate-700">1.3.1 Number of End Users and Privileged Users</h4>
+            {!inv.snapshot.supported ? (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">
+                {inv.status === 'loading' ? 'Loading the tools and services…' : INVENTORY_NOT_AVAILABLE}
+              </div>
+            ) : inv.snapshot.tools.length === 0 ? (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">{NO_TOOLS_RECORDED}</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border border-slate-200">
+                  <thead>
+                    <tr className="bg-slate-50 text-left">
+                      {SYSTEM_DETAILS_HEADERS.map((h) => (
+                        <th key={h} scope="col" className="px-3 py-2 border-b border-slate-200 font-semibold text-slate-700">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {systemDetailsRows(inv.snapshot).map((r) => (
+                      <tr key={r.id} className="border-b border-slate-100 last:border-0">
+                        <td className="px-3 py-2 text-slate-900 font-semibold">{r.name}</td>
+                        <td className="px-3 py-2 text-slate-700">{r.deployment}</td>
+                        <td className="px-3 py-2 text-slate-700">{r.category}</td>
+                        <td className="px-3 py-2 text-slate-700">{r.endUsers}</td>
+                        <td className="px-3 py-2 text-slate-700">{r.privileged}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 pt-2">1.4 Information Types (FCI and CUI)</h3>
+            {!inv.snapshot.supported ? (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">
+                {inv.status === 'loading' ? 'Loading the data inventory…' : INVENTORY_NOT_AVAILABLE}
+              </div>
+            ) : (
+              <>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                  <span className="text-slate-500 block font-medium">Federal Contract Information (FCI)</span>
+                  <span className="text-slate-900 font-semibold">{yesNoLabel(inv.snapshot.handlesFci)}</span>
+                  {inv.snapshot.registryAsOf && <span className="text-slate-500 block mt-0.5">CUI category list (NARA CUI Registry) as of {inv.snapshot.registryAsOf}</span>}
+                </div>
+                {inv.snapshot.categories.length === 0 ? (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">{activeFramework === 'CMMC_L2' ? `${NO_CUI_CATEGORIES_SELECTED} ${CMMC_L2_NEEDS_CUI_CATEGORY}` : NO_CUI_CATEGORIES_SELECTED}</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border border-slate-200">
+                      <thead>
+                        <tr className="bg-slate-50 text-left">
+                          {DATA_INVENTORY_HEADERS.map((h) => (
+                            <th key={h} scope="col" className="px-3 py-2 border-b border-slate-200 font-semibold text-slate-700">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dataInventoryTableRows(inv.snapshot).map((row, i) => (
+                          <tr key={`${inv.snapshot.categories[i].id}`} className="border-b border-slate-100 last:border-0">
+                            {row.map((cell, j) => (
+                              <td key={j} className={`px-3 py-2 ${j === 0 ? 'text-slate-900 font-semibold' : 'text-slate-700'}`}>{cell}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Section 2: System Environment (2.1 boundary and environment, 2.2 cloud service providers, 2.3 maintenance and ownership) */}

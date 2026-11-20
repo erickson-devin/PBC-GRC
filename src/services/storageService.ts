@@ -18,6 +18,7 @@ import { composeImplementationStatement } from '../data/cmmcGuide/sspStatement';
 import { statusDisplayLabel } from '../data/statusLabels';
 import type { SspProfile } from '../types/sspProfile';
 import { sspIdentificationItems, sspMaintenanceExceptions, sspMaintenanceItems, sspRoleLines } from '../data/ssp/sspOutput';
+import { sspInventoryMarkdown, type SspInventorySnapshot } from '../data/inventory/sspInventory';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -96,13 +97,15 @@ export function createInitialState(tenant: Tenant, frameworkOverride?: Complianc
 
 /**
  * The Markdown SSP of the active framework. Pure: exportMarkdown only downloads the result. The outline follows the compiled SSP
- * (1.1 identification and categorization, 1.2 roles, 2.1 to 2.3 environment); `profile` is the program's SSP profile, null when none is recorded.
+ * (1.1 identification and categorization, 1.2 roles, 1.3 and 1.4 inventory, 2.1 to 2.3 environment); `profile` is the program's SSP profile, null when
+ * none is recorded; `inventory` is the Tools and Services register as the SSP prints it (without it 1.3 and 1.4 are left out, as before).
  */
 export function buildSspMarkdown(
   state: AssessmentState,
   controls: FrameworkControlDefinition[] | undefined,
   framework: ComplianceFramework = 'CMMC_L1',
-  profile?: SspProfile | null
+  profile?: SspProfile | null,
+  inventory?: SspInventorySnapshot | null
 ): string {
   const meta = state.sspMetadata;
   const sspProfile = profile ?? null;
@@ -122,6 +125,7 @@ export function buildSspMarkdown(
   md += `## 1.2 Responsible Organization & Roles\n\n`;
   for (const line of sspRoleLines({ profile: sspProfile, legacySystemOwner: meta.systemOwner, framework })) md += `- **${line.label}:** ${line.value}\n`;
   md += `\n`;
+  if (inventory) md += sspInventoryMarkdown(inventory, framework);
   md += `## 2.1 System Scope & Boundary Description\n\n${meta.systemBoundaryScope}\n\n`;
   md += `## 2.2 Operating Environment & Cloud Service Providers (CSPs)\n\n`;
   md += `- **Environment:** ${meta.systemEnvironment}\n`;
@@ -309,9 +313,10 @@ export const StorageService = {
     state: AssessmentState,
     controls?: FrameworkControlDefinition[],
     framework: ComplianceFramework = 'CMMC_L1',
-    profile?: SspProfile | null
+    profile?: SspProfile | null,
+    inventory?: SspInventorySnapshot | null
   ): void {
-    const md = buildSspMarkdown(state, controls, framework, profile);
+    const md = buildSspMarkdown(state, controls, framework, profile, inventory);
     const meta = state.sspMetadata;
 
     const blob = new Blob([md], { type: 'text/markdown' });

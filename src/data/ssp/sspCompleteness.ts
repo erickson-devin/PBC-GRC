@@ -1,5 +1,6 @@
 // What the SSP still lacks, section by section (#238): one registry of items with their requiredness per framework, used by the builder nav,
-// the export readiness check and later dashboards. Pure: types only. A suggested categorization never counts as filled.
+// the export readiness check and later dashboards. Pure: types and the register's item rules (sections 1.3 and 1.4, inventory/sspInventory.ts) only.
+// A suggested categorization never counts as filled.
 
 import type { SSPMetadata } from '../../types/cmmc';
 import type { Program } from '../../types/program';
@@ -8,6 +9,7 @@ import type { SspMetadataFields } from '../../types/sspMetadata';
 import type { SspProfile, SspRoleKey, SspSectionReviewState } from '../../types/sspProfile';
 import type { Tenant } from '../../types/tenant';
 import { SSP_ROLE_LABELS, SSP_SECTIONS, effectiveSspRoles, type SspSectionId } from './sspSections';
+import { inventoryCompletenessItems, type SspInventoryCompletenessInput } from '../inventory/sspInventory';
 
 export type SspItemSeverity = 'required' | 'advisory';
 
@@ -31,6 +33,11 @@ export interface SspSectionStatus {
   requiredMissing: number;
   advisoryMissing: number;
   complete: boolean;
+  /**
+   * False for 1.3 and 1.4 when the Tools and Services register is not available (a browser-only organization, or nothing loaded): the section then has
+   * no items and counts toward no total. Every other section is always available.
+   */
+  available: boolean;
 }
 
 export interface SspCompleteness {
@@ -46,6 +53,11 @@ export interface SspCompletenessInput {
   profile: SspProfile | null;
   /** Stands in for a blank boundary text (the program's boundary summary, then the tenant's). */
   boundaryFallback?: string | null;
+  /**
+   * The Tools and Services register and the data inventory (sections 1.3 and 1.4). Without it, or when `supported` is false, both sections are
+   * unavailable: no items, nothing counted. With it, a CMMC Level 2 program must select at least one CUI category (required); missing user counts are advisory.
+   */
+  inventory?: SspInventoryCompletenessInput;
 }
 
 /** Not a string, or whitespace only. */
@@ -120,13 +132,18 @@ function itemsFor(input: SspCompletenessInput): SspItemStatus[] {
   if (MAINTENANCE_ANSWERS.some(([key]) => mt?.[key] === false)) {
     add({ id: 'maintenance:exceptions', sectionId: 'maintenance', label: 'Maintenance and ownership exceptions', severity: 'required', missing: isBlank(mt?.exceptions) });
   }
+
+  // 1.3 system details and 1.4 information types (from the Tools and Services register; nothing without it)
+  if (input.inventory) for (const item of inventoryCompletenessItems(input.framework, input.inventory)) add(item);
   return items;
 }
 
 export function computeSspCompleteness(input: SspCompletenessInput): SspCompleteness {
   const all = itemsFor(input);
+  const inventorySupported = input.inventory?.supported === true;
   const sections: SspSectionStatus[] = SSP_SECTIONS.map((def) => {
-    const items = all.filter((i) => i.sectionId === def.id);
+    const available = (def.id !== 'system_details' && def.id !== 'data_inventory') || inventorySupported;
+    const items = available ? all.filter((i) => i.sectionId === def.id) : [];
     const requiredMissing = items.filter((i) => i.severity === 'required' && i.missing).length;
     return {
       sectionId: def.id,
@@ -137,6 +154,7 @@ export function computeSspCompleteness(input: SspCompletenessInput): SspComplete
       requiredMissing,
       advisoryMissing: items.filter((i) => i.severity === 'advisory' && i.missing).length,
       complete: requiredMissing === 0,
+      available,
     };
   });
   const requiredMissing = sections.reduce((n, s) => n + s.requiredMissing, 0);
@@ -178,7 +196,7 @@ export function resolveSspCompletenessInput(a: {
 }
 
 /** The completeness input of an export form's values (ReportMetadata) and the program's profile. */
-export function sspCompletenessFromReport(meta: Partial<ReportMetadata>, profile: SspProfile | null): SspCompletenessInput {
+export function sspCompletenessFromReport(meta: Partial<ReportMetadata>, profile: SspProfile | null, inventory?: SspInventoryCompletenessInput): SspCompletenessInput {
   return {
     framework: meta.framework ?? '',
     metadata: {
@@ -194,6 +212,7 @@ export function sspCompletenessFromReport(meta: Partial<ReportMetadata>, profile
       serviceCommitments: meta.serviceCommitments ?? '',
     },
     profile,
+    ...(inventory ? { inventory } : {}),
   };
 }
 

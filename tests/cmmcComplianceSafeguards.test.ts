@@ -545,7 +545,7 @@ async function runTestSuite() {
   );
   assert(s237Csv.includes(`"'=1+1"`) && s237Csv.includes(`"'-x; y"`), 'S237-3: the eMASS CSV neutralises formula cells');
   const s237Read = (rel: string) => fs.readFileSync(path.join(process.cwd(), 'src', 'data', 'reports', rel), 'utf8').replace(/\r\n/g, '\n');
-  assert(['reportExporters.ts', 'sprsCompiler.ts', 'inventoryDocuments.ts'].every((f) => s237Read(f).includes("from './csv'") && !s237Read(f).includes(`replace(/"/g, '""')`)), 'S237-4: every CSV writer uses csvCell and none has its own quote escaping');
+  assert(['reportExporters.ts', 'sprsCompiler.ts', 'inventoryDocuments.ts', 'inventoryRegisterCsv.ts'].every((f) => s237Read(f).includes("from './csv'") && !s237Read(f).includes(`replace(/"/g, '""')`)), 'S237-4: every CSV writer uses csvCell and none has its own quote escaping');
 
   // ==========================================================================
   // SUMMARY

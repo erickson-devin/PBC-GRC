@@ -309,7 +309,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries and control_poam_events', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events', 'program_tools', 'program_tool_controls', 'program_data_inventory', 'program_cui_categories', 'program_cui_category_tools', 'program_vendor_documents', 'program_inventory_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries, control_poam_events and the seven inventory program tables (program_tools, program_tool_controls, program_data_inventory, program_cui_categories, program_cui_category_tools, program_vendor_documents, program_inventory_events)', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -695,7 +695,7 @@ console.log('\n--- control POA&M entries, milestones and stable item numbers (#3
       `CP-D5: ${t} is a tenant table and a program table (FORCE row security, tenant and program policies), not backfilled`
     );
   }
-  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 2] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 1] === 'control_poam_events', 'CP-D6: both tables are appended at the end of RLS_PROGRAM_TABLES');
+  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 9] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 8] === 'control_poam_events', 'CP-D6: both tables were appended after the SSP tables (only the seven inventory program tables come after them in RLS_PROGRAM_TABLES)');
 
   for (const col of ["milestones JSONB NOT NULL DEFAULT '[]'::jsonb", 'item_number INTEGER']) {
     assert(TABLES_SQL.includes('ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ' + col + ';'), 'VM-D1: vm_poam_items gets ' + col + ' idempotently (nullable or defaulted: an older image still starts)');
@@ -766,6 +766,83 @@ for (const t of ['vm_host_inventory', 'vm_host_software']) {
     `HI-D1: ${t} is a tenant table (tenant RLS), not a program table and not backfilled`
   );
   assert(buildRlsSql().includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && buildRlsSql().includes(rlsPolicyName(t)), `HI-D2: ${t} gets FORCE row security and its tenant policy`);
+}
+
+console.log('\n--- Tools and Services register (inventory_*, program_tools and friends; #239, #243, #248, #249) ---');
+{
+  const blockOf = (table: string): string => {
+    const at = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS ' + table + ' (');
+    return at < 0 ? '' : TABLES_SQL.slice(at, TABLES_SQL.indexOf('\n  );', at));
+  };
+  const INVENTORY_TENANT_TABLES = ['inventory_vendors', 'inventory_tools', 'inventory_events', 'program_tools', 'program_tool_controls', 'program_data_inventory', 'program_cui_categories', 'program_cui_category_tools', 'program_vendor_documents', 'program_inventory_events'];
+  const INVENTORY_PROGRAM_TABLES = INVENTORY_TENANT_TABLES.slice(3);
+  const vendorsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS inventory_vendors (');
+  const toolsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS inventory_tools (');
+  const toolsBlock = blockOf('inventory_tools');
+  assert(vendorsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS control_poam_events (') && toolsAt > vendorsAt, 'INV-D1: inventory_tools is created after inventory_vendors (the table its foreign key points at)');
+  assert(
+    toolsBlock.includes('FOREIGN KEY (tenant_id, vendor_id) REFERENCES inventory_vendors (tenant_id, id) ON DELETE SET NULL (vendor_id)') &&
+      TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_tools_name ON inventory_tools (tenant_id, lower(name));') &&
+      TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_tools_seed ON inventory_tools (tenant_id, seed_key) WHERE seed_key IS NOT NULL;') &&
+      TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_inventory_tools_rank ON inventory_tools (tenant_id, recovery_rank) WHERE recovery_rank IS NOT NULL;') &&
+      toolsBlock.includes('inventory_tools_cost_check CHECK (annual_cost_cents IS NULL OR annual_cost_cents BETWEEN 0 AND 100000000000)') &&
+      toolsBlock.includes('annual_cost_cents BIGINT') && toolsBlock.includes('renewal_date DATE'),
+    'INV-D1: the vendor link nulls on delete, the name, seed and rank unique indexes exist, and the cost is a bounded BIGINT of cents'
+  );
+  assert(
+    toolsBlock.includes("tool_type ~ '^[A-Z][A-Z0-9_]{0,31}$'") && toolsBlock.includes("deployment ~ '^[A-Z][A-Z_]{0,15}$'") && !/\bIN \(/.test(toolsBlock) && !/\bIN \(/.test(blockOf('inventory_vendors')) && !/\bIN \(/.test(blockOf('program_vendor_documents')),
+    'INV-D1b: the enum columns are pattern CHECKs, never IN lists (a later image may add a value without a migration)'
+  );
+  const dropped = [...TABLES_SQL.matchAll(/DROP CONSTRAINT IF EXISTS (\w+)/g)].map((m) => m[1]);
+  assert(
+    dropped.every((c) => !INVENTORY_TENANT_TABLES.some((t) => c.startsWith(t))) && !/ALTER TABLE (inventory_\w+|program_(tools|tool_controls|data_inventory|cui_\w+|vendor_documents|inventory_events)) (DROP|ADD) CONSTRAINT/.test(TABLES_SQL),
+    'INV-D2: no DROP or ADD CONSTRAINT touches a register table (every CHECK is inline: no one-way upgrade)',
+    dropped.filter((c) => INVENTORY_TENANT_TABLES.some((t) => c.startsWith(t)))
+  );
+  for (const t of INVENTORY_PROGRAM_TABLES) {
+    const b = blockOf(t);
+    const viaProgram = b.includes('REFERENCES programs (tenant_id, id) ON DELETE CASCADE');
+    const expected = t === 'program_cui_categories' ? b.includes('REFERENCES program_data_inventory (tenant_id, program_id) ON DELETE CASCADE')
+      : t === 'program_cui_category_tools' ? b.includes('REFERENCES program_cui_categories (tenant_id, program_id, category_id) ON DELETE CASCADE')
+      : t === 'program_inventory_events' ? !/REFERENCES/.test(b)
+      : viaProgram;
+    assert(b !== '' && expected && b.includes('program_id VARCHAR(64) NOT NULL') && b.includes('tenant_id VARCHAR(64) NOT NULL'), `INV-D3: ${t} cascades with its program (directly, through the data inventory or the category; the history has no foreign key) and has a NOT NULL program`);
+  }
+  assert(
+    blockOf('program_cui_categories').includes("category_id VARCHAR(48) NOT NULL") && blockOf('program_cui_categories').includes("category_id ~ '^[A-Z][A-Z0-9_-]{0,47}$'") &&
+      blockOf('program_cui_category_tools').includes('CHECK (stores OR processes OR transmits)'),
+    'INV-D3b: category ids are 48 characters with hyphens allowed (the CUI Registry ids), and a tool row stores, processes or transmits'
+  );
+  const kindStart = TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check');
+  const kindLine = TABLES_SQL.slice(kindStart, TABLES_SQL.indexOf('\n', kindStart));
+  assert(!/tool|inventory|cui/.test(kindLine) && kindLine.includes('stack_profile_changed'), 'INV-D4: the program_events kind CHECK is unchanged (the register has its own history tables)');
+  const trig = (name: string, table: string, when: string): boolean => {
+    const dropAt = TABLES_SQL.indexOf(`DROP TRIGGER IF EXISTS ${name} ON ${table};`);
+    const createAt = TABLES_SQL.indexOf(`CREATE TRIGGER ${name} BEFORE ${when} ON ${table}`);
+    return dropAt > 0 && createAt > dropAt;
+  };
+  const guardAt = TABLES_SQL.indexOf('CREATE OR REPLACE FUNCTION inventory_events_guard()');
+  const guardBody = guardAt < 0 ? '' : TABLES_SQL.slice(guardAt, TABLES_SQL.indexOf('$$ LANGUAGE plpgsql;', guardAt));
+  assert(
+    guardBody.includes('RAISE EXCEPTION') && guardBody.includes('append-only') && guardBody.includes("ERRCODE = '42501'") &&
+      trig('trg_inventory_events_guard', 'inventory_events', 'UPDATE') && trig('trg_inventory_events_no_truncate', 'inventory_events', 'TRUNCATE') &&
+      trig('trg_program_inventory_events_guard', 'program_inventory_events', 'UPDATE') && trig('trg_program_inventory_events_no_truncate', 'program_inventory_events', 'TRUNCATE') &&
+      !/BEFORE DELETE ON (program_)?inventory_events/.test(TABLES_SQL),
+    'INV-D5: both history tables are append-only through the guard function (UPDATE and TRUNCATE refused, each trigger dropped before it is created); DELETE stays allowed'
+  );
+  for (const t of INVENTORY_TENANT_TABLES) {
+    assert(
+      RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id') &&
+        (RLS_PROGRAM_TABLES as readonly string[]).includes(t) === INVENTORY_PROGRAM_TABLES.includes(t) &&
+        !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t) &&
+        buildRlsSql().includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && (!INVENTORY_PROGRAM_TABLES.includes(t) || buildProgramRlsSql().includes(rlsProgramPolicyName(t))),
+      `INV-D6: ${t} is a tenant table${INVENTORY_PROGRAM_TABLES.includes(t) ? ' and a program table' : ' (not a program table)'}, FORCE row security, not backfilled`
+    );
+  }
+  assert(
+    JSON.stringify(RLS_PROGRAM_TABLES.slice(-7)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-10).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
+    'INV-D7: the new tables are appended at the end of both row-security lists, in creation order'
+  );
 }
 
 const initAt = dbSrc.indexOf('export async function initDb(');

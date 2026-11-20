@@ -9,7 +9,7 @@ import type { ImpactLevel, SspProfile, SspRoleEntry, SspRoleKey } from '../../ty
 /** Part of every digest: changing it marks every section as changed since its review. */
 export const SSP_DIGEST_VERSION = 'ssp-section-v1';
 
-export type SspSectionId = 'identification' | 'roles' | 'environment' | 'maintenance';
+export type SspSectionId = 'identification' | 'roles' | 'system_details' | 'data_inventory' | 'environment' | 'maintenance';
 
 export interface SspSectionDef {
   id: SspSectionId;
@@ -18,10 +18,15 @@ export interface SspSectionDef {
   signable: boolean;
 }
 
-/** In display order. Numbers follow the NIST SP 800-171 SSP template; `environment` prints 2.1 and 2.2. */
+/**
+ * In display order. Numbers follow the NIST SP 800-171 SSP template; `environment` prints 2.1 and 2.2. 1.3 and 1.4 are derived from the Tools and
+ * Services register and the data inventory, so they are not signable: they join the nav and the completeness check but never the sign-off digests.
+ */
 export const SSP_SECTIONS: readonly SspSectionDef[] = [
   { id: 'identification', number: '1.1', title: 'System identification and categorization', signable: true },
   { id: 'roles', number: '1.2', title: 'Responsible organization and roles', signable: true },
+  { id: 'system_details', number: '1.3', title: 'System details: tools, users and privileged users', signable: false },
+  { id: 'data_inventory', number: '1.4', title: 'Information types: FCI and CUI', signable: false },
   { id: 'environment', number: '2.1', title: 'System environment, boundary and cloud services', signable: true },
   { id: 'maintenance', number: '2.3', title: 'Hardware and software maintenance and ownership', signable: true },
 ];
@@ -152,6 +157,9 @@ export function sectionCanonical(id: SspSectionId, input: SspSectionContentInput
         ['serviceCommitments', text(m.serviceCommitments)],
       ];
       break;
+    case 'system_details':
+    case 'data_inventory':
+      return '[]'; // derived from the register: never signed, never hashed
     case 'maintenance': {
       const mt = p?.maintenance;
       pairs = [

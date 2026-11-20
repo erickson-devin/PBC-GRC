@@ -37,6 +37,9 @@ import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCre
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
 import type { SoftwareItem, SoftwareItemInput } from '../types/software';
+import { MAX_TOOLS_PER_TENANT, MAX_VENDORS_PER_TENANT } from '../types/inventory';
+import type { DataInventoryRecord, InventoryEvent, InventoryTool, InventoryVendor, ProgramInventory, ProgramInventoryEvent, ToolBatchResult, ToolControlLink, ToolInput, ToolMembership, ToolUsage, VendorDocumentKind, VendorDocumentLink } from '../types/inventory';
+import type { ToolInputWithSeed, VendorInput } from '../data/inventory/inventorySchema';
 import { parseServerSoftwareItems } from '../data/telemetry/softwareItems';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 import { SESSION_MARKER_HEADER, SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
@@ -66,6 +69,8 @@ export class ApiError extends Error {
   readonly status: number;
   /** The server's machine-readable `reason` (e.g. 'invalid_code', 'password_change_required'), when it sent one. */
   reason?: string;
+  /** Only on a 409 `tool_in_use` (removing a tool from a program's boundary): how many control links and CUI category assignments would go with it. Numbers only. */
+  inUse?: { controlLinks: number; cuiLinks: number };
   constructor(status: number, message: string) {
     super(message);
     this.name = 'ApiError';
@@ -136,6 +141,10 @@ function apiErrorFromResponse(status: number, body: unknown): ApiError {
   const code = (body as { code?: unknown } | null)?.code;
   const reason = bodyReason(body) ?? (typeof code === 'string' && code ? code : undefined);
   if (reason) err.reason = reason;
+  if (reason === 'tool_in_use') {
+    const counts = (body ?? {}) as { controlLinks?: unknown; cuiLinks?: unknown };
+    err.inUse = { controlLinks: typeof counts.controlLinks === 'number' ? counts.controlLinks : 0, cuiLinks: typeof counts.cuiLinks === 'number' ? counts.cuiLinks : 0 };
+  }
   // A program-scoped call with no active program in the organization: whoever shows the programs refreshes them so the screen can take over
   if (status === 409 && reason === 'program_required') for (const listener of [...programRequiredListeners]) listener();
   return err;
@@ -227,6 +236,24 @@ export interface InvitePreview {
   enabledFrameworks: string[];
   /** Which of the tenant's sign-ins this invitation requires a second factor for (the server's preview route returns it). */
   mfaMode?: InviteMfaMode;
+}
+
+/** PATCH /program-inventory/tools: the boundary after the change, and how many links went with a forced removal. */
+export interface ProgramToolsResult {
+  programId: string;
+  declared: boolean;
+  toolIds: string[];
+  added: number;
+  removed: number;
+  linksRemoved: number;
+  cuiLinksRemoved: number;
+}
+
+/** PUT /program-inventory/tools/:toolId/controls: the whole set now stored for the tool in this program (sorted by control id). */
+export interface ToolControlsResult {
+  toolId: string;
+  controls: Pick<ToolControlLink, 'controlId' | 'evidenceSource'>[];
+  changed: boolean;
 }
 
 /** Authenticated JSON request that throws ApiError (with a user-safe message) on any failure. */
@@ -808,6 +835,164 @@ export const ApiClient = {
   /** DELETE /api/v1/tenants/:id/software/:itemId. */
   async deleteSoftwareItem(tenantId: string, itemId: string, sessionRef?: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/software/${encodeURIComponent(itemId)}`, { sessionRef, tenantId });
+  },
+
+  // ------------------------------------------------------------------------------------------------ tools and services register
+  // Tenant-wide (shared by every program): these take no programId. Names, vendors, missions, notes and cost may be CUI: nothing here logs a value.
+
+  /** GET /api/v1/tenants/:id/inventory/tools (any member). `annualCostCents` is absent for read roles: an absent key means "not available", never zero. */
+  async listInventoryTools(tenantId: string): Promise<{ tools: InventoryTool[]; limit: number }> {
+    const data = await authedJson<{ tools?: InventoryTool[]; limit?: number }>('GET', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools`, { tenantId });
+    if (!Array.isArray(data?.tools)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { tools: data.tools, limit: typeof data.limit === 'number' ? data.limit : MAX_TOOLS_PER_TENANT };
+  },
+
+  /** POST /api/v1/tenants/:id/inventory/tools (write roles). 409 duplicate_name, 429 limit. */
+  async createInventoryTool(tenantId: string, input: ToolInput): Promise<InventoryTool> {
+    const data = await authedJson<{ tool?: InventoryTool }>('POST', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools`, { tenantId, body: input });
+    if (!data?.tool || typeof data.tool !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.tool;
+  },
+
+  /** POST /api/v1/tenants/:id/inventory/tools/batch (write roles): 1 to 200 items; duplicates come back in `skipped` by position. */
+  async createInventoryToolsBatch(tenantId: string, items: ToolInputWithSeed[]): Promise<ToolBatchResult> {
+    const data = await authedJson<Partial<ToolBatchResult>>('POST', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools/batch`, { tenantId, body: { items } });
+    if (!Array.isArray(data?.created) || !Array.isArray(data?.skipped)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { created: data.created, skipped: data.skipped };
+  },
+
+  /** PUT /api/v1/tenants/:id/inventory/tools/:toolId (write roles): the fields given change; expectedUpdatedAt is the stamp last read (409 stale_write). */
+  async updateInventoryTool(tenantId: string, toolId: string, input: ToolInput, expectedUpdatedAt: string): Promise<{ tool: InventoryTool; changed: boolean }> {
+    const data = await authedJson<{ tool?: InventoryTool; changed?: boolean }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools/${encodeURIComponent(toolId)}`, { tenantId, body: { ...input, expectedUpdatedAt } });
+    if (!data?.tool || typeof data.tool !== 'object' || typeof data.changed !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { tool: data.tool, changed: data.changed };
+  },
+
+  /** DELETE /api/v1/tenants/:id/inventory/tools/:toolId (write roles): its links in every program go with it. */
+  async deleteInventoryTool(tenantId: string, toolId: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools/${encodeURIComponent(toolId)}`, { tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/inventory/tools/:toolId/usage: in how many programs the tool is used (shown before a delete). */
+  async getInventoryToolUsage(tenantId: string, toolId: string): Promise<ToolUsage> {
+    const data = await authedJson<Partial<ToolUsage>>('GET', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools/${encodeURIComponent(toolId)}/usage`, { tenantId });
+    if (typeof data?.programs !== 'number' || typeof data.controlLinks !== 'number' || typeof data.cuiLinks !== 'number') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programs: data.programs, controlLinks: data.controlLinks, cuiLinks: data.cuiLinks };
+  },
+
+  /** PUT /api/v1/tenants/:id/inventory/tools/recovery-order (write roles): the ids ranked 1..n (tools not listed become unranked); expectedOrder is the order last read (409 stale_order). */
+  async setToolRecoveryOrder(tenantId: string, order: string[], expectedOrder: string[]): Promise<string[]> {
+    const data = await authedJson<{ order?: string[] }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/inventory/tools/recovery-order`, { tenantId, body: { order, expectedOrder } });
+    if (!Array.isArray(data?.order)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.order;
+  },
+
+  /** GET /api/v1/tenants/:id/inventory/tool-memberships: the declared tools of every program, archived ones included (an undeclared program lists none and uses the whole register). */
+  async listToolMemberships(tenantId: string): Promise<ToolMembership[]> {
+    const data = await authedJson<{ memberships?: ToolMembership[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/inventory/tool-memberships`, { tenantId });
+    if (!Array.isArray(data?.memberships)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.memberships;
+  },
+
+  /** GET /api/v1/tenants/:id/inventory/vendors (any member). */
+  async listInventoryVendors(tenantId: string): Promise<{ vendors: InventoryVendor[]; limit: number }> {
+    const data = await authedJson<{ vendors?: InventoryVendor[]; limit?: number }>('GET', `/tenants/${encodeURIComponent(tenantId)}/inventory/vendors`, { tenantId });
+    if (!Array.isArray(data?.vendors)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { vendors: data.vendors, limit: typeof data.limit === 'number' ? data.limit : MAX_VENDORS_PER_TENANT };
+  },
+
+  /** POST /api/v1/tenants/:id/inventory/vendors (write roles). */
+  async createInventoryVendor(tenantId: string, input: VendorInput): Promise<InventoryVendor> {
+    const data = await authedJson<{ vendor?: InventoryVendor }>('POST', `/tenants/${encodeURIComponent(tenantId)}/inventory/vendors`, { tenantId, body: input });
+    if (!data?.vendor || typeof data.vendor !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.vendor;
+  },
+
+  /** PUT /api/v1/tenants/:id/inventory/vendors/:vendorId (write roles): expectedUpdatedAt is the stamp last read (409 stale_write). */
+  async updateInventoryVendor(tenantId: string, vendorId: string, input: VendorInput, expectedUpdatedAt: string): Promise<{ vendor: InventoryVendor; changed: boolean }> {
+    const data = await authedJson<{ vendor?: InventoryVendor; changed?: boolean }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/inventory/vendors/${encodeURIComponent(vendorId)}`, { tenantId, body: { ...input, expectedUpdatedAt } });
+    if (!data?.vendor || typeof data.vendor !== 'object' || typeof data.changed !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { vendor: data.vendor, changed: data.changed };
+  },
+
+  /** DELETE /api/v1/tenants/:id/inventory/vendors/:vendorId (write roles): tools keep their row with no vendor; document links go in every program. */
+  async deleteInventoryVendor(tenantId: string, vendorId: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/inventory/vendors/${encodeURIComponent(vendorId)}`, { tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/inventory/events: the register history, newest first (digests and ids only; cost digests only for write roles). */
+  async listInventoryEvents(tenantId: string, options?: { entityId?: string; limit?: number }): Promise<InventoryEvent[]> {
+    const qs = new URLSearchParams();
+    if (options?.entityId) qs.set('entityId', options.entityId);
+    if (options?.limit) qs.set('limit', String(options.limit));
+    const data = await authedJson<{ events?: InventoryEvent[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/inventory/events${qs.toString() ? `?${qs.toString()}` : ''}`, { tenantId });
+    if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.events;
+  },
+
+  // ----------------------------------------------------------------------------------------- program inventory (x-program-id)
+  // The program's boundary, control links, data inventory and vendor documents: each takes the optional trailing programId like the other scoped calls.
+
+  /** GET /api/v1/program-inventory (any member): the boundary (`declared`: false means the whole register), control links and vendor documents of the program. */
+  async getProgramInventory(tenantId: string, programId?: string | null): Promise<ProgramInventory> {
+    const data = await authedJson<Partial<ProgramInventory>>('GET', '/program-inventory', { tenantId, programId });
+    if (!Array.isArray(data?.toolIds) || !Array.isArray(data.controlLinks) || !Array.isArray(data.vendorDocuments) || typeof data.declared !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programId: typeof data.programId === 'string' ? data.programId : '', declared: data.declared, toolIds: data.toolIds, controlLinks: data.controlLinks, vendorDocuments: data.vendorDocuments };
+  },
+
+  /** PATCH /api/v1/program-inventory/tools (write roles): tools to add to and remove from the boundary. 409 tool_in_use carries `inUse` unless `force` is true (which deletes the links too). */
+  async patchProgramTools(tenantId: string, change: { add?: string[]; remove?: string[]; force?: boolean }, programId?: string | null): Promise<ProgramToolsResult> {
+    const data = await authedJson<Partial<ProgramToolsResult>>('PATCH', '/program-inventory/tools', { tenantId, programId, body: change });
+    if (!Array.isArray(data?.toolIds) || typeof data.declared !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return {
+      programId: typeof data.programId === 'string' ? data.programId : '',
+      declared: data.declared,
+      toolIds: data.toolIds,
+      added: typeof data.added === 'number' ? data.added : 0,
+      removed: typeof data.removed === 'number' ? data.removed : 0,
+      linksRemoved: typeof data.linksRemoved === 'number' ? data.linksRemoved : 0,
+      cuiLinksRemoved: typeof data.cuiLinksRemoved === 'number' ? data.cuiLinksRemoved : 0,
+    };
+  },
+
+  /** PUT /api/v1/program-inventory/tools/:toolId/controls (write roles): replaces the tool's control links in this program; expectedControlIds is the set last read (409 stale_write). */
+  async putToolControls(tenantId: string, toolId: string, controls: Pick<ToolControlLink, 'controlId' | 'evidenceSource'>[], expectedControlIds: string[], programId?: string | null): Promise<ToolControlsResult> {
+    const data = await authedJson<Partial<ToolControlsResult>>('PUT', `/program-inventory/tools/${encodeURIComponent(toolId)}/controls`, { tenantId, programId, body: { controls, expectedControlIds } });
+    if (!Array.isArray(data?.controls)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { toolId: typeof data.toolId === 'string' ? data.toolId : toolId, controls: data.controls, changed: data.changed === true };
+  },
+
+  /** GET /api/v1/program-inventory/data-inventory (any member): FCI answer and CUI categories with the tools that store, process or transmit them. */
+  async getDataInventory(tenantId: string, programId?: string | null): Promise<DataInventoryRecord> {
+    const data = await authedJson<Partial<DataInventoryRecord>>('GET', '/program-inventory/data-inventory', { tenantId, programId });
+    if (!Array.isArray(data?.categories)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { handlesFci: typeof data.handlesFci === 'boolean' ? data.handlesFci : null, categories: data.categories, updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null, updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : null };
+  },
+
+  /** PUT /api/v1/program-inventory/data-inventory (write roles): replaces the whole data inventory; expectedUpdatedAt is null for the first write, else the stamp last read (409 stale_write). */
+  async putDataInventory(tenantId: string, input: Pick<DataInventoryRecord, 'handlesFci' | 'categories'>, expectedUpdatedAt: string | null, programId?: string | null): Promise<DataInventoryRecord & { changed: boolean }> {
+    const data = await authedJson<Partial<DataInventoryRecord> & { changed?: boolean }>('PUT', '/program-inventory/data-inventory', { tenantId, programId, body: { handlesFci: input.handlesFci, categories: input.categories, expectedUpdatedAt } });
+    if (!Array.isArray(data?.categories)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { handlesFci: typeof data.handlesFci === 'boolean' ? data.handlesFci : null, categories: data.categories, updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null, updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : null, changed: data.changed === true };
+  },
+
+  /** POST /api/v1/program-inventory/vendor-documents (write roles): links an evidence file of this program to a vendor as a CRM, SRM, contract or other document. */
+  async linkVendorDocument(tenantId: string, link: { vendorId: string; evidenceId: string; docKind: VendorDocumentKind }, programId?: string | null): Promise<{ document: VendorDocumentLink; changed: boolean }> {
+    const data = await authedJson<{ document?: VendorDocumentLink; changed?: boolean }>('POST', '/program-inventory/vendor-documents', { tenantId, programId, body: link });
+    if (!data?.document || typeof data.document !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { document: data.document, changed: data.changed === true };
+  },
+
+  /** DELETE /api/v1/program-inventory/vendor-documents/:vendorId/:evidenceId (write roles): removes the link only, never the evidence file. */
+  async unlinkVendorDocument(tenantId: string, vendorId: string, evidenceId: string, programId?: string | null): Promise<void> {
+    await authedJson('DELETE', `/program-inventory/vendor-documents/${encodeURIComponent(vendorId)}/${encodeURIComponent(evidenceId)}`, { tenantId, programId });
+  },
+
+  /** GET /api/v1/program-inventory/events: boundary, control-link, data-inventory and vendor-document history of the program (ids, counts and flags only), newest first. */
+  async getProgramInventoryEvents(tenantId: string, limit?: number | null, programId?: string | null): Promise<ProgramInventoryEvent[]> {
+    const data = await authedJson<{ events?: ProgramInventoryEvent[] }>('GET', `/program-inventory/events${limit ? `?limit=${encodeURIComponent(String(limit))}` : ''}`, { tenantId, programId });
+    if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.events;
   },
 
   /** POST /api/v1/tenants/:id/assets/bulk: up to 500 at a time; rows whose name already exists come back in `skipped`. */

@@ -18,6 +18,7 @@
  *   7b. account events (issue #40) and sessions (issue #163): local_sessions and local_account_events are global tables without row security; the sessions foreign key cascades, the sid / revoke-reason CHECKs refuse bad rows, a revoke changes exactly one row, and pruning removes only sessions that expired more than a day ago; the event table is append-only for the application role (UPDATE, DELETE and TRUNCATE refused with 42501), refuses an "@" in details and an action outside the list, and only the retention sweep can delete (the test event is backdated about 4000 days so no real event matches).
  *   9. objective catalog update (issue #273): the one-time migration of stored CMMC objective answers (ensureObjectiveCatalogCurrent) on PostgreSQL. control_objectives.objective_catalog_rev exists and is nullable; two concurrent calls change a legacy row once (SELECT ... FOR UPDATE: one 'catalog-update' event, hashes and lengths only), keep narrative, evidence and Not met answers, re-roll up the Met control, stamp the revision, leave the updated_at of unchanged rows alone, and a third call does nothing; another program of the tenant, an archived program and a non-CMMC framework are not touched.
  *   10. objective roll-up (issue #307): writeObjective with framework CMMC_L2 lowers one objective of a Met control and the control is lowered in the same transaction. The event CHECK on control_assessment_events.source accepts 'objective-rollup', exactly one such event exists (MET -> the rolled-up status, notes unchanged and kept only as a digest), another program's Met control is untouched, and the same write under a non-CMMC framework lowers nothing.
+ *   11. Tools and services register (#239, #243, #248, #249): 8t inventory_vendors, inventory_tools and inventory_events (tenant isolation, the composite vendor key that nulls on delete, the unique name / seed / rank indexes, the CHECKs, the append-only history); 8u program_tools and program_tool_controls (program isolation, composite foreign keys, cascades from a tool and from a program); 8v the data inventory (program_data_inventory, program_cui_categories, program_cui_category_tools: isolation, the category and role CHECKs, the cascade from the answer); 8w program_vendor_documents (isolation, doc_kind CHECK, vendor cascade) and program_inventory_events (isolation, no foreign key, append-only). Rows are prefixed rls_verify.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 import { createHash } from 'node:crypto';
@@ -26,9 +27,9 @@ import type { PoolClient } from 'pg';
 process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: this script must hit the real DB
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
-const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries and control_poam_events are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata' && t !== 'vm_poam_item_events' && t !== 'program_ssp_profile' && t !== 'program_ssp_section_reviews' && t !== 'control_poam_entries' && t !== 'control_poam_events');
+const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES, PROGRAM_BACKFILL_TABLES } = await import('../server/schema');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. Every other program table (the objective tables, program_events, program_assets, program_ssp_*, vm_poam_item_events, control_poam_* and the inventory program tables) is new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES: string[] = [...PROGRAM_BACKFILL_TABLES];
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -47,7 +48,7 @@ const mkProgram = async (tenant: string, name: string, isDefault = false): Promi
   );
 
 /** True only when the statement, run in the program's context, fails with the expected SQLSTATE and/or constraint. */
-async function rejectsIn(scope: ProgramScope, sql: string, params: (string | number | null)[], want: { code?: string; constraint?: string }): Promise<{ ok: boolean; detail: string }> {
+async function rejectsIn(scope: ProgramScope, sql: string, params: (string | number | boolean | null)[], want: { code?: string; constraint?: string }): Promise<{ ok: boolean; detail: string }> {
   try {
     await queryWithProgram(scope, sql, params);
     return { ok: false, detail: 'no error' };
@@ -1722,10 +1723,198 @@ async function verifyProgramIsolation() {
     check(ceNotNull.rows.length === 1 && ceNotNull.rows[0].attnotnull === true, '8z. control_poam_events: program_id is NOT NULL (attnotnull)', JSON.stringify(ceNotNull.rows));
     await queryWithProgram(scopeA, "DELETE FROM control_poam_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
 
+    // 8t. Tools and services register (#239, #248, #249): inventory_vendors, inventory_tools and inventory_events are tenant tables (tenant policy only), with a composite vendor key
+    const rejectsTenant = async (tenant: string, sql: string, params: (string | number | boolean | null)[], want: { code?: string; constraint?: string; message?: string }): Promise<{ ok: boolean; detail: string }> => {
+      try {
+        await queryWithTenant(tenant, sql, params);
+        return { ok: false, detail: 'no error' };
+      } catch (err) {
+        const e = err as { code?: string; constraint?: string; message?: string };
+        return {
+          ok: (want.code === undefined || e.code === want.code) && (want.constraint === undefined || e.constraint === want.constraint) && (want.message === undefined || String(e.message).includes(want.message)),
+          detail: 'code ' + e.code + ', constraint ' + e.constraint,
+        };
+      }
+    };
+    const mkVendor = async (tenant: string, name: string): Promise<string> => String((await queryWithTenant(tenant, 'INSERT INTO inventory_vendors (tenant_id, name) VALUES ($1, $2) RETURNING id', [tenant, name])).rows[0]?.id);
+    const insertTool = 'INSERT INTO inventory_tools (tenant_id, name, vendor_id, end_users, deployment, seed_key, recovery_rank) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id';
+    const toolArgs = (tenant: string, name: string, over: Partial<{ vendor: string | null; users: number | null; deployment: string | null; seed: string | null; rank: number | null }> = {}): (string | number | null)[] =>
+      [tenant, name, over.vendor === undefined ? null : over.vendor, over.users === undefined ? 5 : over.users, over.deployment === undefined ? 'CLOUD' : over.deployment, over.seed === undefined ? null : over.seed, over.rank === undefined ? null : over.rank];
+    const mkTool = async (tenant: string, name: string, over: Parameters<typeof toolArgs>[2] = {}): Promise<string> => String((await queryWithTenant(tenant, insertTool, toolArgs(tenant, name, over))).rows[0]?.id);
+    const vendorX = await mkVendor(TENANT_X, 'rls_verify_vendor_x');
+    const vendorY = await mkVendor(TENANT_Y, 'rls_verify_vendor_y');
+    const toolX = await mkTool(TENANT_X, 'rls_verify_tool_x', { vendor: vendorX });
+    check(Boolean(toolX), '8t. inventory_tools: under tenant X the tool is inserted');
+    const itYSees = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM inventory_tools WHERE tenant_id = $1', [TENANT_X]);
+    const ivYSees = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM inventory_vendors WHERE tenant_id = $1', [TENANT_X]);
+    check(itYSees.rows.length === 0 && ivYSees.rows.length === 0, "8t. inventory_tools / inventory_vendors: tenant Y reads none of tenant X's rows", 'saw ' + itYSees.rows.length + ' / ' + ivYSees.rows.length);
+    const itNoCtx = await pool.query("SELECT 1 FROM inventory_tools WHERE name LIKE 'rls_verify_%'");
+    check(itNoCtx.rows.length === 0, '8t. inventory_tools: no tenant context reads zero rows', 'saw ' + itNoCtx.rows.length);
+    const itYInserts = await rejectsTenant(TENANT_Y, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_evil'), { code: '42501' });
+    check(itYInserts.ok, "8t. inventory_tools: tenant Y cannot insert a tool into tenant X (WITH CHECK, 42501)", itYInserts.detail);
+    const itForeignVendor = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_fk', { vendor: vendorY }), { code: '23503', constraint: 'fk_inventory_tools_vendor' });
+    check(itForeignVendor.ok, "8t. inventory_tools: a tool cannot name another tenant's vendor (composite foreign key, 23503, fk_inventory_tools_vendor)", itForeignVendor.detail);
+    const itDuplicate = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'RLS_VERIFY_TOOL_X'), { code: '23505', constraint: 'unq_inventory_tools_name' });
+    check(itDuplicate.ok, '8t. inventory_tools: a second tool with the same name ignoring case is refused (23505, unq_inventory_tools_name)', itDuplicate.detail);
+    await mkTool(TENANT_X, 'rls_verify_tool_rank_a', { rank: 1 });
+    const itRank = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_rank_b', { rank: 1 }), { code: '23505', constraint: 'unq_inventory_tools_rank' });
+    check(itRank.ok, '8t. inventory_tools: two tools of one tenant cannot hold the same recovery rank (23505, unq_inventory_tools_rank)', itRank.detail);
+    await mkTool(TENANT_Y, 'rls_verify_tool_rank_y', { rank: 1 });
+    await mkTool(TENANT_X, 'rls_verify_tool_seed_a', { seed: 'catalog:rls-verify' });
+    const itSeed = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_seed_b', { seed: 'catalog:rls-verify' }), { code: '23505', constraint: 'unq_inventory_tools_seed' });
+    check(itSeed.ok, '8t. inventory_tools: a seed key is stored once per tenant (23505, unq_inventory_tools_seed), and the same rank in another tenant is fine', itSeed.detail);
+    const itUsers = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_users', { users: -1 }), { code: '23514', constraint: 'inventory_tools_counts_check' });
+    const itDeployment = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_dep', { deployment: 'bad' }), { code: '23514', constraint: 'inventory_tools_enum_check' });
+    const itSeedKey = await rejectsTenant(TENANT_X, insertTool, toolArgs(TENANT_X, 'rls_verify_tool_sk', { seed: 'x' }), { code: '23514', constraint: 'inventory_tools_seed_check' });
+    check(itUsers.ok && itDeployment.ok && itSeedKey.ok, "8t. inventory_tools: end_users = -1, deployment = 'bad' and seed_key = 'x' are each refused (23514)", [itUsers.detail, itDeployment.detail, itSeedKey.detail].join(' | '));
+    const ivContract = await rejectsTenant(TENANT_X, "INSERT INTO inventory_vendors (tenant_id, name, contract_start, contract_end) VALUES ($1, 'rls_verify_vendor_dates', '2027-02-01', '2027-01-01')", [TENANT_X], { code: '23514', constraint: 'inventory_vendors_contract_check' });
+    check(ivContract.ok, '8t. inventory_vendors: a contract end before its start is refused (23514, inventory_vendors_contract_check)', ivContract.detail);
+    await queryWithTenant(TENANT_X, 'DELETE FROM inventory_vendors WHERE id = $1', [vendorX]);
+    const itVendorNulled = await queryWithTenant(TENANT_X, 'SELECT vendor_id FROM inventory_tools WHERE id = $1', [toolX]);
+    check(itVendorNulled.rows.length === 1 && itVendorNulled.rows[0].vendor_id === null, "8t. inventory_vendors: deleting the vendor keeps the tool and sets its vendor_id to null (ON DELETE SET NULL (vendor_id))", JSON.stringify(itVendorNulled.rows));
+    const insertInvEvent = "INSERT INTO inventory_events (tenant_id, entity_kind, entity_id, action, actor, fields) VALUES ($1, 'tool', 'rls_verify_item', 'created', 'rls_verify_actor', '{}'::jsonb) RETURNING id";
+    await queryWithTenant(TENANT_X, insertInvEvent, [TENANT_X]);
+    const ieYSees = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM inventory_events WHERE tenant_id = $1', [TENANT_X]);
+    const ieYInserts = await rejectsTenant(TENANT_Y, insertInvEvent, [TENANT_X], { code: '42501' });
+    check(ieYSees.rows.length === 0 && ieYInserts.ok, "8t. inventory_events: tenant Y reads none of tenant X's events and cannot insert one for it (42501)", 'saw ' + ieYSees.rows.length + ' / ' + ieYInserts.detail);
+    const ieUpdate = await rejectsTenant(TENANT_X, "UPDATE inventory_events SET actor = 'rls_verify_changed' WHERE tenant_id = $1", [TENANT_X], { code: '42501', message: 'append-only' });
+    check(ieUpdate.ok, '8t. inventory_events: an UPDATE is refused by the append-only trigger (42501, "append-only")', ieUpdate.detail);
+    const ieBadShape = await rejectsTenant(TENANT_X, "INSERT INTO inventory_events (tenant_id, entity_kind, action, actor, fields) VALUES ($1, 'Tool', 'created', 'rls_verify_actor', '{}'::jsonb)", [TENANT_X], { code: '23514', constraint: 'inventory_events_shape_check' });
+    check(ieBadShape.ok, '8t. inventory_events: an entity kind that is not lower case is refused (23514, inventory_events_shape_check)', ieBadShape.detail);
+
+    // 8u. program_tools and program_tool_controls (the 8j pattern): boundary membership and the tool-to-control links of one program
+    const toolPt = await mkTool(TENANT_X, 'rls_verify_tool_pt');
+    const toolPtY = await mkTool(TENANT_Y, 'rls_verify_tool_pt_y');
+    const insertPt = 'INSERT INTO program_tools (tenant_id, program_id, tool_id, added_by) VALUES ($1, $2, $3, $4) RETURNING tool_id';
+    const insertPtc = 'INSERT INTO program_tool_controls (tenant_id, program_id, tool_id, control_id, evidence_source, linked_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING control_id';
+    const pt1 = await queryWithProgram(scopeA, insertPt, [TENANT_X, programA, toolPt, 'rls_verify_actor']);
+    const ptc1 = await queryWithProgram(scopeA, insertPtc, [TENANT_X, programA, toolPt, 'AC.L2-3.1.1', true, 'rls_verify_actor']);
+    check(pt1.rows.length === 1 && ptc1.rows.length === 1, '8u. program_tools / program_tool_controls: under program A the membership and the link are inserted');
+    for (const t of ['program_tools', 'program_tool_controls']) {
+      const bSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM ' + t + ' WHERE program_id = $1', [programA]);
+      const bSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM ' + t + ' WHERE tenant_id = $1', [TENANT_X]);
+      check(bSeesA.rows.length === 0 && bSeesAny.rows.length === 0, "8u. " + t + ": program B cannot read program A's rows (0 rows, by program or by tenant)", 'saw ' + bSeesA.rows.length + ' / ' + bSeesAny.rows.length);
+      const bUpdates = await queryWithProgram(scopeB, 'UPDATE ' + t + " SET " + (t === 'program_tools' ? 'added_by' : 'linked_by') + " = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+      const bDeletes = await queryWithProgram(scopeB, 'DELETE FROM ' + t + ' WHERE program_id = $1', [programA]);
+      check((bUpdates.rowCount ?? 0) === 0 && (bDeletes.rowCount ?? 0) === 0, "8u. " + t + ": program B can neither update nor delete program A's rows (0 rows)", 'updated ' + bUpdates.rowCount + ', deleted ' + bDeletes.rowCount);
+      const noCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM ' + t + ' WHERE tenant_id = $1', [TENANT_X]);
+      check(noCtx.rows.length === 0, '8u. ' + t + ': a tenant context with no program context sees zero rows', 'saw ' + noCtx.rows.length);
+    }
+    const ptBInserts = await rejectsIn(scopeB, insertPt, [TENANT_X, programA, toolPt, 'rls_verify_actor'], { code: '42501' });
+    const ptcBInserts = await rejectsIn(scopeB, insertPtc, [TENANT_X, programA, toolPt, 'SC.L2-3.13.1', false, 'rls_verify_actor'], { code: '42501' });
+    check(ptBInserts.ok && ptcBInserts.ok, '8u. program_tools / program_tool_controls: program B cannot insert a row into program A (WITH CHECK, 42501)', ptBInserts.detail + ' | ' + ptcBInserts.detail);
+    let ptNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertPt, [TENANT_X, programA, toolPt, 'rls_verify_actor']);
+    } catch (err) {
+      ptNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(ptNoCtxInsert === '42501', '8u. program_tools: no program context cannot insert a row (42501)', ptNoCtxInsert);
+    const ptForeignTool = await rejectsIn(scopeA, insertPt, [TENANT_X, programA, toolPtY, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_tools_tool' });
+    const ptcForeignTool = await rejectsIn(scopeA, insertPtc, [TENANT_X, programA, toolPtY, 'AC.L2-3.1.2', false, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_tool_controls_tool' });
+    check(ptForeignTool.ok && ptcForeignTool.ok, "8u. program_tools / program_tool_controls: tenant X cannot take tenant Y's tool (composite foreign key, 23503)", ptForeignTool.detail + ' | ' + ptcForeignTool.detail);
+    const ptForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertPt, [TENANT_X, defaultY, toolPt, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_tools_program' });
+    check(ptForeignProgram.ok, "8u. program_tools: tenant X cannot attach a tool to tenant Y's program (composite foreign key, 23503)", ptForeignProgram.detail);
+    const ptDuplicate = await rejectsIn(scopeA, insertPt, [TENANT_X, programA, toolPt, 'rls_verify_actor'], { code: '23505', constraint: 'pk_program_tools' });
+    const ptcBadControl = await rejectsIn(scopeA, insertPtc, [TENANT_X, programA, toolPt, 'bad id', false, 'rls_verify_actor'], { code: '23514', constraint: 'program_tool_controls_control_check' });
+    check(ptDuplicate.ok && ptcBadControl.ok, "8u. a tool is a member of a program once (23505, pk_program_tools) and a control id such as 'bad id' is refused (23514, program_tool_controls_control_check)", ptDuplicate.detail + ' | ' + ptcBadControl.detail);
+    // a foreign-key cascade is not filtered by row security: the tool delete (tenant context only) removes the rows that program A owns
+    await queryWithTenant(TENANT_X, 'DELETE FROM inventory_tools WHERE id = $1', [toolPt]);
+    const ptCascade = await queryWithProgram(scopeA, 'SELECT (SELECT COUNT(*) FROM program_tools WHERE program_id = $1)::int AS m, (SELECT COUNT(*) FROM program_tool_controls WHERE program_id = $1)::int AS l', [programA]);
+    check(ptCascade.rows[0].m === 0 && ptCascade.rows[0].l === 0, '8u. program_tools / program_tool_controls: deleting a tool (tenant context only) removes its rows through the cascade', JSON.stringify(ptCascade.rows[0]));
+    const ptProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_inventory_cascade', frameworkId: 'CMMC_L2' }, null);
+    const ptScope = { tenantId: TENANT_X, programId: ptProgram.id };
+    const toolCascade = await mkTool(TENANT_X, 'rls_verify_tool_cascade');
+    await queryWithProgram(ptScope, insertPt, [TENANT_X, ptProgram.id, toolCascade, 'rls_verify_actor']);
+    await queryWithProgram(ptScope, insertPtc, [TENANT_X, ptProgram.id, toolCascade, 'AC.L2-3.1.1', false, 'rls_verify_actor']);
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, ptProgram.id]);
+    const ptProgramCascade = await queryWithProgram(ptScope, 'SELECT (SELECT COUNT(*) FROM program_tools WHERE program_id = $1)::int AS m, (SELECT COUNT(*) FROM program_tool_controls WHERE program_id = $1)::int AS l', [ptProgram.id]);
+    check(ptProgramCascade.rows[0].m === 0 && ptProgramCascade.rows[0].l === 0, '8u. program_tools / program_tool_controls: deleting a program removes its rows through the cascade', JSON.stringify(ptProgramCascade.rows[0]));
+
+    // 8v. the data inventory (#243): program_data_inventory, program_cui_categories and program_cui_category_tools
+    const toolDi = await mkTool(TENANT_X, 'rls_verify_tool_di');
+    const toolDiY = await mkTool(TENANT_Y, 'rls_verify_tool_di_y');
+    const insertDi = 'INSERT INTO program_data_inventory (tenant_id, program_id, handles_fci, updated_by) VALUES ($1, $2, $3, $4) RETURNING program_id';
+    const insertCat = 'INSERT INTO program_cui_categories (tenant_id, program_id, category_id) VALUES ($1, $2, $3) RETURNING category_id';
+    const insertCatTool = 'INSERT INTO program_cui_category_tools (tenant_id, program_id, category_id, tool_id, stores, processes, transmits) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING tool_id';
+    const di1 = await queryWithProgram(scopeA, insertDi, [TENANT_X, programA, true, 'rls_verify_actor']);
+    const dc1 = await queryWithProgram(scopeA, insertCat, [TENANT_X, programA, 'CTI']);
+    const dt1 = await queryWithProgram(scopeA, insertCatTool, [TENANT_X, programA, 'CTI', toolDi, true, false, false]);
+    check(di1.rows.length === 1 && dc1.rows.length === 1 && dt1.rows.length === 1, '8v. the data inventory: under program A the answer, the category and the tool row are inserted');
+    for (const t of ['program_data_inventory', 'program_cui_categories', 'program_cui_category_tools']) {
+      const bSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM ' + t + ' WHERE program_id = $1', [programA]);
+      const bSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM ' + t + ' WHERE tenant_id = $1', [TENANT_X]);
+      const bDeletes = await queryWithProgram(scopeB, 'DELETE FROM ' + t + ' WHERE program_id = $1', [programA]);
+      const noCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM ' + t + ' WHERE tenant_id = $1', [TENANT_X]);
+      check(bSeesA.rows.length === 0 && bSeesAny.rows.length === 0 && (bDeletes.rowCount ?? 0) === 0 && noCtx.rows.length === 0, "8v. " + t + ": program B cannot read or delete program A's rows, and no program context sees zero rows", 'saw ' + bSeesA.rows.length + ' / ' + bSeesAny.rows.length + ' / ' + noCtx.rows.length + ', deleted ' + bDeletes.rowCount);
+    }
+    const diBInserts = await rejectsIn(scopeB, insertDi, [TENANT_X, programA, false, 'rls_verify_actor'], { code: '42501' });
+    const dcBInserts = await rejectsIn(scopeB, insertCat, [TENANT_X, programA, 'EXPT'], { code: '42501' });
+    check(diBInserts.ok && dcBInserts.ok, '8v. program_data_inventory / program_cui_categories: program B cannot insert a row into program A (WITH CHECK, 42501)', diBInserts.detail + ' | ' + dcBInserts.detail);
+    const diBadCategory = await rejectsIn(scopeA, insertCat, [TENANT_X, programA, 'bad id'], { code: '23514', constraint: 'program_cui_categories_id_check' });
+    check(diBadCategory.ok, "8v. program_cui_categories: the category id 'bad id' is refused (23514, program_cui_categories_id_check)", diBadCategory.detail);
+    const diNoRole = await rejectsIn(scopeA, insertCatTool, [TENANT_X, programA, 'CTI', toolDi, false, false, false], { code: '23514', constraint: 'program_cui_category_tools_role_check' });
+    check(diNoRole.ok, '8v. program_cui_category_tools: a row that neither stores, processes nor transmits is refused (23514, program_cui_category_tools_role_check)', diNoRole.detail);
+    const diNoCategory = await rejectsIn(scopeA, insertCatTool, [TENANT_X, programA, 'EXPT', toolDi, true, false, false], { code: '23503', constraint: 'fk_program_cui_category_tools_category' });
+    const diForeignTool = await rejectsIn(scopeA, insertCatTool, [TENANT_X, programA, 'CTI', toolDiY, true, false, false], { code: '23503', constraint: 'fk_program_cui_category_tools_tool' });
+    check(diNoCategory.ok && diForeignTool.ok, "8v. program_cui_category_tools: a category the program does not hold, and another tenant's tool, are each refused (23503)", diNoCategory.detail + ' | ' + diForeignTool.detail);
+    const diForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertDi, [TENANT_X, defaultY, true, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_data_inventory_program' });
+    check(diForeignProgram.ok, "8v. program_data_inventory: tenant X cannot attach an answer to tenant Y's program (composite foreign key, 23503)", diForeignProgram.detail);
+    await queryWithProgram(scopeA, 'DELETE FROM program_data_inventory WHERE tenant_id = $1 AND program_id = $2', [TENANT_X, programA]);
+    const diCascade = await queryWithProgram(scopeA, 'SELECT (SELECT COUNT(*) FROM program_cui_categories WHERE program_id = $1)::int AS c, (SELECT COUNT(*) FROM program_cui_category_tools WHERE program_id = $1)::int AS t', [programA]);
+    check(diCascade.rows[0].c === 0 && diCascade.rows[0].t === 0, '8v. program_data_inventory: deleting the row removes its categories and their tool rows through the cascade', JSON.stringify(diCascade.rows[0]));
+
+    // 8w. program_vendor_documents and program_inventory_events: isolation, the CHECKs, the vendor cascade and the append-only history
+    const vendorDoc = await mkVendor(TENANT_X, 'rls_verify_vendor_doc');
+    const insertDoc = 'INSERT INTO program_vendor_documents (tenant_id, program_id, vendor_id, evidence_id, doc_kind, linked_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING evidence_id';
+    const dd1 = await queryWithProgram(scopeA, insertDoc, [TENANT_X, programA, vendorDoc, 'rls_verify_evidence', 'CRM', 'rls_verify_actor']);
+    check(dd1.rows.length === 1, '8w. program_vendor_documents: under program A the document link is inserted');
+    const ddBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_vendor_documents WHERE program_id = $1', [programA]);
+    const ddBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_vendor_documents WHERE tenant_id = $1', [TENANT_X]);
+    const ddBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_vendor_documents WHERE program_id = $1', [programA]);
+    const ddNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_vendor_documents WHERE tenant_id = $1', [TENANT_X]);
+    check(ddBSeesA.rows.length === 0 && ddBSeesAny.rows.length === 0 && (ddBDeletes.rowCount ?? 0) === 0 && ddNoCtx.rows.length === 0, "8w. program_vendor_documents: program B cannot read or delete program A's links, and no program context sees zero rows", 'saw ' + ddBSeesA.rows.length + ' / ' + ddBSeesAny.rows.length + ' / ' + ddNoCtx.rows.length);
+    const ddBInserts = await rejectsIn(scopeB, insertDoc, [TENANT_X, programA, vendorDoc, 'rls_verify_evidence_2', 'CRM', 'rls_verify_actor'], { code: '42501' });
+    check(ddBInserts.ok, '8w. program_vendor_documents: program B cannot insert a link into program A (WITH CHECK, 42501)', ddBInserts.detail);
+    const ddBadKind = await rejectsIn(scopeA, insertDoc, [TENANT_X, programA, vendorDoc, 'rls_verify_evidence_3', 'x', 'rls_verify_actor'], { code: '23514', constraint: 'program_vendor_documents_check' });
+    check(ddBadKind.ok, "8w. program_vendor_documents: doc_kind = 'x' is refused (23514, program_vendor_documents_check)", ddBadKind.detail);
+    const ddForeignVendor = await rejectsIn(scopeA, insertDoc, [TENANT_X, programA, vendorY, 'rls_verify_evidence_4', 'CRM', 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_vendor_documents_vendor' });
+    check(ddForeignVendor.ok, "8w. program_vendor_documents: tenant X cannot link another tenant's vendor (composite foreign key, 23503)", ddForeignVendor.detail);
+    await queryWithTenant(TENANT_X, 'DELETE FROM inventory_vendors WHERE id = $1', [vendorDoc]);
+    const ddCascade = await queryWithProgram(scopeA, 'SELECT 1 FROM program_vendor_documents WHERE program_id = $1', [programA]);
+    check(ddCascade.rows.length === 0, '8w. program_vendor_documents: deleting the vendor (tenant context only) removes its links through the cascade', 'saw ' + ddCascade.rows.length);
+    const insertPie = "INSERT INTO program_inventory_events (tenant_id, program_id, action, entity_id, actor, detail) VALUES ($1, $2, 'controls_changed', 'rls_verify_item', 'rls_verify_actor', '{}'::jsonb) RETURNING id";
+    const pie1 = await queryWithProgram(scopeA, insertPie, [TENANT_X, programA]);
+    check(pie1.rows.length === 1, '8w. program_inventory_events: under program A the event is inserted');
+    const pieBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_inventory_events WHERE program_id = $1', [programA]);
+    const pieBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_inventory_events WHERE tenant_id = $1', [TENANT_X]);
+    const pieBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_inventory_events WHERE program_id = $1', [programA]);
+    const pieNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_inventory_events WHERE tenant_id = $1', [TENANT_X]);
+    check(pieBSeesA.rows.length === 0 && pieBSeesAny.rows.length === 0 && (pieBDeletes.rowCount ?? 0) === 0 && pieNoCtx.rows.length === 0, "8w. program_inventory_events: program B cannot read or delete program A's events, and no program context sees zero rows", 'saw ' + pieBSeesA.rows.length + ' / ' + pieBSeesAny.rows.length + ' / ' + pieNoCtx.rows.length);
+    const pieBInserts = await rejectsIn(scopeB, insertPie, [TENANT_X, programA], { code: '42501' });
+    check(pieBInserts.ok, '8w. program_inventory_events: program B cannot insert an event into program A (WITH CHECK, 42501)', pieBInserts.detail);
+    let pieUpdate = 'no error';
+    try {
+      await queryWithProgram(scopeA, "UPDATE program_inventory_events SET actor = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    } catch (err) {
+      pieUpdate = String((err as { code?: string }).code) + ' ' + ((err as Error).message.includes('append-only') ? 'append-only' : 'other');
+    }
+    check(pieUpdate === '42501 append-only', '8w. program_inventory_events: an UPDATE is refused by the append-only trigger (42501, "append-only")', pieUpdate);
+    const pieFk = await pool.query("SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'program_inventory_events'::regclass AND contype = 'f'");
+    check(pieFk.rows[0]?.n === 0, '8w. program_inventory_events: no foreign key (the history outlives the program)', JSON.stringify(pieFk.rows[0]));
+    const pieNotNull = await pool.query("SELECT attnotnull FROM pg_attribute WHERE attrelid = 'program_inventory_events'::regclass AND attname = 'program_id' AND NOT attisdropped");
+    check(pieNotNull.rows.length === 1 && pieNotNull.rows[0].attnotnull === true, '8w. program_inventory_events: program_id is NOT NULL (attnotnull)', JSON.stringify(pieNotNull.rows));
+    const pieBadAction = await rejectsIn(scopeA, "INSERT INTO program_inventory_events (tenant_id, program_id, action, actor, detail) VALUES ($1, $2, 'Bad Action', 'rls_verify_actor', '{}'::jsonb)", [TENANT_X, programA], { code: '23514', constraint: 'program_inventory_events_shape_check' });
+    check(pieBadAction.ok, '8w. program_inventory_events: an action that is not snake case is refused (23514, program_inventory_events_shape_check)', pieBadAction.detail);
+    await queryWithProgram(scopeA, "DELETE FROM program_inventory_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM software_items WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM inventory_tools WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the boundary, link and data-inventory rows cascade with their tool
+      await queryWithTenant(t, "DELETE FROM inventory_vendors WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM inventory_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined); // the membership rows cascade with their asset
     }
     // the history has no foreign key, so a program's delete does not remove its events
@@ -1734,6 +1923,7 @@ async function verifyProgramIsolation() {
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM program_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM vm_poam_item_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM control_poam_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      if (id) await queryWithProgram({ tenantId: TENANT_X, programId: id }, "DELETE FROM program_inventory_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
     }
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the rows cascade with their program
