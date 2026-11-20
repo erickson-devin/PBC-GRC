@@ -9,7 +9,7 @@ import { STACK_PROFILE_ENUM_KEYS, STACK_PROFILE_MAX_BYTES } from '../src/data/st
 import { CONTROL_POAM_OWNER_MAX, CONTROL_POAM_PLAN_MAX, CONTROL_POAM_RESOURCES_MAX } from '../src/types/controlPoam';
 import { VM_POAM_DATE_MAX, VM_POAM_DATE_MIN } from '../src/data/poamDates';
 import { POAM_MILESTONES_MAX, POAM_MILESTONES_MAX_BYTES } from '../src/data/poamMilestones';
-import { VM_CONFIG_RESULTS,VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_PUSH_ERROR_CODES, VM_PUSH_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
+import { VM_CONFIG_RESULTS,VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_HUMAN_DECISIONS, VM_POAM_STATUSES, VM_PUSH_ERROR_CODES, VM_PUSH_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -69,6 +69,10 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_cui_category_tools', tenantColumn: 'tenant_id' },
   { table: 'program_vendor_documents', tenantColumn: 'tenant_id' },
   { table: 'program_inventory_events', tenantColumn: 'tenant_id' },
+  { table: 'vm_remediation_policy', tenantColumn: 'tenant_id' },
+  { table: 'vm_remediation_policy_events', tenantColumn: 'tenant_id' },
+  { table: 'vm_finding_decisions', tenantColumn: 'tenant_id' },
+  { table: 'vm_finding_decision_events', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -140,6 +144,7 @@ const vmRunStatusList = VM_RUN_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmSeverityList = VM_SEVERITIES.map((s) => `'${s}'`).join(', ');
 const vmFindingStatusList = VM_FINDING_STATUSES.map((s) => `'${s}'`).join(', ');
 const vmPoamStatusList = VM_POAM_STATUSES.map((s) => `'${s}'`).join(', ');
+const vmHumanDecisionList = VM_HUMAN_DECISIONS.map((s) => `'${s}'`).join(', ');
 const vmVulnSourceList = VM_VULN_SOURCES.map((s) => `'${s}'`).join(', ');
 const vmConfigResultList = VM_CONFIG_RESULTS.map((r) => `'${r}'`).join(', ');
 const vmConfigSeverityList = VM_CONFIG_SEVERITIES.map((s) => `'${s}'`).join(', ');
@@ -1587,6 +1592,108 @@ export const TABLES_SQL = `
   DROP TRIGGER IF EXISTS trg_program_inventory_events_no_truncate ON program_inventory_events;
   CREATE TRIGGER trg_program_inventory_events_no_truncate BEFORE TRUNCATE ON program_inventory_events
       FOR EACH STATEMENT EXECUTE FUNCTION inventory_events_guard();
+
+  -- Vulnerability remediation policy and risk decisions (#268). Everything here is a NEW table or function (no existing table, CHECK or list is changed),
+  -- so an image from before this release still starts against the upgraded database: it ignores these tables, goes back to the environment deadlines and
+  -- drafts a POA&M item for every overdue finding. Nothing it does deletes a row here. Only structural ranges are checked in the database; the product
+  -- rules (ordering, which severities may be warn-only, the grace cap) are the application's, so a later image can relax them without a migration.
+  -- The policy is one row per tenant (numbers only: an event may record the values). The history of the policy and of the decisions is append-only.
+  CREATE TABLE IF NOT EXISTS vm_remediation_policy (
+      tenant_id VARCHAR(64) PRIMARY KEY,
+      days_critical INTEGER NOT NULL,
+      days_high INTEGER NOT NULL,
+      days_medium INTEGER NOT NULL,
+      days_low INTEGER NOT NULL,
+      warn_only TEXT[] NOT NULL DEFAULT '{}',
+      grace_days INTEGER NOT NULL DEFAULT 0,
+      updated_by VARCHAR(255) NOT NULL,
+      updated_by_user_id VARCHAR(128),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT vm_remediation_policy_days_check CHECK (days_critical BETWEEN 1 AND 3650 AND days_high BETWEEN 1 AND 3650 AND days_medium BETWEEN 1 AND 3650 AND days_low BETWEEN 1 AND 3650),
+      CONSTRAINT vm_remediation_policy_warn_check CHECK (warn_only <@ ARRAY[${vmSeverityList}]::text[]),
+      CONSTRAINT vm_remediation_policy_grace_check CHECK (grace_days BETWEEN 0 AND 365)
+  );
+  CREATE TABLE IF NOT EXISTS vm_remediation_policy_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      actor_role VARCHAR(32),
+      old_policy JSONB,
+      new_policy JSONB NOT NULL,
+      open_findings_recomputed INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT vm_remediation_policy_events_shape_check CHECK (jsonb_typeof(new_policy) = 'object' AND (old_policy IS NULL OR jsonb_typeof(old_policy) = 'object') AND octet_length(new_policy::text) <= 4096)
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_remediation_policy_events_tenant ON vm_remediation_policy_events (tenant_id, created_at DESC);
+
+  -- Risk decisions: one row per request, keyed by the finding row (which persists across episodes). The justification is user text and may be CUI:
+  -- it lives only here (events and the evidence snapshot carry ids, digests and lengths). The state is derived from the events and the dates, never stored.
+  CREATE TABLE IF NOT EXISTS vm_finding_decisions (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      finding_id VARCHAR(64) NOT NULL,
+      asset_id VARCHAR(64) NOT NULL,
+      vuln_id VARCHAR(64) NOT NULL,
+      kind VARCHAR(16) NOT NULL,
+      justification TEXT NOT NULL,
+      justification_sha256 CHAR(64) NOT NULL,
+      package_fingerprint CHAR(64) NOT NULL,
+      finding_first_seen_at TIMESTAMPTZ NOT NULL,
+      requested_by VARCHAR(255) NOT NULL,
+      requested_by_user_id VARCHAR(128) NOT NULL,
+      requested_by_role VARCHAR(32) NOT NULL,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      CONSTRAINT unq_vm_finding_decisions_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT fk_vm_finding_decisions_finding FOREIGN KEY (tenant_id, finding_id) REFERENCES vm_findings (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT vm_finding_decisions_kind_check CHECK (kind IN (${vmHumanDecisionList})),
+      CONSTRAINT vm_finding_decisions_text_check CHECK (btrim(justification) <> '' AND char_length(justification) <= 4000),
+      CONSTRAINT vm_finding_decisions_sha_check CHECK (justification_sha256 ~ '^[0-9a-f]{64}$' AND package_fingerprint ~ '^[0-9a-f]{64}$'),
+      CONSTRAINT vm_finding_decisions_expiry_check CHECK (expires_at > requested_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_finding_decisions_finding ON vm_finding_decisions (tenant_id, finding_id, requested_at DESC);
+  CREATE TABLE IF NOT EXISTS vm_finding_decision_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      decision_id VARCHAR(64) NOT NULL,
+      action VARCHAR(16) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128) NOT NULL,
+      actor_role VARCHAR(32) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT fk_vm_finding_decision_events_decision FOREIGN KEY (tenant_id, decision_id) REFERENCES vm_finding_decisions (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT vm_finding_decision_events_action_check CHECK (action IN ('approved', 'rejected', 'withdrawn', 'revoked'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_vm_finding_decision_events_decision ON vm_finding_decision_events (tenant_id, decision_id, created_at);
+  -- A request is resolved once (approved, rejected or withdrawn) and an approval is revoked once: two people acting at the same moment cannot both win.
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_finding_decision_resolution ON vm_finding_decision_events (tenant_id, decision_id) WHERE action IN ('approved', 'rejected', 'withdrawn');
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_finding_decision_revoked ON vm_finding_decision_events (tenant_id, decision_id) WHERE action = 'revoked';
+
+  -- One guard for the three append-only tables: UPDATE and TRUNCATE are refused. A DELETE is not (a finding deleted with its asset cascades to its decisions).
+  CREATE OR REPLACE FUNCTION vm_append_only_guard() RETURNS trigger AS $$
+  BEGIN
+    RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '42501';
+  END;
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_vm_remediation_policy_events_guard ON vm_remediation_policy_events;
+  CREATE TRIGGER trg_vm_remediation_policy_events_guard BEFORE UPDATE ON vm_remediation_policy_events
+      FOR EACH ROW EXECUTE FUNCTION vm_append_only_guard();
+  DROP TRIGGER IF EXISTS trg_vm_remediation_policy_events_no_truncate ON vm_remediation_policy_events;
+  CREATE TRIGGER trg_vm_remediation_policy_events_no_truncate BEFORE TRUNCATE ON vm_remediation_policy_events
+      FOR EACH STATEMENT EXECUTE FUNCTION vm_append_only_guard();
+  DROP TRIGGER IF EXISTS trg_vm_finding_decisions_guard ON vm_finding_decisions;
+  CREATE TRIGGER trg_vm_finding_decisions_guard BEFORE UPDATE ON vm_finding_decisions
+      FOR EACH ROW EXECUTE FUNCTION vm_append_only_guard();
+  DROP TRIGGER IF EXISTS trg_vm_finding_decisions_no_truncate ON vm_finding_decisions;
+  CREATE TRIGGER trg_vm_finding_decisions_no_truncate BEFORE TRUNCATE ON vm_finding_decisions
+      FOR EACH STATEMENT EXECUTE FUNCTION vm_append_only_guard();
+  DROP TRIGGER IF EXISTS trg_vm_finding_decision_events_guard ON vm_finding_decision_events;
+  CREATE TRIGGER trg_vm_finding_decision_events_guard BEFORE UPDATE ON vm_finding_decision_events
+      FOR EACH ROW EXECUTE FUNCTION vm_append_only_guard();
+  DROP TRIGGER IF EXISTS trg_vm_finding_decision_events_no_truncate ON vm_finding_decision_events;
+  CREATE TRIGGER trg_vm_finding_decision_events_no_truncate BEFORE TRUNCATE ON vm_finding_decision_events
+      FOR EACH STATEMENT EXECUTE FUNCTION vm_append_only_guard();
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

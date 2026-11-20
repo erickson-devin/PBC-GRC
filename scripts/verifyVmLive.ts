@@ -25,6 +25,9 @@ import type {} from '../server/middleware/authMiddleware';
 export {};
 
 process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: this script must hit the real DB
+// The legacy remediation policy (#268): no warn-only severity, so every overdue finding is a gap and gets a POA&M item, as sections 1-27 expect.
+// Section 28 saves a policy of its own for tenant X, which then overrides this default.
+process.env.VM_WARN_ONLY_SEVERITIES = 'none';
 
 const crypto = await import('crypto');
 const fs = await import('fs');
@@ -46,6 +49,7 @@ const { PoamMilestoneError } = await import('../src/data/poamMilestones');
 const { VM_NOTES_BEGIN, computeSnapshot, getVmSnapshotConfig } = await import('../server/vm/snapshot');
 const { localStorageRoot } = await import('../server/evidence/storage');
 const { validateIngestPayload } = await import('../server/vm/ingestSchema');
+const { listDecisionStates, loadStoredPolicy, requestDecision, resolveDecision, saveRemediationPolicy } = await import('../server/vm/remediationStore');
 
 // The control history and answers are program-scoped: the VM snapshot writes into the tenant's VM target (its first program, the organization default).
 // A tenant starts with no program: the first scopeOf call creates it.
@@ -991,6 +995,68 @@ async function main() {
     let badMs = '';
     try { await updateVmPoamItem(scope, itemB.id as string, { milestones: [{ id: 'ms-000000000000', description: 'x', targetDate: '2099-11-01' }] }, withMs!.item.updatedAt, editorB); } catch (err) { badMs = err instanceof PoamMilestoneError ? err.code : 'other'; }
     check(badMs === 'invalid_milestones', 'a milestone id the item does not hold is refused', badMs);
+
+    console.log('\n--- 28. Remediation policy and risk decisions (#268) ---');
+    // Everything above ran with VM_WARN_ONLY_SEVERITIES=none (the legacy policy: every overdue finding is a gap). From here on the tenant saves its own policy.
+    const who28 = { actor: 'vm_verify', userId: null, role: 'TENANT_OWNER' as const };
+    const policy28 = { slaDays: { CRITICAL: 100, HIGH: 100, MEDIUM: 90, LOW: 180 }, warnOnly: ['MEDIUM' as const, 'LOW' as const], graceDays: 0 };
+    check((await loadStoredPolicy(TENANT_X)).source === 'defaults', 'before the first save the tenant has no policy row: the environment defaults apply');
+    const dueOf = async (vulnId: string): Promise<number> => Date.parse(String((await queryWithTenant(TENANT_X, 'SELECT sla_due_at FROM vm_findings WHERE tenant_id = $1 AND vuln_id = $2', [TENANT_X, vulnId])).rows[0]?.sla_due_at));
+    const firstSeenOf = async (vulnId: string): Promise<number> => Date.parse(String((await queryWithTenant(TENANT_X, 'SELECT first_seen_at FROM vm_findings WHERE tenant_id = $1 AND vuln_id = $2', [TENANT_X, vulnId])).rows[0]?.first_seen_at));
+    const dueBefore = await dueOf('CVE-2099-0202');
+    const saved1 = await saveRemediationPolicy(TENANT_X, policy28, null, who28, new Date().toISOString());
+    const dueAfter = await dueOf('CVE-2099-0202');
+    check(saved1.changed && saved1.impact.openRecomputed >= 1 && dueBefore !== dueAfter && dueAfter === (await firstSeenOf('CVE-2099-0202')) + 100 * 86_400_000, 'saving the policy recomputes the due date of an open finding from its first sight, in the save transaction, under row security', JSON.stringify([saved1.impact, dueBefore, dueAfter]));
+    const events28 = Number((await queryWithTenant(TENANT_X, 'SELECT count(*)::int AS n FROM vm_remediation_policy_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n);
+    check(events28 === 1, 'one event was recorded for the one real change', String(events28));
+    const stale28 = await thrown(() => saveRemediationPolicy(TENANT_X, policy28, null, who28, new Date().toISOString()));
+    check(stale28 instanceof StaleWriteError, 'a save that expects no policy when one exists is refused (StaleWriteError)', describe(stale28));
+    const same28 = await saveRemediationPolicy(TENANT_X, policy28, saved1.updatedAt, who28, new Date().toISOString());
+    check(!same28.changed && Number((await queryWithTenant(TENANT_X, 'SELECT count(*)::int AS n FROM vm_remediation_policy_events WHERE tenant_id = $1', [TENANT_X])).rows[0]?.n) === 1, 'a save that changes nothing writes no event');
+    check((await loadStoredPolicy(TENANT_Y)).source === 'defaults', "tenant Y's policy is untouched by tenant X's save (row security)");
+
+    // an overdue MEDIUM under the saved policy (Medium warn-only) gets no item; with warn-only switched off, the next processed run drafts one
+    const remRun = await writeFindingsRun('vm_verify_rem', '2099-07-10T00:00:00Z', [
+      { agent: 'vmv-rem1', name: 'vm-verify-rem1', findings: [{ vuln_id: 'CVE-2099-0301', severity: 'MEDIUM', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]);
+    await processRun(remRun);
+    const medium28 = await findingIdOf('CVE-2099-0301');
+    check((await itemRowsOf(scope, medium28)).length === 0, 'an overdue MEDIUM under a warn-only Medium gets no POA&M item');
+    const saved2 = await saveRemediationPolicy(TENANT_X, { ...policy28, warnOnly: [] }, saved1.updatedAt, who28, new Date().toISOString());
+    check(saved2.changed && (await itemRowsOf(scope, medium28)).length === 0, 'saving the policy drafts nothing by itself');
+    await reprocessRun(remRun);
+    check((await itemRowsOf(scope, medium28)).length === 1, 'with no warn-only severity the next processed run drafts the MEDIUM');
+    const report28 = computeSnapshot(await loadSnapshotInput(TENANT_X, new Date(), getVmSnapshotConfig(), 'vmsnap_verify_rem', scope.programId));
+    check(report28.version === 2 && typeof report28.criteria.noRemediationGap?.met === 'boolean' && report28.remediation.policy.warnOnly.length === 0, 'the snapshot is version 2, evaluates noRemediationGap and carries the saved policy', JSON.stringify(report28.remediation?.policy));
+
+    // an approved decision keeps the worker from drafting; revoking it lets the next run draft
+    process.env.VM_POAM_AUTOCREATE = 'off';
+    const decRun = await writeFindingsRun('vm_verify_rem', '2099-07-11T00:00:00Z', [
+      { agent: 'vmv-rem2', name: 'vm-verify-rem2', findings: [{ vuln_id: 'CVE-2099-0302', severity: 'CRITICAL', detected_at: '2020-01-01T00:00:00Z' }] },
+    ]);
+    await processRun(decRun);
+    delete process.env.VM_POAM_AUTOCREATE;
+    const critical28 = await findingIdOf('CVE-2099-0302');
+    check((await itemRowsOf(scope, critical28)).length === 0, 'with automatic items off the overdue CRITICAL has no item yet');
+    const expires28 = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const requested = await requestDecision(TENANT_X, critical28, { kind: 'RISK_ACCEPTED', justification: 'vm-verify justification', expiresAt: expires28 }, { name: 'vm_verify_requester', userId: 'vm_verify_u1', role: 'TENANT_ADMIN' }, new Date().toISOString());
+    check(requested.state === 'PENDING', 'a decision request is PENDING under row security');
+    const selfApproval = await thrown(() => resolveDecision(TENANT_X, requested.decision.id, 'approve', { name: 'vm_verify_requester', userId: 'vm_verify_u1', role: 'TENANT_OWNER' }, new Date().toISOString()));
+    check((selfApproval as { code?: string } | null)?.code === 'self_approval_forbidden', 'the requester cannot approve their own request', describe(selfApproval));
+    const approved = await resolveDecision(TENANT_X, requested.decision.id, 'approve', { name: 'vm_verify_approver', userId: 'vm_verify_u2', role: 'TENANT_OWNER' }, new Date().toISOString());
+    check(approved.state === 'ACTIVE', 'another owner approves it: ACTIVE');
+    const twice = await thrown(() => resolveDecision(TENANT_X, requested.decision.id, 'approve', { name: 'vm_verify_approver', userId: 'vm_verify_u3', role: 'MSP_ADMIN' }, new Date().toISOString()));
+    check((twice as { code?: string } | null)?.code === 'decision_not_pending', 'a second approval is refused (one resolution per request)', describe(twice));
+    await reprocessRun(decRun);
+    check((await itemRowsOf(scope, critical28)).length === 0, 'an accepted finding is not drafted by the next processed run');
+    check((await listDecisionStates(TENANT_X, new Date().toISOString())).some((v) => v.decision.id === requested.decision.id) && (await listDecisionStates(TENANT_Y, new Date().toISOString())).length === 0, "tenant Y sees none of tenant X's decisions (row security)");
+    const lapsed = (await listDecisionStates(TENANT_X, new Date(Date.now() + 40 * 86_400_000).toISOString())).find((v) => v.decision.id === requested.decision.id);
+    check(lapsed?.state === 'EXPIRED', 'with an injected clock 40 days ahead the decision is EXPIRED');
+    await resolveDecision(TENANT_X, requested.decision.id, 'revoke', { name: 'vm_verify_approver', userId: 'vm_verify_u2', role: 'TENANT_OWNER' }, new Date().toISOString());
+    await reprocessRun(decRun);
+    check((await itemRowsOf(scope, critical28)).length === 1, 'after the decision is revoked the next processed run drafts the item');
+    const noText28 = (await queryWithTenant(TENANT_X, 'SELECT row_to_json(e)::text AS t FROM vm_finding_decision_events e WHERE tenant_id = $1', [TENANT_X])).rows.every((r) => !String(r.t).includes('vm-verify justification'));
+    check(noText28, 'no decision event row holds the justification text');
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
       // The six program-scoped tables are only reachable under the program context: delete through the tenant's default program
@@ -1000,6 +1066,9 @@ async function main() {
       const programIds = ((await queryWithTenant(t, 'SELECT id FROM programs WHERE tenant_id = $1', [t]).catch(() => null))?.rows ?? []).map((r) => r.id as string);
       for (const pid of programIds) await queryWithProgram({ tenantId: t, programId: pid }, 'DELETE FROM vm_poam_items WHERE tenant_id = $1', [t]).catch(() => undefined);
       for (const pid of programIds) await queryWithProgram({ tenantId: t, programId: pid }, 'DELETE FROM vm_poam_item_events WHERE tenant_id = $1', [t]).catch(() => undefined); // the history has no foreign key to the program
+      await queryWithTenant(t, 'DELETE FROM vm_finding_decisions WHERE tenant_id = $1', [t]).catch(() => undefined); // #268: their events go with them
+      await queryWithTenant(t, 'DELETE FROM vm_remediation_policy_events WHERE tenant_id = $1', [t]).catch(() => undefined);
+      await queryWithTenant(t, 'DELETE FROM vm_remediation_policy WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_sightings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_findings WHERE tenant_id = $1', [t]).catch(() => undefined);
       await queryWithTenant(t, 'DELETE FROM vm_run_assets WHERE tenant_id = $1', [t]).catch(() => undefined);

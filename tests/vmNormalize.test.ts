@@ -30,6 +30,7 @@ import {
   type PoamCandidate,
   type VmSlaConfig,
 } from '../server/vm/transitions';
+import { computeRemediationTier, type VmEffectiveDecision, type VmRemediationPolicy } from '../src/data/vmRemediation';
 import { findingsNormalizerFor } from '../server/vm/adapters/registry';
 import { agentKey, kindKey, migrateLegacyAgentIds, normalizeMac, planAssetMatches, type AgentAssetCandidate } from '../server/vm/assetMatch';
 import { validateIngestPayload, type IngestPayload } from '../server/vm/ingestSchema';
@@ -561,6 +562,31 @@ const cand = (f: Partial<VmFinding> = {}, kev = false): PoamCandidate => ({
   assert(wl.endsWith(' Affected packages: openssl 1.0 (fixed in 1.1).'), 'T49d legacy finding without a list falls back to the single package', wl);
   const wn = poamWeakness(cand({ affectedPackages: [], affectedPackageCount: 0, packageName: '', packageVersion: '', fixedVersion: null }));
   assert(wn === 'CVE-2026-0001 on web-01: HIGH severity, first seen 2026-01-01, remediation due 2026-01-31 (overdue).', 'T49e no packages -> the plain template', wn);
+
+  // #268: with a remediation policy only a gap gets a draft; without one (rules absent) the legacy behaviour is unchanged
+  const DEF: VmRemediationPolicy = { slaDays: { CRITICAL: 15, HIGH: 30, MEDIUM: 90, LOW: 180 }, warnOnly: ['MEDIUM', 'LOW'], graceDays: 0 };
+  const four = [
+    cand({ id: 'p-crit', severity: 'CRITICAL' }),
+    cand({ id: 'p-high', severity: 'HIGH' }),
+    cand({ id: 'p-med', severity: 'MEDIUM' }),
+    cand({ id: 'p-low', severity: 'LOW' }),
+  ];
+  const noDecisions = new Map<string, VmEffectiveDecision>();
+  const nowMs = Date.parse(NOW);
+  const gapIds = four
+    .filter((c) => computeRemediationTier({ status: c.finding.status, severity: c.finding.severity, slaDueAt: c.finding.slaDueAt, kev: c.kev }, DEF, null, nowMs).tier === 'GAP')
+    .map((c) => c.finding.id);
+  const p1 = planPoamItems(four, [], NOW, { policy: DEF, decisions: noDecisions });
+  assert(gapIds.length === 2 && eq(p1.map((d) => d.findingId), gapIds) && eq(gapIds, ['p-crit', 'p-high']), 'P1 default policy: only the gap findings (CRITICAL, HIGH) get a draft', p1.map((d) => d.findingId));
+  assert(planPoamItems(four, [], NOW, { policy: { ...DEF, warnOnly: [] }, decisions: noDecisions }).length === 4, 'P2 warn-only empty -> all four get a draft');
+  assert(planPoamItems(four, [], NOW).length === 4, 'P3 no rules -> legacy: all four get a draft');
+  const high3 = cand({ id: 'p-high3', severity: 'HIGH', slaDueAt: '2026-02-26T00:00:00.000Z' });
+  assert(planPoamItems([high3], [], NOW, { policy: { ...DEF, graceDays: 7 }, decisions: noDecisions }).length === 0, 'P4 HIGH 3 days overdue inside a 7 day grace period -> none');
+  assert(planPoamItems([cand({ id: 'p-kev', severity: 'MEDIUM' }, true)], [], NOW, { policy: { ...DEF, graceDays: 30 }, decisions: noDecisions }).length === 1, 'P5 known-exploited MEDIUM is a gap whatever the policy -> one draft');
+  const decision = (expiresAt: string): VmEffectiveDecision => ({ decisionId: 'd1', kind: 'RISK_ACCEPTED', expiresAt, approvedAt: R1 });
+  const crit = [cand({ id: 'p-crit', severity: 'CRITICAL' })];
+  assert(planPoamItems(crit, [], NOW, { policy: DEF, decisions: new Map([['p-crit', decision('2026-03-02T00:00:00.000Z')]]) }).length === 0, 'P6 an active decision on the CRITICAL -> none');
+  assert(planPoamItems(crit, [], NOW, { policy: DEF, decisions: new Map([['p-crit', decision(NOW)]]) }).length === 1, 'P6 a decision expiring exactly now no longer applies -> one draft');
 }
 
 // ---------- Asset matching ----------

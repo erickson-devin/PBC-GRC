@@ -13,6 +13,7 @@ import { getControlObjectives } from '../cmmcGuide/objectives';
 import { cmmcNumberOf } from '../cmmcGuide/guide';
 import { cmmcDisplayId, cmmcGuideLetter } from '../cmmcGuide/displayId';
 import { composeImplementationStatement } from '../cmmcGuide/sspStatement';
+import { appendRemediationPolicyParagraph } from '../vmRemediation';
 import { statusDisplayLabel } from '../statusLabels';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
@@ -350,6 +351,8 @@ export function compileNistSSP(
       const status = cState?.status || 'NOT_STARTED';
       // #293: the control-level notes, then the objective narratives (CMMC only; the notes alone without objectives)
       let narrative = composeImplementationStatement(ctrl.id, cState?.implementationNotes, objectives, metadata.framework).text || 'No implementation narrative documented.';
+      // #268: the labelled remediation-policy paragraph on the two vulnerability controls (CMMC only; generated here, never stored)
+      narrative = appendRemediationPolicyParagraph(narrative, ctrl.id, metadata.framework, metadata.vmRemediationPolicy);
       // 3.13.11: cite the validated modules from the asset inventory (plain text: this is a table cell)
       if (metadata.cryptoModules && isCryptographicProtectionControl(ctrl.id)) {
         narrative = applyFipsModules(narrative, metadata.cryptoModules, { bold: false });

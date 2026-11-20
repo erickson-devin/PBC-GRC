@@ -191,7 +191,7 @@ async function main() {
     let lastRejection = '';
     // True only when the statement fails with the expected SQLSTATE and/or constraint, so a stray error (a NULL id hitting
     // NOT NULL, a typo) cannot masquerade as the refusal under test. On a mismatch the detail names what was actually thrown.
-    const rejectsWith = async (tenant: string, sql: string, params: (string | number | null)[], want: { code?: string; constraint?: string }): Promise<boolean> => {
+    const rejectsWith = async (tenant: string, sql: string, params: (string | number | string[] | null)[], want: { code?: string; constraint?: string }): Promise<boolean> => {
       try {
         await queryWithTenant(tenant, sql, params);
         lastRejection = 'no error';
@@ -581,6 +581,77 @@ async function main() {
     const swCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM vm_host_software WHERE asset_id = $1', [cascadeAssetId]);
     check(invCascade.rows.length === 0 && swCascade.rows.length === 0, 'vm_host_inventory and vm_host_software: rows go with their asset (ON DELETE CASCADE)', `saw ${invCascade.rows.length} hosts, ${swCascade.rows.length} packages`);
 
+    console.log('\n--- 3b-2. Remediation policy and risk decisions (#268) ---');
+    // Four new tenant tables: the policy (one row per tenant), its append-only history, the decisions and their append-only events.
+    // The decision rows and events are keyed by a finding of the tenant (composite foreign key); the justification text is never read by this script.
+    const insertPolicy =
+      "INSERT INTO vm_remediation_policy (tenant_id, days_critical, days_high, days_medium, days_low, warn_only, grace_days, updated_by) VALUES ($1, $2, 30, 90, 180, $3::text[], $4, 'rls_verify_actor')";
+    const policyOk = (await queryWithTenant(TENANT_X, insertPolicy, [TENANT_X, 15, ['MEDIUM', 'LOW'], 0]).then(() => true, () => false));
+    check(policyOk, 'vm_remediation_policy: tenant X can save its policy');
+    const policyNoCtx = await pool.query("SELECT 1 FROM vm_remediation_policy WHERE updated_by = 'rls_verify_actor'");
+    check(policyNoCtx.rowCount === 0, 'vm_remediation_policy: no tenant context => zero rows visible', `saw ${policyNoCtx.rowCount}`);
+    const policyStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_remediation_policy WHERE tenant_id = $1', [TENANT_X]);
+    check(policyStolen.rows.length === 0, 'vm_remediation_policy: tenant Y cannot read tenant X policy even by naming the tenant', `saw ${policyStolen.rows.length}`);
+    check(await rejectsWith(TENANT_X, insertPolicy, [TENANT_Y, 15, ['LOW'], 0], { code: '42501' }), 'vm_remediation_policy: tenant X cannot write a policy for tenant Y (WITH CHECK)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertPolicy, [TENANT_X, 15, ['LOW'], 0], { code: '23505' }), 'vm_remediation_policy: a tenant has one policy row (primary key)', lastRejection);
+    check(await rejectsWith(TENANT_Y, insertPolicy, [TENANT_Y, 0, ['LOW'], 0], { code: '23514', constraint: 'vm_remediation_policy_days_check' }), 'vm_remediation_policy: a deadline outside 1..3650 days is refused (days_check)', lastRejection);
+    check(await rejectsWith(TENANT_Y, insertPolicy, [TENANT_Y, 15, ['BOGUS'], 0], { code: '23514', constraint: 'vm_remediation_policy_warn_check' }), 'vm_remediation_policy: a warn-only severity outside the list is refused (warn_check)', lastRejection);
+    check(await rejectsWith(TENANT_Y, insertPolicy, [TENANT_Y, 15, ['LOW'], 366], { code: '23514', constraint: 'vm_remediation_policy_grace_check' }), 'vm_remediation_policy: a grace period beyond 365 days is refused (grace_check)', lastRejection);
+    const policyUpdate = await queryWithTenant(TENANT_X, "UPDATE vm_remediation_policy SET grace_days = 5 WHERE tenant_id = $1 AND updated_by = 'rls_verify_actor'", [TENANT_X]);
+    check((policyUpdate.rowCount ?? 0) === 1, 'vm_remediation_policy: the policy row itself is updatable by its tenant (only its history is append-only)');
+    const policyCrossUpdate = await queryWithTenant(TENANT_Y, 'UPDATE vm_remediation_policy SET grace_days = 9 WHERE tenant_id = $1', [TENANT_X]);
+    check((policyCrossUpdate.rowCount ?? 0) === 0, "vm_remediation_policy: tenant Y cannot update tenant X's policy (0 rows)");
+
+    const insertPolicyEvent =
+      "INSERT INTO vm_remediation_policy_events (tenant_id, actor, actor_role, old_policy, new_policy, open_findings_recomputed) VALUES ($1, 'rls_verify_actor', 'TENANT_OWNER', NULL, $2::jsonb, 3) RETURNING id";
+    const policyEv = await queryWithTenant(TENANT_X, insertPolicyEvent, [TENANT_X, '{"graceDays":0}']);
+    check(policyEv.rows.length === 1, 'vm_remediation_policy_events: tenant X can record an event');
+    const policyEvStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_remediation_policy_events WHERE tenant_id = $1', [TENANT_X]);
+    check(policyEvStolen.rows.length === 0, "vm_remediation_policy_events: tenant Y cannot read tenant X's events", `saw ${policyEvStolen.rows.length}`);
+    check(await rejectsWith(TENANT_X, insertPolicyEvent, [TENANT_Y, '{}'], { code: '42501' }), 'vm_remediation_policy_events: tenant X cannot write an event for tenant Y (WITH CHECK)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertPolicyEvent, [TENANT_X, '[]'], { code: '23514', constraint: 'vm_remediation_policy_events_shape_check' }), 'vm_remediation_policy_events: a policy that is not a JSON object is refused (shape_check)', lastRejection);
+    check(await rejectsWith(TENANT_X, "UPDATE vm_remediation_policy_events SET actor = 'rls_verify_changed' WHERE actor = 'rls_verify_actor'", [], { code: '42501' }), 'vm_remediation_policy_events: an UPDATE is refused by the append-only guard (42501)', lastRejection);
+
+    // A throwaway finding of tenant X: its decisions go with it (a DELETE is allowed), and the foreign key ties a decision to its own tenant's finding
+    await pool.query("INSERT INTO vm_vulns (vuln_id) VALUES ('RLS-VERIFY-0003') ON CONFLICT DO NOTHING");
+    const decisionFinding = await queryWithTenant(TENANT_X, "INSERT INTO vm_findings (tenant_id, asset_id, vuln_id, severity) VALUES ($1, $2, 'RLS-VERIFY-0003', 'HIGH') RETURNING id", [TENANT_X, assetIdX]);
+    const decisionFindingId = decisionFinding.rows[0]?.id;
+    const insertDecision =
+      `INSERT INTO vm_finding_decisions (tenant_id, finding_id, asset_id, vuln_id, kind, justification, justification_sha256, package_fingerprint, finding_first_seen_at,
+                                        requested_by, requested_by_user_id, requested_by_role, requested_at, expires_at)
+       VALUES ($1, $2, $3, 'RLS-VERIFY-0003', $4, $5, $6, $6, NOW(), 'rls_verify_actor', 'rls_verify_user', 'TENANT_ADMIN', NOW(), NOW() + $7::interval) RETURNING id`;
+    const goodDigest = 'c'.repeat(64);
+    const decisionX = await queryWithTenant(TENANT_X, insertDecision, [TENANT_X, decisionFindingId, assetIdX, 'RISK_ACCEPTED', 'rls_verify justification', goodDigest, '30 days']);
+    const decisionId = decisionX.rows[0]?.id;
+    check(Boolean(decisionId), 'vm_finding_decisions: tenant X can record a decision for its own finding');
+    const decNoCtx = await pool.query("SELECT 1 FROM vm_finding_decisions WHERE requested_by = 'rls_verify_actor'");
+    check(decNoCtx.rowCount === 0, 'vm_finding_decisions: no tenant context => zero rows visible', `saw ${decNoCtx.rowCount}`);
+    const decStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_finding_decisions WHERE tenant_id = $1', [TENANT_X]);
+    check(decStolen.rows.length === 0, "vm_finding_decisions: tenant Y cannot read tenant X's decisions", `saw ${decStolen.rows.length}`);
+    check(await rejectsWith(TENANT_X, insertDecision, [TENANT_Y, decisionFindingId, assetIdX, 'RISK_ACCEPTED', 'x', goodDigest, '30 days'], { code: '42501' }), 'vm_finding_decisions: tenant X cannot write a decision for tenant Y (WITH CHECK)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecision, [TENANT_X, 'rls_verify_no_such_finding', assetIdX, 'RISK_ACCEPTED', 'x', goodDigest, '30 days'], { code: '23503', constraint: 'fk_vm_finding_decisions_finding' }), "vm_finding_decisions: a decision must name a finding of the same tenant (composite foreign key)", lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecision, [TENANT_X, decisionFindingId, assetIdX, 'RESOLVED', 'x', goodDigest, '30 days'], { code: '23514', constraint: 'vm_finding_decisions_kind_check' }), 'vm_finding_decisions: a kind outside RISK_ACCEPTED and FALSE_POSITIVE is refused (kind_check)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecision, [TENANT_X, decisionFindingId, assetIdX, 'RISK_ACCEPTED', '   ', goodDigest, '30 days'], { code: '23514', constraint: 'vm_finding_decisions_text_check' }), 'vm_finding_decisions: a blank justification is refused (text_check)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecision, [TENANT_X, decisionFindingId, assetIdX, 'RISK_ACCEPTED', 'x', 'XYZ', '30 days'], { code: '23514', constraint: 'vm_finding_decisions_sha_check' }), 'vm_finding_decisions: a digest or fingerprint that is not 64 lowercase hex characters is refused (sha_check)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecision, [TENANT_X, decisionFindingId, assetIdX, 'RISK_ACCEPTED', 'x', goodDigest, '-1 day'], { code: '23514', constraint: 'vm_finding_decisions_expiry_check' }), 'vm_finding_decisions: an expiry that is not after the request is refused (expiry_check)', lastRejection);
+    check(await rejectsWith(TENANT_X, "UPDATE vm_finding_decisions SET kind = 'FALSE_POSITIVE' WHERE requested_by = 'rls_verify_actor'", [], { code: '42501' }), 'vm_finding_decisions: an UPDATE is refused by the append-only guard (42501)', lastRejection);
+
+    const insertDecisionEvent =
+      "INSERT INTO vm_finding_decision_events (tenant_id, decision_id, action, actor, actor_user_id, actor_role) VALUES ($1, $2, $3, 'rls_verify_actor', 'rls_verify_user2', 'TENANT_OWNER')";
+    check(await queryWithTenant(TENANT_X, insertDecisionEvent, [TENANT_X, decisionId, 'approved']).then(() => true, () => false), 'vm_finding_decision_events: tenant X can record the approval');
+    const evStolen = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM vm_finding_decision_events WHERE tenant_id = $1', [TENANT_X]);
+    check(evStolen.rows.length === 0, "vm_finding_decision_events: tenant Y cannot read tenant X's events", `saw ${evStolen.rows.length}`);
+    check(await rejectsWith(TENANT_X, insertDecisionEvent, [TENANT_Y, decisionId, 'revoked'], { code: '42501' }), 'vm_finding_decision_events: tenant X cannot write an event for tenant Y (WITH CHECK)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecisionEvent, [TENANT_X, decisionId, 'approved'], { code: '23505', constraint: 'unq_vm_finding_decision_resolution' }), 'vm_finding_decision_events: a second approval of the same decision is refused (unq_vm_finding_decision_resolution, 23505)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecisionEvent, [TENANT_X, decisionId, 'rejected'], { code: '23505', constraint: 'unq_vm_finding_decision_resolution' }), 'vm_finding_decision_events: a rejection after the approval is refused too (one resolution per request)', lastRejection);
+    check(await rejectsWith(TENANT_X, insertDecisionEvent, [TENANT_X, decisionId, 'bogus'], { code: '23514', constraint: 'vm_finding_decision_events_action_check' }), 'vm_finding_decision_events: an action outside the list is refused (action_check)', lastRejection);
+    check(await queryWithTenant(TENANT_X, insertDecisionEvent, [TENANT_X, decisionId, 'revoked']).then(() => true, () => false), 'vm_finding_decision_events: the approval can be revoked once');
+    check(await rejectsWith(TENANT_X, insertDecisionEvent, [TENANT_X, decisionId, 'revoked'], { code: '23505', constraint: 'unq_vm_finding_decision_revoked' }), 'vm_finding_decision_events: a second revocation is refused (unq_vm_finding_decision_revoked, 23505)', lastRejection);
+    check(await rejectsWith(TENANT_X, "UPDATE vm_finding_decision_events SET actor = 'rls_verify_changed' WHERE actor = 'rls_verify_actor'", [], { code: '42501' }), 'vm_finding_decision_events: an UPDATE is refused by the append-only guard (42501)', lastRejection);
+    await queryWithTenant(TENANT_X, 'DELETE FROM vm_findings WHERE id = $1', [decisionFindingId]);
+    const decCascade = await queryWithTenant(TENANT_X, 'SELECT (SELECT count(*) FROM vm_finding_decisions WHERE id = $1)::int AS d, (SELECT count(*) FROM vm_finding_decision_events WHERE decision_id = $1)::int AS e', [decisionId]);
+    check(decCascade.rows[0]?.d === 0 && decCascade.rows[0]?.e === 0, 'a finding deleted with its asset takes its decisions and their events with it (DELETE is allowed, ON DELETE CASCADE)', JSON.stringify(decCascade.rows[0]));
+
     console.log('\n--- 3c. Control assessment history ---');
     // control_assessment_events is program-scoped: every insert and read below runs in the program of its tenant (both settings)
     const programX = await mkProgram(TENANT_X, 'rls_verify_events_x', true);
@@ -692,6 +763,9 @@ async function main() {
       await queryWithTenant(t, "DELETE FROM programs WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
     }
     for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM vm_finding_decisions WHERE requested_by LIKE 'rls_verify%'", []).catch(() => undefined); // #268: their events go with them
+      await queryWithTenant(t, "DELETE FROM vm_remediation_policy_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM vm_remediation_policy WHERE updated_by LIKE 'rls_verify%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_sightings WHERE source_id IN (SELECT id FROM vm_sources WHERE label LIKE 'rls_verify_%')", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_findings WHERE vuln_id LIKE 'RLS-VERIFY-%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM vm_run_assets WHERE run_id IN (SELECT id FROM vm_runs WHERE raw_path = 'rls_verify')", []).catch(() => undefined);

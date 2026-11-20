@@ -27,6 +27,9 @@ import { listAccountEvents } from '../server/auth/accountEvents';
  */
 const BASE = 'http://127.0.0.1:8080/api/v1';
 const HTTPS = { 'X-Forwarded-Proto': 'https' };
+// Legacy remediation policy (#268): no warn-only severity, so every overdue finding still gets a POA&M draft, as the cases below expect.
+// The tiered behaviour (warn-only, grace, decisions) is pinned in vmRemediationApi.test.ts.
+process.env.VM_WARN_ONLY_SEVERITIES = 'none';
 
 let passed = 0;
 let total = 0;

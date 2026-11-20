@@ -24,6 +24,7 @@ import { requireWriteRole } from '../middleware/roleGuard';
 import { ensureActiveTenant, ensureOwnerRole } from './tenantGuards';
 import { errorMessage } from '../../src/utils/errors';
 import { countOpenPoamItems, countOverdueWithoutItem } from '../vm/findingsStore';
+import { loadTierRules } from '../vm/remediationStore';
 import { isPoamAutocreateEnabled } from '../vm/transitions';
 import type { VmTargetPreview } from '../../src/types/vm';
 
@@ -241,6 +242,7 @@ router.get('/:id/vm-target/preview', async (req: Request, res: Response): Promis
     if (!program) throw new ProgramError('program_not_found', 'Program not found');
     const current = await resolveVmTargetProgram(tenantId);
     const ineligibleReason: VmTargetPreview['ineligibleReason'] = program.archivedAt ? 'program_archived' : !VM_TARGET_FRAMEWORK_IDS.includes(program.frameworkId) ? 'invalid_vm_target' : null;
+    const now = new Date().toISOString();
     const preview: VmTargetPreview = {
       programId: program.id,
       isTarget: current?.program.id === program.id,
@@ -249,7 +251,8 @@ router.get('/:id/vm-target/preview', async (req: Request, res: Response): Promis
       currentTargetId: current?.program.id ?? null,
       currentTargetExplicit: current?.explicit ?? false,
       openPoamInCurrent: current ? await countOpenPoamItems({ tenantId, programId: current.program.id }) : 0,
-      overdueWithoutItem: await countOverdueWithoutItem({ tenantId, programId: program.id }, new Date().toISOString()),
+      // Gaps only (#268): an overdue finding the policy treats as a warning, or that has an approved decision, would not get an item
+      overdueWithoutItem: await countOverdueWithoutItem({ tenantId, programId: program.id }, now, undefined, await loadTierRules(tenantId, now)),
       autocreateEnabled: isPoamAutocreateEnabled(),
     };
     res.json(preview);

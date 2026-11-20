@@ -33,6 +33,8 @@ import type { AccretionDiscoveryItem, EnclaveAsset } from '../types/telemetry';
 import type { VmAssetConfigSummary, VmConfigResult, VmConfigRuleResult, VmConfigScan, VmConfigSuggestionsResponse, VmFinding, VmFindingStatus, VmObservedHost, VmObservedHostWithAsset, VmObservedSoftware, VmObservedSoftwareGroup, VmPoamItemEvent, VmPoamItemPatch, VmPoamResponse, VmPoamRow, VmRun, VmServiceToken, VmSeverity, VmSource, VmTargetPreview } from '../types/vm';
 import { parseObservedHosts, parseObservedSoftware, parseObservedSoftwareGroups, parseProgramObservedHosts } from '../data/telemetry/observedInventory';
 import { parseVmFindings } from '../data/telemetry/vmFindingsView';
+import type { VmRemediationPolicy } from '../data/vmRemediation';
+import type { VmDecision, VmPolicyEvent, VmPolicySaveResult, VmRemediationPolicyResponse, VmRemediationSummary } from '../types/vmRemediation';
 import type { Program, ProgramInput, ProgramMetrics, ProgramUpdate } from '../types/program';
 import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCreateBody, validateProgramInput } from '../data/programSync';
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
@@ -54,6 +56,12 @@ function requireAsset(raw: unknown): EnclaveAsset {
   const [asset] = parseServerAssets([raw]);
   if (!asset) throw new ApiError(502, 'The server sent back an asset this version of the app does not understand.');
   return asset;
+}
+
+function requireVmDecision(raw: unknown): VmDecision {
+  const r = raw as { id?: unknown; kind?: unknown; state?: unknown } | null | undefined;
+  if (!r || typeof r !== 'object' || typeof r.id !== 'string' || typeof r.kind !== 'string' || typeof r.state !== 'string') throw new ApiError(502, 'The server returned an unexpected response.');
+  return raw as VmDecision;
 }
 
 function requireSoftwareItem(raw: unknown): SoftwareItem {
@@ -1265,6 +1273,84 @@ export const ApiClient = {
     const data = await authedJson<{ events?: VmPoamItemEvent[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/poam/${encodeURIComponent(itemId)}/events`, { tenantId, programId });
     if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
     return data.events;
+  },
+
+  /** GET /api/v1/tenants/:id/vm/remediation-policy (#268), tenant-wide, every role: the policy in force, where it comes from, the defaults and the fixed known-exploited rule. */
+  async getVmRemediationPolicy(tenantId: string): Promise<VmRemediationPolicyResponse> {
+    const data = await authedJson<VmRemediationPolicyResponse>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/remediation-policy`, { tenantId });
+    if (typeof data?.policy !== 'object' || data.policy === null || typeof data.source !== 'string') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data;
+  },
+
+  /**
+   * PUT /api/v1/tenants/:id/vm/remediation-policy (#268), owner-level access (Tenant Owner, MSP Admin). `expectedUpdatedAt` is the policy's updatedAt as loaded, or null while none is stored
+   * (409 reason `stale_write` when it changed). Other reasons: `invalid_policy`, `owner_required`. Tenant-wide: the policy applies to every program.
+   */
+  async saveVmRemediationPolicy(tenantId: string, policy: VmRemediationPolicy, expectedUpdatedAt: string | null): Promise<VmPolicySaveResult> {
+    const data = await authedJson<VmPolicySaveResult>('PUT', `/tenants/${encodeURIComponent(tenantId)}/vm/remediation-policy`, { tenantId, body: { ...policy, expectedUpdatedAt } });
+    if (typeof data?.changed !== 'boolean' || typeof data.impact !== 'object' || data.impact === null) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data;
+  },
+
+  /** GET /api/v1/tenants/:id/vm/remediation-policy/events (#268), every role: the policy's change history, newest first (limit 1 to 100). */
+  async getVmRemediationPolicyEvents(tenantId: string, limit = 50): Promise<VmPolicyEvent[]> {
+    const data = await authedJson<{ events?: VmPolicyEvent[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/remediation-policy/events?limit=${encodeURIComponent(String(limit))}`, { tenantId });
+    if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.events;
+  },
+
+  /** GET /api/v1/tenants/:id/vm/remediation/summary (#268), every role: counts of open findings per remediation tier, with the pending and expiring decisions. */
+  async getVmRemediationSummary(tenantId: string): Promise<VmRemediationSummary> {
+    const data = await authedJson<VmRemediationSummary>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/remediation/summary`, { tenantId });
+    if (typeof data?.counts !== 'object' || data.counts === null) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data;
+  },
+
+  /**
+   * POST /api/v1/tenants/:id/vm/findings/:findingId/decisions (#268), write roles: asks for a risk acceptance or a false-positive decision (state PENDING until an owner-level person approves it).
+   * The justification is CUI-adjacent text: it is only sent, never cached or logged. Reasons: `invalid_decision`, `decision_pending`, `finding_not_open`, `not_found`.
+   */
+  async requestVmFindingDecision(tenantId: string, findingId: string, body: { kind: 'RISK_ACCEPTED' | 'FALSE_POSITIVE'; justification: string; expiresAt: string }): Promise<VmDecision> {
+    const data = await authedJson<{ decision?: VmDecision }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/findings/${encodeURIComponent(findingId)}/decisions`, { tenantId, body });
+    return requireVmDecision(data?.decision);
+  },
+
+  /** GET /api/v1/tenants/:id/vm/findings/:findingId/decisions (#268), every role: the finding's decisions, newest first (the justification is null for a Viewer). */
+  async listVmFindingDecisions(tenantId: string, findingId: string): Promise<VmDecision[]> {
+    const data = await authedJson<{ decisions?: VmDecision[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/findings/${encodeURIComponent(findingId)}/decisions`, { tenantId });
+    if (!Array.isArray(data?.decisions)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.decisions;
+  },
+
+  /** GET /api/v1/tenants/:id/vm/decisions?state= (#268), every role: the organization's decisions, newest first, at most 500. */
+  async listVmDecisions(tenantId: string, state: 'pending' | 'active' | 'expiring' | 'all'): Promise<VmDecision[]> {
+    const data = await authedJson<{ decisions?: VmDecision[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/decisions?state=${encodeURIComponent(state)}`, { tenantId });
+    if (!Array.isArray(data?.decisions)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.decisions;
+  },
+
+  /** POST /api/v1/tenants/:id/vm/decisions/:id/approve (#268): owner-level access, never the requester (reasons `self_approval_forbidden`, `owner_required`, `decision_not_pending`, `decision_expired`). */
+  async approveVmDecision(tenantId: string, decisionId: string): Promise<VmDecision> {
+    const data = await authedJson<{ decision?: VmDecision }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/decisions/${encodeURIComponent(decisionId)}/approve`, { tenantId });
+    return requireVmDecision(data?.decision);
+  },
+
+  /** POST /api/v1/tenants/:id/vm/decisions/:id/reject (#268): owner-level access. */
+  async rejectVmDecision(tenantId: string, decisionId: string): Promise<VmDecision> {
+    const data = await authedJson<{ decision?: VmDecision }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/decisions/${encodeURIComponent(decisionId)}/reject`, { tenantId });
+    return requireVmDecision(data?.decision);
+  },
+
+  /** POST /api/v1/tenants/:id/vm/decisions/:id/withdraw (#268): only the person who requested it (reason `not_requester`). */
+  async withdrawVmDecision(tenantId: string, decisionId: string): Promise<VmDecision> {
+    const data = await authedJson<{ decision?: VmDecision }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/decisions/${encodeURIComponent(decisionId)}/withdraw`, { tenantId });
+    return requireVmDecision(data?.decision);
+  },
+
+  /** POST /api/v1/tenants/:id/vm/decisions/:id/revoke (#268): owner-level access, for a decision in force (reason `decision_not_active` otherwise). */
+  async revokeVmDecision(tenantId: string, decisionId: string): Promise<VmDecision> {
+    const data = await authedJson<{ decision?: VmDecision }>('POST', `/tenants/${encodeURIComponent(tenantId)}/vm/decisions/${encodeURIComponent(decisionId)}/revoke`, { tenantId });
+    return requireVmDecision(data?.decision);
   },
 
   /** GET /api/v1/control-poam for the program (x-program-id): the POA&M fields recorded for its controls (only controls with a stored entry). Every role reads; never cached in browser storage. */

@@ -24,6 +24,19 @@ import {
 } from '../../data/telemetry/vmFindingsView';
 import type { FindingStatusFilter, SeverityFilter } from '../../data/telemetry/vmFindingsView';
 import type { VmFindingsStatus } from '../../hooks/useVmFindings';
+import type { VmTierResult } from '../../data/vmRemediation';
+import {
+  REMEDIATION_COPY,
+  TIER_BADGE,
+  TIER_FILTERS,
+  TIER_FILTER_LABEL,
+  TIER_LABEL,
+  filterByTier,
+  tierCounts,
+  tierCountsText,
+  tierLines,
+} from '../../data/telemetry/vmRemediationView';
+import type { TierFilter } from '../../data/telemetry/vmRemediationView';
 
 interface VmFindingsListProps {
   status: VmFindingsStatus;
@@ -33,6 +46,8 @@ interface VmFindingsListProps {
   onRetry: () => void;
   /** Whether a scanner has reported this host (null while that is not known): only changes the wording of the empty state. */
   scannerReported: boolean | null;
+  /** Opens the risk decisions of one finding (write roles request, owner-level roles decide). Without it the list has no Decisions column. */
+  onOpenDecisions?: (f: VmFinding) => void;
 }
 
 const FIELD_CLASS = 'bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500';
@@ -40,6 +55,18 @@ const FIELD_CLASS = 'bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-
 const dateOnly = (iso: string): string | null => {
   const t = Date.parse(iso);
   return Number.isNaN(t) ? null : new Date(t).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const TierCell: React.FC<{ r: VmTierResult | null }> = ({ r }) => {
+  if (!r) return <span className="text-slate-400">{NOT_REPORTED}</span>;
+  const l = tierLines(r);
+  return (
+    <>
+      <span className={`badge px-1.5 py-0.5 rounded text-xs font-semibold border ${TIER_BADGE[r.tier]}`}>{TIER_LABEL[r.tier]}</span>
+      {l.due && <p className="mt-1 text-slate-300 whitespace-nowrap">{l.due}</p>}
+      {l.reason && <p className="mt-0.5 text-slate-400">{l.reason}</p>}
+    </>
+  );
 };
 
 const SeenDate: React.FC<{ iso: string }> = ({ iso }) => {
@@ -51,7 +78,7 @@ const SeenDate: React.FC<{ iso: string }> = ({ iso }) => {
  * The vulnerability findings the scanners report for one asset, read-only: searched and filtered here, never kept in the browser.
  * Every scanner string is rendered as a text node; no link, no write action, no justification or decider.
  */
-export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings, statusFilter, onStatusFilterChange, onRetry, scannerReported }) => {
+export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings, statusFilter, onStatusFilterChange, onRetry, scannerReported, onOpenDecisions }) => {
   const [query, setQuery] = useState('');
   const [severity, setSeverity] = useState<SeverityFilter>('ALL');
   const [visible, setVisible] = useState<number>(FINDINGS_RENDER_STEP);
@@ -59,14 +86,18 @@ export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings
   const statusId = `${idBase}-status`;
   const searchId = `${idBase}-search`;
   const severityId = `${idBase}-severity`;
+  const tierId = `${idBase}-tier`;
+  const [tier, setTier] = useState<TierFilter>('ALL');
 
   useEffect(() => {
     setVisible(FINDINGS_RENDER_STEP);
-  }, [query, severity, statusFilter]);
+  }, [query, severity, statusFilter, tier]);
 
   const sorted = useMemo(() => sortFindings(findings), [findings]);
-  const shown = useMemo(() => filterFindings(sorted, query, severity), [sorted, query, severity]);
+  const shown = useMemo(() => filterByTier(filterFindings(sorted, query, severity), tier), [sorted, query, severity, tier]);
   const counts = useMemo(() => severityCounts(findings), [findings]);
+  const hasTiers = useMemo(() => findings.some((f) => f.remediation), [findings]);
+  const tierLine = hasTiers ? tierCountsText(tierCounts(findings)) : '';
   const rows = shown.slice(0, visible);
   const capNotice = status === 'ready' ? findingsCapNotice(findings.length) : null;
 
@@ -110,6 +141,7 @@ export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings
               </li>
             ))}
           </ul>
+          {tierLine && <p className="text-slate-300">{tierLine}</p>}
 
           <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
             <div className="flex-1">
@@ -137,7 +169,18 @@ export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings
                 ))}
               </select>
             </div>
+            {hasTiers && (
+              <div>
+                <label htmlFor={tierId} className="block font-semibold text-slate-300 mb-1">Remediation</label>
+                <select id={tierId} value={tier} onChange={(e) => setTier(e.target.value as TierFilter)} className={FIELD_CLASS}>
+                  {TIER_FILTERS.map((t) => (
+                    <option key={t} value={t}>{TIER_FILTER_LABEL[t]}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
+          {hasTiers && <p className="text-slate-400 leading-relaxed">{REMEDIATION_COPY.legend}</p>}
 
           <p role="status" className="text-slate-400">{findingsCaption(shown.length, findings.length)}</p>
           {capNotice && (
@@ -145,22 +188,24 @@ export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings
           )}
 
           <div className="overflow-x-auto max-h-96 overflow-y-auto rounded-lg border border-slate-800" tabIndex={0} role="region" aria-label="Vulnerability findings table">
-            <table className="w-full min-w-[40rem] text-left text-xs border-collapse">
+            <table className="w-full min-w-[48rem] text-left text-xs border-collapse">
               <caption className="sr-only">{FINDINGS_COPY.caption}</caption>
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-slate-800 bg-slate-900 text-slate-400 font-semibold">
                   <th scope="col" className="py-2 px-3">Vulnerability</th>
                   <th scope="col" className="py-2 px-3">Severity</th>
                   <th scope="col" className="py-2 px-3">Status</th>
+                  <th scope="col" className="py-2 px-3">Remediation</th>
                   <th scope="col" className="py-2 px-3">Affected packages</th>
                   <th scope="col" className="py-2 px-3">First seen</th>
                   <th scope="col" className="py-2 px-3">Last seen</th>
+                  {onOpenDecisions && <th scope="col" className="py-2 px-3"><span className="sr-only">Actions</span></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {shown.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-4 text-center text-slate-400">{FINDINGS_COPY.noMatch}</td>
+                    <td colSpan={onOpenDecisions ? 8 : 7} className="py-4 text-center text-slate-400">{tier !== 'ALL' ? REMEDIATION_COPY.noMatchFilters : FINDINGS_COPY.noMatch}</td>
                   </tr>
                 ) : (
                   rows.map((f) => {
@@ -174,6 +219,7 @@ export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings
                         <td className="py-2 px-3">
                           <span className={`badge px-1.5 py-0.5 rounded text-xs font-semibold border ${STATUS_BADGE[f.status]}`}>{STATUS_LABEL[f.status]}</span>
                         </td>
+                        <td className="py-2 px-3"><TierCell r={f.remediation ?? null} /></td>
                         <td className="py-2 px-3 text-slate-200">
                           {pk.shown.length === 0 ? (
                             <span className="text-slate-400">{NOT_REPORTED}</span>
@@ -191,6 +237,18 @@ export const VmFindingsList: React.FC<VmFindingsListProps> = ({ status, findings
                         </td>
                         <td className="py-2 px-3 text-slate-300 whitespace-nowrap"><SeenDate iso={f.firstSeenAt} /></td>
                         <td className="py-2 px-3 text-slate-300 whitespace-nowrap"><SeenDate iso={f.lastSeenAt} /></td>
+                        {onOpenDecisions && (
+                          <td className="py-2 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => onOpenDecisions(f)}
+                              aria-label={REMEDIATION_COPY.decisionsAria(f.vulnId)}
+                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 whitespace-nowrap"
+                            >
+                              {REMEDIATION_COPY.decisionsButton}
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })

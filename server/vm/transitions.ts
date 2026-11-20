@@ -1,5 +1,7 @@
 import { VM_MAX_AFFECTED_PACKAGES } from '../../src/types/vm';
 import type { VmFinding, VmFindingStatus, VmPoamStatus, VmRun, VmSeverity } from '../../src/types/vm';
+import { computeRemediationTier } from '../../src/data/vmRemediation';
+import type { VmEffectiveDecision, VmRemediationPolicy } from '../../src/data/vmRemediation';
 import type { NormalizedHost } from './adapters/wazuh';
 
 /**
@@ -367,13 +369,20 @@ function affectedPackagesText(f: VmFinding): string {
  * recorded) it was created at or after that first_seen_at. A finding that was closed, reopened and went overdue again gets a new
  * item, even while the previous episode's item is still open.
  */
-export function planPoamItems(candidates: PoamCandidate[], linked: LinkedPoamItem[], now: string): PoamDraft[] {
+export function planPoamItems(
+  candidates: PoamCandidate[],
+  linked: LinkedPoamItem[],
+  now: string,
+  rules?: { policy: VmRemediationPolicy; decisions: ReadonlyMap<string, VmEffectiveDecision> },
+): PoamDraft[] {
   const nowMs = Date.parse(now);
   const drafts: PoamDraft[] = [];
   for (const c of candidates) {
     const f = c.finding;
     if (f.status !== 'OPEN' || f.slaDueAt === null) continue;
     if (!(Date.parse(f.slaDueAt) < nowMs)) continue;
+    // With a remediation policy only a gap gets an item: warn-only, grace-period and accepted findings do not (#268).
+    if (rules && computeRemediationTier({ status: f.status, severity: f.severity, slaDueAt: f.slaDueAt, kev: c.kev }, rules.policy, rules.decisions.get(f.id) ?? null, nowMs).tier !== 'GAP') continue;
     const sameEpisode = (l: LinkedPoamItem): boolean =>
       l.findingFirstSeenAt !== null
         ? Date.parse(l.findingFirstSeenAt) === Date.parse(f.firstSeenAt)

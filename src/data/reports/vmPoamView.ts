@@ -206,11 +206,27 @@ export function isoDate(s: string | null): string {
   return s ? s.slice(0, 10) : 'None';
 }
 
+const VM_POAM_COMPLETION_TEXT =
+  'An item is completed automatically when a later scan confirms the fix: the scanner that reported the vulnerability scans the host again and no longer lists it, and no other active scanner still reports it. A host that is not scanned completes nothing. If the vulnerability comes back it gets a new item; the completed one stays in the history. An item a person reopened is not completed automatically. This also applies to items in a program that was the target earlier, unless it is archived.';
+
+/** The rules paragraph: with the organization's remediation policy (#268) it states that policy; without one it is the fixed-timeline text. */
 export function vmRulesText(rules: VmPoamResponse['rules'], framework: string): string {
   const id = cmmcDisplayId(rules.controlId, framework);
   const d = (n: number): string => (n === 1 ? '1 day' : `${n} days`);
   const s = rules.slaDays;
-  return `A vulnerability becomes a POA&M item under ${id} when it is still open after its remediation deadline. The deadline counts from when the vulnerability was first seen: Critical ${d(s.CRITICAL)}, High ${d(s.HIGH)}, Medium ${d(s.MEDIUM)}, Low ${d(s.LOW)}. Unknown severity uses the Medium deadline, and a known exploited vulnerability (KEV) never gets longer than the Critical deadline. Items are added when the next scan is processed after the deadline. An item is completed automatically when a later scan confirms the fix: the scanner that reported the vulnerability scans the host again and no longer lists it, and no other active scanner still reports it. A host that is not scanned completes nothing. If the vulnerability comes back it gets a new item; the completed one stays in the history. An item a person reopened is not completed automatically. This also applies to items in a program that was the target earlier, unless it is archived.`;
+  const p = rules.policy;
+  if (p) {
+    const gapList = p.warnOnly.length >= 2 ? 'Critical or High' : p.warnOnly.length === 1 ? 'Critical, High or Medium' : 'Critical, High, Medium or Low';
+    const warn =
+      p.warnOnly.length >= 2
+        ? ' Medium and Low findings past their deadline are warnings: they are tracked in Vulnerability Remediation (profile menu), not as POA&M items.'
+        : p.warnOnly.length === 1
+          ? ' Low findings past their deadline are warnings: they are tracked in Vulnerability Remediation (profile menu), not as POA&M items.'
+          : '';
+    const grace = p.graceDays > 0 ? ` A finding counts as a gap only ${d(p.graceDays)} after its deadline (the grace period), except a known exploited one.` : '';
+    return `A vulnerability becomes a POA&M item under ${id} when it is a remediation gap: still open after its deadline at ${gapList} severity, or known exploited (CISA KEV) and past its deadline at any severity. The deadline counts from when the vulnerability was first seen: Critical ${d(s.CRITICAL)}, High ${d(s.HIGH)}, Medium ${d(s.MEDIUM)}, Low ${d(s.LOW)}. Unknown severity counts as Medium, and a known exploited vulnerability never gets longer than the Critical deadline.${warn}${grace} An approved risk decision (risk accepted or false positive) stops a finding counting as a gap until the decision expires. Items are added when the next scan is processed after the deadline. ${VM_POAM_COMPLETION_TEXT}`;
+  }
+  return `A vulnerability becomes a POA&M item under ${id} when it is still open after its remediation deadline. The deadline counts from when the vulnerability was first seen: Critical ${d(s.CRITICAL)}, High ${d(s.HIGH)}, Medium ${d(s.MEDIUM)}, Low ${d(s.LOW)}. Unknown severity uses the Medium deadline, and a known exploited vulnerability (KEV) never gets longer than the Critical deadline. Items are added when the next scan is processed after the deadline. ${VM_POAM_COMPLETION_TEXT}`;
 }
 
 export interface VmPoamNotice {

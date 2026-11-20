@@ -25,6 +25,9 @@ import { SspGateBanner } from '../dashboard/SspGateBanner';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useEnclaveAssets } from '../../hooks/useEnclaveAssets';
 import { useSoftwareItems } from '../../hooks/useSoftwareItems';
+import { useVmRemediationPolicy } from '../../hooks/useVmRemediationPolicy';
+import { policyAsOf, sspPolicyNote } from '../../data/telemetry/vmRemediationView';
+import { GeneratedParagraphText } from './GeneratedParagraphText';
 import { softwareExportLine, scannerExportLine } from '../../data/softwareInventoryView';
 import { useProgramObservedInventory } from '../../hooks/useProgramObservedInventory';
 import { collectFipsModules } from '../../data/telemetry/fipsValidation';
@@ -144,6 +147,12 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   // The Tools and Services register and the data inventory (SSP 1.3 and 1.4), for the SSP only
   const sspInventory = useSspInventory({ enabled: isOpen && selectedDocType === 'NIST_SP_800_18_SSP' });
   const inventorySnapshot = selectedDocType === 'NIST_SP_800_18_SSP' && sspInventory.status !== 'loading' ? sspInventory.snapshot : undefined;
+  // The vulnerability remediation policy (#268) of a server-backed organization, for the paragraph a CMMC SSP appends to RA.L2-3.11.3 and SI.L1-3.14.1
+  const vmPolicyApplies = isOpen && Boolean(currentTenant.serverBacked) && (activeFramework === 'CMMC_L1' || activeFramework === 'CMMC_L2');
+  const vmPolicy = useVmRemediationPolicy({ enabled: vmPolicyApplies });
+  const vmPolicyAsOf = vmPolicy.load.status === 'ready' ? policyAsOf(vmPolicy.load.data, Date.now()) : null;
+  const vmPolicyStatus = vmPolicy.load.status === 'idle' ? 'loading' : vmPolicy.load.status;
+  const policyNoteText = selectedDocType === 'NIST_SP_800_18_SSP' ? sspPolicyNote(activeFramework, vmPolicyStatus, vmPolicyAsOf) : null;
   const scannerAssetCount = useMemo(() => new Set(scannerObserved.hosts.filter((h) => h.softwareReported).map((h) => h.assetId)).size, [scannerObserved]);
   const scannerLine = scannerExportLine({ status: scanner.status, packages: scannerObserved.software.length, assets: scannerAssetCount, truncated: scannerObserved.truncated });
   useEffect(() => {
@@ -206,6 +215,18 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       return inventorySnapshot ? { ...next, sspInventory: inventorySnapshot } : next;
     });
   }, [inventorySnapshot]);
+
+  // The policy rides on the form values too (set only while it is loaded, never saved with the metadata) so the compiled SSP appends its labelled paragraph
+  const vmPolicyData = vmPolicy.load.status === 'ready' ? vmPolicy.load.data.policy : null;
+  useEffect(() => {
+    const next = vmPolicyData && vmPolicyAsOf ? { policy: vmPolicyData, asOf: vmPolicyAsOf } : undefined;
+    setFormData((prev) => {
+      if (JSON.stringify(prev.vmRemediationPolicy) === JSON.stringify(next)) return prev;
+      const rest = { ...prev };
+      delete rest.vmRemediationPolicy;
+      return next ? { ...rest, vmRemediationPolicy: next } : rest;
+    });
+  }, [vmPolicyData, vmPolicyAsOf]);
 
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [isExportingJson, setIsExportingJson] = useState<boolean>(false);
@@ -573,6 +594,12 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                   <Server className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
                   <span>{boundaryLine}</span>
                 </p>
+                {policyNoteText && (
+                  <p role="note" data-testid="vm-policy-paragraph-note" className="flex items-start gap-2 px-4 py-3 rounded-2xl bg-slate-950 border border-amber-500/30 text-xs text-amber-200">
+                    <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>{policyNoteText}</span>
+                  </p>
+                )}
                 {selectedDocType === 'NIST_SP_800_18_SSP' && (
                   <p data-testid="ssp-inventory-scope" aria-live="polite" className="text-xs text-slate-400">
                     {sspInventory.status === 'loading'
@@ -657,7 +684,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                                 <tr key={rIdx} className="hover:bg-slate-850/50">
                                   {cells.map((cell, cIdx) => (
                                     <td key={cIdx} className="p-2.5 text-slate-300">
-                                      {String(cell)}
+                                      <GeneratedParagraphText text={String(cell)} />
                                     </td>
                                   ))}
                                 </tr>
@@ -711,7 +738,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                                         <tr key={rIdx} className="hover:bg-slate-850/50">
                                           {cells.map((cell, cIdx) => (
                                             <td key={cIdx} className="p-2 text-slate-300">
-                                              {String(cell)}
+                                              <GeneratedParagraphText text={String(cell)} />
                                             </td>
                                           ))}
                                         </tr>

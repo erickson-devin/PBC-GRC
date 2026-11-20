@@ -5,6 +5,7 @@
  */
 
 import type { PoamMilestone, PoamMilestoneInput } from './poamMilestone';
+import type { VmRemediationPolicy, VmTierResult } from '../data/vmRemediation';
 
 /** Append-only: the CHECK on vm_sources.kind is re-created from this list on every boot, so removing a kind that rows still use would fail initDb. */
 export const VM_SOURCE_KINDS = ['WAZUH', 'SENTINELONE', 'ACTION1', 'GREENBONE', 'NUCLEI', 'NMAP', 'SCAP'] as const;
@@ -160,6 +161,10 @@ export interface VmFinding {
   decidedBy: string | null;
   decidedByUserId: string | null;
   decidedAt: string | null;
+  /** GET /vm/findings only (#268): the vulnerability is on the known-exploited list. */
+  kev?: boolean;
+  /** GET /vm/findings only (#268): the tier under the tenant's remediation policy. */
+  remediation?: VmTierResult | null;
 }
 
 export interface VmSighting {
@@ -246,6 +251,8 @@ export interface VmPoamRow {
     affectedPackages: VmAffectedPackage[];
     affectedPackageCount: number;
     asset: { id: string; name: string } | null;
+    /** #268: the finding's tier under the remediation policy (a draft the policy no longer requires reads WARNING or ACCEPTED). */
+    remediation?: VmTierResult | null;
   };
 }
 
@@ -323,6 +330,8 @@ export interface VmPoamResponse {
     vmTargetProgramId: string | null;
     isVmTarget: boolean;
     slaDays: { CRITICAL: number; HIGH: number; MEDIUM: number; LOW: number };
+    /** #268: the tenant's remediation policy (slaDays above are its deadlines). */
+    policy?: VmRemediationPolicy;
   };
   items: VmPoamRow[];
   itemsTotal: number;

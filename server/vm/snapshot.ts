@@ -3,6 +3,8 @@ import { CATEGORY_INFO } from '../../src/data/telemetry/assetScope';
 import type { AssetDiscoveryStatus, CmmcAssetCategory } from '../../src/types/telemetry';
 import { VM_SEVERITIES } from '../../src/types/vm';
 import type { VmFinding, VmPoamItem, VmRun, VmRunStatus, VmSeverity, VmSource } from '../../src/types/vm';
+import { VM_KEV_RULE_TEXT, computeRemediationTier, tallyTiers } from '../../src/data/vmRemediation';
+import type { VmEffectiveDecision, VmRemediationPolicy, VmTierResult } from '../../src/data/vmRemediation';
 
 /**
  * The pure core of the vulnerability management snapshot (docs/VULNERABILITY_MANAGEMENT.md, section 7): the evaluation of the
@@ -76,6 +78,12 @@ export interface SnapshotInput {
   findings: Pick<VmFinding, 'id' | 'assetId' | 'vulnId' | 'status' | 'severity' | 'slaDueAt' | 'resolvedAt'>[];
   kevVulnIds: readonly string[];
   poamItems: Pick<VmPoamItem, 'id' | 'findingId' | 'status'>[];
+  /** The tenant's remediation policy (#268): which overdue findings are gaps, warnings or accepted. */
+  policy: VmRemediationPolicy;
+  /** Effective (approved, unexpired) risk decisions by finding id. */
+  decisions: Record<string, VmEffectiveDecision>;
+  /** Risk decisions waiting for an approver. */
+  pendingDecisionCount: number;
 }
 
 export interface SnapshotAssetRef {
@@ -109,7 +117,7 @@ export interface SnapshotSourceItem {
 }
 
 export interface SnapshotReport {
-  version: 1;
+  version: 2;
   snapshotId: string;
   tenantId: string;
   generatedAt: string;
@@ -138,14 +146,33 @@ export interface SnapshotReport {
     falsePositive: number;
     openOnDecommissioned: number;
   };
+  /** overdueWithoutPoam counts remediation gaps only (warnings and accepted findings need no item). */
   poam: { overdueWithPoam: number; overdueWithoutPoam: number; openItems: number };
+  remediation: {
+    policy: VmRemediationPolicy;
+    kevRule: string;
+    gaps: { total: number; critical: number; high: number; kev: number };
+    warnings: { total: number; bySeverity: Record<VmSeverity, number> };
+    accepted: { riskAccepted: number; falsePositive: number; expiringWithin30Days: number };
+    pendingDecisions: number;
+  };
   assets: { staleThresholdMinutes: number; neverReported: SnapshotAssetRef[]; stale: SnapshotAssetRef[] };
   criteria: {
     met: boolean;
     sourcesWithinInterval: { met: boolean; reason: string };
     coverage: { met: boolean; reason: string };
-    noOverdueCriticalOrKev: { met: boolean; reason: string };
+    noRemediationGap: { met: boolean; reason: string };
   };
+  /** What the evidence suggests for a control's status. Only a suggestion: nothing is ever written to a control status. */
+  suggestions: SnapshotSuggestion[];
+}
+
+export type SnapshotSuggestionValue = 'MET' | 'NOT_MET' | 'REVIEW';
+
+export interface SnapshotSuggestion {
+  controlId: string;
+  suggestion: SnapshotSuggestionValue;
+  reason: string;
 }
 
 export function formatDuration(minutes: number): string {
@@ -320,10 +347,31 @@ export function computeSnapshot(input: SnapshotInput): SnapshotReport {
     openOnDecommissioned: 0,
   };
   const overdueFindingIds = new Set<string>();
+  const gapFindingIds = new Set<string>();
+  const tierResults: VmTierResult[] = [];
+  const tierSeverities: VmSeverity[] = [];
+  let expiringWithin30Days = 0;
   for (const fi of input.findings) {
     if (decommissionedIds.has(fi.assetId)) {
       if (fi.status === 'OPEN') f.openOnDecommissioned += 1;
       continue;
+    }
+    // Remediation tier under the tenant policy (a legacy decision status or an effective decision makes it ACCEPTED).
+    const decision = input.decisions[fi.id] ?? null;
+    const tier = computeRemediationTier(
+      { status: fi.status, severity: fi.severity, slaDueAt: fi.slaDueAt, kev: kev.has(fi.vulnId) },
+      input.policy,
+      decision,
+      nowMs,
+    );
+    tierResults.push(tier);
+    tierSeverities.push(fi.severity);
+    if (tier.tier === 'GAP') gapFindingIds.add(fi.id);
+    if (tier.tier === 'ACCEPTED') {
+      const kind = tier.decision?.kind ?? fi.status;
+      if (kind === 'RISK_ACCEPTED') f.riskAccepted += 1;
+      else if (kind === 'FALSE_POSITIVE') f.falsePositive += 1;
+      if (tier.decision !== null && Date.parse(tier.decision.expiresAt) - nowMs <= 30 * 86_400_000) expiringWithin30Days += 1;
     }
     if (fi.status === 'OPEN') {
       f.openTotal += 1;
@@ -340,10 +388,6 @@ export function computeSnapshot(input: SnapshotInput): SnapshotReport {
         f.closedInWindow += 1;
         if (fi.slaDueAt === null || Date.parse(fi.resolvedAt) <= Date.parse(fi.slaDueAt)) f.closedInWindowWithinSla += 1;
       }
-    } else if (fi.status === 'RISK_ACCEPTED') {
-      f.riskAccepted += 1;
-    } else if (fi.status === 'FALSE_POSITIVE') {
-      f.falsePositive += 1;
     }
   }
   const openWithinSla = f.openTotal - f.overdueOpen;
@@ -359,11 +403,32 @@ export function computeSnapshot(input: SnapshotInput): SnapshotReport {
   }
   let overdueWithPoam = 0;
   for (const id of overdueFindingIds) if (linked.has(id)) overdueWithPoam += 1;
+  let gapsWithoutPoam = 0;
+  for (const id of gapFindingIds) if (!linked.has(id)) gapsWithoutPoam += 1;
 
-  const overdueMet = f.overdueCriticalOrKev === 0;
+  const tally = tallyTiers(tierResults, tierSeverities);
+  const gapMet = tally.gap === 0;
+  const gapReason = gapMet
+    ? 'No vulnerability is past its remediation deadline at a gap severity (Critical, High or known exploited).'
+    : `${tally.gap} remediation gap(s): Critical ${tally.gapCritical}, High ${tally.gapHigh}, known exploited ${tally.gapKev}.`;
+  const baseMet = sourcesMet && coverageMet;
+  const suggest = (controlId: string, suggestion: SnapshotSuggestionValue, reason: string): SnapshotSuggestion => ({ controlId, suggestion, reason });
+  const gapSuggestion = (controlId: string): SnapshotSuggestion =>
+    tally.gap > 0
+      ? suggest(controlId, 'NOT_MET', `${tally.gap} remediation gap(s).`)
+      : !baseMet
+        ? suggest(controlId, 'REVIEW', 'No remediation gap, but sources or asset coverage do not meet their criteria.')
+        : suggest(controlId, 'MET', 'No remediation gap; sources and asset coverage meet their criteria.');
+  const suggestions: SnapshotSuggestion[] = [
+    baseMet
+      ? suggest('RA.L2-3.11.2', 'MET', 'Sources reported within their interval and asset coverage meets the threshold.')
+      : suggest('RA.L2-3.11.2', 'NOT_MET', 'Sources or asset coverage do not meet their criteria.'),
+    gapSuggestion('RA.L2-3.11.3'),
+    gapSuggestion('SI.L1-3.14.1'),
+  ];
 
   return {
-    version: 1,
+    version: 2,
     snapshotId: input.snapshotId,
     tenantId: input.tenantId,
     generatedAt,
@@ -391,19 +456,23 @@ export function computeSnapshot(input: SnapshotInput): SnapshotReport {
       falsePositive: f.falsePositive,
       openOnDecommissioned: f.openOnDecommissioned,
     },
-    poam: { overdueWithPoam, overdueWithoutPoam: overdueFindingIds.size - overdueWithPoam, openItems },
+    poam: { overdueWithPoam, overdueWithoutPoam: gapsWithoutPoam, openItems },
+    remediation: {
+      policy: { slaDays: { ...input.policy.slaDays }, warnOnly: [...input.policy.warnOnly], graceDays: input.policy.graceDays },
+      kevRule: VM_KEV_RULE_TEXT,
+      gaps: { total: tally.gap, critical: tally.gapCritical, high: tally.gapHigh, kev: tally.gapKev },
+      warnings: { total: tally.warning, bySeverity: tally.warningBySeverity },
+      accepted: { riskAccepted: f.riskAccepted, falsePositive: f.falsePositive, expiringWithin30Days },
+      pendingDecisions: input.pendingDecisionCount,
+    },
     assets: { staleThresholdMinutes, neverReported, stale: staleAssets },
     criteria: {
-      met: sourcesMet && coverageMet && overdueMet,
+      met: sourcesMet && coverageMet && gapMet,
       sourcesWithinInterval: { met: sourcesMet, reason: sourcesReason },
       coverage: { met: coverageMet, reason: coverageReason },
-      noOverdueCriticalOrKev: {
-        met: overdueMet,
-        reason: overdueMet
-          ? 'No OPEN CRITICAL or KEV finding is past its SLA deadline.'
-          : `${f.overdueCriticalOrKev} OPEN CRITICAL or KEV finding(s) past their SLA deadline.`,
-      },
+      noRemediationGap: { met: gapMet, reason: gapReason },
     },
+    suggestions,
   };
 }
 
@@ -440,7 +509,29 @@ export function renderSnapshotMarkdown(report: SnapshotReport): string {
   L.push(`Overall: ${c.met ? 'MET' : 'NOT MET'}`, '');
   L.push(`- Sources within expected interval: ${c.sourcesWithinInterval.met ? 'met' : 'not met'}. ${mdText(c.sourcesWithinInterval.reason)}`);
   L.push(`- Asset coverage: ${c.coverage.met ? 'met' : 'not met'}. ${mdText(c.coverage.reason)}`);
-  L.push(`- No overdue CRITICAL or KEV finding: ${c.noOverdueCriticalOrKev.met ? 'met' : 'not met'}. ${mdText(c.noOverdueCriticalOrKev.reason)}`, '');
+  L.push(`- No remediation gap: ${c.noRemediationGap.met ? 'met' : 'not met'}. ${mdText(c.noRemediationGap.reason)}`, '');
+  if (report.suggestions.length > 0) {
+    L.push('Suggested control status (a suggestion only; no control status is changed automatically):', '');
+    for (const s of report.suggestions) L.push(`- ${mdText(s.controlId)}: ${s.suggestion}. ${mdText(s.reason)}`);
+    L.push('');
+  }
+
+  const rem = report.remediation;
+  const sevName = (s: string): string => s.charAt(0) + s.slice(1).toLowerCase();
+  L.push('## Remediation policy', '');
+  L.push(`- Remediation deadlines (days after first sight): ${(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const).map((s) => `${sevName(s)} ${rem.policy.slaDays[s]}`).join(', ')}`);
+  L.push(`- Warn-only severities (overdue is a warning, not a gap): ${rem.policy.warnOnly.length ? rem.policy.warnOnly.map(sevName).join(', ') : '(none)'}`);
+  L.push(`- Grace period: ${rem.policy.graceDays} day(s)`);
+  L.push(`- Known exploited: ${mdText(rem.kevRule)}`, '');
+  L.push('## Remediation gaps', '');
+  L.push(`- Gaps: ${rem.gaps.total} (Critical ${rem.gaps.critical}, High ${rem.gaps.high}, known exploited ${rem.gaps.kev})`, '');
+  L.push('## Warnings (not gaps)', '');
+  L.push(`- Warnings: ${rem.warnings.total} (${VM_SEVERITIES.map((s) => `${sevName(s)} ${rem.warnings.bySeverity[s]}`).join(', ')})`, '');
+  L.push('## Risk decisions', '');
+  L.push(`- Risk accepted: ${rem.accepted.riskAccepted}`);
+  L.push(`- False positive: ${rem.accepted.falsePositive}`);
+  L.push(`- Expiring within 30 days: ${rem.accepted.expiringWithin30Days}`);
+  L.push(`- Waiting for approval: ${rem.pendingDecisions}`, '');
 
   L.push('## Sources', '');
   if (report.sources.items.length === 0) {
@@ -508,7 +599,8 @@ function blockText(label: string): string {
   return label.replace(/[<>]/g, '_').replace(/\|/g, '/');
 }
 
-export function renderNotesBlock(report: SnapshotReport, evidenceIds: readonly string[]): string {
+export function renderNotesBlock(report: SnapshotReport, evidenceIds: readonly string[], controlId?: string): string {
+  const suggested = controlId === undefined ? undefined : report.suggestions.find((s) => s.controlId === controlId);
   const problems = report.sources.items
     .map((i) => ({ label: i.label, text: sourceProblem(i) }))
     .filter((p): p is { label: string; text: string } => p.text !== null)
@@ -518,7 +610,7 @@ export function renderNotesBlock(report: SnapshotReport, evidenceIds: readonly s
     `[VM snapshot ${report.generatedAt.slice(0, 10)}] criteria MET: ${yesNo(report.criteria.met)}`,
     `sources within interval: ${report.sources.withinInterval}/${report.sources.enabled}${problems.length ? ` (${problems.join(', ')})` : ''}`,
     `coverage ${cov.ratio === null ? 'n/a' : pct(cov.covered, cov.inScopeTotal)} (${cov.covered}/${cov.inScopeTotal}) of ${String(report.thresholds.coverage)}`,
-    `overdue CRITICAL/KEV: ${report.findings.overdueCriticalOrKev}`,
+    `remediation gaps: ${report.remediation.gaps.total} | warnings: ${report.remediation.warnings.total}${suggested ? ` | suggested: ${suggested.suggestion}` : ''}`,
     `evidence: ${evidenceIds.length ? evidenceIds.join(', ') : 'none'}`,
   ].join(' | ');
   return `${VM_NOTES_BEGIN}\n${line}\n${VM_NOTES_END}`;

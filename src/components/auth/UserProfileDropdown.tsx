@@ -9,6 +9,7 @@ import {
   LogOut,
   Users,
   Layers,
+  ShieldAlert,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTenant } from '../../context/TenantContext';
@@ -17,6 +18,7 @@ import { ROLE_SHORT_LABELS, SIMULATED_ROLES } from '../../data/roleView';
 import { RoleBadge } from '../common/RoleBadge';
 import { AccountSettingsModal } from './AccountSettingsModal';
 import { ApiTokensModal } from './ApiTokensModal';
+import { VmRemediationModal } from '../telemetry/VmRemediationModal';
 
 export const UserProfileDropdown: React.FC = () => {
   const { currentUser, logout, lockSession } = useAuth();
@@ -33,6 +35,7 @@ export const UserProfileDropdown: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isTokensModalOpen, setIsTokensModalOpen] = useState(false);
+  const [isRemediationOpen, setIsRemediationOpen] = useState(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -171,6 +174,20 @@ export const UserProfileDropdown: React.FC = () => {
                 <Key className="w-4 h-4 text-slate-400" aria-hidden="true" />
                 <span>API Keys & Service Tokens</span>
               </button>
+
+              {/* Vulnerability remediation policy and risk decisions (server-backed organizations only) */}
+              {currentTenant.serverBacked && (
+                <button
+                  onClick={() => {
+                    setIsOpen(false);
+                    setIsRemediationOpen(true);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 flex items-center gap-2.5 transition-colors"
+                >
+                  <ShieldAlert className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                  <span>Vulnerability Remediation</span>
+                </button>
+              )}
             </div>
 
 
@@ -233,6 +250,9 @@ export const UserProfileDropdown: React.FC = () => {
         isOpen={isTokensModalOpen}
         onClose={() => setIsTokensModalOpen(false)}
       />
+
+      {/* Vulnerability Remediation window */}
+      {isRemediationOpen && <VmRemediationModal key={currentTenant.id} onClose={() => setIsRemediationOpen(false)} />}
     </>
   );
 };
