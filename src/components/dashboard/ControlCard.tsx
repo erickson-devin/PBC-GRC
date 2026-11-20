@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Terminal,
   ListChecks,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { ControlStatus, DomainInfo } from '../../types/cmmc';
 import { FrameworkControlDefinition, FrameworkDomainInfo } from '../../types/framework';
@@ -23,11 +24,19 @@ import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 import { hasSspStatement } from '../../data/cmmcGuide/sspStatementView';
 import { statusDisplayLabel } from '../../data/statusLabels';
 import { cardSuggestionText, type CardSuggestionValue } from '../../data/telemetry/configResultsView';
+import { chipText, type Rev2Suggested } from '../../data/frameworkCopy/copyView';
 
 /** A configuration-scan suggestion is dashed, as on the Configuration Results screen: never mistaken for a recorded status. */
 export const CONFIG_SUGGESTION_CLASS: Record<CardSuggestionValue, string> = {
   NOT_MET: 'border-dashed border-rose-500/50 bg-rose-950/30 text-rose-300',
   MET: 'border-dashed border-emerald-500/50 bg-emerald-950/30 text-emerald-300',
+};
+
+/** The Rev. 2 suggestion on a Rev. 3 control (#255) is dashed too: a suggestion, never a recorded status. */
+export const REV2_SUGGESTION_CLASS: Record<Rev2Suggested, string> = {
+  MET: 'border-dashed border-emerald-500/50 bg-emerald-950/30 text-emerald-300',
+  IN_PROGRESS: 'border-dashed border-amber-500/50 bg-amber-950/30 text-amber-300',
+  NOT_MET: 'border-dashed border-rose-500/50 bg-rose-950/30 text-rose-300',
 };
 
 interface ControlCardProps {
@@ -38,6 +47,8 @@ interface ControlCardProps {
   metMismatch?: { open: number; total: number } | null;
   /** What the latest configuration scans suggest when it differs from the recorded status (#205). Text only: the card never applies it. */
   configSuggestion?: CardSuggestionValue | null;
+  /** What the Rev. 2 program suggests (#255), when it differs from the recorded status. Text only. */
+  rev2Suggestion?: Rev2Suggested | null;
 }
 
 export const ControlCard: React.FC<ControlCardProps> = ({
@@ -46,6 +57,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
   onOpenDetailModal,
   metMismatch,
   configSuggestion,
+  rev2Suggestion,
 }) => {
   const {
     state,
@@ -170,6 +182,12 @@ export const ControlCard: React.FC<ControlCardProps> = ({
               <span data-testid="card-config-suggestion" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${CONFIG_SUGGESTION_CLASS[configSuggestion]}`}>
                 <ListChecks className="w-3 h-3 shrink-0" aria-hidden="true" />
                 <span>{cardSuggestionText(configSuggestion)}</span>
+              </span>
+            )}
+            {rev2Suggestion && (
+              <span data-testid="card-rev2-suggestion" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold border ${REV2_SUGGESTION_CLASS[rev2Suggestion]}`}>
+                <ArrowLeftRight className="w-3 h-3 shrink-0" aria-hidden="true" />
+                <span>{chipText(rev2Suggestion)}</span>
               </span>
             )}
 

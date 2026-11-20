@@ -67,6 +67,7 @@ export function getDefaultDocumentTypeForFramework(framework: ComplianceFramewor
     case 'CMMC_L1':
     case 'CMMC_L2':
     case 'NIST_800_53_REV5':
+    case 'NIST_800_171_R3':
       return 'NIST_SP_800_18_SSP';
     case 'SOC_2_TYPE_II':
       return 'SOC_2_SYSTEM_DESCRIPTION';

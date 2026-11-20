@@ -90,6 +90,11 @@ export default defineConfig({
             return id.includes('objectives.generated') ? 'nist-80053a-objectives' : 'nist-80053-catalog';
           }
 
+          // ── NIST SP 800-171 Rev. 3 generated data: its own file, cached apart from the app and from the other catalogs ──
+          if (id.includes('/src/data/frameworks/nist171r3/') && id.endsWith('.json')) {
+            return 'nist-171r3-catalog';
+          }
+
           // ── Framework & Control Catalog definitions ─────────────────────
           if (
             id.includes('/src/data/cmmcLevel1Controls') ||

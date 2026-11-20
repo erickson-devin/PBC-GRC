@@ -91,6 +91,9 @@ function normalizeFrameworkParams(query: Request['query']): {
     framework = 'SOC_2_TYPE_II';
   } else if (rawFramework === 'HIPAA_SECURITY' || rawFramework === 'HIPAA') {
     framework = 'HIPAA_SECURITY';
+  } else if (rawFramework === 'NIST_800_171_R3' || rawFramework === 'NIST_SP_800_171_R3') {
+    framework = 'NIST_800_171_R3';
+    baseline = 'ALL_CONTROLS'; // Rev. 3 has no baselines
   } else {
     framework = 'CMMC_L1';
   }

@@ -10,6 +10,7 @@ import controlPoamRouter from './controlPoam';
 import programInventoryRouter from './programInventory';
 import programDocumentsRouter from './programDocuments';
 import assignmentsRouter from './assignments';
+import frameworkCopyRouter from './frameworkCopy';
 import programSummaryRouter from './programSummary';
 import searchRouter, { searchRateLimiter } from './search';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
@@ -145,6 +146,8 @@ router.use('/program-inventory', authMiddleware, programContext, programInventor
 router.use('/program-documents', authMiddleware, programContext, programDocumentsRouter);
 // Who is responsible for which control, objective or SSP section of a program (labels: they grant nothing; teams are /tenants/:tenantId/teams)
 router.use('/assignments', authMiddleware, programContext, assignmentsRouter);
+// Copy from Rev. 2 (#255): appends a CMMC program's content to the active NIST SP 800-171 Rev. 3 program (preview, commit, runs, suggested statuses)
+router.use('/framework-copy', authMiddleware, programContext, frameworkCopyRouter);
 // The server facts of the program journey bar and the dashboard (#251, #252): counts, flags and dates only, readable by every role
 router.use('/program-summary', authMiddleware, programContext, programSummaryRouter);
 // Global search of the open program (#254): a POST so the query stays out of URLs and logs, so it is mounted behind the read-only program context (every role,

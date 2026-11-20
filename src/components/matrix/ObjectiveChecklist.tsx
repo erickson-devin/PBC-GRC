@@ -31,6 +31,7 @@ import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ObjectiveOwner } from '../assignments/AssignControl';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
 import { unsavedObjectiveDrafts } from '../../services/unsavedText';
+import { isR3ControlId } from '../../data/frameworkCopy/copyView';
 
 const OBJECTIVE_STATUS_OPTIONS: { id: ObjectiveStatus; icon: LucideIcon; active: string; short?: string }[] = [
   { id: 'MET', icon: CheckCircle2, active: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
@@ -313,7 +314,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center gap-3">
             <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400">
-              {is80053 ? 'NIST SP 800-53A Objective Rollup' : 'NIST SP 800-171A Objective Rollup'}
+              {isR3ControlId(controlId) ? 'NIST SP 800-171A Rev. 3 Objective Rollup' : is80053 ? 'NIST SP 800-53A Objective Rollup' : 'NIST SP 800-171A Objective Rollup'}
             </span>
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${

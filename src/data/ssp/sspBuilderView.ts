@@ -271,8 +271,8 @@ export function categorizationSuggestionView(a: { framework: string; baseline: P
   if (!s) return null;
   if (a.profile?.confidentialityImpact || a.profile?.integrityImpact || a.profile?.availabilityImpact) return null;
   const triple = `${impactLabel(s.confidentiality)} / ${impactLabel(s.integrity)} / ${impactLabel(s.availability)}`;
-  const text = a.framework === 'CMMC_L2'
-    ? `Suggested for a CMMC Level 2 program, which handles CUI: ${triple}.`
+  const text = a.framework === 'CMMC_L2' || a.framework === 'NIST_800_171_R3'
+    ? `Suggested for a ${a.framework === 'CMMC_L2' ? 'CMMC Level 2' : 'NIST SP 800-171 Rev. 3'} program, which handles CUI: ${triple}.`
     : `Suggested from this program's ${impactLabel(a.baseline)} baseline: ${triple}.`;
   return { text, values: s };
 }
@@ -316,7 +316,7 @@ export interface RoleRowView {
 }
 
 const FIXED_ROLE_KEYS = SSP_ROLE_KEYS.filter((k): k is Exclude<SspRoleKey, 'custom'> => k !== 'custom');
-const CERTIFICATE_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5'];
+const CERTIFICATE_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'NIST_800_171_R3'];
 
 export function roleRowsView(a: {
   rows: SspRoleEntry[];

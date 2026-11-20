@@ -209,7 +209,7 @@ assert(programsBlock.includes('CONSTRAINT unq_programs_tenant_id UNIQUE (tenant_
 assert(programsBlock.includes('id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text') && programsBlock.includes('CONSTRAINT programs_default_not_archived CHECK (NOT (is_default AND archived_at IS NOT NULL))'), 'P1: text ids like every other table, and a default program cannot be archived');
 assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default'), 'P1: at most one default program per tenant');
 assert(TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name))'), 'P1: program names are unique per tenant ignoring case');
-assert(TABLES_SQL.includes("ADD CONSTRAINT programs_framework_check CHECK (framework_id IN ('CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'))"), 'P1: the framework check lists the five registry ids');
+assert(TABLES_SQL.includes("ADD CONSTRAINT programs_framework_check CHECK (framework_id IN ('CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'))"), 'P1: the framework check lists the six registry ids');
 assert(TABLES_SQL.includes("ADD CONSTRAINT programs_baseline_check CHECK (baseline IS NULL OR (framework_id = 'NIST_800_53_REV5' AND baseline IN ('LOW', 'MODERATE', 'HIGH')))"), 'P1: a baseline exists for NIST only and is LOW, MODERATE or HIGH');
 assert(
   ['programs_framework_check', 'programs_baseline_check'].every((c) => TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) >= 0 && TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS ' + c) < TABLES_SQL.indexOf('ADD CONSTRAINT ' + c)),
@@ -309,7 +309,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events', 'program_tools', 'program_tool_controls', 'program_data_inventory', 'program_cui_categories', 'program_cui_category_tools', 'program_vendor_documents', 'program_inventory_events', 'program_governance_documents', 'program_document_controls', 'program_document_attachments', 'program_document_expectations', 'program_assignments']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries, control_poam_events, the seven inventory program tables (program_tools, program_tool_controls, program_data_inventory, program_cui_categories, program_cui_category_tools, program_vendor_documents, program_inventory_events) the four document register program tables (program_governance_documents, program_document_controls, program_document_attachments, program_document_expectations) and program_assignments', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events', 'program_tools', 'program_tool_controls', 'program_data_inventory', 'program_cui_categories', 'program_cui_category_tools', 'program_vendor_documents', 'program_inventory_events', 'program_governance_documents', 'program_document_controls', 'program_document_attachments', 'program_document_expectations', 'program_assignments', 'program_framework_copy_items', 'program_framework_copy_runs']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries, control_poam_events, the seven inventory program tables (program_tools, program_tool_controls, program_data_inventory, program_cui_categories, program_cui_category_tools, program_vendor_documents, program_inventory_events) the four document register program tables (program_governance_documents, program_document_controls, program_document_attachments, program_document_expectations) and program_assignments', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -745,7 +745,7 @@ console.log('\n--- control POA&M entries, milestones and stable item numbers (#3
       `CP-D5: ${t} is a tenant table and a program table (FORCE row security, tenant and program policies), not backfilled`
     );
   }
-  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 14] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 13] === 'control_poam_events', 'CP-D6: both tables were appended after the SSP tables (only the seven inventory program tables, the four document register program tables and program_assignments come after them in RLS_PROGRAM_TABLES)');
+  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 16] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 15] === 'control_poam_events', 'CP-D6: both tables were appended after the SSP tables (only the seven inventory program tables, the four document register program tables, program_assignments and the two framework copy tables come after them in RLS_PROGRAM_TABLES)');
 
   for (const col of ["milestones JSONB NOT NULL DEFAULT '[]'::jsonb", 'item_number INTEGER']) {
     assert(TABLES_SQL.includes('ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ' + col + ';'), 'VM-D1: vm_poam_items gets ' + col + ' idempotently (nullable or defaulted: an older image still starts)');
@@ -890,7 +890,7 @@ console.log('\n--- Tools and Services register (inventory_*, program_tools and f
     );
   }
   assert(
-    JSON.stringify(RLS_PROGRAM_TABLES.slice(-12, -5)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-22, -12).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
+    JSON.stringify(RLS_PROGRAM_TABLES.slice(-14, -7)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-24, -14).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
     'INV-D7: the register tables sit after the SSP tables in both row-security lists, in creation order (the four remediation tables, the five document register tables and the three teams and assignments tables come after them in RLS_TENANT_TABLES, the four document register program tables and program_assignments in RLS_PROGRAM_TABLES)'
   );
 }
@@ -945,7 +945,7 @@ console.log('\n--- Document register and expected documents checklist (governanc
     );
   }
   assert(
-    JSON.stringify(RLS_PROGRAM_TABLES.slice(-5, -1)) === JSON.stringify(DOC_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-8, -3).map((r) => r.table)) === JSON.stringify(DOC_TENANT_TABLES),
+    JSON.stringify(RLS_PROGRAM_TABLES.slice(-7, -3)) === JSON.stringify(DOC_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-10, -5).map((r) => r.table)) === JSON.stringify(DOC_TENANT_TABLES),
     'DOC-D7: the document register tables sit in both row-security lists in creation order, followed only by the teams and assignments tables (tenant_teams, tenant_team_members, program_assignments)'
   );
 }
@@ -1000,9 +1000,52 @@ console.log('\n--- SPRS goal, teams and assignments (programs.sprs_goal, tenant_
     );
   }
   assert(
-    JSON.stringify(RLS_TENANT_TABLES.slice(-3).map((r) => r.table)) === JSON.stringify(TEAM_TENANT_TABLES) && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 1] === 'program_assignments',
-    'TEAM-D7: the three tables are appended at the end of RLS_TENANT_TABLES and program_assignments at the end of RLS_PROGRAM_TABLES, in creation order'
+    JSON.stringify(RLS_TENANT_TABLES.slice(-5, -2).map((r) => r.table)) === JSON.stringify(TEAM_TENANT_TABLES) && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 3] === 'program_assignments',
+    'TEAM-D7: the three tables sit in creation order in RLS_TENANT_TABLES and program_assignments in RLS_PROGRAM_TABLES, followed only by the two framework copy tables of #255'
   );
+}
+
+console.log('\n--- Copy from Rev. 2 (program_framework_copy_items, program_framework_copy_runs; #255) ---');
+{
+  const COPY_TABLES = ['program_framework_copy_items', 'program_framework_copy_runs'];
+  const blockOf = (table: string): string => {
+    const at = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS ' + table + ' (');
+    return at < 0 ? '' : TABLES_SQL.slice(at, TABLES_SQL.indexOf('\n  );', at));
+  };
+  const items = blockOf('program_framework_copy_items');
+  const runs = blockOf('program_framework_copy_runs');
+  assert(items !== '' && runs !== '' && TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_framework_copy_items (') > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_assignments ('), 'COPY-D1: both tables are created after the teams and assignments tables');
+  assert(
+    items.includes('CONSTRAINT pk_program_framework_copy_items PRIMARY KEY (tenant_id, program_id, source_program_id, item_kind, target_control_id, source_key)') &&
+      items.includes('FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') && !/REFERENCES programs[^\n]*\n[^\n]*source_program/.test(items) &&
+      runs.includes('FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') && !runs.includes('REFERENCES tenant_users'),
+    'COPY-D2: the marker primary key makes a pair copy once; both tables cascade with the target program and have no foreign key to the source program (the record outlives it)'
+  );
+  assert(
+    items.includes("item_kind ~ '^[A-Z][A-Z_]{0,15}$'") && items.includes("source_key ~ '^[][A-Za-z0-9._-]{1,128}$'") && items.includes("source_sha256 ~ '^[0-9a-f]{64}$'") && !/\bIN \(/.test(items) &&
+      runs.includes("mapping_sha256 ~ '^[0-9a-f]{64}$'") && runs.includes("jsonb_typeof(summary) = 'object'") && runs.includes('octet_length(summary::text) <= 65536') && !/\bIN \(/.test(runs),
+    'COPY-D3: kinds and keys are pattern CHECKs (no closed IN list a later kind would have to widen), and the run summary is a bounded JSON object'
+  );
+  const dropped = [...TABLES_SQL.matchAll(/DROP CONSTRAINT IF EXISTS (\w+)/g)].map((m) => m[1]);
+  assert(
+    dropped.every((c) => !COPY_TABLES.some((t) => c.startsWith(t))) && !new RegExp('ALTER TABLE (' + COPY_TABLES.join('|') + ') (DROP|ADD) CONSTRAINT').test(TABLES_SQL),
+    'COPY-D4: no DROP or ADD CONSTRAINT touches a framework copy table (every CHECK is inline: no one-way upgrade)'
+  );
+  for (const t of COPY_TABLES) {
+    assert(
+      RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id') && (RLS_PROGRAM_TABLES as readonly string[]).includes(t) &&
+        !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t) && blockOf(t).includes('program_id VARCHAR(64) NOT NULL') &&
+        buildRlsSql().includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && buildProgramRlsSql().includes(rlsProgramPolicyName(t)),
+      `COPY-D5: ${t} is a tenant and a program table, FORCE row security, program_id NOT NULL from creation, not backfilled`
+    );
+  }
+  assert(
+    JSON.stringify(RLS_TENANT_TABLES.slice(-2).map((r) => r.table)) === JSON.stringify(COPY_TABLES) && JSON.stringify(RLS_PROGRAM_TABLES.slice(-2)) === JSON.stringify(COPY_TABLES),
+    'COPY-D6: the two tables are appended at the end of both row-security lists, in creation order'
+  );
+  const programKind = TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check');
+  const kindLine = TABLES_SQL.slice(programKind, TABLES_SQL.indexOf('\n', programKind));
+  assert(!/copy/i.test(kindLine) && !TABLES_SQL.slice(TABLES_SQL.indexOf('ADD CONSTRAINT control_assessment_events_source_check')).split('\n')[0].includes('copy'), 'COPY-D7: the program_events kind CHECK and the control history source CHECK are not widened (the copy writes source clone)');
 }
 
 const initAt = dbSrc.indexOf('export async function initDb(');

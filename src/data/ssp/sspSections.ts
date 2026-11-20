@@ -91,14 +91,14 @@ export function systemOwnerMirror(profile: SspProfile | null, current?: string):
   return holder === (current ?? '') ? null : holder;
 }
 
-/** Only a CMMC Level 2 program holds CUI (Level 1 is FCI only). */
+/** Only a CMMC Level 2 or NIST SP 800-171 Rev. 3 program holds CUI (Level 1 is FCI only). */
 export function isCuiProgram(framework: string | null | undefined): boolean {
-  return framework === 'CMMC_L2';
+  return framework === 'CMMC_L2' || framework === 'NIST_800_171_R3';
 }
 
-/** The categorization to suggest (never to store without a click): Moderate across the board for CMMC L2, the baseline for NIST SP 800-53, none otherwise. */
+/** The categorization to suggest (never to store without a click): Moderate across the board for CMMC L2 and NIST SP 800-171 Rev. 3, the baseline for NIST SP 800-53, none otherwise. */
 export function suggestedCategorization(p: { framework: string; baseline?: ProgramBaseline | null }): { confidentiality: ImpactLevel; integrity: ImpactLevel; availability: ImpactLevel } | null {
-  if (p.framework === 'CMMC_L2') return { confidentiality: 'MODERATE', integrity: 'MODERATE', availability: 'MODERATE' };
+  if (p.framework === 'CMMC_L2' || p.framework === 'NIST_800_171_R3') return { confidentiality: 'MODERATE', integrity: 'MODERATE', availability: 'MODERATE' };
   if ((p.framework === 'NIST_800_53_REV5' || p.framework === 'nist-800-53-r5') && p.baseline) {
     return { confidentiality: p.baseline, integrity: p.baseline, availability: p.baseline };
   }

@@ -111,7 +111,7 @@ export const SspDataInventorySection: React.FC<SspDataInventorySectionProps> = (
   const requirement = cuiRequirementLine(framework, record.categories.length);
   const hint = fciHint(framework, record.handlesFci);
   const body = status === 'ready' || status === 'stale';
-  const noToolsTone = framework === 'CMMC_L2' ? 'text-rose-300' : 'text-slate-400';
+  const noToolsTone = framework === 'CMMC_L2' || framework === 'NIST_800_171_R3' ? 'text-rose-300' : 'text-slate-400';
 
   useEffect(() => {
     if (confirmRemove) confirmRef.current?.focus();

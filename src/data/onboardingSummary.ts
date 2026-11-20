@@ -38,6 +38,8 @@ export function onboardingAssessedUnder(framework: ComplianceFramework): string 
       return 'FAR 52.204-21 / CMMC Level 1';
     case 'CMMC_L2':
       return 'DFARS 252.204-7012 / CMMC Level 2 (NIST SP 800-171 Rev 2)';
+    case 'NIST_800_171_R3':
+      return 'NIST SP 800-171 Rev. 3';
     case 'NIST_800_53_REV5':
     case 'nist-800-53-r5':
       return 'NIST SP 800-53 Rev 5';

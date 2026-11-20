@@ -256,7 +256,7 @@ export function evidenceChoices(ev: EvidenceLike[]): { id: string; name: string;
 
 /** The control a vendor document is filed under by default (always editable): the external-service-provider control of the framework, when the catalog has it. */
 export function suggestedVendorDocControl(framework: string, catalogIds: ReadonlySet<string>): string | null {
-  const id = framework === 'CMMC_L2' ? 'CA.L2-3.12.4' : framework === 'NIST_800_53_REV5' ? 'SA-9' : null;
+  const id = framework === 'CMMC_L2' ? 'CA.L2-3.12.4' : framework === 'NIST_800_53_REV5' ? 'SA-9' : framework === 'NIST_800_171_R3' ? '03.16.03' : null;
   return id !== null && catalogIds.has(id) ? id : null;
 }
 

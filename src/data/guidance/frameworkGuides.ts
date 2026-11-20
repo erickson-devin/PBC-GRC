@@ -1,7 +1,7 @@
 // Practitioner guides for the Framework Guidance page, one per framework of the active program. Pure data.
 // Counts (controls, domains, SPRS points) are never written into the text: they are placeholders such as {controls} that the
 // view fills from the program's own controls (see fillGuideText). Body text may use **bold**.
-import { getFrameworkGuidanceText } from '../frameworks/frameworkHelpers';
+import { frameworkGuidance } from '../frameworkGuidance';
 import { FRAMEWORK_REGISTRY, normalizeFrameworkId } from '../frameworks/frameworkRegistry';
 import type { ComplianceFramework } from '../../types/framework';
 
@@ -381,7 +381,7 @@ function nistGuide(baseline?: string | null): FrameworkGuide {
 }
 
 function genericGuide(framework: string): FrameworkGuide {
-  const info = getFrameworkGuidanceText(normalizeFrameworkId(framework) as ComplianceFramework);
+  const info = frameworkGuidance(normalizeFrameworkId(framework) as ComplianceFramework);
   const label = FRAMEWORK_REGISTRY[framework]?.shortName ?? framework;
   return {
     key: 'GENERIC',
@@ -410,6 +410,9 @@ export function guideFor(framework: string, baseline?: string | null): Framework
       return CMMC_L2_GUIDE;
     case 'NIST_800_53_REV5':
       return nistGuide(baseline);
+    case 'NIST_800_171_R3':
+      // The generic guide on purpose: the CMMC guide's wording (practices, SPRS, C3PAO) does not apply to Rev. 3.
+      return genericGuide(framework);
     default:
       return genericGuide(framework);
   }

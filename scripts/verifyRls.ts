@@ -21,6 +21,7 @@
  *   11. Tools and services register (#239, #243, #248, #249): 8t inventory_vendors, inventory_tools and inventory_events (tenant isolation, the composite vendor key that nulls on delete, the unique name / seed / rank indexes, the CHECKs, the append-only history); 8u program_tools and program_tool_controls (program isolation, composite foreign keys, cascades from a tool and from a program); 8v the data inventory (program_data_inventory, program_cui_categories, program_cui_category_tools: isolation, the category and role CHECKs, the cascade from the answer); 8w program_vendor_documents (isolation, doc_kind CHECK, vendor cascade) and program_inventory_events (isolation, no foreign key, append-only). Rows are prefixed rls_verify.
  *   12. Document register (#240, #250): 8r governance_documents (tenant isolation, the unique live-title and seed-key indexes with a RETIRED title reusable, the kind / approval / seed CHECKs); 8s program_governance_documents, program_document_controls, program_document_attachments and program_document_expectations (program isolation, composite foreign keys to the program and the document, the one-primary partial unique index, the id CHECKs, cascades from a document and from a program). Rows are prefixed rls_verify.
  *   13. SPRS goal, teams and assignments (#252, #253): 8aa programs.sprs_goal (the inline range and framework CHECK, NULL accepted); 8ab tenant_teams and tenant_team_members (tenant isolation, the unique name ignoring case, the CHECKs, the composite team key, the cascade from a team); 8ac program_assignments (program isolation, the shape CHECK, one assignee per target and duty, the composite program key, the cascade from a program). Rows are prefixed rls_verify.
+ *   14. Copy from Rev. 2 (#255): 8ad programs accepts the Rev. 3 framework id and refuses a baseline for it; 8ae program_framework_copy_items (program isolation, the marker primary key, the pattern CHECK, the composite program key, the cascade from a program); 8af program_framework_copy_runs (program isolation, the CHECK, the composite program key, the cascade from a program). Rows are prefixed rls_verify.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 import { createHash } from 'node:crypto';
@@ -2245,6 +2246,83 @@ async function verifyProgramIsolation() {
       await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, paProgram.id]);
       const paCascade = await queryWithProgram(paScope, 'SELECT COUNT(*)::int AS n FROM program_assignments WHERE program_id = $1', [paProgram.id]);
       check(paCascade.rows[0].n === 0, '8ac. program_assignments: deleting a program removes its assignments through the cascade', JSON.stringify(paCascade.rows[0]));
+      // 8ad. NIST SP 800-171 Rev. 3 (#255): programs_framework_check lists the Rev. 3 id; the framework has no baseline, so programs_baseline_check refuses one
+      const insertR3 = 'INSERT INTO programs (tenant_id, name, framework_id, baseline) VALUES ($1, $2, $3, $4) RETURNING id';
+      const r3Ok = await queryWithTenant(TENANT_X, insertR3, [TENANT_X, 'rls_verify_r3_ok', 'NIST_800_171_R3', null]);
+      check(r3Ok.rows.length === 1, "8ad. programs: a program with framework_id 'NIST_800_171_R3' and no baseline is accepted (programs_framework_check lists the Rev. 3 id)");
+      const r3Baseline = await rejectsTenant(TENANT_X, insertR3, [TENANT_X, 'rls_verify_r3_low', 'NIST_800_171_R3', 'LOW'], { code: '23514', constraint: 'programs_baseline_check' });
+      check(r3Baseline.ok, "8ad. programs: a NIST_800_171_R3 program with baseline 'LOW' is refused (23514, programs_baseline_check)", r3Baseline.detail);
+      await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, r3Ok.rows[0].id]);
+
+      // 8ae. program_framework_copy_items (#255): the 8j pattern (program isolation), the marker primary key, the pattern CHECK and the cascade from a program
+      const insertCi = 'INSERT INTO program_framework_copy_items (tenant_id, program_id, source_program_id, item_kind, target_control_id, source_key, run_id, source_sha256) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING source_key';
+      const ciArgs = (program: string, kind = 'NOTES', sourceKey = 'AC.L1-3.1.1'): (string | null)[] => [TENANT_X, program, 'rls_verify_source', kind, '03.01.01', sourceKey, 'rls_verify_run', null];
+      const ci1 = await queryWithProgram(scopeA, insertCi, ciArgs(programA));
+      const ci2 = await queryWithProgram(scopeA, insertCi, ciArgs(programA, 'OBJECTIVE', 'AC.L2-3.1.1[a]'));
+      check(ci1.rows.length === 1 && ci2.rows.length === 1, "8ae. program_framework_copy_items: under program A a control marker and an objective marker ('AC.L2-3.1.1[a]') are inserted");
+      const ciBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_framework_copy_items WHERE program_id = $1', [programA]);
+      const ciBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_framework_copy_items WHERE tenant_id = $1', [TENANT_X]);
+      const ciBUpdates = await queryWithProgram(scopeB, "UPDATE program_framework_copy_items SET run_id = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+      const ciBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_framework_copy_items WHERE program_id = $1', [programA]);
+      const ciNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_framework_copy_items WHERE tenant_id = $1', [TENANT_X]);
+      check(ciBSeesA.rows.length === 0 && ciBSeesAny.rows.length === 0 && (ciBUpdates.rowCount ?? 0) === 0 && (ciBDeletes.rowCount ?? 0) === 0 && ciNoCtx.rows.length === 0, "8ae. program_framework_copy_items: program B can neither read, update nor delete program A's rows, and a tenant context with no program sees zero rows", 'saw ' + ciBSeesA.rows.length + ' / ' + ciBSeesAny.rows.length + ' / ' + ciNoCtx.rows.length + ', updated ' + ciBUpdates.rowCount + ', deleted ' + ciBDeletes.rowCount);
+      const ciBInserts = await rejectsIn(scopeB, insertCi, ciArgs(programA, 'NOTES', 'AC.L1-3.1.2'), { code: '42501' });
+      let ciNoCtxInsert = 'no error';
+      try {
+        await queryWithTenant(TENANT_X, insertCi, ciArgs(programA, 'NOTES', 'AC.L1-3.1.2'));
+      } catch (err) {
+        ciNoCtxInsert = String((err as { code?: string }).code);
+      }
+      check(ciBInserts.ok && ciNoCtxInsert === '42501', '8ae. program_framework_copy_items: program B, and a context with no program, cannot insert a row into program A (WITH CHECK, 42501)', ciBInserts.detail + ' | ' + ciNoCtxInsert);
+      const ciDuplicate = await rejectsIn(scopeA, insertCi, ciArgs(programA), { code: '23505', constraint: 'pk_program_framework_copy_items' });
+      check(ciDuplicate.ok, '8ae. program_framework_copy_items: a second marker for the same pair is refused (23505, pk_program_framework_copy_items)', ciDuplicate.detail);
+      const ciBadKind = await rejectsIn(scopeA, insertCi, ciArgs(programA, 'notes'), { code: '23514', constraint: 'program_framework_copy_items_check' });
+      const ciBadKey = await rejectsIn(scopeA, insertCi, ciArgs(programA, 'NOTES', 'bad key!'), { code: '23514', constraint: 'program_framework_copy_items_check' });
+      const ciBadSha = await rejectsIn(scopeA, insertCi, [TENANT_X, programA, 'rls_verify_source', 'NOTES', '03.01.01', 'AC.L1-3.1.3', 'rls_verify_run', 'not-a-sha'], { code: '23514', constraint: 'program_framework_copy_items_check' });
+      check(ciBadKind.ok && ciBadKey.ok && ciBadSha.ok, "8ae. program_framework_copy_items: item_kind = 'notes', source_key = 'bad key!' and source_sha256 = 'not-a-sha' are each refused (23514, program_framework_copy_items_check)", [ciBadKind.detail, ciBadKey.detail, ciBadSha.detail].join(' | '));
+      const ciForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertCi, ciArgs(defaultY), { code: '23503', constraint: 'fk_program_framework_copy_items_program' });
+      check(ciForeignProgram.ok, "8ae. program_framework_copy_items: tenant X cannot attach a marker to tenant Y's program (composite foreign key, 23503)", ciForeignProgram.detail);
+      const ciProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_copy_items_cascade', frameworkId: 'CMMC_L2' }, null);
+      const ciScope = { tenantId: TENANT_X, programId: ciProgram.id };
+      await queryWithProgram(ciScope, insertCi, ciArgs(ciProgram.id));
+      await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, ciProgram.id]);
+      const ciCascade = await queryWithProgram(ciScope, 'SELECT COUNT(*)::int AS n FROM program_framework_copy_items WHERE program_id = $1', [ciProgram.id]);
+      check(ciCascade.rows[0].n === 0, '8ae. program_framework_copy_items: deleting a program removes its markers through the cascade', JSON.stringify(ciCascade.rows[0]));
+
+      // 8af. program_framework_copy_runs (#255): the 8j pattern, the CHECK and the cascade from a program
+      const insertCr = 'INSERT INTO program_framework_copy_runs (tenant_id, program_id, source_program_id, source_framework, mapping_sha256, actor, summary) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb) RETURNING id';
+      const crSha = 'a'.repeat(64);
+      const crArgs = (program: string, framework = 'CMMC_L2', sha = crSha, summary = '{}'): string[] => [TENANT_X, program, 'rls_verify_source', framework, sha, 'rls_verify_actor', summary];
+      const cr1 = await queryWithProgram(scopeA, insertCr, crArgs(programA));
+      check(cr1.rows.length === 1, '8af. program_framework_copy_runs: under program A a run row is inserted (the id defaults to a uuid)');
+      const crBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_framework_copy_runs WHERE program_id = $1', [programA]);
+      const crBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_framework_copy_runs WHERE tenant_id = $1', [TENANT_X]);
+      const crBUpdates = await queryWithProgram(scopeB, "UPDATE program_framework_copy_runs SET actor = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+      const crBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_framework_copy_runs WHERE program_id = $1', [programA]);
+      const crNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_framework_copy_runs WHERE tenant_id = $1', [TENANT_X]);
+      check(crBSeesA.rows.length === 0 && crBSeesAny.rows.length === 0 && (crBUpdates.rowCount ?? 0) === 0 && (crBDeletes.rowCount ?? 0) === 0 && crNoCtx.rows.length === 0, "8af. program_framework_copy_runs: program B can neither read, update nor delete program A's rows, and a tenant context with no program sees zero rows", 'saw ' + crBSeesA.rows.length + ' / ' + crBSeesAny.rows.length + ' / ' + crNoCtx.rows.length + ', updated ' + crBUpdates.rowCount + ', deleted ' + crBDeletes.rowCount);
+      const crBInserts = await rejectsIn(scopeB, insertCr, crArgs(programA), { code: '42501' });
+      let crNoCtxInsert = 'no error';
+      try {
+        await queryWithTenant(TENANT_X, insertCr, crArgs(programA));
+      } catch (err) {
+        crNoCtxInsert = String((err as { code?: string }).code);
+      }
+      check(crBInserts.ok && crNoCtxInsert === '42501', '8af. program_framework_copy_runs: program B, and a context with no program, cannot insert a row into program A (WITH CHECK, 42501)', crBInserts.detail + ' | ' + crNoCtxInsert);
+      const crBadFramework = await rejectsIn(scopeA, insertCr, crArgs(programA, 'cmmc l2'), { code: '23514', constraint: 'program_framework_copy_runs_check' });
+      const crBadSha = await rejectsIn(scopeA, insertCr, crArgs(programA, 'CMMC_L2', 'not-a-sha'), { code: '23514', constraint: 'program_framework_copy_runs_check' });
+      const crBadSummary = await rejectsIn(scopeA, insertCr, crArgs(programA, 'CMMC_L2', crSha, '[]'), { code: '23514', constraint: 'program_framework_copy_runs_check' });
+      check(crBadFramework.ok && crBadSha.ok && crBadSummary.ok, "8af. program_framework_copy_runs: source_framework = 'cmmc l2', mapping_sha256 = 'not-a-sha' and a summary that is a JSON array are each refused (23514, program_framework_copy_runs_check)", [crBadFramework.detail, crBadSha.detail, crBadSummary.detail].join(' | '));
+      const crForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertCr, crArgs(defaultY), { code: '23503', constraint: 'fk_program_framework_copy_runs_program' });
+      check(crForeignProgram.ok, "8af. program_framework_copy_runs: tenant X cannot attach a run to tenant Y's program (composite foreign key, 23503)", crForeignProgram.detail);
+      const crProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_copy_runs_cascade', frameworkId: 'CMMC_L2' }, null);
+      const crScope = { tenantId: TENANT_X, programId: crProgram.id };
+      await queryWithProgram(crScope, insertCr, crArgs(crProgram.id));
+      await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, crProgram.id]);
+      const crCascade = await queryWithProgram(crScope, 'SELECT COUNT(*)::int AS n FROM program_framework_copy_runs WHERE program_id = $1', [crProgram.id]);
+      check(crCascade.rows[0].n === 0, '8af. program_framework_copy_runs: deleting a program removes its runs through the cascade', JSON.stringify(crCascade.rows[0]));
+      await queryWithProgram(scopeA, "DELETE FROM program_framework_copy_items WHERE source_program_id = 'rls_verify_source'", []);
+      await queryWithProgram(scopeA, "DELETE FROM program_framework_copy_runs WHERE source_program_id = 'rls_verify_source'", []);
     }
 
     await verifyUpgrade();

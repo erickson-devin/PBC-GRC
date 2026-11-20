@@ -5,11 +5,16 @@ import { useTenant } from '../../context/TenantContext';
 import { CMMC_LEVEL_2_CONTROLS } from '../../data/frameworks/cmmcLevel2Controls';
 import { crosswalkFor171, crosswalkFor53, requirementNumberOf } from '../../data/frameworks/nist80053/crosswalk';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
+import { cmmcNumberOf } from '../../data/cmmcGuide/guide';
+import { r2SourcesForR3 } from '../../data/frameworks/nist171r3/r2r3';
+import { isR3ControlId, rev2CounterpartsView, type R2Source } from '../../data/frameworkCopy/copyView';
 import type { ControlStatus } from '../../types/cmmc';
 import type { ComplianceFramework } from '../../types/framework';
 
 interface Props {
   controlId: string;
+  /** Set on a NIST SP 800-171 Rev. 3 program (#255): the Rev. 2 statuses the last Copy from Rev. 2 recorded (null: none known) and the name of that Rev. 2 program. */
+  rev2?: { recorded: ReadonlyMap<string, ControlStatus> | null; programName: string | null };
 }
 
 interface Counterpart {
@@ -20,6 +25,9 @@ interface Counterpart {
   enabledIn: ComplianceFramework[];
   badge?: string;
   detail?: string;
+  /** A status recorded in another program (the Rev. 2 program of a Copy from Rev. 2): shown as a pill with its own line. */
+  external?: { status: ControlStatus; line: string } | null;
+  note?: string;
 }
 
 const CMMC_TITLES = new Map(CMMC_LEVEL_2_CONTROLS.map((c) => [c.id, c.title]));
@@ -42,7 +50,7 @@ const excerpt = (text: string, max = 160) => {
  * written under one framework are visible from the other. Read-only: nothing is copied and nothing is saved here. A counterpart
  * outside the program is a plain reference.
  */
-export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
+export const CrosswalkPanel: React.FC<Props> = ({ controlId, rev2 }) => {
   const { state } = useAssessment();
   const { currentTenant } = useTenant();
   const [open, setOpen] = useState(true);
@@ -55,6 +63,25 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
   }, [currentTenant.enabledFrameworks, currentTenant.primaryFramework]);
 
   const view = useMemo(() => {
+    if (rev2 && isR3ControlId(controlId)) {
+      const sources: R2Source[] = [];
+      for (const s of r2SourcesForR3(controlId)) {
+        const cmmc = CMMC_LEVEL_2_CONTROLS.find((c) => cmmcNumberOf(c.id) === s.r2);
+        if (cmmc) sources.push({ cmmcId: cmmc.id, relation: s.relation, changeType: s.changeType, newOdp: s.newOdp });
+      }
+      const v = rev2CounterpartsView(sources, rev2.recorded, rev2.programName);
+      const items: Counterpart[] = v.items.map((i) => ({
+        id: i.cmmcId,
+        title: CMMC_TITLES.get(i.cmmcId) ?? `SP 800-171 Rev. 2 ${cmmcNumberOf(i.cmmcId) ?? i.cmmcId}`,
+        framework: 'CMMC_L2',
+        enabledIn: [],
+        badge: i.badge,
+        detail: i.detail ?? '',
+        external: i.recordedStatus && i.recordedLine ? { status: i.recordedStatus, line: i.recordedLine } : null,
+        note: i.recordedLine ?? undefined,
+      }));
+      return { heading: v.heading, intro: v.intro, items, empty: v.empty, standalone: true };
+    }
     if (requirementNumberOf(controlId)) {
       const items: Counterpart[] = crosswalkFor171(controlId).map((c) => ({
         id: c.control,
@@ -64,7 +91,7 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
         badge: c.kind === 'ENHANCEMENT' ? 'Enhancement' : 'Base',
         detail: [c.parent ? `Enhancement of ${c.parent}` : '', c.rev4 ? `Rev. 4 ${c.rev4} carried to Rev. 5 through NIST's withdrawn-control link` : ''].filter(Boolean).join('. '),
       }));
-      return { heading: 'SP 800-53 Rev. 5 counterparts', intro: 'Appendix D relates this requirement to these controls (only the part of each that the requirement addresses).', items };
+      return { heading: 'SP 800-53 Rev. 5 counterparts', intro: 'Appendix D relates this requirement to these controls (only the part of each that the requirement addresses).', items, empty: null, standalone: false };
     }
     const { direct, viaParent } = crosswalkFor53(controlId);
     const items: Counterpart[] = [];
@@ -82,8 +109,8 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
     };
     for (const d of direct) for (const id of d.cmmcIds) push(id, d.requirement);
     for (const v of viaParent) for (const id of v.cmmcIds) push(id, v.requirement, v.parent);
-    return { heading: 'SP 800-171 / CMMC counterparts', intro: 'These SP 800-171 requirements map to this control.', items };
-  }, [controlId, enabled]);
+    return { heading: 'SP 800-171 / CMMC counterparts', intro: 'These SP 800-171 requirements map to this control.', items, empty: null, standalone: false };
+  }, [controlId, enabled, rev2]);
 
   const trackedIds = useMemo(() => new Set(view.items.filter((i) => i.enabledIn.length > 0).map((i) => i.id)), [view]);
 
@@ -96,7 +123,7 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
     return counts;
   }, [state.evidenceIndex, trackedIds]);
 
-  if (view.items.length === 0) return null;
+  if (view.items.length === 0 && !view.empty) return null;
 
   return (
     <section aria-labelledby={headingId} className="rounded-xl border border-slate-700/70 bg-slate-950/60">
@@ -117,7 +144,8 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
       </button>
       {open && (
         <div id={listId} className="px-3.5 pb-3 space-y-2">
-          <p className="text-xs text-slate-400">{view.intro} Read-only: notes and evidence are shown here, never copied.</p>
+          <p className="text-xs text-slate-400">{view.standalone ? view.intro : `${view.intro} Read-only: notes and evidence are shown here, never copied.`}</p>
+          {view.empty && <p className="text-xs text-slate-400">{view.empty}</p>}
           <ul className="space-y-2">
             {view.items.map((item) => {
               const tracked = item.enabledIn.length > 0;
@@ -149,8 +177,16 @@ export const CrosswalkPanel: React.FC<Props> = ({ controlId }) => {
                         {notes.trim() ? excerpt(notes) : 'No implementation notes recorded.'}
                       </p>
                     </div>
+                  ) : item.external ? (
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border font-mono font-semibold ${STATUS[item.external.status].cls}`}>
+                        {React.createElement(STATUS[item.external.status].Icon, { className: 'w-3 h-3' })}
+                        {STATUS[item.external.status].label}
+                      </span>
+                      <span className="text-slate-300">{item.external.line}</span>
+                    </div>
                   ) : (
-                    <p className="text-xs text-slate-500">Reference only: not part of this program.</p>
+                    <p className="text-xs text-slate-500">{item.note ?? 'Reference only: not part of this program.'}</p>
                   )}
                 </li>
               );

@@ -58,6 +58,14 @@ export const INVENTORY_NOT_AVAILABLE = 'Not available: the Tools and Services re
 export const NO_TOOLS_RECORDED = 'No tools or services are recorded in this system boundary.';
 export const NO_CUI_CATEGORIES_SELECTED = 'No CUI categories selected.';
 export const CMMC_L2_NEEDS_CUI_CATEGORY = 'A CMMC Level 2 program must select at least one CUI category.';
+export const R3_NEEDS_CUI_CATEGORY = 'A NIST SP 800-171 Rev. 3 program must select at least one CUI category.';
+
+/** The sentence that follows "No CUI categories selected." for a CUI program (CMMC Level 2, NIST SP 800-171 Rev. 3); null for the others. */
+export function cuiCategoryRequirement(framework: string): string | null {
+  if (framework === 'CMMC_L2') return CMMC_L2_NEEDS_CUI_CATEGORY;
+  if (framework === 'NIST_800_171_R3') return R3_NEEDS_CUI_CATEGORY;
+  return null;
+}
 
 const DEPLOYMENT_LABELS: Record<ToolDeployment, string> = { ON_PREM: 'On-premises', CLOUD: 'Cloud', ESP: 'External service provider' };
 const DESIGNATION_LABELS: Record<string, string> = { BASIC: 'Basic', SPECIFIED: 'Specified', BOTH: 'Basic or Specified', NONE: 'No designation listed' };
@@ -170,7 +178,8 @@ export function dataInventorySubsection(s: SspInventorySnapshot, framework: stri
     ...(s.registryAsOf ? [{ label: 'CUI category list (NARA CUI Registry) as of', value: s.registryAsOf }] : []),
   ];
   if (s.categories.length === 0) {
-    return { title, content: framework === 'CMMC_L2' ? `${NO_CUI_CATEGORIES_SELECTED} ${CMMC_L2_NEEDS_CUI_CATEGORY}` : NO_CUI_CATEGORIES_SELECTED, items };
+    const needs = cuiCategoryRequirement(framework);
+    return { title, content: needs ? `${NO_CUI_CATEGORIES_SELECTED} ${needs}` : NO_CUI_CATEGORIES_SELECTED, items };
   }
   return { title, items, table: { headers: DATA_INVENTORY_HEADERS, rows: dataInventoryTableRows(s) } };
 }
@@ -190,7 +199,7 @@ export function sspInventoryMarkdown(s: SspInventorySnapshot, framework: string)
   if (s.registryAsOf) md += `- **CUI category list (NARA CUI Registry) as of:** ${s.registryAsOf}\n`;
   md += `\n`;
   md += s.categories.length === 0
-    ? `${framework === 'CMMC_L2' ? `${NO_CUI_CATEGORIES_SELECTED} ${CMMC_L2_NEEDS_CUI_CATEGORY}` : NO_CUI_CATEGORIES_SELECTED}\n\n`
+    ? `${cuiCategoryRequirement(framework) ? `${NO_CUI_CATEGORIES_SELECTED} ${cuiCategoryRequirement(framework)}` : NO_CUI_CATEGORIES_SELECTED}\n\n`
     : `${mdTable(DATA_INVENTORY_HEADERS, dataInventoryTableRows(s))}\n`;
   return md;
 }
@@ -222,7 +231,7 @@ export function buildSspInventoryCompletenessInput(a: InventorySources): SspInve
 type InventoryClass = 'cmmc2' | 'cmmc1' | 'nist' | 'light';
 
 function inventoryClassOf(framework: string): InventoryClass {
-  if (framework === 'CMMC_L2') return 'cmmc2';
+  if (framework === 'CMMC_L2' || framework === 'NIST_800_171_R3') return 'cmmc2';
   if (framework === 'CMMC_L1') return 'cmmc1';
   if (framework === 'NIST_800_53_REV5' || framework === 'nist-800-53-r5') return 'nist';
   return 'light';

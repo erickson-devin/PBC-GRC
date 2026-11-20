@@ -30,7 +30,7 @@ export interface ServerTenant {
   accessExpiresOn?: string | null;
 }
 
-const FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+const FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'];
 const SAM_STATUSES: readonly SamStatus[] = ['ACTIVE', 'PENDING', 'EXPIRED', 'NOT_REGISTERED'];
 
 const isFramework = (v: unknown): v is ComplianceFramework => FRAMEWORKS.includes(v as ComplianceFramework);

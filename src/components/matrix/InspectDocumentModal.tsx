@@ -43,6 +43,9 @@ import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { StigRule } from '../../types/stig';
 import { ObjectiveChecklist } from './ObjectiveChecklist';
 import { CrosswalkPanel } from './CrosswalkPanel';
+import { Rev2SuggestionStrip } from '../frameworkCopy/Rev2SuggestionStrip';
+import { useRev3Suggestions } from '../../hooks/useFrameworkCopy';
+import { isR3ControlId } from '../../data/frameworkCopy/copyView';
 import { OdpPanel } from './OdpPanel';
 import { SspStatementEditor, hasStatementItems } from './SspStatementEditor';
 import { ImportAnalysisPanel } from './ImportAnalysisPanel';
@@ -109,7 +112,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     objectivesReady,
   } = useAssessment();
 
-  const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram } = useTenant();
+  const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram, refreshLiveData } = useTenant();
   const storageConfig = useStorageConfig(currentTenant);
   // #230: the active program's stack profile, else the organization's
   const stackTenant = React.useMemo(() => withEffectiveStack(currentTenant, activeProgram), [currentTenant, activeProgram]);
@@ -241,8 +244,15 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   // Who owns this control (#253): a label only, for server-backed organizations
   const ownerProps = useAssignControlProps('control', control?.id ?? '', 'owner', control ? cmmcDisplayId(control.id, activeFramework) : '');
 
+  // What the Rev. 2 program suggests for this Rev. 3 control (#255); off for every other framework
+  const rev2 = useRev3Suggestions(activeFramework === 'NIST_800_171_R3' && isR3ControlId(activeId ?? ''));
+
   // Guard return ONLY AFTER all useState, useContext, useMemo, and useEffect hooks have been unconditionally initialized
   if (!activeId || !control) return null;
+
+  const rev2Data = rev2.load.status === 'ready' ? rev2.load.data : null;
+  const rev2Suggestion = rev2Data?.suggestions.find((s) => s.controlId === control.id) ?? null;
+  const rev2SourceName = rev2Data?.sourceProgramId ? programs.find((p) => p.id === rev2Data.sourceProgramId)?.name ?? null : null;
 
   const currentFramework = control.framework || activeFramework;
 
@@ -590,16 +600,25 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           </div>
         </div>
 
+        {rev2Suggestion?.suggested && (
+          <Rev2SuggestionStrip key={control.id} controlId={control.id} suggestion={rev2Suggestion} currentStatus={storedStatus} sourceProgramName={rev2SourceName} statusLoaded={notesEditable}
+            onReload={() => { void refreshLiveData().catch(() => undefined); void rev2.reload(); }} />
+        )}
+
         {/* ── MANDATORY C3PAO ASSESSMENT METHOD BANNER ── */}
         <div className="px-6 py-3 bg-gradient-to-r from-cyan-950/70 via-slate-900 to-indigo-950/60 border-b border-cyan-500/30 flex items-center gap-3 shrink-0">
           <ShieldAlert className="w-5 h-5 text-cyan-400 shrink-0 animate-pulse motion-reduce:animate-none" />
           <div className="min-w-0">
             <p className="text-xs font-bold text-cyan-200 tracking-wide">
-              C3PAO Assessment Method: All objectives must be satisfied for overall control compliance.
+              {control.framework === 'NIST_800_171_R3'
+                ? 'Assessment method: all objectives must be satisfied for overall control compliance.'
+                : 'C3PAO Assessment Method: All objectives must be satisfied for overall control compliance.'}
             </p>
             <p className="text-xs text-slate-400">
               {control.framework === 'NIST_800_53_REV5'
                 ? 'Under NIST SP 800-53A, each determination statement of the control must be evaluated and verified as Met or Not applicable. Any objective that is Not met drops the parent control to Not met.'
+                : control.framework === 'NIST_800_171_R3'
+                ? 'Under NIST SP 800-171A Rev. 3, each determination statement of the requirement must be evaluated and recorded as Met or Not applicable. Any objective that is Not met drops the requirement to Not met.'
                 :'Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as Met or Not applicable. Any objective that is Not met drops the parent control to Not met.'}
             </p>
           </div>
@@ -1041,7 +1060,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           {/* 5. Cross-Framework Mappings Tab */}
           {activeTab === 'mappings' && (
             <div className="space-y-4">
-              <CrosswalkPanel controlId={control.id} />
+              <CrosswalkPanel controlId={control.id}
+                rev2={activeFramework === 'NIST_800_171_R3' ? { recorded: rev2Suggestion ? new Map(rev2Suggestion.sources.map((x) => [x.controlId, x.status])) : null, programName: rev2SourceName } : undefined} />
               <h4 className="text-xs font-bold text-white uppercase tracking-wider">
                 Cross-Framework Harmonization ({rawMappings.length})
               </h4>

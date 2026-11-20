@@ -81,6 +81,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'tenant_teams', tenantColumn: 'tenant_id' },
   { table: 'tenant_team_members', tenantColumn: 'tenant_id' },
   { table: 'program_assignments', tenantColumn: 'tenant_id' },
+  { table: 'program_framework_copy_items', tenantColumn: 'tenant_id' },
+  { table: 'program_framework_copy_runs', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -119,6 +121,8 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'program_document_attachments',
   'program_document_expectations',
   'program_assignments',
+  'program_framework_copy_items',
+  'program_framework_copy_runs',
 ];
 
 /**
@@ -163,7 +167,7 @@ const vmConfigResultList = VM_CONFIG_RESULTS.map((r) => `'${r}'`).join(', ');
 const vmConfigSeverityList = VM_CONFIG_SEVERITIES.map((s) => `'${s}'`).join(', ');
 
 /** The framework ids a program may carry: the registry ids (src/data/frameworks/frameworkRegistry.ts), canonical spelling only. */
-export const PROGRAM_FRAMEWORK_IDS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'] as const;
+export const PROGRAM_FRAMEWORK_IDS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'] as const;
 const programFrameworkList = PROGRAM_FRAMEWORK_IDS.map((f) => `'${f}'`).join(', ');
 const sspMetadataFieldList = SSP_METADATA_FIELDS.map((f) => `'${f}'`).join(', ');
 const stackProfileKeyList = [...STACK_PROFILE_ENUM_KEYS, 'odpParams', 'customLabels'].map((k) => `'${k}'`).join(', ');
@@ -1853,6 +1857,42 @@ export const TABLES_SQL = `
         AND target_id ~ '^[A-Za-z0-9.()_-]{1,64}(\\[[a-z0-9]{1,16}\\])?$' AND assignee_id ~ '^[A-Za-z0-9._:@-]{1,128}$')
   );
   CREATE INDEX IF NOT EXISTS idx_program_assignments_assignee ON program_assignments (tenant_id, program_id, assignee_kind, assignee_id);
+
+  -- NIST SP 800-171 Rev. 3 "copy from Rev. 2" (#255). program_id is the TARGET (Rev. 3) program. One row per copied item: the idempotency marker (a
+  -- re-run appends nothing for a pair already copied). Ids and digests only, never narrative text or file names. No foreign key to the source program, so the
+  -- record outlives it. Both tables are NEW with inline CHECKs (never dropped and re-added at start): no one-way upgrade, an older image ignores them.
+  CREATE TABLE IF NOT EXISTS program_framework_copy_items (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      source_program_id VARCHAR(64) NOT NULL,
+      item_kind VARCHAR(16) NOT NULL,
+      target_control_id VARCHAR(64) NOT NULL,
+      source_key VARCHAR(128) NOT NULL,
+      run_id VARCHAR(64) NOT NULL,
+      source_sha256 VARCHAR(64),
+      target_ref VARCHAR(64),
+      copied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_framework_copy_items PRIMARY KEY (tenant_id, program_id, source_program_id, item_kind, target_control_id, source_key),
+      CONSTRAINT fk_program_framework_copy_items_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_framework_copy_items_check CHECK (item_kind ~ '^[A-Z][A-Z_]{0,15}$' AND target_control_id ~ '^[A-Za-z0-9._-]{1,64}$' AND source_key ~ '^[][A-Za-z0-9._-]{1,128}$'
+        AND (source_sha256 IS NULL OR source_sha256 ~ '^[0-9a-f]{64}$') AND (target_ref IS NULL OR target_ref ~ '^[A-Za-z0-9_-]{1,64}$'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_framework_copy_items_run ON program_framework_copy_items (tenant_id, program_id, run_id);
+  CREATE TABLE IF NOT EXISTS program_framework_copy_runs (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      source_program_id VARCHAR(64) NOT NULL,
+      source_framework VARCHAR(64) NOT NULL,
+      mapping_sha256 VARCHAR(64) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT fk_program_framework_copy_runs_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_framework_copy_runs_check CHECK (source_framework ~ '^[A-Z0-9_]{1,64}$' AND mapping_sha256 ~ '^[0-9a-f]{64}$' AND jsonb_typeof(summary) = 'object' AND octet_length(summary::text) <= 65536)
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_framework_copy_runs_program ON program_framework_copy_runs (tenant_id, program_id, created_at DESC);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";
