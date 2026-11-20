@@ -41,6 +41,9 @@ export const VM_TOKENS_COPY = {
   copied: 'Copied to the clipboard.',
   copyFailed: 'The browser blocked copying. The token is selected in the field: copy it with Ctrl+C (Cmd+C on a Mac).',
   done: 'I have stored the token',
+  closeConfirm: 'Close without storing the token? It is not shown again. If it is lost, revoke it and create a new one.',
+  keepToken: 'Keep the token on screen',
+  closeAnyway: 'Close without storing',
   prefixSr: 'Starts with',
   neverUsed: 'Never',
   revoke: 'Revoke',
@@ -135,4 +138,12 @@ export function vmTokenLoadErrorMessage(err: unknown): string {
   if (status === 403) return VM_TOKENS_COPY.forbidden;
   if (status === 0) return VM_TOKENS_COPY.unreachable;
   return VM_TOKENS_COPY.loadError;
+}
+
+/** What closing the API Keys window does now (#213): 'busy' while a token is being created (closing is refused), 'confirm' while a new token is on screen. */
+export type TokenCloseGuard = 'none' | 'confirm' | 'busy';
+export function tokenCloseGuard(s: { creating: boolean; revealing: boolean }): TokenCloseGuard {
+  if (s.creating) return 'busy';
+  if (s.revealing) return 'confirm';
+  return 'none';
 }

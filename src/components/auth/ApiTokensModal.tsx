@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import {
   X,
   Key,
@@ -9,7 +9,7 @@ import {
   Server,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
-import { VM_TOKENS_COPY } from '../../data/telemetry/vmTokensView';
+import { VM_TOKENS_COPY, tokenCloseGuard } from '../../data/telemetry/vmTokensView';
 import { VmServiceTokensSection } from './VmServiceTokensSection';
 import { ConnectedScannersPanel } from './ConnectedScannersPanel';
 import { ExporterSetupPanel } from './ExporterSetupPanel';
@@ -28,11 +28,47 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
   const serverBacked = Boolean(currentTenant.serverBacked);
   const tokensHeadingId = useId();
   const [revealing, setRevealing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const closeConfirmId = useId();
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const footerCloseRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const guard = tokenCloseGuard({ creating, revealing });
+
+  // The question only makes sense while a new token is on screen.
+  useEffect(() => { if (guard !== 'confirm') setConfirmClose(false); }, [guard]);
 
   if (!isOpen) return null;
 
+  const focusLater = (target: () => HTMLElement | null | undefined) => {
+    requestAnimationFrame(() => target()?.focus());
+  };
+
+  const requestClose = () => {
+    if (guard === 'busy') return;
+    if (guard === 'confirm') {
+      if (!confirmClose) returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setConfirmClose(true);
+      focusLater(() => keepRef.current);
+      return;
+    }
+    onClose();
+  };
+  const keepToken = () => {
+    setConfirmClose(false);
+    const back = returnFocusRef.current;
+    returnFocusRef.current = null;
+    focusLater(() => (back && document.contains(back) ? back : footerCloseRef.current));
+  };
+  const closeAnyway = () => {
+    setConfirmClose(false);
+    returnFocusRef.current = null;
+    onClose();
+  };
+
   return (
-    <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+    <DialogOverlay onClose={guard === 'busy' ? undefined : confirmClose ? keepToken : requestClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
       <div className="w-full max-w-2xl p-1.5 rounded-[2rem] bg-gradient-to-b from-brand-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
         <div className="max-h-[calc(94vh-0.75rem)] overflow-y-auto p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-5">
           
@@ -48,8 +84,9 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
               </div>
             </div>
             <button aria-label="Close"
-              onClick={onClose}
-              className="w-7 h-7 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
+              onClick={requestClose}
+              disabled={guard === 'busy'}
+              className="w-7 h-7 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -82,7 +119,7 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
 
           {/* VM service tokens */}
           {serverBacked && canEdit ? (
-            <VmServiceTokensSection key={currentTenant.id} tenantId={currentTenant.id} tenantName={currentTenant.name} onRevealChange={setRevealing} />
+            <VmServiceTokensSection key={currentTenant.id} tenantId={currentTenant.id} tenantName={currentTenant.name} onRevealChange={setRevealing} onCreatingChange={setCreating} />
           ) : (
             <section aria-labelledby={tokensHeadingId} className="space-y-2 text-xs pt-4 border-t border-slate-800">
               <h3 id={tokensHeadingId} className="text-sm font-bold text-white flex items-center gap-1.5">
@@ -114,14 +151,32 @@ export const ApiTokensModal: React.FC<ApiTokensModalProps> = ({
             </span>
           </div>
 
-          <div className="pt-2 flex justify-end">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors"
+          {confirmClose ? (
+            <div
+              role="group"
+              aria-labelledby={closeConfirmId}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); keepToken(); } }}
+              className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 space-y-2.5 text-xs"
             >
-              Close
-            </button>
-          </div>
+              <p id={closeConfirmId} className="text-amber-100 leading-relaxed">{VM_TOKENS_COPY.closeConfirm}</p>
+              <div className="flex items-center justify-end gap-2">
+                <button ref={keepRef} type="button" onClick={keepToken} className="px-3 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs shadow-md transition-all">{VM_TOKENS_COPY.keepToken}</button>
+                <button type="button" onClick={closeAnyway} className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-950/40 text-rose-300 border border-rose-800/50 hover:bg-rose-900/50">{VM_TOKENS_COPY.closeAnyway}</button>
+              </div>
+            </div>
+          ) : (
+            <div className="pt-2 flex justify-end">
+              <button
+                ref={footerCloseRef}
+                type="button"
+                onClick={requestClose}
+                disabled={guard === 'busy'}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Close
+              </button>
+            </div>
+          )}
 
         </div>
       </div>
