@@ -16,7 +16,8 @@ export interface UploadUrlResponse {
   evidence: EvidenceItem;
 }
 
-import { ServerTenant, isPasswordChangeRequired, parseServerTenants } from '../data/tenantSync';
+import { ServerTenant, ExpiredMembership, isPasswordChangeRequired, parseExpiredTenants, parseServerTenants } from '../data/tenantSync';
+import type { MemberProfilePatch } from '../data/membershipView';
 import {
   ServerInvitation,
   ServerMember,
@@ -134,8 +135,15 @@ export function onProgramRequired(listener: () => void): () => void {
   return () => { programRequiredListeners.delete(listener); };
 }
 
+/** Callers that want to know when the server says the signed-in person's access to an organization has ended (403 membership_expired, #258). Returns the unsubscribe. */
+const membershipExpiredListeners = new Set<(e: { tenantId: string | null; expiredOn: string | null }) => void>();
+export function onMembershipExpired(listener: (e: { tenantId: string | null; expiredOn: string | null }) => void): () => void {
+  membershipExpiredListeners.add(listener);
+  return () => { membershipExpiredListeners.delete(listener); };
+}
+
 /** Turns a failed response into an ApiError carrying the server's `reason` (when it sent one). */
-function apiErrorFromResponse(status: number, body: unknown): ApiError {
+function apiErrorFromResponse(status: number, body: unknown, tenantId?: string): ApiError {
   const err = baseApiError(status, body);
   // The programs routes send their machine-readable code as `code`
   const code = (body as { code?: unknown } | null)?.code;
@@ -147,6 +155,12 @@ function apiErrorFromResponse(status: number, body: unknown): ApiError {
   }
   // A program-scoped call with no active program in the organization: whoever shows the programs refreshes them so the screen can take over
   if (status === 409 && reason === 'program_required') for (const listener of [...programRequiredListeners]) listener();
+  // The signed-in person's own access end date has passed: whoever shows the organizations refreshes them and says so
+  if (status === 403 && reason === 'membership_expired') {
+    const on = (body as { expiredOn?: unknown } | null)?.expiredOn;
+    const expiredOn = typeof on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(on) ? on : null;
+    for (const listener of [...membershipExpiredListeners]) listener({ tenantId: tenantId ?? null, expiredOn });
+  }
   return err;
 }
 
@@ -206,7 +220,7 @@ async function apiFetch(input: string, init: RequestInit): Promise<Response> {
 
 /** What GET /api/v1/tenants answered (see ApiClient.listMyTenantsResult). */
 export type ListMyTenantsResult =
-  | { kind: 'ok'; tenants: ServerTenant[] }
+  | { kind: 'ok'; tenants: ServerTenant[]; expiredTenants?: ExpiredMembership[] }
   | { kind: 'rejected' }
   | { kind: 'password_change_required' };
 
@@ -274,9 +288,12 @@ async function authedJson<T>(
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw apiErrorFromResponse(res.status, data);
+  if (!res.ok) throw apiErrorFromResponse(res.status, data, options.tenantId);
   return data as T;
 }
+
+/** The fields PATCH /tenants/:id/members/:userId accepts (#258, #259); send only what changes. Defined with the pure member view logic. */
+export type { MemberProfilePatch };
 
 /** A signed-in session as the server returns it. */
 export interface LocalLoginResponse {
@@ -426,6 +443,112 @@ const parsePlatformSystemUseNotice = (data: unknown): PlatformSystemUseNotice =>
     defaultText: data.defaultText,
     maxLength: data.maxLength,
   };
+};
+
+/** How loud an announcement is: a warning is also shown as a banner (issue #260). */
+export type NoticeSeverity = 'info' | 'warning';
+export type NoticeKind = 'release' | 'announcement';
+
+/** One announcement as a signed-in person sees it in What's new. */
+export interface NoticeAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  severity: NoticeSeverity;
+  createdAt: string;
+  expiresAt: string | null;
+  read: boolean;
+}
+
+/** GET /api/v1/me/notices: the running version, which versions this person marked as read, and the active announcements. */
+export interface NoticesSnapshot {
+  currentVersion: string;
+  notesAvailable: boolean;
+  releaseReads: string[];
+  announcements: NoticeAnnouncement[];
+}
+
+/** One announcement as a platform administrator sees it (adds who posted or withdrew it). */
+export interface AdminAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  severity: NoticeSeverity;
+  createdAt: string;
+  expiresAt: string | null;
+  createdByUserId: string;
+  withdrawnAt: string | null;
+  withdrawnByUserId: string | null;
+}
+
+export interface AnnouncementLimits {
+  titleMax: number;
+  bodyMax: number;
+  maxActive: number;
+  maxExpiryDays: number;
+}
+
+/** The server's limits, used until it answers (and for any key it leaves out). */
+export const DEFAULT_ANNOUNCEMENT_LIMITS: AnnouncementLimits = { titleMax: 120, bodyMax: 2000, maxActive: 5, maxExpiryDays: 365 };
+
+const parseNoticeAnnouncement = (raw: unknown): NoticeAnnouncement | null => {
+  if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.title !== 'string' || typeof raw.body !== 'string') return null;
+  return {
+    id: raw.id,
+    title: raw.title,
+    body: raw.body,
+    severity: raw.severity === 'warning' ? 'warning' : 'info',
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+    expiresAt: typeof raw.expiresAt === 'string' ? raw.expiresAt : null,
+    read: raw.read === true,
+  };
+};
+
+/** Reads GET /me/notices; throws ApiError(502) when the version is missing or malformed. Unusable announcements are dropped. */
+export function parseNotices(raw: unknown): NoticesSnapshot {
+  if (!isRecord(raw) || typeof raw.currentVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(raw.currentVersion)) {
+    throw new ApiError(502, 'The server sent back notices this version of the app does not understand.');
+  }
+  return {
+    currentVersion: raw.currentVersion,
+    notesAvailable: raw.notesAvailable === true,
+    releaseReads: Array.isArray(raw.releaseReads) ? raw.releaseReads.filter((v): v is string => typeof v === 'string') : [],
+    announcements: Array.isArray(raw.announcements)
+      ? raw.announcements.map(parseNoticeAnnouncement).filter((a): a is NoticeAnnouncement => a !== null)
+      : [],
+  };
+}
+
+export function parseAdminAnnouncement(raw: unknown): AdminAnnouncement | null {
+  const base = parseNoticeAnnouncement(raw);
+  if (!base || !isRecord(raw)) return null;
+  return {
+    id: base.id,
+    title: base.title,
+    body: base.body,
+    severity: base.severity,
+    createdAt: base.createdAt,
+    expiresAt: base.expiresAt,
+    createdByUserId: typeof raw.createdByUserId === 'string' ? raw.createdByUserId : '',
+    withdrawnAt: typeof raw.withdrawnAt === 'string' ? raw.withdrawnAt : null,
+    withdrawnByUserId: typeof raw.withdrawnByUserId === 'string' ? raw.withdrawnByUserId : null,
+  };
+}
+
+/** Each limit must be a positive whole number, else the default for that key is used. */
+export function parseAnnouncementLimits(raw: unknown): AnnouncementLimits {
+  const r = isRecord(raw) ? raw : {};
+  const pick = (key: keyof AnnouncementLimits): number => {
+    const v = r[key];
+    return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : DEFAULT_ANNOUNCEMENT_LIMITS[key];
+  };
+  return { titleMax: pick('titleMax'), bodyMax: pick('bodyMax'), maxActive: pick('maxActive'), maxExpiryDays: pick('maxExpiryDays') };
+}
+
+const parseAdminAnnouncementOrThrow = (raw: unknown): AdminAnnouncement => {
+  const a = parseAdminAnnouncement(isRecord(raw) ? raw.announcement : null);
+  if (!a) throw new ApiError(502, 'The server sent back an announcement this version of the app does not understand.');
+  return a;
 };
 
 /**
@@ -780,6 +903,12 @@ export const ApiClient = {
   /** DELETE /api/v1/tenants/:id/members/:userId */
   async removeMember(tenantId: string, userId: string, sessionRef?: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { sessionRef, tenantId });
+  },
+
+  /** PATCH /api/v1/tenants/:id/members/:userId (#258, #259): the access end date, affiliation, US-person status and primary contact; `changed` names the fields that changed. */
+  async updateMemberProfile(tenantId: string, userId: string, patch: MemberProfilePatch, sessionRef?: string): Promise<{ changed: string[] }> {
+    const data = await authedJson<{ changed?: unknown }>('PATCH', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { sessionRef, tenantId, body: patch });
+    return { changed: Array.isArray(data?.changed) ? data.changed.filter((c): c is string => typeof c === 'string') : [] };
   },
 
   /** POST /api/v1/tenants/:id/members/:userId/restore (#257): an MSP Admin or a Tenant Owner restores a member the inactivity check disabled, with their own authenticator code. */
@@ -1313,7 +1442,9 @@ export const ApiClient = {
     // A temporary password must be changed first: nothing to load yet, and not an error (the change triggers a new sync)
     if (res.status === 403 && isPasswordChangeRequired(res.status, body)) return { kind: 'password_change_required' };
     if (!res.ok) throw apiErrorFromResponse(res.status, body);
-    return { kind: 'ok', tenants: parseServerTenants(await res.json()) };
+    const listBody = await res.json();
+    const expired = parseExpiredTenants(listBody);
+    return { kind: 'ok', tenants: parseServerTenants(listBody), ...(expired.length ? { expiredTenants: expired } : {}) };
   },
 
   /**
@@ -1537,6 +1668,37 @@ export const ApiClient = {
   /** PUT /api/v1/platform/system-use-notice (platform administrators, needs a fresh authenticator `code`): saves the notice and returns it. */
   async updatePlatformSystemUseNotice(input: { enabled: boolean; text: string; code: string }): Promise<PlatformSystemUseNotice> {
     return parsePlatformSystemUseNotice(await accountJson<unknown>('PUT', '/platform/system-use-notice', { body: input }));
+  },
+
+  /** GET /api/v1/me/notices: release notes read state and the active announcements for the signed-in person (account-level, no organization). */
+  async getNotices(): Promise<NoticesSnapshot> {
+    return parseNotices(await accountJson<unknown>('GET', '/me/notices'));
+  },
+
+  /** POST /api/v1/me/notices/read: marks a release version or an announcement as read for the signed-in person. */
+  async markNoticeRead(kind: NoticeKind, ref: string): Promise<void> {
+    await accountJson('POST', '/me/notices/read', { body: { kind, ref } });
+  },
+
+  /** GET /api/v1/platform/announcements (platform administrators): every announcement, with the limits the server enforces. */
+  async listAnnouncementsAdmin(): Promise<{ announcements: AdminAnnouncement[]; limits: AnnouncementLimits }> {
+    const data = await accountJson<unknown>('GET', '/platform/announcements');
+    const rec = isRecord(data) ? data : {};
+    return {
+      announcements: Array.isArray(rec.announcements) ? rec.announcements.map(parseAdminAnnouncement).filter((a): a is AdminAnnouncement => a !== null) : [],
+      limits: parseAnnouncementLimits(rec.limits),
+    };
+  },
+
+  /** POST /api/v1/platform/announcements (platform administrators, needs a fresh authenticator `code`). */
+  async postAnnouncement(input: { title: string; body: string; severity: NoticeSeverity; expiresAt: string | null }, code: string): Promise<AdminAnnouncement> {
+    const body = { title: input.title, body: input.body, severity: input.severity, ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}), code };
+    return parseAdminAnnouncementOrThrow(await accountJson<unknown>('POST', '/platform/announcements', { body }));
+  },
+
+  /** POST /api/v1/platform/announcements/:id/withdraw (platform administrators, needs a fresh authenticator `code`). */
+  async withdrawAnnouncement(id: string, code: string): Promise<AdminAnnouncement> {
+    return parseAdminAnnouncementOrThrow(await accountJson<unknown>('POST', `/platform/announcements/${encodeURIComponent(id)}/withdraw`, { body: { code } }));
   },
 
   /** GET /api/v1/auth/config: how long a session may sit idle, in seconds (0 = no limit), so the browser locks after the same period. Needs no session. */

@@ -178,7 +178,7 @@ const dormantLines = [
   'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;',
   'ALTER TABLE local_users ADD COLUMN IF NOT EXISTS dormancy_reset_at TIMESTAMPTZ NOT NULL DEFAULT NOW();',
 ];
-const actionBlockAt = TABLES_SQL.indexOf("ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed'", TABLES_SQL.indexOf('LIKE \'%vm_token_revoked%\''));
+const actionBlockAt = TABLES_SQL.indexOf("ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed'", TABLES_SQL.indexOf('LIKE \'%announcement_withdrawn%\''));
 const reasonDrop = TABLES_SQL.indexOf('ALTER TABLE local_users DROP CONSTRAINT IF EXISTS local_users_disabled_reason_check;');
 const reasonAdd = TABLES_SQL.indexOf('ALTER TABLE local_users ADD CONSTRAINT local_users_disabled_reason_check');
 assert(
@@ -490,7 +490,7 @@ const addMatch = /ADD CONSTRAINT local_account_events_action_check CHECK \(actio
 const dropAt = TABLES_SQL.indexOf('DROP CONSTRAINT IF EXISTS local_account_events_action_check;');
 assert(
   JSON.stringify(listOf(inlineList)) === JSON.stringify([...ACCOUNT_EVENT_ACTIONS]) && !!addMatch && JSON.stringify(listOf(addMatch[1])) === JSON.stringify([...ACCOUNT_EVENT_ACTIONS]) &&
-    dropAt > 0 && dropAt < (addMatch?.index ?? -1) && TABLES_SQL.slice(0, dropAt).includes("LIKE '%vm_token_revoked%'"),
+    dropAt > 0 && dropAt < (addMatch?.index ?? -1) && TABLES_SQL.slice(0, dropAt).includes("LIKE '%announcement_withdrawn%'"),
   'AE5: the new-install and the migrated action lists both equal ACCOUNT_EVENT_ACTIONS; the old check is dropped before the new one is added, only while it lacks the newest action',
   [listOf(inlineList).length, addMatch ? listOf(addMatch[1]).length : null, ACCOUNT_EVENT_ACTIONS.length]
 );
@@ -505,6 +505,56 @@ assert(
     eaBlock.includes('last_scanned_at TIMESTAMPTZ') && eaBlock.includes('compliance_score INTEGER'),
   'AS216: the retired scan columns stay in the table; a gated startup fix lifts FORCE RLS, nulls them and restores FORCE, in that order',
   [eaAt, noForceAt, nullAt, forceAt]
+);
+
+console.log('\n--- Membership profile columns (#258, #259) ---');
+const tuCreateAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS tenant_users (');
+const tuLines = [
+  'ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS access_expires_on DATE;',
+  'ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS affiliation VARCHAR(16);',
+  'ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS us_person VARCHAR(16);',
+  'ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS us_person_recorded_by VARCHAR(128);',
+  'ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS us_person_recorded_at TIMESTAMPTZ;',
+  'ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS is_primary_contact BOOLEAN NOT NULL DEFAULT FALSE;',
+  "ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_affiliation_check CHECK (affiliation IS NULL OR affiliation IN ('EMPLOYEE', 'CONTRACTOR', 'ESP'));",
+  "ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_us_person_check CHECK (us_person IS NULL OR us_person IN ('US_PERSON', 'OTHER'));",
+  'CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_users_primary_contact ON tenant_users (tenant_id) WHERE is_primary_contact;',
+];
+assert(tuCreateAt >= 0 && tuLines.every((l) => TABLES_SQL.indexOf(l) > tuCreateAt), 'TU1: every membership profile column, check and the one-primary-contact index is in TABLES_SQL after the tenant_users table', tuLines.filter((l) => TABLES_SQL.indexOf(l) <= tuCreateAt));
+assert(
+  ['affiliation_check', 'us_person_check'].every((c) => {
+    const d = TABLES_SQL.indexOf(`ALTER TABLE tenant_users DROP CONSTRAINT IF EXISTS tenant_users_${c};`);
+    return d > tuCreateAt && d < TABLES_SQL.indexOf(`ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_${c}`);
+  }),
+  'TU2: each check is dropped before it is added, so the startup is repeatable'
+);
+assert(RLS_TENANT_TABLES.some((r) => r.table === 'tenant_users') && !TABLES_SQL.slice(tuCreateAt, TABLES_SQL.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_users_primary_contact')).includes('DROP COLUMN'), 'TU3: tenant_users stays under row security and nothing drops a column');
+
+console.log('\n--- Platform announcements and notice reads (#260) ---');
+const annAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS platform_announcements (');
+const annBlock = annAt < 0 ? '' : TABLES_SQL.slice(annAt, TABLES_SQL.indexOf('\n  );', annAt));
+const readsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS user_notice_reads (');
+const readsBlock = readsAt < 0 ? '' : TABLES_SQL.slice(readsAt, TABLES_SQL.indexOf('\n  );', readsAt));
+const luCreateAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS local_users (');
+assert(
+  annAt > 0 && readsAt > 0 && !/\btenant_id\b/.test(annBlock) && !/\btenant_id\b/.test(readsBlock) &&
+    ['platform_announcements', 'user_notice_reads'].every((t) => !RLS_TENANT_TABLES.some((r) => r.table === t) && !(RLS_PROGRAM_TABLES as readonly string[]).includes(t) && !buildRlsSql().includes(t)),
+  'AN1: both tables are global: no tenant_id, not in the tenant or program row security lists, not in buildRlsSql()'
+);
+assert(
+  annBlock.includes('CONSTRAINT platform_announcements_title_check CHECK (char_length(btrim(title)) BETWEEN 1 AND 120)') &&
+    annBlock.includes('CONSTRAINT platform_announcements_body_check CHECK (char_length(body) BETWEEN 1 AND 2000)') &&
+    annBlock.includes("CONSTRAINT platform_announcements_severity_check CHECK (severity IN ('info', 'warning'))") &&
+    annBlock.includes('CONSTRAINT platform_announcements_window_check CHECK (expires_at IS NULL OR expires_at > created_at)') &&
+    annBlock.includes('CONSTRAINT platform_announcements_withdrawn_check CHECK ((withdrawn_at IS NULL) = (withdrawn_by_user_id IS NULL))') &&
+    TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_platform_announcements_active ON platform_announcements (created_at DESC) WHERE withdrawn_at IS NULL;'),
+  'AN2: announcement title 1 to 120 and body 1 to 2000 characters, severity info or warning, an expiry after creation, withdrawn time and actor set together'
+);
+assert(
+  readsAt > luCreateAt && luCreateAt > 0 && readsBlock.includes('CONSTRAINT pk_user_notice_reads PRIMARY KEY (user_id, kind, ref)') &&
+    readsBlock.includes('FOREIGN KEY (user_id) REFERENCES local_users (id) ON DELETE CASCADE') &&
+    readsBlock.includes("CHECK (kind IN ('release', 'announcement'))") && readsBlock.includes("CHECK (ref ~ '^[A-Za-z0-9._-]{1,64}$')"),
+  'AN3: notice reads are keyed by user, kind and ref, follow the account (cascade), accept two kinds and a plain reference, and come after local_users'
 );
 
 console.log('\n--- Pool configuration ---');

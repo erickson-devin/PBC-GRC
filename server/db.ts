@@ -60,7 +60,8 @@ pool.on('error', (err) => {
 
 import { getEquivalentControlIds, CANONICAL_CONTROL_MAPPINGS } from '../src/data/frameworks/controlMappings';
 import { errorMessage } from '../src/utils/errors';
-import { isTenantRole } from '../src/utils/roles';
+import { OWNER_LEVEL_ROLES, isOwnerLevel, isTenantRole } from '../src/utils/roles';
+import { isAffiliation, isUsPerson, membershipExpired, type Affiliation, type UsPerson } from '../src/utils/memberProfile';
 import { buildSchemaSql } from './schema';
 import type { EnclaveStackProfile, TenantRole } from '../src/types/tenant';
 
@@ -105,6 +106,13 @@ interface InMemoryTenantUser {
   role: string;
   created_at: string;
   updated_at: string;
+  /** Membership profile (issues #258, #259), as in the tenant_users columns of the same names. */
+  access_expires_on?: string | null;
+  affiliation?: string | null;
+  us_person?: string | null;
+  us_person_recorded_by?: string | null;
+  us_person_recorded_at?: string | null;
+  is_primary_contact?: boolean;
 }
 
 const memoryTenantUsers = new Map<string, InMemoryTenantUser>(); // key: `${tenant_id}__${user_id}`
@@ -577,6 +585,7 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
     const existing = memoryTenantUsers.get(key);
     const now = new Date().toISOString();
     const record: InMemoryTenantUser = {
+      ...existing, // a role change keeps the membership profile (the pg upsert leaves those columns alone)
       id: existing?.id || `tu_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       user_id: userId,
       user_email: email,
@@ -585,6 +594,8 @@ function executeInMemoryWithTenant(tenantId: string, text: string, params: any[]
       role,
       created_at: existing?.created_at || now,
       updated_at: now,
+      // Owner-level memberships never carry an expiry: a promotion clears it (the pg upsert does the same in its CASE).
+      access_expires_on: isOwnerLevel(role) ? null : existing?.access_expires_on ?? null,
     };
     memoryTenantUsers.set(key, record);
     return { rows: [record], command: 'INSERT', rowCount: 1, oid: 0, fields: [] };
@@ -716,7 +727,7 @@ export async function initDb(): Promise<void> {
  * The user's membership row in the tenant, or null. Works against PostgreSQL and the in-memory fallback.
  * Fails closed (null) if the table is unavailable.
  */
-async function findTenantMember(userId: string, tenantId: string): Promise<{ role: unknown } | null> {
+async function findTenantMember(userId: string, tenantId: string): Promise<{ role: unknown; access_expires_on?: unknown } | null> {
   if (!userId || !tenantId) return null;
   if (isMemoryMode()) {
     return memoryTenantUsers.get(`${tenantId}__${userId}`) ?? null;
@@ -724,7 +735,7 @@ async function findTenantMember(userId: string, tenantId: string): Promise<{ rol
   try {
     const result = await queryWithTenant(
       tenantId,
-      'SELECT role FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
+      'SELECT role, access_expires_on FROM tenant_users WHERE user_id = $1 AND tenant_id = $2 LIMIT 1',
       [userId, tenantId]
     );
     return result.rows[0] ?? null;
@@ -744,6 +755,54 @@ export async function getTenantRole(userId: string, tenantId: string): Promise<T
   return member && isTenantRole(member.role) ? member.role : null;
 }
 
+/**
+ * A stored expiry date as 'YYYY-MM-DD', or null when there is none. node-pg parses a DATE column as LOCAL midnight, so a Date is read with
+ * the local getters (an ISO string would shift the day west of UTC). A string keeps its first 10 characters. Anything else (an invalid
+ * Date, another type) comes back as a marker that is not a date, which membershipExpired treats as expired: it fails closed.
+ */
+function dateOnly(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return 'invalid';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${String(v.getFullYear()).padStart(4, '0')}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+  }
+  if (typeof v === 'string') return v.slice(0, 10);
+  return 'invalid';
+}
+
+let membershipClock: (() => number) | null = null;
+/** The time the membership expiry is judged against (UTC milliseconds). Tests replace it; nothing else does. */
+export const membershipNowMs = (): number => (membershipClock ? membershipClock() : Date.now());
+export function __setMembershipClockForTests(fn: (() => number) | null): void {
+  membershipClock = fn;
+}
+
+export type ActiveMembership = { status: 'active'; role: TenantRole } | { status: 'expired'; expiredOn: string };
+
+/**
+ * The membership as the per-request check sees it: active with the role, expired (the access expiry date has passed), or null when there is
+ * no row, the role is not valid or the table cannot be read (fails closed). One query. isTenantMember and getTenantRole stay raw: member
+ * management must still see an expired row.
+ */
+export async function getActiveTenantMembership(userId: string, tenantId: string, nowMs: number = membershipNowMs()): Promise<ActiveMembership | null> {
+  const member = await findTenantMember(userId, tenantId);
+  if (!member || !isTenantRole(member.role)) return null;
+  const expiresOn = dateOnly(member.access_expires_on);
+  if (membershipExpired(expiresOn, nowMs)) return { status: 'expired', expiredOn: expiresOn ?? '' };
+  return { status: 'active', role: member.role };
+}
+
+/** The membership profile fields (issues #258, #259) of one tenant_users row. */
+export interface MemberProfile {
+  accessExpiresOn: string | null;
+  affiliation: Affiliation | null;
+  usPerson: UsPerson | null;
+  usPersonRecordedAt: string | null;
+  usPersonRecordedBy: string | null;
+  primaryContact: boolean;
+}
+
 export interface TenantMember {
   id: string;
   userId: string;
@@ -753,10 +812,25 @@ export interface TenantMember {
   role: TenantRole;
   createdAt: string;
   updatedAt: string;
+  /** Never spread into a response for the read roles: routes pick from it (see GET /:tenantId/members). */
+  profile: MemberProfile;
+}
+
+function mapMemberProfile(row: pg.QueryResultRow): MemberProfile {
+  const recordedAt = row.us_person_recorded_at ? new Date(row.us_person_recorded_at) : null;
+  return {
+    accessExpiresOn: dateOnly(row.access_expires_on),
+    affiliation: isAffiliation(row.affiliation) ? row.affiliation : null,
+    usPerson: isUsPerson(row.us_person) ? row.us_person : null,
+    usPersonRecordedAt: recordedAt && !Number.isNaN(recordedAt.getTime()) ? recordedAt.toISOString() : null,
+    usPersonRecordedBy: typeof row.us_person_recorded_by === 'string' ? row.us_person_recorded_by : null,
+    primaryContact: row.is_primary_contact === true,
+  };
 }
 
 function mapMemberRow(row: pg.QueryResultRow): TenantMember {
   return {
+    profile: mapMemberProfile(row),
     id: row.id,
     userId: row.user_id,
     email: row.user_email,
@@ -778,11 +852,107 @@ export async function upsertTenantMember(
     `INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (user_id, tenant_id) DO UPDATE
-       SET user_email = EXCLUDED.user_email, user_name = EXCLUDED.user_name, role = EXCLUDED.role, updated_at = NOW()
+       SET user_email = EXCLUDED.user_email, user_name = EXCLUDED.user_name, role = EXCLUDED.role, updated_at = NOW(),
+           access_expires_on = CASE WHEN EXCLUDED.role IN (${OWNER_LEVEL_SQL}) THEN NULL ELSE tenant_users.access_expires_on END
      RETURNING *`,
     [member.userId, member.email, member.name, tenantId, member.role]
   );
   return mapMemberRow(result.rows[0]);
+}
+
+const OWNER_LEVEL_SQL = OWNER_LEVEL_ROLES.map((r) => `'${r}'`).join(', ');
+
+export class PrimaryContactConflictError extends Error {
+  constructor() {
+    super('Another member was made the primary contact at the same time');
+    this.name = 'PrimaryContactConflictError';
+  }
+}
+
+export interface MemberProfilePatch {
+  accessExpiresOn?: string | null;
+  affiliation?: Affiliation | null;
+  usPerson?: UsPerson | null;
+  primaryContact?: boolean;
+}
+
+/**
+ * Changes the profile fields of one member (the caller has already checked who may change what). Only the keys present in `patch` change.
+ * Naming a primary contact clears the flag on the previous one in the same transaction. An owner-level member never keeps an expiry (the
+ * UPDATE clears it whatever the patch says). `usPerson` also records who set it and when. Returns the profile before and after and the role,
+ * or null when the member does not exist. Throws PrimaryContactConflictError when a concurrent request named another primary contact.
+ */
+export async function updateTenantMemberProfile(
+  tenantId: string,
+  userId: string,
+  patch: MemberProfilePatch,
+  actorUserId: string
+): Promise<{ before: MemberProfile; after: MemberProfile; role: TenantRole } | null> {
+  if (isMemoryMode()) {
+    const key = `${tenantId}__${userId}`;
+    const existing = memoryTenantUsers.get(key);
+    if (!existing || !isTenantRole(existing.role)) return null;
+    const before = mapMemberProfile(existing);
+    if (patch.primaryContact === true) {
+      for (const [k, other] of memoryTenantUsers) {
+        if (other.tenant_id === tenantId && other.user_id !== userId && other.is_primary_contact) memoryTenantUsers.set(k, { ...other, is_primary_contact: false });
+      }
+    }
+    const next: InMemoryTenantUser = { ...existing };
+    if ('accessExpiresOn' in patch) next.access_expires_on = isOwnerLevel(existing.role as TenantRole) ? null : patch.accessExpiresOn ?? null;
+    if ('affiliation' in patch) next.affiliation = patch.affiliation ?? null;
+    if ('usPerson' in patch) {
+      next.us_person = patch.usPerson ?? null;
+      next.us_person_recorded_by = patch.usPerson ? actorUserId : null;
+      next.us_person_recorded_at = patch.usPerson ? new Date().toISOString() : null;
+    }
+    if (patch.primaryContact !== undefined) next.is_primary_contact = patch.primaryContact;
+    memoryTenantUsers.set(key, next);
+    return { before, after: mapMemberProfile(next), role: existing.role as TenantRole };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', tenantId]);
+    const current = await client.query('SELECT * FROM tenant_users WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE', [tenantId, userId]);
+    if (current.rows.length === 0 || !isTenantRole(current.rows[0].role)) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const before = mapMemberProfile(current.rows[0]);
+    const sets: string[] = [];
+    const params: SqlParam[] = [tenantId, userId];
+    const add = (sql: string, value: SqlParam) => {
+      params.push(value);
+      const n = params.length;
+      sets.push(sql.replace('?', () => `$${n}`));
+    };
+    if ('accessExpiresOn' in patch) add(`access_expires_on = CASE WHEN role IN (${OWNER_LEVEL_SQL}) THEN NULL ELSE ?::date END`, patch.accessExpiresOn ?? null);
+    if ('affiliation' in patch) add('affiliation = ?', patch.affiliation ?? null);
+    if ('usPerson' in patch) {
+      add('us_person = ?', patch.usPerson ?? null);
+      add('us_person_recorded_by = ?', patch.usPerson ? actorUserId : null);
+      sets.push(patch.usPerson ? 'us_person_recorded_at = NOW()' : 'us_person_recorded_at = NULL');
+    }
+    if (patch.primaryContact !== undefined) add('is_primary_contact = ?', patch.primaryContact);
+    let row = current.rows[0];
+    if (sets.length > 0) {
+      if (patch.primaryContact === true) {
+        await client.query('UPDATE tenant_users SET is_primary_contact = FALSE WHERE tenant_id = $1 AND user_id <> $2 AND is_primary_contact', [tenantId, userId]);
+      }
+      const updated = await client.query(`UPDATE tenant_users SET ${sets.join(', ')}, updated_at = NOW() WHERE tenant_id = $1 AND user_id = $2 RETURNING *`, params);
+      row = updated.rows[0];
+    }
+    await client.query('COMMIT');
+    return { before, after: mapMemberProfile(row), role: row.role as TenantRole };
+  } catch (err: unknown) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if ((err as { code?: string })?.code === '23505') throw new PrimaryContactConflictError();
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** All members of the tenant (RLS limits the query to the active tenant). */
@@ -928,6 +1098,8 @@ export interface MyTenant extends Omit<TenantRecord, 'createdAt'> {
   createdAt: string | null;
   role: TenantRole;
   joinedAt: string;
+  /** The user's own access expiry date ('YYYY-MM-DD', the last day of access in UTC), or null. */
+  accessExpiresOn: string | null;
 }
 
 /**
@@ -957,6 +1129,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
           createdAt: t?.createdAt ?? null,
           role: m.role as TenantRole,
           joinedAt: m.created_at,
+          accessExpiresOn: dateOnly(m.access_expires_on),
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -964,7 +1137,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
 
   const res = await queryWithUser(
     userId,
-    `SELECT tu.tenant_id, tu.role, tu.created_at AS joined_at,
+    `SELECT tu.tenant_id, tu.role, tu.created_at AS joined_at, tu.access_expires_on,
             t.name, t.cage_code, t.sam_status, t.system_name, t.system_owner, t.industry,
             t.enabled_frameworks, t.primary_framework, t.stack_profile, t.created_at AS tenant_created_at
        FROM tenant_users tu
@@ -990,6 +1163,7 @@ export async function listUserTenants(userId: string): Promise<MyTenant[]> {
       createdAt: r.tenant_created_at ? new Date(r.tenant_created_at).toISOString() : null,
       role: r.role as TenantRole,
       joinedAt: new Date(r.joined_at).toISOString(),
+      accessExpiresOn: dateOnly(r.access_expires_on),
     }));
 }
 

@@ -429,7 +429,8 @@ export async function redeemInvitation(token: string, user: { uid: string; email
     await client.query(
       `INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role) VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (user_id, tenant_id) DO UPDATE
-         SET role = EXCLUDED.role, user_email = EXCLUDED.user_email, user_name = EXCLUDED.user_name, updated_at = NOW()`,
+         SET role = EXCLUDED.role, user_email = EXCLUDED.user_email, user_name = EXCLUDED.user_name, updated_at = NOW(),
+             access_expires_on = CASE WHEN EXCLUDED.role IN ('TENANT_OWNER', 'MSP_ADMIN') THEN NULL ELSE tenant_users.access_expires_on END`,
       [user.uid, normEmail(user.email!), user.name || user.email!.split('@')[0], rec.tenantId, role]
     );
     await client.query('COMMIT');

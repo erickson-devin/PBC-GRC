@@ -27,6 +27,9 @@ export const ACCOUNT_EVENT_ACTIONS = [
   'system_use_notice_updated',
   'vm_token_created',
   'vm_token_revoked',
+  'membership_updated',
+  'announcement_posted',
+  'announcement_withdrawn',
 ] as const;
 export type AccountEventAction = (typeof ACCOUNT_EVENT_ACTIONS)[number];
 
@@ -63,7 +66,7 @@ export class AccountEventDetailsError extends Error {
   }
 }
 
-const DETAIL_KEYS: readonly string[] = ['reason', 'via', 'previousRole', 'newRole', 'attempted', 'mustChangePassword', 'noticeVersion', 'noticeEnabled', 'tokenId'];
+const DETAIL_KEYS: readonly string[] = ['reason', 'via', 'previousRole', 'newRole', 'attempted', 'mustChangePassword', 'noticeVersion', 'noticeEnabled', 'tokenId', 'field', 'previousValue', 'newValue', 'announcementId'];
 const DETAIL_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 

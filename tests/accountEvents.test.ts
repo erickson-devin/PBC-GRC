@@ -340,6 +340,15 @@ async function run() {
       thrown(() => sanitizeAccountEventDetails({ tokenName: 'x' })) instanceof AccountEventDetailsError,
     'E214-1: a service token id is an allowed detail; a token name is refused'
   );
+  __resetAccountEventsForTests();
+  await recordAccountEvent({ actorKind: 'user', actorUserId: 'lu_actor', targetUserId: 'lu_member', action: 'membership_updated', scopeTenantId: 't_one', details: { field: 'us_person' } });
+  const mu = await listAccountEvents({ action: 'membership_updated' });
+  assert(
+    JSON.stringify(sanitizeAccountEventDetails({ field: 'us_person' })) === JSON.stringify({ field: 'us_person' }) &&
+      thrown(() => sanitizeAccountEventDetails({ newValue: 'a@b' })) instanceof AccountEventDetailsError &&
+      mu.length === 1 && mu[0].details.field === 'us_person' && mu[0].tenantId === 't_one',
+    'E258-1: membership_updated is recorded and listed; the field, previousValue, newValue and announcementId detail keys exist, and an address in newValue is refused'
+  );
   let refusedAction = false;
   try {
     await recordAccountEvent({ actorKind: 'system', targetUserId: 'lu_x', action: 'made_up' as never });

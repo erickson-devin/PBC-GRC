@@ -3,6 +3,7 @@ import { TenantProvider, useTenant } from './context/TenantContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AssessmentProvider, useAssessment } from './context/AssessmentContext';
 import { Header } from './components/layout/Header';
+import { MembershipNotices } from './components/layout/MembershipNotices';
 import { Sidebar } from './components/layout/Sidebar';
 import { ComplianceOverview } from './components/dashboard/ComplianceOverview';
 import { ControlsList } from './components/controls/ControlsList';
@@ -275,6 +276,7 @@ const AppContent: React.FC = () => {
           <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500 selection:text-white">
             {/* Top Application Header */}
             <Header />
+            <MembershipNotices />
 
             {/* Main Workspace Layout */}
             <div className="flex-1 flex flex-col md:flex-row max-w-7xl w-full mx-auto">

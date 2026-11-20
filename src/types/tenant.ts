@@ -99,5 +99,17 @@ export interface TeamMember {
   accountDisabled?: boolean;
   disabledReason?: 'admin' | 'dormant' | null;
   disabledAt?: string | null;
+  /** #258, sent to every role on server tenants: this member is the organization's primary contact. */
+  primaryContact?: boolean;
+  /** #258, write roles only (undefined when the server did not send it): the last day of access, 'YYYY-MM-DD' in UTC, null for no end date. */
+  accessExpiresOn?: string | null;
+  /** #258, write roles only: the end date has passed, so the member cannot open the organization. */
+  membershipExpired?: boolean;
+  /** #258, write roles only: how this person relates to the organization, null when not recorded. */
+  affiliation?: 'EMPLOYEE' | 'CONTRACTOR' | 'ESP' | null;
+  /** #259, write roles only: recorded by an owner, never self-declared; null when not recorded. */
+  usPerson?: 'US_PERSON' | 'OTHER' | null;
+  /** #259, write roles only: when the US-person value was last recorded (an ISO instant). */
+  usPersonRecordedAt?: string | null;
   avatarUrl?: string;
 }

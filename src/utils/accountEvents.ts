@@ -22,6 +22,9 @@ export const ACCOUNT_EVENT_LABELS: Record<string, string> = {
   system_use_notice_updated: 'System use notice changed',
   vm_token_created: 'Service token created',
   vm_token_revoked: 'Service token revoked',
+  membership_updated: 'Membership details changed',
+  announcement_posted: 'Announcement posted',
+  announcement_withdrawn: 'Announcement withdrawn',
 };
 
 export function accountEventLabel(action: string): string {
@@ -48,6 +51,10 @@ const DETAIL_KEYS: Array<[string, string]> = [
   ['noticeVersion', 'Notice version'],
   ['noticeEnabled', 'Notice shown'],
   ['tokenId', 'Service token'],
+  ['field', 'Field'],
+  ['previousValue', 'Previous'],
+  ['newValue', 'New'],
+  ['announcementId', 'Announcement'],
 ];
 const VIA_TEXT: Record<string, string> = {
   sign_in: 'sign-in',
@@ -72,6 +79,7 @@ const ATTEMPTED_TEXT: Record<string, string> = {
   enable: 'enable account',
   restore: 'restore an account blocked for inactivity',
   'system-use-notice': 'change the system use notice',
+  announcement: 'post or withdraw an announcement',
 };
 
 function detailValue(key: string, value: string | boolean): string {

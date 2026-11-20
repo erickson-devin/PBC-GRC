@@ -1,6 +1,7 @@
 import type { Tenant, TenantInvitation, TenantRole, TeamMember } from '../types/tenant';
 import { isTenantRole } from '../utils/roles';
 import { parseDisabledReason, type DisabledReason } from './dormancyView';
+import { isAffiliation, isUsPerson, type Affiliation, type UsPerson } from '../utils/memberProfile';
 
 /**
  * Pure mapping between the server's invitation / member records and the UI's TenantInvitation / TeamMember.
@@ -28,6 +29,15 @@ export interface ServerInvitation {
 /** The account facts a write role sees for a member (#257); absent for read-only callers. */
 export interface ServerMemberAccount { lastLoginAt: string | null; disabled: boolean; disabledReason: DisabledReason | null; disabledAt: string | null }
 
+/** The membership facts a write role sees for a member (#258, #259); absent for read-only callers. */
+export interface ServerMemberMembership {
+  accessExpiresOn: string | null;
+  expired: boolean;
+  affiliation: Affiliation | null;
+  usPerson: UsPerson | null;
+  usPersonRecordedAt: string | null;
+}
+
 export interface ServerMember {
   userId: string;
   email: string;
@@ -36,6 +46,9 @@ export interface ServerMember {
   role: TenantRole;
   createdAt: string;
   account?: ServerMemberAccount;
+  membership?: ServerMemberMembership;
+  /** Sent to every role; only present when this member is the organization's primary contact. */
+  primaryContact?: true;
 }
 
 const STATUSES: readonly string[] = ['PENDING', 'ACCEPTED', 'REVOKED', 'EXPIRED'];
@@ -73,6 +86,18 @@ export function parseMemberAccount(raw: unknown): ServerMemberAccount | null {
   return { lastLoginAt: strOrNull(a.lastLoginAt), disabled: a.disabled === true, disabledReason: parseDisabledReason(a.disabledReason), disabledAt: strOrNull(a.disabledAt) };
 }
 
+export function parseMemberMembership(raw: unknown): ServerMemberMembership | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const a = raw as Record<string, unknown>;
+  return {
+    accessExpiresOn: strOrNull(a.accessExpiresOn),
+    expired: a.expired === true,
+    affiliation: isAffiliation(a.affiliation) ? a.affiliation : null,
+    usPerson: isUsPerson(a.usPerson) ? a.usPerson : null,
+    usPersonRecordedAt: strOrNull(a.usPersonRecordedAt),
+  };
+}
+
 /** Defensive parse of GET .../members. */
 export function parseServerMembers(raw: unknown): ServerMember[] {
   const list = (raw as { members?: unknown } | null)?.members;
@@ -84,6 +109,9 @@ export function parseServerMembers(raw: unknown): ServerMember[] {
     const entry: ServerMember = { userId: m.userId, email: str(m.email), name: str(m.name), tenantId: str(m.tenantId), role: m.role, createdAt: str(m.createdAt) };
     const account = parseMemberAccount(m.account);
     if (account) entry.account = account;
+    const membership = parseMemberMembership(m.membership);
+    if (membership) entry.membership = membership;
+    if (m.primaryContact === true) entry.primaryContact = true;
     out.push(entry);
   }
   return out;
@@ -138,6 +166,8 @@ export function buildTeam(
     status: 'ACTIVE' as const,
     joinedAt: m.createdAt || undefined,
     ...(m.account ? { lastLoginAt: m.account.lastLoginAt, accountDisabled: m.account.disabled, disabledReason: m.account.disabledReason, disabledAt: m.account.disabledAt } : {}),
+    ...(m.primaryContact ? { primaryContact: true } : {}),
+    ...(m.membership ? { accessExpiresOn: m.membership.accessExpiresOn, membershipExpired: m.membership.expired, affiliation: m.membership.affiliation, usPerson: m.membership.usPerson, usPersonRecordedAt: m.membership.usPersonRecordedAt } : {}),
   }));
 
   const pending: TeamMember[] = invitations

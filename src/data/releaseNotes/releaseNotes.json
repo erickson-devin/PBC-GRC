@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "releases": [
+    {
+      "version": "0.5.0",
+      "date": "2026-11-18",
+      "summary": "The CMMC objectives now follow the DoD assessment guides (version 2.13), and a control can be recorded as Met only when its objectives are met.",
+      "sections": [
+        {
+          "heading": "CMMC objectives updated",
+          "items": [
+            "The first time you open each CMMC program, objectives that were Met or Not applicable and whose wording changed are set back to In progress. A control that was Met with such objectives moves down with them.",
+            "Your narratives and evidence are kept, and every change is written to the history.",
+            "Met counts and the SPRS score can drop after this update. The control matrix shows a notice that lists what changed.",
+            "An archived program is left alone until it is unarchived."
+          ]
+        },
+        {
+          "heading": "Met needs its objectives",
+          "items": [
+            "A CMMC control can be recorded as Met only when every objective is Met or Not applicable.",
+            "Controls already recorded as Met with open objectives are not changed. The control matrix lists them under Met controls with open objectives, and they still count as Met in the scores and the SSP until someone answers the objectives or sets the control to the status of its objectives."
+          ]
+        },
+        {
+          "heading": "Control ids",
+          "items": [
+            "Control ids are now shown the way the guides write them, for example AC.L2-3.1.1 and AC.L1-b.1.i.",
+            "Saved answers, evidence and history are unchanged, and search accepts either form of the id."
+          ]
+        },
+        {
+          "heading": "Vulnerability POA&M items",
+          "items": [
+            "The first scan processed after the update completes every POA&M item whose vulnerability a scan has since confirmed fixed.",
+            "If the vulnerability target is not the organization default program, that scan also creates an item there for every finding that is already past its deadline. Before, those findings were dropped without a trace."
+          ]
+        },
+        {
+          "heading": "System Security Plan",
+          "items": [
+            "For CMMC controls, the SSP now prints the objective narratives after the control-level statement. An SSP exported after the update can be longer than one exported before it from the same answers."
+          ]
+        }
+      ]
+    }
+  ]
+}

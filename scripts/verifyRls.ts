@@ -709,6 +709,7 @@ async function main() {
   }
 
   await verifyDiscovery();
+  await verifyMembershipProfile();
   await verifyLocalIdentities();
   await verifyAccountEvents();
   await verifyProgramIsolation();
@@ -781,6 +782,72 @@ async function verifyDiscovery() {
     for (const t of [TENANT_X, TENANT_Y]) {
       await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM tenants WHERE id LIKE 'rls_verify_%'", []).catch(() => undefined);
+    }
+  }
+}
+
+/** Issues #258, #259: the membership profile columns on tenant_users: one primary contact per tenant, value checks, tenant isolation of writes. */
+async function verifyMembershipProfile() {
+  console.log('\n--- 4b. Membership profile (access expiry, affiliation, US person, primary contact) ---');
+  let lastRejection = '';
+  const rejects = async (tenant: string, sql: string, params: (string | number | null)[], want: { code: string; constraint?: string }): Promise<boolean> => {
+    try {
+      await queryWithTenant(tenant, sql, params);
+      lastRejection = 'no error';
+      return false;
+    } catch (err) {
+      const e = err as { code?: string; constraint?: string };
+      lastRejection = `code ${e.code}, constraint ${e.constraint}`;
+      return e.code === want.code && (want.constraint === undefined || e.constraint === want.constraint);
+    }
+  };
+  const join = (tenant: string, user: string) =>
+    queryWithTenant(
+      tenant,
+      `INSERT INTO tenant_users (user_id, user_email, user_name, tenant_id, role) VALUES ($1, $2, $1, $3, 'VIEWER') ON CONFLICT (user_id, tenant_id) DO NOTHING`,
+      [user, `${user}@example.mil`, tenant]
+    );
+  const flag = (tenant: string, user: string, on: boolean) =>
+    queryWithTenant(tenant, 'UPDATE tenant_users SET is_primary_contact = $3 WHERE tenant_id = $1 AND user_id = $2', [tenant, user, on]);
+  const U1 = 'rls_verify_mp_u1';
+  const U2 = 'rls_verify_mp_u2';
+  const U3 = 'rls_verify_mp_u3';
+  try {
+    await join(TENANT_X, U1);
+    await join(TENANT_X, U2);
+    await join(TENANT_Y, U3);
+
+    await flag(TENANT_X, U1, true);
+    check(await rejects(TENANT_X, 'UPDATE tenant_users SET is_primary_contact = TRUE WHERE tenant_id = $1 AND user_id = $2', [TENANT_X, U2], { code: '23505', constraint: 'uq_tenant_users_primary_contact' }), 'a second primary contact in the same tenant is refused (unique index)', lastRejection);
+    let otherTenantOk = true;
+    try {
+      await flag(TENANT_Y, U3, true);
+    } catch {
+      otherTenantOk = false;
+    }
+    check(otherTenantOk, 'a primary contact in another tenant is allowed (the index is per tenant)');
+    await flag(TENANT_X, U1, false);
+    await flag(TENANT_X, U2, true);
+    const mine = await queryWithTenant(TENANT_X, 'SELECT user_id FROM tenant_users WHERE tenant_id = $1 AND is_primary_contact', [TENANT_X]);
+    check(mine.rows.length === 1 && mine.rows[0].user_id === U2, 'the flag can move to another member once cleared', JSON.stringify(mine.rows));
+
+    const stolen = await queryWithTenant(TENANT_X, 'UPDATE tenant_users SET access_expires_on = CURRENT_DATE WHERE tenant_id = $1', [TENANT_Y]);
+    check(stolen.rowCount === 0, 'tenant X cannot set an expiry on a tenant Y member (0 rows)', 'rows updated: ' + stolen.rowCount);
+
+    // node-pg returns a DATE as local midnight: the stored day must come back as the same calendar day (read with the local getters).
+    await queryWithTenant(TENANT_X, "UPDATE tenant_users SET access_expires_on = DATE '2031-03-01' WHERE tenant_id = $1 AND user_id = $2", [TENANT_X, U1]);
+    const { listTenantMembers } = await import('../server/db');
+    const back = (await listTenantMembers(TENANT_X)).find((m) => m.userId === U1);
+    check(back?.profile.accessExpiresOn === '2031-03-01', 'a stored expiry date reads back as the same calendar day', JSON.stringify(back?.profile));
+
+    const seen = await queryWithUser(U1, 'SELECT access_expires_on FROM tenant_users WHERE user_id LIKE $1', ['rls_verify_mp_%']);
+    check(seen.rows.length === 1, 'in user context only the user\'s own membership row is readable', `saw ${seen.rows.length}`);
+
+    check(await rejects(TENANT_X, "UPDATE tenant_users SET affiliation = 'BOGUS' WHERE tenant_id = $1 AND user_id = $2", [TENANT_X, U1], { code: '23514', constraint: 'tenant_users_affiliation_check' }), 'an affiliation outside the list is refused (affiliation_check)', lastRejection);
+    check(await rejects(TENANT_X, "UPDATE tenant_users SET us_person = 'MAYBE' WHERE tenant_id = $1 AND user_id = $2", [TENANT_X, U1], { code: '23514', constraint: 'tenant_users_us_person_check' }), 'a US person value outside the list is refused (us_person_check)', lastRejection);
+  } finally {
+    for (const t of [TENANT_X, TENANT_Y]) {
+      await queryWithTenant(t, "DELETE FROM tenant_users WHERE user_id LIKE 'rls_verify_mp_%'", []).catch(() => undefined);
     }
   }
 }
@@ -1055,6 +1122,27 @@ async function verifyAccountEvents() {
     await recordAccountEvent({ actorKind: 'user', actorUserId: TARGET, targetUserId: TARGET, action: 'vm_token_created', scopeTenantId: 'rls_verify_t', details: { tokenId: 'vmt_0123456789abcdef' } });
     const tokEvents = (await listAccountEvents({ limit: 200 })).filter((e) => e.targetUserId === TARGET && e.action === 'vm_token_created');
     check(tokEvents.length === 1 && tokEvents[0].details.tokenId === 'vmt_0123456789abcdef' && tokEvents[0].tenantId === 'rls_verify_t', 'the action list (migrated or new) accepts vm_token_created', JSON.stringify(tokEvents));
+
+    // V30d (issues #258, #260): the migrated action list accepts the membership and announcement actions; the two announcement tables are global.
+    await recordAccountEvent({ actorKind: 'user', actorUserId: TARGET, targetUserId: TARGET, action: 'membership_updated', scopeTenantId: 'rls_verify_t', details: { field: 'us_person', via: 'member_update' } });
+    await recordAccountEvent({ actorKind: 'admin', actorUserId: TARGET, targetUserId: TARGET, action: 'announcement_posted', details: { announcementId: 'rls_verify_ann' } });
+    await recordAccountEvent({ actorKind: 'admin', actorUserId: TARGET, targetUserId: TARGET, action: 'announcement_withdrawn', details: { announcementId: 'rls_verify_ann' } });
+    const newActions = (await listAccountEvents({ limit: 200 })).filter((e) => e.targetUserId === TARGET).map((e) => e.action);
+    check(['membership_updated', 'announcement_posted', 'announcement_withdrawn'].every((a) => newActions.includes(a as never)), 'the action list (migrated or new) accepts membership_updated, announcement_posted and announcement_withdrawn', JSON.stringify(newActions));
+    const annFlags = await pool.query("SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('platform_announcements', 'user_notice_reads') AND relkind = 'r'");
+    check(annFlags.rows.length === 2 && annFlags.rows.every((r) => r.relrowsecurity === false), 'platform_announcements and user_notice_reads: row security is NOT enabled (global tables)', JSON.stringify(annFlags.rows));
+    check(
+      await rejects(() => pool.query("INSERT INTO platform_announcements (title, body, created_by_user_id) VALUES ('   ', 'rls verify', 'rls_verify_ann')"), { code: '23514', constraint: 'platform_announcements_title_check' }),
+      'an announcement with a blank title is refused (title_check)', lastRejection
+    );
+    check(
+      await rejects(() => pool.query("INSERT INTO platform_announcements (title, body, created_by_user_id) VALUES ('rls verify', repeat('x', 2001), 'rls_verify_ann')"), { code: '23514', constraint: 'platform_announcements_body_check' }),
+      'an announcement body over 2000 characters is refused (body_check)', lastRejection
+    );
+    check(
+      await rejects(() => pool.query("INSERT INTO user_notice_reads (user_id, kind, ref) VALUES ('rls_verify_ann', 'x', '1.0.0')"), { code: '23514', constraint: 'user_notice_reads_kind_check' }),
+      'a notice read of an unknown kind is refused (kind_check)', lastRejection
+    );
 
     // V-216 (issue #216): the simulator-era scan columns are retired: kept, marked, and (by the startup fix) nulled.
     const retired = await pool.query(
