@@ -319,7 +319,7 @@ console.log('\n--- Documents honesty (#196 to #200) ---');
 }
 {
   const m = (text.get('src/components/reports/ArtifactExportModal.tsx') ?? '').replace(/\r\n/g, '\n');
-  assert(m.includes("import { getExportGaps } from '../../data/reports/exportReadiness';") && m.includes('getExportGaps(selectedDocType, formData)'), 'S151-25 the export modal lists the gaps of the selected document');
+  assert(m.includes("import { getExportGaps } from '../../data/reports/exportReadiness';") && m.includes('getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework })'), 'S151-25 the export modal lists the gaps of the selected document');
   const region = m.slice(m.indexOf('data-testid="export-readiness"'), m.indexOf('{/* Modal Bottom Action Footer */}'));
   assert(region.length > 0 && m.includes('<div role="status" data-testid="export-readiness"'), 'S151-26 the readiness checklist is a status region above the footer');
   assert(!region.includes('formData.') && !region.includes('disabled='), 'S151-27 the checklist never echoes a value and never disables an export');
@@ -329,6 +329,8 @@ console.log('\n--- Documents honesty (#196 to #200) ---');
   const missing151 = fields151.filter((f) => !m.includes(`htmlFor={metaId('${f}')}`) || !m.includes(`id={metaId('${f}')}`));
   assert(missing151.length === 0, 'S151-30 every field getExportGaps can report has a labelled input with an id', missing151);
   assert(m.includes("serviceCommitments: meta.serviceCommitments || '',") && m.includes('serviceCommitments: formData.serviceCommitments'), 'S199-5 the export form loads and saves the service commitments');
+  const saveBlock = m.slice(m.indexOf('const handleSaveMetadata'), m.indexOf('// Dynamic Live Document Compilation'));
+  assert(saveBlock.length > 0 && m.includes('readOnly') && !saveBlock.includes('systemOwner:') && m.includes('openSspSection('), 'S151-31 the export form shows the system owner read-only, never saves it, and opens the SSP builder for a profile gap');
 }
 
 // ----------------------------------------------------------------------------- Verification claims with nothing behind them (#277)

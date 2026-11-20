@@ -2,6 +2,7 @@ import { ComplianceFramework, BaselineTier } from './framework';
 import { ControlStatus, ComplianceMetrics, DomainStat } from './cmmc';
 import type { AssetScopeSummary } from '../data/telemetry/assetScope';
 import type { FipsModuleRef } from '../data/telemetry/fipsValidation';
+import type { SspProfile } from './sspProfile';
 
 export type ReportDocumentType =
   | 'NIST_SP_800_18_SSP'
@@ -52,6 +53,11 @@ export interface ReportMetadata {
   cryptoModules?: FipsModuleRef[];
   /** The principal service commitments and system requirements a SOC 2 system description states (1.2). */
   serviceCommitments?: string;
+  /**
+   * The program's SSP profile (system identifier, categorization, roles, maintenance and ownership). Set only when a profile is
+   * recorded, so a package built without one is unchanged; the SSP states each item as not recorded otherwise.
+   */
+  sspProfile?: SspProfile;
 }
 
 export interface POAMMilestone {

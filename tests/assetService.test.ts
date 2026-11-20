@@ -114,8 +114,8 @@ function sspTests() {
     { cmmcAssetCategory: 'CONTRACTOR_RISK' as const, discoveryStatus: 'UNCONFIRMED_DISCOVERY' as const },
   ]);
   const doc = compileNistSSP({ ...meta, assetScope: scope }, cmmcL1Controls, {}, []);
-  const section = doc.sections.find((s) => s.id === 'sec-1-system-identification')!;
-  const sub = section.subsections?.find((s) => s.title.startsWith('1.2.1'));
+  const section = doc.sections.find((s) => s.id === 'sec-2-system-environment')!;
+  const sub = section.subsections?.find((s) => s.title.startsWith('2.1.1'));
   assert(Boolean(sub), 'the SSP has a "CMMC Asset Scoping Summary" subsection under the boundary');
   const item = (label: string) => sub?.items?.find((i) => i.label === label)?.value;
   assert(item('CUI Asset') === '3' && item('Security Protection Asset (SPA)') === '2' && item('Specialized Asset (SA)') === '1' && item('Contractor Risk Managed Asset (CRMA)') === '0', 'CUI and SPA (and SA / CRMA) counts are stated with their full names', sub?.items);
@@ -123,9 +123,9 @@ function sspTests() {
   assert(/6 in-scope assets: 3 CUI Assets, 2 Security Protection Assets \(SPA\)/.test(sub?.content ?? ''), 'the narrative repeats the counts', sub?.content);
   assert(section.subsections?.some((s) => s.content === 'Custom boundary text.'), "the organisation's own boundary description is still there");
   const titles = section.subsections?.map((s) => s.title) ?? [];
-  assert(titles.indexOf(sub!.title) === titles.findIndex((t) => t.startsWith('1.2 ')) + 1, 'it sits directly after the boundary description (1.2)');
+  assert(titles.indexOf(sub!.title) === titles.findIndex((t) => t.startsWith('2.1 ')) + 1, 'it sits directly after the boundary description (2.1)');
   const without = compileNistSSP(meta, cmmcL1Controls, {}, []);
-  assert(!without.sections.find((s) => s.id === 'sec-1-system-identification')?.subsections?.some((s) => s.title.startsWith('1.2.1')), 'with no inventory loaded the SSP states no counts (never a wrong zero)');
+  assert(!without.sections.find((s) => s.id === 'sec-2-system-environment')?.subsections?.some((s) => s.title.startsWith('2.1.1')), 'with no inventory loaded the SSP states no counts (never a wrong zero)');
 }
 
 async function backendTests() {

@@ -16,6 +16,8 @@ import { NOT_RECORDED } from '../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../data/cmmcGuide/displayId';
 import { composeImplementationStatement } from '../data/cmmcGuide/sspStatement';
 import { statusDisplayLabel } from '../data/statusLabels';
+import type { SspProfile } from '../types/sspProfile';
+import { sspIdentificationItems, sspMaintenanceExceptions, sspMaintenanceItems, sspRoleLines } from '../data/ssp/sspOutput';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -93,16 +95,20 @@ export function createInitialState(tenant: Tenant, frameworkOverride?: Complianc
 }
 
 /**
- * The Markdown SSP of the active framework. Pure: exportMarkdown only downloads the result.
+ * The Markdown SSP of the active framework. Pure: exportMarkdown only downloads the result. The outline follows the compiled SSP
+ * (1.1 identification and categorization, 1.2 roles, 2.1 to 2.3 environment); `profile` is the program's SSP profile, null when none is recorded.
  */
 export function buildSspMarkdown(
   state: AssessmentState,
   controls: FrameworkControlDefinition[] | undefined,
-  framework: ComplianceFramework = 'CMMC_L1'
+  framework: ComplianceFramework = 'CMMC_L1',
+  profile?: SspProfile | null
 ): string {
   const meta = state.sspMetadata;
+  const sspProfile = profile ?? null;
   const fwTitle = framework === 'CMMC_L1' ? 'CMMC LEVEL 1' : framework.replace(/_/g, ' ');
   let md = `# SYSTEM SECURITY PLAN (SSP) - ${fwTitle.toUpperCase()}\n\n`;
+  md += `## 1.1 System Identification & Categorization\n\n`;
   md += `- **Document Version:** ${meta.version || '1.0.0'}\n`;
   md += `- **Organization:** ${meta.organizationName}\n`;
   md += `- **CAGE Code:** ${meta.cageCode || 'N/A'}\n`;
@@ -111,11 +117,18 @@ export function buildSspMarkdown(
   md += `- **System Owner:** ${meta.systemOwner}\n`;
   md += `- **Lead Assessor:** ${meta.authorName}\n`;
   md += `- **Assessment Date:** ${meta.assessmentDate}\n`;
+  for (const item of sspIdentificationItems(sspProfile)) md += `- **${item.label}:** ${item.value}\n`;
   md += `- **Evidence vault (local):** \`tenants/${state.tenantId}/\`\n\n`;
-  md += `## 1. System Scope & Boundary Description\n\n${meta.systemBoundaryScope}\n\n`;
-  md += `## 2. Operating Environment & Cloud Service Providers (CSPs)\n\n`;
+  md += `## 1.2 Responsible Organization & Roles\n\n`;
+  for (const line of sspRoleLines({ profile: sspProfile, legacySystemOwner: meta.systemOwner, framework })) md += `- **${line.label}:** ${line.value}\n`;
+  md += `\n`;
+  md += `## 2.1 System Scope & Boundary Description\n\n${meta.systemBoundaryScope}\n\n`;
+  md += `## 2.2 Operating Environment & Cloud Service Providers (CSPs)\n\n`;
   md += `- **Environment:** ${meta.systemEnvironment}\n`;
   md += `- **Authorized CSPs:** ${meta.cloudServiceProviders}\n\n`;
+  md += `## 2.3 Hardware and Software Maintenance and Ownership\n\n`;
+  for (const item of sspMaintenanceItems(sspProfile)) md += `- **${item.label}:** ${item.value}\n`;
+  md += `\n**Exceptions:** ${sspMaintenanceExceptions(sspProfile)}\n\n`;
 
   const activeControls: FrameworkControlDefinition[] =
     controls && controls.length > 0 ? controls : getFrameworkControls(framework);
@@ -295,9 +308,10 @@ export const StorageService = {
   exportMarkdown(
     state: AssessmentState,
     controls?: FrameworkControlDefinition[],
-    framework: ComplianceFramework = 'CMMC_L1'
+    framework: ComplianceFramework = 'CMMC_L1',
+    profile?: SspProfile | null
   ): void {
-    const md = buildSspMarkdown(state, controls, framework);
+    const md = buildSspMarkdown(state, controls, framework, profile);
     const meta = state.sspMetadata;
 
     const blob = new Blob([md], { type: 'text/markdown' });

@@ -51,6 +51,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'user_program_defaults', tenantColumn: 'tenant_id' },
   { table: 'software_items', tenantColumn: 'tenant_id' },
   { table: 'vm_poam_item_events', tenantColumn: 'tenant_id' },
+  { table: 'program_ssp_profile', tenantColumn: 'tenant_id' },
+  { table: 'program_ssp_section_reviews', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -73,6 +75,8 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'program_assets',
   'program_ssp_metadata',
   'vm_poam_item_events',
+  'program_ssp_profile',
+  'program_ssp_section_reviews',
 ];
 
 /**
@@ -1167,6 +1171,49 @@ export const TABLES_SQL = `
       CONSTRAINT vm_poam_item_events_system_check CHECK (source = 'human' OR (actor = 'system:vm-worker' AND actor_user_id IS NULL))
   );
   CREATE INDEX IF NOT EXISTS idx_vm_poam_item_events_item ON vm_poam_item_events (tenant_id, program_id, item_id, created_at DESC);
+  -- SSP profile and section reviews (issues #238, #241, #242, #246). The profile holds the structured SSP fields (categorization, system
+  -- identifier, roles, maintenance); it may be CUI: never logged, history holds digests only. The CHECK pins type and size only (keys are
+  -- validated by the application), so a later image may add profile keys without making this one fail to start.
+  CREATE TABLE IF NOT EXISTS program_ssp_profile (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      profile JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_by VARCHAR(255),
+      updated_by_user_id VARCHAR(128),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_ssp_profile PRIMARY KEY (tenant_id, program_id),
+      CONSTRAINT fk_program_ssp_profile_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_ssp_profile_shape_check CHECK (jsonb_typeof(profile) = 'object' AND octet_length(profile::text) <= 262144)
+  );
+  -- Append-only sign-offs: who (server user id, never the request body), when, and the SHA-256 of the section's saved content.
+  CREATE TABLE IF NOT EXISTS program_ssp_section_reviews (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      section_id VARCHAR(32) NOT NULL,
+      action VARCHAR(16) NOT NULL DEFAULT 'signed_off',
+      content_sha256 VARCHAR(64) NOT NULL,
+      reviewer_user_id VARCHAR(128) NOT NULL,
+      reviewer_name VARCHAR(255) NOT NULL,
+      reviewer_role VARCHAR(32) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT fk_program_ssp_section_reviews_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_ssp_section_reviews_action_check CHECK (action IN ('signed_off', 'withdrawn')),
+      CONSTRAINT program_ssp_section_reviews_sha_check CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+      CONSTRAINT program_ssp_section_reviews_section_check CHECK (section_id ~ '^[a-z][a-z0-9_]{0,31}$')
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_ssp_section_reviews_section ON program_ssp_section_reviews (tenant_id, program_id, section_id, created_at DESC);
+  CREATE OR REPLACE FUNCTION program_ssp_section_reviews_guard() RETURNS trigger AS $$
+  BEGIN
+    RAISE EXCEPTION 'program_ssp_section_reviews is append-only' USING ERRCODE = '42501';
+  END;
+  $$ LANGUAGE plpgsql;
+  DROP TRIGGER IF EXISTS trg_program_ssp_section_reviews_guard ON program_ssp_section_reviews;
+  CREATE TRIGGER trg_program_ssp_section_reviews_guard BEFORE UPDATE ON program_ssp_section_reviews
+      FOR EACH ROW EXECUTE FUNCTION program_ssp_section_reviews_guard();
+  DROP TRIGGER IF EXISTS trg_program_ssp_section_reviews_no_truncate ON program_ssp_section_reviews;
+  CREATE TRIGGER trg_program_ssp_section_reviews_no_truncate BEFORE TRUNCATE ON program_ssp_section_reviews
+      FOR EACH STATEMENT EXECUTE FUNCTION program_ssp_section_reviews_guard();
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

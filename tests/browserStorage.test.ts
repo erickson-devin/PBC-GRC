@@ -440,6 +440,22 @@ async function main() {
   const m12 = scrubAssessmentJson(JSON.stringify(withSc(true)));
   assert(m12.clearedSspMetadata === 1 && m12.json !== null && !m12.json.includes(SCMARK), 'M12 the scrub clears serviceCommitments from a marked cache', m12.clearedSspMetadata);
 
+  // M13 to M16: the SSP profile (identifier, roles, maintenance) is server-only once the cache is marked, and stays in a browser-only cache
+  const PROFMARK = 'PROF-MARK-84';
+  const withProfile = (marker: boolean): AssessmentState => ({ ...withSsp('srv1', marker), sspProfile: { systemIdentifier: PROFMARK, roles: [{ id: 'r1', roleKey: 'system_owner', name: PROFMARK, email: '' }] } });
+  const m13 = scrubAssessmentJson(JSON.stringify(withProfile(true)));
+  assert(m13.json !== null && !m13.json.includes(PROFMARK) && !m13.json.includes('sspProfile') && m13.clearedSspMetadata === 1, 'M13 the scrub removes the SSP profile from a marked server cache');
+  const m14 = scrubAssessmentJson(JSON.stringify(withProfile(false)));
+  assert((m14.json ?? '').includes(PROFMARK), 'M14 a browser-only cache keeps its SSP profile');
+  const m15In = withProfile(true);
+  const m15Out = stripSspMetadataForCache(m15In);
+  assert(m15In.sspProfile !== undefined && !('sspProfile' in m15Out) && !JSON.stringify(m15Out).includes(PROFMARK) && stripSspMetadataForCache(withProfile(false)).sspProfile?.systemIdentifier === PROFMARK, 'M15 the helper drops the profile of a marked cache without mutating, and keeps it without the marker');
+  globalStore.clear();
+  StorageService.saveAssessment('srv1', withProfile(true));
+  assert(!globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'srv1')!.includes(PROFMARK), 'M16 saveAssessment with the marker stores no SSP profile');
+  StorageService.saveAssessment('brw1', withProfile(false), { keepNotes: true });
+  assert(globalStore.getItem(ASSESSMENT_KEY_PREFIX + 'brw1')!.includes(PROFMARK), 'M16b a browser-only save keeps the SSP profile');
+
   console.log('\n--- Asset cache and discovery keys ---');
   const NOTE7 = 'CUI-NOTE-7';
   const realAssets = JSON.stringify([{ id: 'a-1', hostName: 'WS-01', macAddress: '', notes: NOTE7 }]);

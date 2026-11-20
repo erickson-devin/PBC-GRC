@@ -9,6 +9,7 @@
 
 import { Tenant } from '../../types/tenant';
 import type { SspMetadataFields } from '../../types/sspMetadata';
+import type { SspProfile } from '../../types/sspProfile';
 import { AssessmentState, ControlState, EvidenceItem } from '../../types/cmmc';
 import type { AssessmentObjective } from '../../types/assessment';
 import { CompiledDocument, POAMEntry } from '../../types/report';
@@ -92,6 +93,8 @@ export interface HandoverOptions {
   sspMetadata?: SspMetadataFields;
   /** The program's objective answers from the server (#293), so its SSP prints the objective narratives and its POA&M names the open objectives. Without them the SSP prints the control-level notes only. */
   objectives?: Record<string, AssessmentObjective>;
+  /** The program's SSP profile from the server (identifier, categorization, roles, maintenance), so its SSP prints them. Without it a program's package states them as not recorded; the browser path reads the cached profile. */
+  sspProfile?: SspProfile;
 }
 
 /** Thrown (and shown to the operator as is) when the evidence files cannot be cleared; it holds no tenant data. */
@@ -160,6 +163,7 @@ export async function generateEnclaveHandoverPackage(
   // The customer's own environment and cloud providers as recorded in the SSP metadata (#122). A program's package reads no browser cache and states none.
   // A program's package takes the server's SSP details for that program (#84) when the caller fetched them.
   const sspMeta = options.sspMetadata ?? state?.sspMetadata;
+  const sspProfile = options.sspProfile ?? state?.sspProfile;
   const evidenceForPackage: ReadonlyArray<EvidenceItem> = evidenceIndex ?? state?.evidenceIndex ?? [];
   const ledger: AuditLogEntry[] = loadLedger(tenantId);
 
@@ -187,6 +191,7 @@ export async function generateEnclaveHandoverPackage(
       framework: program ? program.framework : primaryFw,
       assetScope: assets ? summarizeScope(assets) : undefined,
       cryptoModules: assets ? collectFipsModules(assets) : undefined,
+      ...(sspProfile ? { sspProfile } : {}),
     },
     controls,
     controlsForReport,

@@ -155,14 +155,16 @@ export function stripImplementationNotesForCache(state: AssessmentState): Assess
 }
 
 /**
- * Returns a copy of the state with the SSP metadata text blanked (tenantId kept), once `sspMetadataMigratedAt` is set: the
+ * Returns a copy of the state with the SSP metadata text blanked (tenantId kept) and the SSP profile removed, once `sspMetadataMigratedAt` is set: the
  * server then holds the only copy. The same object until then (the cache is the only copy). Never mutates the input.
  */
 export function stripSspMetadataForCache(state: AssessmentState): AssessmentState {
   if (!state.sspMetadataMigratedAt || !state.sspMetadata) return state;
   const meta: Record<string, unknown> = { ...(state.sspMetadata as unknown as Record<string, unknown>) };
   for (const field of SSP_METADATA_FIELDS) meta[field] = '';
-  return { ...state, sspMetadata: meta as unknown as AssessmentState['sspMetadata'] };
+  // The SSP profile (roles, identifier, categorization, maintenance) is server-only for a server-backed tenant, like the metadata
+  const { sspProfile: _sspProfile, ...rest } = state;
+  return { ...rest, sspMetadata: meta as unknown as AssessmentState['sspMetadata'] };
 }
 
 /** Returns a copy of the state with `failingAssets` (host names, IPs, scan output) removed from every control. Never mutates the input. */
@@ -256,6 +258,10 @@ export function scrubAssessmentJson(raw: string, options: { clearEvidence?: bool
           (parsed.sspMetadata as Record<string, unknown>)[field] = '';
           clearedSspMetadata = 1;
         }
+      }
+      if ('sspProfile' in (parsed as object)) {
+        delete (parsed as Record<string, unknown>).sspProfile;
+        clearedSspMetadata = 1;
       }
     }
     if (stripped === 0 && strippedObjectives === 0 && clearedEvidence === 0 && clearedFailingAssets === 0 && clearedSspMetadata === 0) {

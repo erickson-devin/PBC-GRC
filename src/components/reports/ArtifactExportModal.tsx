@@ -52,6 +52,9 @@ import {
 } from '../../data/reports/reportExporters';
 import { isInventoryDocumentType } from '../../data/reports/inventoryDocuments';
 import { getExportGaps } from '../../data/reports/exportReadiness';
+import { exportGapTarget } from '../../data/ssp/sspBuilderView';
+import type { SspSectionId } from '../../data/ssp/sspSections';
+import { useSspProfile } from '../../hooks/useSspProfile';
 import {
   calculateSprsScore,
   formatSprsScore,
@@ -86,6 +89,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     updateSSPMetadata,
     sspMetadataEditable,
     exportModalInitialDocType,
+    openSspSection,
   } = useAssessment();
 
   const {
@@ -101,6 +105,8 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   // states no asset counts rather than a wrong zero or the wrong boundary.
   const { assets: inventory, summary: inventorySummary, loading: assetsLoading, error: assetsError } = useEnclaveAssets();
   const boundary = useProgramAssets({ enabled: isOpen });
+  // The SSP profile (identifier, categorization, roles, maintenance) is edited in the SSP builder; the export prints it and lists what it lacks
+  const sspProfile = useSspProfile();
   const boundaryList = useMemo(
     () => (boundary.status === 'ready' ? boundaryAssets(inventory, [...boundary.activeIds], boundary.declared) : inventory),
     [boundary.status, boundary.activeIds, boundary.declared, inventory]
@@ -171,6 +177,16 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
     framework: activeFramework,
   });
 
+  // The profile rides on the form values (set only when one exists) so the compiled SSP, the eMASS CSV and the SPRS summary print it
+  useEffect(() => {
+    setFormData((prev) => {
+      if (prev.sspProfile === (sspProfile.profile ?? undefined)) return prev;
+      const next = { ...prev };
+      delete next.sspProfile;
+      return sspProfile.profile ? { ...next, sspProfile: sspProfile.profile } : next;
+    });
+  }, [sspProfile.profile]);
+
   const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
   const [isExportingJson, setIsExportingJson] = useState<boolean>(false);
   const [jsonExportError, setJsonExportError] = useState<string | null>(null);
@@ -222,7 +238,6 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       organizationName: formData.organizationName,
       cageCode: formData.cageCode,
       samStatus: formData.samStatus,
-      systemOwner: formData.systemOwner,
       authorName: formData.primaryAssessor,
       systemBoundaryScope: formData.boundaryDescription,
       systemEnvironment: formData.systemEnvironment,
@@ -255,15 +270,20 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
 
   // Export readiness (#151, B-1): advisory only, exports stay allowed. Labels are fixed text; values are never echoed.
   const metaIdBase = useId();
-  const metaId = (field: keyof ReportMetadata) => `${metaIdBase}-meta-${field}`;
+  const metaId = (field: string) => `${metaIdBase}-meta-${field}`;
   const metaHeadingId = `${metaIdBase}-meta-heading`;
-  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData), [selectedDocType, formData]);
+  const exportGaps = useMemo(() => getExportGaps(selectedDocType, formData, { profile: sspProfile.profile, framework: activeFramework }), [selectedDocType, formData, sspProfile.profile, activeFramework]);
   const requiredGapCount = exportGaps.filter((g) => !g.advisory).length;
-  const [pendingFocusField, setPendingFocusField] = useState<keyof ReportMetadata | null>(null);
-  const handleGapClick = useCallback((field: keyof ReportMetadata) => {
+  const [pendingFocusField, setPendingFocusField] = useState<string | null>(null);
+  const handleGapClick = useCallback((field: string) => {
     setActiveTab('metadata');
     setPendingFocusField(field);
   }, []);
+  // A gap that is filled in on the SSP builder opens that section (the builder takes focus); an unsaved edit in this window is lost, as when it is closed
+  const handleSspGapClick = useCallback((section: SspSectionId) => {
+    openSspSection(section);
+    if (!embedded) onClose();
+  }, [openSspSection, embedded, onClose]);
   useEffect(() => {
     if (activeTab !== 'metadata' || !pendingFocusField) return;
     const target = (canEdit ? document.getElementById(metaId(pendingFocusField)) : null) ?? document.getElementById(metaHeadingId);
@@ -750,10 +770,15 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
                     disabled={!canEdit}
                     type="text"
                     value={formData.systemOwner}
-                    onChange={(e) => setFormData({ ...formData, systemOwner: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+                    readOnly
+                    aria-describedby={`${metaId('systemOwner')}-hint`}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-sm text-slate-300 focus:border-brand-500 focus:outline-none cursor-default"
                     placeholder="e.g. Alex Mercer, CMMC CCA (CISO)"
                   />
+                  <p id={`${metaId('systemOwner')}-hint`} className="mt-1.5 text-[11px] text-slate-400">
+                    Set by the System Owner role in the SSP builder (1.2 Responsible organization and roles).{' '}
+                    <button type="button" onClick={() => handleSspGapClick('roles')} className="text-brand-300 hover:text-brand-200 underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded">Open roles</button>
+                  </p>
                 </div>
 
                 {/* Primary Assessor */}
@@ -1150,16 +1175,17 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
               <div className="space-y-2 min-w-0">
                 <p>
                   {exportGaps.length === 1 ? '1 value is' : `${exportGaps.length} values are`} not recorded, so this document will print "not recorded" there. Exporting is still allowed.
-                  {canEdit ? ' Select a value to fill it in on Boundary Metadata.' : ' You have read-only access: ask a Tenant Owner or Admin to record these values.'}
+                  {canEdit ? ' Select a value to fill it in on Boundary Metadata or in the SSP builder.' : ' You have read-only access: ask a Tenant Owner or Admin to record these values.'}
                 </p>
                 <ul className="flex flex-wrap gap-1.5" aria-label="Values not recorded">
                   {exportGaps.map((gap) => (
                     <li key={gap.field}>
-                      <button type="button" onClick={() => handleGapClick(gap.field)}
+                      <button type="button" onClick={() => { const t = exportGapTarget(gap); if (t.kind === 'ssp') handleSspGapClick(t.section); else handleGapClick(t.field); }}
                         className={`px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${gap.advisory ? 'border-dashed border-slate-600 bg-slate-900 text-slate-300 hover:bg-slate-800' : 'border-amber-500/40 bg-slate-900 text-amber-200 hover:bg-slate-800'}`}>
                         <Edit3 className="w-3 h-3" aria-hidden="true" />
                         <span>{gap.label}</span>
                         <span className="font-normal text-slate-400">{gap.advisory ? '(optional for this document)' : '(required)'}</span>
+                        {gap.sspSection || gap.field === 'systemOwner' ? <span className="sr-only"> (opens the SSP builder)</span> : null}
                       </button>
                     </li>
                   ))}

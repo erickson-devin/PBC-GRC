@@ -253,8 +253,10 @@ export function generateEmassControlMatrixCsv(
     const role = recordedRole(state?.responsibleRole);
     const evalDate = state?.lastUpdated ? state.lastUpdated.split('T')[0] : metadata.assessmentDate || new Date().toISOString().split('T')[0];
 
+    // The unique identifier leads the column when the SSP profile records one ("SYS-1 / Enclave")
+    const systemId = (metadata.sspProfile?.systemIdentifier ?? '').trim();
     const row = [
-      csvCell(metadata.systemName || NOT_RECORDED),
+      csvCell(systemId ? `${systemId} / ${metadata.systemName || NOT_RECORDED}` : metadata.systemName || NOT_RECORDED),
       csvCell(metadata.cageCode || 'N/A'),
       csvCell(cmmcDisplayId(ctrl.id, metadata.framework)),
       csvCell(mapsTo171 ? nistId : 'N/A'),

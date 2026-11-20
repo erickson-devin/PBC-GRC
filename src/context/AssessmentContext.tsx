@@ -37,6 +37,8 @@ import { loadNist80053Objectives } from '../data/frameworks/nist80053/objectives
 import { ApiClient, ApiError } from '../services/apiClient';
 import { unsavedControlNotes, unsavedSspMetadataFields } from '../services/unsavedText';
 import { SSP_METADATA_FIELDS, type SspField, type SspMetadataFields } from '../types/sspMetadata';
+import { validateSspProfile, type SspProfile } from '../types/sspProfile';
+import type { SspSectionId } from '../data/ssp/sspSections';
 import {
   SSP_METADATA_STALE_MESSAGE,
   createDebouncedSave,
@@ -180,7 +182,15 @@ interface AssessmentContextType {
   /** Controls the last successful import set to their objectives' status because the file had them Met without every objective Met (#292). */
   importControlsLowered: () => number;
   exportAssessmentJSON: () => void;
-  exportAssessmentMarkdown: () => void;
+  /** Downloads the Markdown SSP; `profile` is the program's SSP profile (identifier, categorization, roles, maintenance), null when none is recorded. */
+  exportAssessmentMarkdown: (profile?: SspProfile | null) => void;
+  /** Browser-only tenants: saves the SSP profile in this browser's cache. Does nothing for a server-backed tenant (its profile lives on the server) or a read-only role. */
+  setBrowserSspProfile: (profile: SspProfile) => void;
+  /** The SSP builder section another screen asked to open (the export modal's gap list). The builder consumes it and calls clearSspFocusSection. */
+  sspFocusSection: SspSectionId | null;
+  /** Opens the SSP tab on this section. Asking for the same section again re-focuses it once the builder has cleared the request. */
+  openSspSection: (id: SspSectionId) => void;
+  clearSspFocusSection: () => void;
 
   // NIST SP 800-171A Objective-Level Evaluation & Rollup
   getObjectivesForControl: (controlId: string) => AssessmentObjective[];
@@ -302,6 +312,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [activeTab, setActiveTab] = useState<NavigationTab>('dashboard');
   const [selectedControlId, setSelectedControlId] = useState<string | null>(null);
   const [focusObjective, setFocusObjective] = useState<FocusObjectiveRequest | null>(null);
+  const [sspFocusSection, setSspFocusSection] = useState<SspSectionId | null>(null);
   const [selectedDomainFilter, setSelectedDomainFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<ControlStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -319,6 +330,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setSelectedControlId(controlId);
   }, []);
   const clearFocusObjective = useCallback(() => setFocusObjective(null), []);
+  const openSspSection = useCallback((id: SspSectionId) => {
+    setSspFocusSection(id);
+    setActiveTab('ssp');
+  }, []);
+  const clearSspFocusSection = useCallback(() => setSspFocusSection(null), []);
   const dismissCatalogUpdate = useCallback(() => {
     setState((prev) => (prev.catalogUpdate ? { ...prev, catalogUpdate: { ...prev.catalogUpdate, dismissedAt: new Date().toISOString() } } : prev));
   }, []);
@@ -367,6 +383,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       : undefined;
     setState({ ...migrated.state, ...(catalogUpdate ? { catalogUpdate } : {}), programId });
     setSelectedControlId(null);
+    setSspFocusSection(null);
     setFocusObjective(null);
     setSelectedDomainFilter('ALL');
     setSelectedStatusFilter('ALL');
@@ -1916,6 +1933,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       imported.sspMetadataMigratedAt = stateRef.current.sspMetadataMigratedAt;
       if (!imported.sspMetadataMigratedAt) delete imported.sspMetadataMigratedAt;
       if (currentTenant.serverBacked && !sspMetadataEditable) imported.sspMetadata = stateRef.current.sspMetadata;
+      // The SSP profile of a backup file: a server-backed program keeps its own on the server; a browser-only one takes a valid profile only
+      if (currentTenant.serverBacked || !validateSspProfile(imported.sspProfile ?? {}).ok) delete imported.sspProfile;
 
       // A server-backed tenant's notes, status and roles live on the server: send each control that differs from the
       // current state through the audited writer (one PUT per control, sequential, only the changed fields)
@@ -1987,9 +2006,16 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [state, activeFramework]);
 
   // Action: Export Markdown
-  const exportAssessmentMarkdown = useCallback(() => {
-    StorageService.exportMarkdown(state, frameworkControls, activeFramework);
-  }, [state, frameworkControls, activeFramework]);
+  const exportAssessmentMarkdown = useCallback((profile?: SspProfile | null) => {
+    StorageService.exportMarkdown(state, frameworkControls, activeFramework, profile ?? (currentTenant.serverBacked ? null : state.sspProfile ?? null));
+  }, [state, frameworkControls, activeFramework, currentTenant.serverBacked]);
+
+  // Browser-only tenants keep the SSP profile in the cache (a server-backed tenant's is on the server and never held here)
+  const setBrowserSspProfile = useCallback((profile: SspProfile) => {
+    if (!canEdit || currentTenant.serverBacked) return;
+    stateRef.current = { ...stateRef.current, sspProfile: profile };
+    setState(prev => ({ ...prev, sspProfile: profile }));
+  }, [canEdit, currentTenant.serverBacked]);
 
   const value = useMemo(() => ({
     state,
@@ -2039,6 +2065,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     importControlsLowered: getImportControlsLowered,
     exportAssessmentJSON,
     exportAssessmentMarkdown,
+    setBrowserSspProfile,
+    sspFocusSection,
+    openSspSection,
+    clearSspFocusSection,
 
     isExportModalOpen,
     setIsExportModalOpen,
@@ -2099,6 +2129,10 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     getImportControlsLowered,
     exportAssessmentJSON,
     exportAssessmentMarkdown,
+    setBrowserSspProfile,
+    sspFocusSection,
+    openSspSection,
+    clearSspFocusSection,
     isExportModalOpen,
     exportModalInitialDocType,
     openExportModal,

@@ -1,5 +1,6 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata';
+import type { SspProfile, SspProfileRecord, SspReviewsResponse, SspSectionReview, SspSectionReviewState } from '../types/sspProfile';
 import type { CatalogUpdateChanges, LoweredControl, ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
@@ -1536,6 +1537,60 @@ export const ApiClient = {
       method: 'PUT',
       headers: this.getHeaders(tenantId, undefined, programId),
       body: JSON.stringify({ metadata, expectedUpdatedAt }),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * GET /api/v1/ssp-metadata/profile
+   * The program's SSP profile (categorization, system identifier, roles, maintenance; profile null when no row yet); every role may read it
+   */
+  async getSspProfile(tenantId: string, programId?: string | null): Promise<SspProfileRecord> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata/profile`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * PUT /api/v1/ssp-metadata/profile
+   * Replaces the program's SSP profile (write roles only); expectedUpdatedAt is null for the first write, else the stamp last read
+   */
+  async putSspProfile(tenantId: string, profile: SspProfile, expectedUpdatedAt: string | null, programId?: string | null): Promise<SspProfileRecord & { changed: boolean }> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata/profile`, {
+      method: 'PUT',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      body: JSON.stringify({ profile, expectedUpdatedAt }),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * GET /api/v1/ssp-metadata/reviews
+   * The sign-off state of each SSP section and the review history (newest first); every role may read it
+   */
+  async getSspReviews(tenantId: string, programId?: string | null): Promise<SspReviewsResponse> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata/reviews`, {
+      method: 'GET',
+      headers: this.getHeaders(tenantId, undefined, programId),
+    });
+    if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
+    return res.json();
+  },
+
+  /**
+   * POST /api/v1/ssp-metadata/reviews
+   * Signs off one SSP section as the caller (write roles only); expectedDigest is the section digest last read, a changed section answers 409
+   */
+  async postSspReview(tenantId: string, sectionId: string, expectedDigest: string, programId?: string | null): Promise<{ review: SspSectionReview; section: SspSectionReviewState; changed: boolean }> {
+    const res = await apiFetch(`${API_BASE_URL}/api/v1/ssp-metadata/reviews`, {
+      method: 'POST',
+      headers: this.getHeaders(tenantId, undefined, programId),
+      body: JSON.stringify({ sectionId, expectedDigest }),
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
     return res.json();

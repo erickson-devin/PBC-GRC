@@ -443,6 +443,28 @@ async function headers() {
     let sspStale = '';
     try { await ApiClient.putSspMetadata('t1', { systemName: 'S' }, '2026-10-31T00:00:00.000Z'); } catch (err) { sspStale = String((err as { code?: unknown }).code ?? (err as Error).message); }
     assert(sspStale !== '' && !sspStale.includes('"systemName"'), 'H10d a stale write rejects without echoing the metadata', sspStale);
+
+    // #238, #241, #242, #246: the SSP profile and the section reviews
+    stub(200, { profile: null, updatedAt: null, updatedBy: null });
+    const profGot = await ApiClient.getSspProfile('t1', 'p1');
+    assert(calls[0].url === '/api/v1/ssp-metadata/profile' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't1' && headerOf(calls[0], 'x-program-id') === 'p1' && profGot.profile === null, 'SSP-H1 getSspProfile is GET /api/v1/ssp-metadata/profile with x-program-id', calls[0].url);
+    stub(200, { profile: { systemIdentifier: 'SYS-1' }, updatedAt: '2026-10-31T00:00:00.000Z', updatedBy: 'u', changed: true });
+    const profPut = await ApiClient.putSspProfile('t1', { systemIdentifier: 'SYS-1' }, null, 'p1');
+    assert(calls[0].url === '/api/v1/ssp-metadata/profile' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"profile":{"systemIdentifier":"SYS-1"},"expectedUpdatedAt":null}' && headerOf(calls[0], 'x-program-id') === 'p1' && profPut.changed === true, 'SSP-H2 putSspProfile is PUT with the profile and expectedUpdatedAt (null on a first write)', calls[0].init.body);
+    stub(200, { sections: [], history: [] });
+    const revGot = await ApiClient.getSspReviews('t1', 'p1');
+    assert(calls[0].url === '/api/v1/ssp-metadata/reviews' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && Array.isArray(revGot.sections), 'SSP-H3 getSspReviews is GET /api/v1/ssp-metadata/reviews with x-program-id', calls[0].url);
+    stub(201, { review: { id: 'r1' }, section: { sectionId: 'roles' }, changed: true });
+    await ApiClient.postSspReview('t1', 'roles', 'a'.repeat(64), 'p1');
+    assert(calls[0].url === '/api/v1/ssp-metadata/reviews' && calls[0].init.method === 'POST' && calls[0].init.body === `{"sectionId":"roles","expectedDigest":"${'a'.repeat(64)}"}` && headerOf(calls[0], 'x-program-id') === 'p1', 'SSP-H4 postSspReview is POST with exactly the section id and the expected digest', calls[0].init.body);
+    stub(409, { error: 'stale', code: 'stale_write' });
+    let profStale = '';
+    try { await ApiClient.putSspProfile('t1', { systemIdentifier: 'SYS-MARK' }, '2026-10-31T00:00:00.000Z'); } catch (err) { profStale = String((err as { code?: unknown }).code ?? (err as Error).message); }
+    assert(profStale !== '' && !profStale.includes('MARK'), 'SSP-H2b a stale profile write rejects without echoing the profile', profStale);
+    stub(409, { error: 'changed', code: 'section_changed' });
+    let revStale = '';
+    try { await ApiClient.postSspReview('t1', 'roles', 'b'.repeat(64)); } catch (err) { revStale = String((err as { code?: unknown }).code ?? (err as Error).message); }
+    assert(revStale !== '' && !revStale.includes('bbbb'), 'SSP-H4b a changed section rejects without echoing the digest', revStale);
     stub(201, { program: { id: 'p9', framework: 'NIST_800_53_REV5', baseline: 'HIGH', name: 'N' } });
     const created = await ApiClient.createProgram('t1', { name: 'N', framework: 'NIST_800_53_REV5', baseline: 'HIGH', seed: 'clone', sourceProgramId: 'p1' });
     const postBody = JSON.parse(String(calls[0].init.body)) as { seed?: { cloneFrom?: string }; frameworkId?: string };
@@ -667,7 +689,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;

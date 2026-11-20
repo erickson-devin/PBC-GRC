@@ -21,6 +21,13 @@ import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry
 import { sprsAppliesTo } from './sprsCompiler';
 import { compileHardwareInventory, compileSoftwareInventory, InventoryInput } from './inventoryDocuments';
 import { VM_POAM_COPY, type VmPoamExport } from './vmPoamView';
+import {
+  SSP_ROLE_TABLE_HEADERS,
+  sspIdentificationItems,
+  sspMaintenanceExceptions,
+  sspMaintenanceItems,
+  sspRoleRows,
+} from '../ssp/sspOutput';
 
 import {
   NO_CSP_RECORDED,
@@ -216,6 +223,9 @@ export function compileNistSSP(
 
   const sections: ReportSection[] = [];
 
+  // The SSP profile (identifier, categorization, roles, maintenance): printed as recorded, never suggested
+  const sspProfile = metadata.sspProfile ?? null;
+
   // Section 1: System Identification & Operational Status
   sections.push({
     id: 'sec-1-system-identification',
@@ -223,7 +233,7 @@ export function compileNistSSP(
     summary: 'Establishes the formal boundary identification, operational categorization, and organizational governance.',
     subsections: [
       {
-        title: '1.1 System Identification & Ownership',
+        title: '1.1 System Identification & Categorization',
         items: [
           { label: 'System Name', value: metadata.systemName || NO_SYSTEM_NAME_RECORDED },
           { label: 'Organization Name', value: metadata.organizationName || NO_ORGANIZATION_RECORDED },
@@ -235,16 +245,33 @@ export function compileNistSSP(
           { label: 'Document Version', value: metadata.version || '1.0.0' },
           { label: 'Assessment Baseline Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
           { label: 'Classification Level', value: metadata.classificationLevel || 'UNCLASSIFIED // CUI' },
+          ...sspIdentificationItems(sspProfile),
         ],
       },
       {
-        title: '1.2 Operational Environment & Authorization Boundary',
+        title: '1.2 Responsible Organization & Roles',
+        table: {
+          headers: SSP_ROLE_TABLE_HEADERS,
+          rows: sspRoleRows({ profile: sspProfile, legacySystemOwner: metadata.systemOwner, framework: metadata.framework }).map((r) => [r.role, r.name, r.email]),
+        },
+      },
+    ],
+  });
+
+  // Section 2: System Environment (boundary, cloud service providers, maintenance and ownership)
+  sections.push({
+    id: 'sec-2-system-environment',
+    title: '2. System Environment',
+    summary: 'Describes the authorization boundary, the hosting infrastructure, and who maintains and owns the hardware and software.',
+    subsections: [
+      {
+        title: '2.1 Operational Environment & Authorization Boundary',
         content: metadata.boundaryDescription || NO_BOUNDARY_RECORDED,
       },
       ...(metadata.assetScope
         ? [
             {
-              title: '1.2.1 CMMC Asset Scoping Summary',
+              title: '2.1.1 CMMC Asset Scoping Summary',
               content: boundaryNarrative(metadata.assetScope),
               items: [
                 ...CMMC_ASSET_CATEGORIES.map((cat) => ({ label: CATEGORY_INFO[cat].label, value: String(metadata.assetScope!.byCategory[cat]) })),
@@ -257,7 +284,7 @@ export function compileNistSSP(
       ...(metadata.cryptoModules
         ? [
             {
-              title: '1.2.2 FIPS-Validated Cryptographic Modules',
+              title: '2.1.2 FIPS-Validated Cryptographic Modules',
               content:
                 metadata.cryptoModules.length > 0
                   ? 'Cryptographic modules protecting CUI, as recorded on the Security Protection Assets in the asset inventory (NIST CMVP certificates).'
@@ -274,16 +301,21 @@ export function compileNistSSP(
           ]
         : []),
       {
-        title: '1.3 Cloud Service Providers (CSPs) & Hosting Infrastructure',
+        title: '2.2 Cloud Service Providers (CSPs) & Hosting Infrastructure',
         content: metadata.cloudServiceProviders || NO_CSP_RECORDED,
+      },
+      {
+        title: '2.3 Hardware and Software Maintenance and Ownership',
+        content: sspMaintenanceExceptions(sspProfile),
+        items: sspMaintenanceItems(sspProfile),
       },
     ],
   });
 
-  // Section 2: Executive Summary & Readiness Posture
+  // Section 3: Executive Summary & Readiness Posture
   sections.push({
     id: 'sec-2-executive-summary',
-    title: '2. Executive Summary & Assessment Posture',
+    title: '3. Executive Summary & Assessment Posture',
     summary: `Current operational readiness evaluation against ${fwDef.name} (${fwDef.authority}).`,
     table: {
       headers: ['Compliance Metric', 'Evaluated Value', 'Compliance Target', 'Status Evaluation'],
@@ -297,7 +329,7 @@ export function compileNistSSP(
     },
   });
 
-  // Section 3: Detailed Control Implementation Statements by Family
+  // Section 4: Detailed Control Implementation Statements by Family
   const controlSubsections = Object.entries(domainGroups).map(([domainCode, domainCtrls]) => {
     const domainMeta = fwDef.domains[domainCode];
     const domainTitle = domainMeta ? `${domainMeta.name} (${domainCode})` : `Family: ${domainCode}`;
@@ -339,15 +371,15 @@ export function compileNistSSP(
 
   sections.push({
     id: 'sec-3-control-narratives',
-    title: '3. Security Control Implementation Statements (NIST SP 800-18)',
+    title: '4. Security Control Implementation Statements (NIST SP 800-18)',
     summary: 'Detailed operational implementation statements for all controls.',
     subsections: controlSubsections,
   });
 
-  // Section 4: Attestation & Formal Sign-off
+  // Section 5: Attestation & Formal Sign-off
   sections.push({
     id: 'sec-4-attestation',
-    title: '4. System Security Plan Attestation & Approvals',
+    title: '5. System Security Plan Attestation & Approvals',
     content: `${UNSIGNED_ATTESTATION_NOTE} I hereby attest that the information contained in this System Security Plan represents an accurate, rigorous, and truthful representation of the security controls implemented within ${metadata.systemName || UNNAMED_SYSTEM}. All administrative, technical, and physical safeguards have been verified against ${fwDef.name}.`,
     subsections: [
       {

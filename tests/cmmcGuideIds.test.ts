@@ -138,7 +138,7 @@ const statesOf = (cs: { id: string }[], status: ControlState['status']) => Objec
 const cellsOf = (r: unknown): unknown[] => (Array.isArray(r) ? r : (r as { cells: unknown[] }).cells);
 
 const sspL2 = compileNistSSP(meta('CMMC_L2'), l2, statesOf(l2, 'NOT_STARTED'));
-const acRowsL2 = (sspL2.sections[2].subsections || []).flatMap((s) => s.table?.rows || []).map(cellsOf);
+const acRowsL2 = (sspL2.sections[3].subsections || []).flatMap((s) => s.table?.rows || []).map(cellsOf);
 assert(acRowsL2.some((r) => r[0] === 'AC.L2-3.1.1') && !acRowsL2.some((r) => r[0] === 'AC.L1-3.1.1'), 'E1: the Level 2 SSP row shows the guide id of AC.L1-3.1.1');
 
 const emass = generateEmassControlMatrixCsv(l2, statesOf(l2, 'NOT_STARTED'), meta('CMMC_L2'));
