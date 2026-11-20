@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Building2, CheckCircle2, Edit2, FileDown, Lock, Plus, Search, Trash2 } from 'lucide-react';
+import { usePendingFocus, findByDataId, scrollAndFocus, PENDING_FOCUS_MISSED } from '../../hooks/usePendingFocus';
 import { useTenant } from '../../context/TenantContext';
 import { useVendorRegister } from '../../hooks/useVendorRegister';
 import { useToolRegister } from '../../hooks/useToolRegister';
@@ -60,6 +61,13 @@ export const VendorRegisterPanel: React.FC = () => {
   const notifyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const programReady = inv.status === 'ready' && Boolean(activeProgram);
+  // A global search result for a vendor: scroll to its row and focus it (it says so when the filters hide it)
+  const { missed: pendingMissed, highlightId, clearHighlight } = usePendingFocus('vendor', reg.status === 'ready' || reg.status === 'error', (id) => {
+    const el = findByDataId('vendor-id', id);
+    if (!el) return false;
+    scrollAndFocus(el);
+    return true;
+  });
   const programName = activeProgram?.name ?? '';
   const archived = Boolean(activeProgram?.archived);
   const today = localDateIso(new Date());
@@ -232,6 +240,7 @@ export const VendorRegisterPanel: React.FC = () => {
           </div>
 
           <p className="text-xs text-slate-400" aria-live="polite">{reg.status === 'loading' ? '' : vendorCountCaption(shown.length, reg.vendors.length)}</p>
+          {pendingMissed && <p role="status" className="text-xs text-amber-300">{PENDING_FOCUS_MISSED}</p>}
 
           <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
             <table aria-busy={reg.status === 'loading' || busy || undefined} className="table w-full min-w-[56rem] text-left text-xs border-collapse">
@@ -267,7 +276,7 @@ export const VendorRegisterPanel: React.FC = () => {
                     const review = reviewAge(v.lastReviewDate, today);
                     return (
                       <React.Fragment key={v.id}>
-                        <tr className="hover:bg-slate-800/40 transition-colors">
+                        <tr data-vendor-id={v.id} tabIndex={-1} onBlur={highlightId === v.id ? clearHighlight : undefined} className={`hover:bg-slate-800/40 transition-colors focus:outline-none${highlightId === v.id ? ' ring-2 ring-inset ring-cyan-400' : ''}`}>
                           <td className="py-3 px-3 sticky left-0 z-10 bg-slate-950 min-w-[14rem]">
                             <span className="font-semibold text-white">{v.name}</span>
                             {v.services && <div className="text-slate-400 truncate max-w-xs" title={v.services}>{v.services}</div>}

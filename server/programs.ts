@@ -8,8 +8,9 @@ import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
 import { __deleteProgramSspProfileForMemory } from './sspProfile';
 import { __deleteProgramControlPoamForMemory } from './controlPoam';
 import { __deleteProgramSspReviewsForMemory } from './sspReviews';
-import { __deleteProgramInventoryForMemory } from './inventory/programInventoryStore';
+import { __deleteProgramInventoryForMemory, recordProgramInventoryEvent, recordProgramInventoryEventTx } from './inventory/programInventoryStore';
 import { __deleteProgramDocumentsForMemory } from './documents/programDocumentsStore';
+import { __deleteProgramAssignmentsForMemory } from './assignments/assignmentsStore';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
@@ -23,6 +24,7 @@ import type { ComplianceFramework, OverlayFilters } from '../src/types/framework
 import type { ProgramScoping } from '../src/types/program';
 import type { EnclaveStackProfile } from '../src/types/tenant';
 import { STACK_PROFILE_ENUM_KEYS, validateStackProfile } from '../src/data/stackProfileSchema';
+import { validateSprsGoal } from '../src/data/dashboard/sprsGoal';
 
 /**
  * Programs: a tenant's authorization boundaries (an ATO effort or project). Each program has one framework and, for NIST SP 800-53,
@@ -60,6 +62,8 @@ export interface Program {
   vmTarget: boolean;
   /** The program's own enclave stack profile (issue #230); null means the tenant's profile applies. */
   stackProfile: EnclaveStackProfile | null;
+  /** The SPRS score a CMMC Level 2 program aims for (-203 to 110); null shows the default, 110. Always null for any other framework. */
+  sprsGoal: number | null;
   isDefault: boolean;
   archivedAt: string | null;
   createdBy: string | null;
@@ -82,6 +86,7 @@ export type ProgramErrorCode =
   | 'scoping_conflict'
   | 'invalid_vm_target'
   | 'invalid_stack_profile'
+  | 'invalid_sprs_goal'
   | 'invalid_asset_ids'
   | 'unknown_assets'
   | 'program_is_vm_target'
@@ -130,6 +135,8 @@ export interface ProgramPatch {
   expectedScoping?: unknown;
   /** Mutable: replaces the program's stack profile as a whole (validated); null clears it (the tenant's applies). Absent leaves it. */
   stackProfile?: unknown;
+  /** Mutable (CMMC Level 2 programs only): a whole number from -203 to 110, or null for the default. Absent leaves it. Anything else is invalid_sprs_goal. */
+  sprsGoal?: unknown;
 }
 
 /** Who made a change, as the program events record it. */
@@ -238,6 +245,7 @@ function rowToProgram(r: pg.QueryResultRow): Program {
     scoping: scopingFromRow(r.scoping),
     vmTarget: r.vm_target === true,
     stackProfile: (r.stack_profile ?? null) as EnclaveStackProfile | null,
+    sprsGoal: r.sprs_goal === null || r.sprs_goal === undefined ? null : Number(r.sprs_goal),
     isDefault: Boolean(r.is_default),
     archivedAt: r.archived_at ? iso(r.archived_at) : null,
     createdBy: r.created_by ?? null,
@@ -338,6 +346,7 @@ async function resolveDefaultProgram(tenantId: string): Promise<Program> {
       scoping: {},
       vmTarget: false,
       stackProfile: null,
+      sprsGoal: null,
       isDefault: true,
       archivedAt: null,
       createdBy: null,
@@ -501,7 +510,7 @@ export async function createProgram(tenantId: string, input: NewProgramInput, cr
     const isDefault = ![...memoryPrograms.values()].some((p) => p.tenantId === tenantId && p.isDefault && p.archivedAt === null);
     program = {
       id: crypto.randomUUID(), tenantId, name, description, frameworkId, baseline, privacyBaseline, systemBoundarySummary,
-      scoping, vmTarget: false, stackProfile: null, isDefault, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
+      scoping, vmTarget: false, stackProfile: null, sprsGoal: null, isDefault, archivedAt: null, createdBy: by, createdAt: now, updatedAt: now,
     };
     memoryPrograms.set(program.id, program);
     pushMemoryEvent(tenantId, program.id, 'scoping_set', who, null, scoping);
@@ -664,6 +673,13 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
       wantedProfile = check.value;
     }
   }
+  let wantedGoal: number | null | undefined; // undefined: leave the goal as it is
+  if (patch.sprsGoal !== undefined) {
+    const check = validateSprsGoal(patch.sprsGoal);
+    // a goal is a CMMC Level 2 concept (the database CHECK says the same): only "no goal" is accepted for any other framework
+    if (!check.ok || (check.value !== null && current.frameworkId !== 'CMMC_L2')) throw new ProgramError('invalid_sprs_goal', 'The SPRS goal is a whole number from -203 to 110, on a CMMC Level 2 program');
+    wantedGoal = check.value;
+  }
   if (patch.frameworkId !== undefined && programFramework(patch.frameworkId) !== current.frameworkId) {
     throw new ProgramError('framework_immutable', 'The framework of a program cannot be changed after creation');
   }
@@ -684,8 +700,10 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
     if (expected && !sameScoping(fresh.scoping, expected)) throw new ProgramError('scoping_conflict', 'The overlays of this program changed meanwhile');
     const scoping = wantedScoping ?? fresh.scoping;
     const stackProfile = wantedProfile === undefined ? fresh.stackProfile : wantedProfile;
-    const next: Program = { ...fresh, name, description, systemBoundarySummary: summary, scoping, stackProfile, updatedAt: new Date().toISOString() };
+    const sprsGoal = wantedGoal === undefined ? fresh.sprsGoal : wantedGoal;
+    const next: Program = { ...fresh, name, description, systemBoundarySummary: summary, scoping, stackProfile, sprsGoal, updatedAt: new Date().toISOString() };
     memoryPrograms.set(id, next);
+    if (sprsGoal !== fresh.sprsGoal) await recordProgramInventoryEvent({ tenantId, programId: id }, 'sprs_goal_changed', null, who, { old: fresh.sprsGoal, new: sprsGoal });
     if (!sameScoping(fresh.scoping, scoping)) pushMemoryEvent(tenantId, id, 'scoping_changed', who, fresh.scoping, scoping);
     if (!sameStackProfile(fresh.stackProfile, stackProfile)) {
       const digests = stackProfileDigests(fresh.stackProfile, stackProfile);
@@ -702,12 +720,18 @@ export async function updateProgram(tenantId: string, id: string, patch: Program
       if (expected && !sameScoping(before.scoping, expected)) throw new ProgramError('scoping_conflict', 'The overlays of this program changed meanwhile');
       const scoping = wantedScoping ?? before.scoping;
       const stackProfile = wantedProfile === undefined ? before.stackProfile : wantedProfile;
+      const sprsGoal = wantedGoal === undefined ? before.sprsGoal : wantedGoal;
       const res = await q(
-        `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, scoping = $6::jsonb, stack_profile = $7::jsonb, updated_at = NOW()
+        `UPDATE programs SET name = $3, description = $4, system_boundary_summary = $5, scoping = $6::jsonb, stack_profile = $7::jsonb, sprs_goal = $8::smallint, updated_at = NOW()
           WHERE tenant_id = $1 AND id = $2
           RETURNING *`,
-        [tenantId, id, name, description, summary, JSON.stringify(scoping), stackProfile === null ? null : JSON.stringify(stackProfile)]
+        [tenantId, id, name, description, summary, JSON.stringify(scoping), stackProfile === null ? null : JSON.stringify(stackProfile), sprsGoal]
       );
+      if (sprsGoal !== before.sprsGoal) {
+        // the goal's history goes to the program's inventory events (never widening program_events_kind_check), in the same transaction
+        await q('SELECT set_config($1, $2, true)', ['app.current_program_id', id]);
+        await recordProgramInventoryEventTx((text, params) => q(text, params as SqlParam[]), { tenantId, programId: id }, 'sprs_goal_changed', null, who, { old: before.sprsGoal, new: sprsGoal });
+      }
       if (!sameScoping(before.scoping, scoping)) await insertEventTx(q, tenantId, id, 'scoping_changed', who, before.scoping, scoping);
       if (!sameStackProfile(before.stackProfile, stackProfile)) {
         const digests = stackProfileDigests(before.stackProfile, stackProfile);
@@ -827,6 +851,7 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     __deleteProgramSspReviewsForMemory({ tenantId, programId: id });
     __deleteProgramInventoryForMemory({ tenantId, programId: id });
     __deleteProgramDocumentsForMemory({ tenantId, programId: id });
+    __deleteProgramAssignmentsForMemory({ tenantId, programId: id });
     __deleteUserDefaultsForProgramMemory(tenantId, id);
     memoryPrograms.delete(id);
     promoteSuccessorInMemory(tenantId);

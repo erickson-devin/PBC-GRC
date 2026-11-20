@@ -30,6 +30,8 @@ import tenantAssetsRouter from './assets';
 import tenantSoftwareRouter from './software';
 import tenantInventoryRouter from './inventory';
 import tenantDocumentsRouter from './documents';
+import tenantTeamsRouter from './teams';
+import tenantResponsibilitiesRouter from './responsibilities';
 import sspImportsRouter from './sspImports';
 import aiAssistRouter from './aiAssist';
 import vmRouter from './vm';
@@ -255,6 +257,9 @@ router.use('/:tenantId/software', tenantSoftwareRouter);
 router.use('/:tenantId/inventory', tenantInventoryRouter);
 // The document register: governance documents, tenant-wide (a program's declared set, links and attachments are /program-documents)
 router.use('/:tenantId/documents', tenantDocumentsRouter);
+// Teams (named groups of members, for assignments) and the responsibilities of a person or a team across the programs; labels, they grant nothing
+router.use('/:tenantId/teams', tenantTeamsRouter);
+router.use('/:tenantId/responsibilities', tenantResponsibilitiesRouter);
 // SSP imports resolve the program from x-program-id (409 program_required when the tenant has none); the VM module only optionally (most of it
 // is tenant-wide); the programs API itself (it works on archived programs and names them in the URL) and ai-assist do not.
 router.use('/:tenantId/programs', programsRouter);

@@ -132,7 +132,7 @@ export interface DataInventoryRecord {
 
 export interface InventoryEvent {
   id: string;
-  entityKind: 'tool' | 'vendor' | 'order' | 'document';
+  entityKind: 'tool' | 'vendor' | 'order' | 'document' | 'team';
   entityId: string | null;
   action: string;
   actor: string;

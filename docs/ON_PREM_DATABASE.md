@@ -510,6 +510,22 @@ One environment variable is added: `ACCOUNT_DORMANT_DAYS` (empty means the defau
   tables. After upgrading again the policy and the decisions are intact; due dates it wrote are corrected at the next scan of each finding or the next save
   of the policy, and the drafts it created stay. **Nothing in this change is one-way.**
 * **The policy and the decisions live on the server only.** An organization stored only in the browser has neither.
+* **SPRS goal, teams and responsibilities (issues #252, #253).** This release adds one nullable column, `programs.sprs_goal` (the SPRS score a CMMC Level 2
+  program aims for, from -203 to 110; empty shows the default, 110), and three tables: `tenant_teams` and `tenant_team_members` (named groups of members,
+  per organization) and `program_assignments` (who is responsible for a control, an objective or an SSP section of a program: a person or a team, as an
+  owner, or for a signable SSP section as a reviewer). The two team tables follow the tenant row-level-security pattern, `program_assignments` the program
+  one (the same as the other per-program tables). The column is added with `ADD COLUMN IF NOT EXISTS` and carries its range and CMMC Level 2 check inline, so
+  the check is created once with the column and never dropped and re-added at start. The history goes to tables that already exist: a change of the goal and
+  of an assignment is a row of `program_inventory_events` (actions `sprs_goal_changed` and `assignment_changed`, ids and numbers only), a team change one of
+  `inventory_events` with the entity kind `team` (its name and description as a SHA-256 and a length, never the text). Both history tables take any action or
+  kind that matches their pattern check, so **no existing check, list or table is widened or rewritten**.
+* **An older image still starts and runs** on the upgraded database: it ignores the column and the three tables. It lists the new history rows as actions
+  it does not recognise, and it never deletes a row of these tables. A member who leaves, or a team that is removed, keeps its assignments (they show as "no
+  longer a member" or "team removed"); deleting a program removes its assignments, and deleting a team that still has assignments is refused unless the
+  owner forces it. **Nothing in this change is one-way.** An assignment is a label: it grants no access, and the sign-off of an SSP section is unchanged.
+* **Program summary and global search add no table.** The program summary (the journey bar and the dashboard) reads existing data and returns counts and
+  dates only. The global search takes its text in the request body (never in a URL), runs a case-insensitive substring match (`ILIKE`, no database extension
+  is needed), is limited to 60 searches a minute per user, is never cached and never logs the text searched for or a snippet of what was found.
 
 Two environment variables are added: `VM_WARN_ONLY_SEVERITIES` (empty means the default, `MEDIUM,LOW`; `none` means no severity is warn-only) and
 `VM_GRACE_DAYS` (empty means 0). They are only the defaults of an organization that has not saved a policy; `docker-compose.yml` passes both through.

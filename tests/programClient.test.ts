@@ -753,6 +753,120 @@ async function headers() {
       conflictErr = e as { status?: number; reason?: string };
     }
     assert(conflictErr?.status === 409 && conflictErr.reason === 'scoping_conflict' && isOverlayConflict(conflictErr), 'P5s3 a 409 scoping_conflict rejects with that reason, and isOverlayConflict recognises it', conflictErr);
+
+    {
+    // ---- experience (#251 to #254): program summary, SPRS goal, assignments, teams, responsibilities, global search
+    const summaryBody = { programId: 'p1', generatedAt: '2026-11-20T00:00:00.000Z', people: { ownerLevelMembers: 1, primaryContactSet: true }, inventory: { supported: true }, documents: null, reviews: { reviewed: 0, total: 3 }, poam: { openCount: 0 } };
+    stub(200, summaryBody);
+    const sum = await ApiClient.getProgramSummary('t1', 'p1');
+    assert(
+      calls[0].url === '/api/v1/program-summary' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && headerOf(calls[0], 'x-tenant-id') === 't1' && sum.programId === 'p1' && sum.reviews.total === 3,
+      'X1 getProgramSummary is GET /program-summary with both headers and returns the summary', { url: calls[0].url }
+    );
+    stub(200, summaryBody);
+    await ApiClient.getProgramSummary('t1', null);
+    assert(headerOf(calls[0], 'x-program-id') === undefined, 'X1a getProgramSummary without a program sends no x-program-id');
+    stub(200, { nope: true });
+    let sumBad: { status?: number } | null = null;
+    try { await ApiClient.getProgramSummary('t1', 'p1'); } catch (e) { sumBad = e as { status?: number }; }
+    assert(sumBad?.status === 502, 'X1b a summary without its parts is refused with 502', sumBad);
+
+    stub(200, { program: { id: 'p1', framework: 'CMMC_L2', baseline: null, name: 'N', sprsGoal: 88 } });
+    const goalSet = await ApiClient.updateProgram('t1', 'p1', { sprsGoal: 88 });
+    const goalBody = JSON.parse(String(calls[0].init.body)) as Record<string, unknown>;
+    assert(calls[0].init.method === 'PUT' && JSON.stringify(goalBody) === '{"sprsGoal":88}' && goalSet.sprsGoal === 88, 'X2 updateProgram sends exactly { sprsGoal } and the parsed program carries it', { goalBody, goal: goalSet.sprsGoal });
+    stub(200, { program: { id: 'p1', framework: 'CMMC_L2', baseline: null, name: 'N', sprsGoal: null } });
+    const goalCleared = await ApiClient.updateProgram('t1', 'p1', { sprsGoal: null });
+    assert(JSON.stringify(JSON.parse(String(calls[0].init.body))) === '{"sprsGoal":null}' && goalCleared.sprsGoal === null, 'X2a a null goal is sent as null and parsed as null');
+    stub(200, { program: { id: 'p1', framework: 'CMMC_L2', baseline: null, name: 'N', sprsGoal: 999 } });
+    const goalWild = await ApiClient.updateProgram('t1', 'p1', { name: 'N' });
+    assert(!('sprsGoal' in goalWild) && !('sprsGoal' in JSON.parse(String(calls[0].init.body))), 'X2b an out-of-range goal from the server is dropped, and an update without a goal sends none');
+    stub(400, { error: 'The SPRS goal must be a whole number from -203 to 110', code: 'invalid_sprs_goal' });
+    let goalErr: { status?: number; reason?: string } | null = null;
+    try { await ApiClient.updateProgram('t1', 'p1', { sprsGoal: 5 }); } catch (e) { goalErr = e as { status?: number; reason?: string }; }
+    assert(goalErr?.status === 400 && goalErr.reason === 'invalid_sprs_goal', 'X2c a 400 invalid_sprs_goal rejects with that reason', goalErr);
+
+    stub(200, { assignments: [{ targetKind: 'control', targetId: 'AC.L1-3.1.1', duty: 'owner' }], limit: 25000 });
+    const asg = await ApiClient.listAssignments('t1', 'p1');
+    assert(calls[0].url === '/api/v1/assignments' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && asg.length === 1, 'X3 listAssignments is GET /assignments with the program header');
+    const batch = [{ targetKind: 'control' as const, targetId: 'AC.L1-3.1.1', duty: 'owner' as const, assignee: { kind: 'user' as const, id: 'u1' }, expectedAssignee: null }];
+    stub(200, { assignments: [], changed: 1 });
+    const put = await ApiClient.putAssignments('t1', batch, 'p1');
+    assert(
+      calls[0].url === '/api/v1/assignments' && calls[0].init.method === 'PUT' && headerOf(calls[0], 'x-program-id') === 'p1' && headerOf(calls[0], 'Content-Type') === 'application/json'
+        && JSON.stringify(JSON.parse(String(calls[0].init.body))) === JSON.stringify({ items: batch }) && put.changed === 1,
+      'X4 putAssignments is PUT /assignments with exactly { items } and returns the count', { url: calls[0].url }
+    );
+    stub(409, { error: 'changed', code: 'stale_write', index: 2, current: { kind: 'user', id: 'u9' } });
+    let staleAsg: { status?: number; reason?: string; index?: number } | null = null;
+    try { await ApiClient.putAssignments('t1', batch, 'p1'); } catch (e) { staleAsg = e as { status?: number; reason?: string; index?: number }; }
+    assert(staleAsg?.status === 409 && staleAsg.reason === 'stale_write' && staleAsg.index === 2, 'X4a a 409 stale_write carries its reason and the index of the item', staleAsg);
+    stub(400, { error: 'x', code: 'assignee_not_member', index: -3 });
+    let badIdx: { index?: number } | null = null;
+    try { await ApiClient.putAssignments('t1', batch, 'p1'); } catch (e) { badIdx = e as { index?: number }; }
+    assert(badIdx !== null && badIdx.index === undefined, 'X4b a negative index is not kept');
+    stub(200, { items: [{ targetKind: 'ssp_section', targetId: 'roles', duty: 'reviewer' }] });
+    const mine = await ApiClient.listMyAssignments('t1', 'p1');
+    assert(calls[0].url === '/api/v1/assignments/mine' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && mine.length === 1, 'X5 listMyAssignments is GET /assignments/mine');
+
+    const team = { id: 'tm1', name: 'Blue', description: '', memberIds: [], createdAt: 'a', updatedAt: 'b', updatedBy: null };
+    stub(200, { teams: [team], limit: 100 });
+    const tl = await ApiClient.listTeams('t 1');
+    assert(calls[0].url === '/api/v1/tenants/t%201/teams' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-tenant-id') === 't 1' && headerOf(calls[0], 'x-program-id') === undefined && tl.length === 1, 'X6 listTeams is GET on the encoded tenant path, tenant header, no program header');
+    stub(201, { team });
+    const created = await ApiClient.createTeam('t1', { name: 'Blue', description: 'd' });
+    assert(calls[0].url === '/api/v1/tenants/t1/teams' && calls[0].init.method === 'POST' && JSON.stringify(JSON.parse(String(calls[0].init.body))) === '{"name":"Blue","description":"d"}' && created.id === 'tm1', 'X7 createTeam is POST with exactly { name, description }');
+    stub(409, { error: 'A team with that name exists', code: 'duplicate_name' });
+    let dup: { status?: number; reason?: string } | null = null;
+    try { await ApiClient.createTeam('t1', { name: 'Blue' }); } catch (e) { dup = e as { status?: number; reason?: string }; }
+    assert(dup?.status === 409 && dup.reason === 'duplicate_name', 'X7a a 409 duplicate_name rejects with that reason', dup);
+    stub(200, { team, changed: true });
+    const upd = await ApiClient.updateTeam('t1', 'tm/1', { name: 'Red', expectedUpdatedAt: 'b' });
+    assert(calls[0].url === '/api/v1/tenants/t1/teams/tm%2F1' && calls[0].init.method === 'PUT' && JSON.stringify(JSON.parse(String(calls[0].init.body))) === '{"name":"Red","expectedUpdatedAt":"b"}' && upd.changed === true, 'X8 updateTeam is PUT on the encoded team id with exactly the changes and the stamp');
+    stub(200, { team, added: 1, removed: 0 });
+    const mem = await ApiClient.patchTeamMembers('t1', 'tm1', { add: ['u1'] });
+    assert(calls[0].url === '/api/v1/tenants/t1/teams/tm1/members' && calls[0].init.method === 'PATCH' && JSON.stringify(JSON.parse(String(calls[0].init.body))) === '{"add":["u1"]}' && mem.added === 1, 'X9 patchTeamMembers is PATCH .../members with exactly { add }');
+    stub(200, { programs: [{ programId: 'p1', assignments: 2 }] });
+    const use = await ApiClient.getTeamUsage('t1', 'tm1');
+    assert(calls[0].url === '/api/v1/tenants/t1/teams/tm1/usage' && calls[0].init.method === 'GET' && use[0].assignments === 2, 'X10 getTeamUsage is GET .../usage');
+    stub(200, { removed: 'tm1', assignmentsRemoved: 3 });
+    const gone = await ApiClient.deleteTeam('t1', 'tm1', true);
+    assert(calls[0].url === '/api/v1/tenants/t1/teams/tm1?force=true' && calls[0].init.method === 'DELETE' && gone.assignmentsRemoved === 3, 'X11 deleteTeam with force is DELETE ?force=true');
+    stub(200, { removed: 'tm1', assignmentsRemoved: 0 });
+    await ApiClient.deleteTeam('t1', 'tm1');
+    assert(calls[0].url === '/api/v1/tenants/t1/teams/tm1', 'X11a deleteTeam without force has no query');
+    stub(409, { error: 'The team still has assignments', code: 'team_in_use', assignments: 4, programs: 2 });
+    let inUse: { status?: number; reason?: string; teamUse?: { assignments: number; programs: number } } | null = null;
+    try { await ApiClient.deleteTeam('t1', 'tm1'); } catch (e) { inUse = e as typeof inUse; }
+    assert(inUse?.status === 409 && inUse.reason === 'team_in_use' && inUse.teamUse?.assignments === 4 && inUse.teamUse.programs === 2, 'X11b a 409 team_in_use carries the two counts', inUse);
+
+    stub(200, { programs: [], truncated: false });
+    await ApiClient.getResponsibilities('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/responsibilities?view=me' && calls[0].init.method === 'GET' && headerOf(calls[0], 'x-program-id') === undefined, 'X12 getResponsibilities defaults to view=me, tenant-wide');
+    stub(200, { programs: [], truncated: false });
+    await ApiClient.getResponsibilities('t1', { view: 'team', teamId: 'tm 1', includeArchived: true });
+    assert(calls[0].url === '/api/v1/tenants/t1/responsibilities?view=team&teamId=tm%201&includeArchived=true', 'X12a the team view sends the encoded team and includeArchived', calls[0].url);
+    stub(200, { programs: [], truncated: false });
+    await ApiClient.getResponsibilities('t1', { view: 'me', teamId: 'tm1' });
+    assert(calls[0].url === '/api/v1/tenants/t1/responsibilities?view=me', 'X12b a team id is not sent with view=me');
+
+    stub(200, { programId: 'p1', groups: [{ kind: 'control', results: [], truncated: false }] });
+    const found = await ApiClient.searchProgram('t1', { q: 'access & more?', kinds: ['control'], perKind: 5 }, 'p1');
+    assert(
+      calls[0].url === '/api/v1/search' && calls[0].init.method === 'POST' && headerOf(calls[0], 'x-program-id') === 'p1' && headerOf(calls[0], 'Content-Type') === 'application/json'
+        && JSON.stringify(JSON.parse(String(calls[0].init.body))) === '{"q":"access & more?","kinds":["control"],"perKind":5}' && found.groups.length === 1,
+      'X13 searchProgram is POST /search with the query only in the body', { url: calls[0].url }
+    );
+    assert(!calls[0].url.includes('access') && !calls[0].url.includes('?') && (calls[0].init as { cache?: unknown }).cache === undefined, 'X13a the query is never in the URL');
+    stub(429, { error: 'slow down' });
+    let limited: { status?: number; message?: string } | null = null;
+    try { await ApiClient.searchProgram('t1', { q: 'ab' }, 'p1'); } catch (e) { limited = e as { status?: number; message?: string }; }
+    assert(limited?.status === 429 && limited.message === 'Too many requests. Please wait a moment and try again.', 'X13b a 429 rejects with the fixed message', limited);
+    stub(400, { error: 'The search text must be 2 to 100 characters', code: 'invalid_query' });
+    let badQ: { status?: number; reason?: string } | null = null;
+    try { await ApiClient.searchProgram('t1', { q: 'a' }, 'p1'); } catch (e) { badQ = e as { status?: number; reason?: string }; }
+    assert(badQ?.status === 400 && badQ.reason === 'invalid_query', 'X13c a 400 invalid_query rejects with that reason', badQ);
+    }
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -870,7 +984,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware', 'getProgramInventory', 'patchProgramTools', 'putToolControls', 'getDataInventory', 'putDataInventory', 'linkVendorDocument', 'unlinkVendorDocument', 'getProgramInventoryEvents', 'getProgramDocuments', 'patchProgramDocuments', 'putDocumentControls', 'linkDocumentAttachment', 'setDocumentAttachmentPrimary', 'unlinkDocumentAttachment', 'putDocumentExpectation'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware', 'getProgramInventory', 'patchProgramTools', 'putToolControls', 'getDataInventory', 'putDataInventory', 'linkVendorDocument', 'unlinkVendorDocument', 'getProgramInventoryEvents', 'getProgramDocuments', 'patchProgramDocuments', 'putDocumentControls', 'linkDocumentAttachment', 'setDocumentAttachmentPrimary', 'unlinkDocumentAttachment', 'putDocumentExpectation', 'getProgramSummary', 'listAssignments', 'putAssignments', 'listMyAssignments', 'searchProgram'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;

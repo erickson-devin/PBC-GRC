@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Check,
   ListChecks,
+  UserCheck,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -33,6 +34,7 @@ import { ControlCard, CONFIG_SUGGESTION_CLASS } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 import { CatalogUpdateNotice } from './CatalogUpdateNotice';
 import { CatalogUpdateList } from './CatalogUpdateList';
+import { BulkAssignDialog } from '../assignments/BulkAssignDialog';
 import { MetMismatchNotice } from './MetMismatchNotice';
 import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
 import { useConfigSuggestions } from '../../hooks/useConfigSuggestions';
@@ -102,6 +104,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   const catalogUpdate = useCatalogUpdateChanges();
   const [catalogUpdateFilter, setCatalogUpdateFilter] = useState<Set<string> | null>(null); // a snapshot: a control stays listed after its answers are reviewed
   const [catalogListOpen, setCatalogListOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false); // assign one owner to the shown controls (#253)
+  const [bulkNotice, setBulkNotice] = useState('');
   const catalogChipRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const noticeMode = catalogUpdateNoticeMode(catalogUpdate);
@@ -230,6 +234,9 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     setVisibleCount(PAGE_SIZE);
   }, [selectedDomainFilter, selectedStatusFilter, selectedBaselineFilter, selectedKindFilter, selectedWeightFilter, activeFramework, searchQuery, frameworkControls, catalogUpdateFilter, metMismatchFilter]);
   const shownControls = useMemo(() => filteredControls.slice(0, visibleCount), [filteredControls, visibleCount]);
+  // Bulk owner assignment (#253): server-backed organizations with an open program; the server refuses it for read roles and archived programs
+  const assignSupported = Boolean(currentTenant.serverBacked) && programsStatus !== 'unsupported' && Boolean(activeProgram);
+  const bulkControlIds = useMemo(() => filteredControls.map((c) => c.id), [filteredControls]);
 
   const handleControlClick = (id: string) => {
     if (onSelectControl) {
@@ -277,6 +284,11 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           onClose={() => setCatalogListOpen(false)} />
       )}
 
+      {bulkOpen && (
+        <BulkAssignDialog controlIds={bulkControlIds} onClose={() => setBulkOpen(false)} onDone={(msg) => { setBulkOpen(false); setBulkNotice(msg); }} />
+      )}
+      <p role="status" aria-live="polite" className="sr-only">{bulkNotice}</p>
+
       {/* Top Header & Framework Target Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -299,6 +311,13 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           <div className="text-xs text-slate-300 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-xl font-mono shadow-sm">
             Showing <strong className="text-cyan-300 font-bold">{filteredControls.length}</strong> of {totalControlsCount} controls
           </div>
+
+          {assignSupported && canEdit && !activeProgram?.archived && (
+            <button type="button" onClick={() => { setBulkNotice(''); setBulkOpen(true); }} disabled={filteredControls.length === 0} aria-haspopup="dialog"
+              className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />Assign owner ({filteredControls.length})
+            </button>
+          )}
 
           <div className="flex items-center p-1 bg-slate-900/80 border border-slate-800 rounded-xl">
             <button

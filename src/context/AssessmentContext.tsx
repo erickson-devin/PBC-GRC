@@ -112,6 +112,7 @@ export type NavigationTab =
   | 'guidance'    // Framework Guidance & Authority
   | 'settings'    // Enclave Settings
   | 'programs'    // Programs & Boundaries (the programs page)
+  | 'responsibilities' // My and team responsibilities (#253)
   | 'stigs';      // Legacy — now external link, kept for backwards compat
 
 /** The stored status of each objective by id, for the Met rule (#292). */
@@ -222,6 +223,19 @@ interface AssessmentContextType {
   setIsExportModalOpen: (open: boolean) => void;
   exportModalInitialDocType?: ReportDocumentType;
   openExportModal: (initialDocType?: ReportDocumentType) => void;
+
+  /** A row another screen asked to show (global search). Ids only; React state, never stored. The screen calls clearPendingFocus(seq) once it has handled it. */
+  pendingFocus: PendingFocus | null;
+  requestFocus: (kind: PendingFocusKind, id: string, tab: NavigationTab) => void;
+  clearPendingFocus: (seq: number) => void;
+}
+
+/** The rows a search result can ask a screen to scroll to and focus (a control, an objective, evidence and a document have their own helpers). */
+export type PendingFocusKind = 'asset' | 'tool' | 'vendor' | 'poam_control' | 'poam_vm';
+export interface PendingFocus {
+  kind: PendingFocusKind;
+  id: string;
+  seq: number;
 }
 
 /** A control opened on one of its objectives; `previousStatus` is what the objective update set the answer back from. */
@@ -324,6 +338,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [exportModalInitialDocType, setExportModalInitialDocType] = useState<ReportDocumentType | undefined>(undefined);
 
+  const focusSeqRef = useRef(0);
+  const [pendingFocus, setPendingFocus] = useState<PendingFocus | null>(null);
+  const requestFocus = useCallback((kind: PendingFocusKind, id: string, tab: NavigationTab) => {
+    setPendingFocus({ kind, id, seq: ++focusSeqRef.current });
+    setActiveTab(tab);
+  }, []);
+  const clearPendingFocus = useCallback((seq: number) => setPendingFocus((p) => (p && p.seq === seq ? null : p)), []);
+
   const openExportModal = useCallback((initialDocType?: ReportDocumentType) => {
     setExportModalInitialDocType(initialDocType);
     setIsExportModalOpen(true);
@@ -393,6 +415,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setSelectedStatusFilter('ALL');
     setSearchQuery('');
     setPreviewEvidence(null);
+    setPendingFocus(null);
     setIsExportModalOpen(false);
   }, [currentTenant.id, programScope]);
 
@@ -2078,6 +2101,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setIsExportModalOpen,
     exportModalInitialDocType,
     openExportModal,
+    pendingFocus,
+    requestFocus,
+    clearPendingFocus,
 
     // NIST SP 800-171A Objective-Level Evaluation & Rollup
     getObjectivesForControl,
@@ -2140,6 +2166,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     isExportModalOpen,
     exportModalInitialDocType,
     openExportModal,
+    pendingFocus,
+    requestFocus,
+    clearPendingFocus,
     getObjectivesForControl,
     updateObjectiveStatus,
     updateObjectiveNarrative,
@@ -2168,4 +2197,10 @@ export const useAssessment = (): AssessmentContextType => {
     throw new Error('useAssessment must be used within an AssessmentProvider');
   }
   return context;
+};
+
+/** The pending focus request alone, or null outside the provider (a screen rendered on its own, as a test does, has none). */
+export const usePendingFocusContext = (): Pick<AssessmentContextType, 'pendingFocus' | 'clearPendingFocus'> | null => {
+  const context = useContext(AssessmentContext);
+  return context ? { pendingFocus: context.pendingFocus, clearPendingFocus: context.clearPendingFocus } : null;
 };

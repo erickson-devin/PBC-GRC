@@ -20,6 +20,7 @@
  *   10. objective roll-up (issue #307): writeObjective with framework CMMC_L2 lowers one objective of a Met control and the control is lowered in the same transaction. The event CHECK on control_assessment_events.source accepts 'objective-rollup', exactly one such event exists (MET -> the rolled-up status, notes unchanged and kept only as a digest), another program's Met control is untouched, and the same write under a non-CMMC framework lowers nothing.
  *   11. Tools and services register (#239, #243, #248, #249): 8t inventory_vendors, inventory_tools and inventory_events (tenant isolation, the composite vendor key that nulls on delete, the unique name / seed / rank indexes, the CHECKs, the append-only history); 8u program_tools and program_tool_controls (program isolation, composite foreign keys, cascades from a tool and from a program); 8v the data inventory (program_data_inventory, program_cui_categories, program_cui_category_tools: isolation, the category and role CHECKs, the cascade from the answer); 8w program_vendor_documents (isolation, doc_kind CHECK, vendor cascade) and program_inventory_events (isolation, no foreign key, append-only). Rows are prefixed rls_verify.
  *   12. Document register (#240, #250): 8r governance_documents (tenant isolation, the unique live-title and seed-key indexes with a RETIRED title reusable, the kind / approval / seed CHECKs); 8s program_governance_documents, program_document_controls, program_document_attachments and program_document_expectations (program isolation, composite foreign keys to the program and the document, the one-primary partial unique index, the id CHECKs, cascades from a document and from a program). Rows are prefixed rls_verify.
+ *   13. SPRS goal, teams and assignments (#252, #253): 8aa programs.sprs_goal (the inline range and framework CHECK, NULL accepted); 8ab tenant_teams and tenant_team_members (tenant isolation, the unique name ignoring case, the CHECKs, the composite team key, the cascade from a team); 8ac program_assignments (program isolation, the shape CHECK, one assignee per target and duty, the composite program key, the cascade from a program). Rows are prefixed rls_verify.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 import { createHash } from 'node:crypto';
@@ -2172,6 +2173,80 @@ async function verifyProgramIsolation() {
     );
     check(docProgramCascade.rows[0].m === 0 && docProgramCascade.rows[0].c === 0 && docProgramCascade.rows[0].a === 0 && docProgramCascade.rows[0].e === 0, '8s. the document program tables: deleting a program removes its rows through the cascade', JSON.stringify(docProgramCascade.rows[0]));
 
+    // The sections below sit in one block of their own: their variable names are local to it
+    {
+      // 8aa. SPRS goal (#252): programs.sprs_goal rides the programs tenant policy; the inline CHECK keeps the range and the framework
+      const goalL2 = await createSmProgram(TENANT_X, { name: 'rls_verify_sprs_goal_l2', frameworkId: 'CMMC_L2' }, null);
+      const goalNist = await createSmProgram(TENANT_X, { name: 'rls_verify_sprs_goal_nist', frameworkId: 'NIST_800_53_REV5', baseline: 'LOW' }, null);
+      const setGoal = 'UPDATE programs SET sprs_goal = $3 WHERE tenant_id = $1 AND id = $2';
+      const goalTooHigh = await rejectsTenant(TENANT_X, setGoal, [TENANT_X, goalL2.id, 111], { code: '23514', constraint: 'programs_sprs_goal_check' });
+      const goalTooLow = await rejectsTenant(TENANT_X, setGoal, [TENANT_X, goalL2.id, -204], { code: '23514', constraint: 'programs_sprs_goal_check' });
+      check(goalTooHigh.ok && goalTooLow.ok, '8aa. programs.sprs_goal: 111 and -204 are each refused on a CMMC_L2 program (23514, programs_sprs_goal_check)', goalTooHigh.detail + ' | ' + goalTooLow.detail);
+      const goalWrongFramework = await rejectsTenant(TENANT_X, setGoal, [TENANT_X, goalNist.id, 100], { code: '23514', constraint: 'programs_sprs_goal_check' });
+      check(goalWrongFramework.ok, '8aa. programs.sprs_goal: a goal on a NIST program is refused (23514, programs_sprs_goal_check)', goalWrongFramework.detail);
+      const goalOk = await queryWithTenant(TENANT_X, setGoal + ' RETURNING sprs_goal', [TENANT_X, goalL2.id, 100]);
+      const goalEdge = await queryWithTenant(TENANT_X, setGoal + ' RETURNING sprs_goal', [TENANT_X, goalL2.id, -203]);
+      const goalNull = await queryWithTenant(TENANT_X, 'UPDATE programs SET sprs_goal = NULL WHERE tenant_id = $1 AND id = $2 RETURNING sprs_goal', [TENANT_X, goalNist.id]);
+      check(goalOk.rows[0]?.sprs_goal === 100 && goalEdge.rows[0]?.sprs_goal === -203 && goalNull.rows[0]?.sprs_goal === null, '8aa. programs.sprs_goal: 100 and -203 are accepted on a CMMC_L2 program, and NULL (the default) on any program');
+
+      // 8ab. teams (#253): tenant_teams and tenant_team_members are tenant tables (tenant policy only, no program context)
+      const insertTeam = 'INSERT INTO tenant_teams (tenant_id, name, description) VALUES ($1, $2, $3) RETURNING id';
+      const insertTeamMember = 'INSERT INTO tenant_team_members (tenant_id, team_id, user_id, added_by) VALUES ($1, $2, $3, $4) RETURNING user_id';
+      const teamX = String((await queryWithTenant(TENANT_X, insertTeam, [TENANT_X, 'rls_verify_team_x', ''])).rows[0]?.id);
+      await queryWithTenant(TENANT_X, insertTeamMember, [TENANT_X, teamX, 'rls_verify_user', 'rls_verify_actor']);
+      const teamYSees = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM tenant_teams WHERE tenant_id = $1', [TENANT_X]);
+      const teamYMembers = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM tenant_team_members WHERE tenant_id = $1', [TENANT_X]);
+      const teamYDeletes = await queryWithTenant(TENANT_Y, 'DELETE FROM tenant_teams WHERE id = $1', [teamX]);
+      check(teamYSees.rows.length === 0 && teamYMembers.rows.length === 0 && (teamYDeletes.rowCount ?? 0) === 0, "8ab. tenant_teams and tenant_team_members: tenant Y cannot read or delete tenant X's rows (0 rows)", 'saw ' + teamYSees.rows.length + ' / ' + teamYMembers.rows.length + ', deleted ' + teamYDeletes.rowCount);
+      const teamYInserts = await rejectsTenant(TENANT_Y, insertTeam, [TENANT_X, 'rls_verify_team_evil', ''], { code: '42501' });
+      check(teamYInserts.ok, '8ab. tenant_teams: tenant Y cannot insert a team into tenant X (WITH CHECK, 42501)', teamYInserts.detail);
+      const teamDuplicate = await rejectsTenant(TENANT_X, insertTeam, [TENANT_X, 'RLS_VERIFY_TEAM_X', ''], { code: '23505', constraint: 'unq_tenant_teams_name' });
+      check(teamDuplicate.ok, '8ab. tenant_teams: a second team with the same name ignoring case is refused (23505, unq_tenant_teams_name)', teamDuplicate.detail);
+      const teamBlank = await rejectsTenant(TENANT_X, insertTeam, [TENANT_X, '   ', ''], { code: '23514', constraint: 'tenant_teams_name_check' });
+      const memberBadId = await rejectsTenant(TENANT_X, insertTeamMember, [TENANT_X, teamX, 'bad id', 'rls_verify_actor'], { code: '23514', constraint: 'tenant_team_members_user_check' });
+      const memberForeignTeam = await rejectsTenant(TENANT_Y, insertTeamMember, [TENANT_Y, teamX, 'rls_verify_user', 'rls_verify_actor'], { code: '23503', constraint: 'fk_tenant_team_members_team' });
+      check(teamBlank.ok && memberBadId.ok && memberForeignTeam.ok, "8ab. a blank team name (23514), a member id such as 'bad id' (23514) and another tenant's team (composite foreign key, 23503) are each refused", [teamBlank.detail, memberBadId.detail, memberForeignTeam.detail].join(' | '));
+      await queryWithTenant(TENANT_X, 'DELETE FROM tenant_teams WHERE id = $1', [teamX]);
+      const teamCascade = await queryWithTenant(TENANT_X, 'SELECT 1 FROM tenant_team_members WHERE team_id = $1', [teamX]);
+      check(teamCascade.rows.length === 0, '8ab. tenant_team_members: deleting a team removes its members through the cascade');
+
+      // 8ac. program_assignments (#253): the 8j pattern (program isolation), the shape CHECK and the cascade from a program
+      const insertPa = 'INSERT INTO program_assignments (tenant_id, program_id, target_kind, target_id, duty, assignee_kind, assignee_id, assigned_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING target_id';
+      const paArgs = (program: string, targetId: string, duty = 'owner'): string[] => [TENANT_X, program, 'control', targetId, duty, 'user', 'rls_verify_user', 'rls_verify_actor'];
+      const pa1 = await queryWithProgram(scopeA, insertPa, paArgs(programA, 'AC.L2-3.1.1'));
+      const pa2 = await queryWithProgram(scopeA, insertPa, [TENANT_X, programA, 'objective', 'AC.L2-3.1.1[a]', 'owner', 'team', 'rls_verify_team', 'rls_verify_actor']);
+      check(pa1.rows.length === 1 && pa2.rows.length === 1, "8ac. program_assignments: under program A a control id and an objective id ('AC.L2-3.1.1[a]') are inserted");
+      const paBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_assignments WHERE program_id = $1', [programA]);
+      const paBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_assignments WHERE tenant_id = $1', [TENANT_X]);
+      const paBUpdates = await queryWithProgram(scopeB, "UPDATE program_assignments SET assigned_by = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+      const paBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_assignments WHERE program_id = $1', [programA]);
+      const paNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_assignments WHERE tenant_id = $1', [TENANT_X]);
+      check(paBSeesA.rows.length === 0 && paBSeesAny.rows.length === 0 && (paBUpdates.rowCount ?? 0) === 0 && (paBDeletes.rowCount ?? 0) === 0 && paNoCtx.rows.length === 0, "8ac. program_assignments: program B can neither read, update nor delete program A's rows, and a tenant context with no program sees zero rows", 'saw ' + paBSeesA.rows.length + ' / ' + paBSeesAny.rows.length + ' / ' + paNoCtx.rows.length + ', updated ' + paBUpdates.rowCount + ', deleted ' + paBDeletes.rowCount);
+      const paBInserts = await rejectsIn(scopeB, insertPa, paArgs(programA, 'AC.L2-3.1.2'), { code: '42501' });
+      let paNoCtxInsert = 'no error';
+      try {
+        await queryWithTenant(TENANT_X, insertPa, paArgs(programA, 'AC.L2-3.1.2'));
+      } catch (err) {
+        paNoCtxInsert = String((err as { code?: string }).code);
+      }
+      check(paBInserts.ok && paNoCtxInsert === '42501', '8ac. program_assignments: program B, and a context with no program, cannot insert a row into program A (WITH CHECK, 42501)', paBInserts.detail + ' | ' + paNoCtxInsert);
+      const paBadTarget = await rejectsIn(scopeA, insertPa, paArgs(programA, 'bad id!'), { code: '23514', constraint: 'program_assignments_shape_check' });
+      const paBadDuty = await rejectsIn(scopeA, insertPa, paArgs(programA, 'AC.L2-3.1.3', 'Owner'), { code: '23514', constraint: 'program_assignments_shape_check' });
+      const paBadAssignee = await rejectsIn(scopeA, insertPa, [TENANT_X, programA, 'control', 'AC.L2-3.1.3', 'owner', 'user', 'bad id', 'rls_verify_actor'], { code: '23514', constraint: 'program_assignments_shape_check' });
+      check(paBadTarget.ok && paBadDuty.ok && paBadAssignee.ok, "8ac. program_assignments: target_id = 'bad id!', duty = 'Owner' and assignee_id = 'bad id' are each refused (23514, program_assignments_shape_check)", [paBadTarget.detail, paBadDuty.detail, paBadAssignee.detail].join(' | '));
+      const paSecondOwner = await rejectsIn(scopeA, insertPa, paArgs(programA, 'AC.L2-3.1.1'), { code: '23505', constraint: 'pk_program_assignments' });
+      const paReviewer = await queryWithProgram(scopeA, insertPa, paArgs(programA, 'AC.L2-3.1.1', 'reviewer'));
+      check(paSecondOwner.ok && paReviewer.rows.length === 1, '8ac. program_assignments: one assignee per target and duty (a second owner is refused, 23505), while the same target takes a reviewer too', paSecondOwner.detail);
+      const paForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertPa, paArgs(defaultY, 'AC.L2-3.1.1'), { code: '23503', constraint: 'fk_program_assignments_program' });
+      check(paForeignProgram.ok, "8ac. program_assignments: tenant X cannot attach an assignment to tenant Y's program (composite foreign key, 23503)", paForeignProgram.detail);
+      const paProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_assignments_cascade', frameworkId: 'CMMC_L2' }, null);
+      const paScope = { tenantId: TENANT_X, programId: paProgram.id };
+      await queryWithProgram(paScope, insertPa, paArgs(paProgram.id, 'AC.L2-3.1.1'));
+      await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, paProgram.id]);
+      const paCascade = await queryWithProgram(paScope, 'SELECT COUNT(*)::int AS n FROM program_assignments WHERE program_id = $1', [paProgram.id]);
+      check(paCascade.rows[0].n === 0, '8ac. program_assignments: deleting a program removes its assignments through the cascade', JSON.stringify(paCascade.rows[0]));
+    }
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
@@ -2180,6 +2255,7 @@ async function verifyProgramIsolation() {
       await queryWithTenant(t, "DELETE FROM inventory_vendors WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM inventory_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM governance_documents WHERE title LIKE 'rls_verify_%'", []).catch(() => undefined); // the program rows cascade with their document
+      await queryWithTenant(t, "DELETE FROM tenant_teams WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the member rows cascade with their team
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined); // the membership rows cascade with their asset
     }
     // the history has no foreign key, so a program's delete does not remove its events

@@ -28,6 +28,7 @@ import { statusDisplayLabel } from '../../data/statusLabels';
 import { objectiveSspBadge, objectiveNarrativesInSsp } from '../../data/cmmcGuide/sspStatementView';
 import { objectiveSaveView, objectiveSaveAnnouncement } from '../../data/objectiveSaveState';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { ObjectiveOwner } from '../assignments/AssignControl';
 import { useUnsavedTextProvider } from '../../hooks/useUnsavedTextProvider';
 import { unsavedObjectiveDrafts } from '../../services/unsavedText';
 
@@ -560,6 +561,11 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                   </span>
                 )}
               </div>
+              {currentTenant.serverBacked && (
+                <div className="mt-2">
+                  <ObjectiveOwner objectiveId={obj.id} label={`objective ${cmmcGuideObjectiveId(obj.id, activeFramework)}`} />
+                </div>
+              )}
               {saveView && (
                 <p
                   id={`${narrativeId}-save`}

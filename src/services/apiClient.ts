@@ -40,6 +40,9 @@ import { parseProgramList, parseProgramMetrics, parseProgramResponse, programCre
 import { parseAssetMemberships, parseProgramAssets } from '../data/programAssets';
 import type { ProgramAssets } from '../data/programAssets';
 import type { SoftwareItem, SoftwareItemInput } from '../types/software';
+import type { ProgramSummary } from '../types/programSummary';
+import type { Assignment, AssignmentChange, ResponsibilitiesResponse, ResponsibilityItem, Team } from '../types/assignments';
+import type { SearchKind, SearchResponse } from '../types/search';
 import { MAX_TOOLS_PER_TENANT, MAX_VENDORS_PER_TENANT } from '../types/inventory';
 import type { DataInventoryRecord, InventoryEvent, InventoryTool, InventoryVendor, ProgramInventory, ProgramInventoryEvent, ToolBatchResult, ToolControlLink, ToolInput, ToolMembership, ToolUsage, VendorDocumentKind, VendorDocumentLink } from '../types/inventory';
 import type { ToolInputWithSeed, VendorInput } from '../data/inventory/inventorySchema';
@@ -85,6 +88,10 @@ export class ApiError extends Error {
   field?: string;
   /** Only on a 409 `duplicate_seed` (a generated draft already registered): the id of the existing document. */
   documentId?: string;
+  /** Only on an assignment batch refusal (400 / 404 / 409): the position of the item in the request that was refused. A number only. */
+  index?: number;
+  /** Only on a 409 `team_in_use`: how many assignments and programs name the team. Numbers only. */
+  teamUse?: { assignments: number; programs: number };
   constructor(status: number, message: string) {
     super(message);
     this.name = 'ApiError';
@@ -175,6 +182,11 @@ function apiErrorFromResponse(status: number, body: unknown, tenantId?: string):
   if ((reason === 'invalid' || reason === 'invalid_location') && typeof (body as { field?: unknown } | null)?.field === 'string') {
     const field = (body as { field: string }).field;
     if (/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(field)) err.field = field;
+  }
+  if (typeof (body as { index?: unknown } | null)?.index === 'number' && Number.isInteger((body as { index: number }).index) && (body as { index: number }).index >= 0) err.index = (body as { index: number }).index;
+  if (reason === 'team_in_use') {
+    const counts = (body ?? {}) as { assignments?: unknown; programs?: unknown };
+    err.teamUse = { assignments: typeof counts.assignments === 'number' ? counts.assignments : 0, programs: typeof counts.programs === 'number' ? counts.programs : 0 };
   }
   if (reason === 'duplicate_seed' && typeof (body as { documentId?: unknown } | null)?.documentId === 'string') {
     const id = (body as { documentId: string }).documentId;
@@ -817,6 +829,97 @@ export const ApiClient = {
     return URL.createObjectURL(await res.blob());
   },
 
+  // ----------------------------------------------------------------------------------------- experience (#251-#254)
+  // Program summary, assignments, teams, responsibilities and global search. Scoped methods end with `programId?`; the team and responsibility calls are tenant-wide.
+
+  /** GET /api/v1/program-summary (any member): the counts the journey bar and the dashboard need from the server. Never cached by the server. */
+  async getProgramSummary(tenantId: string, programId?: string | null): Promise<ProgramSummary> {
+    const data = await authedJson<Partial<ProgramSummary>>('GET', '/program-summary', { tenantId, programId });
+    if (!data || typeof data.programId !== 'string' || !data.people || !data.inventory || !data.reviews || !data.poam) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data as ProgramSummary;
+  },
+
+  /** GET /api/v1/assignments (any member): every assignment of the program. */
+  async listAssignments(tenantId: string, programId?: string | null): Promise<Assignment[]> {
+    const data = await authedJson<{ assignments?: unknown }>('GET', '/assignments', { tenantId, programId });
+    if (!Array.isArray(data?.assignments)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.assignments as Assignment[];
+  },
+
+  /** PUT /api/v1/assignments (write roles): one to 500 changes, all or nothing. 409 stale_write names the item (`index`) that changed under the caller. */
+  async putAssignments(tenantId: string, items: AssignmentChange[], programId?: string | null): Promise<{ assignments: Assignment[]; changed: number }> {
+    const data = await authedJson<{ assignments?: unknown; changed?: unknown }>('PUT', '/assignments', { tenantId, programId, body: { items } });
+    if (!Array.isArray(data?.assignments) || typeof data.changed !== 'number') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { assignments: data.assignments as Assignment[], changed: data.changed };
+  },
+
+  /** GET /api/v1/assignments/mine (any member): what the signed-in person is responsible for in this program, directly and through teams. */
+  async listMyAssignments(tenantId: string, programId?: string | null): Promise<ResponsibilityItem[]> {
+    const data = await authedJson<{ items?: unknown }>('GET', '/assignments/mine', { tenantId, programId });
+    if (!Array.isArray(data?.items)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.items as ResponsibilityItem[];
+  },
+
+  /** GET /api/v1/tenants/:id/teams (any member). */
+  async listTeams(tenantId: string): Promise<Team[]> {
+    const data = await authedJson<{ teams?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/teams`, { tenantId });
+    if (!Array.isArray(data?.teams)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.teams as Team[];
+  },
+
+  /** POST /api/v1/tenants/:id/teams (write roles). 409 duplicate_name, 429 limit. */
+  async createTeam(tenantId: string, input: { name: string; description?: string }): Promise<Team> {
+    const data = await authedJson<{ team?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/teams`, { tenantId, body: input });
+    if (!data?.team || typeof data.team !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.team as Team;
+  },
+
+  /** PUT /api/v1/tenants/:id/teams/:teamId (write roles): `expectedUpdatedAt` is the stamp the caller loaded; a change since answers 409 stale_write. */
+  async updateTeam(tenantId: string, teamId: string, changes: { name?: string; description?: string; expectedUpdatedAt: string }): Promise<{ team: Team; changed: boolean }> {
+    const data = await authedJson<{ team?: unknown; changed?: unknown }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/teams/${encodeURIComponent(teamId)}`, { tenantId, body: changes });
+    if (!data?.team || typeof data.team !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { team: data.team as Team, changed: data.changed === true };
+  },
+
+  /** PATCH /api/v1/tenants/:id/teams/:teamId/members (write roles): people to add (current members only) and to remove. */
+  async patchTeamMembers(tenantId: string, teamId: string, change: { add?: string[]; remove?: string[] }): Promise<{ team: Team; added: number; removed: number }> {
+    const data = await authedJson<{ team?: unknown; added?: unknown; removed?: unknown }>('PATCH', `/tenants/${encodeURIComponent(tenantId)}/teams/${encodeURIComponent(teamId)}/members`, { tenantId, body: change });
+    if (!data?.team || typeof data.team !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { team: data.team as Team, added: typeof data.added === 'number' ? data.added : 0, removed: typeof data.removed === 'number' ? data.removed : 0 };
+  },
+
+  /** GET /api/v1/tenants/:id/teams/:teamId/usage (any member): the programs whose assignments name the team (archived ones included). */
+  async getTeamUsage(tenantId: string, teamId: string): Promise<{ programId: string; assignments: number }[]> {
+    const data = await authedJson<{ programs?: unknown }>('GET', `/tenants/${encodeURIComponent(tenantId)}/teams/${encodeURIComponent(teamId)}/usage`, { tenantId });
+    if (!Array.isArray(data?.programs)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.programs as { programId: string; assignments: number }[];
+  },
+
+  /** DELETE /api/v1/tenants/:id/teams/:teamId (write roles). 409 team_in_use (counts on the error) unless `force` removes the team's assignments too. */
+  async deleteTeam(tenantId: string, teamId: string, force?: boolean): Promise<{ removed: string; assignmentsRemoved: number }> {
+    const query = force ? '?force=true' : '';
+    const data = await authedJson<{ removed?: unknown; assignmentsRemoved?: unknown }>('DELETE', `/tenants/${encodeURIComponent(tenantId)}/teams/${encodeURIComponent(teamId)}${query}`, { tenantId });
+    if (typeof data?.removed !== 'string') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { removed: data.removed, assignmentsRemoved: typeof data.assignmentsRemoved === 'number' ? data.assignmentsRemoved : 0 };
+  },
+
+  /** GET /api/v1/tenants/:id/responsibilities (any member): the caller's responsibilities (`me`) or a team's (`team`, with `teamId`) across the programs. */
+  async getResponsibilities(tenantId: string, options: { view?: 'me' | 'team'; teamId?: string; includeArchived?: boolean } = {}): Promise<ResponsibilitiesResponse> {
+    const params: string[] = [`view=${options.view === 'team' ? 'team' : 'me'}`];
+    if (options.view === 'team' && options.teamId) params.push(`teamId=${encodeURIComponent(options.teamId)}`);
+    if (options.includeArchived) params.push('includeArchived=true');
+    const data = await authedJson<Partial<ResponsibilitiesResponse>>('GET', `/tenants/${encodeURIComponent(tenantId)}/responsibilities?${params.join('&')}`, { tenantId });
+    if (!Array.isArray(data?.programs)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programs: data.programs, truncated: data.truncated === true };
+  },
+
+  /** POST /api/v1/search (any member): the query travels in the body, never in the URL. The answer is never cached (the server sends no-store). 400 invalid_query, 429 when asked too often. */
+  async searchProgram(tenantId: string, body: { q: string; kinds?: SearchKind[]; perKind?: number }, programId?: string | null): Promise<SearchResponse> {
+    const data = await authedJson<Partial<SearchResponse>>('POST', '/search', { tenantId, programId, body });
+    if (!Array.isArray(data?.groups)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programId: typeof data.programId === 'string' ? data.programId : '', groups: data.groups };
+  },
+
   // ---------------------------------------------------------------- programs (authorization boundaries)
 
   /** GET /api/v1/tenants/:id/programs. Archived programs are included only when asked for. */
@@ -843,6 +946,7 @@ export const ApiClient = {
     if (updates.scoping !== undefined) body.scoping = updates.scoping;
     if (updates.expectedScoping !== undefined) body.expectedScoping = updates.expectedScoping;
     if (updates.stackProfile !== undefined) body.stackProfile = updates.stackProfile;
+    if (updates.sprsGoal !== undefined) body.sprsGoal = updates.sprsGoal;
     const program = parseProgramResponse(await authedJson('PUT', `/tenants/${encodeURIComponent(tenantId)}/programs/${encodeURIComponent(programId)}`, { tenantId, body }));
     if (!program) throw new ApiError(502, 'The server sent back a program this version of the app does not understand.');
     return program;

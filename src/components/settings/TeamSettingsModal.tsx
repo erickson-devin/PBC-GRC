@@ -16,8 +16,11 @@ import {
   UserCog,
   CalendarClock,
   Star,
+  UsersRound,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl } from '../../context/TenantContext';
+import { useTeams } from '../../hooks/useTeams';
+import { TeamsSection } from './TeamsSection';
 import { useAuth } from '../../context/AuthContext';
 import { TenantRole, type TeamMember } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
@@ -133,7 +136,8 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   } = useTenant();
   const { mfaEnrolled, sessionCheck } = useAuth();
 
-  const [activeModalTab, setActiveModalTab] = useState<'team' | 'scope'>('team');
+  const [activeModalTab, setActiveModalTab] = useState<'team' | 'scope' | 'teams'>('team');
+  const { supported: teamsSupported, teams } = useTeams();
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
@@ -489,6 +493,20 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   {enabledFrameworks.length}
                 </span>
               </button>
+              {teamsSupported && (
+                <button
+                  type="button"
+                  onClick={() => setActiveModalTab('teams')}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    activeModalTab === 'teams'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                      : 'bg-slate-900/60 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  <UsersRound className="w-3.5 h-3.5" />
+                  <span>Teams ({teams.length})</span>
+                </button>
+              )}
             </div>
 
             {/* Role Capabilities Matrix Accordion */}
@@ -1153,6 +1171,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Tab 3: Teams (#253) */}
+            {activeModalTab === 'teams' && teamsSupported && <TeamsSection />}
 
           </div>
   );

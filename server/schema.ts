@@ -78,6 +78,9 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'program_document_controls', tenantColumn: 'tenant_id' },
   { table: 'program_document_attachments', tenantColumn: 'tenant_id' },
   { table: 'program_document_expectations', tenantColumn: 'tenant_id' },
+  { table: 'tenant_teams', tenantColumn: 'tenant_id' },
+  { table: 'tenant_team_members', tenantColumn: 'tenant_id' },
+  { table: 'program_assignments', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -115,6 +118,7 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'program_document_controls',
   'program_document_attachments',
   'program_document_expectations',
+  'program_assignments',
 ];
 
 /**
@@ -885,6 +889,9 @@ export const TABLES_SQL = `
   ALTER TABLE programs ADD COLUMN IF NOT EXISTS stack_profile JSONB;
   ALTER TABLE programs DROP CONSTRAINT IF EXISTS programs_stack_profile_check;
   ALTER TABLE programs ADD CONSTRAINT programs_stack_profile_check CHECK (stack_profile IS NULL OR (jsonb_typeof(stack_profile) = 'object' AND (stack_profile - ARRAY[${stackProfileKeyList}]) = '{}'::jsonb AND octet_length(stack_profile::text) <= ${STACK_PROFILE_MAX_BYTES}));
+  -- The SPRS score a CMMC Level 2 program aims for (#252); NULL shows the default 110. The CHECK rides on ADD COLUMN, so it is created once with the column
+  -- and never dropped and re-added: an older image ignores the column and still starts (no one-way upgrade).
+  ALTER TABLE programs ADD COLUMN IF NOT EXISTS sprs_goal SMALLINT CONSTRAINT programs_sprs_goal_check CHECK (sprs_goal IS NULL OR (sprs_goal BETWEEN -203 AND 110 AND framework_id = 'CMMC_L2'));
   -- One default program per tenant, and program names are unique per tenant ignoring case.
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_default ON programs (tenant_id) WHERE is_default;
   CREATE UNIQUE INDEX IF NOT EXISTS unq_programs_name ON programs (tenant_id, lower(name));
@@ -1800,6 +1807,52 @@ export const TABLES_SQL = `
       CONSTRAINT fk_program_document_expectations_document FOREIGN KEY (tenant_id, document_id) REFERENCES governance_documents (tenant_id, id) ON DELETE CASCADE,
       CONSTRAINT program_document_expectations_id_check CHECK (expected_id ~ '^[a-z0-9][a-z0-9-]{1,63}$')
   );
+
+  -- Teams and responsibilities (#253). Teams are tenant-wide like tenant_users; names may be sensitive: never logged, history holds digests. Assignments are
+  -- labels, never access: nothing reads them to grant a permission. No foreign key to tenant_users: a member who leaves keeps their team rows and assignments,
+  -- shown as "no longer a member". Everything here is a NEW table with inline CHECKs (never dropped and re-added at start): no one-way upgrade, an older image
+  -- ignores these tables. The history goes to inventory_events (entity_kind 'team') and program_inventory_events (assignment_changed).
+  CREATE TABLE IF NOT EXISTS tenant_teams (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      name VARCHAR(120) NOT NULL,
+      description VARCHAR(1000) NOT NULL DEFAULT '',
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT unq_tenant_teams_tenant_id UNIQUE (tenant_id, id),
+      CONSTRAINT tenant_teams_name_check CHECK (length(btrim(name)) > 0)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_tenant_teams_name ON tenant_teams (tenant_id, lower(name));
+  CREATE TABLE IF NOT EXISTS tenant_team_members (
+      tenant_id VARCHAR(64) NOT NULL,
+      team_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(128) NOT NULL,
+      added_by VARCHAR(255),
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_tenant_team_members PRIMARY KEY (tenant_id, team_id, user_id),
+      CONSTRAINT fk_tenant_team_members_team FOREIGN KEY (tenant_id, team_id) REFERENCES tenant_teams (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT tenant_team_members_user_check CHECK (user_id ~ '^[A-Za-z0-9._:@-]{1,128}$')
+  );
+  CREATE INDEX IF NOT EXISTS idx_tenant_team_members_user ON tenant_team_members (tenant_id, user_id);
+  CREATE TABLE IF NOT EXISTS program_assignments (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      target_kind VARCHAR(16) NOT NULL,
+      target_id VARCHAR(96) NOT NULL,
+      duty VARCHAR(16) NOT NULL,
+      assignee_kind VARCHAR(8) NOT NULL,
+      assignee_id VARCHAR(128) NOT NULL,
+      assigned_by VARCHAR(255),
+      assigned_by_user_id VARCHAR(128),
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_program_assignments PRIMARY KEY (tenant_id, program_id, target_kind, target_id, duty),
+      CONSTRAINT fk_program_assignments_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT program_assignments_shape_check CHECK (target_kind ~ '^[a-z][a-z_]{0,15}$' AND duty ~ '^[a-z][a-z_]{0,15}$' AND assignee_kind ~ '^[a-z]{1,8}$'
+        AND target_id ~ '^[A-Za-z0-9.()_-]{1,64}(\\[[a-z0-9]{1,16}\\])?$' AND assignee_id ~ '^[A-Za-z0-9._:@-]{1,128}$')
+  );
+  CREATE INDEX IF NOT EXISTS idx_program_assignments_assignee ON program_assignments (tenant_id, program_id, assignee_kind, assignee_id);
 `;
 
 const currentUserPredicate = "NULLIF(current_setting('app.current_user_id', true), '')";

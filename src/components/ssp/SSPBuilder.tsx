@@ -58,6 +58,8 @@ import { DOCUMENTS_NOT_AVAILABLE, SSP_DOCUMENT_HEADERS, documentsSubsection, ssp
 import { ErrorNotice } from '../common/ErrorNotice';
 import { SspSectionNav } from './SspSectionNav';
 import { SspSectionReview } from './SspSectionReview';
+import { SspReviewerChip } from './SspReviewerChip';
+import { SectionOwner } from '../assignments/AssignControl';
 import { SspSystemDetailsSection } from './SspSystemDetailsSection';
 import { SspDataInventorySection } from './SspDataInventorySection';
 import { SspDocumentsSection } from './SspDocumentsSection';
@@ -467,6 +469,7 @@ export const SSPBuilder: React.FC = () => {
                 <span className="font-mono text-slate-400 mr-2">{def.number}</span>
                 {def.title}
               </h3>
+              {serverBacked && <SectionOwner sectionId={activeSection} label={def.title} />}
 
               {activeSection === 'identification' && (
                 <SspIdentificationSection
@@ -581,6 +584,7 @@ export const SSPBuilder: React.FC = () => {
                   notice={reviewMsg?.section === activeSection ? reviewMsg.notice : null}
                   onSignOff={() => void handleSignOff()}
                   onRetry={() => void reviews.reload()}
+                  reviewer={reviews.supported ? <SspReviewerChip sectionId={activeSection} latest={reviews.sections[activeSection]?.latest ?? null} /> : null}
                 />
               )}
             </section>

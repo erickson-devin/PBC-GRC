@@ -16,13 +16,20 @@ import {
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
+import { getFrameworkTitle, getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { remediationPriorities } from '../../data/reports/remediationPriority';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
 import { storagePathLabel } from '../../data/audit/storageDriver';
 import { DomainCards } from './DomainCards';
+import { SprsGoalCard } from './SprsGoalCard';
+import { PoamTargetCard } from './PoamTargetCard';
+import { DomainStatusChart } from './DomainStatusChart';
+import { useProgramSummary } from '../../hooks/useProgramSummary';
+import { domainChartRows, domainChartSummary } from '../../data/dashboard/domainChart';
+import { poamTargetSummary } from '../../data/dashboard/poamTarget';
+import { heroBarLabel, utcToday } from '../../data/dashboard/dashboardUiView';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
 import { ROLE_LABELS } from '../../utils/roles';
 import { SspGateBanner } from './SspGateBanner';
@@ -34,13 +41,15 @@ import { refusedMetControls } from '../../data/cmmcGuide/controlStatusGuard';
 import { metMismatchesInView, metMismatchOverviewText } from '../../data/cmmcGuide/controlStatusView';
 
 export const ComplianceOverview: React.FC = () => {
-  const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId, objectivesReady, notesEditable } = useAssessment();
-  const { currentTenant, canEdit, currentRole, activeFramework } = useTenant();
+  const { metrics, state, frameworkControls, setActiveTab, openExportModal, setSelectedControlId, setSelectedDomainFilter, objectivesReady, notesEditable } = useAssessment();
+  const { currentTenant, canEdit, currentRole, activeFramework, activeProgram, canManagePrograms, updateProgram } = useTenant();
   const storageConfig = useStorageConfig(currentTenant);
   const catalogUpdate = useCatalogUpdateChanges();
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
   const guidance = getFrameworkGuidanceText(activeFramework);
+  const summary = useProgramSummary();
+  const serverBacked = Boolean(currentTenant.serverBacked);
   const totalCount = metrics.totalControls || frameworkControls.length || 1;
 
   // Real-time CMMC L2 SPRS score (-203 to +110)
@@ -72,6 +81,18 @@ export const ComplianceOverview: React.FC = () => {
     const ids = new Set(frameworkControls.map((c) => c.id));
     return metMismatchesInView(refusedMetControls(state.controls, state.objectives, activeFramework), ids).length;
   }, [objectivesReady, notesEditable, state.controls, state.objectives, activeFramework, frameworkControls]);
+
+  // The POA&M target (#252): a browser-only organization keeps no dates, so its open entries are all undated; a server-backed one reads the server's summary
+  const localPoam = useMemo(
+    () => poamTargetSummary(frameworkControls.map((c) => ({ status: state.controls[c.id]?.status ?? 'NOT_STARTED', scheduledCompletion: null })), { open: 0, dated: 0, latest: null, overdue: 0 }, utcToday(Date.now())),
+    [frameworkControls, state.controls]
+  );
+  const poamStatus = !serverBacked ? 'local' : summary.status === 'ready' ? 'ready' : summary.status === 'error' ? 'error' : 'loading';
+  const goalLocked = !serverBacked ? 'Setting a goal needs a server-backed organization.' : activeProgram?.archived ? 'This program is archived. Restore it to change the goal.' : null;
+  const chartRows = useMemo(
+    () => domainChartRows(metrics.domainStats, (FRAMEWORK_REGISTRY[activeFramework] ?? FRAMEWORK_REGISTRY.CMMC_L1).domains ?? {}),
+    [metrics.domainStats, activeFramework]
+  );
 
   const handleRemediateControl =(controlId: string) => {
     setSelectedControlId(controlId);
@@ -222,7 +243,7 @@ export const ComplianceOverview: React.FC = () => {
 
             {/* Single Unified Multi-Segment Progress Bar */}
             <div className="space-y-2">
-              <div className="w-full bg-slate-800 rounded-full h-3.5 overflow-hidden flex shadow-inner border border-slate-700/50">
+              <div role="img" aria-label={heroBarLabel({ met: metrics.metCount, inProgress: metrics.inProgressCount, notMet: metrics.notMetCount, notStarted: metrics.notStartedCount, total: totalCount })} className="w-full bg-slate-800 rounded-full h-3.5 overflow-hidden flex shadow-inner border border-slate-700/50">
                 <div
                   className="bg-emerald-500 transition-all duration-700"
                   style={{ width: `${metPct}%` }}
@@ -291,6 +312,27 @@ export const ComplianceOverview: React.FC = () => {
           </div>
 
         </div>
+      </div>
+
+      {/* Goals and deadlines (#252) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {sprsResult && (
+          <SprsGoalCard
+            sprs={sprsResult}
+            goal={activeProgram?.sprsGoal ?? null}
+            canEditGoal={serverBacked && canManagePrograms && !!activeProgram && !activeProgram.archived}
+            lockedReason={goalLocked}
+            onSave={async (v) => { if (activeProgram) await updateProgram(activeProgram.id, { sprsGoal: v }); }}
+          />
+        )}
+        <PoamTargetCard
+          status={poamStatus}
+          summary={serverBacked ? summary.summary?.poam ?? null : localPoam}
+          poamPermitted={guidance.poamPermitted}
+          frameworkTitle={frameworkTitle}
+          onOpenPoam={() => setActiveTab('poam')}
+          onRetry={() => void summary.reload()}
+        />
       </div>
 
       {/* Two Actionable Operational Widgets */}
@@ -490,6 +532,8 @@ export const ComplianceOverview: React.FC = () => {
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        <DomainStatusChart rows={chartRows} summary={domainChartSummary(chartRows)} onOpenDomain={(code) => { setSelectedDomainFilter(code); setActiveTab('controls'); }} />
 
         <DomainCards />
       </div>
