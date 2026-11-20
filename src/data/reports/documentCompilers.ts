@@ -21,6 +21,8 @@ import { applyFipsModules, isCryptographicProtectionControl } from '../telemetry
 import { sprsAppliesTo } from './sprsCompiler';
 import { compileHardwareInventory, compileSoftwareInventory, InventoryInput } from './inventoryDocuments';
 import { VM_POAM_COPY, type VmPoamExport } from './vmPoamView';
+import type { ControlPoamRecord } from '../../types/controlPoam';
+import { toPOAMMilestones } from '../poamMilestones';
 import {
   SSP_ROLE_TABLE_HEADERS,
   sspIdentificationItems,
@@ -144,12 +146,16 @@ export function cmmcObjectiveWeakness(
 /**
  * Automatically aggregates NOT_MET and IN_PROGRESS (and unaddressed) controls into structured POA&M entries.
  * #198: only what is recorded is stated. A due date, resources and milestones are never invented; they print as not recorded.
+ * #304: `recorded` holds what a person recorded per control (owner, scheduled completion, resources, plan, milestones): each recorded value
+ * replaces the "not recorded" text (an owner replaces the responsible role, a plan the generated plan). A control that is Met prints no entry
+ * whatever is recorded for it, and a record never adds an entry. Without `recorded` the output is exactly what it was before.
  */
 export function generatePOAMEntries(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   objectives?: Record<string, AssessmentObjective>,
-  framework?: string
+  framework?: string,
+  recorded?: Record<string, ControlPoamRecord>
 ): POAMEntry[] {
   const poamEntries: POAMEntry[] = [];
   let counter = 1;
@@ -180,18 +186,19 @@ export function generatePOAMEntries(
       const validateStep = objectiveWeakness ? `${objectiveWeakness.validate}.` : `Validate objective: "${primaryObjective}".`;
       const remediationPlan = `1. Complete procedural policy for ${ctrl.title}.\n2. Configure automated technical baseline or identity enforcement.\n3. ${validateStep}\n4. Collect and upload immutable SHA-256 verification artifacts into GRC Vault.`;
 
+      const rec = recorded && Object.prototype.hasOwnProperty.call(recorded, ctrl.id) ? recorded[ctrl.id] : undefined;
       poamEntries.push({
         weaknessId,
         controlId: ctrl.id,
         controlDisplayId: cmmcDisplayId(ctrl.id, framework),
         controlTitle: ctrl.title,
         weaknessDescription: weaknessDesc,
-        scheduledCompletionDate: NOT_RECORDED,
-        requiredResources: NOT_RECORDED,
-        responsibleRole: recordedRole(state?.responsibleRole),
-        remediationPlan,
+        scheduledCompletionDate: rec?.scheduledCompletion || NOT_RECORDED,
+        requiredResources: rec?.requiredResources?.trim() || NOT_RECORDED,
+        responsibleRole: rec?.owner?.trim() || recordedRole(state?.responsibleRole),
+        remediationPlan: rec?.plan?.trim() || remediationPlan,
         status,
-        milestones: [],
+        milestones: toPOAMMilestones(rec?.milestones),
       });
     }
   }
@@ -208,7 +215,8 @@ export function compileNistSSP(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   evidence: EvidenceItem[] = [],
-  objectives?: Record<string, AssessmentObjective>
+  objectives?: Record<string, AssessmentObjective>,
+  recordedPoam?: Record<string, ControlPoamRecord>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
   const fwDef = FRAMEWORK_REGISTRY[metadata.framework] || FRAMEWORK_REGISTRY.CMMC_L1;
@@ -404,7 +412,7 @@ export function compileNistSSP(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework),
+    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework, recordedPoam),
   };
 }
 
@@ -417,10 +425,11 @@ export function compilePOAM(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   objectives?: Record<string, AssessmentObjective>,
-  vmPoam?: VmPoamExport
+  vmPoam?: VmPoamExport,
+  recordedPoam?: Record<string, ControlPoamRecord>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
-  const poamEntries = generatePOAMEntries(controls, controlStates, objectives, metadata.framework);
+  const poamEntries = generatePOAMEntries(controls, controlStates, objectives, metadata.framework, recordedPoam);
   const fwDef = FRAMEWORK_REGISTRY[metadata.framework] || FRAMEWORK_REGISTRY.CMMC_L1;
 
   const sections: ReportSection[] = [];
@@ -525,7 +534,9 @@ export function compilePOAM(
   }
 
   // Section 3: Milestone Schedule Breakdown
-  const milestoneSubsections = poamEntries.map(entry => {
+  // The control entries all get a block; a vulnerability item (#304) only when it has milestones, so a document without any is unchanged
+  const milestoneEntries = [...poamEntries, ...(vmPoam?.status === 'ready' ? vmPoam.entries.filter(entry => (entry.milestones?.length ?? 0) > 0) : [])];
+  const milestoneSubsections = milestoneEntries.map(entry => {
     const milestones = entry.milestones || [];
     const summaryLines = `Responsible Owner: ${entry.responsibleRole} | Target Date: ${entry.scheduledCompletionDate}\nResource Allocation: ${entry.requiredResources}\nDeficiency Summary: ${entry.weaknessDescription}`;
     return {
@@ -596,7 +607,8 @@ export function compileSoc2SystemDescription(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   evidence: EvidenceItem[] = [],
-  objectives?: Record<string, AssessmentObjective>
+  objectives?: Record<string, AssessmentObjective>,
+  recordedPoam?: Record<string, ControlPoamRecord>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
 
@@ -756,7 +768,7 @@ export function compileSoc2SystemDescription(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework),
+    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework, recordedPoam),
   };
 }
 
@@ -769,7 +781,8 @@ export function compileHipaaAssessment(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
   evidence: EvidenceItem[] = [],
-  objectives?: Record<string, AssessmentObjective>
+  objectives?: Record<string, AssessmentObjective>,
+  recordedPoam?: Record<string, ControlPoamRecord>
 ): CompiledDocument {
   const metrics = calculateSummaryMetrics(controls, controlStates);
 
@@ -905,7 +918,7 @@ export function compileHipaaAssessment(
     metadata,
     sections,
     summaryMetrics: metrics,
-    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework),
+    poamEntries: generatePOAMEntries(controls, controlStates, objectives, metadata.framework, recordedPoam),
   };
 }
 
@@ -920,17 +933,17 @@ export function compileReportDocument(
   evidence: EvidenceItem[] = [],
   inventory?: InventoryInput,
   objectives?: Record<string, AssessmentObjective>,
-  extras?: { vmPoam?: VmPoamExport }
+  extras?: { vmPoam?: VmPoamExport; controlPoam?: Record<string, ControlPoamRecord> }
 ): CompiledDocument {
   switch (documentType) {
     case 'NIST_SP_800_18_SSP':
-      return compileNistSSP(metadata, controls, controlStates, evidence, objectives);
+      return compileNistSSP(metadata, controls, controlStates, evidence, objectives, extras?.controlPoam);
     case 'POAM':
-      return compilePOAM(metadata, controls, controlStates, objectives, extras?.vmPoam);
+      return compilePOAM(metadata, controls, controlStates, objectives, extras?.vmPoam, extras?.controlPoam);
     case 'SOC_2_SYSTEM_DESCRIPTION':
-      return compileSoc2SystemDescription(metadata, controls, controlStates, evidence, objectives);
+      return compileSoc2SystemDescription(metadata, controls, controlStates, evidence, objectives, extras?.controlPoam);
     case 'HIPAA_SECURITY_ASSESSMENT':
-      return compileHipaaAssessment(metadata, controls, controlStates, evidence, objectives);
+      return compileHipaaAssessment(metadata, controls, controlStates, evidence, objectives, extras?.controlPoam);
     case 'HARDWARE_INVENTORY':
       return compileHardwareInventory(metadata, inventory, calculateSummaryMetrics(controls, controlStates));
     case 'SOFTWARE_INVENTORY':

@@ -3,6 +3,7 @@ import type { POAMEntry } from '../../types/report';
 import { NOT_RECORDED } from './documentDefaults';
 import { cmmcDisplayId, cmmcGuideId } from '../cmmcGuide/displayId';
 import { poamQueryTerms } from './poamView';
+import { toPOAMMilestones } from '../poamMilestones';
 
 /**
  * #274: the POA&M screen's vulnerability side as pure functions: the open items as POA&M entries for the exports, asset groups, search,
@@ -61,14 +62,18 @@ export function isOpenVmPoamStatus(s: VmPoamStatus): boolean {
   return s === 'OPEN' || s === 'IN_PROGRESS';
 }
 
-/** Weakness ids over the open rows in input order, so the screen and the exports name an item the same way. */
+/**
+ * Weakness ids of the open rows, so the screen and the exports name an item the same way. A row that has a stored number (#305) prints it
+ * (POAM-VM-<number, 3 digits>), so completing an item never renumbers the later ones. A row with none (an item an older image created) is
+ * numbered after the largest number the rows carry, in input order: with no stored number at all that is the plain position, as before.
+ */
 export function vmWeaknessIds(rows: readonly VmPoamRow[]): Map<string, string> {
   const ids = new Map<string, string>();
-  let i = 0;
+  const pad = (n: number): string => `POAM-VM-${String(n).padStart(3, '0')}`;
+  let next = rows.reduce((max, r) => (typeof r.itemNumber === 'number' && r.itemNumber > max ? r.itemNumber : max), 0);
   for (const r of rows) {
     if (!isOpenVmPoamStatus(r.status)) continue;
-    i++;
-    ids.set(r.id, `POAM-VM-${String(i).padStart(3, '0')}`);
+    ids.set(r.id, pad(typeof r.itemNumber === 'number' && r.itemNumber > 0 ? r.itemNumber : ++next));
   }
   return ids;
 }
@@ -98,7 +103,7 @@ export function vmPoamEntries(rows: readonly VmPoamRow[], framework: string): PO
       responsibleRole: row.owner.trim() || NOT_RECORDED,
       remediationPlan: row.mitigation.trim() || 'Remediate or mitigate the vulnerability, then confirm that a later scan no longer reports it.',
       status: row.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'OPEN',
-      milestones: [],
+      milestones: toPOAMMilestones(row.milestones),
     });
   }
   return entries;

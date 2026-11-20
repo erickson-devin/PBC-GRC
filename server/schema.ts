@@ -5,7 +5,10 @@ import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
 import { OBJECTIVE_CHANGE_SOURCES, OBJECTIVE_STATUSES } from '../src/types/controlObjectives';
 import { SSP_METADATA_FIELDS, SSP_METADATA_MAX_BYTES } from '../src/types/sspMetadata';
 import { STACK_PROFILE_ENUM_KEYS, STACK_PROFILE_MAX_BYTES } from '../src/data/stackProfileSchema';
-import { VM_CONFIG_RESULTS, VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_PUSH_ERROR_CODES, VM_PUSH_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
+import { CONTROL_POAM_OWNER_MAX, CONTROL_POAM_PLAN_MAX, CONTROL_POAM_RESOURCES_MAX } from '../src/types/controlPoam';
+import { VM_POAM_DATE_MAX, VM_POAM_DATE_MIN } from '../src/data/poamDates';
+import { POAM_MILESTONES_MAX, POAM_MILESTONES_MAX_BYTES } from '../src/data/poamMilestones';
+import { VM_CONFIG_RESULTS,VM_CONFIG_SEVERITIES, VM_FINDING_STATUSES, VM_POAM_STATUSES, VM_PUSH_ERROR_CODES, VM_PUSH_STATUSES, VM_RUN_STATUSES, VM_SEVERITIES, VM_SOURCE_KINDS, VM_TOKEN_SCOPES, VM_VULN_SOURCES } from '../src/types/vm';
 
 /**
  * A table whose rows belong to exactly one tenant. Every table listed here gets
@@ -53,6 +56,8 @@ export const RLS_TENANT_TABLES: readonly RlsTable[] = [
   { table: 'vm_poam_item_events', tenantColumn: 'tenant_id' },
   { table: 'program_ssp_profile', tenantColumn: 'tenant_id' },
   { table: 'program_ssp_section_reviews', tenantColumn: 'tenant_id' },
+  { table: 'control_poam_entries', tenantColumn: 'tenant_id' },
+  { table: 'control_poam_events', tenantColumn: 'tenant_id' },
 ];
 
 export const rlsPolicyName = (table: string): string => `rls_${table}_tenant_isolation`;
@@ -77,6 +82,8 @@ export const RLS_PROGRAM_TABLES: readonly string[] = [
   'vm_poam_item_events',
   'program_ssp_profile',
   'program_ssp_section_reviews',
+  'control_poam_entries',
+  'control_poam_events',
 ];
 
 /**
@@ -1171,6 +1178,110 @@ export const TABLES_SQL = `
       CONSTRAINT vm_poam_item_events_system_check CHECK (source = 'human' OR (actor = 'system:vm-worker' AND actor_user_id IS NULL))
   );
   CREATE INDEX IF NOT EXISTS idx_vm_poam_item_events_item ON vm_poam_item_events (tenant_id, program_id, item_id, created_at DESC);
+
+  -- POA&M milestones and stable item numbers (#304, #305). Every change is additive (a new column that is nullable or has a default, a new
+  -- CHECK on the new column only, a new index): an image from before this release still starts against the upgraded database, ignores the columns
+  -- (it reads the item with SELECT p.*) and inserts items without them (milestones defaults to [], item_number to NULL).
+  -- Milestones are one JSON list per item; the descriptions are user text and may be CUI: events record the count, the completed count and a digest.
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS milestones JSONB NOT NULL DEFAULT '[]'::jsonb;
+  ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS item_number INTEGER;
+  ALTER TABLE vm_poam_item_events ADD COLUMN IF NOT EXISTS milestones_changed BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE vm_poam_item_events ADD COLUMN IF NOT EXISTS new_milestone_count INTEGER;
+  ALTER TABLE vm_poam_item_events ADD COLUMN IF NOT EXISTS new_milestones_completed INTEGER;
+  ALTER TABLE vm_poam_item_events ADD COLUMN IF NOT EXISTS new_milestones_sha256 VARCHAR(64);
+  -- The checks are added once (a re-run finds them and skips), so a boot does not scan the table again.
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vm_poam_items_milestones_check' AND conrelid = 'vm_poam_items'::regclass) THEN
+      ALTER TABLE vm_poam_items ADD CONSTRAINT vm_poam_items_milestones_check CHECK (jsonb_typeof(milestones) = 'array' AND jsonb_array_length(milestones) <= ${POAM_MILESTONES_MAX} AND octet_length(milestones::text) <= ${POAM_MILESTONES_MAX_BYTES});
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vm_poam_items_item_number_check' AND conrelid = 'vm_poam_items'::regclass) THEN
+      ALTER TABLE vm_poam_items ADD CONSTRAINT vm_poam_items_item_number_check CHECK (item_number IS NULL OR item_number > 0);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'vm_poam_item_events_milestones_check' AND conrelid = 'vm_poam_item_events'::regclass) THEN
+      ALTER TABLE vm_poam_item_events ADD CONSTRAINT vm_poam_item_events_milestones_check CHECK ((new_milestones_sha256 IS NULL OR new_milestones_sha256 ~ '^[0-9a-f]{64}$') AND (new_milestone_count IS NULL OR new_milestone_count >= 0) AND (new_milestones_completed IS NULL OR new_milestones_completed >= 0));
+    END IF;
+  END
+  $$;
+  -- Item numbers (#305): a stored per-program sequence, so completing an item never renumbers the later ones in an export. Assigned when the item
+  -- is created (the largest number of the tenant and program + 1, under an advisory lock; server/vm/findingsStore.ts insertPoamItems). The existing
+  -- items are numbered once, oldest first per tenant and program. The probe and the UPDATE have to lift FORCE (with no tenant context FORCE hides
+  -- every row, so nothing would be found or numbered); the column comment marks the fix as done, so it runs once, and FORCE is set again
+  -- (a harmless early set on a fresh database, which the RLS step repeats). An item with no program yet stays unnumbered until it has one and
+  -- an older image's item stays unnumbered too: the exports number those after the stored ones (src/data/reports/vmPoamView.ts). updated_at is not touched.
+  DO $$
+  BEGIN
+    IF col_description('vm_poam_items'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = 'vm_poam_items'::regclass AND attname = 'item_number' AND NOT attisdropped))
+       IS DISTINCT FROM 'Stable per-program number (#305); backfilled once, oldest first' THEN
+      ALTER TABLE vm_poam_items NO FORCE ROW LEVEL SECURITY;
+      UPDATE vm_poam_items p SET item_number = n.rn
+        FROM (
+          SELECT u.id, COALESCE(m.mx, 0) + ROW_NUMBER() OVER (PARTITION BY u.tenant_id, u.program_id ORDER BY u.created_at, u.id) AS rn
+            FROM vm_poam_items u
+            LEFT JOIN (SELECT tenant_id, program_id, MAX(item_number) AS mx FROM vm_poam_items WHERE item_number IS NOT NULL GROUP BY tenant_id, program_id) m
+              ON m.tenant_id = u.tenant_id AND m.program_id = u.program_id
+           WHERE u.item_number IS NULL AND u.program_id IS NOT NULL
+        ) n
+       WHERE p.id = n.id;
+      ALTER TABLE vm_poam_items FORCE ROW LEVEL SECURITY;
+      COMMENT ON COLUMN vm_poam_items.item_number IS 'Stable per-program number (#305); backfilled once, oldest first';
+    END IF;
+  END
+  $$;
+  CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_number ON vm_poam_items (tenant_id, program_id, item_number);
+
+  -- Control POA&M entries (#304): the owner, scheduled completion, required resources, plan and milestones of one control in one program. Keyed by
+  -- control id (never by weakness id, which shifts with the controls' statuses). Only what a person recorded: the weakness text stays generated
+  -- from the control. The text columns may be CUI: never logged, history holds digests and lengths only. A control that becomes Met keeps its row
+  -- and prints no entry. Cascades with the program (like its control answers); the history has no foreign key and outlives it.
+  CREATE TABLE IF NOT EXISTS control_poam_entries (
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      owner VARCHAR(255) NOT NULL DEFAULT '',
+      scheduled_completion DATE,
+      required_resources TEXT NOT NULL DEFAULT '',
+      plan TEXT NOT NULL DEFAULT '',
+      milestones JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_by VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by VARCHAR(255),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_control_poam_entries PRIMARY KEY (tenant_id, program_id, control_id),
+      CONSTRAINT fk_control_poam_entries_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE,
+      CONSTRAINT control_poam_entries_text_check CHECK (length(owner) <= ${CONTROL_POAM_OWNER_MAX} AND length(required_resources) <= ${CONTROL_POAM_RESOURCES_MAX} AND length(plan) <= ${CONTROL_POAM_PLAN_MAX}),
+      CONSTRAINT control_poam_entries_date_check CHECK (scheduled_completion IS NULL OR scheduled_completion BETWEEN DATE '${VM_POAM_DATE_MIN}' AND DATE '${VM_POAM_DATE_MAX}'),
+      CONSTRAINT control_poam_entries_milestones_check CHECK (jsonb_typeof(milestones) = 'array' AND jsonb_array_length(milestones) <= ${POAM_MILESTONES_MAX} AND octet_length(milestones::text) <= ${POAM_MILESTONES_MAX_BYTES})
+  );
+  CREATE TABLE IF NOT EXISTS control_poam_events (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      tenant_id VARCHAR(64) NOT NULL,
+      program_id VARCHAR(64) NOT NULL,
+      control_id VARCHAR(64) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      actor_user_id VARCHAR(128),
+      control_status VARCHAR(32),
+      old_scheduled_completion DATE,
+      new_scheduled_completion DATE,
+      owner_changed BOOLEAN NOT NULL DEFAULT FALSE,
+      new_owner_sha256 VARCHAR(64),
+      new_owner_length INTEGER,
+      resources_changed BOOLEAN NOT NULL DEFAULT FALSE,
+      new_resources_sha256 VARCHAR(64),
+      new_resources_length INTEGER,
+      plan_changed BOOLEAN NOT NULL DEFAULT FALSE,
+      new_plan_sha256 VARCHAR(64),
+      new_plan_length INTEGER,
+      milestones_changed BOOLEAN NOT NULL DEFAULT FALSE,
+      new_milestone_count INTEGER,
+      new_milestones_completed INTEGER,
+      new_milestones_sha256 VARCHAR(64),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT control_poam_events_sha_check CHECK (
+        (new_owner_sha256 IS NULL OR new_owner_sha256 ~ '^[0-9a-f]{64}$') AND (new_resources_sha256 IS NULL OR new_resources_sha256 ~ '^[0-9a-f]{64}$')
+        AND (new_plan_sha256 IS NULL OR new_plan_sha256 ~ '^[0-9a-f]{64}$') AND (new_milestones_sha256 IS NULL OR new_milestones_sha256 ~ '^[0-9a-f]{64}$'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_control_poam_events_control ON control_poam_events (tenant_id, program_id, control_id, created_at DESC);
   -- SSP profile and section reviews (issues #238, #241, #242, #246). The profile holds the structured SSP fields (categorization, system
   -- identifier, roles, maintenance); it may be CUI: never logged, history holds digests only. The CHECK pins type and size only (keys are
   -- validated by the application), so a later image may add profile keys without making this one fail to start.

@@ -12,6 +12,8 @@ import {
 } from '../../data/reports/vmPoamItemForm';
 import { VM_POAM_DATE_MAX, VM_POAM_DATE_MIN, VM_POAM_MITIGATION_MAX, VM_POAM_OWNER_MAX } from '../../data/vmPoamEdit';
 import type { VmPoamItemEvent, VmPoamRow, VmPoamStatus } from '../../types/vm';
+import { milestoneErrors, pendingMilestoneWarning } from '../../data/reports/poamMilestoneForm';
+import { PoamMilestonesEditor } from './PoamMilestonesEditor';
 import { VmPoamStatusBadge } from './VmPoamStatusBadge';
 import { SMALL_BUTTON } from './PoamGroupPanel';
 
@@ -73,6 +75,10 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
   const reopen = vmPoamReopenWarning(base, form);
   const marker = vmPoamStatusMarker(base);
   const shownErrors: Partial<Record<VmPoamFormField, string>> = showErrors ? errors : {};
+  const rowErrors = milestoneErrors(form.milestones);
+  const shownRowErrors = showErrors ? rowErrors : {};
+  // A warning only: the item can still be completed while milestones are pending
+  const pending = pendingMilestoneWarning(form.milestones, form.status);
 
   const focusCancel = () => requestAnimationFrame(() => cancelRef.current?.focus());
 
@@ -94,14 +100,18 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
     if (field === 'owner') ownerRef.current?.focus();
     else if (field === 'scheduledCompletion') dateRef.current?.focus();
     else if (field === 'mitigation') mitigationRef.current?.focus();
-    else document.getElementById(`${uid}-status-${form.status}`)?.focus();
+    else if (field === 'milestones') {
+      const i = Number(Object.keys(rowErrors)[0]);
+      const draft = form.milestones[i];
+      if (draft) document.getElementById(`${uid}-ms-${draft.key}-${rowErrors[i].description ? 'description' : 'date'}`)?.focus();
+    } else document.getElementById(`${uid}-status-${form.status}`)?.focus();
   };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (saving || locked || stale?.phase === 'error' || stale?.phase === 'loading') return;
     setShowErrors(true);
-    const first = (['owner', 'scheduledCompletion', 'mitigation', 'status'] as VmPoamFormField[]).find((f) => errors[f]);
+    const first = (['owner', 'scheduledCompletion', 'mitigation', 'milestones', 'status'] as VmPoamFormField[]).find((f) => errors[f]);
     if (first) {
       focusField(first);
       return;
@@ -181,6 +191,7 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
   const mitigationErrorId = `${uid}-mitigation-error`;
   const blockedId = `${uid}-status-blocked`;
   const reopenId = `${uid}-status-reopen`;
+  const pendingId = `${uid}-status-pending`;
   const statusErrorId = `${uid}-status-error`;
   const join = (ids: Array<string | false | null>): string | undefined => ids.filter(Boolean).join(' ') || undefined;
   const statusOptions = vmPoamStatusOptions(base);
@@ -227,6 +238,7 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
                 )}
               </div>
             </dl>
+            <PoamMilestonesEditor value={form.milestones} onChange={() => undefined} readOnly idBase={uid} />
             <div className="pt-2 flex items-center justify-end gap-2.5">
               <button type="button" ref={cancelRef} onClick={() => onClose()} className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors">Close</button>
             </div>
@@ -309,7 +321,15 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
               {shownErrors.mitigation && <p id={mitigationErrorId} className="mt-1 text-xs text-rose-300">{shownErrors.mitigation}</p>}
             </div>
 
-            <fieldset aria-describedby={join([blocked && blockedId, reopen && reopenId, shownErrors.status ? statusErrorId : null])} className="space-y-2">
+            <PoamMilestonesEditor
+              value={form.milestones}
+              onChange={(next) => set('milestones', next)}
+              disabled={saving || locked}
+              errors={shownRowErrors}
+              idBase={uid}
+            />
+
+            <fieldset aria-describedby={join([blocked && blockedId, reopen && reopenId, pending && pendingId, shownErrors.status ? statusErrorId : null])} className="space-y-2">
               <legend className={labelClass}>Status</legend>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {statusOptions.map((o) => {
@@ -346,6 +366,12 @@ export const VmPoamItemDialog: React.FC<VmPoamItemDialogProps> = ({ row, weaknes
                   <p id={reopenId} className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                     <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" aria-hidden="true" />
                     {reopen}
+                  </p>
+                )}
+                {pending && (
+                  <p id={pendingId} className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" aria-hidden="true" />
+                    {pending}
                   </p>
                 )}
               </div>

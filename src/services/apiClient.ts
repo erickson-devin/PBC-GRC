@@ -1,5 +1,6 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata';
+import type { ControlPoamEvent, ControlPoamPatch, ControlPoamRecord } from '../types/controlPoam';
 import type { SspProfile, SspProfileRecord, SspReviewsResponse, SspSectionReview, SspSectionReviewState } from '../types/sspProfile';
 import type { CatalogUpdateChanges, LoweredControl, ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
@@ -948,6 +949,31 @@ export const ApiClient = {
   /** GET /api/v1/tenants/:id/vm/poam/:itemId/events for the program (x-program-id): the item's history, newest first. Every role reads; statuses, dates and changed flags only. */
   async getVmPoamItemEvents(tenantId: string, itemId: string, programId?: string | null): Promise<VmPoamItemEvent[]> {
     const data = await authedJson<{ events?: VmPoamItemEvent[] }>('GET', `/tenants/${encodeURIComponent(tenantId)}/vm/poam/${encodeURIComponent(itemId)}/events`, { tenantId, programId });
+    if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.events;
+  },
+
+  /** GET /api/v1/control-poam for the program (x-program-id): the POA&M fields recorded for its controls (only controls with a stored entry). Every role reads; never cached in browser storage. */
+  async listControlPoam(tenantId: string, programId?: string | null): Promise<{ entries: ControlPoamRecord[] }> {
+    const data = await authedJson<{ entries?: ControlPoamRecord[] }>('GET', '/control-poam', { tenantId, programId });
+    if (!Array.isArray(data?.entries)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { entries: data.entries };
+  },
+
+  /**
+   * PATCH /api/v1/control-poam/:controlId for the program (x-program-id), write roles (Tenant Owner, Admin, MSP Admin): records the owner, scheduled completion, required resources, plan
+   * or milestones of a control. `expectedUpdatedAt` is the entry's updatedAt as loaded, or null when it has no entry yet (409 reason `stale_write` when it changed). Other reasons:
+   * `invalid_control_poam_patch` (with the field name), `framework_not_enabled`, `program_archived`. `entry` is null when nothing was stored. Never cached in browser storage.
+   */
+  async updateControlPoam(tenantId: string, controlId: string, patch: ControlPoamPatch, expectedUpdatedAt: string | null, programId?: string | null): Promise<{ entry: ControlPoamRecord | null; changed: boolean }> {
+    const data = await authedJson<{ entry?: ControlPoamRecord | null; changed?: boolean }>('PATCH', `/control-poam/${encodeURIComponent(controlId)}`, { tenantId, programId, body: { ...patch, expectedUpdatedAt } });
+    if (typeof data?.changed !== 'boolean' || (data.entry !== null && (typeof data.entry !== 'object' || data.entry === undefined))) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { entry: data.entry, changed: data.changed };
+  },
+
+  /** GET /api/v1/control-poam/:controlId/events for the program (x-program-id): the control's POA&M history, newest first. Every role reads; flags, dates, counts and the control's status only. */
+  async getControlPoamEvents(tenantId: string, controlId: string, programId?: string | null): Promise<ControlPoamEvent[]> {
+    const data = await authedJson<{ events?: ControlPoamEvent[] }>('GET', `/control-poam/${encodeURIComponent(controlId)}/events`, { tenantId, programId });
     if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
     return data.events;
   },

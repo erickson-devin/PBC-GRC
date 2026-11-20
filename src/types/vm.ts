@@ -4,6 +4,8 @@
  * Timestamps are ISO strings, like EnclaveAsset in ./telemetry.
  */
 
+import type { PoamMilestone, PoamMilestoneInput } from './poamMilestone';
+
 /** Append-only: the CHECK on vm_sources.kind is re-created from this list on every boot, so removing a kind that rows still use would fail initDb. */
 export const VM_SOURCE_KINDS = ['WAZUH', 'SENTINELONE', 'ACTION1', 'GREENBONE', 'NUCLEI', 'NMAP', 'SCAP'] as const;
 export type VmSourceKind = (typeof VM_SOURCE_KINDS)[number];
@@ -196,6 +198,13 @@ export interface VmPoamItem {
   statusChangedAt?: string | null;
   /** False once a person reopened the item: the worker no longer completes it automatically. */
   autoComplete?: boolean;
+  /** The item's milestones (#304); empty for an item with none. */
+  milestones?: PoamMilestone[];
+  /**
+   * The item's number within its program (#305): assigned once when the item is created (the largest number of the tenant and program + 1),
+   * never reused or changed. Null for an item an older image created and nothing numbered yet.
+   */
+  itemNumber?: number | null;
 }
 
 /** Most affected packages one POA&M row of GET /vm/poam carries (the count is always the true one). */
@@ -218,6 +227,10 @@ export interface VmPoamRow {
   statusChangedBy: string | null;
   statusChangedAt: string | null;
   autoComplete: boolean;
+  /** #304: the item's milestones, in the order the editor saved them. */
+  milestones: PoamMilestone[];
+  /** #305: the stored per-program number (the export prints POAM-VM-<number>); null while an older item has none. */
+  itemNumber: number | null;
   /** null when the finding was deleted with its asset (the key sets finding_id NULL). */
   finding: null | {
     id: string;
@@ -248,6 +261,10 @@ export interface VmPoamItemEvent {
   newScheduledCompletion: string | null;
   ownerChanged: boolean;
   mitigationChanged: boolean;
+  /** #304: the milestone list changed; the count and completed count after the change (null when it did not). Never the text. */
+  milestonesChanged: boolean;
+  milestoneCount: number | null;
+  milestonesCompleted: number | null;
   runId: string | null;
   createdAt: string;
 }
@@ -259,6 +276,8 @@ export interface VmPoamItemPatch {
   /** Calendar date (YYYY-MM-DD) or null. */
   scheduledCompletion?: string | null;
   status?: VmPoamStatus;
+  /** #304: replaces the whole milestone list (a new milestone has no id; an empty list clears it). */
+  milestones?: PoamMilestoneInput[];
 }
 
 /** GET .../programs/:id/vm-target/preview: what choosing the program as the VM target would mean (nothing is changed). */

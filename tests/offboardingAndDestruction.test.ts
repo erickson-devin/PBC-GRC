@@ -328,6 +328,36 @@ async function runTests() {
     } catch (err) { failedClosed = err; }
     assert(failedClosed instanceof Error, 'OB-P10b: if the declared assets cannot be read the export rejects (no package with the wrong boundary)');
 
+    // #304: the program's recorded control POA&M fields reach the package's SSP and POA&M matrix, and a failed read rejects the export
+    const cpCtrl = getFrameworkControls('CMMC_L1')[0];
+    const cpDeps = { ...deps, getControls: async () => [{ id: cpCtrl.id, status: 'NOT_MET', implementationNotes: '', responsibleRole: 'Role', lastUpdated: '', tags: [] } as any] };
+    const cpRecord = { controlId: cpCtrl.id, owner: 'CP-OWNER-304', scheduledCompletion: '2027-04-30', requiredResources: 'CP-RES-304', plan: 'CP-PLAN-304', milestones: [{ id: 'ms-aaaaaaaaaaaa', description: 'CP-MS-304', targetDate: '2027-02-01', completed: false }], createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', updatedBy: 'u' };
+    let cpAsked = '';
+    const cpWith = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...cpDeps, getControlPoam: async (t, p) => { cpAsked = `${t}/${p}`; return [cpRecord]; } });
+    const cpPkg = cpWith.packages[0].reports;
+    const cpMatrix = cpPkg.poamMatrix.find((x) => x.controlId === cpCtrl.id);
+    const cpSsp = (cpPkg.systemSecurityPlan.poamEntries ?? []).find((x) => x.controlId === cpCtrl.id);
+    assert(
+      cpAsked === `${progTenant.id}/p-a` && cpMatrix?.scheduledCompletionDate === '2027-04-30' && cpSsp?.scheduledCompletionDate === '2027-04-30' &&
+        cpMatrix?.responsibleRole === 'CP-OWNER-304' && cpMatrix?.requiredResources === 'CP-RES-304' && cpMatrix?.remediationPlan === 'CP-PLAN-304' && cpMatrix?.milestones?.[0]?.id === 'M1' && cpMatrix.milestones[0].description === 'CP-MS-304',
+      'OB-304a: the handover reads the program\'s recorded POA&M fields; both the POA&M matrix and the SSP entries carry the date, owner, resources, plan and milestones',
+      cpMatrix
+    );
+    const cpNone = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...cpDeps, getControlPoam: async () => [] });
+    assert(cpNone.packages[0].reports.poamMatrix.find((x) => x.controlId === cpCtrl.id)?.scheduledCompletionDate === NOT_RECORDED, 'OB-304b: a program with no recorded fields prints Not recorded');
+    let cpFailed: unknown = null;
+    try {
+      await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...cpDeps, getControlPoam: async () => { throw new Error('boom'); } });
+    } catch (err) { cpFailed = err; }
+    assert(cpFailed instanceof Error && !String((cpFailed as Error).message).includes('CP-'), 'OB-304c: if the POA&M fields cannot be read the handover rejects (no package that silently prints Not recorded)');
+    const cpWithout = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, cpDeps);
+    assert(cpWithout.packages[0].reports.poamMatrix.find((x) => x.controlId === cpCtrl.id)?.scheduledCompletionDate === NOT_RECORDED, 'OB-304d: a caller that supplies no getControlPoam gets the package as before');
+    const cpAll = await buildProgramHandover(progTenant, { kind: 'all' }, undefined, { ...cpDeps, getControlPoam: async (_t, p) => (p === 'p-a' ? [cpRecord] : []) });
+    assert(cpAll.packages.length >= 2 && cpAll.packages.some((p) => p.reports.poamMatrix.some((x) => x.scheduledCompletionDate === '2027-04-30')) && cpAll.packages.some((p) => p.reports.poamMatrix.every((x) => x.scheduledCompletionDate === NOT_RECORDED)), 'OB-304e: in a bundle each program gets its own recorded fields');
+
+    const dashSrc = readFileSync(join(process.cwd(), 'src', 'components', 'admin', 'SuperAdminDashboard.tsx'), 'utf8');
+    assert(/getControlPoam: async \(t, p\) => \(await ApiClient\.listControlPoam\(t, p\)\)\.entries/.test(dashSrc), 'OB-304f: the dashboard binds getControlPoam to ApiClient.listControlPoam (no catch: a failure rejects the export)');
+
     // #84: a program's package states that program's own SSP details from the server
     const mPkg = await generateEnclaveHandoverPackage(progTenant.id, progTenant, undefined, {}, [], {
       program: nistLow, download: false, sspMetadata: { systemEnvironment: 'ENV-84', cloudServiceProviders: 'CSP-84', systemBoundaryScope: 'BOUNDARY-84' },

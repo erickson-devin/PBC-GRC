@@ -6,6 +6,7 @@ import controlsRouter from './controls';
 import evidenceRouter from './evidence';
 import objectivesRouter from './objectives';
 import sspMetadataRouter from './sspMetadata';
+import controlPoamRouter from './controlPoam';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
@@ -126,6 +127,7 @@ router.put('/me/default-program', authMiddleware, async (req, res) => {
 router.use('/controls', authMiddleware, programContext, controlsRouter);
 router.use('/objectives', authMiddleware, programContext, objectivesRouter);
 router.use('/ssp-metadata', authMiddleware, programContext, sspMetadataRouter);
+router.use('/control-poam', authMiddleware, programContext, controlPoamRouter);
 router.use('/evidence', authMiddleware, programContext, evidenceRouter);
 router.use('/tenants', authMiddleware, tenantsRouter);
 

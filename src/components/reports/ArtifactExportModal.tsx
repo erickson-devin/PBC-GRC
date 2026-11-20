@@ -70,6 +70,8 @@ import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { PoamWorkspace } from './PoamWorkspace';
 import { useVmPoam } from '../../hooks/useVmPoam';
+import { useControlPoam } from '../../hooks/useControlPoam';
+import { controlPoamExportNotice } from '../../data/reports/controlPoamForm';
 import { vmPoamExportFor, poamTabLabel, poamTabAriaLabel } from '../../data/reports/vmPoamView';
 interface ArtifactExportModalProps {
   isOpen: boolean;
@@ -147,6 +149,10 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
   const vmPoam = useVmPoam({ enabled: isOpen && !isInventoryDoc && (activeTab === 'poam' || selectedDocType === 'POAM') });
   const vmPoamExport = useMemo(() => vmPoamExportFor(vmPoam.load, activeFramework), [vmPoam.load, activeFramework]);
   const vmEntries = vmPoamExport?.status === 'ready' ? vmPoamExport.entries : [];
+  // #304: what was recorded on the controls' POA&M entries (dates, owners, resources, plans, milestones): every document that prints POA&M entries reads it
+  const controlPoam = useControlPoam({ enabled: isOpen && !isInventoryDoc });
+  const controlPoamRecorded = controlPoam.byControl;
+  const controlPoamNotice = controlPoamExportNotice(controlPoam.load);
 
   // Compute live DoD SPRS scoring metrics (CMMC Level 2 only)
   const sprsResult = useMemo(() => {
@@ -264,9 +270,9 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
       state.evidenceIndex,
       scopeUnavailable ? undefined : { assets: boundaryList, software: softwareInScope, observed: scanner.status === 'loading' ? undefined : scannerObserved },
       state.objectives ?? {},
-      { vmPoam: vmPoamExport }
+      { vmPoam: vmPoamExport, controlPoam: controlPoamRecorded }
     );
-  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex, state.objectives, vmPoamExport, scanner.status, scannerObserved]);
+  }, [selectedDocType, formData, assetScope, cryptoModules, boundaryList, softwareInScope, scopeUnavailable, frameworkControls, state.controls, state.evidenceIndex, state.objectives, vmPoamExport, controlPoamRecorded, scanner.status, scannerObserved]);
 
   // Export readiness (#151, B-1): advisory only, exports stay allowed. Labels are fixed text; values are never echoed.
   const metaIdBase = useId();
@@ -938,7 +944,7 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
           {/* TAB 3: POA&M (#278 grouped and filtered on screen; #274 vulnerability items). Exports always list every entry. */}
           {activeTab === 'poam' && (
             <PoamWorkspace key={activeProgram?.id ?? 'no-program'} entries={compiledDoc.poamEntries ?? []} framework={activeFramework}
-              frameworkControls={frameworkControls} vm={vmPoam} vmEntries={vmEntries} programs={programs} onExportCsv={handleExportPoamCsv}
+              frameworkControls={frameworkControls} vm={vmPoam} controlPoam={controlPoam} vmEntries={vmEntries} programs={programs} onExportCsv={handleExportPoamCsv}
               onNavigateAway={embedded ? undefined : onClose} />
           )}
 
@@ -1194,6 +1200,17 @@ export const ArtifactExportModal: React.FC<ArtifactExportModalProps> = ({ isOpen
             </>
           )}
         </div>
+
+        {/* #304: the recorded control POA&M fields are still loading or failed to load: the POA&M would print Not recorded for them without saying why */}
+        {selectedDocType === 'POAM' && activeTab !== 'poam' && controlPoamNotice && (
+          <div role="status" data-testid="control-poam-notice" className="mx-5 mb-3 shrink-0 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+            <span className="flex-1">{controlPoamNotice.text}</span>
+            {controlPoamNotice.retry && (
+              <button type="button" onClick={() => { void controlPoam.reload(); }} className="shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors">Retry</button>
+            )}
+          </div>
+        )}
 
         {/* Modal Bottom Action Footer */}
         <div className="px-5 py-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">

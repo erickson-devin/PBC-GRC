@@ -1,5 +1,5 @@
-import React, { useId, useMemo, useRef, useState } from 'react';
-import { Check, CheckCircle2, Filter, Info, ListChecks, Search } from 'lucide-react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Check, CheckCircle2, Eye, Filter, Info, ListChecks, Loader2, Pencil, Search } from 'lucide-react';
 import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import type { FrameworkControlDefinition } from '../../types/framework';
 import type { POAMEntry } from '../../types/report';
@@ -22,6 +22,13 @@ import {
   type PoamStatusKey,
 } from '../../data/reports/poamView';
 import { poamEmptyState, type VmPoamLoad } from '../../data/reports/vmPoamView';
+import type { UseControlPoam } from '../../hooks/useControlPoam';
+import type { ControlPoamRecord } from '../../types/controlPoam';
+import { controlPoamMap } from '../../data/reports/controlPoamView';
+import { CONTROL_POAM_COPY, controlPoamItemLabel, controlPoamLoadNotice, controlPoamSavedText, poamDateWarnings, todayIso } from '../../data/reports/controlPoamForm';
+import { milestoneProgressText } from '../../data/reports/poamMilestoneForm';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { ControlPoamDialog } from './ControlPoamDialog';
 import { CHIP_OFF, CHIP_ON, PoamGroupPanel, SMALL_BUTTON } from './PoamGroupPanel';
 
 export interface PoamControlsSectionProps {
@@ -32,13 +39,19 @@ export interface PoamControlsSectionProps {
   /** Opens a control (by its stored id) in the control view. The control id is plain text without it. */
   onOpenControl?: (controlId: string) => void;
   headingRef?: React.Ref<HTMLHeadingElement>;
+  /** The recorded POA&M fields of the controls (#304). Without it the rows have no Edit / View button and no notice. */
+  controlPoam?: Pick<UseControlPoam, 'load' | 'reload' | 'applySaved' | 'api'>;
+  /** The write roles (Tenant Owner, Admin, MSP Admin): the Edit button; other roles get View. */
+  canEdit?: boolean;
 }
+
+const NOTE_CLASS = 'rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-400';
 
 /**
  * The controls half of the POA&M screen (#278): search, status chips and collapsible family groups over the entries it is given.
  * Filtering is a view only: the exports always list every entry. Props only, state in React only (nothing typed is stored or logged).
  */
-export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entries, framework, controls, vmLoad, onOpenControl, headingRef }) => {
+export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entries, framework, controls, vmLoad, onOpenControl, headingRef, controlPoam, canEdit = false }) => {
   const uid = useId();
   const headingId = `${uid}-heading`;
   const searchId = `${uid}-search`;
@@ -52,6 +65,10 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
   const searchRef = useRef<HTMLInputElement>(null);
   const firstChipRef = useRef<HTMLButtonElement>(null);
   const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [openEntry, setOpenEntry] = useState<{ entry: POAMEntry; groupCode: string } | null>(null);
+  const [announcement, setAnnouncement] = useState('');
+  const itemButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const focusAfterClose = useRef<{ controlId: string; groupCode: string } | null>(null);
 
   const defaults = useMemo(() => defaultPoamStatuses(entries), [entries]);
   const effective = statuses ?? defaults;
@@ -64,6 +81,12 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
   const initial = useMemo(() => initialExpanded(groups.map((g) => g.code)), [groups]);
   const searching = poamQueryTerms(query).length > 0;
   const vmCount = vmLoad.status === 'ready' ? vmLoad.data.openItemsTotal : null;
+  const poamLoad = controlPoam?.load ?? null;
+  const notice = poamLoad ? controlPoamLoadNotice(poamLoad) : null;
+  // The Edit / View column exists for a server-backed organization with a program; the buttons work once the stored fields are loaded
+  const editColumn = poamLoad !== null && poamLoad.status !== 'unsupported' && poamLoad.status !== 'no_program' && poamLoad.status !== 'idle';
+  const recorded = useMemo(() => (poamLoad?.status === 'ready' ? controlPoamMap(poamLoad.entries) : {}), [poamLoad]);
+  const today = todayIso();
 
   const toggleStatus = (key: PoamStatusKey) => {
     const next = new Set(effective);
@@ -109,6 +132,30 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
     if (next >= total) requestAnimationFrame(() => toggleRefs.current.get(code)?.focus());
   };
 
+  const closeEntry = (saved?: { entry: ControlPoamRecord | null; changed: boolean }) => {
+    if (!openEntry) return;
+    focusAfterClose.current = { controlId: openEntry.entry.controlId, groupCode: openEntry.groupCode };
+    const shownId = openEntry.entry.controlDisplayId ?? openEntry.entry.controlId;
+    setOpenEntry(null);
+    if (saved) {
+      controlPoam?.applySaved(saved.changed ? saved.entry : null);
+      setAnnouncement(controlPoamSavedText(shownId, saved.changed));
+    }
+  };
+  // After the commit that removed the dialog (and maybe the row): the row's button, else its group's toggle, else the section heading
+  useEffect(() => {
+    const f = focusAfterClose.current;
+    if (!f || openEntry) return;
+    focusAfterClose.current = null;
+    requestAnimationFrame(() => {
+      const btn = itemButtonRefs.current.get(f.controlId);
+      if (btn?.isConnected) { btn.focus(); return; }
+      const toggle = toggleRefs.current.get(f.groupCode);
+      if (toggle?.isConnected) { toggle.focus(); return; }
+      document.getElementById(headingId)?.focus();
+    });
+  }, [openEntry, entries, headingId]);
+
   const empty = controls.length === 0 ? null : poamEmptyState(entries.length, vmLoad);
 
   const renderEmptyCard = (tone: 'clear' | 'partial', title: string, body: string) => (
@@ -133,6 +180,20 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
         {POAM_COPY.controlsHeading}
       </h3>
       <p className="text-xs text-slate-400">{POAM_COPY.controlsIntro}</p>
+      <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
+      {notice?.kind === 'loading' && (
+        <p role="status" className={`${NOTE_CLASS} flex items-center gap-2`}>
+          <Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none shrink-0" aria-hidden="true" />
+          {notice.text}
+        </p>
+      )}
+      {notice?.kind === 'error' && (
+        <div className="space-y-2">
+          <ErrorNotice message={notice.text} />
+          <button type="button" onClick={() => { void controlPoam?.reload(); }} className={SMALL_BUTTON}>{CONTROL_POAM_COPY.retry}</button>
+        </div>
+      )}
+      {(notice?.kind === 'unsupported' || notice?.kind === 'no_program') && <p role="note" className={NOTE_CLASS}>{notice.text}</p>}
 
       {controls.length === 0 ? (
         renderEmptyCard('partial', 'No control entries', POAM_COPY.noControls)
@@ -234,6 +295,7 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
                             <th scope="col" className="p-3 hidden lg:table-cell">Target Date</th>
                             <th scope="col" className="p-3 hidden lg:table-cell">Owner</th>
                             <th scope="col" className="p-3 hidden lg:table-cell">Resources</th>
+                            {editColumn && <th scope="col" className="p-3"><span className="sr-only">Actions</span></th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800">
@@ -241,8 +303,10 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
                             const k = poamStatusKey(entry.status);
                             const shownId = entry.controlDisplayId ?? entry.controlId;
                             const idTitle = shownId !== entry.controlId ? `Stored as ${entry.controlId}` : undefined;
+                            const warns = poamDateWarnings({ date: entry.scheduledCompletionDate, open: true, today });
+                            const progress = milestoneProgressText(entry.milestones);
                             return (
-                              <tr key={entry.weaknessId} className="hover:bg-slate-850/50">
+                              <tr key={entry.controlId} className="hover:bg-slate-850/50">
                                 <th scope="row" className="p-3 font-mono font-bold text-amber-300 whitespace-nowrap text-left">{entry.weaknessId}</th>
                                 <td className="p-3">
                                   {onOpenControl ? (
@@ -270,10 +334,29 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
                                 </td>
                                 <td className="p-3">
                                   <span className={`badge px-2 py-0.5 rounded text-xs font-bold ${POAM_STATUS_BADGE[k]}`}>{POAM_STATUS_LABEL[k]}</span>
+                                  {progress && <p className="mt-1 text-slate-400">{progress}</p>}
+                                  {warns.map((w) => (
+                                    <p key={w} className="mt-1 text-amber-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" />{w === 'far' ? CONTROL_POAM_COPY.farRowText : CONTROL_POAM_COPY.pastRowText}</p>
+                                  ))}
                                 </td>
                                 <td className="p-3 font-mono text-slate-300 hidden lg:table-cell">{entry.scheduledCompletionDate}</td>
                                 <td className="p-3 text-slate-300 hidden lg:table-cell">{entry.responsibleRole}</td>
                                 <td className="p-3 text-slate-400 text-xs hidden lg:table-cell">{entry.requiredResources}</td>
+                                {editColumn && (
+                                  <td className="p-3 text-right">
+                                    <button
+                                      type="button"
+                                      ref={(el) => { if (el) itemButtonRefs.current.set(entry.controlId, el); else itemButtonRefs.current.delete(entry.controlId); }}
+                                      onClick={() => setOpenEntry({ entry, groupCode: g.code })}
+                                      disabled={poamLoad?.status !== 'ready'}
+                                      aria-label={`${canEdit ? 'Edit' : 'View'} ${controlPoamItemLabel(shownId)}`}
+                                      className={`${SMALL_BUTTON} inline-flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed`}
+                                    >
+                                      {canEdit ? <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> : <Eye className="w-3.5 h-3.5" aria-hidden="true" />}
+                                      <span>{canEdit ? 'Edit' : 'View'}</span>
+                                    </button>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
@@ -293,6 +376,17 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
             </div>
           )}
         </>
+      )}
+      {openEntry && controlPoam && (
+        <ControlPoamDialog
+          key={openEntry.entry.controlId}
+          entry={openEntry.entry}
+          record={recorded[openEntry.entry.controlId] ?? null}
+          controlStatus={entries.find((e) => e.controlId === openEntry.entry.controlId)?.status ?? 'MET'}
+          canEdit={canEdit}
+          api={controlPoam.api}
+          onClose={closeEntry}
+        />
       )}
     </section>
   );

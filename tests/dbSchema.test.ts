@@ -37,9 +37,9 @@ const sspDrop = TABLES_SQL.indexOf('DROP TABLE ssp_documents;');
 const sspReforce = TABLES_SQL.indexOf('ALTER TABLE ssp_documents FORCE ROW LEVEL SECURITY;');
 assert(0 < sspNoForce && sspNoForce < sspProbe && sspProbe < sspDrop && sspDrop < sspReforce, 'D3: ssp_documents is dropped only after an empty probe, and FORCE RLS is restored when rows remain', [sspNoForce, sspProbe, sspDrop, sspReforce]);
 assert(
-  (schema.match(/NO FORCE ROW LEVEL SECURITY/g) || []).length === 2 &&
-    (schema.match(/ALTER TABLE (\w+) NO FORCE ROW LEVEL SECURITY/g) || []).join('|') === 'ALTER TABLE ssp_documents NO FORCE ROW LEVEL SECURITY|ALTER TABLE enclave_assets NO FORCE ROW LEVEL SECURITY',
-  'D4: the ssp_documents probe and the enclave_assets retired-column fix (#216) are the only NO FORCE in the schema'
+  (schema.match(/NO FORCE ROW LEVEL SECURITY/g) || []).length === 3 &&
+    (schema.match(/ALTER TABLE (\w+) NO FORCE ROW LEVEL SECURITY/g) || []).join('|') === 'ALTER TABLE ssp_documents NO FORCE ROW LEVEL SECURITY|ALTER TABLE enclave_assets NO FORCE ROW LEVEL SECURITY|ALTER TABLE vm_poam_items NO FORCE ROW LEVEL SECURITY',
+  'D4: the ssp_documents probe, the enclave_assets retired-column fix (#216) and the vm_poam_items item-number backfill (#305) are the only NO FORCE in the schema'
 );
 assert(TABLES_SQL.includes('relnamespace = current_schema()::regnamespace'), 'D5: the ssp_documents lookup is limited to the current schema');
 assert(/CREATE TABLE IF NOT EXISTS local_users/.test(schema) && /password_hash/.test(schema) && !/\bpassword\s+VARCHAR/i.test(schema), 'local_users stores a password hash only, never a password column');
@@ -309,7 +309,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile and program_ssp_section_reviews', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries and control_poam_events', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -658,6 +658,76 @@ for (const t of ['program_ssp_profile', 'program_ssp_section_reviews']) {
       !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t),
     `SR-D2: ${t} is a tenant table and a program table, not backfilled`
   );
+}
+console.log('\n--- control POA&M entries, milestones and stable item numbers (#304, #305) ---');
+{
+  const entAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS control_poam_entries (');
+  const entBlock = entAt < 0 ? '' : TABLES_SQL.slice(entAt, TABLES_SQL.indexOf('\n  );', entAt));
+  assert(
+    entBlock.includes('CONSTRAINT pk_control_poam_entries PRIMARY KEY (tenant_id, program_id, control_id)') &&
+      entBlock.includes('CONSTRAINT fk_control_poam_entries_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
+      entBlock.includes('tenant_id VARCHAR(64) NOT NULL') && entBlock.includes('program_id VARCHAR(64) NOT NULL') && entBlock.includes('control_id VARCHAR(64) NOT NULL') &&
+      entBlock.includes("milestones JSONB NOT NULL DEFAULT '[]'::jsonb"),
+    'CP-D1: control_poam_entries is keyed by tenant, program and control id, cascades with the program, and holds a JSON milestone list'
+  );
+  assert(
+    entBlock.includes('length(owner) <= 255') && entBlock.includes('length(required_resources) <= 2000') && entBlock.includes('length(plan) <= 4000') &&
+      entBlock.includes("BETWEEN DATE '2000-01-01' AND DATE '2099-12-31'") &&
+      entBlock.includes("jsonb_typeof(milestones) = 'array' AND jsonb_array_length(milestones) <= 20 AND octet_length(milestones::text) <= 65536"),
+    'CP-D2: control_poam_entries CHECKs: owner 255, resources 2000, plan 4000 characters, the date bounds, at most 20 milestones and 64 KB'
+  );
+  const evAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS control_poam_events (');
+  const evBlock = evAt < 0 ? '' : TABLES_SQL.slice(evAt, TABLES_SQL.indexOf('\n  );', evAt));
+  assert(
+    evBlock !== '' && !/FOREIGN KEY|REFERENCES/.test(evBlock) && evBlock.includes('program_id VARCHAR(64) NOT NULL') &&
+      !/\b(owner|plan|required_resources|description|milestones) (TEXT|VARCHAR|JSONB)/.test(evBlock) &&
+      /new_owner_sha256/.test(evBlock) && /new_resources_length/.test(evBlock) && /new_plan_sha256/.test(evBlock) && /new_milestones_sha256/.test(evBlock) && /new_milestone_count/.test(evBlock) &&
+      evBlock.includes('control_poam_events_sha_check'),
+    'CP-D3: control_poam_events has no foreign key, a NOT NULL program and no text column: flags, lengths, counts and SHA-256 digests only'
+  );
+  assert(TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_control_poam_events_control ON control_poam_events (tenant_id, program_id, control_id, created_at DESC);'), 'CP-D4: the history is indexed by control and time');
+  for (const t of ['control_poam_entries', 'control_poam_events']) {
+    assert(
+      RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id') &&
+        (RLS_PROGRAM_TABLES as readonly string[]).includes(t) &&
+        !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t) &&
+        buildRlsSql().includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && buildProgramRlsSql().includes(rlsProgramPolicyName(t)),
+      `CP-D5: ${t} is a tenant table and a program table (FORCE row security, tenant and program policies), not backfilled`
+    );
+  }
+  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 2] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 1] === 'control_poam_events', 'CP-D6: both tables are appended at the end of RLS_PROGRAM_TABLES');
+
+  for (const col of ["milestones JSONB NOT NULL DEFAULT '[]'::jsonb", 'item_number INTEGER']) {
+    assert(TABLES_SQL.includes('ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ' + col + ';'), 'VM-D1: vm_poam_items gets ' + col + ' idempotently (nullable or defaulted: an older image still starts)');
+  }
+  for (const col of ['milestones_changed BOOLEAN NOT NULL DEFAULT FALSE', 'new_milestone_count INTEGER', 'new_milestones_completed INTEGER', 'new_milestones_sha256 VARCHAR(64)']) {
+    assert(TABLES_SQL.includes('ALTER TABLE vm_poam_item_events ADD COLUMN IF NOT EXISTS ' + col + ';'), 'VM-D2: vm_poam_item_events gets ' + col + ' idempotently');
+  }
+  const guarded = (name: string, table: string): boolean =>
+    TABLES_SQL.includes(`IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${name}' AND conrelid = '${table}'::regclass) THEN`) && TABLES_SQL.includes(`ADD CONSTRAINT ${name} CHECK`);
+  assert(guarded('vm_poam_items_milestones_check', 'vm_poam_items') && guarded('vm_poam_items_item_number_check', 'vm_poam_items') && guarded('vm_poam_item_events_milestones_check', 'vm_poam_item_events'), 'VM-D3: the new CHECKs on vm_poam_items and its events are added once, each guarded by pg_constraint (no rescan at every boot)');
+  assert(!/DROP CONSTRAINT IF EXISTS vm_poam_items_(milestones|item_number)_check/.test(TABLES_SQL) && !/vm_poam_item_events_(status|source|sha|system)_check CHECK[^;]*milestone/.test(TABLES_SQL), 'VM-D4: no existing CHECK is widened or dropped (an older image still starts and runs)');
+
+  // The item-number backfill (#305)
+  const fillAt = TABLES_SQL.indexOf("IS DISTINCT FROM 'Stable per-program number (#305); backfilled once, oldest first' THEN");
+  const fillEnd = fillAt < 0 ? -1 : TABLES_SQL.indexOf('$$;', fillAt);
+  const fill = fillAt < 0 ? '' : TABLES_SQL.slice(fillAt, fillEnd);
+  const noForce = fill.indexOf('ALTER TABLE vm_poam_items NO FORCE ROW LEVEL SECURITY;');
+  const update = fill.indexOf('UPDATE vm_poam_items p SET item_number = n.rn');
+  const force = fill.indexOf('ALTER TABLE vm_poam_items FORCE ROW LEVEL SECURITY;');
+  const comment = fill.indexOf("COMMENT ON COLUMN vm_poam_items.item_number IS 'Stable per-program number (#305); backfilled once, oldest first';");
+  assert(fillAt > TABLES_SQL.indexOf('ADD COLUMN IF NOT EXISTS item_number INTEGER') && 0 <= noForce && noForce < update && update < force && force < comment, 'VM-B1: the item-number backfill lifts FORCE, numbers the rows, restores FORCE and then sets the done marker, in that order', [noForce, update, force, comment]);
+  assert(
+    fill.includes('PARTITION BY u.tenant_id, u.program_id ORDER BY u.created_at, u.id') && fill.includes('WHERE u.item_number IS NULL AND u.program_id IS NOT NULL') && fill.includes('COALESCE(m.mx, 0) + ROW_NUMBER()') && !/updated_at/.test(fill),
+    'VM-B2: the backfill numbers per tenant and program, oldest first (created_at, then id), only rows with no number and a program, after any number already held; updated_at is not touched'
+  );
+  assert(
+    TABLES_SQL.includes('col_description(\'vm_poam_items\'::regclass') && fillAt > 0 && TABLES_SQL.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_poam_items_number ON vm_poam_items (tenant_id, program_id, item_number);') > fillEnd,
+    'VM-B3: the backfill runs once (guarded by the column comment) and the unique index (tenant_id, program_id, item_number) is created after it'
+  );
+  assert(TABLES_SQL.includes('CHECK (item_number IS NULL OR item_number > 0)'), 'VM-B4: a stored number is positive; NULL stays allowed (an older image inserts none)');
+  const findingsSrc = fs.readFileSync('server/vm/findingsStore.ts', 'utf8').replace(/\r\n/g, '\n');
+  assert(findingsSrc.includes('pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))') && findingsSrc.includes('COALESCE(MAX(item_number), 0)::int AS n FROM vm_poam_items WHERE tenant_id = $1::text AND program_id = $2::text'), 'VM-B5: insertPoamItems numbers the new items under a per-tenant-and-program advisory lock, after the largest stored number');
 }
 const kindLine = TABLES_SQL.slice(TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check'), TABLES_SQL.indexOf('\n', TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check')));
 assert(kindLine.includes('ssp_metadata_changed') && !kindLine.includes('ssp_profile') && !kindLine.includes('ssp_section') && SSP_METADATA_FIELDS.length === 12, 'SR-D3: the program_events kind CHECK and the twelve SSP metadata fields are unchanged (no one-way upgrade)');

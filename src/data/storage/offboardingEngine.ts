@@ -25,6 +25,7 @@ import { getFrameworkControls } from '../frameworks';
 import { programFrameworkControls, scopingToOverlays } from '../programScope';
 import type { Program } from '../../types/program';
 import type { OverlayFilters } from '../../types/framework';
+import type { ControlPoamRecord } from '../../types/controlPoam';
 import { browserTenantOverlays } from '../browserOverlays';
 import { purgeTenantData, downloadCertificateOfDestruction } from './retentionPolicy';
 import { EvidenceVault } from '../../services/evidenceVault';
@@ -95,6 +96,8 @@ export interface HandoverOptions {
   objectives?: Record<string, AssessmentObjective>;
   /** The program's SSP profile from the server (identifier, categorization, roles, maintenance), so its SSP prints them. Without it a program's package states them as not recorded; the browser path reads the cached profile. */
   sspProfile?: SspProfile;
+  /** The program's recorded control POA&M fields (#304) by control id, so its SSP and POA&M matrix print the dates, owners, resources, plans and milestones. Without them they print as not recorded. */
+  controlPoam?: Record<string, ControlPoamRecord>;
 }
 
 /** Thrown (and shown to the operator as is) when the evidence files cannot be cleared; it holds no tenant data. */
@@ -196,11 +199,12 @@ export async function generateEnclaveHandoverPackage(
     controls,
     controlsForReport,
     [...evidenceForPackage],
-    objectivesForReport
+    objectivesForReport,
+    options.controlPoam
   );
 
   // Generate structured POA&M entries
-  const poamMatrix = generatePOAMEntries(controls, controlsForReport, objectivesForReport, program ? program.framework : primaryFw);
+  const poamMatrix = generatePOAMEntries(controls, controlsForReport, objectivesForReport, program ? program.framework : primaryFw, options.controlPoam);
 
   const now = new Date().toISOString();
   const rawPayload = {

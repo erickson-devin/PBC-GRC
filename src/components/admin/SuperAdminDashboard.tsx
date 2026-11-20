@@ -352,6 +352,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
             getProgramAssets: (t, p) => ApiClient.getProgramAssets(t, p),
             getSspMetadata: (t, p) => ApiClient.getSspMetadata(t, p),
             getSspProfile: (t, p) => ApiClient.getSspProfile(t, p),
+            getControlPoam: async (t, p) => (await ApiClient.listControlPoam(t, p)).entries,
             getObjectives: (t, p) => ApiClient.getObjectives(t, undefined, p),
           });
         } catch (err: unknown) {

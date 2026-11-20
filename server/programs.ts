@@ -6,6 +6,7 @@ import { notesDigest, readControlAssessments, writeControlAssessment, type Contr
 import { __deleteProgramObjectivesForMemory, cloneObjectives, readObjectives } from './controlObjectives';
 import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
 import { __deleteProgramSspProfileForMemory } from './sspProfile';
+import { __deleteProgramControlPoamForMemory } from './controlPoam';
 import { __deleteProgramSspReviewsForMemory } from './sspReviews';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
@@ -820,6 +821,7 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     __deleteProgramObjectivesForMemory({ tenantId, programId: id });
     __deleteProgramSspMetadataForMemory({ tenantId, programId: id });
     __deleteProgramSspProfileForMemory({ tenantId, programId: id });
+    __deleteProgramControlPoamForMemory({ tenantId, programId: id });
     __deleteProgramSspReviewsForMemory({ tenantId, programId: id });
     __deleteUserDefaultsForProgramMemory(tenantId, id);
     memoryPrograms.delete(id);
