@@ -100,6 +100,9 @@ async function run() {
   assert(Array.isArray(b.invites) && b.invites.length === 2 && b.invites.every((i: any) => /^inv_/.test(i.token) && i.role === 'ASSESSOR'), 'it stages one-time invitation tokens for each teammate', b.invites);
   assert(!JSON.stringify(b).includes(PASSWORD), 'the password is never echoed back');
 
+  const members0 = await call('GET', `/tenants/${b.tenant.id}/members`, { token: b.token, tenant: b.tenant.id });
+  assert(typeof members0.body?.members?.[0]?.account?.lastLoginAt === 'string', 'the session setup issues counts as a sign-in (Last sign-in is set, #257)', members0.body);
+
   const me = await call('GET', '/me', { token: b.token });
   assert(me.status === 200 && me.body?.isPlatformAdmin === true, '/me: the new user is a platform administrator (stored, not configured)', me.body);
   const tenants = await call('GET', '/tenants', { token: b.token });
@@ -116,6 +119,9 @@ async function run() {
   const bobToken = b.invites.find((i: any) => i.email === 'bob@acme-defense.mil').token;
   const bob = await call('POST', '/auth/register-with-invite', { body: { token: bobToken, password: PASSWORD, name: 'Bob' } });
   assert(bob.status === 201 && bob.body?.tenantId === b.tenant.id && bob.body?.role === 'ASSESSOR', 'a staged invitation can be redeemed by the teammate', bob.body);
+  const members1 = await call('GET', `/tenants/${b.tenant.id}/members`, { token: b.token, tenant: b.tenant.id });
+  const bobRow = (members1.body?.members ?? []).find((m: any) => m.email === 'bob@acme-defense.mil');
+  assert(typeof bobRow?.account?.lastLoginAt === 'string', 'registering with an invitation counts as a sign-in too', bobRow);
   const bobMe = await call('GET', '/me', { token: bob.body?.token });
   assert(bobMe.body?.isPlatformAdmin === false, 'an invited teammate is NOT a platform administrator');
 

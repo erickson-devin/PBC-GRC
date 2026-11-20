@@ -183,22 +183,30 @@ export async function listVmTokens(tenantId: string): Promise<VmServiceToken[]> 
   });
 }
 
-/** Revokes a token. Idempotent: revoking a revoked token returns it unchanged. */
-export async function revokeVmToken(tenantId: string, id: string): Promise<VmServiceToken> {
+/** Revokes a token and says whether this call did it (false: it was already revoked). Idempotent. */
+export async function revokeVmTokenOutcome(tenantId: string, id: string): Promise<{ token: VmServiceToken; changed: boolean }> {
   if (isMemory()) {
     const m = memoryTokens.get(id);
     if (!m || m.tenantId !== tenantId) throw new VmTokenError('not_found', 'Service token not found');
-    if (!m.revokedAt) m.revokedAt = new Date().toISOString();
-    return toRecord(m);
+    const changed = !m.revokedAt;
+    if (changed) m.revokedAt = new Date().toISOString();
+    return { token: toRecord(m), changed };
   }
   return inTenantTx(tenantId, async (client) => {
+    const before = await client.query('SELECT revoked_at FROM vm_service_tokens WHERE id = $1 AND tenant_id = $2 FOR UPDATE', [id, tenantId]);
+    if (before.rows.length === 0) throw new VmTokenError('not_found', 'Service token not found');
     const res = await client.query(
       `UPDATE vm_service_tokens SET revoked_at = COALESCE(revoked_at, NOW()) WHERE id = $1 AND tenant_id = $2 RETURNING ${RECORD_COLUMNS}`,
       [id, tenantId]
     );
     if (res.rows.length === 0) throw new VmTokenError('not_found', 'Service token not found');
-    return rowToRecord(res.rows[0]);
+    return { token: rowToRecord(res.rows[0]), changed: !before.rows[0].revoked_at };
   });
+}
+
+/** Revokes a token. Idempotent: revoking a revoked token returns it unchanged. */
+export async function revokeVmToken(tenantId: string, id: string): Promise<VmServiceToken> {
+  return (await revokeVmTokenOutcome(tenantId, id)).token;
 }
 
 /** One UPDATE per push outcome: code null => status 'ok'. Callers never let it fail a request (see notePush in routes/vmIngest.ts). */

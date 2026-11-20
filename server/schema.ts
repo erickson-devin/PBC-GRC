@@ -308,6 +308,23 @@ export const TABLES_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS unq_enclave_assets_name ON enclave_assets(tenant_id, lower(asset_name));
   CREATE INDEX IF NOT EXISTS idx_enclave_assets_tenant_category ON enclave_assets(tenant_id, cmmc_category);
 
+  -- Simulator-era scan columns (#216): no longer written or shown. Kept so an older server still starts; nulled once.
+  -- Like the ssp_documents block above, the data fix lifts FORCE RLS (with no tenant context FORCE hides every row, so the UPDATE
+  -- would touch none) and restores it in the same statement batch. Row security itself is applied after all tables (buildRlsSql),
+  -- so on a fresh database FORCE here is a harmless early set that the RLS step repeats. The comment marks the fix as done.
+  DO $$
+  BEGIN
+    IF col_description('enclave_assets'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = 'enclave_assets'::regclass AND attname = 'compliance_score' AND NOT attisdropped))
+       IS DISTINCT FROM 'Retired (#216): not written or shown' THEN
+      ALTER TABLE enclave_assets NO FORCE ROW LEVEL SECURITY;
+      UPDATE enclave_assets SET compliance_score = NULL, last_scanned_at = NULL WHERE compliance_score IS NOT NULL OR last_scanned_at IS NOT NULL;
+      ALTER TABLE enclave_assets FORCE ROW LEVEL SECURITY;
+      COMMENT ON COLUMN enclave_assets.compliance_score IS 'Retired (#216): not written or shown';
+      COMMENT ON COLUMN enclave_assets.last_scanned_at IS 'Retired (#216): not written or shown';
+    END IF;
+  END
+  $$;
+
   -- Local identities. Global, not tenant-bound: a person logs in first and
   -- belongs to tenants through tenant_users. Passwords are stored only as bcrypt hashes.
   CREATE TABLE IF NOT EXISTS local_users (
@@ -1010,7 +1027,7 @@ export const TABLES_SQL = `
       scope_tenant_id VARCHAR(64),
       details JSONB NOT NULL DEFAULT '{}'::jsonb,
       CONSTRAINT local_account_events_actor_check CHECK (actor_kind IN ('user', 'admin', 'cli', 'system')),
-      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated')),
+      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked')),
       CONSTRAINT local_account_events_details_check CHECK (jsonb_typeof(details) = 'object' AND octet_length(details::text) <= 2048 AND position('@' in details::text) = 0)
   );
   CREATE INDEX IF NOT EXISTS idx_local_account_events_at ON local_account_events (id DESC);
@@ -1034,19 +1051,27 @@ export const TABLES_SQL = `
   CREATE TRIGGER trg_local_account_events_no_truncate BEFORE TRUNCATE ON local_account_events
       FOR EACH STATEMENT EXECUTE FUNCTION local_account_events_guard();
 
-  -- The action list grows with the product (issue #256 added the system use notice actions): replace the check on an existing database.
+  -- The action list grows with the product (issues #256, #214 added the system use notice and service token actions): replace the check on an existing database.
   -- It runs only while the stored check lacks the newest action, so the trail is read once, not at every start.
   DO $$
   BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
        WHERE conrelid = 'local_account_events'::regclass AND conname = 'local_account_events_action_check'
-         AND pg_get_constraintdef(oid) LIKE '%system_use_notice_updated%'
+         AND pg_get_constraintdef(oid) LIKE '%vm_token_revoked%'
     ) THEN
       ALTER TABLE local_account_events DROP CONSTRAINT IF EXISTS local_account_events_action_check;
-      ALTER TABLE local_account_events ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated'));
+      ALTER TABLE local_account_events ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked'));
     END IF;
   END $$;
+
+  -- Dormant accounts (IA.L2-3.5.6, issue #257): why and when an account was disabled, and when its inactivity clock last restarted.
+  -- dormancy_reset_at defaults to the time the column is added, so existing accounts get a full grace period after the upgrade.
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS disabled_reason VARCHAR(16);
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+  ALTER TABLE local_users ADD COLUMN IF NOT EXISTS dormancy_reset_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  ALTER TABLE local_users DROP CONSTRAINT IF EXISTS local_users_disabled_reason_check;
+  ALTER TABLE local_users ADD CONSTRAINT local_users_disabled_reason_check CHECK (disabled_reason IS NULL OR disabled_reason IN ('admin', 'dormant'));
 
   -- System use notification (issue #256): the notice shown before sign-in, one platform-wide row (id is pinned to 1). Global like
   -- platform_setup (no tenant column, no row security): it must be readable before anyone signs in. No row means off. The text is public by

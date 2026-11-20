@@ -18,6 +18,7 @@ import { createProgram } from '../server/programs';
 import type { VmFinding } from '../src/types/vm';
 import { firstProgram } from './programFixture';
 import { createAgentReportedAsset, listAgentAssetCandidates } from '../server/assets';
+import { listAccountEvents } from '../server/auth/accountEvents';
 
 /**
  * Vulnerability-management Phase 2 over HTTP: service tokens (create / list / revoke, transport rule), the scanner push
@@ -259,6 +260,33 @@ async function run() {
   assert((await call('POST', `/tenants/${A}/vm/tokens/a.b/revoke`, ownerA, A)).status === 404, 'an id with characters outside the pattern -> 404');
   assert((await call('POST', `/tenants/${B}/vm/tokens/${victim}/revoke`, ownerB, B)).status === 404, "another tenant's owner cannot revoke this tenant's token (404)");
   assert((await call('POST', `/tenants/${A}/vm/tokens/${victim}/revoke`, viewer, A)).status === 403, 'a VIEWER cannot revoke (403)');
+
+  console.log('\n--- Service token account events (#214) ---');
+  const tokenEvents = async () => (await listAccountEvents({ limit: 200 })).filter((e) => e.action.startsWith('vm_token_'));
+  const tev = await tokenEvents();
+  const createdForFirst = tev.filter((e) => e.action === 'vm_token_created' && e.details.tokenId === tokenARecord.id);
+  assert(
+    createdForFirst.length === 1 && createdForFirst[0].actorUserId === 'u_vm_owner_a' && createdForFirst[0].targetUserId === 'u_vm_owner_a' && createdForFirst[0].tenantId === A &&
+      createdForFirst[0].actorKind === 'user' && JSON.stringify(Object.keys(createdForFirst[0].details)) === JSON.stringify(['tokenId']),
+    'TA1 creating a token records exactly one vm_token_created: actor = target = the owner, the tenant, details { tokenId } only', createdForFirst
+  );
+  const cTokens = await listTokens(ownerC, C);
+  assert(
+    tev.filter((e) => e.action === 'vm_token_created' && e.tenantId === C).length === cTokens.length && cTokens.length > 0,
+    'TA2 the created events of the cap-test tenant equal the tokens it holds (refused attempts add none)', [cTokens.length, tev.length]
+  );
+  assert(tev.filter((e) => e.action === 'vm_token_revoked' && e.details.tokenId === victim).length === 1, 'TA3 revoking the same token twice records one vm_token_revoked');
+  assert(
+    !tev.some((e) => e.details.tokenId === 'vmt_doesnotexist') && tev.filter((e) => e.action === 'vm_token_revoked' && e.tenantId === B).length === 0 &&
+      tev.filter((e) => e.action === 'vm_token_revoked' && e.tenantId === A).every((e) => e.details.tokenId === victim),
+    'TA4 an unknown id, a cross-tenant attempt and a refused role record no revocation'
+  );
+  const secretNames = [...(await listTokens(ownerA, A)), ...cTokens].map((t) => String(t.name)).filter((n) => n.length >= 5);
+  const evText = JSON.stringify(tev);
+  assert(
+    secretNames.length > 0 && secretNames.every((n) => !evText.includes(n)) && !evText.includes(tokenA) && !evText.includes(tokenA.slice(0, 12)),
+    'TA5 the events carry no token name, token value or display prefix'
+  );
 
   console.log('\n--- Ingest authentication ---');
   const unknownWellFormed = 'pbcvm_' + 'A'.repeat(43);

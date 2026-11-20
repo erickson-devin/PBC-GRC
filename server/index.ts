@@ -3,7 +3,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import apiRouter from './routes/api';
 import { initDb, assertDbModeAllowed, getDbMode, pool } from './db';
-import { assertAuthConfig, authStartupWarnings } from './auth/localAuth';
+import { assertAuthConfig, authStartupWarnings, getAccountDormantDays } from './auth/localAuth';
+import { describeAccountDormancy } from './auth/accountDormancy';
 import { runtimeEnvWarnings } from './runtimeEnv';
 import { assertStorageConfig, assertStorageWritable, localStorageRoot } from './evidence/storage';
 import { errorMessage } from '../src/utils/errors';
@@ -140,6 +141,7 @@ export const server = app.listen(PORT, BIND_ADDRESS, async () => {
       console.log('[Startup] ' + describeRetention(retention));
       if (retention.warning) console.warn('[Startup] ' + retention.warning);
     }
+    console.log('[Startup] ' + describeAccountDormancy(getAccountDormantDays()));
     const accountRetention = startAccountRetention();
     if (accountRetention) {
       console.log('[Startup] ' + describeAccountEventRetention(accountRetention));

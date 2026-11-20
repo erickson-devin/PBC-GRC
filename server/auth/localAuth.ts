@@ -67,6 +67,7 @@ export function assertAuthConfig(env: NodeJS.ProcessEnv = process.env): void {
   getMfaRequirement(env);
   getPasswordHistoryDepth(env);
   getSessionIdleMinutes(env);
+  getAccountDormantDays(env);
   const mfaKey = (env.MFA_ENCRYPTION_KEY ?? '').trim();
   if (mfaKey !== '' && mfaKey.length < MIN_MFA_KEY_LENGTH) {
     throw new LocalAuthConfigError(
@@ -120,6 +121,23 @@ export function getSessionIdleMinutes(env: NodeJS.ProcessEnv = process.env): num
   return minutes;
 }
 
+/** Days without a completed sign-in after which an account is disabled (NIST SP 800-171 3.5.6, IA.L2-3.5.6); 0 never disables. */
+export const DEFAULT_ACCOUNT_DORMANT_DAYS = 90;
+export const MAX_ACCOUNT_DORMANT_DAYS = 3650;
+
+/** Parses ACCOUNT_DORMANT_DAYS (whole number 0..3650, blank = default). Anything else is a configuration error. */
+export function getAccountDormantDays(env: NodeJS.ProcessEnv = process.env): number {
+  const value = (env.ACCOUNT_DORMANT_DAYS ?? '').trim();
+  if (value === '') return DEFAULT_ACCOUNT_DORMANT_DAYS;
+  const days = /^\d{1,4}$/.test(value) ? Number(value) : NaN;
+  if (!Number.isInteger(days) || days > MAX_ACCOUNT_DORMANT_DAYS) {
+    throw new LocalAuthConfigError(
+      `ACCOUNT_DORMANT_DAYS must be a whole number of days from 0 to ${MAX_ACCOUNT_DORMANT_DAYS} (0 never disables inactive accounts; empty means the default, ${DEFAULT_ACCOUNT_DORMANT_DAYS}).`
+    );
+  }
+  return days;
+}
+
 /** 400 body when a new password matches the current one or one of the previous N (never counts as a failed login). */
 export const PASSWORD_REUSED = {
   error: 'That password was used recently. Choose one you have not used before.',
@@ -134,6 +152,9 @@ export function authStartupWarnings(env: NodeJS.ProcessEnv = process.env): strin
   }
   if (getSessionIdleMinutes(env) === 0 && !isNonProductionEnv(env)) {
     warnings.push('SESSION_IDLE_MINUTES=0 in production: sessions never end for inactivity; NIST SP 800-171 3.1.11 expects a defined inactivity limit');
+  }
+  if (getAccountDormantDays(env) === 0 && !isNonProductionEnv(env)) {
+    warnings.push('ACCOUNT_DORMANT_DAYS=0 in production: inactive accounts are never disabled; NIST SP 800-171 3.5.6 expects identifiers to be disabled after a defined period of inactivity');
   }
   const ttl = Number((env.LOCAL_AUTH_TOKEN_TTL_SECONDS ?? '').trim());
   if (Number.isFinite(ttl) && ttl > 43200) {

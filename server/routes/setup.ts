@@ -3,7 +3,8 @@ import { Router, Request, Response } from 'express';
 import { LocalAuthConfigError, getMfaRequirement, signMfaPendingToken, validateNewPassword } from '../auth/localAuth';
 import { issueSession, rejectCrossSite } from '../auth/session';
 import { isMfaRequiredFor } from '../auth/mfaPolicy';
-import { LocalUserExistsError, createLocalUser, deleteLocalUser, normalizeEmail } from '../auth/localUsers';
+import { accountLogRef } from '../auth/loginThrottle';
+import { LocalUserExistsError, createLocalUser, deleteLocalUser, normalizeEmail, registerSuccessfulLogin } from '../auth/localUsers';
 import { TenantExistsError, createTenantWithOwner } from '../db';
 import { createInvitation } from '../invitations';
 import { createRateLimiter } from '../middleware/rateLimit';
@@ -226,7 +227,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         }
       }
 
-      console.log(`[Setup] First-time setup completed: ${user.email} is the platform administrator; tenant ${tenant.id} created; ${invites.filter((i) => i.token).length} invitation(s) staged. Setup is now locked.`);
+      console.log(`[Setup] First-time setup completed: account ${accountLogRef(user.email)} is the platform administrator; tenant ${tenant.id} created; ${invites.filter((i) => i.token).length} invitation(s) staged. Setup is now locked.`);
       const summary = { user: { id: user.id, email: user.email, name: user.name }, tenant: { id: tenant.id, name: tenant.name }, invites };
       // A platform administrator is always privileged: whenever MFA_REQUIRED is not `off`, the first administrator enrols a
       // second factor before getting a session (the wizard continues with the enrol-stage token).
@@ -241,6 +242,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
         });
         return;
       }
+      await registerSuccessfulLogin(user); // a session issued here is a sign-in: "Last sign-in" and the inactivity clock count it (#257)
       res.status(201).json({
         ...await issueSession(req, res, { id: user.id, email: user.email, name: user.name, tokenVersion: user.tokenVersion, mustChangePassword: false }, ['pwd'], false),
         ...summary,

@@ -25,6 +25,8 @@ export const ACCOUNT_EVENT_ACTIONS = [
   'step_up_failed',
   'system_use_acknowledged',
   'system_use_notice_updated',
+  'vm_token_created',
+  'vm_token_revoked',
 ] as const;
 export type AccountEventAction = (typeof ACCOUNT_EVENT_ACTIONS)[number];
 
@@ -61,7 +63,7 @@ export class AccountEventDetailsError extends Error {
   }
 }
 
-const DETAIL_KEYS: readonly string[] = ['reason', 'via', 'previousRole', 'newRole', 'attempted', 'mustChangePassword', 'noticeVersion', 'noticeEnabled'];
+const DETAIL_KEYS: readonly string[] = ['reason', 'via', 'previousRole', 'newRole', 'attempted', 'mustChangePassword', 'noticeVersion', 'noticeEnabled', 'tokenId'];
 const DETAIL_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -140,21 +142,42 @@ export async function recordAccountEventBestEffort(input: AccountEventInput): Pr
   }
 }
 
-/** Newest first by id. `beforeId` (a numeric string) pages to older events. */
-export async function listAccountEvents(opts: { limit?: number; beforeId?: string | null } = {}): Promise<AccountEventRow[]> {
+/**
+ * Newest first by id. `beforeId` (a numeric string) pages to older events; `targetUserId` and `action` narrow the list.
+ * A filter value that fails validation returns [] (the filter is never silently dropped).
+ */
+export async function listAccountEvents(opts: { limit?: number; beforeId?: string | null; targetUserId?: string | null; action?: string | null } = {}): Promise<AccountEventRow[]> {
   const limit = Math.min(200, Math.max(1, Math.floor(opts.limit ?? 50)));
   const before = opts.beforeId && /^\d{1,18}$/.test(opts.beforeId) ? opts.beforeId : null;
+  const target = opts.targetUserId ?? null;
+  const action = opts.action ?? null;
+  if ((target !== null && !ID_PATTERN.test(target)) || (action !== null && !(ACCOUNT_EVENT_ACTIONS as readonly string[]).includes(action))) return [];
   if (getDbMode() === 'memory') {
     return memoryEvents
-      .filter((e) => before === null || Number(e.id) < Number(before))
+      .filter((e) => (before === null || Number(e.id) < Number(before)) && (target === null || e.targetUserId === target) && (action === null || e.action === action))
       .sort((a, b) => Number(b.id) - Number(a.id))
       .slice(0, limit)
       .map(({ atMs: _atMs, ...row }) => ({ ...row, details: { ...row.details } }));
   }
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (before !== null) {
+    params.push(before);
+    clauses.push(`id < $${params.length}::bigint`);
+  }
+  if (target !== null) {
+    params.push(target);
+    clauses.push(`target_user_id = $${params.length}`);
+  }
+  if (action !== null) {
+    params.push(action);
+    clauses.push(`action = $${params.length}`);
+  }
+  params.push(limit);
   const res = await pool.query(
     `SELECT id, at, actor_kind, actor_user_id, target_user_id, action, scope_tenant_id, details FROM local_account_events
-      WHERE ($1::bigint IS NULL OR id < $1::bigint) ORDER BY id DESC LIMIT $2`,
-    [before, limit]
+      ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY id DESC LIMIT $${params.length}`,
+    params
   );
   return res.rows.map((r) => ({
     id: String(r.id),

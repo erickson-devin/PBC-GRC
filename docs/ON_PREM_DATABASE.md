@@ -224,6 +224,19 @@ container. Revocation is immediate on any number of instances because it is read
 is a fresh password (and code) sign-in. The page's text stays in the DOM behind the overlay, as in any single-page lock screen: it
 protects an unattended screen, not someone with the browser's developer tools.
 
+**Dormant accounts (IA.L2-3.5.6).** `ACCOUNT_DORMANT_DAYS` (default 90, whole days from 0 to 3650, `0` turns it off; an unusable
+value stops the server at startup, and `0` in production logs a warning) disables an account that has had no completed sign-in for
+that long. The time is measured from the last completed sign-in, or from the account's creation or last restore if it never
+signed in. A daily sweep disables the dormant accounts, and a sign-in with the right password to a dormant account is refused
+and disables it on the spot (the answer is the same as for a wrong password). A disable for inactivity ends the account's
+sessions but keeps its second factor. The last enabled platform administrator is never disabled this way. A platform
+administrator restores any account with Enable in the administration console; a Tenant Owner or MSP Admin can restore a
+dormant member whose role they manage, with their own authenticator code. The break-glass, run at the server's keyboard, is
+`npm run auth:enable-user -- <email>`. After the upgrade every existing account gets a full period first, so nobody is disabled
+by the upgrade itself. The measure is the last sign-in, not the last activity: with a very long `LOCAL_AUTH_TOKEN_TTL_SECONDS` a
+person who stays signed in can look inactive. This release adds columns to `local_users` at startup (`disabled_reason`,
+`disabled_at`, `dormancy_reset_at`); no rows are rewritten.
+
 **Account events.** Password changes and resets, second-factor enrolment, regeneration and reset, disable and enable, role
 changes, member removal, sign-out and refused step-ups are recorded in `local_account_events`: who (an id or a kind, never a name
 or an email), what (a closed list of actions), when, and ids and codes as details. A platform administrator reads them with
@@ -420,7 +433,15 @@ afterwards, and it is all intended.
   as soon as one member holds Admin, so it will not start on that database. Roll back as in step 4: restore the dump, then
   set `IMAGE_TAG` back. Or, before rolling back, change every Admin to another role and revoke the pending Admin invitations.
 
-No environment variable is added or changed.
+* **Control history.** Once a control history event with the source `objective-rollup` exists (issue #307), an older image will
+  not start on that database, because it re-creates a narrower check on the source column.
+* **Account event log.** It now accepts `vm_token_created` and `vm_token_revoked` (issue #214). An older image still starts but
+  shows such rows as unrecognised, and the check cannot be narrowed again.
+* **Dormant accounts.** `local_users` gains three columns at startup (see "Sessions: idle timeout, sign-out and account events").
+  Accounts with no sign-in for 90 days are disabled from the first daily sweep after their grace period; set
+  `ACCOUNT_DORMANT_DAYS` before upgrading if your policy differs.
+
+One environment variable is added: `ACCOUNT_DORMANT_DAYS` (empty means the default, 90).
 
 What makes an upgrade safe is the release routine around it:
 

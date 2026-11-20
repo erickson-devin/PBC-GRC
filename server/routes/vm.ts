@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
-import { VmTokenError, createVmToken, listVmTokens, revokeVmToken } from '../vm/tokens';
+import { VmTokenError, createVmToken, listVmTokens, revokeVmTokenOutcome } from '../vm/tokens';
+import { recordAccountEventBestEffort } from '../auth/accountEvents';
 import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
 import { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, loadVmPoamView, updateVmPoamItem } from '../vm/findingsStore';
 import { StaleWriteError } from '../controlAssessments';
@@ -118,6 +119,7 @@ router.post('/tokens', async (req: Request, res: Response): Promise<void> => {
       console.warn('[VM API] service token ' + record.id + ' created over plain HTTP (VM_ALLOW_INSECURE_TOKENS=true) in ' + req.tenantId);
     }
     console.log('[VM API] ' + user.uid + ' created service token ' + record.id + ' in ' + req.tenantId);
+    await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: user.uid, targetUserId: user.uid, action: 'vm_token_created', scopeTenantId: req.tenantId!, details: { tokenId: record.id } });
     res.status(201).json({ token, record });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to create the service token');
@@ -144,8 +146,11 @@ router.post('/tokens/:id/revoke', async (req: Request, res: Response): Promise<v
     return;
   }
   try {
-    const token = await revokeVmToken(req.tenantId!, id);
+    const { token, changed } = await revokeVmTokenOutcome(req.tenantId!, id);
     console.log('[VM API] ' + req.user?.uid + ' revoked service token ' + token.id + ' in ' + req.tenantId);
+    if (changed && req.user) {
+      await recordAccountEventBestEffort({ actorKind: 'user', actorUserId: req.user.uid, targetUserId: req.user.uid, action: 'vm_token_revoked', scopeTenantId: req.tenantId!, details: { tokenId: token.id } });
+    }
     res.json({ token });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to revoke the service token');

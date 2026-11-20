@@ -41,6 +41,7 @@ import { SESSION_MARKER_HEADER, SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE, sess
 import { tabSessionState, tabSessionPin } from './tabSession';
 import { acknowledgedSystemUseNotice } from './systemUseNoticeAck';
 import { parseSystemUseNotice, type SystemUseNotice } from '../data/systemUseNotice';
+import { parseDormantDays, parseDisabledReason, type DisabledReason } from '../data/dormancyView';
 import { isTabLocked, parseIdleSeconds } from './idleLock';
 
 function requireAsset(raw: unknown): EnclaveAsset {
@@ -339,6 +340,9 @@ export interface LocalAccount {
   lockedUntil: string | null;
   lastLoginAt: string | null;
   createdAt: string;
+  /** Why the account is disabled (#257): by an administrator or by the inactivity check; null when enabled or not reported. */
+  disabledReason: DisabledReason | null;
+  disabledAt: string | null;
 }
 
 /** One entry of the platform account-event trail (#40). `id` is the server's numeric event id as a string; `details` holds ids and codes only. */
@@ -351,6 +355,12 @@ export interface AccountEvent {
   action: string;
   tenantId: string | null;
   details: Record<string, unknown>;
+}
+
+/** Narrows GET /platform/account-events (#194): one account (user id) and / or one action code; empty values mean no filter. */
+export interface AccountEventFilter {
+  target?: string | null;
+  action?: string | null;
 }
 
 const parseAccountEvent = (raw: unknown): AccountEvent | null => {
@@ -455,6 +465,8 @@ const parseAccount = (raw: unknown): LocalAccount => {
     lockedUntil: typeof raw.lockedUntil === 'string' ? raw.lockedUntil : null,
     lastLoginAt: typeof raw.lastLoginAt === 'string' ? raw.lastLoginAt : null,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+    disabledReason: parseDisabledReason(raw.disabledReason),
+    disabledAt: typeof raw.disabledAt === 'string' ? raw.disabledAt : null,
   };
 };
 
@@ -720,9 +732,15 @@ export const ApiClient = {
 
   // ---------------------------------------------------------------- team: members and invitations
 
+  /** GET /api/v1/tenants/:id/members with the install's inactivity period (#257). */
+  async listMembersWithPolicy(tenantId: string, sessionRef?: string): Promise<{ members: ServerMember[]; dormantDays: number | null }> {
+    const data = await authedJson<unknown>('GET', `/tenants/${encodeURIComponent(tenantId)}/members`, { sessionRef, tenantId });
+    return { members: parseServerMembers(data), dormantDays: parseDormantDays((data as { dormantDays?: unknown } | null)?.dormantDays) };
+  },
+
   /** GET /api/v1/tenants/:id/members */
   async listMembers(tenantId: string, sessionRef?: string): Promise<ServerMember[]> {
-    return parseServerMembers(await authedJson('GET', `/tenants/${encodeURIComponent(tenantId)}/members`, { sessionRef, tenantId }));
+    return (await ApiClient.listMembersWithPolicy(tenantId, sessionRef)).members;
   },
 
   /** POST /api/v1/tenants/:id/members: sets (or changes) an existing person's role. Write roles may call it; the server limits which roles each caller may grant or change (an Admin only Assessor and Viewer). */
@@ -733,6 +751,12 @@ export const ApiClient = {
   /** DELETE /api/v1/tenants/:id/members/:userId */
   async removeMember(tenantId: string, userId: string, sessionRef?: string): Promise<void> {
     await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}`, { sessionRef, tenantId });
+  },
+
+  /** POST /api/v1/tenants/:id/members/:userId/restore (#257): an MSP Admin or a Tenant Owner restores a member the inactivity check disabled, with their own authenticator code. */
+  async restoreMember(tenantId: string, userId: string, code: string, sessionRef?: string): Promise<{ restored: boolean; userId: string }> {
+    const data = await authedJson<{ restored?: unknown; userId?: unknown }>('POST', `/tenants/${encodeURIComponent(tenantId)}/members/${encodeURIComponent(userId)}/restore`, { sessionRef, tenantId, body: { code } });
+    return { restored: data?.restored === true, userId: typeof data?.userId === 'string' ? data.userId : userId };
   },
 
   // ----------------------------------------------------------------------------------------- CMMC asset scoping
@@ -1227,10 +1251,15 @@ export const ApiClient = {
 
   // ---------------------------------------------------------------- local account administration (platform administrators)
 
+  /** GET /api/v1/platform/users: the accounts and the inactivity period (#257; 0 = off, null when the server does not report it). */
+  async listLocalUsersWithPolicy(): Promise<{ users: LocalAccount[]; dormantDays: number | null }> {
+    const data = await accountJson<{ users?: unknown; dormantDays?: unknown }>('GET', '/platform/users');
+    return { users: Array.isArray(data?.users) ? data.users.map(parseAccount) : [], dormantDays: parseDormantDays(data?.dormantDays) };
+  },
+
   /** GET /api/v1/platform/users */
   async listLocalUsers(): Promise<LocalAccount[]> {
-    const data = await accountJson<{ users?: unknown }>('GET', '/platform/users');
-    return Array.isArray(data?.users) ? data.users.map(parseAccount) : [];
+    return (await ApiClient.listLocalUsersWithPolicy()).users;
   },
 
   /** POST /api/v1/platform/users/:id/reset-password: sets a temporary password the person must change at their next sign-in. */
@@ -1258,10 +1287,12 @@ export const ApiClient = {
   },
 
   /** GET /api/v1/platform/account-events (platform administrators): security changes to local accounts, newest first. `before` is the previous page's `nextBefore`. */
-  async listAccountEvents(limit?: number, before?: string): Promise<{ events: AccountEvent[]; nextBefore: string | null }> {
+  async listAccountEvents(limit?: number, before?: string, filter?: AccountEventFilter): Promise<{ events: AccountEvent[]; nextBefore: string | null }> {
     const query = new URLSearchParams();
     if (limit !== undefined) query.set('limit', String(limit));
     if (before) query.set('before', before);
+    if (filter?.target) query.set('target', filter.target);
+    if (filter?.action) query.set('action', filter.action);
     const qs = query.toString();
     const data = await accountJson<{ events?: unknown; nextBefore?: unknown }>('GET', `/platform/account-events${qs ? `?${qs}` : ''}`);
     const events = Array.isArray(data?.events) ? data.events.map(parseAccountEvent).filter((e): e is AccountEvent => e !== null) : [];
