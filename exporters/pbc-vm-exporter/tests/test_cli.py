@@ -597,3 +597,104 @@ def test_insecure_warning_only_when_a_url_is_plain_http(caplog):
     with caplog.at_level(logging.WARNING):
         load_config({**base, "PBC_URL": "http://grc.local"}, None, mode_override=None, dry_run=False, sample=False)
     assert any("PBC_ALLOW_INSECURE_TRANSPORT" in r.getMessage() for r in caplog.records)
+
+
+# ------------------------------------------------------------------------------------------------ wazuh-sca source
+
+SCA_ENV = {"PBC_SOURCE_LABEL": "wazuh-sca-test", "WAZUH_API_URL": "https://wazuh:55000", "WAZUH_API_USER": "u", "WAZUH_API_PASSWORD": "api-secret"}
+SCA_HOSTS = [{
+    "agent_id": "001", "hostname": "web-01", "ip": "10.0.0.5",
+    "configuration": [{
+        "benchmark": {"id": "cis_ubuntu22-04", "title": "CIS Ubuntu"}, "scanner": {"name": "Wazuh SCA"},
+        "scanned_at": "2026-10-01T02:03:30Z",
+        "results": [{"rule_id": "1", "result": "pass"}, {"rule_id": "2", "result": "fail"}],
+    }],
+}]
+
+
+def test_wazuh_sca_sample_dry_run():
+    code, out, _ = run(["--dry-run", "--sample", "--source", "wazuh-sca"])
+    assert code == 0
+    doc = json.loads(out)
+    (chunk,) = doc["chunks"]
+    assert chunk["payload"]["source"] == {"kind": "SCAP", "label": "sample-wazuh-sca"}
+    assert validate_payload(chunk["payload"]) is None and chunk["findings"] == 0 and chunk["results"] == 6
+    assert chunk["hosts"] == 2
+
+
+def test_wazuh_sca_sample_without_dry_run_is_exit_2():
+    code, _, err = run(["--sample", "--source", "wazuh-sca"])
+    assert code == 2 and "--dry-run" in err
+
+
+def test_wazuh_sca_refuses_mode():
+    code, _, err = run(["--dry-run", "--mode", "api", "--source", "wazuh-sca"], SCA_ENV)
+    assert code == 2 and "--mode" in err
+
+
+def test_wazuh_sca_needs_the_api_url():
+    env = {k: v for k, v in SCA_ENV.items() if k != "WAZUH_API_URL"}
+    code, _, err = run(["--dry-run", "--source", "wazuh-sca"], env)
+    assert code == 2 and "WAZUH_API_URL" in err
+
+
+def test_wazuh_sca_zero_hosts_is_exit_3_and_posts_nothing(monkeypatch):
+    monkeypatch.setattr(cli.ScaReader, "fetch_hosts", lambda self: [])
+
+    class NoClient:
+        def __init__(self, *a, **k):
+            raise AssertionError("must not construct a client")
+
+    monkeypatch.setattr(cli, "IngestClient", NoClient)
+    code, _, err = run(["--source", "wazuh-sca"], {**ENV, **SCA_ENV})
+    assert code == 3 and "nothing was sent" in err
+
+
+def test_wazuh_sca_posts_the_validated_bytes_and_logs_no_names(monkeypatch):
+    sent = []
+
+    class Ok:
+        def __init__(self, url, token, verify, timeout, **k):
+            pass
+
+        def send_all(self, bodies, metas):
+            sent.extend(bodies)
+            return []
+
+    monkeypatch.setattr(cli.ScaReader, "fetch_hosts", lambda self: SCA_HOSTS)
+    monkeypatch.setattr(cli, "IngestClient", Ok)
+    code, _, err = run(["--source", "wazuh-sca"], {**ENV, **SCA_ENV})
+    assert code == 0 and len(sent) == 1
+    payload = json.loads(sent[0])
+    assert validate_payload(payload) is None and payload["source"] == {"kind": "SCAP", "label": "wazuh-sca-test"}
+    for needle in ("web-01", "10.0.0.5", "001", "api-secret"):
+        assert needle not in err
+
+
+def test_wazuh_sca_read_error_is_exit_3(monkeypatch):
+    def boom(self):
+        raise WazuhReadError("wazuh api SCA policies failed: ConnectionError")
+
+    monkeypatch.setattr(cli.ScaReader, "fetch_hosts", boom)
+    code, _, err = run(["--dry-run", "--source", "wazuh-sca"], SCA_ENV)
+    assert code == 3 and "ConnectionError" in err
+
+
+def test_check_wazuh_sca_authenticates_against_the_manager_and_skips_the_indexer(monkeypatch):
+    from conftest import FakeSession
+
+    def handler(method, url, kwargs):
+        if url.endswith("/api/v1/vm/whoami"):
+            return (200, WHOAMI)
+        if url.endswith("/security/user/authenticate"):
+            return (200, {"data": {"token": "jwt1"}})
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    session = FakeSession(handler=handler)
+    monkeypatch.setattr(cli, "make_session", lambda *a, **k: session)
+    code, out, err = run(["check", "--source", "wazuh-sca"], {**ENV, **SCA_ENV})
+    assert code == 0, out + err
+    assert "[PASS] " in out and "Wazuh manager API: authenticated" in out
+    assert "[SKIP] " in out and "Wazuh indexer: not used by --source wazuh-sca" in out
+    assert "api-secret" not in out and "api-secret" not in err
+    assert [c["method"] for c in session.calls] == ["GET", "POST"]

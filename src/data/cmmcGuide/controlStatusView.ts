@@ -69,6 +69,15 @@ export function metMismatchNoticeCopy(count: number, o: { canEdit: boolean }): {
   };
 }
 
+/** The one-line pointer on the overview, where the score is shown (#305). Empty when nothing is open. */
+export function metMismatchOverviewText(n: number, o: { sprs: boolean }): string {
+  if (n <= 0) return '';
+  const counts = o.sprs ? 'in the SPRS score and the Met count.' : 'in the Met count.';
+  return n === 1
+    ? `1 control is recorded as Met while its objectives are not all Met or Not applicable. It still counts as Met ${counts}`
+    : `${n} controls are recorded as Met while their objectives are not all Met or Not applicable. They still count as Met ${counts}`;
+}
+
 export function importResultMessage(orgName: string, lowered: number): string {
   if (lowered <= 0) return `Assessment data successfully imported for ${orgName}!`;
   const n = lowered;

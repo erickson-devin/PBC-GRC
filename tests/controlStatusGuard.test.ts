@@ -3,6 +3,7 @@ import path from 'node:path';
 import { cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import {
   checkControlStatusWrite,
+  controlStatusAfterObjectiveWrite,
   lowerRefusedMet,
   metRefusalMessage,
   refusedMetControls,
@@ -112,6 +113,20 @@ assert(
 );
 const other = lowerRefusedMet({ controls: { 'AC-2': { status: 'MET' as ControlStatus } }, objectives: {} }, 'NIST_800_53_REV5');
 assert(other.lowered.length === 0 && other.state.controls['AC-2'].status === 'MET', 'G12c: a non-CMMC framework is left alone');
+
+console.log('--- After an objective write (#307) ---');
+const after = (controlId: string, current: ControlStatus, statuses: Record<string, ObjectiveStatus>, fw: string) => controlStatusAfterObjectiveWrite(controlId, current, statuses, fw);
+const oneNotMet = { ...answers(ID, L2, 'MET'), [`${ID}[${L[0]}]`]: 'NOT_MET' as ObjectiveStatus };
+const partial = answers(ID, L2, 'MET', L.slice(0, 2));
+const partialRule = checkControlStatusWrite(ID, 'MET', partial, L2);
+const oneRule = checkControlStatusWrite(ID, 'MET', oneNotMet, L2);
+assert(after(ID, 'MET', answers(ID, L2, 'MET'), L2) === 'MET', 'W1: a Met control with every objective Met stays Met');
+assert(!oneRule.allowed && after(ID, 'MET', oneNotMet, L2) === oneRule.rolledUp && oneRule.rolledUp !== 'MET', 'W2: one Not met objective lowers a Met control to the rolled-up status', oneRule);
+assert(!partialRule.allowed && after(ID, 'MET', partial, L2) === partialRule.rolledUp, 'W3: partly Met objectives lower it to what checkControlStatusWrite says they roll up to', partialRule);
+assert(after(ID, 'IN_PROGRESS', oneNotMet, L2) === 'IN_PROGRESS' && after(ID, 'NOT_MET', answers(ID, L2, 'MET'), L2) === 'NOT_MET' && after(ID, 'NOT_STARTED', answers(ID, L2, 'MET'), L2) === 'NOT_STARTED', 'W4: it never raises, and never changes a control that is not Met');
+assert(after('AC-2', 'MET', {}, 'NIST_800_53_REV5') === 'MET' && after(ID, 'MET', {}, 'SOC_2_TYPE_II') === 'MET', 'W5: a NIST 800-53 and a SOC 2 control stay Met');
+const metAndNa = { ...answers(ID, L2, 'MET'), [`${ID}[${L[0]}]`]: 'NOT_APPLICABLE' as ObjectiveStatus };
+assert(after(ID, 'MET', metAndNa, L2) === 'MET', 'W6: Met and Not applicable objectives keep the control Met');
 
 console.log('--- Source ---');
 const src = fs.readFileSync(path.join(process.cwd(), 'src', 'data', 'cmmcGuide', 'controlStatusGuard.ts'), 'utf8');

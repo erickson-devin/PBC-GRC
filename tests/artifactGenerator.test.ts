@@ -639,6 +639,10 @@ async function runArtifactGeneratorTests() {
     assert(agMd.includes(`[${agLetter}] ${agNarrative}`) && agMd.includes('Control-level statement.'), 'AG2 the Markdown SSP prints the objective narrative');
     const agMdPlain = buildSspMarkdown({ ...agMdState, objectives: undefined }, [agCtrl], 'CMMC_L1');
     assert(!agMdPlain.includes(agNarrative) && agMdPlain.includes('Control-level statement.\n\n'), 'AG3 without objectives the Markdown holds the notes only');
+    // #305: notes that are only whitespace, with no objective narrative, print the placeholder
+    const wsStates = { ...sspMdState.controls, [agCtrl.id]: { ...sspMdState.controls[agCtrl.id], implementationNotes: '  \n ' } };
+    const wsMd = buildSspMarkdown({ ...sspMdState, controls: wsStates, objectives: undefined } as unknown as AssessmentState, [agCtrl], 'CMMC_L1');
+    assert(wsMd.includes('**Implementation Statement:**\n\n_No implementation narrative provided._\n\n'), 'AG3b whitespace-only notes print the placeholder in the Markdown SSP');
     const normSrc = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
     const compilersSrc = normSrc('src/data/reports/documentCompilers.ts');
     const nistSlice = compilersSrc.slice(compilersSrc.indexOf('export function compileNistSSP('), compilersSrc.indexOf('export function compilePOAM('));

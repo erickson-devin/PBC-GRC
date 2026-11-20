@@ -1,8 +1,8 @@
 import { guideObjectives } from '../src/data/cmmcGuide/guide';
 import { cmmcDisplayId } from '../src/data/cmmcGuide/displayId';
 import { metRefusalMessage } from '../src/data/cmmcGuide/controlStatusGuard';
-import { controlHeaderView, importResultMessage, metMismatchesInView, metMismatchNoticeCopy, movedLoweredNote } from '../src/data/cmmcGuide/controlStatusView';
-import { matrixEmptyFilterMessage, matrixSearchPlaceholder } from '../src/data/matrixView';
+import { controlHeaderView, importResultMessage, metMismatchesInView, metMismatchNoticeCopy, metMismatchOverviewText, movedLoweredNote } from '../src/data/cmmcGuide/controlStatusView';
+import { matrixEmptyFilterMessage, matrixSearchPlaceholder, objectiveNarrativeIndex } from '../src/data/matrixView';
 import type { ObjectiveStatus } from '../src/types/assessment';
 
 /**
@@ -93,6 +93,32 @@ assert(
     matrixEmptyFilterMessage({ catalog: false, metMismatch: false }) === 'Try clearing your search query or switching family and status filters.',
   'M4: the four empty-filter messages'
 );
+
+console.log('--- Overview pointer and narrative search ---');
+assert(metMismatchOverviewText(0, { sprs: true }) === '' && metMismatchOverviewText(-1, { sprs: false }) === '', 'O1: nothing open: empty');
+assert(
+  metMismatchOverviewText(1, { sprs: true }) === '1 control is recorded as Met while its objectives are not all Met or Not applicable. It still counts as Met in the SPRS score and the Met count.' &&
+    metMismatchOverviewText(1, { sprs: false }) === '1 control is recorded as Met while its objectives are not all Met or Not applicable. It still counts as Met in the Met count.',
+  'O2: one control, with and without the SPRS score'
+);
+assert(
+  metMismatchOverviewText(3, { sprs: true }) === '3 controls are recorded as Met while their objectives are not all Met or Not applicable. They still count as Met in the SPRS score and the Met count.' &&
+    metMismatchOverviewText(3, { sprs: false }) === '3 controls are recorded as Met while their objectives are not all Met or Not applicable. They still count as Met in the Met count.',
+  'O3: three controls, with and without the SPRS score'
+);
+const narr = {
+  'C1[a]': { controlId: 'C1', implementationNarrative: 'Uses Entra MFA' },
+  'C1[b]': { controlId: 'C1', implementationNarrative: '  ' },
+  'C1[c]': { controlId: 'C1', implementationNarrative: 'Quarterly Review' },
+  'C2[a]': { implementationNarrative: 'Badge readers' },
+};
+const narrBefore = JSON.stringify(narr);
+const idx = objectiveNarrativeIndex(narr);
+assert(
+  idx.get('C1') === 'uses entra mfa\nquarterly review' && idx.get('C2') === 'badge readers' && idx.size === 2 && JSON.stringify(narr) === narrBefore,
+  'S1: narratives are grouped by control, trimmed and lower-cased; empty ones are skipped; the input is untouched'
+);
+assert(objectiveNarrativeIndex(undefined).size === 0, 'S2: no objectives: an empty index');
 
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 if (passed !== total) process.exitCode = 1;

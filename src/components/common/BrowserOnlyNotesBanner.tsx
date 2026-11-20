@@ -5,6 +5,7 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { OBJECTIVES_NEED_OWNER_MESSAGE } from '../../data/objectiveSync';
 import { ObjectiveReviewDialog } from '../matrix/ObjectiveReviewDialog';
 import { ErrorNotice } from './ErrorNotice';
+import { MoveResultNotice, type MoveToServerResult } from './LegacyTenantNotice';
 import { errorMessage } from '../../utils/errors';
 import { retryableNotes } from '../../data/controlSave';
 
@@ -23,6 +24,7 @@ export const BrowserOnlyNotesBanner: React.FC = () => {
   const [announce, setAnnounce] = useState('');
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [moved, setMoved] = useState<MoveToServerResult | null>(null); // what the move did, shown once the tenant is server-backed
 
   if (currentTenant.serverBacked) {
     const retryCount = retryableNotes(notesNotSaved).length;
@@ -30,6 +32,11 @@ export const BrowserOnlyNotesBanner: React.FC = () => {
     return (
       <>
         <p role="status" aria-live="polite" className="sr-only">{announce}</p>
+        {moved && moved.tenantId === currentTenant.id && (
+          <div className="max-w-7xl mx-auto mt-2">
+            <MoveResultNotice moved={moved} onDismiss={() => setMoved(null)} />
+          </div>
+        )}
         {objectivesNeedOwner && (
           <div
             role="region"
@@ -89,7 +96,8 @@ export const BrowserOnlyNotesBanner: React.FC = () => {
     setStage('moving');
     setError(null);
     try {
-      await migrateLocalTenantToServer(currentTenant.id);
+      const result = await migrateLocalTenantToServer(currentTenant.id);
+      setMoved(result);
       setStage('idle');
     } catch (err: unknown) {
       setError(errorMessage(err) || 'Could not move the tenant to the server.');

@@ -141,7 +141,25 @@ def test_vuln_id_kept_as_reported_or_row_dropped():
     assert row_to_finding(row(vuln_id="cve-2024-0001"))["vuln_id"] == "cve-2024-0001"
     hosts, stats = build_hosts([raw_host(rows=[row(vuln_id="bad id!")])])
     assert stats.dropped_rows == 1
-    assert hosts[0]["findings"] == []
+    assert hosts == [] and stats.emptied_hosts == 1  # a failed read must not look like a clean host (#303)
+
+
+def test_empty_rows_still_send_an_empty_findings_list():
+    hosts, stats = build_hosts([raw_host(rows=[])])
+    assert hosts[0]["findings"] == [] and stats.emptied_hosts == 0
+
+
+def test_all_rows_invalid_with_software_sends_the_host_without_findings():
+    inventory = {"software": [{"name": "openssl", "version": "3.0.1"}]}
+    hosts, stats = build_hosts([raw_host(rows=[row(vuln_id="bad id!")], inventory=inventory)])
+    assert len(hosts) == 1 and "findings" not in hosts[0] and hosts[0]["software"]
+    assert stats.emptied_hosts == 1
+
+
+def test_mixed_valid_and_invalid_rows_are_unchanged():
+    hosts, stats = build_hosts([raw_host(rows=[row(vuln_id="bad id!"), row()])])
+    assert len(hosts[0]["findings"]) == 1
+    assert stats.dropped_rows == 1 and stats.emptied_hosts == 0
 
 
 def test_finding_key_order():

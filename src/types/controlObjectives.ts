@@ -5,6 +5,8 @@
  * Timestamps are ISO strings.
  */
 
+import type { ControlStatus } from './cmmc';
+
 /** The same statuses an objective has in the assessment model (src/types/assessment.ts). */
 export const OBJECTIVE_STATUSES = ['MET', 'NOT_MET', 'IN_PROGRESS', 'NOT_STARTED', 'NOT_APPLICABLE'] as const;
 export type ObjectiveStatus = (typeof OBJECTIVE_STATUSES)[number];
@@ -39,6 +41,14 @@ export interface ObjectiveRecord {
 }
 
 export type ObjectiveImportResult = 'created' | 'unchanged' | 'conflict';
+
+/** A Met control the server lowered because an objective write left its objectives short of Met (#307). No notes: they may be CUI. */
+export interface LoweredControl {
+  controlId: string;
+  status: ControlStatus;
+  updatedAt: string | null;
+  updatedBy: string;
+}
 
 export interface ObjectiveEvent {
   id: string;

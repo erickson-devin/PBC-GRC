@@ -620,9 +620,16 @@ async function run() {
   assert(sharedId !== '' && (await shared())?.status === 'OPEN', 'both managers report one host (by hostname): one OPEN finding', await shared());
   await mgrRun(tokenA, 'mgr-a', '2026-10-21T01:00:02Z', [{ agent: '500', hostname: 'shared-500', vulns: [] }]);
   assert((await shared()).status === 'OPEN', 'manager A drops the finding while manager B still lists it: it stays OPEN');
-  const bDrops = await mgrRun(tokenA, 'mgr-b', '2026-10-21T01:00:03Z', [{ agent: '501', hostname: 'shared-500', vulns: [] }]);
+  const bHeld = await mgrRun(tokenA, 'mgr-b', '2026-10-21T01:00:03Z', [{ agent: '501', hostname: 'shared-500', vulns: [] }]);
+  const bHeldRun = await runById(bHeld.body?.run_id);
+  assert((await shared()).status === 'OPEN', 'manager B drops it too, but a host that reports nothing closes nothing on that report (#303): it stays OPEN');
+  assert(String(bHeldRun.warning ?? '').startsWith('1 host(s) reported no findings') && !String(bHeldRun.warning).includes('shared-500') && !String(bHeldRun.warning).includes('CVE-'), 'and the run warning carries counts only (no host name, no CVE id)', bHeldRun.warning);
+  await call('POST', `/tenants/${A}/vm/runs/${bHeld.body?.run_id}/reprocess`, ownerA, A);
+  await __drainVmWorkerForTests();
+  assert((await shared()).status === 'OPEN', 'reprocessing the held run keeps the finding OPEN (#303)');
+  const bDrops = await mgrRun(tokenA, 'mgr-b', '2026-10-21T01:00:04Z', [{ agent: '501', hostname: 'shared-500', vulns: [] }]);
   const closedShared = await shared();
-  assert(closedShared.status === 'RESOLVED' && closedShared.resolvedRunId === bDrops.body?.run_id, 'manager B drops it too: RESOLVED by that run', closedShared);
+  assert(closedShared.status === 'RESOLVED' && closedShared.resolvedRunId === bDrops.body?.run_id, 'manager B reports the host empty again: RESOLVED by the confirming run', closedShared);
 
   const srcB = ((await call('GET', `/tenants/${B}/vm/sources`, ownerB, B)).body?.sources ?? [])[0]?.id as string;
   await createAgentReportedAsset(B, {
@@ -673,7 +680,9 @@ async function run() {
   assert((await mixed()).length === 1 && (await mixed())[0].status === 'OPEN', 'both kinds report the finding: one OPEN finding', await mixed());
   await mgrRun(tokenA, 'mix-w', '2026-10-22T13:00:02Z', [{ agent: '700', hostname: 'mixed-700', vulns: [] }]);
   assert((await mixed())[0].status === 'OPEN', 'the WAZUH source drops it while the SENTINELONE source still lists it: it stays OPEN');
-  const mixDrop = await mgrRun(tokenA, 'mix-s1', '2026-10-22T13:00:03Z', [{ agent: 'uuid-700', hostname: 'mixed-700', vulns: [] }], 'SENTINELONE');
+  await mgrRun(tokenA, 'mix-s1', '2026-10-22T13:00:03Z', [{ agent: 'uuid-700', hostname: 'mixed-700', vulns: [] }], 'SENTINELONE');
+  assert((await mixed())[0].status === 'OPEN', 'the SENTINELONE source drops it too: held OPEN until its next empty report (#303)');
+  const mixDrop = await mgrRun(tokenA, 'mix-s1', '2026-10-22T13:00:04Z', [{ agent: 'uuid-700', hostname: 'mixed-700', vulns: [] }], 'SENTINELONE');
   const mixClosed = (await mixed())[0];
   assert(mixClosed.status === 'RESOLVED' && mixClosed.resolvedRunId === mixDrop.body?.run_id, 'the SENTINELONE source drops it too: RESOLVED by the SENTINELONE run', mixClosed);
 
@@ -862,7 +871,7 @@ async function run() {
   assert(poamCountOf(re1Run.lines, re1Id) === String((await totalItems(defaultA.id)) - beforeRe1), 'RE1 the worker line counts the items really inserted', re1Run.lines.length);
 
   // close the episode in the past (memory has no foreign key to protect), then the finding is reported again
-  await saveFindings(A, { created: [], updated: [], resolved: [{ ...(reoFinding as VmFinding), status: 'RESOLVED', resolvedAt: '2025-06-01T00:00:00.000Z', resolvedRunId: re1Id }], sightings: [], vulnIds: [] }, null);
+  await saveFindings(A, { created: [], updated: [], resolved: [{ ...(reoFinding as VmFinding), status: 'RESOLVED', resolvedAt: '2025-06-01T00:00:00.000Z', resolvedRunId: re1Id }], sightings: [], vulnIds: [], held: { hosts: 0, findings: 0 } }, null);
   const beforeRe2 = await totalItems(defaultA.id);
   const re2Run = await reoRun('2026-10-20T00:00:00Z', '2025-07-01T00:00:00Z');
   const re2Id = (re2Run.value.body as Json)?.run_id as string;
@@ -924,7 +933,12 @@ async function run() {
   assert((await acFinding('host-ac1')).status === 'OPEN' && ac2Item.status === 'OPEN' && completedCountOf(ac2Run.lines, (ac2Run.value.body as Json).run_id) === '0', 'AC2 a host that was not scanned completes nothing (finding and item stay OPEN)', [ac2Item.status]);
 
   // AC1: the same source scans host-ac1 again and no longer lists the vulnerability
-  const ac3Run = await acRun('ac-src', [acHost('ac1', []), acHost('ac2', ['CVE-2024-0951'])], '2026-10-23T00:00:00Z');
+  // (#303: a host reported with no findings closes nothing on that report; the same source's next empty report confirms it)
+  const ac3Held = await acRun('ac-src', [acHost('ac1', []), acHost('ac2', ['CVE-2024-0951'])], '2026-10-23T00:00:00Z');
+  const ac3HeldRun = await runById((ac3Held.value.body as Json).run_id);
+  assert((await acFinding('host-ac1')).status === 'OPEN' && (await itemsOf(defaultA.id, ac1Finding.id))[0].status === 'OPEN' && completedCountOf(ac3Held.lines, (ac3Held.value.body as Json).run_id) === '0', 'AC1 the first empty report holds the finding OPEN and completes no item (#303)');
+  assert(String(ac3HeldRun.warning ?? '').startsWith('1 host(s) reported no findings') && !String(ac3HeldRun.warning).includes('host-ac1') && !String(ac3HeldRun.warning).includes('CVE-'), 'AC1 the held run warning carries counts only', ac3HeldRun.warning);
+  const ac3Run = await acRun('ac-src', [acHost('ac1', []), acHost('ac2', ['CVE-2024-0951'])], '2026-10-23T12:00:00Z');
   const ac3Id = (ac3Run.value.body as Json).run_id as string;
   const ac3Item = (await itemsOf(defaultA.id, ac1Finding.id))[0];
   assert((await acFinding('host-ac1')).status === 'RESOLVED', 'AC1 the finding is RESOLVED by the later scan', await acFinding('host-ac1'));
@@ -943,7 +957,7 @@ async function run() {
   assert(ac3Again.value.status === 202 && ac3ItemAgain.status === 'COMPLETED' && ac3ItemAgain.updatedAt === ac3Item.updatedAt && completedCountOf(ac3Again.lines, ac3Id) === '0' && memoryPoamEvents.filter((e) => e.itemId === ac3Item.id).length === 1, 'AC3 reprocessing completes nothing twice (same updatedAt, one event, "0 POA&M completed")', [ac3ItemAgain.updatedAt, ac3Item.updatedAt]);
 
   // AC4: the vulnerability comes back in a new episode: a new OPEN item, the completed one stays
-  await saveFindings(A, { created: [], updated: [], resolved: [{ ...(ac1Finding as VmFinding), status: 'RESOLVED', resolvedAt: '2025-06-01T00:00:00.000Z', resolvedRunId: ac3Id }], sightings: [], vulnIds: [] }, null);
+  await saveFindings(A, { created: [], updated: [], resolved: [{ ...(ac1Finding as VmFinding), status: 'RESOLVED', resolvedAt: '2025-06-01T00:00:00.000Z', resolvedRunId: ac3Id }], sightings: [], vulnIds: [], held: { hosts: 0, findings: 0 } }, null);
   await acRun('ac-src', [{ ...acHost('ac1', ['CVE-2024-0950']), findings: [{ vuln_id: 'CVE-2024-0950', severity: 'CRITICAL', detected_at: '2025-07-01T00:00:00Z' }] }, acHost('ac2', ['CVE-2024-0951'])], '2026-10-24T00:00:00Z');
   const ac4Items = await itemsOf(defaultA.id, ac1Finding.id);
   assert(
@@ -959,7 +973,8 @@ async function run() {
   assert((await itemsOf(defaultA.id, ac6Finding.id)).length === 1 && ac6a.value.status === 202, 'AC6 setup: the overdue finding has one item', ac6a.value.status);
   const savedAutocreate = process.env.VM_POAM_AUTOCREATE;
   process.env.VM_POAM_AUTOCREATE = 'off';
-  const ac6b = await acRun('ac-src6', [acHost('ac6', [])], '2026-10-27T00:00:00Z');
+  await acRun('ac-src6', [acHost('ac6', [])], '2026-10-27T00:00:00Z'); // held (#303)
+  const ac6b = await acRun('ac-src6', [acHost('ac6', [])], '2026-10-27T12:00:00Z');
   if (savedAutocreate === undefined) delete process.env.VM_POAM_AUTOCREATE;
   else process.env.VM_POAM_AUTOCREATE = savedAutocreate;
   const ac6Id = (ac6b.value.body as Json).run_id as string;
@@ -974,9 +989,10 @@ async function run() {
   await acRun('ac-src5', [acHost('ac5', ['CVE-2024-0955']), acHost('ac7', ['CVE-2024-0958'])], '2026-10-29T00:00:00Z');
   const ac7Finding = await acFinding('host-ac7');
   assert(ac5a.value.status === 202 && (await itemsOf(defaultA.id, ac5Finding.id)).length === 1 && (await itemsOf(progOld.id, ac7Finding.id)).length === 1, 'AC5 setup: one item in the default program, one in the second program', [(await itemsOf(defaultA.id, ac5Finding.id)).length, (await itemsOf(progOld.id, ac7Finding.id)).length]);
+  await acRun('ac-src5', [acHost('ac5', []), acHost('ac7', [])], '2026-10-30T00:00:00Z'); // held (#303): the first empty report closes nothing, before the target changes
   assert((await call('PUT', `/tenants/${A}/programs/${progNew.id}/vm-target`, ownerA, A)).status === 200, 'AC5 setup: a third program becomes the target');
   assert((await call('POST', `/tenants/${A}/programs/${progOld.id}/archive`, ownerA, A)).status === 200, 'AC5 setup: the second program is archived');
-  const ac5Close = await acRun('ac-src5', [acHost('ac5', []), acHost('ac7', [])], '2026-10-30T00:00:00Z');
+  const ac5Close = await acRun('ac-src5', [acHost('ac5', []), acHost('ac7', [])], '2026-10-30T12:00:00Z');
   const ac5CloseId = (ac5Close.value.body as Json).run_id as string;
   assert((await acFinding('host-ac5')).status === 'RESOLVED' && (await acFinding('host-ac7')).status === 'RESOLVED', 'AC5 the closing scan resolves both findings');
   assert((await itemsOf(defaultA.id, ac5Finding.id))[0].status === 'COMPLETED', 'AC5 the item in the previous target (default, not archived) is completed', (await itemsOf(defaultA.id, ac5Finding.id))[0].status);

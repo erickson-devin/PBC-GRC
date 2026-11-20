@@ -38,4 +38,12 @@ export const MetMismatchNotice: React.FC<MetMismatchNoticeProps> = ({ count, can
   );
 };
 
+/** The one-line pointer on the overview (#305), modelled on the objective update pointer. A region, not an alert. */
+export const MetMismatchOverviewNotice: React.FC<{ text: string; onOpenMatrix: () => void }> = ({ text, onOpenMatrix }) => (
+  <div role="region" aria-label="Met controls with open objectives" className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+    <div className="flex items-start gap-3 min-w-0"><ListChecks className="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true" /><p className="text-slate-300 leading-relaxed">{text}</p></div>
+    <button type="button" onClick={onOpenMatrix} className="btn-secondary text-xs px-3.5 py-2 shrink-0">Review in the control matrix</button>
+  </div>
+);
+
 export default MetMismatchNotice;

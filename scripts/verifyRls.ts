@@ -17,6 +17,7 @@
  *   8. program isolation (the RESTRICTIVE rls_<table>_program_isolation policies on the six program-scoped tables): a tenant cannot see another tenant's programs, a program cannot take another tenant's program id (composite foreign key), program B can neither read, update nor insert into program A's rows (and no program context sees and writes nothing), the same control id is one row per program (the old unique key is gone), the policies are in the catalog, every legacy table is finalized (program_id NOT NULL, no program_required check) or still waiting for a backfill (nullable, NOT VALID check), and an upgrade of legacy rows without a program (isolated schema rls_verify_upgrade, SKIPPED when CREATE SCHEMA is refused): visible under the default program only until migrateTenantToPrograms adopts them (8h: the schema step of initDb tolerates those rows, finalizes program_id once they are adopted, and never adds the check back). 8f: the same program isolation for control_objectives and control_objective_events (assessment objectives; new tables with program_id NOT NULL, so no program_required check). 8i: program_events isolation (same pattern as 8f, no foreign key, kind CHECK), the programs_scoping_check / programs_scoping_privacy_check / programs_scoping_framework_check refusals, and the one VM target per tenant (unq_programs_vm_target, programs_vm_target_check). 8j: program_assets isolation (boundary asset membership; same pattern as 8i), the two composite foreign keys (another tenant's asset or program is refused), and the cascade from an asset delete through FORCE RLS. 8l: program_ssp_metadata isolation (SSP metadata, issue #84; same pattern as 8j), the composite foreign key to programs, the primary key (one row per program), the shape CHECK (known keys, string values, 262 144 bytes), the first-writer race of writeSspMetadata, the tenants.stack_profile CHECK, and the cascade from a program delete.
  *   7b. account events (issue #40) and sessions (issue #163): local_sessions and local_account_events are global tables without row security; the sessions foreign key cascades, the sid / revoke-reason CHECKs refuse bad rows, a revoke changes exactly one row, and pruning removes only sessions that expired more than a day ago; the event table is append-only for the application role (UPDATE, DELETE and TRUNCATE refused with 42501), refuses an "@" in details and an action outside the list, and only the retention sweep can delete (the test event is backdated about 4000 days so no real event matches).
  *   9. objective catalog update (issue #273): the one-time migration of stored CMMC objective answers (ensureObjectiveCatalogCurrent) on PostgreSQL. control_objectives.objective_catalog_rev exists and is nullable; two concurrent calls change a legacy row once (SELECT ... FOR UPDATE: one 'catalog-update' event, hashes and lengths only), keep narrative, evidence and Not met answers, re-roll up the Met control, stamp the revision, leave the updated_at of unchanged rows alone, and a third call does nothing; another program of the tenant, an archived program and a non-CMMC framework are not touched.
+ *   10. objective roll-up (issue #307): writeObjective with framework CMMC_L2 lowers one objective of a Met control and the control is lowered in the same transaction. The event CHECK on control_assessment_events.source accepts 'objective-rollup', exactly one such event exists (MET -> the rolled-up status, notes unchanged and kept only as a digest), another program's Met control is untouched, and the same write under a non-CMMC framework lowers nothing.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 import { createHash } from 'node:crypto';
@@ -711,6 +712,7 @@ async function main() {
   await verifyAccountEvents();
   await verifyProgramIsolation();
   await verifyCatalogUpdate();
+  await verifyObjectiveRollup();
 }
 
 async function verifyDiscovery() {
@@ -1872,6 +1874,85 @@ async function verifyCatalogUpdate() {
       await queryWithProgram(scope, 'DELETE FROM control_assessments WHERE program_id = $1', [id]).catch(() => undefined);
     }
     await queryWithTenant(T, "DELETE FROM programs WHERE name LIKE 'rls_verify_p9_%'", []).catch(() => undefined);
+  }
+}
+
+/**
+ * 10. A CMMC objective write lowers a Met control that its objectives no longer support (issue #307), on PostgreSQL, in the writer's own transaction.
+ * Objectives and Met controls are seeded with SQL; the expected status comes from the pure rule (checkControlStatusWrite). Messages name ids and
+ * statuses only, never a note. Every row, event and program it creates is removed.
+ */
+async function verifyObjectiveRollup() {
+  console.log('\n--- 10. Objective roll-up (a Met control is lowered by the objective write that breaks it) ---');
+  const { writeObjective } = await import('../server/controlObjectives');
+  const { checkControlStatusWrite } = await import('../src/data/cmmcGuide/controlStatusGuard');
+  const { cmmcNumberOf, guideObjectives } = await import('../src/data/cmmcGuide/guide');
+  const T = TENANT_X;
+  const CONTROL = 'AC.L2-3.1.5';
+  const NOTES = 'rls_verify_notes_10';
+  const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+  const letters = guideObjectives(cmmcNumberOf(CONTROL)!, 'CMMC_L2').map((g) => g.letter);
+  const objectiveIds = letters.map((l) => CONTROL + '[' + l + ']');
+  const insertObjective = 'INSERT INTO control_objectives (tenant_id, program_id, control_id, objective_id, status, narrative, linked_evidence_ids, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8)';
+  const insertControl = 'INSERT INTO control_assessments (tenant_id, control_id, status, implementation_notes, program_id, updated_by) VALUES ($1, $2, $3, $4, $5, $6)';
+  const who = { source: 'human' as const, actor: 'rls_verify_actor', userId: 'rls_verify_user' };
+  const ids: string[] = [];
+  const mkMet = async (name: string): Promise<ProgramScope> => {
+    const id = await mkProgram(T, 'rls_verify_p10_' + name);
+    ids.push(id);
+    const scope = { tenantId: T, programId: id };
+    for (const o of objectiveIds) await queryWithProgram(scope, insertObjective, [T, id, CONTROL, o, 'MET', '', '{}', 'rls_verify_actor']);
+    await queryWithProgram(scope, insertControl, [T, CONTROL, 'MET', NOTES, id, 'rls_verify_actor']);
+    return scope;
+  };
+  const controlOf = async (scope: ProgramScope) =>
+    (await queryWithProgram(scope, 'SELECT status, implementation_notes FROM control_assessments WHERE tenant_id = $1 AND program_id = $2 AND control_id = $3', [scope.tenantId, scope.programId, CONTROL])).rows[0];
+  const rollupEvents = async (scope: ProgramScope) =>
+    (await queryWithProgram(scope, "SELECT * FROM control_assessment_events WHERE tenant_id = $1 AND program_id = $2 AND source = 'objective-rollup'", [scope.tenantId, scope.programId])).rows;
+  try {
+    const primary = await mkMet('primary');
+    const other = await mkMet('other');
+    const nist = await mkMet('nist');
+    const lowered = { ...Object.fromEntries(objectiveIds.map((o) => [o, 'MET' as const])), [objectiveIds[0]]: 'NOT_MET' as const };
+    const decision = checkControlStatusWrite(CONTROL, 'MET', lowered, 'CMMC_L2');
+    check(!decision.allowed && letters.length >= 2, '10a. the pure rule refuses Met once one objective is Not met (the expected value comes from it)', JSON.stringify(decision));
+    const expected = decision.allowed ? 'MET' : decision.rolledUp;
+
+    const result = await writeObjective(primary, { objectiveId: objectiveIds[0], controlId: CONTROL, status: 'NOT_MET' }, who, { framework: 'CMMC_L2' });
+    check(result.changed && result.controls.length === 1 && result.controls[0].controlId === CONTROL && result.controls[0].status === expected, '10b. writeObjective reports the one control it lowered, at the rolled-up status ' + expected, JSON.stringify(result.controls));
+    const row = await controlOf(primary);
+    check(row?.status === expected && row?.implementation_notes === NOTES, '10b. the stored control is ' + expected + ' and its notes are unchanged', 'status ' + row?.status);
+
+    const events = await rollupEvents(primary);
+    const ev = events[0];
+    check(events.length === 1, "10c. the CHECK on control_assessment_events.source accepts 'objective-rollup', and exactly one such event exists", 'events ' + events.length);
+    check(
+      ev !== undefined && ev.old_status === 'MET' && ev.new_status === expected && ev.notes_changed === false && ev.old_notes_sha256 === sha(NOTES) && ev.new_notes_sha256 === sha(NOTES) && ev.actor_user_id === who.userId && !JSON.stringify(ev).includes(NOTES),
+      '10c. the event records MET -> ' + expected + ' under the signed-in user, notes unchanged and stored only as a digest',
+      ev ? ev.old_status + ' -> ' + ev.new_status : 'no event'
+    );
+
+    const again = await writeObjective(primary, { objectiveId: objectiveIds[0], controlId: CONTROL, status: 'IN_PROGRESS' }, who, { framework: 'CMMC_L2' });
+    check(again.controls.length === 0 && (await rollupEvents(primary)).length === 1, '10d. a second change lowers nothing more (the control is no longer Met) and adds no event');
+
+    const otherRow = await controlOf(other);
+    check(otherRow?.status === 'MET' && (await rollupEvents(other)).length === 0, "10e. another program's Met control is untouched, with no rollup event", 'status ' + otherRow?.status);
+
+    const nistResult = await writeObjective(nist, { objectiveId: objectiveIds[0], controlId: CONTROL, status: 'NOT_MET' }, who, { framework: 'NIST_800_53_REV5' });
+    const nistRow = await controlOf(nist);
+    check(nistResult.changed && nistResult.controls.length === 0 && nistRow?.status === 'MET' && (await rollupEvents(nist)).length === 0, '10f. the same write under a non-CMMC framework lowers nothing', 'status ' + nistRow?.status);
+  } catch (err) {
+    // the SQL state only: a message can carry a row value
+    check(false, '10. the objective roll-up test ran to the end', 'code ' + String((err as { code?: string }).code ?? (err as Error).name));
+  } finally {
+    for (const id of ids) {
+      const scope = { tenantId: T, programId: id };
+      await queryWithProgram(scope, 'DELETE FROM control_objective_events WHERE program_id = $1', [id]).catch(() => undefined); // no foreign key: the history outlives its program
+      await queryWithProgram(scope, 'DELETE FROM control_assessment_events WHERE program_id = $1', [id]).catch(() => undefined);
+      await queryWithProgram(scope, 'DELETE FROM control_objectives WHERE program_id = $1', [id]).catch(() => undefined);
+      await queryWithProgram(scope, 'DELETE FROM control_assessments WHERE program_id = $1', [id]).catch(() => undefined);
+    }
+    await queryWithTenant(T, "DELETE FROM programs WHERE name LIKE 'rls_verify_p10_%'", []).catch(() => undefined);
   }
 }
 

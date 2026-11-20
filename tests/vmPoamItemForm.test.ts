@@ -222,6 +222,10 @@ console.log('--- F15 source pins ---');
   }
   assert(!/console\.|localStorage|sessionStorage|dangerouslySetInnerHTML/.test(dialog), 'F15 the dialog has no console, browser storage or raw HTML');
   assert(dialog.includes('e.stopPropagation()') && dialog.includes("e.key === 'Escape'"), 'F15 Escape inside the discard group only cancels the confirmation');
+  assert(
+    dialog.includes('ownerRef.current?.focus({ preventScroll: true })') && dialog.split('autoFocus').length - 1 === 1 && dialog.includes('autoFocus onClick'),
+    'F15 the Owner field is focused by an effect (after the focus trap), and only the Keep editing button uses the focus attribute'
+  );
   const form = read('src/data/reports/vmPoamItemForm.ts');
   assert(!/console\.|localStorage|sessionStorage|ApiClient/.test(form), 'F15 the form helpers have no console, storage or ApiClient');
 }

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Download,
@@ -52,13 +52,16 @@ export const Header: React.FC<HeaderProps> = () => {
   }, [activeFramework, frameworkControls, state.controls, state.sspMetadata]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // The import result, shown in a polite status region instead of a blocking dialog; another tenant's result does not carry over
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  useEffect(() => { setImportNotice(null); }, [currentTenant.id]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const success = await importAssessmentJSON(file);
       if (success) {
-        alert(importResultMessage(currentTenant.name, importControlsLowered()));
+        setImportNotice(importResultMessage(currentTenant.name, importControlsLowered()));
       }
       e.target.value = '';
     }
@@ -215,6 +218,18 @@ export const Header: React.FC<HeaderProps> = () => {
 
       {/* Browser-only tenants: their notes have no other copy (persistent, not dismissable) */}
       <BrowserOnlyNotesBanner />
+
+      {/* The result of a JSON import (always mounted so a screen reader announces it) */}
+      <div role="status" aria-live="polite" className="max-w-7xl mx-auto">
+        {importNotice && (
+          <div className="mt-2 flex items-start justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs">
+            <p className="min-w-0 text-emerald-200">{importNotice}</p>
+            <button type="button" onClick={() => setImportNotice(null)} className="shrink-0 px-2 py-1 text-xs font-semibold text-slate-400 hover:text-white">
+              Dismiss
+            </button>
+          </div>
+        )}
+      </div>
     </header>
   );
 };

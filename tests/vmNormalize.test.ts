@@ -126,6 +126,7 @@ interface Opts {
   others?: OtherSourceReport[];
   kev?: string[];
   sla?: VmSlaConfig;
+  emptyBefore?: string[];
 }
 const apply = (o: Opts) => {
   const input: ApplyRunInput = {
@@ -135,6 +136,7 @@ const apply = (o: Opts) => {
     existing: o.existing ?? [],
     sightedBySource: new Set(o.sighted ?? []),
     otherSourceReports: o.others ?? [],
+    emptyBefore: new Set(o.emptyBefore ?? []),
     kev: new Set(o.kev ?? []),
     sla: o.sla ?? SLA,
     newId,
@@ -229,7 +231,7 @@ const other = (o: Partial<OtherSourceReport> = {}): OtherSourceReport => ({
 }
 {
   const prev = finding();
-  const r = apply({ run: runOf('run-2', R2), existing: [prev], sighted: [prev.id], hosts: hostA([]) });
+  const r = apply({ run: runOf('run-2', R2), existing: [prev], sighted: [prev.id], hosts: hostA([]), emptyBefore: [A] });
   const res = r.resolved[0];
   assert(r.resolved.length === 1 && res.status === 'RESOLVED', 'T10 absent finding is RESOLVED', r.resolved);
   assert(res.resolvedAt === R2 && res.resolvedRunId === 'run-2', 'T10 resolved_at = R2.receivedAt, resolved_run_id run-2', res);
@@ -255,7 +257,7 @@ const other = (o: Partial<OtherSourceReport> = {}): OtherSourceReport => ({
   // The finding was sighted by this source and SRC2's latest report of the asset still lists it: this source's run does not close it.
   const prev = finding();
   const run = runOf('run-2', R2, SRC);
-  const close = (others: OtherSourceReport[]) => apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([]), others });
+  const close = (others: OtherSourceReport[]) => apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([]), others, emptyBefore: [A] });
   let r = close([other()]);
   assert(r.resolved.length === 0 && r.updated.length === 0, 'T13 another source still lists it -> stays OPEN', r);
   r = close([other({ findingIds: new Set() })]);
@@ -272,6 +274,28 @@ const other = (o: Partial<OtherSourceReport> = {}): OtherSourceReport => ({
   assert(r.resolved.length === 1, 'T13g a report of the closing source itself never blocks', r);
   r = close([other({ receivedAt: R3 })]);
   assert(r.resolved.length === 0, 'T13h a report newer than the closing run blocks', r);
+}
+// ---------- #303: a host reported with no findings closes nothing until the next report confirms ----------
+{
+  const prev = finding();
+  const run = runOf('run-2', R2);
+  let r = apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([]), emptyBefore: [] });
+  assert(r.resolved.length === 0 && r.held.hosts === 1 && r.held.findings === 1, 'E1 empty host, previous report not empty -> held, nothing resolved', r);
+  r = apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([]), emptyBefore: [A] });
+  assert(r.resolved.length === 1 && r.held.hosts === 0 && r.held.findings === 0, 'E2 empty host confirmed by an empty previous report -> resolved', r);
+  r = apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([nfind({ vulnId: 'CVE-2026-0002' })]), emptyBefore: [] });
+  assert(r.resolved.length === 1 && r.resolved[0].id === prev.id && r.held.hosts === 0, 'E3 a host that still reports a different finding resolves the missing one', r);
+  const accepted = finding({ status: 'RISK_ACCEPTED', justification: 'because', decidedBy: 'dev', decidedAt: R1 });
+  r = apply({ run, existing: [accepted], sighted: [accepted.id], hosts: hostA([]), emptyBefore: [] });
+  assert(r.resolved.length === 0 && r.held.hosts === 0 && r.held.findings === 0, 'E4 only a RISK_ACCEPTED finding -> nothing held', r);
+  const second = finding({ id: 'f-second', vulnId: 'CVE-2026-0003' });
+  r = apply({ run, existing: [prev, second], sighted: [prev.id, second.id], hosts: hostA([]), emptyBefore: [] });
+  assert(r.resolved.length === 0 && r.held.hosts === 1 && r.held.findings === 2, 'E5 two open findings on one empty host -> held {1, 2}', r);
+  r = apply({ run, existing: [prev], sighted: [prev.id], hosts: hostA([]), others: [other()], emptyBefore: [] });
+  assert(r.resolved.length === 0 && r.held.hosts === 0 && r.held.findings === 0, 'E6 finding held by another source -> not counted as held', r);
+  const later = finding({ lastSeenAt: R3 });
+  r = apply({ run, existing: [later], sighted: [later.id], hosts: hostA([]), emptyBefore: [] });
+  assert(r.resolved.length === 0 && r.held.hosts === 0 && r.held.findings === 0, 'E7 finding last seen after the run -> not counted as held', r);
 }
 for (const [t, status] of [['T14', 'RISK_ACCEPTED'], ['T15', 'FALSE_POSITIVE']] as const) {
   const prev = finding({ status, justification: 'because', decidedBy: 'dev', decidedAt: R1 });
@@ -423,6 +447,7 @@ for (const [t, status] of [['T20', 'RISK_ACCEPTED'], ['T21', 'FALSE_POSITIVE']] 
     existing: [open, other, accepted, open2],
     sighted: ['f-open', 'f-acc', 'f-open2'],
     hosts: hostA([]),
+    emptyBefore: [A],
   });
   const ids = r.resolved.map((f) => f.id).sort();
   assert(eq(ids, ['f-open', 'f-open2']), 'T27 host with zero findings closes every OPEN finding of that source on that asset', ids);

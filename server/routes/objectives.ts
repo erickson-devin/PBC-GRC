@@ -91,6 +91,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 /**
  * PUT /api/v1/objectives
  * Body { objectives: [{ objectiveId, controlId, status?, narrative?, linkedEvidenceIds? }] }: up to 500 objectives, all or none.
+ * In a CMMC program, a Met control that the new statuses leave short of Met is lowered in the same transaction: `controls` lists them (ids, status, stamp, who; never notes).
  */
 router.put('/', async (req: Request, res: Response): Promise<void> => {
   const inputs = listFrom(req, res, MAX_OBJECTIVE_BULK);
@@ -98,7 +99,7 @@ router.put('/', async (req: Request, res: Response): Promise<void> => {
   if (!(await ensureControls(req, res, inputs))) return;
   try {
     await catalogCurrent(req);
-    const result = await writeObjectivesBulk(scopeOf(req), inputs, actorOf(req));
+    const result = await writeObjectivesBulk(scopeOf(req), inputs, actorOf(req), req.program?.frameworkId);
     res.json(result);
   } catch (err: unknown) {
     fail(res, req, 'updating objectives', err);
@@ -116,8 +117,8 @@ router.post('/import', async (req: Request, res: Response): Promise<void> => {
   if (!(await ensureControls(req, res, inputs))) return;
   try {
     await catalogCurrent(req);
-    const results = await importObjectives(scopeOf(req), inputs, actorOf(req));
-    res.json({ results });
+    const { results, controls } = await importObjectives(scopeOf(req), inputs, actorOf(req), req.program?.frameworkId);
+    res.json({ results, controls });
   } catch (err: unknown) {
     fail(res, req, 'importing objectives', err);
   }
@@ -194,8 +195,8 @@ router.put('/:objectiveId', async (req: Request, res: Response): Promise<void> =
   if (!(await ensureControlInFrameworkPolicy(req, res, item.controlId))) return;
   try {
     await catalogCurrent(req);
-    const { record, changed } = await writeObjective(scopeOf(req), item, actorOf(req), { expectedUpdatedAt: expected.value });
-    res.json({ objective: record, changed });
+    const { record, changed, controls } = await writeObjective(scopeOf(req), item, actorOf(req), { expectedUpdatedAt: expected.value, framework: req.program?.frameworkId });
+    res.json({ objective: record, changed, controls });
   } catch (err: unknown) {
     if (err instanceof StaleWriteError) {
       res.status(409).json({ error: 'This objective was saved by someone else after you loaded it.', code: 'stale_write', current: err.current });

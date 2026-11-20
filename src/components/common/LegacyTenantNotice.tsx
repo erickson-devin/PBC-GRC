@@ -14,6 +14,31 @@ interface LegacyTenantNoticeProps {
   onMoved?: (newTenantId: string) => void;
 }
 
+export type MoveToServerResult = { tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; controlsLowered: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number };
+
+/** What the move did, with a warning for everything that stayed in this browser. A status region; Dismiss is shown only when the caller can clear it. */
+export const MoveResultNotice: React.FC<{ moved: MoveToServerResult; onDismiss?: () => void }> = ({ moved, onDismiss }) => (
+  <div role="status" className="flex items-start gap-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">
+    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+    <span>
+      <strong className="text-emerald-300">Moved to the server.</strong> Your assessment
+      {moved.assetsMoved > 0 ? `, ${moved.assetsMoved} asset${moved.assetsMoved === 1 ? '' : 's'}` : ''}
+      {moved.evidenceFilesMoved > 0 ? ` and ${moved.evidenceFilesMoved} evidence file${moved.evidenceFilesMoved === 1 ? '' : 's'}` : ''} now live
+      under the server-assigned tenant. You can invite your team from Team settings.
+      {moved.assetsFailed > 0 ? ` Warning: ${moved.assetsFailed} asset${moved.assetsFailed === 1 ? '' : 's'} could not be moved; ${moved.assetsFailed === 1 ? 'it stays' : 'they stay'} in this browser and you can retry from the asset inventory.` : ''}
+      {moved.evidenceFailed > 0 ? ` Warning: ${moved.evidenceFailed} evidence file${moved.evidenceFailed === 1 ? '' : 's'} could not be uploaded; ${moved.evidenceFailed === 1 ? 'it stays' : 'they stay'} in this browser and ${moved.evidenceFailed === 1 ? 'is' : 'are'} listed under "Only in this browser" in the evidence vault.` : ''}
+      {moved.controlsFailed > 0 ? ` Warning: ${moved.controlsFailed} control answer${moved.controlsFailed === 1 ? ' could' : 's could'} not be saved to the server; ${moved.controlsFailed === 1 ? 'it stays' : 'they stay'} in this browser and you can retry from the control matrix.` : ''}
+      {movedLoweredNote(moved.controlsLowered)}
+      {moved.registryFieldsFailed > 0 ? ' Warning: the stack profile or the boundary text could not be saved to the server; it stays in this browser and is sent again the next time a Tenant Owner or Admin opens the tenant.' : ''}
+    </span>
+    {onDismiss && (
+      <button type="button" onClick={onDismiss} aria-label="Dismiss the move result" className="ml-auto shrink-0 px-2 py-1 text-xs font-semibold text-slate-400 hover:text-white">
+        Dismiss
+      </button>
+    )}
+  </div>
+);
+
 /**
  * Shown for a live tenant that exists only in this browser (created before tenants lived on the server).
  * "Move to server" creates it on the server, ports its assessment and evidence files to the new id, and unlocks team
@@ -23,28 +48,11 @@ export const LegacyTenantNotice: React.FC<LegacyTenantNoticeProps> = ({ tenant, 
   const { migrateLocalTenantToServer } = useTenant();
   const [stage, setStage] = useState<'idle' | 'confirm' | 'moving' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [moved, setMoved] = useState<{ tenantId: string; evidenceFilesMoved: number; evidenceFailed: number; controlsFailed: number; controlsLowered: number; assetsMoved: number; assetsFailed: number; registryFieldsFailed: number } | null>(null);
+  const [moved, setMoved] = useState<MoveToServerResult | null>(null);
 
   const isLegacy = !tenant.serverBacked && tenant.isConfigured !== false;
 
-  if (stage === 'done' && moved) {
-    return (
-      <div role="status" className="flex items-start gap-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">
-        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-        <span>
-          <strong className="text-emerald-300">Moved to the server.</strong> Your assessment
-          {moved.assetsMoved > 0 ? `, ${moved.assetsMoved} asset${moved.assetsMoved === 1 ? '' : 's'}` : ''}
-          {moved.evidenceFilesMoved > 0 ? ` and ${moved.evidenceFilesMoved} evidence file${moved.evidenceFilesMoved === 1 ? '' : 's'}` : ''} now live
-          under the server-assigned tenant. You can invite your team from Team settings.
-          {moved.assetsFailed > 0 ? ` Warning: ${moved.assetsFailed} asset${moved.assetsFailed === 1 ? '' : 's'} could not be moved; ${moved.assetsFailed === 1 ? 'it stays' : 'they stay'} in this browser and you can retry from the asset inventory.` : ''}
-          {moved.evidenceFailed > 0 ? ` Warning: ${moved.evidenceFailed} evidence file${moved.evidenceFailed === 1 ? '' : 's'} could not be uploaded; ${moved.evidenceFailed === 1 ? 'it stays' : 'they stay'} in this browser and ${moved.evidenceFailed === 1 ? 'is' : 'are'} listed under "Only in this browser" in the evidence vault.` : ''}
-          {moved.controlsFailed > 0 ? ` Warning: ${moved.controlsFailed} control answer${moved.controlsFailed === 1 ? ' could' : 's could'} not be saved to the server; ${moved.controlsFailed === 1 ? 'it stays' : 'they stay'} in this browser and you can retry from the control matrix.` : ''}
-          {movedLoweredNote(moved.controlsLowered)}
-          {moved.registryFieldsFailed > 0 ? ' Warning: the stack profile or the boundary text could not be saved to the server; it stays in this browser and is sent again the next time a Tenant Owner or Admin opens the tenant.' : ''}
-        </span>
-      </div>
-    );
-  }
+  if (stage === 'done' && moved) return <MoveResultNotice moved={moved} />;
   if (!isLegacy) return null;
 
   const move = async () => {

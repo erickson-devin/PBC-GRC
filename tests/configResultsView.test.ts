@@ -6,6 +6,9 @@ import {
   countSummary, failingAssetNames, groupResultCounts, noSuggestionsMessage, outsideNote, ruleSummary, shownCaption, sortScanRows,
   sortSuggestions, splitByProgramControls, statusLabel, suggestionLabel, suggestionStatus, unmappedNote, unsupportedMessage,
 } from '../src/data/telemetry/configResultsView';
+import { objectivesOpenMessage } from '../src/data/telemetry/configResultsView';
+import { checkControlStatusWrite } from '../src/data/cmmcGuide/controlStatusGuard';
+import { guideObjectives } from '../src/data/cmmcGuide/guide';
 import type { ControlDecisionOutcome } from '../src/data/telemetry/configResultsView';
 import type { VmConfigScan, VmConfigSuggestion, VmConfigSuggestionValue } from '../src/types/vm';
 
@@ -59,6 +62,32 @@ function main() {
       applyBlock({ suggestion: 'MET', currentStatus: 'IN_PROGRESS', ...ok }) === null &&
       applyBlock({ suggestion: 'REVIEW', currentStatus: 'MET', canEdit: false, archived: true, controlsLoaded: false }) === 'review',
     'V5d applyBlock, in order'
+  );
+  // #301: a Met suggestion is not offered where the objectives rule (#292) would refuse it
+  const refusal = { open: 4, total: 6 };
+  assert(
+    applyBlock({ suggestion: 'MET', currentStatus: 'IN_PROGRESS', ...ok, metRefusal: refusal }) === 'objectives_open' &&
+      applyBlock({ suggestion: 'NOT_MET', currentStatus: 'IN_PROGRESS', ...ok, metRefusal: refusal }) === null &&
+      applyBlock({ suggestion: 'MET', currentStatus: 'IN_PROGRESS', ...ok, objectivesLoaded: false }) === 'objectives_loading' &&
+      applyBlock({ suggestion: 'MET', currentStatus: 'IN_PROGRESS', ...ok, objectivesLoaded: true, metRefusal: null }) === null &&
+      applyBlock({ suggestion: 'MET', currentStatus: 'MET', ...ok, metRefusal: refusal }) === 'matches' &&
+      applyBlock({ suggestion: 'MET', currentStatus: 'IN_PROGRESS', ...ok, canEdit: false, metRefusal: refusal }) === 'read_only',
+    'V5d2 applyBlock: Met refused by the objectives rule, objectives still loading, precedence kept'
+  );
+  assert(
+    objectivesOpenMessage(4, 6) === 'Suggests Met. 4 of 6 objectives are still open: answer them in the control.' &&
+      objectivesOpenMessage(1, 6) === 'Suggests Met. 1 of 6 objectives is still open: answer it in the control.' &&
+      objectivesOpenMessage(1, 1) === 'Suggests Met. 1 of 1 objective is still open: answer it in the control.' &&
+      CONFIG_RESULTS_COPY.objectivesLoading === 'Met can be offered once the objectives of this control are loaded.',
+    'V5d3 objectivesOpenMessage and the loading copy'
+  );
+  const realRefusal = checkControlStatusWrite('AC.L2-3.1.1', 'MET', {}, 'CMMC_L2');
+  const guideCount = guideObjectives('3.1.1', 'CMMC_L2').length;
+  assert(
+    !realRefusal.allowed && guideCount > 0 && realRefusal.open === guideCount && realRefusal.total === guideCount &&
+      applyBlock({ suggestion: 'MET', currentStatus: 'NOT_STARTED', ...ok, metRefusal: { open: realRefusal.open, total: realRefusal.total } }) === 'objectives_open' &&
+      checkControlStatusWrite('AC-2', 'MET', {}, 'NIST_800_53').allowed,
+    'V5d4 the real rule refuses Met with no answers (open === total === guide objectives) and a NIST control is allowed'
   );
   assert(
     countSummary({ inScope: 4, evaluated: 3, failing: 1, passing: 2, error: 0, unconfirmed: 1 }) === '1 failing, 2 passing, 0 with errors; 3 of 4 in-scope assets evaluated; 1 unclassified asset included' &&
@@ -156,7 +185,11 @@ function main() {
     !exists('src/data/telemetry/assetTelemetryEngine.ts') && !ctx.includes('aggregateAssetTelemetry') && !ctx.includes('refreshBoundaryTelemetry'),
     'V3 the fleet engine is gone and the context no longer rolls up the fleet'
   );
-  assert(!view.includes('dangerouslySetInnerHTML') && !view.includes('innerHTML'), 'V4 the view never injects HTML: exporter strings are text nodes');
+  assert(
+    view.includes('checkControlStatusWrite(') && view.includes('objectivesReady') && view.includes('objectivesOpenMessage(') && view.includes('setSelectedControlId(s.controlId)'),
+    'V1b the view asks the Met rule, waits for the objectives, and sends the person to the control to answer them'
+  );
+  assert(!view.includes('dangerouslySetInnerHTML') && !view.includes('innerHTML'), 'V4the view never injects HTML: exporter strings are text nodes');
   assert(
     view.includes('ApiClient.getConfigSuggestions(tenantId, programId)') && view.includes('}, [tenantId, programId, serverBacked, loadSuggestions]);') &&
       view.includes('ApiClient.listConfigScans(tenantId, {') && view.includes('}, [tenantId, serverBacked, loadScans]);'),

@@ -24,6 +24,7 @@ What is supported **today**:
 | --- | --- | --- |
 | Wazuh 4.x | **supported** (first adapter) | vulnerability state per agent, daily push, findings lifecycle, POA&M drafts, snapshot evidence |
 | Any SCAP scanner (OpenSCAP, SCC, STIG Viewer output) | **supported** | configuration results from XCCDF / ARF files, per-control suggestions |
+| Wazuh SCA | **dry-run tested, unverified live** (issue #298) | SCA policy results per agent as configuration results (section 2.8), no control suggestions yet |
 | Action1 | **dry-run tested, unverified live** (issue #105 phase 1) | missing-update (patch) findings per endpoint, same lifecycle as Wazuh |
 | SentinelOne | **dry-run tested, unverified live** (issue #217) | application vulnerabilities (CVE per application per endpoint), same lifecycle as Wazuh |
 
@@ -245,6 +246,30 @@ When a connection fails, the exporter (and `check`) appends a `hint:` to the err
 | PBC-GRC is reachable: HTTP 302 (any 3xx) | redirect refused; set PBC_URL to the final https URL |
 | contract matches the server: the server's ingest contract differs | upgrade the exporter or the server so both match (--print-contract-sha256 shows this exporter's) |
 | Warning: PBC_ALLOW_INSECURE_TRANSPORT is set | PBC_ALLOW_INSECURE_TRANSPORT is set but every URL is https: remove it, it only silences a safety check |
+
+### 2.8 Wazuh SCA results (dry-run tested, unverified live)
+
+Wazuh's Security Configuration Assessment (SCA) checks each agent against policies such as the CIS benchmarks. The
+exporter can push those results as configuration results (issue #298), next to the vulnerability findings:
+
+```
+sudo -u pbc-vm-exporter .venv/bin/python -m pbc_vm_exporter --env-file /etc/pbc-vm-exporter/env.sca --source wazuh-sca
+```
+
+* **A separate env file and a separate label.** Use a file such as `/etc/pbc-vm-exporter/env.sca` with its own
+  `PBC_SOURCE_LABEL` (for example `wazuh-sca-prod`), different from the label of the vulnerability run. A label belongs to
+  one source kind and the server refuses a label that belongs to another one: the vulnerability run is kind `WAZUH`, this
+  run is kind `SCAP`. The same PBC-GRC token can be used. Schedule it as its own timer (section 2.6).
+* **A read-only manager API user** (port 55000, the manager API, not the indexer): a role with `sca:read` and
+  `agent:read` only. Its name and password go into `WAZUH_API_URL`, `WAZUH_API_USER` and `WAZUH_API_PASSWORD` in that env
+  file, with `WAZUH_CA_BUNDLE` as in section 2.2. The indexer settings are not used and `--mode` is refused.
+* `check --source wazuh-sca` tests PBC-GRC and the manager API login. `--dry-run --source wazuh-sca` reads Wazuh and
+  prints what would be sent.
+* The host name is the Wazuh agent name, so the results land on the same asset the vulnerability run created. Agents that
+  never connected, and agents with no SCA policy, are skipped; if no agent has results the run stops and sends nothing.
+* **Unverified against a live Wazuh manager.** The SCA endpoints and field names are assumed from the Wazuh 4.x
+  documentation; the first live run must confirm them (the field map is in the exporter README, section 10e). SCA
+  checks produce no control suggestions yet.
 
 ## 3. Configuration results from any SCAP scanner (supported today)
 

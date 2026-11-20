@@ -15,3 +15,20 @@ export function matrixEmptyFilterMessage(f: { catalog: boolean; metMismatch: boo
   if (f.metMismatch) return 'The filter "Met with open objectives" is on. Clear it or the other filters to see more controls.';
   return 'Try clearing your search query or switching family and status filters.';
 }
+
+/**
+ * The matrix search reads objective narratives too (#305): control id -> that control's non-empty narratives, trimmed, lower-cased and joined
+ * with a newline. Held in memory only (narratives can be sensitive); the input is not changed.
+ */
+export function objectiveNarrativeIndex(objectives: Record<string, { controlId?: string; implementationNarrative?: string }> | undefined): Map<string, string> {
+  const byControl = new Map<string, string[]>();
+  for (const [id, o] of Object.entries(objectives ?? {})) {
+    const text = (o.implementationNarrative ?? '').trim().toLowerCase();
+    if (!text) continue;
+    const controlId = o.controlId || id.split('[')[0];
+    const list = byControl.get(controlId);
+    if (list) list.push(text);
+    else byControl.set(controlId, [text]);
+  }
+  return new Map([...byControl].map(([controlId, list]) => [controlId, list.join('\n')]));
+}

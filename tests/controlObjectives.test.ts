@@ -5,6 +5,7 @@ import { __objectiveCatalogRevForTests, __seedLegacyObjectivesForTests, latestHu
 import { listCatalogUpdateControlEvents, writeControlAssessment } from '../server/controlAssessments';
 import { cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import { buildCatalogUpdateChanges, CATALOG_UPDATE_ACTOR } from '../server/objectiveCatalogMigration';
+import { checkControlStatusWrite } from '../src/data/cmmcGuide/controlStatusGuard';
 import type { ObjectiveRecord, ObjectiveStatus } from '../src/types/controlObjectives';
 
 /**
@@ -401,6 +402,106 @@ async function run() {
   assert(a7.status !== 409 || a7.body?.code !== 'objectives_not_met', 'A7 an unknown control keeps its own answer (the framework check runs first)', [a7.status, a7.body]);
   const nistMet = await call('PUT', '/controls/AC-2', owner, T, { status: 'MET' }, NIST);
   assert(nistMet.status === 200 && (await controlOf(NIST, 'AC-2'))?.status === 'MET', 'A8 a NIST SP 800-53 control can still be set Met by hand (no objectives needed)', nistMet.body);
+
+  console.log('\n--- 19: an objective write lowers a Met control that its objectives no longer support (#307) ---');
+  const R_CTRL = 'AC.L2-3.1.5';
+  const rIds = gLetters.map((l) => `${R_CTRL}[${l}]`);
+  const rolled = (statuses: Record<string, ObjectiveStatus>): string | null => {
+    const d = checkControlStatusWrite(R_CTRL, 'MET', statuses, 'CMMC_L2');
+    return d.allowed ? null : d.rolledUp;
+  };
+  const allMet = (): Record<string, ObjectiveStatus> => Object.fromEntries(rIds.map((id) => [id, 'MET' as ObjectiveStatus]));
+  // a program whose control is Met because every objective is: the objectives and the notes carry marker text that must never leave a response or an event
+  const metProgram = async (name: string) => {
+    const id = (await newProgram(T, name)).id;
+    await setAll(id, 'MET', 'CUI-MARK-307');
+    await putControl(id, R_CTRL, { status: 'MET', implementationNotes: 'CUI-NOTES-307' });
+    return id;
+  };
+  const rollupEvents = async (program: string) => (await controlEvents(program, R_CTRL)).filter((e) => e.source === 'objective-rollup');
+  const R1 = await metProgram('Obj Rollup 1');
+  const R2 = await metProgram('Obj Rollup 2');
+  assert((await controlOf(R1, R_CTRL))?.status === 'MET' && (await controlOf(R2, R_CTRL))?.status === 'MET' && gN >= 2, 'R0 setup: two programs, each with a Met control and all objectives Met', gN);
+
+  const lowerOne = { ...allMet(), [rIds[0]]: 'NOT_MET' as ObjectiveStatus };
+  const wantLowered = rolled(lowerOne);
+  const eventsR1 = (await controlEvents(R1, R_CTRL)).length;
+  const r1 = await put(R1, rIds[0], { controlId: R_CTRL, status: 'NOT_MET' });
+  const r1Controls = (r1.body?.controls ?? []) as Json[];
+  assert(
+    r1.status === 200 && wantLowered !== null && wantLowered !== 'MET' && r1Controls.length === 1 && r1Controls[0].controlId === R_CTRL && r1Controls[0].status === wantLowered &&
+      Object.keys(r1Controls[0]).sort().join() === 'controlId,status,updatedAt,updatedBy' && r1Controls[0].updatedBy === 'u_ob_admin',
+    'R1 lowering one objective of a Met control -> 200 with that one control in `controls`, at the rolled-up status',
+    r1.body
+  );
+  const r1Control = await controlOf(R1, R_CTRL);
+  assert(r1Control?.status === wantLowered && r1Control?.implementationNotes === 'CUI-NOTES-307', 'R2 the control read back is lowered, and its notes are unchanged', r1Control);
+  const r1Events = await controlEvents(R1, R_CTRL);
+  const r1Last = r1Events[0] ?? {};
+  assert(
+    r1Events.length === eventsR1 + 1 && r1Last.source === 'objective-rollup' && r1Last.oldStatus === 'MET' && r1Last.newStatus === wantLowered && r1Last.notesChanged === false && r1Last.actorUserId === 'u_ob_admin',
+    'R3 the newest control event is objective-rollup, MET -> lowered, notesChanged false, under the signed-in user',
+    r1Last
+  );
+  assert(
+    !JSON.stringify(r1.body?.controls).includes('CUI-') && !JSON.stringify(r1Events).includes('CUI-MARK-307') && !JSON.stringify(r1Events).includes('CUI-NOTES-307'),
+    'R4 neither the response `controls` nor the control events contain objective or notes text'
+  );
+  const r5 = await put(R1, rIds[0], { controlId: R_CTRL, status: 'IN_PROGRESS' });
+  assert(r5.status === 200 && (r5.body?.controls ?? []).length === 0 && (await controlEvents(R1, R_CTRL)).length === eventsR1 + 1 && (await controlOf(R1, R_CTRL))?.status === wantLowered, 'R5 a second change of the same objective -> `controls` is empty and no control event is added (the control is no longer Met)', r5.body);
+  assert((await controlOf(R2, R_CTRL))?.status === 'MET' && (await rollupEvents(R2)).length === 0, 'R6 the other program\'s control is still Met, with no rollup event');
+
+  const eventsR2 = (await rollupEvents(R2)).length;
+  const bulkLow = await call('PUT', '/objectives', owner, T, { objectives: [rIds[0], rIds[1]].map((id) => ({ objectiveId: id, controlId: R_CTRL, status: 'NOT_MET' })) }, R2);
+  const bulkWant = rolled({ ...allMet(), [rIds[0]]: 'NOT_MET', [rIds[1]]: 'NOT_MET' });
+  assert(
+    bulkLow.status === 200 && bulkLow.body?.changed === 2 && (bulkLow.body?.controls ?? []).length === 1 && bulkLow.body.controls[0].status === bulkWant && (await controlOf(R2, R_CTRL))?.status === bulkWant && (await rollupEvents(R2)).length === eventsR2 + 1,
+    'R7 a bulk write of two lowered objectives lowers the control once: one `controls` entry, one rollup event',
+    bulkLow.body
+  );
+
+  const R3 = await metProgram('Obj Rollup 3');
+  const eventsR3 = (await controlEvents(R3, R_CTRL)).length;
+  const narrativeOnly = await put(R3, rIds[0], { controlId: R_CTRL, narrative: 'CUI-MARK-307 edited' });
+  const sameStatus = await put(R3, rIds[0], { controlId: R_CTRL, status: 'MET' });
+  const notApplicable = await put(R3, rIds[0], { controlId: R_CTRL, status: 'NOT_APPLICABLE' });
+  assert(
+    narrativeOnly.status === 200 && sameStatus.status === 200 && notApplicable.status === 200 && [narrativeOnly, sameStatus, notApplicable].every((r) => (r.body?.controls ?? []).length === 0) &&
+      (await controlOf(R3, R_CTRL))?.status === 'MET' && (await controlEvents(R3, R_CTRL)).length === eventsR3,
+    'R8 a narrative-only write, a same-status write and Met -> Not applicable leave the Met control Met, with `controls` empty and no event',
+    [narrativeOnly.body, sameStatus.body, notApplicable.body]
+  );
+
+  const R4 = await metProgram('Obj Rollup 4');
+  const eventsR4 = (await controlEvents(R4, R_CTRL)).length;
+  const objectiveBefore = find(await list(R4), rIds[0]);
+  const staleLower = await put(R4, rIds[0], { controlId: R_CTRL, status: 'NOT_MET', expectedUpdatedAt: '2000-01-01T00:00:00.000Z' });
+  assert(
+    staleLower.status === 409 && staleLower.body?.code === 'stale_write' && (await controlOf(R4, R_CTRL))?.status === 'MET' && (await controlEvents(R4, R_CTRL)).length === eventsR4 && find(await list(R4), rIds[0])?.status === objectiveBefore?.status,
+    'R9 a stale objective write -> 409 stale_write; the control stays Met and no control event is added',
+    staleLower.body
+  );
+
+  const IMP_X = 'AC.L2-3.1.3';
+  const IMP_Y = 'AC.L2-3.1.4';
+  const R5 = (await newProgram(T, 'Obj Rollup Import')).id;
+  const R5S = { tenantId: T, programId: R5 };
+  // Met controls with no objective rows: seeded through the store, as the route refuses such a Met (#292)
+  for (const id of [IMP_X, IMP_Y]) await writeControlAssessment(R5S, id, () => ({ status: 'MET', notes: null, role: null, updatedBy: 'seed' }), { source: 'human', actor: 'seed', userId: null });
+  const noStatus = await call('POST', '/objectives/import', owner, T, { objectives: [{ objectiveId: `${IMP_Y}[a]`, controlId: IMP_Y, narrative: 'CUI-MARK-307' }] }, R5);
+  assert(noStatus.status === 200 && noStatus.body?.results[0].result === 'created' && (noStatus.body?.controls ?? []).length === 0 && (await controlOf(R5, IMP_Y))?.status === 'MET', 'R10 an import row with no status (a new Not started row) leaves the Met control Met', noStatus.body);
+  const impLower = await call('POST', '/objectives/import', owner, T, { objectives: [{ objectiveId: `${IMP_X}[a]`, controlId: IMP_X, status: 'NOT_MET' }] }, R5);
+  const impWant = checkControlStatusWrite(IMP_X, 'MET', { [`${IMP_X}[a]`]: 'NOT_MET' }, 'CMMC_L2');
+  const r11Events = (await controlEvents(R5, IMP_X)).filter((e) => e.source === 'objective-rollup');
+  assert(
+    impLower.status === 200 && !impWant.allowed && (impLower.body?.controls ?? []).length === 1 && impLower.body.controls[0].controlId === IMP_X && impLower.body.controls[0].status === impWant.rolledUp &&
+      (await controlOf(R5, IMP_X))?.status === impWant.rolledUp && r11Events.length === 1 && r11Events[0].actorUserId === 'u_ob_admin',
+    'R11 an import row NOT_MET for a Met control with no objective rows lowers it (one rollup event under the signed-in user)',
+    [impLower.body, r11Events]
+  );
+
+  const nistPutNotMet = await put(NIST, 'AC-2[a01]', { controlId: 'AC-2', status: 'NOT_MET' });
+  assert(nistPutNotMet.status === 200 && (nistPutNotMet.body?.controls ?? []).length === 0 && (await controlOf(NIST, 'AC-2'))?.status === 'MET', 'R12 a NIST SP 800-53 control stays Met when its objective is lowered', nistPutNotMet.body);
 
   console.log('\n================================================================');
   console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

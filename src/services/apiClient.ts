@@ -1,6 +1,6 @@
 import { ControlState, EvidenceItem } from '../types/cmmc';
 import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata';
-import type { CatalogUpdateChanges, ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
+import type { CatalogUpdateChanges, LoweredControl, ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
 const SESSION_REF_KEY = 'pbc_session_ref_v3';
@@ -1504,7 +1504,7 @@ export const ApiClient = {
    * PUT /api/v1/objectives/:objectiveId
    * Saves one objective (write roles only: Tenant Owner, Admin, MSP Admin); a field left out keeps its stored value, an empty narrative clears it
    */
-  async putObjective(tenantId: string, input: ObjectiveInput & { expectedUpdatedAt?: string | null }, programId?: string | null): Promise<{ objective: ObjectiveRecord; changed: boolean }> {
+  async putObjective(tenantId: string, input: ObjectiveInput & { expectedUpdatedAt?: string | null }, programId?: string | null): Promise<{ objective: ObjectiveRecord; changed: boolean; controls?: LoweredControl[] }> {
     const { objectiveId, ...body } = input;
     const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/${encodeURIComponent(objectiveId)}`, {
       method: 'PUT',
@@ -1519,7 +1519,7 @@ export const ApiClient = {
    * PUT /api/v1/objectives
    * Saves up to 500 objectives, all or none
    */
-  async putObjectivesBulk(tenantId: string, objectives: ObjectiveInput[], programId?: string | null): Promise<{ total: number; changed: number }> {
+  async putObjectivesBulk(tenantId: string, objectives: ObjectiveInput[], programId?: string | null): Promise<{ total: number; changed: number; controls?: LoweredControl[] }> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives`, {
       method: 'PUT',
       headers: this.getHeaders(tenantId, undefined, programId),
@@ -1533,7 +1533,7 @@ export const ApiClient = {
    * POST /api/v1/objectives/import
    * Moves what a browser kept to the server (up to 5000): insert-only, an id the server already holds differently is a conflict
    */
-  async importObjectives(tenantId: string, objectives: ObjectiveInput[], programId?: string | null): Promise<{ objectiveId: string; result: ObjectiveImportResult }[]> {
+  async importObjectives(tenantId: string, objectives: ObjectiveInput[], programId?: string | null): Promise<{ objectiveId: string; result: ObjectiveImportResult }[] & { controls?: LoweredControl[] }> {
     const res = await apiFetch(`${API_BASE_URL}/api/v1/objectives/import`, {
       method: 'POST',
       headers: this.getHeaders(tenantId, undefined, programId),
@@ -1541,7 +1541,9 @@ export const ApiClient = {
     });
     if (!res.ok) throw apiErrorFromResponse(res.status, await res.json().catch(() => ({ error: res.statusText })));
     const data = await res.json();
-    return Array.isArray(data.results) ? data.results : [];
+    // the per-id results stay a plain list; the Met controls the import lowered ride along as `controls` (#307)
+    const results: { objectiveId: string; result: ObjectiveImportResult }[] = Array.isArray(data.results) ? data.results : [];
+    return Array.isArray(data.controls) ? Object.assign(results, { controls: data.controls as LoweredControl[] }) : results;
   },
 
   /**

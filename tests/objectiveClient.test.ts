@@ -476,6 +476,15 @@ async function staleStamps() {
   const narrative = slice(assess, 'const updateObjectiveNarrative = useCallback', 'const applyObjectivePrefilledNarrative');
   const saveSlice = slice(assess, 'const saveObjectives = useCallback', 'const objectivePendingReview');
   const liveObjective = slice(read('src/context/TenantContext.tsx'), 'const updateLiveObjective = useCallback', 'const updateLiveObjectivesBulk = useCallback');
+  const tenantSrc = read('src/context/TenantContext.tsx');
+  const liveBulk = slice(tenantSrc, 'const updateLiveObjectivesBulk = useCallback', 'const importLiveObjectives = useCallback');
+  const liveImport = slice(tenantSrc, 'const importLiveObjectives = useCallback', 'const createLiveEvidenceUploadUrl = useCallback');
+  const lowering = slice(tenantSrc, 'const applyLoweredControls = useCallback', 'const reloadLiveObjectives = useCallback');
+  assert(
+    liveObjective.includes('applyLoweredControls(scope, controls)') && liveBulk.includes('applyLoweredControls(scope, controls)') && liveImport.includes('applyLoweredControls(scope, chunkResults.controls)') &&
+      lowering.includes('scopeNow(currentTenant.id) !== scope') && lowering.includes('setLiveControls(') && lowering.includes('status: l.status') && lowering.includes('updatedAt: l.updatedAt'),
+    'S154-9 the live objective writers merge the controls the server lowered (#307) into the live controls, only while the scope is unchanged'
+  );
   assert(!narrative.includes('liveObjectivesRef') && narrative.includes('checkStale: true') && saveSlice.includes('objectiveSavesRef.current.run(') && assess.includes('objectiveSavesRef.current.clear()') && liveObjective.includes('programId !== undefined'), 'S154-8 the narrative writer asks for the check, saveObjectives queues, a switch clears the stamps, updateLiveObjective takes the program');
 }
 

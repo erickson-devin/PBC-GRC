@@ -220,6 +220,59 @@ export async function loadSightedBySource(
 }
 
 /**
+ * Ids of the given assets whose latest earlier report by this source sighted no finding on them (an empty host). An asset this source
+ * never reported before is not in the set. Closure reads it so one empty report does not resolve anything (section 6.3).
+ */
+export async function loadEmptyPreviousReports(
+  tenantId: string,
+  sourceId: string,
+  assetIds: string[],
+  excludeRunId: string,
+  receivedAt: string,
+  client: pg.PoolClient | null,
+): Promise<Set<string>> {
+  if (assetIds.length === 0) return new Set();
+  if (isMemory()) {
+    const wanted = new Set(assetIds);
+    const latest = new Map<string, { runId: string; assetId: string; receivedAt: string }>();
+    for (const ra of memoryRunAssets.values()) {
+      if (ra.tenantId !== tenantId || ra.sourceId !== sourceId || ra.runId === excludeRunId || !wanted.has(ra.assetId)) continue;
+      if (Date.parse(ra.receivedAt) > Date.parse(receivedAt)) continue;
+      const cur = latest.get(ra.assetId);
+      if (!cur || ra.receivedAt > cur.receivedAt || (ra.receivedAt === cur.receivedAt && ra.runId > cur.runId)) latest.set(ra.assetId, ra);
+    }
+    const out = new Set<string>();
+    for (const l of latest.values()) {
+      let sighted = false;
+      for (const s of memorySightings.values()) {
+        if (s.tenantId !== tenantId || s.runId !== l.runId) continue;
+        if (memoryFindings.get(s.findingId)?.assetId === l.assetId) {
+          sighted = true;
+          break;
+        }
+      }
+      if (!sighted) out.add(l.assetId);
+    }
+    return out;
+  }
+  const { rows } = await need(client).query(
+    `SELECT l.asset_id
+       FROM (SELECT DISTINCT ON (ra.asset_id) ra.asset_id, ra.run_id
+               FROM vm_run_assets ra
+               JOIN vm_runs r ON r.tenant_id = ra.tenant_id AND r.id = ra.run_id
+              WHERE ra.tenant_id = $1 AND ra.asset_id = ANY($2::text[]) AND r.source_id = $3 AND ra.run_id <> $4 AND r.received_at <= $5::timestamptz
+              ORDER BY ra.asset_id, r.received_at DESC, ra.run_id DESC) l
+      WHERE NOT EXISTS (
+        SELECT 1 FROM vm_sightings s
+          JOIN vm_findings f ON f.tenant_id = s.tenant_id AND f.id = s.finding_id
+         WHERE s.tenant_id = $1 AND s.run_id = l.run_id AND f.asset_id = l.asset_id
+      )`,
+    [tenantId, assetIds, sourceId, excludeRunId, receivedAt],
+  );
+  return new Set(rows.map((r) => r.asset_id as string));
+}
+
+/**
  * For each OTHER source that reported one of the given assets: its latest run that listed the asset, whether the source is
  * enabled, its expected interval, and which of the given open findings that run sighted. Closure reads it so a finding another
  * manager still reports is not resolved by this one (docs/VULNERABILITY_MANAGEMENT.md, section 6.3). Runs from before
