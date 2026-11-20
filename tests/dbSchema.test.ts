@@ -309,7 +309,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata and vm_poam_item_events', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile and program_ssp_section_reviews', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -608,6 +608,59 @@ assert(
 const afterSm = smHeadingAt < 0 ? '' : TABLES_SQL.slice(smHeadingAt);
 assert(afterSm !== '' && !afterSm.includes('NOT VALID') && !afterSm.includes('SET NOT NULL'), 'SM-D6: no NOT VALID check and no SET NOT NULL after the SSP metadata heading');
 assert(!TABLES_SQL.includes('SET stack_profile'), 'SM-D8: no boot-time UPDATE of stack_profile (tenants and programs are FORCE RLS, so it would see no rows)');
+
+console.log('\n--- SSP profile and section reviews (program_ssp_profile, program_ssp_section_reviews, issues #238 #241 #242 #246) ---');
+const sprAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_ssp_profile (');
+const sprBlock = sprAt < 0 ? '' : TABLES_SQL.slice(sprAt, TABLES_SQL.indexOf('\n  );', sprAt));
+assert(
+  sprAt > smAt &&
+    sprBlock.includes('CONSTRAINT pk_program_ssp_profile PRIMARY KEY (tenant_id, program_id)') &&
+    sprBlock.includes('CONSTRAINT fk_program_ssp_profile_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
+    sprBlock.includes('tenant_id VARCHAR(64) NOT NULL') &&
+    sprBlock.includes('program_id VARCHAR(64) NOT NULL') &&
+    sprBlock.includes("jsonb_typeof(profile) = 'object'") &&
+    sprBlock.includes('262144') &&
+    !TABLES_SQL.includes('DROP CONSTRAINT IF EXISTS program_ssp_profile'),
+  'SP-D1: program_ssp_profile has the primary key, the cascading foreign key, NOT NULL tenant and program, an object and size CHECK, and no constraint is dropped and re-added'
+);
+const srAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_ssp_section_reviews (');
+const srBlock = srAt < 0 ? '' : TABLES_SQL.slice(srAt, TABLES_SQL.indexOf('\n  );', srAt));
+const srGuardAt = TABLES_SQL.indexOf('CREATE OR REPLACE FUNCTION program_ssp_section_reviews_guard()');
+const srTail = srAt < 0 ? '' : TABLES_SQL.slice(srAt);
+const srTrig = (name: string) => {
+  const drop = srTail.indexOf(`DROP TRIGGER IF EXISTS ${name} ON program_ssp_section_reviews;`);
+  const create = srTail.indexOf(`CREATE TRIGGER ${name} BEFORE `);
+  return drop >= 0 && create > drop;
+};
+assert(
+  sprAt > 0 && srAt > sprAt &&
+    srBlock.includes('CONSTRAINT fk_program_ssp_section_reviews_program FOREIGN KEY (tenant_id, program_id) REFERENCES programs (tenant_id, id) ON DELETE CASCADE') &&
+    srBlock.includes("CHECK (action IN ('signed_off', 'withdrawn'))") &&
+    srBlock.includes("content_sha256 ~ '^[0-9a-f]{64}$'") &&
+    srBlock.includes("section_id ~ '^[a-z][a-z0-9_]{0,31}$'") &&
+    srBlock.includes('reviewer_user_id VARCHAR(128) NOT NULL') &&
+    srBlock.includes('reviewer_name VARCHAR(255) NOT NULL') &&
+    srBlock.includes('program_id VARCHAR(64) NOT NULL'),
+  'SR-D1: program_ssp_section_reviews has the cascading foreign key, the action, sha and section CHECKs and a NOT NULL reviewer'
+);
+assert(
+  srGuardAt > srAt &&
+    srTail.includes('RAISE EXCEPTION') && srTail.includes('append-only') && srTail.includes("ERRCODE = '42501'") &&
+    srTrig('trg_program_ssp_section_reviews_guard') && srTrig('trg_program_ssp_section_reviews_no_truncate') &&
+    srTail.includes('BEFORE UPDATE ON program_ssp_section_reviews') && srTail.includes('BEFORE TRUNCATE ON program_ssp_section_reviews') &&
+    !srTail.includes('BEFORE DELETE ON program_ssp_section_reviews'),
+  'SR-D1b: the append-only guard function and the update and truncate triggers exist, each dropped before it is created; DELETE stays allowed (program cascade)'
+);
+for (const t of ['program_ssp_profile', 'program_ssp_section_reviews']) {
+  assert(
+    RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id') &&
+      (RLS_PROGRAM_TABLES as readonly string[]).includes(t) &&
+      !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t),
+    `SR-D2: ${t} is a tenant table and a program table, not backfilled`
+  );
+}
+const kindLine = TABLES_SQL.slice(TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check'), TABLES_SQL.indexOf('\n', TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check')));
+assert(kindLine.includes('ssp_metadata_changed') && !kindLine.includes('ssp_profile') && !kindLine.includes('ssp_section') && SSP_METADATA_FIELDS.length === 12, 'SR-D3: the program_events kind CHECK and the twelve SSP metadata fields are unchanged (no one-way upgrade)');
 
 console.log('\n--- per-user default program (user_program_defaults) ---');
 const updAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS user_program_defaults (');

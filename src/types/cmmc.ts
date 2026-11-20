@@ -1,4 +1,5 @@
 import { AssessmentObjective, ObjectiveStatus } from './assessment';
+import type { SspProfile } from './sspProfile';
 
 export type ControlStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'MET' | 'NOT_MET';
 
@@ -117,6 +118,8 @@ export interface AssessmentState {
   };
   /** ISO time the client set once this cache key's SSP metadata is on the server; from then on the cache holds none of it (#84). */
   sspMetadataMigratedAt?: string;
+  /** The program's SSP profile (identifier, categorization, roles, maintenance). Browser-only tenants keep it here (their only copy); a server-backed tenant's lives on the server and is never cached. */
+  sspProfile?: SspProfile;
 }
 
 export interface DomainStat {

@@ -5,6 +5,8 @@ import { PROGRAM_FRAMEWORK_IDS } from './schema';
 import { notesDigest, readControlAssessments, writeControlAssessment, type ControlChangeActor } from './controlAssessments';
 import { __deleteProgramObjectivesForMemory, cloneObjectives, readObjectives } from './controlObjectives';
 import { __deleteProgramSspMetadataForMemory } from './sspMetadata';
+import { __deleteProgramSspProfileForMemory } from './sspProfile';
+import { __deleteProgramSspReviewsForMemory } from './sspReviews';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
@@ -817,6 +819,8 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     await queryWithProgram({ tenantId, programId: id }, 'DELETE FROM control_assessments WHERE tenant_id = $1 AND program_id = $2', [tenantId, id]);
     __deleteProgramObjectivesForMemory({ tenantId, programId: id });
     __deleteProgramSspMetadataForMemory({ tenantId, programId: id });
+    __deleteProgramSspProfileForMemory({ tenantId, programId: id });
+    __deleteProgramSspReviewsForMemory({ tenantId, programId: id });
     __deleteUserDefaultsForProgramMemory(tenantId, id);
     memoryPrograms.delete(id);
     promoteSuccessorInMemory(tenantId);

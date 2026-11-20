@@ -1,11 +1,16 @@
 import type { ReportDocumentType, ReportMetadata } from '../../types/report';
+import type { SspProfile } from '../../types/sspProfile';
+import { computeSspCompleteness, sspCompletenessFromReport } from '../ssp/sspCompleteness';
+import type { SspSectionId } from '../ssp/sspSections';
 
 export interface ExportGap {
-  /** The ReportMetadata field that is empty. */
-  field: keyof ReportMetadata;
+  /** The ReportMetadata field that is empty; for an SSP profile item (no ReportMetadata field) the completeness item id, e.g. 'role:isso_ciso'. */
+  field: string;
   label: string;
   /** Advisory gaps do not stop an export; they only say the document will print "not recorded". */
   advisory?: boolean;
+  /** Set on an SSP profile gap: the builder section where it is filled in. */
+  sspSection?: SspSectionId;
 }
 
 const LABELS: Partial<Record<keyof ReportMetadata, string>> = {
@@ -19,8 +24,12 @@ const LABELS: Partial<Record<keyof ReportMetadata, string>> = {
   serviceCommitments: 'Principal service commitments',
 };
 
+// The SSP's lists come from the completeness registry (sspCompleteness.ts): the registry decides which of these fields are required and
+// which advisory; this is only the order they are listed in.
+const SSP_REPORT_FIELD_ORDER: (keyof ReportMetadata)[] = ['systemName', 'organizationName', 'systemOwner', 'primaryAssessor', 'boundaryDescription', 'cageCode', 'samStatus'];
+
 const REQUIRED: Record<ReportDocumentType, (keyof ReportMetadata)[]> = {
-  NIST_SP_800_18_SSP: ['systemName', 'organizationName', 'systemOwner', 'primaryAssessor', 'boundaryDescription'],
+  NIST_SP_800_18_SSP: [],
   SOC_2_SYSTEM_DESCRIPTION: ['organizationName', 'systemName', 'systemOwner', 'boundaryDescription'],
   POAM: ['systemName', 'organizationName', 'systemOwner'],
   HIPAA_SECURITY_ASSESSMENT: ['organizationName', 'systemName', 'systemOwner', 'boundaryDescription'],
@@ -29,17 +38,41 @@ const REQUIRED: Record<ReportDocumentType, (keyof ReportMetadata)[]> = {
 };
 
 const ADVISORY: Partial<Record<ReportDocumentType, (keyof ReportMetadata)[]>> = {
-  NIST_SP_800_18_SSP: ['cageCode', 'samStatus'],
+  NIST_SP_800_18_SSP: [],
   SOC_2_SYSTEM_DESCRIPTION: ['serviceCommitments'],
 };
 
-/** The recorded values a document of this type would otherwise print as "not recorded" (#151). Pure; a blank or whitespace-only value is a gap. */
-export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportMetadata>): ExportGap[] {
+/**
+ * The recorded values a document of this type would otherwise print as "not recorded" (#151). Pure; a blank or whitespace-only value is a gap.
+ * With `ssp` (the program's profile and framework) an SSP also lists the profile items that have no ReportMetadata field (identifier,
+ * categorization, the other roles, maintenance), each with the builder section to open; without it the result is the report fields only.
+ */
+export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportMetadata>, ssp?: { profile: SspProfile | null; framework: string }): ExportGap[] {
   const empty = (field: keyof ReportMetadata) => {
     const v = meta[field];
     return typeof v !== 'string' || v.trim() === '';
   };
   const gaps: ExportGap[] = [];
+  if (docType === 'NIST_SP_800_18_SSP') {
+    const items = computeSspCompleteness(sspCompletenessFromReport({ ...meta, framework: (ssp?.framework ?? meta.framework) as ReportMetadata['framework'] }, ssp?.profile ?? null)).sections.flatMap((s) => s.items);
+    const byField = new Map(items.filter((i) => i.reportField).map((i) => [i.reportField as string, i]));
+    for (const advisory of [false, true]) {
+      for (const field of SSP_REPORT_FIELD_ORDER) {
+        const item = byField.get(field);
+        if (!item || item.missing !== true || (item.severity === 'advisory') !== advisory) continue;
+        gaps.push({ field, label: LABELS[field] ?? String(field), ...(advisory ? { advisory: true } : {}) });
+      }
+    }
+    if (ssp) {
+      for (const severity of ['required', 'advisory'] as const) {
+        for (const item of items) {
+          if (item.reportField || !item.missing || item.severity !== severity) continue;
+          gaps.push({ field: item.id, label: item.label, sspSection: item.sectionId, ...(severity === 'advisory' ? { advisory: true } : {}) });
+        }
+      }
+    }
+    return gaps;
+  }
   for (const field of REQUIRED[docType] ?? []) {
     if (empty(field)) gaps.push({ field, label: LABELS[field] ?? String(field) });
   }

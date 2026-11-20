@@ -33,6 +33,7 @@ const legacy = src('src/components/common/LegacyTenantNotice.tsx');
 const banner = src('src/components/common/BrowserOnlyNotesBanner.tsx');
 const overview = src('src/components/dashboard/ComplianceOverview.tsx');
 const sspPage = src('src/components/ssp/SSPBuilder.tsx');
+const sspSectionFiles = ['SspSectionNav.tsx', 'SspSectionReview.tsx', 'SspIdentificationSection.tsx', 'SspRolesSection.tsx', 'SspEnvironmentSection.tsx', 'SspMaintenanceSection.tsx'];
 const storage = src('src/services/storageService.ts');
 
 console.log('--- Control dialog ---');
@@ -207,6 +208,8 @@ const checked: Record<string, string> = {
   'ControlCard.tsx': card,
   'MetMismatchNotice.tsx': noticeSrc,
   'SSPBuilder.tsx': sspPage,
+  ...Object.fromEntries(sspSectionFiles.map((n) => [n, src(`src/components/ssp/${n}`)])),
+  'sspBuilderView.ts': src('src/data/ssp/sspBuilderView.ts'),
   'Header.tsx': header,
   'LegacyTenantNotice.tsx': legacy,
   'BrowserOnlyNotesBanner.tsx': banner,

@@ -177,12 +177,12 @@ function compilerTests() {
   const withModules = compileNistSSP({ ...meta, cryptoModules: [falcon, openssl] }, controls, { 'SC.L2-3.13.11': { id: 'SC.L2-3.13.11', tenantId: 't', status: 'MET', implementationNotes: 'Disk encryption enforced.', responsibleRole: 'IT', lastUpdated: '', tags: [] } as any }, []);
   const cell = cellFor(withModules);
   assert(cell.startsWith('Disk encryption enforced.') && cell.includes('FIPS 140-2 Certificate #4211 (CrowdStrike Falcon)') && !cell.includes('**'), 'the 3.13.11 narrative keeps the author\'s notes and adds the certificates (plain text)', cell);
-  const sub = withModules.sections.find((s) => s.id === 'sec-1-system-identification')!.subsections!.find((s) => s.title.startsWith('1.2.2'));
-  assert(Boolean(sub) && sub!.table!.rows.length === 2 && sub!.table!.rows[0][0] === '#4211' && sub!.table!.rows[0][1] === 'CrowdStrike Falcon' && sub!.table!.rows[0][2] === 'FIPS 140-2' && sub!.table!.rows[0][3] === 'EDR-GATEWAY', 'section 1.2.2 tabulates certificate, module, standard and asset', sub?.table);
+  const sub = withModules.sections.find((s) => s.id === 'sec-2-system-environment')!.subsections!.find((s) => s.title.startsWith('2.1.2'));
+  assert(Boolean(sub) && sub!.table!.rows.length === 2 && sub!.table!.rows[0][0] === '#4211' && sub!.table!.rows[0][1] === 'CrowdStrike Falcon' && sub!.table!.rows[0][2] === 'FIPS 140-2' && sub!.table!.rows[0][3] === 'EDR-GATEWAY', 'section 2.1.2 tabulates certificate, module, standard and asset', sub?.table);
   const empty = compileNistSSP({ ...meta, cryptoModules: [] }, controls, {}, []);
-  assert(/No FIPS-validated cryptographic module is recorded/.test(cellFor(empty)) && /No FIPS-validated cryptographic module is recorded/.test(empty.sections.find((s) => s.id === 'sec-1-system-identification')!.subsections!.find((s) => s.title.startsWith('1.2.2'))!.content ?? ''), 'an empty inventory is stated plainly in the SSP');
+  assert(/No FIPS-validated cryptographic module is recorded/.test(cellFor(empty)) && /No FIPS-validated cryptographic module is recorded/.test(empty.sections.find((s) => s.id === 'sec-2-system-environment')!.subsections!.find((s) => s.title.startsWith('2.1.2'))!.content ?? ''), 'an empty inventory is stated plainly in the SSP');
   const absent = compileNistSSP(meta, controls, {}, []);
-  assert(!cellFor(absent).includes('FIPS') && !absent.sections.find((s) => s.id === 'sec-1-system-identification')!.subsections!.some((s) => s.title.startsWith('1.2.2')), 'with no inventory loaded the SSP states nothing about modules');
+  assert(!cellFor(absent).includes('FIPS') && !absent.sections.find((s) => s.id === 'sec-2-system-environment')!.subsections!.some((s) => s.title.startsWith('2.1.2')), 'with no inventory loaded the SSP states nothing about modules');
 }
 
 async function apiTests() {

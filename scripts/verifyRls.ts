@@ -27,8 +27,8 @@ process.env.NODE_ENV = 'production'; // never fall back to the in-memory store: 
 
 const { pool, initDb, queryWithTenant, queryWithProgram, queryWithUser, listUserTenants, checkDatabaseConnection } = await import('../server/db');
 const { RLS_TENANT_TABLES, RLS_PROGRAM_TABLES } = await import('../server/schema');
-// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets, program_ssp_metadata and vm_poam_item_events are new (program_id NOT NULL).
-const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata' && t !== 'vm_poam_item_events');
+// The tables that existed before programs: they got a nullable program_id and a NOT VALID program_required check. The objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile and program_ssp_section_reviews are new (program_id NOT NULL).
+const LEGACY_PROGRAM_TABLES = RLS_PROGRAM_TABLES.filter((t) => !t.startsWith('control_objective') && t !== 'program_events' && t !== 'program_assets' && t !== 'program_ssp_metadata' && t !== 'vm_poam_item_events' && t !== 'program_ssp_profile' && t !== 'program_ssp_section_reviews');
 type ProgramScope = { tenantId: string; programId: string };
 
 let failures = 0;
@@ -1562,6 +1562,89 @@ async function verifyProgramIsolation() {
     await queryWithTenant(TENANT_X, 'DELETE FROM enclave_assets WHERE tenant_id = $1 AND id = $2', [TENANT_X, swAssetX]);
     const swAfterDelete = await queryWithTenant(TENANT_X, "SELECT asset_id FROM software_items WHERE tenant_id = $1 AND name = 'rls_verify_sw_x'", [TENANT_X]);
     check(swAfterDelete.rows.length === 1 && swAfterDelete.rows[0].asset_id === null, '8o. software_items: deleting the linked asset keeps the entry and sets asset_id to NULL', JSON.stringify(swAfterDelete.rows));
+
+    // 8p. SSP profile (issues #241, #242, #246): program_ssp_profile isolation, the composite foreign key, the primary key and the shape CHECK
+    const insertProfile = 'INSERT INTO program_ssp_profile (tenant_id, program_id, profile, updated_by) VALUES ($1, $2, $3::jsonb, $4) RETURNING program_id';
+    const profileJson = JSON.stringify({ systemIdentifier: 'rls_verify_sp' });
+    const sp1 = await queryWithProgram(scopeA, insertProfile, [TENANT_X, programA, profileJson, 'rls_verify_actor']);
+    check(sp1.rows.length === 1, '8p. program_ssp_profile: under program A the row is inserted');
+    const spBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_ssp_profile WHERE program_id = $1', [programA]);
+    const spBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_ssp_profile WHERE tenant_id = $1', [TENANT_X]);
+    check(spBSeesA.rows.length === 0 && spBSeesAny.rows.length === 0, "8p. program_ssp_profile: program B cannot read program A's row (0 rows, by program or by tenant)", 'saw ' + spBSeesA.rows.length + ' / ' + spBSeesAny.rows.length);
+    const spBUpdates = await queryWithProgram(scopeB, "UPDATE program_ssp_profile SET updated_by = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const spBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_ssp_profile WHERE program_id = $1', [programA]);
+    check((spBUpdates.rowCount ?? 0) === 0 && (spBDeletes.rowCount ?? 0) === 0, "8p. program_ssp_profile: program B can neither update nor delete program A's row (0 rows)", 'updated ' + spBUpdates.rowCount + ', deleted ' + spBDeletes.rowCount);
+    const spBInserts = await rejectsIn(scopeB, insertProfile, [TENANT_X, programA, profileJson, 'rls_verify_actor'], { code: '42501' });
+    check(spBInserts.ok, '8p. program_ssp_profile: program B cannot insert a row into program A (WITH CHECK, 42501)', spBInserts.detail);
+    const spNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_ssp_profile WHERE tenant_id = $1', [TENANT_X]);
+    check(spNoCtx.rows.length === 0, '8p. program_ssp_profile: a tenant context with no program context sees zero rows', 'saw ' + spNoCtx.rows.length);
+    let spNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertProfile, [TENANT_X, programA, profileJson, 'rls_verify_actor']);
+    } catch (err) {
+      spNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(spNoCtxInsert === '42501', '8p. program_ssp_profile: no program context cannot insert a row (42501)', spNoCtxInsert);
+    const spForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertProfile, [TENANT_X, defaultY, profileJson, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_ssp_profile_program' });
+    check(spForeignProgram.ok, "8p. program_ssp_profile: tenant X cannot attach a row to tenant Y's program (composite foreign key, 23503)", spForeignProgram.detail);
+    const spDuplicate = await rejectsIn(scopeA, insertProfile, [TENANT_X, programA, profileJson, 'rls_verify_actor'], { code: '23505', constraint: 'pk_program_ssp_profile' });
+    check(spDuplicate.ok, '8p. program_ssp_profile: a second row for the same program is refused (primary key, 23505)', spDuplicate.detail);
+    const spShape = { code: '23514', constraint: 'program_ssp_profile_shape_check' };
+    const spArray = await rejectsIn(scopeB, insertProfile, [TENANT_X, programB, '[]', 'rls_verify_actor'], spShape);
+    const spTooBig = await rejectsIn(scopeB, insertProfile, [TENANT_X, programB, JSON.stringify({ systemIdentifier: 'x'.repeat(262144) }), 'rls_verify_actor'], spShape);
+    check(spArray.ok && spTooBig.ok, '8p. program_ssp_profile: an array and a value over 262 144 bytes are each refused (23514, program_ssp_profile_shape_check)', [spArray.detail, spTooBig.detail].join(' | '));
+    const spCascadeProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_ssp_profile_cascade', frameworkId: 'CMMC_L2' }, null);
+    const spCascadeScope = { tenantId: TENANT_X, programId: spCascadeProgram.id };
+    await queryWithProgram(spCascadeScope, insertProfile, [TENANT_X, spCascadeProgram.id, profileJson, 'rls_verify_actor']);
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, spCascadeProgram.id]);
+    const spCascade = await queryWithProgram(spCascadeScope, 'SELECT 1 FROM program_ssp_profile WHERE program_id = $1', [spCascadeProgram.id]);
+    check(spCascade.rows.length === 0, '8p. program_ssp_profile: deleting a program removes its row through the cascade', 'saw ' + spCascade.rows.length);
+
+    // 8q. SSP section sign-offs (issue #238): program_ssp_section_reviews isolation, the foreign key, the CHECKs, the append-only trigger and the cascade
+    const insertReview = 'INSERT INTO program_ssp_section_reviews (tenant_id, program_id, section_id, content_sha256, reviewer_user_id, reviewer_name, reviewer_role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id';
+    const reviewSha = 'a'.repeat(64);
+    const reviewArgs = (programId: string, section = 'identification', sha = reviewSha): (string | number | null)[] => [TENANT_X, programId, section, sha, 'rls_verify_user', 'rls_verify_actor', 'TENANT_OWNER'];
+    const sr1 = await queryWithProgram(scopeA, insertReview, reviewArgs(programA));
+    check(sr1.rows.length === 1, '8q. program_ssp_section_reviews: under program A the sign-off is inserted');
+    const srBSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM program_ssp_section_reviews WHERE program_id = $1', [programA]);
+    const srBSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM program_ssp_section_reviews WHERE tenant_id = $1', [TENANT_X]);
+    check(srBSeesA.rows.length === 0 && srBSeesAny.rows.length === 0, "8q. program_ssp_section_reviews: program B cannot read program A's sign-off (0 rows, by program or by tenant)", 'saw ' + srBSeesA.rows.length + ' / ' + srBSeesAny.rows.length);
+    const srBUpdates = await queryWithProgram(scopeB, "UPDATE program_ssp_section_reviews SET reviewer_name = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    const srBDeletes = await queryWithProgram(scopeB, 'DELETE FROM program_ssp_section_reviews WHERE program_id = $1', [programA]);
+    check((srBUpdates.rowCount ?? 0) === 0 && (srBDeletes.rowCount ?? 0) === 0, "8q. program_ssp_section_reviews: program B can neither update nor delete program A's sign-off (0 rows)", 'updated ' + srBUpdates.rowCount + ', deleted ' + srBDeletes.rowCount);
+    const srBInserts = await rejectsIn(scopeB, insertReview, reviewArgs(programA), { code: '42501' });
+    check(srBInserts.ok, '8q. program_ssp_section_reviews: program B cannot insert a sign-off into program A (WITH CHECK, 42501)', srBInserts.detail);
+    const srNoCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM program_ssp_section_reviews WHERE tenant_id = $1', [TENANT_X]);
+    check(srNoCtx.rows.length === 0, '8q. program_ssp_section_reviews: a tenant context with no program context sees zero rows', 'saw ' + srNoCtx.rows.length);
+    let srNoCtxInsert = 'no error';
+    try {
+      await queryWithTenant(TENANT_X, insertReview, reviewArgs(programA));
+    } catch (err) {
+      srNoCtxInsert = String((err as { code?: string }).code);
+    }
+    check(srNoCtxInsert === '42501', '8q. program_ssp_section_reviews: no program context cannot insert a sign-off (42501)', srNoCtxInsert);
+    const srForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertReview, reviewArgs(defaultY), { code: '23503', constraint: 'fk_program_ssp_section_reviews_program' });
+    check(srForeignProgram.ok, "8q. program_ssp_section_reviews: tenant X cannot attach a sign-off to tenant Y's program (composite foreign key, 23503)", srForeignProgram.detail);
+    const srBadSha = await rejectsIn(scopeB, insertReview, reviewArgs(programB, 'identification', 'xyz'), { code: '23514', constraint: 'program_ssp_section_reviews_sha_check' });
+    const srBadSection = await rejectsIn(scopeB, insertReview, reviewArgs(programB, 'Bad Id'), { code: '23514', constraint: 'program_ssp_section_reviews_section_check' });
+    const srBadAction = await rejectsIn(scopeB, "INSERT INTO program_ssp_section_reviews (tenant_id, program_id, section_id, action, content_sha256, reviewer_user_id, reviewer_name, reviewer_role) VALUES ($1, $2, 'identification', 'approved', $3, 'rls_verify_user', 'rls_verify_actor', 'TENANT_OWNER')", [TENANT_X, programB, reviewSha], { code: '23514', constraint: 'program_ssp_section_reviews_action_check' });
+    check(srBadSha.ok && srBadSection.ok && srBadAction.ok, '8q. program_ssp_section_reviews: a bad sha, a bad section id and an unknown action are each refused (23514)', [srBadSha.detail, srBadSection.detail, srBadAction.detail].join(' | '));
+    let srUpdateErr = 'no error';
+    try {
+      await queryWithProgram(scopeA, "UPDATE program_ssp_section_reviews SET reviewer_name = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      srUpdateErr = String(e.code) + (String(e.message).includes('append-only') ? ' append-only' : ' ' + String(e.message));
+    }
+    check(srUpdateErr === '42501 append-only', '8q. program_ssp_section_reviews: updating a sign-off is refused by the append-only trigger (42501)', srUpdateErr);
+    const srStillThere = await queryWithProgram(scopeA, 'SELECT reviewer_name FROM program_ssp_section_reviews WHERE program_id = $1', [programA]);
+    check(srStillThere.rows.length === 1 && srStillThere.rows[0].reviewer_name === 'rls_verify_actor', "8q. program_ssp_section_reviews: program A's sign-off is untouched", JSON.stringify(srStillThere.rows));
+    const srCascadeProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_ssp_reviews_cascade', frameworkId: 'CMMC_L2' }, null);
+    const srCascadeScope = { tenantId: TENANT_X, programId: srCascadeProgram.id };
+    await queryWithProgram(srCascadeScope, insertReview, reviewArgs(srCascadeProgram.id));
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, srCascadeProgram.id]);
+    const srCascade = await queryWithProgram(srCascadeScope, 'SELECT 1 FROM program_ssp_section_reviews WHERE program_id = $1', [srCascadeProgram.id]);
+    check(srCascade.rows.length === 0, '8q. program_ssp_section_reviews: deleting a program removes its sign-offs through the cascade (DELETE is allowed)', 'saw ' + srCascade.rows.length);
 
     await verifyUpgrade();
   } finally {

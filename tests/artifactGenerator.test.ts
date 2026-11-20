@@ -28,6 +28,10 @@ import {
 import { ReportMetadata, ReportSection } from '../src/types/report';
 import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED, NOT_RECORDED, NO_MILESTONES_RECORDED, NO_CUECS_RECORDED, NO_STACK_PROFILE_RECORDED, NO_FAMILY_IMPLEMENTATION_RECORDED, UNSIGNED_ATTESTATION_NOTE } from '../src/data/reports/documentDefaults';
 import { getExportGaps } from '../src/data/reports/exportReadiness';
+import { generateEmassControlMatrixCsv } from '../src/data/reports/sprsCompiler';
+import { computeSspCompleteness, sspCompletenessFromReport } from '../src/data/ssp/sspCompleteness';
+import { NO_MAINTENANCE_EXCEPTIONS_RECORDED } from '../src/data/ssp/sspOutput';
+import type { SspProfile } from '../src/types/sspProfile';
 import { createDefaultSspMetadata, scrubInventedMetadata, buildSspMarkdown, createInitialState } from '../src/services/storageService';
 import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
@@ -148,11 +152,12 @@ async function runArtifactGeneratorTests() {
 
     assert(sspDoc.documentType === 'NIST_SP_800_18_SSP', 'Document type is NIST_SP_800_18_SSP');
     assert(sspDoc.title.includes('Vanguard Defense Systems'), 'Title includes organization name');
-    assert(sspDoc.sections.length === 4, `Compiled exactly 4 standard NIST SP 800-18 sections (found: ${sspDoc.sections.length})`);
+    assert(sspDoc.sections.length === 5, `Compiled exactly 5 standard NIST SP 800-18 sections (found: ${sspDoc.sections.length})`);
     assert(sspDoc.sections[0].id === 'sec-1-system-identification', 'Section 1 is System Identification & Governance');
-    assert(sspDoc.sections[1].id === 'sec-2-executive-summary', 'Section 2 is Executive Summary & Posture');
-    assert(sspDoc.sections[2].id === 'sec-3-control-narratives', 'Section 3 is Security Control Implementation Statements');
-    assert(sspDoc.sections[3].id === 'sec-4-attestation', 'Section 4 is System Security Plan Attestation');
+    assert(sspDoc.sections[1].id === 'sec-2-system-environment', 'Section 2 is System Environment');
+    assert(sspDoc.sections[2].id === 'sec-2-executive-summary', 'Section 3 is Executive Summary & Posture');
+    assert(sspDoc.sections[3].id === 'sec-3-control-narratives', 'Section 4 is Security Control Implementation Statements');
+    assert(sspDoc.sections[4].id === 'sec-4-attestation', 'Section 5 is System Security Plan Attestation');
 
     // Verify metadata items in section 1
     const sec1Items = sspDoc.sections[0].subsections?.[0].items || [];
@@ -161,7 +166,7 @@ async function runArtifactGeneratorTests() {
     assert(sec1Items.some(i => i.label === 'Operational Status' && i.value === 'Operational'), 'Section 1 contains Operational Status');
 
     // Verify control implementation statements grouped by family
-    const sec3Subsections = sspDoc.sections[2].subsections || [];
+    const sec3Subsections = sspDoc.sections[3].subsections || [];
     assert(sec3Subsections.length > 0, `Section 3 groups controls into domain families (found: ${sec3Subsections.length})`);
     assert(sec3Subsections.some(s => s.title.includes('AC') || s.title.includes('Access Control')), 'Section 3 contains Access Control family');
 
@@ -299,11 +304,11 @@ async function runArtifactGeneratorTests() {
       (doc.sections.find(s => s.id === sectionId)?.subsections || []).find(s => s.title.startsWith(prefix));
     const VENDOR_NAMES = /Google|Cloudflare|Cloud SQL|Microsoft/;
     const noCspSsp = compileNistSSP({ ...mockMetadata, cloudServiceProviders: '' }, cmmcL1Controls, mockControlStates);
-    const csp13 = (noCspSsp.sections[0].subsections || []).find(s => s.title.startsWith('1.3'));
-    assert(csp13?.content === NO_CSP_RECORDED, 'SSP 1.3 states that no cloud service provider is recorded when none is');
+    const csp13 = (noCspSsp.sections.find(s => s.id === 'sec-2-system-environment')?.subsections || []).find(s => s.title.startsWith('2.2'));
+    assert(csp13?.content === NO_CSP_RECORDED, 'SSP 2.2 states that no cloud service provider is recorded when none is');
     const withCspSsp = compileNistSSP(mockMetadata, cmmcL1Controls, mockControlStates);
-    const csp13Set = (withCspSsp.sections[0].subsections || []).find(s => s.title.startsWith('1.3'));
-    assert(csp13Set?.content === mockMetadata.cloudServiceProviders, 'SSP 1.3 states the recorded cloud service providers');
+    const csp13Set = (withCspSsp.sections.find(s => s.id === 'sec-2-system-environment')?.subsections || []).find(s => s.title.startsWith('2.2'));
+    assert(csp13Set?.content === mockMetadata.cloudServiceProviders, 'SSP 2.2 states the recorded cloud service providers');
 
     const noCspSoc2 = compileSoc2SystemDescription({ ...soc2Meta, cloudServiceProviders: '', boundaryDescription: '' }, soc2Controls, mockSoc2States, mockEvidence);
     const soc213 = subOf(noCspSoc2, 'soc2-sec-1-scope', '1.3');
@@ -457,13 +462,13 @@ async function runArtifactGeneratorTests() {
     assert(itemOf(blankSsp, 'SAM.gov Status') === NO_SAM_STATUS_RECORDED, 'S151-1 SSP 1.1 states no SAM status is recorded');
     assert(itemOf(blankSsp, 'System Owner') === NO_SYSTEM_OWNER_RECORDED, 'S151-1 SSP 1.1 states no system owner is recorded');
     assert(itemOf(blankSsp, 'Primary Assessor / Author') === NO_ASSESSOR_RECORDED, 'S151-1 SSP 1.1 states no assessor is recorded');
-    assert(subTitled(blankSsp, '1.2')?.content === NO_BOUNDARY_RECORDED, 'S151-2 SSP 1.2 states no boundary is recorded');
+    assert(subTitled(blankSsp, '2.1 ')?.content === NO_BOUNDARY_RECORDED, 'S151-2 SSP 2.1 states no boundary is recorded');
     assert(blankSsp.subtitle === 'NIST SP 800-18 / NIST SP 800-171 System Security Plan for the system', 'S151-3 SSP subtitle names "the system"');
     assert(itemOf(blankSsp, 'Information System Owner') === NO_SYSTEM_OWNER_RECORDED, 'S151-3 SSP attestation names no invented owner and no signature suffix');
     assert(itemOf(blankSsp, 'Primary Assessor / Lead Auditor') === NO_ASSESSOR_RECORDED, 'S151-3 SSP attestation names no invented assessor and no attested suffix');
     const fullSsp = compileNistSSP(mockMetadata, cmmcL1Controls, mockControlStates);
     assert(itemOf(fullSsp, 'Organization Name') === 'Vanguard Defense Systems, LLC', 'S151-4 SSP 1.1 states the recorded organization');
-    assert(subTitled(fullSsp, '1.2')?.content === mockMetadata.boundaryDescription, 'S151-4 SSP 1.2 states the recorded boundary');
+    assert(subTitled(fullSsp, '2.1 ')?.content === mockMetadata.boundaryDescription, 'S151-4 SSP 2.1 states the recorded boundary');
     assert(itemOf(fullSsp, 'Information System Owner') === 'Alex Mercer, CMMC CCA', 'S151-4 SSP attestation prints the recorded owner as a bare name');
 
     const blankSoc2 = compileSoc2SystemDescription({ ...blank, framework: 'SOC_2_TYPE_II' }, soc2Controls, mockSoc2States, mockEvidence);
@@ -676,6 +681,46 @@ async function runArtifactGeneratorTests() {
     const scGaps = getExportGaps('SOC_2_SYSTEM_DESCRIPTION', blank);
     assert(scGaps.length === 5 && scGaps.filter(g => g.advisory).length === 1 && scGaps.find(g => g.advisory)?.field === 'serviceCommitments', 'S199-3 a blank SOC 2 description has one advisory gap, the service commitments');
     assert(getExportGaps('SOC_2_SYSTEM_DESCRIPTION', { ...mockMetadata, serviceCommitments: 'x' }).length === 0, 'S199-4 a complete SOC 2 description with service commitments has no gaps');
+
+    // SSP profile (#238, #241, #242, #246): export readiness, the compiled outline, the Markdown and the eMASS column
+    const profMeta = { ...mockMetadata, framework: 'CMMC_L2' as const };
+    const profItems = computeSspCompleteness(sspCompletenessFromReport(profMeta, null)).sections.flatMap(s => s.items);
+    const profGaps = getExportGaps('NIST_SP_800_18_SSP', profMeta, { profile: null, framework: 'CMMC_L2' });
+    const profRequiredIds = profItems.filter(i => !i.reportField && i.severity === 'required' && i.missing).map(i => i.id);
+    assert(JSON.stringify(profGaps.filter(g => g.sspSection && !g.advisory).map(g => g.field)) === JSON.stringify(profRequiredIds) && profRequiredIds.length > 0, 'B-2 the profile gaps of a CMMC L2 SSP are the registry\'s required items without a report field');
+    const profSectionGaps = (id: string) => profGaps.filter(g => g.sspSection === id && !g.advisory);
+    assert(profSectionGaps('identification').length === 4 && profSectionGaps('roles').map(g => g.field).join() === 'role:isso_ciso,role:ir_reporting_primary' && profSectionGaps('maintenance').length === 4, 'B-2b identification (identifier and C/I/A), roles (ISSO, IR primary) and the four maintenance answers are listed', profGaps.map(g => g.field));
+    assert(getExportGaps('NIST_SP_800_18_SSP', profMeta).every(g => !g.sspSection), 'B-2c without the third argument no profile gap is listed');
+    const blankGapFields = getExportGaps('NIST_SP_800_18_SSP', blank, { profile: null, framework: 'CMMC_L1' }).filter(g => !g.sspSection && !g.advisory).map(g => g.field).sort().join();
+    const blankRegistry = computeSspCompleteness(sspCompletenessFromReport(blank, null)).sections.flatMap(s => s.items).filter(i => i.reportField && i.severity === 'required' && i.missing).map(i => i.reportField as string).sort().join();
+    assert(blankGapFields === blankRegistry && blankGapFields !== '', 'B-3 the required report-field gaps of a blank SSP equal the registry\'s required, missing report-field items', { blankGapFields, blankRegistry });
+    assert(getExportGaps('POAM', blank, { profile: null, framework: 'CMMC_L2' }).every(g => !g.sspSection), 'B-4 a POA&M lists no SSP profile gap');
+
+    const allModerate: SspProfile = { systemIdentifier: 'SYS-ID-1', confidentialityImpact: 'MODERATE', integrityImpact: 'MODERATE', availabilityImpact: 'MODERATE' };
+    const profSsp = compileNistSSP({ ...mockMetadata, sspProfile: allModerate }, cmmcL1Controls, mockControlStates);
+    assert(itemOf(profSsp, 'Confidentiality Impact') === 'MODERATE' && itemOf(profSsp, 'System Unique Identifier') === 'SYS-ID-1' && itemOf(profSsp, 'Overall Security Categorization') === 'MODERATE', 'AG-P1 1.1 prints the recorded categorization and identifier');
+    const noProfSsp = compileNistSSP(mockMetadata, cmmcL1Controls, mockControlStates);
+    assert(itemOf(noProfSsp, 'System Unique Identifier') === NOT_RECORDED && itemOf(noProfSsp, 'Confidentiality Impact') === NOT_RECORDED && itemOf(noProfSsp, 'Overall Security Categorization') === NOT_RECORDED, 'AG-P2 without a profile 1.1 states the identifier and categorization as not recorded (a suggestion is never printed)');
+    const rolesSsp = compileNistSSP({ ...mockMetadata, sspProfile: { roles: [{ id: 'a', roleKey: 'system_owner', name: 'Jane', email: 'jane@x.test' }] } }, cmmcL1Controls, mockControlStates);
+    const rolesSub = subTitled(rolesSsp, '1.2 ');
+    const profRoleRows = ((rolesSub?.table?.rows || []) as string[][]);
+    assert(rolesSub?.title.includes('Responsible Organization') === true && profRoleRows.some(r => r[0] === 'System owner' && r[1] === 'Jane' && r[2] === 'jane@x.test'), 'AG-P3 the roles table lists the recorded System owner', profRoleRows);
+    assert(profRoleRows.some(r => r[0].startsWith('Information system security officer') && r[1] === NOT_RECORDED), 'AG-P3b a required role with no row prints as not recorded');
+    assert(generatePrintableHtml(rolesSsp, { ...mockMetadata }).includes('Jane'), 'AG-P3c the printable SSP shows the roles table');
+    const maintSsp = compileNistSSP({ ...mockMetadata, sspProfile: { maintenance: { hardwareMaintainedByOrg: true, hardwareOwnedByOrg: false, softwareMaintainedByOrg: null, softwareOwnedByOrg: true, exceptions: 'Leased printers' } } }, cmmcL1Controls, mockControlStates);
+    const maintSub = subTitled(maintSsp, '2.3');
+    const maintValue = (label: string) => maintSub?.items?.find(i => i.label === label)?.value;
+    assert(maintValue('Hardware maintained by the organization') === 'Yes' && maintValue('Hardware owned by the organization') === 'No' && maintValue('Software maintained by the organization') === NOT_RECORDED && (maintSub?.content || '').includes('Leased printers'), 'AG-P4 2.3 prints Yes, No, Not recorded and the exceptions');
+    assert(noProfSsp.sections.map(s => s.title.split('.')[0]).join() === '1,2,3,4,5' && subTitled(noProfSsp, '2.3')?.content === NO_MAINTENANCE_EXCEPTIONS_RECORDED, 'AG-P5 the sections are numbered 1 to 5 and 2.3 says no exceptions are recorded when there are none');
+
+    const profMd = buildSspMarkdown(sspMdState, sspMdControls, 'CMMC_L1', { systemIdentifier: 'SYS-ID-1', roles: [{ id: 'a', roleKey: 'system_owner', name: 'Jane', email: 'jane@x.test' }], maintenance: { hardwareMaintainedByOrg: true, hardwareOwnedByOrg: false, softwareMaintainedByOrg: null, softwareOwnedByOrg: null, exceptions: 'Leased printers' } });
+    assert(profMd.includes('**System Unique Identifier:** SYS-ID-1') && profMd.includes('## 2.3 Hardware and Software Maintenance and Ownership') && profMd.includes('**System owner:** Jane (jane@x.test)') && profMd.includes('**Exceptions:** Leased printers') && profMd.includes('**Hardware owned by the organization:** No'), 'AG-P6 the Markdown prints the identifier, roles and maintenance');
+    assert(sspMd.includes(`**System Unique Identifier:** ${NOT_RECORDED}`) && sspMd.includes('## 2.3 Hardware and Software Maintenance and Ownership') && headingsHaveBlankLine(profMd) && profMd.split('\n### ').length - 1 === sspMdControls.length, 'AG-P7 without a profile the Markdown says not recorded; every heading keeps its blank line and one ### per control');
+
+    const emassMeta = { ...mockMetadata, systemName: 'Enclave', framework: 'CMMC_L2' as const };
+    const emassWith = generateEmassControlMatrixCsv(cmmcL2Controls.slice(0, 1), {}, { ...emassMeta, sspProfile: { systemIdentifier: 'SYS-ID-1' } });
+    const emassWithout = generateEmassControlMatrixCsv(cmmcL2Controls.slice(0, 1), {}, emassMeta);
+    assert(emassWith.split('\n')[1].startsWith('"SYS-ID-1 / Enclave"') && emassWithout.split('\n')[1].startsWith('"Enclave"'), 'AG-P8 the eMASS System ID / Name leads with the identifier when one is recorded and is unchanged without');
 
     // Extra: no label next to the blank signature rows asserts an attestation or assertion date
     assert(attestDocs.every(d => !JSON.stringify(d).includes('Attestation Date') && !JSON.stringify(d).includes('Date of Assertion')), 'S197-6 no document labels a generated date as an attestation or assertion date');

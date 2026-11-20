@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   FileText,
   Printer,
@@ -11,14 +11,44 @@ import {
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
+import { useSspProfile } from '../../hooks/useSspProfile';
+import { useSspReviews } from '../../hooks/useSspReviews';
 import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
 
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
-import { NOT_RECORDED } from '../../data/reports/documentDefaults';
+import { NOT_RECORDED, NO_CSP_RECORDED } from '../../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { composeImplementationStatement } from '../../data/cmmcGuide/sspStatement';
 import { statusDisplayLabel } from '../../data/statusLabels';
 import { SSP_METADATA_NEED_OWNER_MESSAGE } from '../../data/sspMetadataSync';
+import { computeSspCompleteness, resolveSspCompletenessInput } from '../../data/ssp/sspCompleteness';
+import { SSP_SECTIONS, type SspSectionId } from '../../data/ssp/sspSections';
+import {
+  SSP_BUILDER_TEXT,
+  builderSaveState,
+  completenessSummary,
+  maintenanceControlLinks,
+  navEntriesView,
+  profileSaveErrorText,
+  reviewErrorText,
+  signOffDisabledReason,
+} from '../../data/ssp/sspBuilderView';
+import {
+  SSP_ROLE_TABLE_HEADERS,
+  sspIdentificationItems,
+  sspMaintenanceExceptions,
+  sspMaintenanceItems,
+  sspRoleLines,
+  sspRoleRows,
+} from '../../data/ssp/sspOutput';
+import { ErrorNotice } from '../common/ErrorNotice';
+import { SspSectionNav } from './SspSectionNav';
+import { SspSectionReview } from './SspSectionReview';
+import { SspIdentificationSection } from './SspIdentificationSection';
+import { SspRolesSection } from './SspRolesSection';
+import { SspEnvironmentSection } from './SspEnvironmentSection';
+import { SspMaintenanceSection } from './SspMaintenanceSection';
+
 export const SSPBuilder: React.FC = () => {
   const {
     state,
@@ -31,15 +61,47 @@ export const SSPBuilder: React.FC = () => {
     resolveSspMetadataConflict,
     sspMetadataNeedsOwner,
     exportAssessmentMarkdown,
+    sspFocusSection,
+    clearSspFocusSection,
+    setSelectedControlId,
   } = useAssessment();
 
-  const { currentTenant, canEdit, activeFramework, activeProgram } = useTenant();
+  const { currentTenant, canEdit, activeFramework, activeProgram, teamMembers, teamError } = useTenant();
+  const profileHook = useSspProfile();
+  const reviews = useSspReviews();
+  const profile = profileHook.profile;
 
-  const [viewMode, setViewMode] = useState<'document' | 'form'>('document');
+  // Another screen (the export modal's gap list) can ask for a section: then the builder opens on the edit view
+  const [viewMode, setViewMode] = useState<'document' | 'form'>(() => (sspFocusSection ? 'form' : 'document'));
+  const [activeSection, setActiveSection] = useState<SspSectionId>('identification');
+  const [focusPending, setFocusPending] = useState(false);
+  const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const sectionHeadingId = useId();
   const [copied, setCopied] = useState<boolean>(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [resolvingConflict, setResolvingConflict] = useState<boolean>(false);
   const [conflictFailed, setConflictFailed] = useState<boolean>(false);
+  const [profileNonce, setProfileNonce] = useState(0);
+  const [signing, setSigning] = useState(false);
+  const [reviewMsg, setReviewMsg] = useState<{ section: SspSectionId; error: string | null; notice: string | null } | null>(null);
+
+  useEffect(() => {
+    if (!sspFocusSection) return;
+    setViewMode('form');
+    setActiveSection(sspFocusSection);
+    setFocusPending(true);
+    clearSspFocusSection();
+  }, [sspFocusSection, clearSspFocusSection]);
+
+  useEffect(() => {
+    if (!focusPending || viewMode !== 'form') return;
+    sectionHeadingRef.current?.focus();
+    setFocusPending(false);
+  }, [focusPending, viewMode, activeSection]);
+
+  useEffect(() => {
+    setReviewMsg(null);
+  }, [activeSection, activeProgram?.id]);
 
   const resolveConflict = async (choice: 'browser' | 'server') => {
     setResolvingConflict(true);
@@ -61,9 +123,66 @@ export const SSPBuilder: React.FC = () => {
   const guidance = getFrameworkGuidanceText(activeFramework);
   const totalControls = frameworkControls.length || metrics.totalControls || 1;
 
+  const archived = Boolean(activeProgram?.archived);
+  const profileEditable = canEdit && profileHook.status === 'ready' && !archived;
+  const serverBacked = Boolean(currentTenant.serverBacked);
+  const completeness = useMemo(
+    () => computeSspCompleteness(resolveSspCompletenessInput({ meta, tenant: currentTenant, program: activeProgram, framework: activeFramework, profile })),
+    [meta, currentTenant, activeProgram, activeFramework, profile]
+  );
+  const entries = navEntriesView(completeness, reviews);
+  const sectionStatus = completeness.sections.find((s) => s.sectionId === activeSection);
+  const savePending = sspMetadataStatus === 'saving' || profileHook.saving;
+  const members = teamMembers[currentTenant.id] ?? [];
+  const teamLoaded = serverBacked && teamMembers[currentTenant.id] !== undefined;
+  const maControls = useMemo(
+    () => maintenanceControlLinks(frameworkControls, (id) => cmmcDisplayId(id, activeFramework)),
+    [frameworkControls, activeFramework]
+  );
+  const def = SSP_SECTIONS.find((s) => s.id === activeSection) ?? SSP_SECTIONS[0];
+  const sectionKey = `${activeProgram?.id ?? currentTenant.id}-${profileNonce}`;
+  const saveState = builderSaveState({
+    serverBacked,
+    metadataStatus: sspMetadataStatus,
+    needsOwner: sspMetadataNeedsOwner,
+    conflict: Boolean(sspMetadataConflict),
+    profileStatus: profileHook.status,
+    profileSaving: profileHook.saving,
+  });
+
+  const selectSection = (id: SspSectionId) => {
+    setActiveSection(id);
+    setFocusPending(true);
+  };
+
+  const reloadProfile = () => {
+    void profileHook.reload();
+    setProfileNonce((n) => n + 1);
+  };
+
+  const handleSignOff = async () => {
+    const id = activeSection;
+    setSigning(true);
+    setReviewMsg(null);
+    try {
+      const r = await reviews.signOff(id);
+      setReviewMsg({ section: id, error: null, notice: r.changed ? SSP_BUILDER_TEXT.marked : SSP_BUILDER_TEXT.alreadyMarked });
+    } catch (err) {
+      setReviewMsg({ section: id, error: reviewErrorText(err), notice: null });
+      void reviews.reload();
+    } finally {
+      setSigning(false);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
+
+  // The identifier, categorization, roles and maintenance answers are worded by the shared output module, as in the compiled SSP and the Markdown
+  const identification = sspIdentificationItems(profile);
+  const roleRows = sspRoleRows({ profile, legacySystemOwner: meta.systemOwner, framework: activeFramework });
+  const maintenanceItems = sspMaintenanceItems(profile);
 
   const handleCopyText = () => {
     let text = `SYSTEM SECURITY PLAN (SSP) - ${frameworkTitle.toUpperCase()} / ${guidance.authority.toUpperCase()}\n\n`;
@@ -72,10 +191,17 @@ export const SSPBuilder: React.FC = () => {
     text += `SAM.GOV STATUS: ${meta.samStatus || NOT_RECORDED}\n`;
     if (activeProgram) text += `PROGRAM: ${activeProgram.name}\n`;
     text += `SYSTEM NAME: ${meta.systemName}\n`;
+    for (const item of identification) text += `${item.label.toUpperCase()}: ${item.value}\n`;
     text += `SYSTEM OWNER: ${meta.systemOwner}\n`;
     text += `ASSESSMENT DATE: ${meta.assessmentDate}\n`;
     text += `EVIDENCE VAULT (LOCAL): tenants/${currentTenant.id}/\n\n`;
     text += `SYSTEM BOUNDARY & SCOPE:\n${boundaryScope}\n\n`;
+    text += `RESPONSIBLE ROLES:\n`;
+    for (const line of sspRoleLines({ profile, legacySystemOwner: meta.systemOwner, framework: activeFramework })) text += `- ${line.label}: ${line.value}\n`;
+    text += `\nCLOUD SERVICE PROVIDERS: ${meta.cloudServiceProviders || NO_CSP_RECORDED}\n\n`;
+    text += `HARDWARE AND SOFTWARE MAINTENANCE AND OWNERSHIP:\n`;
+    for (const item of maintenanceItems) text += `- ${item.label}: ${item.value}\n`;
+    text += `EXCEPTIONS: ${sspMaintenanceExceptions(profile)}\n\n`;
     text += `${totalControls} CONTROLS ASSESSMENT MATRIX:\n`;
 
     for (const ctrl of frameworkControls) {
@@ -129,6 +255,8 @@ export const SSPBuilder: React.FC = () => {
           {/* Mode Switcher */}
           <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center gap-1">
             <button
+              type="button"
+              aria-pressed={viewMode === 'document'}
               onClick={() => setViewMode('document')}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                 viewMode === 'document'
@@ -140,6 +268,8 @@ export const SSPBuilder: React.FC = () => {
               <span>Audit Document</span>
             </button>
             <button
+              type="button"
+              aria-pressed={viewMode === 'form'}
               onClick={() => setViewMode('form')}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                 viewMode === 'form'
@@ -148,7 +278,7 @@ export const SSPBuilder: React.FC = () => {
               }`}
             >
               <Edit3 className="w-3.5 h-3.5" />
-              <span>Edit Metadata</span>
+              <span>Edit Sections</span>
             </button>
           </div>
 
@@ -162,7 +292,7 @@ export const SSPBuilder: React.FC = () => {
           <span role="status" aria-live="polite" className={copyFailed ? 'text-xs text-amber-300' : 'sr-only'}>{copyFailed ? COPY_FAILED_MESSAGE : ''}</span>
 
           <button
-            onClick={() => exportAssessmentMarkdown()}
+            onClick={() => exportAssessmentMarkdown(profileHook.profile)}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
           >
             <Download className="w-3.5 h-3.5 text-slate-400" />
@@ -179,37 +309,37 @@ export const SSPBuilder: React.FC = () => {
         </div>
       </div>
 
-      {/* VIEW 1: METADATA FORM EDITOR */}
+      {/* VIEW 1: SECTION EDITOR */}
       {viewMode === 'form' && (
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl">
           <div className="border-b border-slate-800 pb-4">
             <h3 className="text-lg font-bold text-white tracking-tight">
-              Edit Enclave & System Identification
+              Edit SSP Sections
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              These details populate the formal cover page, attestation block, and system environment sections of your SSP.
+              Each section lists what is still missing. Red counts are required items; a green check means the section is complete.
             </p>
           </div>
 
           {!canEdit && (
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-center gap-2">
               <Lock className="w-4 h-4" />
-              <span>You are in Read-Only Viewer mode. Editing metadata is disabled.</span>
+              <span>{SSP_BUILDER_TEXT.readOnly}</span>
             </div>
           )}
 
           {/* Where these details are saved. Fixed text only: the values may be CUI. */}
-          {currentTenant.serverBacked && (
-            <p className="text-xs text-slate-400" role="status" aria-live="polite">
-              {sspMetadataStatus === 'saving'
-                ? 'Saving…'
-                : sspMetadataStatus === 'saved'
-                  ? 'Saved to the server'
-                  : sspMetadataStatus === 'loading' && !sspMetadataNeedsOwner && !sspMetadataConflict
-                    ? 'Loading the server copy…'
+          <p className="text-xs text-slate-400" role="status" aria-live="polite">
+            {saveState === 'saving'
+              ? 'Saving…'
+              : saveState === 'saved'
+                ? 'Saved to the server'
+                : saveState === 'loading'
+                  ? 'Loading the server copy…'
+                  : saveState === 'browser'
+                    ? SSP_BUILDER_TEXT.browserOnly
                     : 'These details are saved to the server, separately for each program.'}
-            </p>
-          )}
+          </p>
 
           {sspMetadataNeedsOwner && (
             <div role="alert" className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-center gap-2">
@@ -247,194 +377,142 @@ export const SSPBuilder: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* System Name */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Information System Name
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.systemName}
-                onChange={(e) => updateSSPMetadata({ systemName: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Defense Contracting Information Network (DCIN)"
-              />
-            </div>
-
-            {/* Organization Name */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Organization / Contractor Name
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.organizationName}
-                onChange={(e) => updateSSPMetadata({ organizationName: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Vanguard Defense Systems LLC"
-              />
-            </div>
-
-            {/* CAGE Code */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Commercial and Government Entity (CAGE) Code
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.cageCode}
-                onChange={(e) => updateSSPMetadata({ cageCode: e.target.value.toUpperCase() })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white font-mono focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. 8K3R1"
-                maxLength={5}
-              />
-            </div>
-
-            {/* SAM Status */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                SAM.gov Registration Status
-              </label>
-              <select
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.samStatus}
-                onChange={(e) => updateSSPMetadata({ samStatus: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
+          {serverBacked && profileHook.status === 'error' && (
+            <div className="space-y-2">
+              <ErrorNotice message={SSP_BUILDER_TEXT.profileLoadFailed} />
+              <button
+                type="button"
+                onClick={() => void profileHook.reload()}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold"
               >
-                <option value="ACTIVE">ACTIVE - Compliant for Federal Award</option>
-                <option value="EXPIRED">EXPIRED - Renewal Required</option>
-                <option value="IN_PROGRESS">IN_PROGRESS - Registration Underway</option>
-                <option value="NOT_REGISTERED">NOT_REGISTERED</option>
-              </select>
+                Try again
+              </button>
             </div>
+          )}
 
-            {/* System Owner */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Designated System Owner
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.systemOwner}
-                onChange={(e) => updateSSPMetadata({ systemOwner: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Alex Mercer, Chief Information Officer"
-              />
+          {serverBacked && profileHook.status === 'stale' && (
+            <div role="alert" className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 space-y-3">
+              <p>{SSP_BUILDER_TEXT.profileStale}</p>
+              <button
+                type="button"
+                onClick={reloadProfile}
+                className="px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold"
+              >
+                Reload the server copy
+              </button>
             </div>
+          )}
 
-            {/* Lead Assessor / Author */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Lead Assessment Author
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.authorName}
-                onChange={(e) => updateSSPMetadata({ authorName: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Lead CMMC Assessor / Security Engineer"
-              />
+          {serverBacked && profileHook.status !== 'stale' && profileHook.saveError && (
+            <div className="space-y-2">
+              <ErrorNotice message={profileSaveErrorText(profileHook.saveError)} />
+              {profileHook.saveError === 'failed' && (
+                <button
+                  type="button"
+                  onClick={() => void profileHook.save(profileHook.profile ?? {})}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold"
+                >
+                  Try again
+                </button>
+              )}
             </div>
+          )}
 
-            {/* Assessment Date */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Baseline Assessment Date
-              </label>
-              <input
-                type="date"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.assessmentDate}
-                onChange={(e) => updateSSPMetadata({ assessmentDate: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-              />
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)] gap-6 items-start">
+            <SspSectionNav entries={entries} activeId={activeSection} onSelect={selectSection} summary={completenessSummary(completeness)} />
+            <section aria-labelledby={sectionHeadingId} className="min-w-0 space-y-5">
+              <h3
+                id={sectionHeadingId}
+                ref={sectionHeadingRef}
+                tabIndex={-1}
+                className="text-base font-bold text-white tracking-tight focus:outline-none"
+              >
+                <span className="font-mono text-slate-400 mr-2">{def.number}</span>
+                {def.title}
+              </h3>
 
-            {/* Document Version */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                SSP Version
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.version}
-                onChange={(e) => updateSSPMetadata({ version: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. 1.0.0"
-              />
-            </div>
+              {activeSection === 'identification' && (
+                <SspIdentificationSection
+                  key={sectionKey}
+                  meta={meta}
+                  canEdit={canEdit}
+                  sspMetadataEditable={sspMetadataEditable}
+                  updateSSPMetadata={updateSSPMetadata}
+                  profile={profile}
+                  profileEditable={profileEditable}
+                  onProfileChange={(p) => void profileHook.save(p)}
+                  section={sectionStatus}
+                  framework={activeFramework}
+                  baseline={activeProgram?.baseline ?? null}
+                />
+              )}
+              {activeSection === 'roles' && (
+                <SspRolesSection
+                  key={sectionKey}
+                  profile={profile}
+                  legacySystemOwner={meta.systemOwner}
+                  section={sectionStatus}
+                  canEdit={canEdit}
+                  profileEditable={profileEditable}
+                  onProfileChange={(p) => void profileHook.save(p)}
+                  members={members}
+                  teamLoaded={teamLoaded}
+                  teamError={teamError}
+                  serverBacked={serverBacked}
+                  framework={activeFramework}
+                />
+              )}
+              {activeSection === 'environment' && (
+                <SspEnvironmentSection
+                  key={sectionKey}
+                  meta={meta}
+                  canEdit={canEdit}
+                  sspMetadataEditable={sspMetadataEditable}
+                  updateSSPMetadata={updateSSPMetadata}
+                  section={sectionStatus}
+                  boundaryFallback={activeProgram?.boundarySummary ?? ''}
+                />
+              )}
+              {activeSection === 'maintenance' && (
+                <SspMaintenanceSection
+                  key={sectionKey}
+                  profile={profile}
+                  canEdit={canEdit}
+                  profileEditable={profileEditable}
+                  onProfileChange={(p) => void profileHook.save(p)}
+                  section={sectionStatus}
+                  maControls={maControls}
+                  onOpenControl={setSelectedControlId}
+                />
+              )}
 
-            {/* Boundary Scope */}
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                System Boundary & Scope Description
-              </label>
-              <textarea
-                rows={4}
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.systemBoundaryScope}
-                onChange={(e) => updateSSPMetadata({ systemBoundaryScope: e.target.value })}
-                className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="Describe the operational boundary, physical facilities, cloud tenants, and components..."
+              <SspSectionReview
+                sectionId={activeSection}
+                supported={reviews.supported}
+                status={reviews.status}
+                state={reviews.sections[activeSection] ?? null}
+                history={reviews.history}
+                canEdit={canEdit}
+                disabledReason={signOffDisabledReason({
+                  savePending,
+                  reviewsStatus: reviews.status,
+                  profileStatus: profileHook.status,
+                  metadataEditable: sspMetadataEditable,
+                  canSignOff: reviews.canSignOff,
+                  signing,
+                })}
+                signing={signing}
+                error={reviewMsg?.section === activeSection ? reviewMsg.error : null}
+                notice={reviewMsg?.section === activeSection ? reviewMsg.notice : null}
+                onSignOff={() => void handleSignOff()}
+                onRetry={() => void reviews.reload()}
               />
-            </div>
-
-            {/* Operating Environment */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                System Operating Environment
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.systemEnvironment}
-                onChange={(e) => updateSSPMetadata({ systemEnvironment: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Hybrid Cloud: Microsoft 365 + On-Premises HQ"
-              />
-            </div>
-
-            {/* Cloud Service Providers */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Authorized Cloud Service Providers (CSPs)
-              </label>
-              <input
-                type="text"
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.cloudServiceProviders}
-                onChange={(e) => updateSSPMetadata({ cloudServiceProviders: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="e.g. Microsoft 365 GCC High (leave empty if none)"
-              />
-            </div>
-
-            {/* Service Commitments (SOC 2) */}
-            <div className="md:col-span-2">
-              <label htmlFor="ssp-service-commitments" className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Principal service commitments and system requirements (SOC 2)
-              </label>
-              <textarea
-                id="ssp-service-commitments"
-                rows={4}
-                disabled={!canEdit || !sspMetadataEditable}
-                value={meta.serviceCommitments ?? ''}
-                onChange={(e) => updateSSPMetadata({ serviceCommitments: e.target.value })}
-                className="w-full p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none disabled:opacity-70"
-                placeholder="Commitments made to customers (SLAs, security and privacy commitments) and the system requirements that support them. Used by the SOC 2 system description."
-              />
-            </div>
+            </section>
           </div>
 
           <div className="pt-4 border-t border-slate-800 flex justify-end">
             <button
+              type="button"
               onClick={() => setViewMode('document')}
               className="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-colors"
             >
@@ -447,14 +525,14 @@ export const SSPBuilder: React.FC = () => {
       {/* VIEW 2: FORMAL PRINTABLE AUDIT DOCUMENT */}
       {viewMode === 'document' && (
         <div className="ssp-print-document bg-white text-slate-900 rounded-3xl p-6 sm:p-12 shadow-2xl border border-slate-200 font-sans space-y-8 max-w-5xl mx-auto">
-          
+
           {/* Document Header & Cover Banner */}
           <div className="border-b-2 border-slate-900 pb-6 space-y-2">
             <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
               <span>SECURITY CLASSIFICATION: UNCLASSIFIED // COMPLIANCE CONTROL SET</span>
               <span>VERSION {meta.version}</span>
             </div>
-            
+
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-950 tracking-tight">
               SYSTEM SECURITY PLAN (SSP)
             </h1>
@@ -474,12 +552,13 @@ export const SSPBuilder: React.FC = () => {
             </div>
           </div>
 
-          {/* Section 1: System Identification & Governance Metadata */}
+          {/* Section 1: System Identification & Governance (1.1 identification and categorization, 1.2 roles) */}
           <div className="space-y-3">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg border-l-4 border-brand-600">
               1. System Identification & Governance
             </h2>
 
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">1.1 System Identification & Categorization</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-slate-500 block font-medium">Organization Name</span>
@@ -498,24 +577,71 @@ export const SSPBuilder: React.FC = () => {
               </div>
 
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-slate-500 block font-medium">Designated System Owner</span>
-                <span className="text-slate-900 font-semibold">{meta.systemOwner}</span>
+                <span className="text-slate-500 block font-medium">{identification[0].label}</span>
+                <span className="text-slate-900 font-mono font-bold text-sm">{identification[0].value}</span>
               </div>
 
               <div className="sm:col-span-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-slate-500 block font-medium">System Architecture & Hosting Environment</span>
-                <span className="text-slate-900">{meta.systemEnvironment}</span>
+                <span className="text-slate-500 block font-medium">Security Categorization (Confidentiality / Integrity / Availability)</span>
+                <span className="text-slate-900 font-bold">{identification[1].value} / {identification[2].value} / {identification[3].value}</span>
+                <span className="text-slate-500 block text-xs mt-0.5">Overall: {identification[4].value}</span>
               </div>
+            </div>
+
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 pt-2">1.2 Responsible Organization & Roles</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border border-slate-200">
+                <thead>
+                  <tr className="bg-slate-50 text-left">
+                    {SSP_ROLE_TABLE_HEADERS.map((h) => (
+                      <th key={h} scope="col" className="px-3 py-2 border-b border-slate-200 font-semibold text-slate-700">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {roleRows.map((r, i) => (
+                    <tr key={`${r.role}-${i}`} className="border-b border-slate-100 last:border-0">
+                      <td className="px-3 py-2 text-slate-700">{r.role}</td>
+                      <td className="px-3 py-2 text-slate-900 font-semibold">{r.name}</td>
+                      <td className="px-3 py-2 text-slate-700 break-all">{r.email}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
-          {/* Section 2: System Boundary & Scope */}
+          {/* Section 2: System Environment (2.1 boundary and environment, 2.2 cloud service providers, 2.3 maintenance and ownership) */}
           <div className="space-y-3">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg border-l-4 border-brand-600">
-              2. System Boundary & Scope Narrative
+              2. System Environment
             </h2>
+
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">2.1 System Boundary & Environment</h3>
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
               {boundaryScope || 'No boundary scope defined.'}
+            </div>
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+              <span className="text-slate-500 block font-medium">System Architecture & Hosting Environment</span>
+              <span className="text-slate-900">{meta.systemEnvironment}</span>
+            </div>
+
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 pt-2">2.2 Cloud Service Providers</h3>
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">
+              {meta.cloudServiceProviders || NO_CSP_RECORDED}
+            </div>
+
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 pt-2">2.3 Hardware and Software Maintenance and Ownership</h3>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {maintenanceItems.map((item) => (
+                <div key={item.label} className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                  <dt className="text-slate-500 font-medium">{item.label}</dt>
+                  <dd className="text-slate-900 font-semibold">{item.value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
+              {sspMaintenanceExceptions(profile)}
             </div>
           </div>
 

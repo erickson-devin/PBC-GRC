@@ -219,11 +219,11 @@ async function runTests() {
     // #122: the handover states no cloud provider or environment of its own
     const plainMeta = plain.reports.systemSecurityPlan.metadata;
     assert(plainMeta.cloudServiceProviders === '' && plainMeta.systemEnvironment === '', 'OB-122a: the handover SSP names no cloud provider or environment the customer did not record', { csp: plainMeta.cloudServiceProviders, env: plainMeta.systemEnvironment });
-    const plain13 = (plain.reports.systemSecurityPlan.sections[0].subsections || []).find((s: { title: string }) => s.title.startsWith('1.3'));
-    assert(plain13?.content === NO_CSP_RECORDED, 'OB-122b: the handover SSP section 1.3 states that no cloud service provider is recorded');
+    const plain13 = (plain.reports.systemSecurityPlan.sections.find((s: { id: string }) => s.id === 'sec-2-system-environment')?.subsections || []).find((s: { title: string }) => s.title.startsWith('2.2'));
+    assert(plain13?.content === NO_CSP_RECORDED, 'OB-122b: the handover SSP section 2.2 states that no cloud service provider is recorded');
 
     // #151: the handover invents no organization, assessor or boundary
-    const plain12 = (plain.reports.systemSecurityPlan.sections[0].subsections || []).find((s: { title: string }) => s.title.startsWith('1.2'));
+    const plain12 = (plain.reports.systemSecurityPlan.sections.find((s: { id: string }) => s.id === 'sec-2-system-environment')?.subsections || []).find((s: { title: string }) => s.title.startsWith('2.1 '));
     assert(plain12?.content === NO_BOUNDARY_RECORDED, 'S151-14: the handover SSP boundary says none is recorded when the customer recorded none');
     const plainItems = (plain.reports.systemSecurityPlan.sections[0].subsections || []).flatMap((s: { items?: { label: string; value: string }[] }) => s.items || []);
     assert(plainItems.find((i: { label: string }) => i.label === 'Primary Assessor / Author')?.value === NO_ASSESSOR_RECORDED, 'S151-15: the handover SSP names no assessor the customer did not record');
@@ -356,6 +356,21 @@ async function runTests() {
       await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...deps, getSspMetadata: async () => { throw new Error('boom'); } });
     } catch (err) { sspFailed = err; }
     assert(sspFailed instanceof Error, 'OB-M4: if the SSP details cannot be read the export rejects');
+
+    // SSP profile (#241, #242, #246): a program's package prints the identifier, roles and maintenance the server holds
+    const profFor = { systemIdentifier: 'SYS-ID-1', roles: [{ id: 'r1', roleKey: 'system_owner' as const, name: 'Jane Owner', email: 'jane@x.test' }], maintenance: { hardwareMaintainedByOrg: true, hardwareOwnedByOrg: true, softwareMaintainedByOrg: true, softwareOwnedByOrg: true, exceptions: '' } };
+    const pWith = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...deps, getSspProfile: async () => ({ profile: profFor }) });
+    const pWithSsp = pWith.packages[0].reports.systemSecurityPlan;
+    const pWithItems = (pWithSsp.sections[0].subsections || []).flatMap((s: { items?: { label: string; value: string }[] }) => s.items || []);
+    assert(pWithItems.find((i: { label: string }) => i.label === 'System Unique Identifier')?.value === 'SYS-ID-1' && JSON.stringify(pWithSsp).includes('Jane Owner'), 'OB-SP1: a program package built with getSspProfile prints the identifier in 1.1 and the roles in 1.2');
+    const pWithout = await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, deps);
+    const pWithoutSsp = pWithout.packages[0].reports.systemSecurityPlan;
+    assert(pWithoutSsp.metadata.sspProfile === undefined && !('sspProfile' in pWithoutSsp.metadata) && (pWithoutSsp.sections[0].subsections || []).flatMap((s: { items?: { label: string; value: string }[] }) => s.items || []).find((i: { label: string }) => i.label === 'System Unique Identifier')?.value === 'Not recorded', 'OB-SP2: without the dependency the package carries no profile and states the identifier as not recorded');
+    let profFailed: unknown = null;
+    try {
+      await buildProgramHandover(progTenant, { kind: 'program', programId: 'p-a' }, undefined, { ...deps, getSspProfile: async () => { throw new Error('boom'); } });
+    } catch (err) { profFailed = err; }
+    assert(profFailed instanceof Error, 'OB-SP3: if the SSP profile cannot be read the export rejects');
 
     let notFound: unknown = null;
     try { await buildProgramHandover(progTenant, { kind: 'program', programId: 'nope' }, undefined, deps); } catch (err) { notFound = err; }
