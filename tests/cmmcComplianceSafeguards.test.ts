@@ -39,6 +39,8 @@ import { compileNistSSP } from '../src/data/reports/documentCompilers';
 import { generatePrintableHtml, generatePoamCsv } from '../src/data/reports/reportExporters';
 import { csvCell } from '../src/data/reports/csv';
 import type { POAMEntry } from '../src/types/report';
+import type { AssessmentObjective } from '../src/types/assessment';
+import { cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 
 let passCount = 0;
 let failCount = 0;
@@ -340,7 +342,36 @@ async function runTestSuite() {
   assert(modalSrc.includes('sprsAppliesTo(activeFramework)'), 'SP4: modal derives sprsApplies from the active framework');
   assert(modalSrc.includes("{sprsApplies ? 'SPRS / eMASS' : 'eMASS'}"), 'SP4: modal tab label depends on sprsApplies');
   assert(modalSrc.includes("activeTab === 'sprs' && !sprsApplies"), 'SP4: modal has an eMASS-only panel for non-L2 frameworks');
-  assert(modalSrc.includes('downloadEmassCsv(frameworkControls, state.controls, formData)'), 'SP4: modal still offers the eMASS CSV download');
+  assert(modalSrc.includes('downloadEmassCsv(frameworkControls, state.controls, formData, state.objectives)'), 'SP4: modal still offers the eMASS CSV download');
+  assert(modalSrc.split('downloadEmassCsv(frameworkControls, state.controls, formData, state.objectives)').length - 1 === 2, 'SP4: both eMASS CSV downloads pass the objectives');
+
+  // E1-E7 (#302): the eMASS narrative column carries the objective narratives of a CMMC control
+  {
+    const eId = CMMC_LEVEL_2_CONTROLS[0].id;
+    const [la, lb] = guideObjectives(cmmcNumberOf(eId)!, 'CMMC_L2').map((g) => g.letter);
+    const obj = (letter: string, narrative: string, status: string = 'MET') =>
+      ({ [`${eId}[${letter}]`]: { id: `${eId}[${letter}]`, controlId: eId, letter, text: '', status, implementationNarrative: narrative } }) as unknown as Record<string, AssessmentObjective>;
+    const st = (notes: string): Record<string, ControlState> => ({ [eId]: { status: 'IN_PROGRESS', implementationNotes: notes } as ControlState });
+    const gen = (notes: string, objs?: Record<string, AssessmentObjective>) => generateEmassControlMatrixCsv(CMMC_LEVEL_2_CONTROLS, st(notes), sampleMeta, objs);
+    const summary = CMMC_LEVEL_2_CONTROLS[0].plainEnglishSummary;
+
+    const e1 = gen('', obj(la, 'Obj A'));
+    assert(e1.includes(csvCell(`[${la}] Obj A`)) && !e1.split('\r\n')[1].includes(csvCell(summary)), 'E1: an objective narrative alone fills the narrative cell, not the plain-English summary');
+    assert(gen('Control-level.', obj(la, 'Obj A')).includes(`"Control-level.\n\n[${la}] Obj A"`), 'E2: control notes then the objective narrative, joined by a blank line');
+    const e3 = gen('Control-level.');
+    assert(e3 === gen('Control-level.', undefined) && e3.includes('"Control-level."') && !e3.includes(`[${la}]`), 'E3: without objectives the output is the control notes only');
+    const nistObjs = obj(la, 'Obj A');
+    const nistMeta = { ...sampleMeta, framework: 'NIST_800_53_REV5' };
+    assert(
+      generateEmassControlMatrixCsv(nistControls, {}, nistMeta, nistObjs) === generateEmassControlMatrixCsv(nistControls, {}, nistMeta),
+      'E4: another framework prints the same CSV with or without objectives'
+    );
+    assert(gen('=1+1', obj(la, 'Obj A')).includes(`"'=1+1\n\n[${la}] Obj A"`), 'E5: the formula guard applies to the composed narrative');
+    const e6 = gen('', obj(lb, 'say "hi"', 'NOT_MET'));
+    assert(e6.includes(`"[${lb}] (Not met) say ""hi"""`), 'E6: quotes in the composed narrative are doubled (RFC 4180)');
+    assert(e6.split('\r\n').length === gen('').split('\r\n').length && e6.split('\r\n').length - 2 === CMMC_LEVEL_2_CONTROLS.length, 'E6: the record count is unchanged by objective narratives');
+    assert(gen('', obj(la, '')) === gen(''), 'E7: when nothing prints the summary fallback is identical to the output without objectives');
+  }
   const modalConsoleLines = modalSrc.split('\n').filter((l) => /console\.\w+\(/.test(l));
   assert(modalConsoleLines.every((l) => !/\berr\b|errorMessage\(|err\.message/.test(l)), 'EX-L1: no console line in the modal passes an error');
   assert(modalSrc.includes('<ErrorNotice message={jsonExportError}') && !modalSrc.includes('Failed to export JSON package'), 'EX-L2: modal shows a fixed-text ErrorNotice for a failed JSON export');

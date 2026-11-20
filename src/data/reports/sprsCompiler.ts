@@ -17,6 +17,8 @@ import { SprsScoreResult } from '../../types/audit';
 import { NOT_RECORDED, recordedRole } from './documentDefaults';
 import { csvCell } from './csv';
 import { cmmcDisplayId } from '../cmmcGuide/displayId';
+import { composeImplementationStatement } from '../cmmcGuide/sspStatement';
+import type { AssessmentObjective } from '../../types/assessment';
 
 export const SPRS_MAX_SCORE = 110;
 export const SPRS_MIN_SCORE = -203;
@@ -201,6 +203,7 @@ export const sprsAppliesTo = (framework: string | null | undefined): boolean => 
 /** Plain-language notes on what the eMASS CSV contains for a framework. */
 export function emassCsvNotes(framework: string): string[] {
   const notes = ['One row per control of this program: its ID, title, domain, implementation status, narrative, responsible role, evaluation date and verified artifacts.'];
+  if (framework === 'CMMC_L1' || framework === 'CMMC_L2') notes[0] += ' For CMMC controls the narrative includes the objective narratives.';
   if (!sprsAppliesTo(framework)) notes.push('The SPRS Weight column reads N/A: SPRS point values exist only for CMMC Level 2.');
   if (framework !== 'CMMC_L1' && framework !== 'CMMC_L2') notes.push('The NIST SP 800-171 Ref column reads N/A: this framework does not map to NIST SP 800-171 requirements.');
   return notes;
@@ -213,7 +216,8 @@ export function emassCsvNotes(framework: string): string[] {
 export function generateEmassControlMatrixCsv(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  metadata: ReportMetadata
+  metadata: ReportMetadata,
+  objectives?: Record<string, AssessmentObjective>
 ): string {
   const headers = [
     'System ID / Name',
@@ -245,7 +249,7 @@ export function generateEmassControlMatrixCsv(
     if (status === 'MET') emassStatus = 'Implemented';
     else if (status === 'IN_PROGRESS') emassStatus = 'Planned / In Progress';
 
-    const narrative = state?.implementationNotes || ctrl.plainEnglishSummary || 'Pending assessor evaluation.';
+    const narrative = composeImplementationStatement(ctrl.id, state?.implementationNotes, objectives, metadata.framework).text || ctrl.plainEnglishSummary || 'Pending assessor evaluation.';
     const role = recordedRole(state?.responsibleRole);
     const evalDate = state?.lastUpdated ? state.lastUpdated.split('T')[0] : metadata.assessmentDate || new Date().toISOString().split('T')[0];
 
@@ -349,9 +353,10 @@ export function generateSprsAssessmentSummary(
 export function downloadEmassCsv(
   controls: FrameworkControlDefinition[],
   controlStates: Record<string, ControlState>,
-  metadata: ReportMetadata
+  metadata: ReportMetadata,
+  objectives?: Record<string, AssessmentObjective>
 ): void {
-  const csv = generateEmassControlMatrixCsv(controls, controlStates, metadata);
+  const csv = generateEmassControlMatrixCsv(controls, controlStates, metadata, objectives);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
