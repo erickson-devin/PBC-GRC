@@ -1,5 +1,6 @@
 import type { ReportDocumentType, ReportMetadata } from '../../types/report';
 import type { SspProfile } from '../../types/sspProfile';
+import type { SspInventoryCompletenessInput } from '../inventory/sspInventory';
 import { computeSspCompleteness, sspCompletenessFromReport } from '../ssp/sspCompleteness';
 import type { SspSectionId } from '../ssp/sspSections';
 
@@ -46,15 +47,17 @@ const ADVISORY: Partial<Record<ReportDocumentType, (keyof ReportMetadata)[]>> = 
  * The recorded values a document of this type would otherwise print as "not recorded" (#151). Pure; a blank or whitespace-only value is a gap.
  * With `ssp` (the program's profile and framework) an SSP also lists the profile items that have no ReportMetadata field (identifier,
  * categorization, the other roles, maintenance), each with the builder section to open; without it the result is the report fields only.
+ * With `ssp.inventory` (the Tools and Services register and the data inventory) it also lists the items of sections 1.3 and 1.4: for a CMMC Level 2
+ * program a missing CUI category is a gap that stops the export, missing user counts are advisory.
  */
-export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportMetadata>, ssp?: { profile: SspProfile | null; framework: string }): ExportGap[] {
+export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportMetadata>, ssp?: { profile: SspProfile | null; framework: string; inventory?: SspInventoryCompletenessInput }): ExportGap[] {
   const empty = (field: keyof ReportMetadata) => {
     const v = meta[field];
     return typeof v !== 'string' || v.trim() === '';
   };
   const gaps: ExportGap[] = [];
   if (docType === 'NIST_SP_800_18_SSP') {
-    const items = computeSspCompleteness(sspCompletenessFromReport({ ...meta, framework: (ssp?.framework ?? meta.framework) as ReportMetadata['framework'] }, ssp?.profile ?? null)).sections.flatMap((s) => s.items);
+    const items = computeSspCompleteness(sspCompletenessFromReport({ ...meta, framework: (ssp?.framework ?? meta.framework) as ReportMetadata['framework'] }, ssp?.profile ?? null, ssp?.inventory)).sections.flatMap((s) => s.items);
     const byField = new Map(items.filter((i) => i.reportField).map((i) => [i.reportField as string, i]));
     for (const advisory of [false, true]) {
       for (const field of SSP_REPORT_FIELD_ORDER) {

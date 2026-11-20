@@ -1,0 +1,1237 @@
+{
+  "_meta": {
+    "title": "CUI Registry: categories and banner markings",
+    "source": "U.S. National Archives and Records Administration (NARA), CUI Registry",
+    "sourceUrls": {
+      "categoryList": "https://www.archives.gov/cui/registry/category-list",
+      "markingList": "https://www.archives.gov/cui/registry/category-marking-list"
+    },
+    "license": "U.S. Government work; not subject to copyright in the United States (17 U.S.C. 105)",
+    "asOf": "2026-11-19",
+    "sourceLastReviewed": {
+      "categoryList": "2025-03-06",
+      "markingList": "2024-04-09"
+    },
+    "verified": true,
+    "verifiedNote": "Transcribed from the two NARA pages fetched on 2026-11-19; 126 categories, 20 groupings",
+    "compiledBy": "Pitch Black Cyber, LLC"
+  },
+  "indexGroups": [
+    {
+      "id": "critical-infrastructure",
+      "name": "Critical Infrastructure"
+    },
+    {
+      "id": "defense",
+      "name": "Defense"
+    },
+    {
+      "id": "export-control",
+      "name": "Export Control"
+    },
+    {
+      "id": "financial",
+      "name": "Financial"
+    },
+    {
+      "id": "immigration",
+      "name": "Immigration"
+    },
+    {
+      "id": "intelligence",
+      "name": "Intelligence"
+    },
+    {
+      "id": "international-agreements",
+      "name": "International Agreements"
+    },
+    {
+      "id": "law-enforcement",
+      "name": "Law Enforcement"
+    },
+    {
+      "id": "legal",
+      "name": "Legal"
+    },
+    {
+      "id": "natural-and-cultural-resources",
+      "name": "Natural and Cultural Resources"
+    },
+    {
+      "id": "nato",
+      "name": "North Atlantic Treaty Organization (NATO)"
+    },
+    {
+      "id": "nuclear",
+      "name": "Nuclear"
+    },
+    {
+      "id": "patent",
+      "name": "Patent"
+    },
+    {
+      "id": "privacy",
+      "name": "Privacy"
+    },
+    {
+      "id": "procurement-and-acquisition",
+      "name": "Procurement and Acquisition"
+    },
+    {
+      "id": "proprietary-business-information",
+      "name": "Proprietary Business Information"
+    },
+    {
+      "id": "provisional",
+      "name": "Provisional"
+    },
+    {
+      "id": "statistical",
+      "name": "Statistical"
+    },
+    {
+      "id": "tax",
+      "name": "Tax"
+    },
+    {
+      "id": "transportation",
+      "name": "Transportation"
+    }
+  ],
+  "categories": [
+    {
+      "id": "CRITAN",
+      "name": "Ammonium Nitrate",
+      "indexGroup": "critical-infrastructure",
+      "marking": "CRITAN",
+      "specifiedBanner": "CUI//SP-CRITAN",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "CVI",
+      "name": "Chemical-terrorism Vulnerability Information",
+      "indexGroup": "critical-infrastructure",
+      "marking": "CVI",
+      "specifiedBanner": "CUI//SP-CVI",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "CEII",
+      "name": "Critical Energy Infrastructure Information",
+      "indexGroup": "critical-infrastructure",
+      "marking": "CEII",
+      "specifiedBanner": "CUI//SP-CEII",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "EMGT",
+      "name": "Emergency Management",
+      "indexGroup": "critical-infrastructure",
+      "marking": "EMGT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "CRIT",
+      "name": "General Critical Infrastructure Information",
+      "indexGroup": "critical-infrastructure",
+      "marking": "CRIT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "ISVI",
+      "name": "Information Systems Vulnerability Information",
+      "indexGroup": "critical-infrastructure",
+      "marking": "ISVI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PHYS",
+      "name": "Physical Security",
+      "indexGroup": "critical-infrastructure",
+      "marking": "PHYS",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PCII",
+      "name": "Protected Critical Infrastructure Information",
+      "indexGroup": "critical-infrastructure",
+      "marking": "PCII",
+      "specifiedBanner": "CUI//SP-PCII",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "SAFE",
+      "name": "SAFETY Act Information",
+      "indexGroup": "critical-infrastructure",
+      "marking": "SAFE",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "TSCA",
+      "name": "Toxic Substances",
+      "indexGroup": "critical-infrastructure",
+      "marking": "TSCA",
+      "specifiedBanner": "CUI//SP-TSCA",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "WATER",
+      "name": "Water Assessments",
+      "indexGroup": "critical-infrastructure",
+      "marking": "WATER",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "CTI",
+      "name": "Controlled Technical Information",
+      "indexGroup": "defense",
+      "marking": "CTI",
+      "specifiedBanner": "CUI//SP-CTI",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "DCRIT",
+      "name": "DoD Critical Infrastructure Security Information",
+      "indexGroup": "defense",
+      "marking": "DCRIT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "NNPI",
+      "name": "Naval Nuclear Propulsion Information",
+      "indexGroup": "defense",
+      "marking": "NNPI",
+      "specifiedBanner": "CUI//SP-NNPI",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "PSI",
+      "name": "Privileged Safety Information",
+      "indexGroup": "defense",
+      "marking": "PSI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "DCNI",
+      "name": "Unclassified Controlled Nuclear Information - Defense",
+      "indexGroup": "defense",
+      "marking": "DCNI",
+      "specifiedBanner": "CUI//SP-DCNI",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "EXPT",
+      "name": "Export Controlled",
+      "indexGroup": "export-control",
+      "marking": "EXPT",
+      "specifiedBanner": "CUI//SP-EXPT",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "EXPTR",
+      "name": "Export Controlled Research",
+      "indexGroup": "export-control",
+      "marking": "EXPTR",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "FSEC",
+      "name": "Bank Secrecy",
+      "indexGroup": "financial",
+      "marking": "FSEC",
+      "specifiedBanner": "CUI//SP-FSEC",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "BUDG",
+      "name": "Budget",
+      "indexGroup": "financial",
+      "marking": "BUDG",
+      "specifiedBanner": "CUI//SP-BUDG",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "COMPT",
+      "name": "Comptroller General",
+      "indexGroup": "financial",
+      "marking": "COMPT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "CCI",
+      "name": "Consumer Complaint Information",
+      "indexGroup": "financial",
+      "marking": "CCI",
+      "specifiedBanner": "CUI//SP-CCI",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "XFER",
+      "name": "Electronic Funds Transfer",
+      "indexGroup": "financial",
+      "marking": "XFER",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "FHFANPI",
+      "name": "Federal Housing Finance Non-Public Information",
+      "indexGroup": "financial",
+      "marking": "FHFANPI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "FSI",
+      "name": "Financial Supervision Information",
+      "indexGroup": "financial",
+      "marking": "FSI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "FNC",
+      "name": "General Financial Information",
+      "indexGroup": "financial",
+      "marking": "FNC",
+      "specifiedBanner": "CUI//SP-FNC",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "FINT",
+      "name": "International Financial Institutions",
+      "indexGroup": "financial",
+      "marking": "FINT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "MERG",
+      "name": "Mergers",
+      "indexGroup": "financial",
+      "marking": "MERG",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "NETW",
+      "name": "Net Worth",
+      "indexGroup": "financial",
+      "marking": "NETW",
+      "specifiedBanner": null,
+      "basicBanner": "CUI//NETW",
+      "designation": "BASIC"
+    },
+    {
+      "id": "RTR",
+      "name": "Retirement",
+      "indexGroup": "financial",
+      "marking": "RTR",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "ASYL",
+      "name": "Asylee",
+      "indexGroup": "immigration",
+      "marking": "ASYL",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "BATT",
+      "name": "Battered Spouse or Child",
+      "indexGroup": "immigration",
+      "marking": "BATT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "RESD",
+      "name": "Permanent Resident Status",
+      "indexGroup": "immigration",
+      "marking": "RESD",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "ADJ",
+      "name": "Status Adjustment",
+      "indexGroup": "immigration",
+      "marking": "ADJ",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PROT",
+      "name": "Temporary Protected Status",
+      "indexGroup": "immigration",
+      "marking": "PROT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "IVIC",
+      "name": "Victims of Human Trafficking",
+      "indexGroup": "immigration",
+      "marking": "IVIC",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "VISA",
+      "name": "Visas",
+      "indexGroup": "immigration",
+      "marking": "VISA",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "AG",
+      "name": "Agriculture",
+      "indexGroup": "intelligence",
+      "marking": "AG",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "FISA",
+      "name": "Foreign Intelligence Surveillance Act",
+      "indexGroup": "intelligence",
+      "marking": "FISA",
+      "specifiedBanner": "CUI//SP-FISA",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "FISAB",
+      "name": "Foreign Intelligence Surveillance Act Business Records",
+      "indexGroup": "intelligence",
+      "marking": "FISAB",
+      "specifiedBanner": "CUI//SP-FISAB",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "INTEL",
+      "name": "General Intelligence",
+      "indexGroup": "intelligence",
+      "marking": "INTEL",
+      "specifiedBanner": "CUI//SP-INTEL",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "GEO",
+      "name": "Geodetic Product Information",
+      "indexGroup": "intelligence",
+      "marking": "GEO",
+      "specifiedBanner": "CUI//SP-GEO",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "IFNC",
+      "name": "Intelligence Financial Records",
+      "indexGroup": "intelligence",
+      "marking": "IFNC",
+      "specifiedBanner": "CUI//SP-IFNC",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "ID",
+      "name": "Internal Data",
+      "indexGroup": "intelligence",
+      "marking": "ID",
+      "specifiedBanner": "CUI//SP-ID",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "OPSEC",
+      "name": "Operations Security",
+      "indexGroup": "intelligence",
+      "marking": "OPSEC",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "INTL",
+      "name": "International Agreement Information",
+      "indexGroup": "international-agreements",
+      "marking": "INTL",
+      "specifiedBanner": "CUI//SP-INTL",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "AIV",
+      "name": "Accident Investigation",
+      "indexGroup": "law-enforcement",
+      "marking": "AIV",
+      "specifiedBanner": "CUI//SP-AIV",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "FUND",
+      "name": "Campaign Funds",
+      "indexGroup": "law-enforcement",
+      "marking": "FUND",
+      "specifiedBanner": "CUI//SP-FUND",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "CMPRS",
+      "name": "Committed Person",
+      "indexGroup": "law-enforcement",
+      "marking": "CMPRS",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "LCOMM",
+      "name": "Communications",
+      "indexGroup": "law-enforcement",
+      "marking": "LCOMM",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SUB",
+      "name": "Controlled Substances",
+      "indexGroup": "law-enforcement",
+      "marking": "SUB",
+      "specifiedBanner": "CUI//SP-SUB",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "CHRI",
+      "name": "Criminal History Records Information",
+      "indexGroup": "law-enforcement",
+      "marking": "CHRI",
+      "specifiedBanner": "CUI//SP-CHRI",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "LDNA",
+      "name": "DNA",
+      "indexGroup": "law-enforcement",
+      "marking": "LDNA",
+      "specifiedBanner": "CUI//SP-LDNA",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "LEI",
+      "name": "General Law Enforcement",
+      "indexGroup": "law-enforcement",
+      "marking": "LEI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "INF",
+      "name": "Informant",
+      "indexGroup": "law-enforcement",
+      "marking": "INF",
+      "specifiedBanner": "CUI//SP-INF",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "INV",
+      "name": "Investigation",
+      "indexGroup": "law-enforcement",
+      "marking": "INV",
+      "specifiedBanner": "CUI//SP-INV",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "JUV",
+      "name": "Juvenile",
+      "indexGroup": "law-enforcement",
+      "marking": "JUV",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "LFNC",
+      "name": "Law Enforcement Financial Records",
+      "indexGroup": "law-enforcement",
+      "marking": "LFNC",
+      "specifiedBanner": "CUI//SP-LFNC",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "LNSL",
+      "name": "National Security Letter",
+      "indexGroup": "law-enforcement",
+      "marking": "LNSL",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "TRACE",
+      "name": "Pen Register/Trap & Trace",
+      "indexGroup": "law-enforcement",
+      "marking": "TRACE",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "RWRD",
+      "name": "Reward",
+      "indexGroup": "law-enforcement",
+      "marking": "RWRD",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SCV",
+      "name": "Sex Crime Victim",
+      "indexGroup": "law-enforcement",
+      "marking": "SCV",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "LSCRN",
+      "name": "Terrorist Screening",
+      "indexGroup": "law-enforcement",
+      "marking": "LSCRN",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "WHSTL",
+      "name": "Whistleblower Identity",
+      "indexGroup": "law-enforcement",
+      "marking": "WHSTL",
+      "specifiedBanner": "CUI//SP-WHSTL",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "ADPO",
+      "name": "Administrative Proceedings",
+      "indexGroup": "legal",
+      "marking": "ADPO",
+      "specifiedBanner": "CUI//SP-ADPO",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "CHLD",
+      "name": "Child Pornography",
+      "indexGroup": "legal",
+      "marking": "CHLD",
+      "specifiedBanner": "CUI//SP-CHLD",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "CVIC",
+      "name": "Child Victim/Witness",
+      "indexGroup": "legal",
+      "marking": "CVIC",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "BARG",
+      "name": "Collective Bargaining",
+      "indexGroup": "legal",
+      "marking": "BARG",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "JURY",
+      "name": "Federal Grand Jury",
+      "indexGroup": "legal",
+      "marking": "JURY",
+      "specifiedBanner": "CUI//SP-JURY",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "PRIVILEGE",
+      "name": "Legal Privilege",
+      "indexGroup": "legal",
+      "marking": "PRIVILEGE",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "LMI",
+      "name": "Legislative Materials",
+      "indexGroup": "legal",
+      "marking": "LMI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PRE",
+      "name": "Presentence Report",
+      "indexGroup": "legal",
+      "marking": "PRE",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PRIOR",
+      "name": "Prior Arrest",
+      "indexGroup": "legal",
+      "marking": "PRIOR",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "LPROT",
+      "name": "Protective Order",
+      "indexGroup": "legal",
+      "marking": "LPROT",
+      "specifiedBanner": "CUI//SP-LPROT",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "LVIC",
+      "name": "Victim",
+      "indexGroup": "legal",
+      "marking": "LVIC",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "WIT",
+      "name": "Witness Protection",
+      "indexGroup": "legal",
+      "marking": "WIT",
+      "specifiedBanner": "CUI//SP-WIT",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "ARCHR",
+      "name": "Archaeological Resources",
+      "indexGroup": "natural-and-cultural-resources",
+      "marking": "ARCHR",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "HISTP",
+      "name": "Historic Properties",
+      "indexGroup": "natural-and-cultural-resources",
+      "marking": "HISTP",
+      "specifiedBanner": "CUI//SP-HISTP",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "NPSR",
+      "name": "National Park System Resources",
+      "indexGroup": "natural-and-cultural-resources",
+      "marking": "NPSR",
+      "specifiedBanner": "CUI//SP-NPSR",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "NATO-RESTRICTED",
+      "name": "NATO Restricted",
+      "indexGroup": "nato",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": null,
+      "designation": "NONE"
+    },
+    {
+      "id": "NATO-UNCLASSIFIED",
+      "name": "NATO Unclassified",
+      "indexGroup": "nato",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": null,
+      "designation": "NONE"
+    },
+    {
+      "id": "NUC",
+      "name": "General Nuclear",
+      "indexGroup": "nuclear",
+      "marking": "NUC",
+      "specifiedBanner": "CUI//SP-NUC",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "RECCOM",
+      "name": "Nuclear Recommendation Material",
+      "indexGroup": "nuclear",
+      "marking": "RECCOM",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SRI",
+      "name": "Nuclear Security-Related Information",
+      "indexGroup": "nuclear",
+      "marking": "SRI",
+      "specifiedBanner": "CUI//SP-SRI",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "SGI",
+      "name": "Safeguards Information",
+      "indexGroup": "nuclear",
+      "marking": "SGI",
+      "specifiedBanner": "CUI//SP-SGI",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "UCNI",
+      "name": "Unclassified Controlled Nuclear Information - Energy",
+      "indexGroup": "nuclear",
+      "marking": "UCNI",
+      "specifiedBanner": "CUI//SP-UCNI",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "APP",
+      "name": "Patent Applications",
+      "indexGroup": "patent",
+      "marking": "APP",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "INVENT",
+      "name": "Inventions",
+      "indexGroup": "patent",
+      "marking": "INVENT",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PSEC",
+      "name": "Secrecy Orders",
+      "indexGroup": "patent",
+      "marking": "PSEC",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "CONTRACT",
+      "name": "Contract Use",
+      "indexGroup": "privacy",
+      "marking": "CONTRACT",
+      "specifiedBanner": "CUI//SP-CONTRACT",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "DREC",
+      "name": "Death Records",
+      "indexGroup": "privacy",
+      "marking": "DREC",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PRVCY",
+      "name": "General Privacy",
+      "indexGroup": "privacy",
+      "marking": "PRVCY",
+      "specifiedBanner": "CUI//SP-PRVCY",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "GENETIC",
+      "name": "Genetic Information",
+      "indexGroup": "privacy",
+      "marking": "GENETIC",
+      "specifiedBanner": "CUI//SP-GENETIC",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "HLTH",
+      "name": "Health Information",
+      "indexGroup": "privacy",
+      "marking": "HLTH",
+      "specifiedBanner": "CUI//SP-HLTH",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "PRIIG",
+      "name": "Inspector General Protected",
+      "indexGroup": "privacy",
+      "marking": "PRIIG",
+      "specifiedBanner": "CUI//SP-PRIIG",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "MIL",
+      "name": "Military Personnel Records",
+      "indexGroup": "privacy",
+      "marking": "MIL",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PERS",
+      "name": "Personnel Records",
+      "indexGroup": "privacy",
+      "marking": "PERS",
+      "specifiedBanner": "CUI//SP-PERS",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "STUD",
+      "name": "Student Records",
+      "indexGroup": "privacy",
+      "marking": "STUD",
+      "specifiedBanner": "CUI//SP-STUD",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "PROCURE",
+      "name": "General Procurement and Acquisition",
+      "indexGroup": "procurement-and-acquisition",
+      "marking": "PROCURE",
+      "specifiedBanner": "CUI//SP-PROCURE",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "SBIZ",
+      "name": "Small Business Research and Technology",
+      "indexGroup": "procurement-and-acquisition",
+      "marking": "SBIZ",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SSEL",
+      "name": "Source Selection",
+      "indexGroup": "procurement-and-acquisition",
+      "marking": "SSEL",
+      "specifiedBanner": "CUI//SP-SSEL",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "CONREG",
+      "name": "Entity Registration Information",
+      "indexGroup": "proprietary-business-information",
+      "marking": "CONREG",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PROPIN",
+      "name": "General Proprietary Business Information",
+      "indexGroup": "proprietary-business-information",
+      "marking": "PROPIN",
+      "specifiedBanner": "CUI//SP-PROPIN",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "OCCMTO",
+      "name": "Ocean Common Carrier and Marine Terminal Operator Agreements",
+      "indexGroup": "proprietary-business-information",
+      "marking": "OCCMTO",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SERV",
+      "name": "Ocean Common Carrier Service Contracts",
+      "indexGroup": "proprietary-business-information",
+      "marking": "SERV",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "MFC",
+      "name": "Proprietary Manufacturer",
+      "indexGroup": "proprietary-business-information",
+      "marking": "MFC",
+      "specifiedBanner": "CUI//SP-MFC",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "POST",
+      "name": "Proprietary Postal",
+      "indexGroup": "proprietary-business-information",
+      "marking": "POST",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "HOMELAND-SECURITY-AGREEMENT-INFORMATION",
+      "name": "Homeland Security Agreement Information",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "HOMELAND-SECURITY-ENFORCEMENT-INFORMATION",
+      "name": "Homeland Security Enforcement Information",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "INFORMATION-SYSTEMS-VULNERABILITY-HOMELAND",
+      "name": "Information Systems Vulnerability Information - Homeland",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "INTERNATIONAL-AGREEMENT-INFORMATION-HOMELAND",
+      "name": "International Agreement Information - Homeland",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "OPERATIONS-SECURITY-INFORMATION",
+      "name": "Operations Security Information",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PERSONNEL-SECURITY-INFORMATION",
+      "name": "Personnel Security Information",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PHYSICAL-SECURITY-HOMELAND",
+      "name": "Physical Security - Homeland",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PRIVACY-INFORMATION",
+      "name": "Privacy Information",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SENSITIVE-PERSONALLY-IDENTIFIABLE-INFORMATION",
+      "name": "Sensitive Personally Identifiable Information",
+      "indexGroup": "provisional",
+      "marking": null,
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SURV",
+      "name": "Investment Survey",
+      "indexGroup": "statistical",
+      "marking": "SURV",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "PEST",
+      "name": "Pesticide Producer Survey",
+      "indexGroup": "statistical",
+      "marking": "PEST",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "STAT",
+      "name": "Statistical Information",
+      "indexGroup": "statistical",
+      "marking": "STAT",
+      "specifiedBanner": "CUI//SP-STAT",
+      "basicBanner": "CUI",
+      "designation": "BOTH"
+    },
+    {
+      "id": "CENS",
+      "name": "US Census",
+      "indexGroup": "statistical",
+      "marking": "CENS",
+      "specifiedBanner": "CUI//SP-CENS",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "TAX",
+      "name": "Federal Taxpayer Information",
+      "indexGroup": "tax",
+      "marking": "TAX",
+      "specifiedBanner": "CUI//SP-TAX",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "CONV",
+      "name": "Tax Convention",
+      "indexGroup": "tax",
+      "marking": "CONV",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "TAI",
+      "name": "Taxpayer Advocate Information",
+      "indexGroup": "tax",
+      "marking": "TAI",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "WDT",
+      "name": "Written Determinations",
+      "indexGroup": "tax",
+      "marking": "WDT",
+      "specifiedBanner": "CUI//SP-WDT",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    },
+    {
+      "id": "RAIL",
+      "name": "Railroad Safety Analysis Records",
+      "indexGroup": "transportation",
+      "marking": "RAIL",
+      "specifiedBanner": null,
+      "basicBanner": "CUI",
+      "designation": "BASIC"
+    },
+    {
+      "id": "SSI",
+      "name": "Sensitive Security Information",
+      "indexGroup": "transportation",
+      "marking": "SSI",
+      "specifiedBanner": "CUI//SP-SSI",
+      "basicBanner": null,
+      "designation": "SPECIFIED"
+    }
+  ]
+}

@@ -110,9 +110,9 @@ const vEmpty = validateSspProfile({ maintenance: {} });
 assert(vEmpty.ok && vEmpty.value.maintenance?.hardwareOwnedByOrg === null && vEmpty.value.maintenance?.exceptions === '', 'V14 missing maintenance answers read as null');
 
 console.log('\n--- Registry and canonical text ---');
-assert(SSP_SECTIONS.map((s) => s.id).join() === 'identification,roles,environment,maintenance', 'E1 sections in display order');
-assert(SSP_SECTIONS.map((s) => s.number).join() === '1.1,1.2,2.1,2.3', 'E2 section numbers follow the template');
-assert(SSP_SIGNABLE_SECTION_IDS.length === 4, 'E3 all four sections are signable');
+assert(SSP_SECTIONS.map((s) => s.id).join() === 'identification,roles,system_details,data_inventory,environment,maintenance', 'E1 sections in display order (1.3 and 1.4 join after the roles)');
+assert(SSP_SECTIONS.map((s) => s.number).join() === '1.1,1.2,1.3,1.4,2.1,2.3', 'E2 section numbers follow the template');
+assert(SSP_SIGNABLE_SECTION_IDS.join() === 'identification,roles,environment,maintenance' && SSP_SECTIONS.filter((s) => !s.signable).map((s) => s.id).join() === 'system_details,data_inventory', 'E3 four of the six sections are signable: 1.3 and 1.4 are derived from the register and never signed');
 assert(SSP_DIGEST_VERSION === 'ssp-section-v1' && MAINTENANCE_DOMAIN === 'MA', 'E4 the digest version and the maintenance domain are pinned');
 assert(Object.keys(SSP_ROLE_LABELS).length === 9, 'E5 every role key has a label');
 
@@ -128,6 +128,7 @@ const shuffled: SspProfile = {};
 const src = fullProfile() as unknown as Record<string, unknown>;
 for (const k of Object.keys(src).reverse()) (shuffled as Record<string, unknown>)[k] = src[k];
 assert(['identification', 'roles', 'maintenance'].every((id) => sectionCanonical(id as 'roles', X) === sectionCanonical(id as 'roles', { ...X, profile: shuffled })), 'D4 shuffled profile key order gives the same text');
+assert(sectionCanonical('system_details', X) === '[]' && sectionCanonical('data_inventory', X) === '[]', 'D4b the derived sections 1.3 and 1.4 have no saved fields to hash');
 const ownerChanged = { ...X, metadata: { ...X.metadata, systemOwner: 'Someone Else' } };
 assert(sectionCanonical('roles', X) === sectionCanonical('roles', ownerChanged), 'D5 with a system_owner row the legacy systemOwner is ignored');
 const noRow = { metadata: fullMeta(), profile: { roles: [role({ roleKey: 'isso_ciso' })] } as SspProfile };
@@ -166,7 +167,7 @@ assert(effectiveSspRoles(ownerProfile, 'Jane').length === 1 && effectiveSspRoles
 assert(effectiveSspRoles(null, '  ').length === 0 && effectiveSspRoles(null).length === 0, 'M2c a blank legacy owner adds nothing');
 
 console.log('\n--- Completeness ---');
-const order = ['identification', 'roles', 'environment', 'maintenance'].join();
+const order = ['identification', 'roles', 'system_details', 'data_inventory', 'environment', 'maintenance'].join();
 for (const framework of ['CMMC_L2', 'CMMC_L1', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY']) {
   const c = computeSspCompleteness({ framework, metadata: {}, profile: null });
   const perSection = c.sections.every((s) => s.requiredMissing === s.items.filter((i) => i.severity === 'required').length && s.requiredMissing === s.requiredTotal);
@@ -175,7 +176,7 @@ for (const framework of ['CMMC_L2', 'CMMC_L1', 'NIST_800_53_REV5', 'SOC_2_TYPE_I
 }
 const filled = computeSspCompleteness({ framework: 'CMMC_L2', metadata: fullMeta(), profile: fullProfile() });
 assert(filled.complete && filled.requiredMissing === 0, 'C2 a fully filled CMMC_L2 input is complete', filled.sections.map((s) => [s.sectionId, s.items.filter((i) => i.missing).map((i) => i.id)]));
-const maintenanceOf = (m: SspProfile['maintenance']) => computeSspCompleteness({ framework: 'CMMC_L2', metadata: fullMeta(), profile: { ...fullProfile(), maintenance: m } }).sections[3];
+const maintenanceOf = (m: SspProfile['maintenance']) => computeSspCompleteness({ framework: 'CMMC_L2', metadata: fullMeta(), profile: { ...fullProfile(), maintenance: m } }).sections.find((s) => s.sectionId === 'maintenance')!;
 const allYes = { hardwareMaintainedByOrg: true, hardwareOwnedByOrg: true, softwareMaintainedByOrg: true, softwareOwnedByOrg: true, exceptions: '' };
 assert(maintenanceOf({ ...allYes, hardwareOwnedByOrg: false, exceptions: '' }).requiredMissing === 1, 'C3 an answer of No with no exceptions is one missing item');
 assert(maintenanceOf({ ...allYes, hardwareOwnedByOrg: false, exceptions: 'x' }).requiredMissing === 0, 'C3b with exceptions there is none');
@@ -184,7 +185,7 @@ const roleItem = (c: ReturnType<typeof computeSspCompleteness>, key: string) => 
 assert(!roleItem(computeSspCompleteness({ framework: 'CMMC_L2', metadata: { systemOwner: 'Jane' }, profile: null }), 'system_owner').missing, 'C4 a legacy systemOwner fills the System Owner role');
 assert(roleItem(computeSspCompleteness({ framework: 'CMMC_L2', metadata: {}, profile: { roles: [role({ roleKey: 'system_owner', name: '  ' })] } }), 'system_owner').missing, 'C5 a System Owner row with a blank name is missing');
 assert(roleItem(computeSspCompleteness({ framework: 'CMMC_L2', metadata: {}, profile: null }), 'ir_reporting_primary').severity === 'required' && roleItem(computeSspCompleteness({ framework: 'SOC_2_TYPE_II', metadata: {}, profile: null }), 'ir_reporting_primary').severity === 'advisory', 'C6 incident reporting, primary is required for CMMC_L2 and advisory for SOC 2');
-const boundary = (c: ReturnType<typeof computeSspCompleteness>) => c.sections[2].items.find((i) => i.id === 'systemBoundaryScope')!;
+const boundary = (c: ReturnType<typeof computeSspCompleteness>) => c.sections.find((s) => s.sectionId === 'environment')!.items.find((i) => i.id === 'systemBoundaryScope')!;
 assert(boundary(computeSspCompleteness({ framework: 'CMMC_L2', metadata: { systemBoundaryScope: ' ' }, profile: null })).missing && !boundary(computeSspCompleteness({ framework: 'CMMC_L2', metadata: {}, profile: null, boundaryFallback: 'X' })).missing, 'C7 a blank boundary is missing unless a fallback stands in');
 const resolved = resolveSspCompletenessInput({
   meta: { systemName: '' },
@@ -206,7 +207,8 @@ const required = reportItems.filter((i) => i.severity === 'required').map((i) =>
 const advisory = reportItems.filter((i) => i.severity === 'advisory').map((i) => i.reportField).sort().join();
 assert(required === ['systemName', 'organizationName', 'systemOwner', 'primaryAssessor', 'boundaryDescription'].sort().join() && advisory === ['cageCode', 'samStatus'].sort().join(), 'C10 the reportField items match the SSP export lists', { required, advisory });
 assert(isBlank(undefined) && isBlank('  ') && isBlank(3) && !isBlank(' a '), 'C11 isBlank');
-assert(computeSspCompleteness({ framework: 'SOC_2_TYPE_II', metadata: {}, profile: null }).sections[2].items.some((i) => i.id === 'serviceCommitments') && !l2.sections[2].items.some((i) => i.id === 'serviceCommitments'), 'C12 service commitments are listed for SOC 2 only');
+const envItems = (c: ReturnType<typeof computeSspCompleteness>) => c.sections.find((s) => s.sectionId === 'environment')!.items;
+assert(envItems(computeSspCompleteness({ framework: 'SOC_2_TYPE_II', metadata: {}, profile: null })).some((i) => i.id === 'serviceCommitments') && !envItems(l2).some((i) => i.id === 'serviceCommitments'), 'C12 service commitments are listed for SOC 2 only');
 assert(computeSspCompleteness({ framework: 'HIPAA_SECURITY', metadata: {}, profile: null }).sections[0].items.find((i) => i.id === 'systemIdentifier')?.severity === 'advisory', 'C13 the identifier is advisory for HIPAA');
 
 console.log('\n--- Review status ---');

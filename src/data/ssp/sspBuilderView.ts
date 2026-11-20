@@ -21,10 +21,12 @@ import { sectionReviewStatus, type SspCompleteness, type SspReviewStatus, type S
 import {
   MAINTENANCE_DOMAIN,
   SSP_ROLE_LABELS,
+  SSP_SECTIONS,
   overallImpact,
   suggestedCategorization,
   type SspSectionId,
 } from './sspSections';
+import { inventoryNavText } from './sspInventoryView';
 
 export const SSP_BUILDER_TEXT = {
   readOnly: "You have read-only access. Editing and sign-off are disabled; each section's sign-offs and their history are shown with it.",
@@ -96,23 +98,32 @@ export interface NavEntryView {
   complete: boolean;
   advisoryText: string | null;
   review: ReviewChipView | null;
+  /** False for 1.3 and 1.4 while the register is not available: the nav then shows `unavailableText` instead of a count or a green check. */
+  available: boolean;
+  unavailableText: string | null;
 }
 
 export function navEntriesView(
   c: SspCompleteness,
-  r: { supported: boolean; status: 'loading' | 'ready' | 'error'; sections: Partial<Record<SspSectionId, SspSectionReviewState>> }
+  r: { supported: boolean; status: 'loading' | 'ready' | 'error'; sections: Partial<Record<SspSectionId, SspSectionReviewState>> },
+  opts?: { inventoryStatus?: 'unsupported' | 'loading' | 'ready' | 'error' }
 ): NavEntryView[] {
   return c.sections.map((s) => {
     const state = r.sections[s.sectionId] ?? null;
+    const signable = SSP_SECTIONS.find((d) => d.id === s.sectionId)?.signable ?? false;
+    const available = s.available;
     return {
       id: s.sectionId,
       number: s.number,
       title: s.title,
-      requiredMissing: s.requiredMissing,
-      missingText: s.requiredMissing > 0 ? missingLabel(s.requiredMissing) : null,
-      complete: s.complete,
-      advisoryText: advisoryLabel(s.advisoryMissing),
-      review: reviewChipView(sectionReviewStatus(state, r.supported), state?.latest ?? null, r.status === 'loading'),
+      requiredMissing: available ? s.requiredMissing : 0,
+      missingText: available && s.requiredMissing > 0 ? missingLabel(s.requiredMissing) : null,
+      complete: available && s.complete,
+      advisoryText: available ? advisoryLabel(s.advisoryMissing) : null,
+      // 1.3 and 1.4 are derived from the register and the data inventory: they are not signed off
+      review: signable ? reviewChipView(sectionReviewStatus(state, r.supported), state?.latest ?? null, r.status === 'loading') : null,
+      available,
+      unavailableText: available ? null : inventoryNavText(opts?.inventoryStatus ?? 'unsupported'),
     };
   });
 }

@@ -65,6 +65,10 @@ export default defineConfig({
             return 'crypto-utils';
           }
 
+          // ── Static data fetched on demand (CUI Registry, Quick add catalog): each in its own file, before the broader rules ──
+          if (id.includes('/src/data/cui/') && id.endsWith('.json')) return 'cui-registry';
+          if (id.includes('/src/data/inventory/') && id.endsWith('.json')) return 'tool-catalog';
+
           // ── Photon SCAP telemetry engine ────────────────────────────────
           if (
             id.includes('/src/data/telemetry/') ||

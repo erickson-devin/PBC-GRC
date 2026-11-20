@@ -16,7 +16,7 @@ const TONE = {
   amber: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
 } as const;
 
-/** The SSP sections with what each still lacks: a red count of required items, or a green check when complete, and the sign-off state. */
+/** The SSP sections with what each still lacks: a red count of required items, or a green check when complete, and the sign-off state. A section that is not available (1.3 and 1.4 without the register) says so instead. */
 export const SspSectionNav: React.FC<SspSectionNavProps> = ({ entries, activeId, onSelect, summary }) => (
   <nav aria-label="SSP sections" className="space-y-3">
     <p className="text-xs text-slate-400">{summary}</p>
@@ -36,7 +36,9 @@ export const SspSectionNav: React.FC<SspSectionNavProps> = ({ entries, activeId,
                 <span className="font-mono text-[11px] text-slate-500 mr-1.5">{e.number}</span>
                 <span className="text-xs font-semibold text-slate-200">{e.title}</span>
               </span>
-              {e.complete ? (
+              {!e.available ? (
+                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">{e.unavailableText}</span>
+              ) : e.complete ? (
                 <span className="shrink-0">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" aria-hidden="true" />
                   <span className="sr-only">Complete</span>

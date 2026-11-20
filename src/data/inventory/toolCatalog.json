@@ -1,0 +1,2628 @@
+{
+  "_meta": {
+    "schemaVersion": 1,
+    "compiledBy": "Pitch Black Cyber, LLC",
+    "asOf": "2026-11-19",
+    "notice": "Product names are trademarks of their owners; no affiliation or endorsement; no pricing or authorization data."
+  },
+  "tools": [
+    {
+      "id": "okta-workforce-identity",
+      "name": "Okta Workforce Identity",
+      "vendor": "Okta",
+      "toolType": "IDENTITY_SSO",
+      "mission": "Cloud identity provider with single sign-on and multi-factor sign-in",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.8",
+        "IA.L1-3.5.1",
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.6"
+      ],
+      "aliases": [
+        "Okta"
+      ]
+    },
+    {
+      "id": "microsoft-entra-id",
+      "name": "Microsoft Entra ID",
+      "vendor": "Microsoft",
+      "toolType": "IDENTITY_SSO",
+      "mission": "Cloud directory and identity provider with single sign-on and conditional access",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.8",
+        "IA.L1-3.5.1",
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.6"
+      ],
+      "aliases": [
+        "Azure Active Directory",
+        "Azure AD"
+      ]
+    },
+    {
+      "id": "pingone",
+      "name": "PingOne",
+      "vendor": "Ping Identity",
+      "toolType": "IDENTITY_SSO",
+      "mission": "Cloud identity service for single sign-on and multi-factor sign-in",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.8",
+        "IA.L1-3.5.1",
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.6"
+      ]
+    },
+    {
+      "id": "jumpcloud",
+      "name": "JumpCloud",
+      "vendor": "JumpCloud",
+      "toolType": "IDENTITY_SSO",
+      "mission": "Cloud directory with device management and single sign-on",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.8",
+        "IA.L1-3.5.1",
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.6"
+      ]
+    },
+    {
+      "id": "onelogin",
+      "name": "OneLogin",
+      "vendor": "One Identity",
+      "toolType": "IDENTITY_SSO",
+      "mission": "Cloud identity provider with single sign-on and user provisioning",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.8",
+        "IA.L1-3.5.1",
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.6"
+      ]
+    },
+    {
+      "id": "cisco-duo",
+      "name": "Cisco Duo",
+      "vendor": "Cisco",
+      "toolType": "MFA",
+      "mission": "Multi-factor authentication and device trust service",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.4",
+        "MA.L2-3.7.5"
+      ],
+      "aliases": [
+        "Duo Security",
+        "Duo"
+      ]
+    },
+    {
+      "id": "rsa-securid",
+      "name": "RSA SecurID",
+      "vendor": "RSA Security",
+      "toolType": "MFA",
+      "mission": "Multi-factor authentication with hardware and software tokens",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.4",
+        "MA.L2-3.7.5"
+      ]
+    },
+    {
+      "id": "yubikey",
+      "name": "YubiKey",
+      "vendor": "Yubico",
+      "toolType": "MFA",
+      "mission": "Hardware security keys for phishing-resistant multi-factor sign-in",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.4",
+        "MA.L2-3.7.5"
+      ]
+    },
+    {
+      "id": "microsoft-authenticator",
+      "name": "Microsoft Authenticator",
+      "vendor": "Microsoft",
+      "toolType": "MFA",
+      "mission": "Mobile app for multi-factor sign-in approvals",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L2-3.5.3",
+        "IA.L2-3.5.4",
+        "MA.L2-3.7.5"
+      ]
+    },
+    {
+      "id": "microsoft-active-directory",
+      "name": "Microsoft Active Directory",
+      "vendor": "Microsoft",
+      "toolType": "DIRECTORY",
+      "mission": "On-premises directory service for users, groups and computers",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "IA.L1-3.5.1",
+        "IA.L2-3.5.5",
+        "IA.L2-3.5.6",
+        "PS.L2-3.9.2"
+      ],
+      "aliases": [
+        "Active Directory",
+        "AD DS"
+      ]
+    },
+    {
+      "id": "openldap",
+      "name": "OpenLDAP",
+      "vendor": "",
+      "toolType": "DIRECTORY",
+      "mission": "Open source LDAP directory server",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.5",
+        "IA.L1-3.5.1",
+        "IA.L2-3.5.5",
+        "IA.L2-3.5.6",
+        "PS.L2-3.9.2"
+      ]
+    },
+    {
+      "id": "cyberark-privileged-access-manager",
+      "name": "CyberArk Privileged Access Manager",
+      "vendor": "CyberArk",
+      "toolType": "PAM",
+      "mission": "Vault and session control for privileged accounts",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.4",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.6",
+        "AC.L2-3.1.7",
+        "AU.L2-3.3.2"
+      ]
+    },
+    {
+      "id": "delinea-secret-server",
+      "name": "Delinea Secret Server",
+      "vendor": "Delinea",
+      "toolType": "PAM",
+      "mission": "Vault for privileged credentials with rotation and session auditing",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.4",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.6",
+        "AC.L2-3.1.7",
+        "AU.L2-3.3.2"
+      ],
+      "aliases": [
+        "Thycotic Secret Server"
+      ]
+    },
+    {
+      "id": "beyondtrust-privileged-remote-access",
+      "name": "BeyondTrust Privileged Remote Access",
+      "vendor": "BeyondTrust",
+      "toolType": "PAM",
+      "mission": "Controlled and recorded privileged remote sessions",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.4",
+        "AC.L2-3.1.5",
+        "AC.L2-3.1.6",
+        "AC.L2-3.1.7",
+        "AU.L2-3.3.2"
+      ]
+    },
+    {
+      "id": "crowdstrike-falcon",
+      "name": "CrowdStrike Falcon",
+      "vendor": "CrowdStrike",
+      "toolType": "EDR",
+      "mission": "Cloud-managed endpoint detection and response agent",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "microsoft-defender-for-endpoint",
+      "name": "Microsoft Defender for Endpoint",
+      "vendor": "Microsoft",
+      "toolType": "EDR",
+      "mission": "Endpoint detection and response service for managed devices",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "sentinelone-singularity",
+      "name": "SentinelOne Singularity",
+      "vendor": "SentinelOne",
+      "toolType": "EDR",
+      "mission": "Endpoint detection and response with automated containment",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "palo-alto-networks-cortex-xdr",
+      "name": "Palo Alto Networks Cortex XDR",
+      "vendor": "Palo Alto Networks",
+      "toolType": "EDR",
+      "mission": "Extended detection and response across endpoints and network data",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "sophos-intercept-x",
+      "name": "Sophos Intercept X",
+      "vendor": "Sophos",
+      "toolType": "EDR",
+      "mission": "Endpoint protection with detection and response",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "trend-micro-apex-one",
+      "name": "Trend Micro Apex One",
+      "vendor": "Trend Micro",
+      "toolType": "EDR",
+      "mission": "Endpoint protection with detection and response",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "carbon-black-cloud",
+      "name": "Carbon Black Cloud",
+      "vendor": "Broadcom",
+      "toolType": "EDR",
+      "mission": "Cloud endpoint detection and response agent",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "huntress-managed-edr",
+      "name": "Huntress Managed EDR",
+      "vendor": "Huntress",
+      "toolType": "EDR",
+      "mission": "Endpoint detection and response agent with a monitored service",
+      "deployments": [
+        "CLOUD",
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "bitdefender-gravityzone",
+      "name": "Bitdefender GravityZone",
+      "vendor": "Bitdefender",
+      "toolType": "EDR",
+      "mission": "Endpoint protection and detection with a central console",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "cisco-secure-endpoint",
+      "name": "Cisco Secure Endpoint",
+      "vendor": "Cisco",
+      "toolType": "EDR",
+      "mission": "Endpoint detection and response agent",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.3",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ],
+      "aliases": [
+        "AMP for Endpoints"
+      ]
+    },
+    {
+      "id": "microsoft-defender-antivirus",
+      "name": "Microsoft Defender Antivirus",
+      "vendor": "Microsoft",
+      "toolType": "ANTIVIRUS",
+      "mission": "Built-in antimalware scanning for Windows devices",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5"
+      ]
+    },
+    {
+      "id": "clamav",
+      "name": "ClamAV",
+      "vendor": "Cisco",
+      "toolType": "ANTIVIRUS",
+      "mission": "Open source antivirus scanning engine",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SI.L1-3.14.2",
+        "SI.L1-3.14.4",
+        "SI.L1-3.14.5"
+      ]
+    },
+    {
+      "id": "threatlocker",
+      "name": "ThreatLocker",
+      "vendor": "ThreatLocker",
+      "toolType": "CONFIG_MANAGEMENT",
+      "mission": "Application allowlisting and ringfencing for endpoints",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.6",
+        "CM.L2-3.4.7",
+        "CM.L2-3.4.8",
+        "CM.L2-3.4.9",
+        "SI.L1-3.14.2"
+      ]
+    },
+    {
+      "id": "splunk-enterprise",
+      "name": "Splunk Enterprise",
+      "vendor": "Splunk",
+      "toolType": "SIEM",
+      "mission": "Log search, correlation and alerting platform",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "splunk-cloud-platform",
+      "name": "Splunk Cloud Platform",
+      "vendor": "Splunk",
+      "toolType": "SIEM",
+      "mission": "Hosted log search, correlation and alerting platform",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "microsoft-sentinel",
+      "name": "Microsoft Sentinel",
+      "vendor": "Microsoft",
+      "toolType": "SIEM",
+      "mission": "Cloud security information and event management service",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "elastic-security",
+      "name": "Elastic Security",
+      "vendor": "Elastic",
+      "toolType": "SIEM",
+      "mission": "Search-based security analytics and log correlation",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "ibm-qradar",
+      "name": "IBM QRadar",
+      "vendor": "IBM",
+      "toolType": "SIEM",
+      "mission": "Security information and event management platform",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "rapid7-insightidr",
+      "name": "Rapid7 InsightIDR",
+      "vendor": "Rapid7",
+      "toolType": "SIEM",
+      "mission": "Cloud detection and response with log search",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "sumo-logic",
+      "name": "Sumo Logic",
+      "vendor": "Sumo Logic",
+      "toolType": "SIEM",
+      "mission": "Cloud log analytics and security monitoring",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "wazuh",
+      "name": "Wazuh",
+      "vendor": "Wazuh",
+      "toolType": "SIEM",
+      "mission": "Open source security monitoring with agents, log analysis and alerting",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "AU.L2-3.3.6",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "IR.L2-3.6.1"
+      ]
+    },
+    {
+      "id": "graylog",
+      "name": "Graylog",
+      "vendor": "Graylog",
+      "toolType": "LOG_MANAGEMENT",
+      "mission": "Central log collection, search and alerting",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.6",
+        "AU.L2-3.3.8",
+        "AU.L2-3.3.9"
+      ]
+    },
+    {
+      "id": "syslog-ng",
+      "name": "syslog-ng",
+      "vendor": "One Identity",
+      "toolType": "LOG_MANAGEMENT",
+      "mission": "Log collection and forwarding daemon",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.2",
+        "AU.L2-3.3.6",
+        "AU.L2-3.3.8",
+        "AU.L2-3.3.9"
+      ]
+    },
+    {
+      "id": "tenable-nessus",
+      "name": "Tenable Nessus",
+      "vendor": "Tenable",
+      "toolType": "VULNERABILITY_SCANNING",
+      "mission": "Vulnerability scanner for hosts and network devices",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "RA.L2-3.11.1",
+        "RA.L2-3.11.2",
+        "RA.L2-3.11.3",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ],
+      "aliases": [
+        "Nessus"
+      ]
+    },
+    {
+      "id": "tenable-security-center",
+      "name": "Tenable Security Center",
+      "vendor": "Tenable",
+      "toolType": "VULNERABILITY_SCANNING",
+      "mission": "On-premises console that manages vulnerability scans and reports",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "RA.L2-3.11.1",
+        "RA.L2-3.11.2",
+        "RA.L2-3.11.3",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "tenable-vulnerability-management",
+      "name": "Tenable Vulnerability Management",
+      "vendor": "Tenable",
+      "toolType": "VULNERABILITY_SCANNING",
+      "mission": "Cloud console that manages vulnerability scans and reports",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "RA.L2-3.11.1",
+        "RA.L2-3.11.2",
+        "RA.L2-3.11.3",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ],
+      "aliases": [
+        "Tenable.io"
+      ]
+    },
+    {
+      "id": "qualys-vmdr",
+      "name": "Qualys VMDR",
+      "vendor": "Qualys",
+      "toolType": "VULNERABILITY_SCANNING",
+      "mission": "Cloud vulnerability detection, scanning and prioritization",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "RA.L2-3.11.1",
+        "RA.L2-3.11.2",
+        "RA.L2-3.11.3",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "rapid7-insightvm",
+      "name": "Rapid7 InsightVM",
+      "vendor": "Rapid7",
+      "toolType": "VULNERABILITY_SCANNING",
+      "mission": "Vulnerability scanning and risk prioritization",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "RA.L2-3.11.1",
+        "RA.L2-3.11.2",
+        "RA.L2-3.11.3",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "cis-cat-pro",
+      "name": "CIS-CAT Pro",
+      "vendor": "Center for Internet Security",
+      "toolType": "VULNERABILITY_SCANNING",
+      "mission": "Configuration assessment against CIS benchmarks",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.2",
+        "RA.L2-3.11.2",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "microsoft-configuration-manager",
+      "name": "Microsoft Configuration Manager",
+      "vendor": "Microsoft",
+      "toolType": "PATCH_RMM",
+      "mission": "Software deployment, patching and inventory for Windows devices",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ],
+      "aliases": [
+        "SCCM",
+        "MECM"
+      ]
+    },
+    {
+      "id": "windows-server-update-services",
+      "name": "Windows Server Update Services",
+      "vendor": "Microsoft",
+      "toolType": "PATCH_RMM",
+      "mission": "Update approval and distribution for Windows devices",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ],
+      "aliases": [
+        "WSUS"
+      ]
+    },
+    {
+      "id": "manageengine-endpoint-central",
+      "name": "ManageEngine Endpoint Central",
+      "vendor": "ManageEngine",
+      "toolType": "PATCH_RMM",
+      "mission": "Endpoint management with patching, inventory and remote control",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "ninjaone",
+      "name": "NinjaOne",
+      "vendor": "NinjaOne",
+      "toolType": "PATCH_RMM",
+      "mission": "Remote monitoring and management with patching",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "connectwise-automate",
+      "name": "ConnectWise Automate",
+      "vendor": "ConnectWise",
+      "toolType": "PATCH_RMM",
+      "mission": "Remote monitoring and management with patching and scripting",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "datto-rmm",
+      "name": "Datto RMM",
+      "vendor": "Kaseya",
+      "toolType": "PATCH_RMM",
+      "mission": "Remote monitoring and management with patching",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "n-able-n-central",
+      "name": "N-able N-central",
+      "vendor": "N-able",
+      "toolType": "PATCH_RMM",
+      "mission": "Remote monitoring and management with patching",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "action1",
+      "name": "Action1",
+      "vendor": "Action1",
+      "toolType": "PATCH_RMM",
+      "mission": "Cloud patch management and software deployment",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.9",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "microsoft-intune",
+      "name": "Microsoft Intune",
+      "vendor": "Microsoft",
+      "toolType": "MDM_UEM",
+      "mission": "Cloud device and application management with compliance policies",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.18",
+        "AC.L2-3.1.19",
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.2",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "jamf-pro",
+      "name": "Jamf Pro",
+      "vendor": "Jamf",
+      "toolType": "MDM_UEM",
+      "mission": "Management of Apple computers and mobile devices",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.18",
+        "AC.L2-3.1.19",
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.2",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "red-hat-ansible-automation-platform",
+      "name": "Red Hat Ansible Automation Platform",
+      "vendor": "Red Hat",
+      "toolType": "CONFIG_MANAGEMENT",
+      "mission": "Automation of configuration and deployment across systems",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.2",
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.6",
+        "CM.L2-3.4.7"
+      ]
+    },
+    {
+      "id": "microsoft-365",
+      "name": "Microsoft 365",
+      "vendor": "Microsoft",
+      "toolType": "EMAIL_COLLABORATION",
+      "mission": "Cloud email, calendar, office and collaboration suite",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "Office 365",
+        "Exchange Online"
+      ]
+    },
+    {
+      "id": "microsoft-exchange-server",
+      "name": "Microsoft Exchange Server",
+      "vendor": "Microsoft",
+      "toolType": "EMAIL_COLLABORATION",
+      "mission": "On-premises email and calendar server",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "microsoft-teams",
+      "name": "Microsoft Teams",
+      "vendor": "Microsoft",
+      "toolType": "EMAIL_COLLABORATION",
+      "mission": "Chat, meetings and team collaboration",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "google-workspace",
+      "name": "Google Workspace",
+      "vendor": "Google",
+      "toolType": "EMAIL_COLLABORATION",
+      "mission": "Cloud email, calendar and document collaboration suite",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "G Suite"
+      ]
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "vendor": "Salesforce",
+      "toolType": "EMAIL_COLLABORATION",
+      "mission": "Team messaging and channel collaboration",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom",
+      "vendor": "Zoom",
+      "toolType": "EMAIL_COLLABORATION",
+      "mission": "Video meetings and team messaging",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "microsoft-sharepoint",
+      "name": "Microsoft SharePoint",
+      "vendor": "Microsoft",
+      "toolType": "FILE_SHARING",
+      "mission": "Document libraries and intranet sites for teams",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "microsoft-onedrive",
+      "name": "Microsoft OneDrive",
+      "vendor": "Microsoft",
+      "toolType": "FILE_SHARING",
+      "mission": "Cloud file storage and sharing for users",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "vendor": "Box",
+      "toolType": "FILE_SHARING",
+      "mission": "Cloud content storage and sharing",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "dropbox",
+      "name": "Dropbox",
+      "vendor": "Dropbox",
+      "toolType": "FILE_SHARING",
+      "mission": "Cloud file storage and sharing",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "proofpoint-email-protection",
+      "name": "Proofpoint Email Protection",
+      "vendor": "Proofpoint",
+      "toolType": "EMAIL_SECURITY",
+      "mission": "Email filtering against spam, phishing and malware",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SC.L2-3.13.8",
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "mimecast-email-security",
+      "name": "Mimecast Email Security",
+      "vendor": "Mimecast",
+      "toolType": "EMAIL_SECURITY",
+      "mission": "Email filtering against spam, phishing and malware",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SC.L2-3.13.8",
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "microsoft-defender-for-office-365",
+      "name": "Microsoft Defender for Office 365",
+      "vendor": "Microsoft",
+      "toolType": "EMAIL_SECURITY",
+      "mission": "Protection for email and collaboration content against phishing and malware",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SC.L2-3.13.8",
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "veeam-backup-and-replication",
+      "name": "Veeam Backup & Replication",
+      "vendor": "Veeam",
+      "toolType": "BACKUP_RECOVERY",
+      "mission": "Backup and recovery of virtual, physical and cloud workloads",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "Veeam"
+      ]
+    },
+    {
+      "id": "commvault-backup-and-recovery",
+      "name": "Commvault Backup & Recovery",
+      "vendor": "Commvault",
+      "toolType": "BACKUP_RECOVERY",
+      "mission": "Backup and recovery of data across environments",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "Commvault"
+      ]
+    },
+    {
+      "id": "rubrik-security-cloud",
+      "name": "Rubrik Security Cloud",
+      "vendor": "Rubrik",
+      "toolType": "BACKUP_RECOVERY",
+      "mission": "Backup, recovery and data protection management",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "cohesity-dataprotect",
+      "name": "Cohesity DataProtect",
+      "vendor": "Cohesity",
+      "toolType": "BACKUP_RECOVERY",
+      "mission": "Backup and recovery of data across environments",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "acronis-cyber-protect",
+      "name": "Acronis Cyber Protect",
+      "vendor": "Acronis",
+      "toolType": "BACKUP_RECOVERY",
+      "mission": "Backup and recovery combined with endpoint protection",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "druva",
+      "name": "Druva",
+      "vendor": "Druva",
+      "toolType": "BACKUP_RECOVERY",
+      "mission": "Cloud backup and recovery service",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "palo-alto-networks-next-generation-firewall",
+      "name": "Palo Alto Networks Next-Generation Firewall",
+      "vendor": "Palo Alto Networks",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Next-generation firewall with application and user policy",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "fortinet-fortigate",
+      "name": "Fortinet FortiGate",
+      "vendor": "Fortinet",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Next-generation firewall and unified threat management",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "cisco-secure-firewall",
+      "name": "Cisco Secure Firewall",
+      "vendor": "Cisco",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Next-generation firewall and intrusion prevention",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "check-point-security-gateway",
+      "name": "Check Point Security Gateway",
+      "vendor": "Check Point",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Firewall and threat prevention gateway",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "sonicwall-firewall",
+      "name": "SonicWall Firewall",
+      "vendor": "SonicWall",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Firewall and unified threat management appliance",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "pfsense",
+      "name": "pfSense",
+      "vendor": "Netgate",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Open source firewall and router software",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "cisco-meraki-mx",
+      "name": "Cisco Meraki MX",
+      "vendor": "Cisco",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Cloud-managed security appliance with firewall and VPN",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.2",
+        "SC.L1-3.13.5",
+        "SC.L2-3.13.6",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "suricata",
+      "name": "Suricata",
+      "vendor": "Open Information Security Foundation",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Open source network intrusion detection and prevention engine",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SC.L1-3.13.1",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "AU.L2-3.3.1"
+      ]
+    },
+    {
+      "id": "snort",
+      "name": "Snort",
+      "vendor": "Cisco",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Open source network intrusion detection and prevention system",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "SC.L1-3.13.1",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7",
+        "AU.L2-3.3.1"
+      ]
+    },
+    {
+      "id": "cisco-identity-services-engine",
+      "name": "Cisco Identity Services Engine",
+      "vendor": "Cisco",
+      "toolType": "FIREWALL_NETWORK",
+      "mission": "Network access control and policy enforcement for devices",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.1",
+        "AC.L2-3.1.3",
+        "AC.L2-3.1.16",
+        "AC.L2-3.1.18",
+        "IA.L1-3.5.1",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "cisco-secure-client",
+      "name": "Cisco Secure Client",
+      "vendor": "Cisco",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "VPN client for remote access to the network",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "AC.L2-3.1.14",
+        "IA.L2-3.5.3",
+        "SC.L2-3.13.7",
+        "SC.L2-3.13.8"
+      ],
+      "aliases": [
+        "AnyConnect"
+      ]
+    },
+    {
+      "id": "palo-alto-networks-globalprotect",
+      "name": "Palo Alto Networks GlobalProtect",
+      "vendor": "Palo Alto Networks",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "VPN client and gateway for remote access",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "AC.L2-3.1.14",
+        "IA.L2-3.5.3",
+        "SC.L2-3.13.7",
+        "SC.L2-3.13.8"
+      ]
+    },
+    {
+      "id": "openvpn",
+      "name": "OpenVPN",
+      "vendor": "OpenVPN",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "VPN server and client software",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "AC.L2-3.1.14",
+        "IA.L2-3.5.3",
+        "SC.L2-3.13.7",
+        "SC.L2-3.13.8"
+      ]
+    },
+    {
+      "id": "cloudflare-zero-trust",
+      "name": "Cloudflare Zero Trust",
+      "vendor": "Cloudflare",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "Cloud access gateway for applications and web traffic",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "AC.L2-3.1.14",
+        "IA.L2-3.5.3",
+        "SC.L2-3.13.7",
+        "SC.L2-3.13.8"
+      ]
+    },
+    {
+      "id": "microsoft-remote-desktop-services",
+      "name": "Microsoft Remote Desktop Services",
+      "vendor": "Microsoft",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "Remote desktop and published application hosting for Windows",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "AC.L2-3.1.14",
+        "IA.L2-3.5.3",
+        "SC.L2-3.13.7",
+        "SC.L2-3.13.8"
+      ]
+    },
+    {
+      "id": "connectwise-screenconnect",
+      "name": "ConnectWise ScreenConnect",
+      "vendor": "ConnectWise",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "Remote support and access tool",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "IA.L2-3.5.3",
+        "MA.L2-3.7.5",
+        "MA.L2-3.7.6"
+      ]
+    },
+    {
+      "id": "teamviewer",
+      "name": "TeamViewer",
+      "vendor": "TeamViewer",
+      "toolType": "REMOTE_ACCESS_VPN",
+      "mission": "Remote support and access tool",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.12",
+        "AC.L2-3.1.13",
+        "IA.L2-3.5.3",
+        "MA.L2-3.7.5",
+        "MA.L2-3.7.6"
+      ]
+    },
+    {
+      "id": "zscaler-internet-access",
+      "name": "Zscaler Internet Access",
+      "vendor": "Zscaler",
+      "toolType": "WEB_DNS_FILTERING",
+      "mission": "Cloud secure web gateway with URL filtering",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.6",
+        "SC.L2-3.13.13",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "cisco-umbrella",
+      "name": "Cisco Umbrella",
+      "vendor": "Cisco",
+      "toolType": "WEB_DNS_FILTERING",
+      "mission": "Cloud DNS-layer filtering and web security",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.6",
+        "SC.L2-3.13.13",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "netskope",
+      "name": "Netskope",
+      "vendor": "Netskope",
+      "toolType": "WEB_DNS_FILTERING",
+      "mission": "Cloud secure web gateway and data protection",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "SC.L2-3.13.6",
+        "SC.L2-3.13.13",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "microsoft-purview-data-loss-prevention",
+      "name": "Microsoft Purview Data Loss Prevention",
+      "vendor": "Microsoft",
+      "toolType": "DLP",
+      "mission": "Policies that detect and block sharing of sensitive data",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "AC.L2-3.1.21",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "forcepoint-dlp",
+      "name": "Forcepoint DLP",
+      "vendor": "Forcepoint",
+      "toolType": "DLP",
+      "mission": "Data loss prevention for endpoints, network and cloud",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "AC.L2-3.1.21",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "digital-guardian",
+      "name": "Digital Guardian",
+      "vendor": "Fortra",
+      "toolType": "DLP",
+      "mission": "Data loss prevention and data protection for endpoints",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "AC.L2-3.1.21",
+        "MP.L2-3.8.2",
+        "SC.L2-3.13.8",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "microsoft-bitlocker",
+      "name": "Microsoft BitLocker",
+      "vendor": "Microsoft",
+      "toolType": "ENCRYPTION_KEY_MGMT",
+      "mission": "Full-disk encryption for Windows devices",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.19",
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.11",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "apple-filevault",
+      "name": "Apple FileVault",
+      "vendor": "Apple",
+      "toolType": "ENCRYPTION_KEY_MGMT",
+      "mission": "Full-disk encryption for Mac computers",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.19",
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.11",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "hashicorp-vault",
+      "name": "HashiCorp Vault",
+      "vendor": "HashiCorp",
+      "toolType": "ENCRYPTION_KEY_MGMT",
+      "mission": "Secrets and encryption key management",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.19",
+        "MP.L2-3.8.6",
+        "SC.L2-3.13.10",
+        "SC.L2-3.13.11",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "aws-key-management-service",
+      "name": "AWS Key Management Service",
+      "vendor": "Amazon Web Services",
+      "toolType": "ENCRYPTION_KEY_MGMT",
+      "mission": "Cloud service for creating and controlling encryption keys",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.19",
+        "MP.L2-3.8.6",
+        "SC.L2-3.13.10",
+        "SC.L2-3.13.11",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "azure-key-vault",
+      "name": "Azure Key Vault",
+      "vendor": "Microsoft",
+      "toolType": "ENCRYPTION_KEY_MGMT",
+      "mission": "Cloud storage for keys, secrets and certificates",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L2-3.1.19",
+        "MP.L2-3.8.6",
+        "SC.L2-3.13.10",
+        "SC.L2-3.13.11",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "microsoft-azure",
+      "name": "Microsoft Azure",
+      "vendor": "Microsoft",
+      "toolType": "CLOUD_PLATFORM",
+      "mission": "Public cloud platform for computing, storage and networking",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "AU.L2-3.3.1",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "amazon-web-services",
+      "name": "Amazon Web Services",
+      "vendor": "Amazon",
+      "toolType": "CLOUD_PLATFORM",
+      "mission": "Public cloud platform for computing, storage and networking",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "AU.L2-3.3.1",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "AWS"
+      ]
+    },
+    {
+      "id": "google-cloud-platform",
+      "name": "Google Cloud Platform",
+      "vendor": "Google",
+      "toolType": "CLOUD_PLATFORM",
+      "mission": "Public cloud platform for computing, storage and networking",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "AU.L2-3.3.1",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "GCP"
+      ]
+    },
+    {
+      "id": "oracle-cloud-infrastructure",
+      "name": "Oracle Cloud Infrastructure",
+      "vendor": "Oracle",
+      "toolType": "CLOUD_PLATFORM",
+      "mission": "Public cloud platform for computing, storage and networking",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "AU.L2-3.3.1",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.16"
+      ],
+      "aliases": [
+        "OCI"
+      ]
+    },
+    {
+      "id": "vmware-vsphere",
+      "name": "VMware vSphere",
+      "vendor": "Broadcom",
+      "toolType": "CLOUD_PLATFORM",
+      "mission": "Server virtualization platform",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "AU.L2-3.3.1",
+        "CM.L2-3.4.1",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "microsoft-hyper-v",
+      "name": "Microsoft Hyper-V",
+      "vendor": "Microsoft",
+      "toolType": "CLOUD_PLATFORM",
+      "mission": "Server virtualization role of Windows Server",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "AU.L2-3.3.1",
+        "CM.L2-3.4.1",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "servicenow",
+      "name": "ServiceNow",
+      "vendor": "ServiceNow",
+      "toolType": "ITSM_TICKETING",
+      "mission": "IT service management with incident, change and request workflows",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.4",
+        "IR.L2-3.6.1",
+        "IR.L2-3.6.2",
+        "CA.L2-3.12.2"
+      ]
+    },
+    {
+      "id": "jira-service-management",
+      "name": "Jira Service Management",
+      "vendor": "Atlassian",
+      "toolType": "ITSM_TICKETING",
+      "mission": "IT service desk with incident, change and request workflows",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.4",
+        "IR.L2-3.6.1",
+        "IR.L2-3.6.2",
+        "CA.L2-3.12.2"
+      ]
+    },
+    {
+      "id": "freshservice",
+      "name": "Freshservice",
+      "vendor": "Freshworks",
+      "toolType": "ITSM_TICKETING",
+      "mission": "Cloud IT service desk with incident and change workflows",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.4",
+        "IR.L2-3.6.1",
+        "IR.L2-3.6.2",
+        "CA.L2-3.12.2"
+      ]
+    },
+    {
+      "id": "manageengine-servicedesk-plus",
+      "name": "ManageEngine ServiceDesk Plus",
+      "vendor": "ManageEngine",
+      "toolType": "ITSM_TICKETING",
+      "mission": "IT service desk with incident and change workflows",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.3",
+        "CM.L2-3.4.4",
+        "IR.L2-3.6.1",
+        "IR.L2-3.6.2",
+        "CA.L2-3.12.2"
+      ]
+    },
+    {
+      "id": "knowbe4",
+      "name": "KnowBe4",
+      "vendor": "KnowBe4",
+      "toolType": "SECURITY_AWARENESS",
+      "mission": "Security awareness training and phishing simulation",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AT.L2-3.2.1",
+        "AT.L2-3.2.2",
+        "AT.L2-3.2.3"
+      ]
+    },
+    {
+      "id": "proofpoint-security-awareness-training",
+      "name": "Proofpoint Security Awareness Training",
+      "vendor": "Proofpoint",
+      "toolType": "SECURITY_AWARENESS",
+      "mission": "Security awareness training and phishing simulation",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AT.L2-3.2.1",
+        "AT.L2-3.2.2",
+        "AT.L2-3.2.3"
+      ]
+    },
+    {
+      "id": "infosec-iq",
+      "name": "Infosec IQ",
+      "vendor": "Infosec Institute",
+      "toolType": "SECURITY_AWARENESS",
+      "mission": "Security awareness training and phishing simulation",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AT.L2-3.2.1",
+        "AT.L2-3.2.2",
+        "AT.L2-3.2.3"
+      ]
+    },
+    {
+      "id": "sans-security-awareness",
+      "name": "SANS Security Awareness",
+      "vendor": "SANS Institute",
+      "toolType": "SECURITY_AWARENESS",
+      "mission": "Security awareness training content for staff",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AT.L2-3.2.1",
+        "AT.L2-3.2.2",
+        "AT.L2-3.2.3"
+      ]
+    },
+    {
+      "id": "1password",
+      "name": "1Password",
+      "vendor": "AgileBits",
+      "toolType": "PASSWORD_MANAGER",
+      "mission": "Password manager with shared vaults for teams",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.7",
+        "IA.L2-3.5.8",
+        "IA.L2-3.5.10"
+      ]
+    },
+    {
+      "id": "bitwarden",
+      "name": "Bitwarden",
+      "vendor": "Bitwarden",
+      "toolType": "PASSWORD_MANAGER",
+      "mission": "Password manager with shared vaults for teams",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.7",
+        "IA.L2-3.5.8",
+        "IA.L2-3.5.10"
+      ]
+    },
+    {
+      "id": "keeper-password-manager",
+      "name": "Keeper Password Manager",
+      "vendor": "Keeper Security",
+      "toolType": "PASSWORD_MANAGER",
+      "mission": "Password manager with shared vaults for teams",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.7",
+        "IA.L2-3.5.8",
+        "IA.L2-3.5.10"
+      ]
+    },
+    {
+      "id": "lastpass",
+      "name": "LastPass",
+      "vendor": "LastPass",
+      "toolType": "PASSWORD_MANAGER",
+      "mission": "Password manager with shared folders for teams",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L1-3.5.2",
+        "IA.L2-3.5.7",
+        "IA.L2-3.5.8",
+        "IA.L2-3.5.10"
+      ]
+    },
+    {
+      "id": "goanywhere-mft",
+      "name": "GoAnywhere MFT",
+      "vendor": "Fortra",
+      "toolType": "SECURE_FILE_TRANSFER",
+      "mission": "Managed file transfer with encryption and audit logs",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.6",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.11"
+      ]
+    },
+    {
+      "id": "moveit",
+      "name": "MOVEit",
+      "vendor": "Progress",
+      "toolType": "SECURE_FILE_TRANSFER",
+      "mission": "Managed file transfer with encryption and audit logs",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.6",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.11"
+      ]
+    },
+    {
+      "id": "kiteworks",
+      "name": "Kiteworks",
+      "vendor": "Kiteworks",
+      "toolType": "SECURE_FILE_TRANSFER",
+      "mission": "Secure content sharing and managed file transfer",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "CUI_ASSET",
+      "typicalControls": [
+        "AC.L2-3.1.3",
+        "MP.L2-3.8.6",
+        "SC.L2-3.13.8",
+        "SC.L2-3.13.11"
+      ]
+    },
+    {
+      "id": "verkada",
+      "name": "Verkada",
+      "vendor": "Verkada",
+      "toolType": "PHYSICAL_SECURITY",
+      "mission": "Cloud-managed cameras and door access control",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "PE.L1-3.10.1",
+        "PE.L2-3.10.2",
+        "PE.L1-3.10.3",
+        "PE.L1-3.10.4",
+        "PE.L1-3.10.5"
+      ]
+    },
+    {
+      "id": "genetec-security-center",
+      "name": "Genetec Security Center",
+      "vendor": "Genetec",
+      "toolType": "PHYSICAL_SECURITY",
+      "mission": "Unified video surveillance and access control",
+      "deployments": [
+        "ON_PREM"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "PE.L1-3.10.1",
+        "PE.L2-3.10.2",
+        "PE.L1-3.10.3",
+        "PE.L1-3.10.4",
+        "PE.L1-3.10.5"
+      ]
+    },
+    {
+      "id": "brivo",
+      "name": "Brivo",
+      "vendor": "Brivo",
+      "toolType": "PHYSICAL_SECURITY",
+      "mission": "Cloud physical access control and badge management",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "PE.L1-3.10.1",
+        "PE.L2-3.10.2",
+        "PE.L1-3.10.3",
+        "PE.L1-3.10.4",
+        "PE.L1-3.10.5"
+      ]
+    },
+    {
+      "id": "drata",
+      "name": "Drata",
+      "vendor": "Drata",
+      "toolType": "OTHER",
+      "mission": "Compliance automation and evidence collection platform",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CA.L2-3.12.1",
+        "CA.L2-3.12.2",
+        "CA.L2-3.12.4"
+      ]
+    },
+    {
+      "id": "vanta",
+      "name": "Vanta",
+      "vendor": "Vanta",
+      "toolType": "OTHER",
+      "mission": "Compliance automation and evidence collection platform",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CA.L2-3.12.1",
+        "CA.L2-3.12.2",
+        "CA.L2-3.12.4"
+      ]
+    },
+    {
+      "id": "secureframe",
+      "name": "Secureframe",
+      "vendor": "Secureframe",
+      "toolType": "OTHER",
+      "mission": "Compliance automation and evidence collection platform",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CA.L2-3.12.1",
+        "CA.L2-3.12.2",
+        "CA.L2-3.12.4"
+      ]
+    },
+    {
+      "id": "hyperproof",
+      "name": "Hyperproof",
+      "vendor": "Hyperproof",
+      "toolType": "OTHER",
+      "mission": "Compliance and risk management platform",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CA.L2-3.12.1",
+        "CA.L2-3.12.2",
+        "CA.L2-3.12.4"
+      ]
+    },
+    {
+      "id": "microsoft-compliance-manager",
+      "name": "Microsoft Compliance Manager",
+      "vendor": "Microsoft",
+      "toolType": "OTHER",
+      "mission": "Compliance assessments and improvement actions for Microsoft cloud services",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CA.L2-3.12.1",
+        "CA.L2-3.12.2",
+        "CA.L2-3.12.4"
+      ]
+    },
+    {
+      "id": "axonius",
+      "name": "Axonius",
+      "vendor": "Axonius",
+      "toolType": "OTHER",
+      "mission": "Asset inventory aggregated from connected tools",
+      "deployments": [
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "RA.L2-3.11.2",
+        "CA.L2-3.12.3",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "lansweeper",
+      "name": "Lansweeper",
+      "vendor": "Lansweeper",
+      "toolType": "OTHER",
+      "mission": "Network and software asset discovery",
+      "deployments": [
+        "ON_PREM",
+        "CLOUD"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.9",
+        "RA.L2-3.11.2",
+        "CA.L2-3.12.3"
+      ]
+    },
+    {
+      "id": "managed-security-service-provider",
+      "name": "Managed security service provider",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced security monitoring and operations",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.5",
+        "IR.L2-3.6.1",
+        "SI.L2-3.14.3",
+        "SI.L2-3.14.6"
+      ]
+    },
+    {
+      "id": "managed-detection-and-response-service",
+      "name": "Managed detection and response service",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced threat detection, investigation and response",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.5",
+        "IR.L2-3.6.1",
+        "SI.L1-3.14.2",
+        "SI.L2-3.14.6",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "managed-soc-monitoring-service",
+      "name": "Managed SOC monitoring service",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced round-the-clock log monitoring and alert triage",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AU.L2-3.3.1",
+        "AU.L2-3.3.3",
+        "AU.L2-3.3.5",
+        "IR.L2-3.6.1",
+        "SI.L2-3.14.7"
+      ]
+    },
+    {
+      "id": "managed-it-service-provider",
+      "name": "Managed IT service provider",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced IT administration, help desk and maintenance",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "CM.L2-3.4.1",
+        "CM.L2-3.4.3",
+        "MA.L2-3.7.1",
+        "SI.L1-3.14.1"
+      ]
+    },
+    {
+      "id": "managed-backup-and-recovery-service",
+      "name": "Managed backup and recovery service",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced backup operations and recovery testing",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "MP.L2-3.8.1",
+        "MP.L2-3.8.9",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "cloud-hosting-provider",
+      "name": "Cloud hosting provider",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced hosting of servers or applications in provider facilities",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "AC.L1-3.1.20",
+        "PE.L2-3.10.2",
+        "SC.L1-3.13.1",
+        "SC.L2-3.13.16"
+      ]
+    },
+    {
+      "id": "outsourced-help-desk",
+      "name": "Outsourced help desk",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced user support and account assistance",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "IA.L1-3.5.1",
+        "IR.L2-3.6.2",
+        "PS.L2-3.9.2"
+      ]
+    },
+    {
+      "id": "virtual-ciso-advisory-service",
+      "name": "Virtual CISO advisory service",
+      "vendor": "",
+      "toolType": "MANAGED_SERVICE",
+      "mission": "Outsourced security leadership, policy and risk guidance",
+      "deployments": [
+        "ESP"
+      ],
+      "defaultAssetCategory": "SECURITY_PROTECTION",
+      "typicalControls": [
+        "RA.L2-3.11.1",
+        "CA.L2-3.12.1",
+        "CA.L2-3.12.4"
+      ]
+    }
+  ]
+}
