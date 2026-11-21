@@ -77,7 +77,7 @@ const VM_TARGET_FRAMEWORK_IDS: readonly string[] = ['CMMC_L1', 'CMMC_L2'];
 
 /**
  * GET /api/v1/tenants/:tenantId/programs[?includeArchived=true]
- * The tenant's programs, the organization default first, each with its metrics ({ documented, total, evidence, openPoam }) and `isMyDefault`
+ * The tenant's programs, the organization default first, each with its metrics ({ documented, total, evidence, openPoam, controlPoam }) and `isMyDefault`
  * (the signed-in user's personal default). A tenant with no program gets an empty list: nothing is created here.
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
@@ -349,7 +349,7 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-/** GET /api/v1/tenants/:tenantId/programs/:id/metrics -> { documented, total, evidence, openPoam } */
+/** GET /api/v1/tenants/:tenantId/programs/:id/metrics -> { documented, total, evidence, openPoam, controlPoam } (openPoam: vulnerability items; controlPoam: control entries not MET) */
 router.get('/:id/metrics', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
   try {

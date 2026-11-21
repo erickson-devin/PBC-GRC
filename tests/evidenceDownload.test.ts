@@ -89,6 +89,8 @@ async function run() {
   }
   const restored = await call('GET', '/evidence/config/storage-info', owner, T);
   assert(restored.body?.localStoragePath === path.resolve(EVIDENCE_TEST_VAULT), 'D55-3 after the restore the root is the vault again', restored.body?.localStoragePath);
+  const vInfo = await call('GET', '/evidence/config/storage-info', viewer, T);
+  assert(vInfo.status === 200 && vInfo.body?.provider === 'local' && !Object.prototype.hasOwnProperty.call(vInfo.body ?? {}, 'localStoragePath'), 'D55-5 a member who is not a platform administrator gets no storage path', [vInfo.status, vInfo.body]);
   const readSrc = (p: string) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
   const routeSrc = readSrc('server/routes/evidence.ts');
   assert(

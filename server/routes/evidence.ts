@@ -9,6 +9,7 @@ import { getEquivalentControlIds } from '../../src/data/frameworks/controlMappin
 import { ensureControlInFrameworkPolicy } from '../middleware/frameworkGuard';
 import { VM_SNAPSHOT_ACTOR } from '../vm/snapshot';
 import { localStorageRoot, resolveWithin, resolveTenantLocalPath } from '../evidence/storage';
+import { isPlatformAdminUser } from '../auth/platformAdmin';
 
 const router = Router();
 
@@ -67,10 +68,12 @@ function mapRowToEvidence(row: pg.QueryResultRow) {
  * GET /api/v1/evidence/config/storage-info
  * Returns storage provider status, path, and air-gapped configuration.
  */
-router.get('/config/storage-info', async (_req: Request, res: Response): Promise<void> => {
+router.get('/config/storage-info', async (req: Request, res: Response): Promise<void> => {
+  // #325: the host directory is shown to platform administrators only
+  const admin = await isPlatformAdminUser(req.user);
   res.json({
     provider: storageProvider,
-    localStoragePath: localStorageRoot(),
+    ...(admin ? { localStoragePath: localStorageRoot() } : {}),
     isAirGapped: true,
     status: 'ACTIVE',
   });
