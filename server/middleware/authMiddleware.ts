@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getTenantRole, isTenantMember } from '../db';
+import { getActiveTenantMembership, getTenantRole } from '../db';
 import { isTenantRole } from '../../src/utils/roles';
 import { errorMessage } from '../../src/utils/errors';
 import type { TenantRole } from '../../src/types/tenant';
@@ -125,7 +125,7 @@ async function resolveTenantId(
   identity: TokenIdentity,
   requestedTenantId: string | undefined,
   allowUnscopedDev: boolean
-): Promise<string | null> {
+): Promise<{ tenantId: string; memberRole: TenantRole | null } | null> {
   const { claimedTenantIds, user } = identity;
 
   if (requestedTenantId) {
@@ -133,24 +133,30 @@ async function resolveTenantId(
       res.status(400).json({ error: 'Invalid x-tenant-id header format' });
       return null;
     }
-    const permitted =
-      claimedTenantIds.has(requestedTenantId) ||
-      (allowUnscopedDev && claimedTenantIds.size === 0) ||
-      (await isTenantMember(user.uid, requestedTenantId));
+    if (claimedTenantIds.has(requestedTenantId) || (allowUnscopedDev && claimedTenantIds.size === 0)) {
+      return { tenantId: requestedTenantId, memberRole: null };
+    }
 
-    if (!permitted) {
+    // One tenant_users read answers both "is a member" and "which role", and refuses a membership whose access expiry date has passed.
+    const membership = await getActiveTenantMembership(user.uid, requestedTenantId);
+    if (membership?.status === 'expired') {
+      console.warn(`[AuthMiddleware] Denied: membership of user ${user.uid} in tenant ${requestedTenantId} expired`);
+      res.status(403).json({ error: `Forbidden: your access to this organization ended on ${membership.expiredOn} (UTC)`, reason: 'membership_expired', expiredOn: membership.expiredOn });
+      return null;
+    }
+    if (!membership) {
       console.warn(`[AuthMiddleware] Denied: user ${user.uid} is not a member of tenant ${requestedTenantId}`);
       res.status(403).json({ error: 'Forbidden: authenticated user does not belong to the requested tenant' });
       return null;
     }
-    return requestedTenantId;
+    return { tenantId: requestedTenantId, memberRole: membership.role };
   }
 
   if (claimedTenantIds.size === 1) {
-    return [...claimedTenantIds][0];
+    return { tenantId: [...claimedTenantIds][0], memberRole: null };
   }
   if (claimedTenantIds.size === 0 && allowUnscopedDev) {
-    return DEV_FALLBACK_TENANT_ID;
+    return { tenantId: DEV_FALLBACK_TENANT_ID, memberRole: null };
   }
 
   res.status(400).json({
@@ -164,11 +170,12 @@ async function resolveTenantId(
  * Fails closed to read-only VIEWER. The one exception is dev/test mock tokens (never in production),
  * which carry no role claim and default to TENANT_OWNER so local development keeps working.
  */
-async function resolveTenantRole(identity: TokenIdentity, tenantId: string, devMockToken: boolean): Promise<TenantRole> {
+async function resolveTenantRole(identity: TokenIdentity, tenantId: string, devMockToken: boolean, memberRole: TenantRole | null): Promise<TenantRole> {
   const claimed = identity.user.roles?.[tenantId];
   if (isTenantRole(claimed)) return claimed;
 
-  const stored = await getTenantRole(identity.user.uid, tenantId);
+  // memberRole is the role of the active membership already read by resolveTenantId; a claim-admitted tenant has none and is looked up.
+  const stored = memberRole ?? (await getTenantRole(identity.user.uid, tenantId));
   if (stored) return stored;
 
   return devMockToken && isMockAuthAllowed() ? 'TENANT_OWNER' : 'VIEWER';
@@ -376,11 +383,11 @@ async function handle(req: Request, res: Response, next: NextFunction, requireTe
   const requestedTenantId = (Array.isArray(rawTenantHeader) ? rawTenantHeader[0] : rawTenantHeader)?.trim() || undefined;
 
   try {
-    const tenantId = await resolveTenantId(res, identity, requestedTenantId, devMock);
-    if (!tenantId) return;
+    const resolved = await resolveTenantId(res, identity, requestedTenantId, devMock);
+    if (!resolved) return;
 
-    req.tenantId = tenantId;
-    req.tenantRole = await resolveTenantRole(identity, tenantId, devMock);
+    req.tenantId = resolved.tenantId;
+    req.tenantRole = await resolveTenantRole(identity, resolved.tenantId, devMock, resolved.memberRole);
     next();
   } catch (err: unknown) {
     console.error('[AuthMiddleware] Tenant resolution failed:', errorMessage(err));

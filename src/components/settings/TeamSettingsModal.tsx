@@ -13,10 +13,13 @@ import {
   Info,
   Save,
   Clock,
+  UserCog,
+  CalendarClock,
+  Star,
 } from 'lucide-react';
 import { useTenant, buildInviteUrl } from '../../context/TenantContext';
 import { useAuth } from '../../context/AuthContext';
-import { TenantRole } from '../../types/tenant';
+import { TenantRole, type TeamMember } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
 import { InviteStaffModal } from './InviteStaffModal';
 import { ErrorNotice } from '../common/ErrorNotice';
@@ -47,10 +50,48 @@ import {
   teamDormancyPolicyText,
   type BlockedMemberRow,
 } from '../../data/dormancyView';
+import {
+  MEMBERSHIP_TEXT,
+  US_PERSON_FILTERS,
+  AFFILIATION_LABELS,
+  US_PERSON_LABELS,
+  US_PERSON_CHIPS,
+  showMembershipDetails,
+  hasMembershipFacts,
+  usPersonCounts,
+  filterByUsPerson,
+  usPersonFilterLabel,
+  teamEmptyText,
+  expiryView,
+  memberIsExpired,
+  expiredSummaryText,
+  memberEditView,
+  profileDraftFrom,
+  profilePatchFrom,
+  draftProblem,
+  patchSummaryText,
+  primaryContactHelp,
+  usPersonRecordedText,
+  ownerPromotionExpiryNote,
+  expiryPreviewText,
+  addDaysUtc,
+  maxExpiryDate,
+  memberProfileErrorMessage,
+  memberProfileRefreshesTeam,
+  profileSavedText,
+  type UsPersonFilter,
+  type MemberProfileDraft,
+} from '../../data/membershipView';
+import { utcToday } from '../../utils/memberProfile';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText } from '../../utils/clipboard';
 import { enclaveSaveErrorMessage } from '../../utils/enclaveEdit';
+
+// Chip colours for an access end date (#258) and the shared chip shape
+const EXPIRY_CHIP_CLASS = { none: '', active: 'bg-slate-800 text-slate-300 border-slate-700', soon: 'bg-amber-500/15 text-amber-300 border-amber-500/30', expired: 'bg-rose-500/15 text-rose-300 border-rose-500/30' } as const;
+const CHIP = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold border';
+
 interface TeamSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -87,9 +128,10 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     refreshTeam,
     teamError,
     restoreDormantMember,
+    updateMemberProfile,
     teamDormantDays,
   } = useTenant();
-  const { mfaEnrolled } = useAuth();
+  const { mfaEnrolled, sessionCheck } = useAuth();
 
   const [activeModalTab, setActiveModalTab] = useState<'team' | 'scope'>('team');
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -116,6 +158,12 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const [restoreCode, setRestoreCode] = useState('');
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  // Member access details (#258, #259): the US-person filter, and the member being edited with its draft
+  const [usFilter, setUsFilter] = useState<UsPersonFilter>('all');
+  const [editTarget, setEditTarget] = useState<TeamMember | null>(null);
+  const [editDraft, setEditDraft] = useState<MemberProfileDraft | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const uid = React.useId();
   // Focus: the result region takes it when the control that was used is gone (a removal, a revoke)
   const resultRef = React.useRef<HTMLDivElement>(null);
@@ -142,6 +190,9 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
       setScopeError(null);
       setPendingAction(null);
       setRestoreTarget(null);
+      setUsFilter('all');
+      setEditTarget(null);
+      setEditDraft(null);
       setCopyFailedUrl(null);
       void refreshTeam(currentTenant.id);
     }
@@ -186,6 +237,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
   const showSignIn = showLastSignInColumn(canManageTenant, !isBrowserOnlyTenant);
   const blockedRows = showSignIn ? blockedMemberRows(members, currentRole, currentUser.email) : [];
   const dormantDays = teamDormantDays[currentTenant.id] ?? null;
+  const nowMs = Date.now();
+  const offline = sessionCheck === 'offline';
+  const showMembership = showMembershipDetails(canManageTenant, !isBrowserOnlyTenant, members);
+  const usCounts = usPersonCounts(members);
+  const expiredCount = showMembership ? members.filter(m => hasMembershipFacts(m) && memberIsExpired(m, nowMs)).length : 0;
+  const isSelfMember = (m: TeamMember) => m.email.toLowerCase() === currentUser.email.toLowerCase();
+  const editView = editTarget ? memberEditView({ actor: currentRole, memberRole: editTarget.role, isSelf: isSelfMember(editTarget), isPending: false, serverBacked: !isBrowserOnlyTenant, hasFacts: hasMembershipFacts(editTarget) }) : null;
+  const editPatch = editTarget && editDraft && editView ? profilePatchFrom(editTarget, editDraft, editView) : {};
 
   const openRestore = (row: BlockedMemberRow) => { setRestoreError(null); setRestoreCode(''); setRestoreTarget(row); };
   const closeRestore = () => { setRestoreTarget(null); setRestoreCode(''); setRestoreError(null); };
@@ -204,13 +263,32 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
     } finally { setRestoreBusy(false); setRestoreCode(''); }
   };
 
-  // Filter members by search
-  const filteredMembers = members.filter(m =>
+  const openEdit = (m: TeamMember) => { setEditError(null); setEditDraft(profileDraftFrom(m)); setEditTarget(m); };
+  const closeEdit = () => { setEditTarget(null); setEditDraft(null); setEditError(null); };
+  const setDraft = (p: Partial<MemberProfileDraft>) => setEditDraft(d => (d ? { ...d, ...p } : d));
+  const runEdit = async () => {
+    if (!editTarget || !editDraft || !editView || editBusy) return;
+    const problem = draftProblem(editTarget, editDraft, editView, Date.now());
+    if (problem) { setEditError(problem); return; }
+    const patch = profilePatchFrom(editTarget, editDraft, editView);
+    if (Object.keys(patch).length === 0) { closeEdit(); return; }
+    setEditBusy(true); setEditError(null);
+    try {
+      await updateMemberProfile(currentTenant.id, editTarget.id, patch);
+      const email = editTarget.email; closeEdit(); setActionError(null); setNotice(profileSavedText(email));
+    } catch (err: unknown) {
+      setEditError(memberProfileErrorMessage(err));
+      if (memberProfileRefreshesTeam(err)) void refreshTeam(currentTenant.id);
+    } finally { setEditBusy(false); }
+  };
+
+  // Filter members by search, then by US-person status (#259)
+  const filteredMembers = filterByUsPerson(members.filter(m =>
     m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     m.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
     ROLE_LABELS[m.role].toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ), showMembership ? usFilter : 'all');
 
   const handleCopyInvite = async (token: string, memberId: string) => {
     const inviteUrl = buildInviteUrl(token);
@@ -473,11 +551,29 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                   )}
                 </div>
 
+                {showMembership && (
+                  <fieldset className="space-y-1.5">
+                    <legend className="text-xs font-semibold text-slate-400 mb-1.5">{MEMBERSHIP_TEXT.usPersonFilterLegend}</legend>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {US_PERSON_FILTERS.map(f => (
+                        <label key={f} className={`inline-flex items-center px-3 py-1 rounded-xl border text-xs font-semibold cursor-pointer transition-colors focus-within:ring-1 focus-within:ring-cyan-400 ${usFilter === f ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'}`}>
+                          <input type="radio" name={`${uid}-us-filter`} value={f} checked={usFilter === f} onChange={() => setUsFilter(f)} className="sr-only" />
+                          <span>{usPersonFilterLabel(f, usCounts)}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400">{MEMBERSHIP_TEXT.usPersonFilterHint}</p>
+                  </fieldset>
+                )}
+
                 {isBrowserOnlyTenant && <LegacyTenantNotice tenant={currentTenant} variant="inline" />}
                 {teamIntroNote(currentRole, canManageTenant) && (
                   <p role="note" className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-400">
                     {teamIntroNote(currentRole, canManageTenant)}
                   </p>
+                )}
+                {showMembership && expiredCount > 0 && (
+                  <p role="note" className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-200">{expiredSummaryText(expiredCount)}</p>
                 )}
                 <div ref={resultRef} tabIndex={-1} className="space-y-2 focus:outline-none">
                   <ErrorNotice message={actionError || teamError} />
@@ -517,7 +613,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                       {pendingAction.type === 'revoke'
                         ? `Revoke the pending invitation for ${pendingAction.label}?`
                         : pendingAction.type === 'role'
-                        ? roleChangeConfirmText(pendingAction.label, pendingAction.from!, pendingAction.to!)
+                        ? `${roleChangeConfirmText(pendingAction.label, pendingAction.from!, pendingAction.to!)}${ownerPromotionExpiryNote(pendingAction.to!, members.find(m => m.id === pendingAction.id)?.accessExpiresOn) ?? ''}`
                         : `Remove ${pendingAction.label} from ${currentTenant.name}? They will lose access immediately.`}
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
@@ -579,6 +675,10 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                           memberRole: member.role,
                           hasInvitation: Boolean(inviteIdFor(member)),
                         });
+                        const hasFacts = showMembership && hasMembershipFacts(member);
+                        const exp = expiryView(member.accessExpiresOn, nowMs);
+                        const expired = hasFacts && memberIsExpired(member, nowMs);
+                        const edit = memberEditView({ actor: currentRole, memberRole: member.role, isSelf, isPending, serverBacked: !isBrowserOnlyTenant, hasFacts });
 
                         return (
                           <tr
@@ -602,6 +702,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   </div>
                                   <p className="text-xs font-mono text-slate-400 truncate">{member.email}</p>
                                   {showSignIn && <p className="md:hidden text-xs text-slate-400">Last sign-in: {memberSignInText(member)}</p>}
+                                  {(member.primaryContact || hasFacts) && (
+                                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                                      {member.primaryContact && <span className={`${CHIP} bg-brand-500/15 text-brand-200 border-brand-500/30`}><Star className="w-3 h-3" aria-hidden="true" />{MEMBERSHIP_TEXT.primaryBadge}</span>}
+                                      {hasFacts && exp.chip && <span className={`${CHIP} ${EXPIRY_CHIP_CLASS[exp.state]}`}><CalendarClock className="w-3 h-3" aria-hidden="true" />{exp.chip}</span>}
+                                      {hasFacts && member.affiliation && <span className={`${CHIP} bg-slate-800 text-slate-300 border-slate-700`}>{AFFILIATION_LABELS[member.affiliation]}</span>}
+                                      {hasFacts && <span className={`${CHIP} bg-slate-800 text-slate-300 border-slate-700`}>{US_PERSON_CHIPS[member.usPerson ?? 'NOT_RECORDED']}</span>}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </td>
@@ -648,6 +756,11 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                 <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse motion-reduce:animate-none" />
                                   Pending Invite
+                                </span>
+                              ) : expired ? (
+                                <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400" aria-hidden="true" />
+                                  {MEMBERSHIP_TEXT.expiredBadge}
                                 </span>
                               ) : accountBadge ? (
                                 <span className={`badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${accountBadge.tone === 'amber' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'}`}>
@@ -707,6 +820,14 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                                   </>
                                 )}
 
+                                {edit.canEdit && (
+                                  <button type="button" disabled={busy || offline} onClick={() => openEdit(member)}
+                                    aria-label={`Edit access details for ${member.email}`} title={offline ? MEMBERSHIP_TEXT.offlineTitle : MEMBERSHIP_TEXT.editButtonTitle}
+                                    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 hover:scale-105 active:scale-95 text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <UserCog className="w-3.5 h-3.5" aria-hidden="true" />
+                                  </button>
+                                )}
+
                                 {row.remove && (
                                   <button
                                     type="button"
@@ -729,7 +850,7 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
 
                   {filteredMembers.length === 0 && (
                     <div className="p-6 text-center text-xs text-slate-400">
-                      No matching members found in this enclave.
+                      {teamEmptyText(showMembership ? usFilter : 'all')}
                     </div>
                   )}
                 </div>
@@ -772,6 +893,94 @@ export const TeamSettingsModal: React.FC<TeamSettingsModalProps> = ({
                         <div className="flex justify-end gap-2">
                           <button type="button" onClick={closeRestore} disabled={restoreBusy} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold">Cancel</button>
                           <button type="submit" disabled={restoreBusy || !mfaEnrolled || !restoreCodeReady(restoreCode)} className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-bold">{restoreBusy ? DORMANCY_TEXT.restoreBusy : DORMANCY_TEXT.restoreButton}</button>
+                        </div>
+                      </form>
+                    </div>
+                  </DialogOverlay>
+                )}
+
+                {/* Access details of one member (#258, #259) */}
+                {editTarget && editDraft && editView && (
+                  <DialogOverlay onClose={editBusy ? undefined : closeEdit} className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+                    <div className="w-full max-w-lg p-1.5 rounded-[2rem] bg-gradient-to-b from-cyan-500/20 via-slate-800/40 to-slate-950 ring-1 ring-white/10 shadow-2xl max-h-[94vh] flex flex-col">
+                      <form noValidate onSubmit={(e) => { e.preventDefault(); void runEdit(); }} className="max-h-[calc(94vh-0.75rem)] overflow-y-auto p-6 rounded-[calc(2rem-0.375rem)] bg-slate-950/95 border border-slate-800 space-y-4 text-xs">
+                        <DialogTitle as="h3" className="text-base font-bold text-white">{MEMBERSHIP_TEXT.editTitle}</DialogTitle>
+                        <p className="text-slate-300 break-words"><strong className="text-white">{editTarget.name}</strong> <span className="font-mono text-slate-400">{editTarget.email}</span></p>
+                        <fieldset disabled={editBusy} className="space-y-4">
+                          <legend className="sr-only">{`Access details for ${editTarget.email}`}</legend>
+                          {/* 1. Access end date */}
+                          <fieldset className="space-y-2">
+                            <legend className="text-xs font-semibold text-slate-300">{MEMBERSHIP_TEXT.expiryLegend}</legend>
+                            {editView.expiry === 'edit' ? (<>
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                                <label className="inline-flex items-center gap-2 text-slate-300"><input type="radio" name={`${uid}-exp`} checked={!editDraft.hasExpiry} onChange={() => setDraft({ hasExpiry: false })} className="h-4 w-4 border-slate-700 bg-slate-900 text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" />{MEMBERSHIP_TEXT.noEndDate}</label>
+                                <label className="inline-flex items-center gap-2 text-slate-300"><input type="radio" name={`${uid}-exp`} checked={editDraft.hasExpiry} onChange={() => setDraft({ hasExpiry: true })} className="h-4 w-4 border-slate-700 bg-slate-900 text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" />{MEMBERSHIP_TEXT.endsOnDate}</label>
+                              </div>
+                              {editDraft.hasExpiry && (
+                                <div className="space-y-1.5">
+                                  <label htmlFor={`${uid}-exp-date`} className="block text-xs font-semibold text-slate-300">{MEMBERSHIP_TEXT.lastDayLabel}</label>
+                                  <input id={`${uid}-exp-date`} type="date" min={utcToday(nowMs)} max={maxExpiryDate(nowMs)} value={editDraft.expiresOn}
+                                    onChange={(e) => setDraft({ expiresOn: e.target.value })} aria-describedby={`${uid}-exp-preview ${uid}-exp-help`} aria-invalid={editError ? true : undefined}
+                                    className="w-full sm:w-56 px-3 py-2 text-xs font-mono bg-slate-900/90 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all" />
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-slate-400">{MEMBERSHIP_TEXT.quickLabel}</span>
+                                    {([['30 days', 30], ['90 days', 90], ['1 year', 365]] as const).map(([label, n]) => (
+                                      <button key={label} type="button" onClick={() => setDraft({ expiresOn: addDaysUtc(utcToday(nowMs), n) })} className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white text-xs font-mono border border-slate-700 transition-colors">{label}</button>
+                                    ))}
+                                  </div>
+                                  <p id={`${uid}-exp-preview`} aria-live="polite" className="text-slate-300">{expiryPreviewText(editDraft.expiresOn)}</p>
+                                </div>
+                              )}
+                              <p id={`${uid}-exp-help`} className="text-slate-400 leading-relaxed">{MEMBERSHIP_TEXT.expiryHelp}</p>
+                              {memberIsExpired(editTarget, nowMs) && <p className="text-amber-300">{MEMBERSHIP_TEXT.expiredRestoreHint}</p>}
+                            </>) : (
+                              <p className="text-slate-400">{editView.expiry === 'owner_never' ? MEMBERSHIP_TEXT.ownerNeverExpires : MEMBERSHIP_TEXT.selfExpiry}</p>
+                            )}
+                          </fieldset>
+                          {/* 2. Affiliation */}
+                          <div>
+                            <label htmlFor={`${uid}-aff`} className="block text-xs font-semibold text-slate-300 mb-1">{MEMBERSHIP_TEXT.affiliationLabel}</label>
+                            <select id={`${uid}-aff`} value={editDraft.affiliation} onChange={(e) => setDraft({ affiliation: e.target.value as MemberProfileDraft['affiliation'] })} aria-describedby={`${uid}-aff-help`}
+                              className="w-full sm:w-72 px-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400">
+                              <option value="">{US_PERSON_LABELS.NOT_RECORDED}</option>
+                              <option value="EMPLOYEE">{AFFILIATION_LABELS.EMPLOYEE}</option>
+                              <option value="CONTRACTOR">{AFFILIATION_LABELS.CONTRACTOR}</option>
+                              <option value="ESP">{AFFILIATION_LABELS.ESP}</option>
+                            </select>
+                            <p id={`${uid}-aff-help`} className="mt-1 text-slate-400">{MEMBERSHIP_TEXT.affiliationHelp}</p>
+                          </div>
+                          {/* 3. US-person status (owner level only) */}
+                          {editView.usPerson !== 'hidden' && (
+                            <fieldset className="space-y-2">
+                              <legend className="text-xs font-semibold text-slate-300">{MEMBERSHIP_TEXT.usPersonLegend}</legend>
+                              {editView.usPerson === 'edit' && (
+                                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-4">
+                                  {([['US_PERSON', US_PERSON_LABELS.US_PERSON], ['OTHER', US_PERSON_LABELS.OTHER], ['', US_PERSON_LABELS.NOT_RECORDED]] as const).map(([v, label]) => (
+                                    <label key={label} className="inline-flex items-center gap-2 text-slate-300"><input type="radio" name={`${uid}-us`} checked={editDraft.usPerson === v} onChange={() => setDraft({ usPerson: v })} className="h-4 w-4 border-slate-700 bg-slate-900 text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" />{label}</label>
+                                  ))}
+                                </div>
+                              )}
+                              <p className="text-slate-400 leading-relaxed">{editView.usPerson === 'self' ? MEMBERSHIP_TEXT.usPersonSelf : MEMBERSHIP_TEXT.usPersonHelp}</p>
+                              {usPersonRecordedText(editTarget.usPersonRecordedAt) && <p className="text-slate-400">{usPersonRecordedText(editTarget.usPersonRecordedAt)}</p>}
+                            </fieldset>
+                          )}
+                          {/* 4. Primary contact (owner level only) */}
+                          {editView.primaryContact && (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <input type="checkbox" id={`${uid}-pc`} checked={editDraft.primaryContact} onChange={(e) => setDraft({ primaryContact: e.target.checked })} aria-describedby={`${uid}-pc-help`} className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500" />
+                                <label htmlFor={`${uid}-pc`} className="text-xs font-semibold text-slate-300">{MEMBERSHIP_TEXT.primaryContactLabel}</label>
+                              </div>
+                              <p id={`${uid}-pc-help`} className="text-slate-400">{primaryContactHelp(members, editTarget.id, editDraft.primaryContact)}</p>
+                            </div>
+                          )}
+                        </fieldset>
+                        <p aria-live="polite" className="text-slate-300">{patchSummaryText(editPatch)}</p>
+                        {offline && <p className="text-amber-300">{MEMBERSHIP_TEXT.offlineSave}</p>}
+                        <ErrorNotice message={editError} />
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={closeEdit} disabled={editBusy} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold">{MEMBERSHIP_TEXT.cancel}</button>
+                          <button type="submit" disabled={editBusy || offline || Object.keys(editPatch).length === 0} className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white font-bold">{editBusy ? MEMBERSHIP_TEXT.saveBusy : MEMBERSHIP_TEXT.saveButton}</button>
                         </div>
                       </form>
                     </div>

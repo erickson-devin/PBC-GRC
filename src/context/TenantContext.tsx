@@ -35,7 +35,9 @@ import { keys as idbKeys, get as idbGet, set as idbSet, del as idbDel } from 'id
 import { listLocalEvidenceCopies, moveLocalEvidenceCopy, moveLocalEvidenceKey, remapEvidenceLinks, sha256Hex } from '../services/localEvidenceCopies';
 import { recordFailedControlMove, recordFailedMove } from '../services/failedMoves';
 import { pushAssetsToServer } from '../services/assetMove';
-import { ApiClient, ApiError, InvitePreview, UploadUrlResponse, onProgramRequired } from '../services/apiClient';
+import { ApiClient, ApiError, InvitePreview, UploadUrlResponse, onProgramRequired, onMembershipExpired, type MemberProfilePatch } from '../services/apiClient';
+import type { ExpiredMembership } from '../data/tenantSync';
+import { accessEndedToShow, mergeAccessEnded } from '../data/membershipView';
 import type { Program, ProgramBaseline, ProgramInput, ProgramUpdate } from '../types/program';
 import {
   activeProgramStorageKey,
@@ -308,6 +310,13 @@ interface TenantContextType {
   removeMember: (tenantId: string, memberId: string) => Promise<void>;
   /** Restores a member blocked for inactivity (#257) with the caller's own authenticator code, then reloads the team. The server allows MSP Admins and Tenant Owners. */
   restoreDormantMember: (tenantId: string, userId: string, code: string) => Promise<void>;
+  /** Changes a member's access end date, affiliation, US-person status or primary contact (#258, #259), then reloads the team. Server-stored organizations only. */
+  updateMemberProfile: (tenantId: string, memberId: string, patch: MemberProfilePatch) => Promise<void>;
+  /** The signed-in person's own access end date per organization (UTC 'YYYY-MM-DD', null for none). Held in memory only, never in browser storage. */
+  myAccessExpiry: Record<string, string | null>;
+  /** Organizations the signed-in person can no longer open because their access end date has passed, until dismissed. */
+  accessEnded: ExpiredMembership[];
+  dismissAccessEnded: (tenantId: string) => void;
   getTenantMembers: (tenantId: string) => TeamMember[];
   /** Re-fetches the members and invitations of a server-backed tenant (default: the active one). */
   refreshTeam: (tenantId?: string) => Promise<void>;
@@ -614,6 +623,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const inviteTokensRef = useRef<Record<string, string>>({});
   const [teamError, setTeamError] = useState<string | null>(null);
   const [teamDormantDays, setTeamDormantDays] = useState<Record<string, number | null>>({});
+  // #258: this person's own access end dates, and the organizations whose access has ended (memory only: nothing here is stored in the browser)
+  const [myAccessExpiry, setMyAccessExpiry] = useState<Record<string, string | null>>({});
+  const [accessEnded, setAccessEnded] = useState<ExpiredMembership[]>([]);
+  const accessEndedDismissed = useRef<Set<string>>(new Set());
   // True while the forced password change is pending: the programs and team requests would all answer 403 (see mayLoadServerData)
   const [serverLoadsPaused, setServerLoadsPausedState] = useState(false);
   const serverLoadsPausedRef = useRef(false);
@@ -645,13 +658,17 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return null;
         }
         const server = listed.tenants;
+        const expired = listed.expiredTenants ?? [];
+        const ended = accessEndedToShow(expired, liveTenantsRef.current.filter(t => t.serverBacked).map(t => t.id), server.length, [...accessEndedDismissed.current]);
+        if (ended.length > 0) setAccessEnded(prev => mergeAccessEnded(prev, ended));
+        setMyAccessExpiry(Object.fromEntries(server.filter(s => s.source === 'membership').map(s => [s.id, s.accessExpiresOn ?? null])));
 
         const result = mergeServerTenants(liveTenantsRef.current, server, new Date(), { placeholderIds: [DEFAULT_BLANK_TENANT.id] });
         setLiveTenants(result.tenants);
         setCurrentUser((prev) => ({ ...prev, roles: applyRoleSync(prev.roles ?? {}, result) }));
         setLiveActiveTenantId((prev) => pickActiveTenantId(prev, result.tenants, result.serverTenantIds, [DEFAULT_BLANK_TENANT.id]));
         // A user who already has tenants on the server does not need the first-run wizard
-        if (server.length > 0) setIsOnboardingModalOpen(false);
+        if (server.length > 0 || expired.length > 0) setIsOnboardingModalOpen(false);
         setTenantSync({ status: 'synced', lastSyncedAt: new Date().toISOString(), error: null, outcome: 'verified' });
         // #84: a stack profile only this browser holds is sent to the server once (write roles: Tenant Owner, Admin and MSP Admin; the server keeps the first one
         // until somebody edits it). Nothing is awaited: the sync result does not depend on it, and a failure retries on the next load.
@@ -1139,6 +1156,20 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // The server says the organization has no active program (409 program_required): re-read the list so the no-program screens take over
   useEffect(() => onProgramRequired(() => { void refreshPrograms(currentTenantIdRef.current); }), [refreshPrograms]);
+
+  // #258: the server says this person's access to an organization has ended: say so, and refresh the list (it no longer includes it)
+  useEffect(() => onMembershipExpired(({ tenantId, expiredOn }) => {
+    if (tenantId && !accessEndedDismissed.current.has(tenantId)) {
+      const name = liveTenantsRef.current.find(t => t.id === tenantId)?.name ?? 'this organization';
+      setAccessEnded(prev => mergeAccessEnded(prev, [{ id: tenantId, name, expiredOn }]));
+    }
+    void syncTenantsFromServer(); // coalesces with a sync already running: no request storm
+  }), [syncTenantsFromServer]);
+
+  const dismissAccessEnded = useCallback((tenantId: string) => {
+    accessEndedDismissed.current.add(tenantId);
+    setAccessEnded(prev => prev.filter(e => e.id !== tenantId));
+  }, []);
 
   const deleteProgram = useCallback(async (programId: string): Promise<void> => {
     const tenantId = currentTenantIdRef.current;
@@ -1914,6 +1945,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCurrentUser(ANONYMOUS_USER);
     setTeamMembers({});
     setTeamDormantDays({});
+    setMyAccessExpiry({});
+    setAccessEnded([]);
+    accessEndedDismissed.current.clear();
     setInvitations([]);
     setIsOnboardingModalOpen(false);
     setTenantSync({ status: 'idle', lastSyncedAt: null, error: null, outcome: null });
@@ -2205,6 +2239,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await refreshTeam(tenantId);
   }, [refreshTeam]);
 
+  /** Saves a member's access details (#258, #259), then reloads the team so the table shows what the server holds. */
+  const updateMemberProfile = useCallback(async (tenantId: string, memberId: string, patch: MemberProfilePatch): Promise<void> => {
+    const tenant = liveTenantsRef.current.find(t => t.id === tenantId);
+    if (!tenant?.serverBacked) throw new ApiError(400, 'These details are kept only for organizations stored on the server.');
+    const member = teamMembers[tenantId]?.find(m => m.id === memberId);
+    if (!member?.userId) throw new ApiError(404, 'This member cannot be changed.');
+    await ApiClient.updateMemberProfile(tenantId, member.userId, patch);
+    await refreshTeam(tenantId);
+  }, [refreshTeam, teamMembers]);
+
   /**
    * Query team members for active or specified tenant
    */
@@ -2271,6 +2315,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateMemberRole,
     removeMember,
     restoreDormantMember,
+    updateMemberProfile,
+    myAccessExpiry,
+    accessEnded,
+    dismissAccessEnded,
     getTenantMembers,
     initializeBlankTenant,
     completeTenantOnboarding,
@@ -2365,6 +2413,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     updateMemberRole,
     removeMember,
     restoreDormantMember,
+    updateMemberProfile,
+    myAccessExpiry,
+    accessEnded,
+    dismissAccessEnded,
     getTenantMembers,
     initializeBlankTenant,
     completeTenantOnboarding,

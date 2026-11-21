@@ -26,6 +26,8 @@ export interface ServerTenant {
   stackProfile: EnclaveStackProfile | null;
   /** 'claim' entries come from the token only and carry no tenant details. */
   source: 'membership' | 'claim';
+  /** #258: the last day of the signed-in person's own access (UTC, 'YYYY-MM-DD'); absent when there is no end date or the server sent none. */
+  accessExpiresOn?: string | null;
 }
 
 const FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
@@ -63,6 +65,31 @@ export function parseServerTenants(raw: unknown): ServerTenant[] {
       role: t.role,
       stackProfile: validProfile(t.stackProfile),
       source: t.source === 'claim' ? 'claim' : 'membership',
+      ...(typeof t.accessExpiresOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.accessExpiresOn) ? { accessExpiresOn: t.accessExpiresOn } : {}),
+    });
+  }
+  return out;
+}
+
+/** An organization the signed-in person can no longer open because the access end date has passed (#258). */
+export interface ExpiredMembership {
+  id: string;
+  name: string;
+  expiredOn: string | null;
+}
+
+/** Defensive parse of `expiredTenants` in the GET /api/v1/tenants response. */
+export function parseExpiredTenants(raw: unknown): ExpiredMembership[] {
+  const list = (raw as { expiredTenants?: unknown } | null)?.expiredTenants;
+  if (!Array.isArray(list)) return [];
+  const out: ExpiredMembership[] = [];
+  for (const item of list) {
+    const t = item as Record<string, unknown> | null;
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    out.push({
+      id: t.id,
+      name: str(t.name, t.id) || t.id,
+      expiredOn: typeof t.expiredOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.expiredOn) ? t.expiredOn : null,
     });
   }
   return out;

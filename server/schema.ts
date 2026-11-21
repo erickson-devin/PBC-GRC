@@ -1,4 +1,5 @@
 import { TENANT_ROLES } from '../src/utils/roles';
+import { AFFILIATIONS, US_PERSON_VALUES } from '../src/utils/memberProfile';
 import { CMMC_ASSET_CATEGORIES } from '../src/data/telemetry/assetScope';
 import { FIPS_STANDARDS, FIPS_STATUSES } from '../src/data/telemetry/fipsValidation';
 import { CONTROL_CHANGE_SOURCES } from '../src/types/controlHistory';
@@ -123,6 +124,8 @@ const tenantPredicate = (column: string): string =>
   `${column} = NULLIF(current_setting('app.current_tenant_id', true), '')`;
 
 const roleList = TENANT_ROLES.map((r) => `'${r}'`).join(', ');
+const affiliationList = AFFILIATIONS.map((a) => `'${a}'`).join(', ');
+const usPersonList = US_PERSON_VALUES.map((a) => `'${a}'`).join(', ');
 const fipsStatusList = FIPS_STATUSES.map((s) => `'${s}'`).join(', ');
 const fipsStandardList = FIPS_STANDARDS.map((s) => `'${s}'`).join(', ');
 const assetCategoryList = CMMC_ASSET_CATEGORIES.map((c) => `'${c}'`).join(', ');
@@ -191,6 +194,20 @@ export const TABLES_SQL = `
   ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_role_check CHECK (role IN (${roleList}));
   CREATE INDEX IF NOT EXISTS idx_tenant_users_user_id ON tenant_users(user_id);
   CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant_id ON tenant_users(tenant_id);
+  -- Membership profile (issues #258, #259): an access expiry (the last day of access, UTC; owner-level roles never carry one, which the
+  -- application enforces, not a CHECK), an affiliation, an optional US person flag recorded by an owner, and one primary contact per tenant.
+  -- An older image ignores these columns and the index.
+  ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS access_expires_on DATE;
+  ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS affiliation VARCHAR(16);
+  ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS us_person VARCHAR(16);
+  ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS us_person_recorded_by VARCHAR(128);
+  ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS us_person_recorded_at TIMESTAMPTZ;
+  ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS is_primary_contact BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE tenant_users DROP CONSTRAINT IF EXISTS tenant_users_affiliation_check;
+  ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_affiliation_check CHECK (affiliation IS NULL OR affiliation IN (${affiliationList}));
+  ALTER TABLE tenant_users DROP CONSTRAINT IF EXISTS tenant_users_us_person_check;
+  ALTER TABLE tenant_users ADD CONSTRAINT tenant_users_us_person_check CHECK (us_person IS NULL OR us_person IN (${usPersonList}));
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_users_primary_contact ON tenant_users (tenant_id) WHERE is_primary_contact;
 
   CREATE TABLE IF NOT EXISTS control_assessments (
       id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -1055,7 +1072,7 @@ export const TABLES_SQL = `
       scope_tenant_id VARCHAR(64),
       details JSONB NOT NULL DEFAULT '{}'::jsonb,
       CONSTRAINT local_account_events_actor_check CHECK (actor_kind IN ('user', 'admin', 'cli', 'system')),
-      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked')),
+      CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked', 'membership_updated', 'announcement_posted', 'announcement_withdrawn')),
       CONSTRAINT local_account_events_details_check CHECK (jsonb_typeof(details) = 'object' AND octet_length(details::text) <= 2048 AND position('@' in details::text) = 0)
   );
   CREATE INDEX IF NOT EXISTS idx_local_account_events_at ON local_account_events (id DESC);
@@ -1079,17 +1096,17 @@ export const TABLES_SQL = `
   CREATE TRIGGER trg_local_account_events_no_truncate BEFORE TRUNCATE ON local_account_events
       FOR EACH STATEMENT EXECUTE FUNCTION local_account_events_guard();
 
-  -- The action list grows with the product (issues #256, #214 added the system use notice and service token actions): replace the check on an existing database.
+  -- The action list grows with the product (issues #256, #214, #258 and #260 added the system use notice, service token, membership update and announcement actions): replace the check on an existing database.
   -- It runs only while the stored check lacks the newest action, so the trail is read once, not at every start.
   DO $$
   BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
        WHERE conrelid = 'local_account_events'::regclass AND conname = 'local_account_events_action_check'
-         AND pg_get_constraintdef(oid) LIKE '%vm_token_revoked%'
+         AND pg_get_constraintdef(oid) LIKE '%announcement_withdrawn%'
     ) THEN
       ALTER TABLE local_account_events DROP CONSTRAINT IF EXISTS local_account_events_action_check;
-      ALTER TABLE local_account_events ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked'));
+      ALTER TABLE local_account_events ADD CONSTRAINT local_account_events_action_check CHECK (action IN ('password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked', 'membership_updated', 'announcement_posted', 'announcement_withdrawn'));
     END IF;
   END $$;
 
@@ -1113,6 +1130,40 @@ export const TABLES_SQL = `
       updated_by_user_id VARCHAR(64),
       CONSTRAINT platform_system_use_notice_singleton CHECK (id = 1),
       CONSTRAINT platform_system_use_notice_text_check CHECK (char_length(notice_text) BETWEEN 1 AND 4000)
+  );
+
+  -- Platform announcements (issue #260): short messages a platform administrator posts to every user of every tenant. Global like
+  -- platform_system_use_notice (no tenant column, no row security). Plain text, shown to all users, so never CUI; the text is never logged
+  -- and account events carry only the announcement id. A withdrawn row is kept (withdrawn_at); at most 5 are active, enforced by the application.
+  CREATE TABLE IF NOT EXISTS platform_announcements (
+      id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+      title VARCHAR(120) NOT NULL,
+      body TEXT NOT NULL,
+      severity VARCHAR(8) NOT NULL DEFAULT 'info',
+      expires_at TIMESTAMPTZ,
+      created_by_user_id VARCHAR(64) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      withdrawn_at TIMESTAMPTZ,
+      withdrawn_by_user_id VARCHAR(64),
+      CONSTRAINT platform_announcements_title_check CHECK (char_length(btrim(title)) BETWEEN 1 AND 120),
+      CONSTRAINT platform_announcements_body_check CHECK (char_length(body) BETWEEN 1 AND 2000),
+      CONSTRAINT platform_announcements_severity_check CHECK (severity IN ('info', 'warning')),
+      CONSTRAINT platform_announcements_window_check CHECK (expires_at IS NULL OR expires_at > created_at),
+      CONSTRAINT platform_announcements_withdrawn_check CHECK ((withdrawn_at IS NULL) = (withdrawn_by_user_id IS NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_platform_announcements_active ON platform_announcements (created_at DESC) WHERE withdrawn_at IS NULL;
+
+  -- What a user has read of the release notes and announcements (issue #260): per user, so it follows them across tenants and browsers.
+  -- Global like local_sessions (keyed by the account, not tenant data); gone with the account.
+  CREATE TABLE IF NOT EXISTS user_notice_reads (
+      user_id VARCHAR(64) NOT NULL,
+      kind VARCHAR(16) NOT NULL,
+      ref VARCHAR(64) NOT NULL,
+      read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT pk_user_notice_reads PRIMARY KEY (user_id, kind, ref),
+      CONSTRAINT fk_user_notice_reads_user FOREIGN KEY (user_id) REFERENCES local_users (id) ON DELETE CASCADE,
+      CONSTRAINT user_notice_reads_kind_check CHECK (kind IN ('release', 'announcement')),
+      CONSTRAINT user_notice_reads_ref_check CHECK (ref ~ '^[A-Za-z0-9._-]{1,64}$')
   );
 
   -- SSP metadata (issue #84): one row per program holding the SSP text fields (system name, environment, boundary and cloud

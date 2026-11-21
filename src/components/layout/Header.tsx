@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Lock,
   FileCheck,
+  Sparkles,
 } from 'lucide-react';
 import { BrandLogo } from '../common/BrandLogo';
 import { BrowserOnlyNotesBanner } from '../common/BrowserOnlyNotesBanner';
@@ -21,6 +22,10 @@ import { TenantSwitcher } from './TenantSwitcher';
 import { ProgramSwitcher } from './ProgramSwitcher';
 import { FrameworkSwitcher } from './FrameworkSwitcher';
 import { UserProfileDropdown } from '../auth/UserProfileDropdown';
+import { WhatsNewPanel } from './WhatsNewPanel';
+import { AnnouncementBanner } from './AnnouncementBanner';
+import { useWhatsNew } from '../../hooks/useWhatsNew';
+import { badgeText, whatsNewBadgeCount, whatsNewButtonLabel } from '../../data/whatsNewView';
 
 interface HeaderProps {
 }
@@ -50,6 +55,13 @@ export const Header: React.FC<HeaderProps> = () => {
     }
     return null;
   }, [activeFramework, frameworkControls, state.controls, state.sspMetadata]);
+
+  // What's new (#260): the unread badge, the panel and the warning banner. Read state lives on the server, never in this browser
+  const whatsNew = useWhatsNew();
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const whatsNewButtonRef = useRef<HTMLButtonElement>(null);
+  const unread = whatsNewBadgeCount(whatsNew.state);
+  const openWhatsNew = () => { whatsNew.reload(); setWhatsNewOpen(true); };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   // The import result, shown in a polite status region instead of a blocking dialog; another tenant's result does not carry over
@@ -205,6 +217,14 @@ export const Header: React.FC<HeaderProps> = () => {
               </button>
             )}
 
+            {/* What's new: release notes and announcements, with the unread count */}
+            <button type="button" ref={whatsNewButtonRef} onClick={openWhatsNew} aria-haspopup="dialog" aria-label={whatsNewButtonLabel(unread)} title="What's new"
+              className="relative flex items-center gap-1.5 p-2 lg:px-2.5 lg:py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+              <Sparkles className="w-4 h-4 text-cyan-300" aria-hidden="true" />
+              <span className="hidden lg:inline">What's new</span>
+              {unread > 0 && <span aria-hidden="true" className="absolute -top-1.5 -right-1.5 min-w-[1.125rem] h-[1.125rem] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold leading-[1.125rem] text-center ring-2 ring-slate-900">{badgeText(unread)}</span>}
+            </button>
+
             {/* User Profile & Identity Dropdown */}
             <UserProfileDropdown />
 
@@ -219,6 +239,10 @@ export const Header: React.FC<HeaderProps> = () => {
       {/* Browser-only tenants: their notes have no other copy (persistent, not dismissable) */}
       <BrowserOnlyNotesBanner />
 
+      {/* A warning from the platform administrator, until the person dismisses it (it never opens the panel by itself) */}
+      <AnnouncementBanner state={whatsNew.state} markBusy={whatsNew.markBusy} markError={whatsNew.markError} onOpen={openWhatsNew}
+        onDismiss={(id) => void whatsNew.markRead('announcement', id).then((ok) => { if (ok) whatsNewButtonRef.current?.focus(); })} />
+
       {/* The result of a JSON import (always mounted so a screen reader announces it) */}
       <div role="status" aria-live="polite" className="max-w-7xl mx-auto">
         {importNotice && (
@@ -230,6 +254,8 @@ export const Header: React.FC<HeaderProps> = () => {
           </div>
         )}
       </div>
+
+      {whatsNewOpen && <WhatsNewPanel state={whatsNew.state} markBusy={whatsNew.markBusy} markError={whatsNew.markError} onMarkRead={(k, r) => void whatsNew.markRead(k, r)} onRetry={whatsNew.reload} onClose={() => setWhatsNewOpen(false)} />}
     </header>
   );
 };

@@ -22,6 +22,8 @@ import setupRouter from './setup';
 import platformUsersRouter from './platformUsers';
 import platformAccountEventsRouter from './platformAccountEvents';
 import platformSystemUseNoticeRouter from './platformSystemUseNotice';
+import platformAnnouncementsRouter from './platformAnnouncements';
+import noticesRouter from './notices';
 
 const router = Router();
 
@@ -80,6 +82,10 @@ router.use('/platform/users', authOnlyMiddleware, platformUsersRouter);
 router.use('/platform/account-events', authOnlyMiddleware, platformAccountEventsRouter);
 // The system use notice shown before sign-in (issue #256): platform administrators only, edits need the step-up code
 router.use('/platform/system-use-notice', authOnlyMiddleware, platformSystemUseNoticeRouter);
+// Announcements to every user (issue #260): platform administrators only, posting and withdrawing need the step-up code
+router.use('/platform/announcements', authOnlyMiddleware, platformAnnouncementsRouter);
+// What's new for the signed-in user (issue #260): the release notes' read state and the visible announcements, no tenant needed
+router.use('/me/notices', authOnlyMiddleware, noticesRouter);
 
 // Listing and creating tenants only need an authenticated user (no tenant context yet): the user discovers the
 // tenants they belong to, or creates one and becomes its first TENANT_OWNER.

@@ -67,6 +67,7 @@ export const SspRolesSection: React.FC<SspRolesSectionProps> = ({
 
   const rows = draft ?? effectiveSspRoles(profile, legacySystemOwner);
   const pickable = pickableMembers(members);
+  const primaryId = members.find((x) => x.primaryContact === true && x.status === 'ACTIVE')?.userId;
   const views = roleRowsView({
     rows,
     rolesStatus: section,
@@ -176,7 +177,7 @@ export const SspRolesSection: React.FC<SspRolesSectionProps> = ({
                         <option value={row.memberUserId} disabled>{row.name || 'Former member'} (no longer on the team)</option>
                       )}
                       {pickable.map((m) => (
-                        <option key={m.userId} value={m.userId}>{m.name} ({m.email})</option>
+                        <option key={m.userId} value={m.userId}>{m.name} ({m.email}){m.userId === primaryId ? ' · Primary contact' : ''}</option>
                       ))}
                     </select>
                   </div>

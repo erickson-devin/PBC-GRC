@@ -44,6 +44,7 @@ import { RoleBadge } from '../common/RoleBadge';
 import { NewTenantModal } from './NewTenantModal';
 import { AccountEventsPanel } from './AccountEventsPanel';
 import { SystemUseNoticeSection } from './SystemUseNoticeSection';
+import { AnnouncementsSection } from './AnnouncementsSection';
 import { EditEnclaveModal } from './EditEnclaveModal';
 import { EditInvitationModal } from './EditInvitationModal';
 import { FinanceProvisioningLog } from './FinanceProvisioningLog';
@@ -1141,6 +1142,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
 
         {/* Section 2d: System use notice shown before sign-in (issue #256) */}
         <SystemUseNoticeSection />
+
+        {/* Section 2e: Announcements shown in every person's What's new panel (#260) */}
+        <AnnouncementsSection />
 
         {/* Section 3: Pending & Recent Onboarding Invitations */}
         <div className="stitch-card p-6 space-y-4">

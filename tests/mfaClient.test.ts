@@ -377,7 +377,7 @@ const headerOf = (c: Call, name: string): string | undefined => (c.init.headers 
   console.log('\n--- S40 account events / S39 owner notice ---');
   {
     const readUi = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
-    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked'];
+    const codes = ['password_changed', 'password_reset', 'mfa_enrolled', 'mfa_reset', 'recovery_codes_regenerated', 'account_disabled', 'account_enabled', 'role_changed', 'member_removed', 'signed_out', 'session_revoked', 'step_up_failed', 'system_use_acknowledged', 'system_use_notice_updated', 'vm_token_created', 'vm_token_revoked', 'membership_updated', 'announcement_posted', 'announcement_withdrawn'];
     assert(codes.every((c) => accountEventLabel(c) !== c && !accountEventLabel(c).startsWith('Unrecognised')) && accountEventLabel('password_reset') === 'Password reset by an administrator' && accountEventLabel('x_y') === 'Unrecognised event (x_y)', 'S40-U1 every action code has a plain label; unknown codes are named as unrecognised');
     const ev = (over: Partial<AccountEvent>): AccountEvent => ({ id: '1', at: '2026-01-01T00:00:00Z', actorKind: 'admin', actorUserId: 'u_admin', targetUserId: 'u_t', action: 'account_disabled', tenantId: null, details: {}, ...over });
     const accounts = [{ id: 'u_admin', email: 'admin@x.test' }, { id: 'u_t', email: 't@x.test' }];

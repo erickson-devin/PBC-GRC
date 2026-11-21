@@ -435,8 +435,26 @@ afterwards, and it is all intended.
 
 * **Control history.** Once a control history event with the source `objective-rollup` exists (issue #307), an older image will
   not start on that database, because it re-creates a narrower check on the source column.
-* **Account event log.** It now accepts `vm_token_created` and `vm_token_revoked` (issue #214). An older image still starts but
-  shows such rows as unrecognised, and the check cannot be narrowed again.
+* **Account event log.** It now accepts `vm_token_created` and `vm_token_revoked` (issue #214), and `membership_updated`,
+  `announcement_posted` and `announcement_withdrawn` (issues #258, #260). The three new codes are a one-way widening of the
+  check: an older image still starts but shows such rows as unrecognised, and the check cannot be narrowed again.
+* **Member access expiry, affiliation, US person flag and primary contact (issues #258, #259).** `tenant_users` gains the
+  columns `access_expires_on` (a date), `affiliation`, `us_person`, `us_person_recorded_by`, `us_person_recorded_at` and
+  `is_primary_contact`, two value checks and a unique index that allows one primary contact per tenant. No rows are changed:
+  every member starts with no expiry, no affiliation, no US person flag and no primary contact. An older image ignores the
+  columns and the index and still starts, so this part can be rolled back (the account event codes above cannot).
+  * An access expiry is a calendar date and lasts until the end of that day in UTC. After it the member is refused on every
+    request (403, reason `membership_expired`) and the tenant is left out of their tenant list; the account, its sessions and
+    its other tenants are not affected, and an Owner or Admin can lift the expiry again. Owners and MSP Admins never carry an
+    expiry (promoting a member clears it). A malformed stored date counts as expired. Run the server and the database with a
+    correct clock: the date is compared with the server's UTC time.
+  * The US person flag is recorded by an Owner only and never by the person it describes. Account events record that it
+    changed, never its value. It is visible to Owners, Admins and MSP Admins only.
+* **Announcements and read state (issue #260).** Two global tables (no tenant column, no row security) are created at startup:
+  `platform_announcements` (short plain-text messages a platform administrator posts to every user) and `user_notice_reads`
+  (which release notes and announcements each account has read; it goes with the account). An older image ignores both
+  tables. The release notes ship inside the image and are shown without any network call. Announcements are shown to every
+  user of every organization on the server, so they must never hold CUI.
 * **Dormant accounts.** `local_users` gains three columns at startup (see "Sessions: idle timeout, sign-out and account events").
   Accounts with no sign-in for 90 days are disabled from the first daily sweep after their grace period; set
   `ACCOUNT_DORMANT_DAYS` before upgrading if your policy differs.

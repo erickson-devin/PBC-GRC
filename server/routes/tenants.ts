@@ -2,12 +2,17 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import {
   MyTenant,
+  MemberProfile,
+  MemberProfilePatch,
+  PrimaryContactConflictError,
   TenantExistsError,
   createTenantWithOwner,
   getTenantRole,
   listTenantMembers,
   listUserTenants,
+  membershipNowMs,
   removeTenantMember,
+  updateTenantMemberProfile,
   updateTenantSettings,
   upsertTenantMember,
   TenantSettingsPatch,
@@ -30,7 +35,8 @@ import vmRouter from './vm';
 import programsRouter from './programs';
 import { optionalProgramContext, programContext } from '../middleware/programContext';
 import { clearUserProgramDefault } from '../userProgramDefaults';
-import { TENANT_ROLES, canChangeMemberRole, canManageRole, canRemoveMember, canRoleWrite, isTenantRole } from '../../src/utils/roles';
+import { TENANT_ROLES, canChangeMemberRole, canManageRole, canRemoveMember, canRoleWrite, isOwnerLevel, isTenantRole } from '../../src/utils/roles';
+import { checkNewExpiry, isAffiliation, isUsPerson, membershipExpired, type Affiliation, type UsPerson } from '../../src/utils/memberProfile';
 import type { TenantRole } from '../../src/types/tenant';
 import { errorMessage } from '../../src/utils/errors';
 import { validateStackProfile } from '../../src/data/stackProfileSchema';
@@ -60,7 +66,14 @@ export async function listMyTenantsHandler(req: Request, res: Response): Promise
   const user = req.user!;
 
   try {
-    const memberships = await listUserTenants(user.uid);
+    const allMemberships = await listUserTenants(user.uid);
+    // A membership whose access expiry date has passed is not offered (authMiddleware refuses it too); it is listed under expiredTenants so the
+    // client can say so. A token claim for the same tenant is unaffected, as in authMiddleware.
+    const nowMs = membershipNowMs();
+    const memberships = allMemberships.filter((m) => !membershipExpired(m.accessExpiresOn, nowMs));
+    const expiredTenants = allMemberships
+      .filter((m) => membershipExpired(m.accessExpiresOn, nowMs))
+      .map((m) => ({ id: m.id, name: m.name, expiredOn: m.accessExpiresOn ?? '' }));
     const byId = new Map<string, MyTenant & { source: 'membership' | 'claim' }>(
       memberships.map((m) => [m.id, { ...m, source: 'membership' as const }])
     );
@@ -90,13 +103,15 @@ export async function listMyTenantsHandler(req: Request, res: Response): Promise
           createdAt: null,
           role,
           joinedAt: new Date(0).toISOString(),
+          accessExpiresOn: null,
           source: 'claim',
         });
       }
     }
 
     const tenants = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-    res.json({ userId: user.uid, totalCount: tenants.length, tenants });
+    // A claim-sourced tenant is not also reported as expired.
+    res.json({ userId: user.uid, totalCount: tenants.length, tenants, expiredTenants: expiredTenants.filter((e) => !byId.has(e.id)) });
   } catch (err: unknown) {
     console.error(`[Tenants API] Failed to list tenants for ${user.uid}:`, errorMessage(err));
     res.status(500).json({ error: 'Failed to list tenants' });
@@ -257,11 +272,23 @@ function accountView(s: LocalUserAccountSummary) {
   };
 }
 
+/** What the write roles see of a member's profile (issues #258, #259): the expiry and whether it has passed, affiliation, US person flag. */
+function membershipView(profile: MemberProfile, nowMs: number) {
+  return {
+    accessExpiresOn: profile.accessExpiresOn,
+    expired: membershipExpired(profile.accessExpiresOn, nowMs),
+    affiliation: profile.affiliation,
+    usPerson: profile.usPerson,
+    usPersonRecordedAt: profile.usPersonRecordedAt,
+  };
+}
+
 /**
  * GET /api/v1/tenants/:tenantId/members
  * Lists the members of the active tenant and their roles. For the write roles each member also carries `account`: the sign-in and
  * disabled state of their local account (null when there is none); the read roles always get `account: null`. `dormantDays` is the
- * inactivity limit (0 = off), issue #257.
+ * inactivity limit (0 = off), issue #257. Every role gets `primaryContact` (boolean); `membership` (access expiry, affiliation, US person
+ * flag, issues #258, #259) is for the write roles and null for the others.
  */
 router.get('/:tenantId/members', async (req: Request, res: Response): Promise<void> => {
   if (!ensureActiveTenant(req, res)) return;
@@ -270,9 +297,18 @@ router.get('/:tenantId/members', async (req: Request, res: Response): Promise<vo
   try {
     const listed = await listTenantMembers(tenantId);
     const summaries = canRoleWrite(req.tenantRole) ? await getLocalUserAccountSummaries(listed.map((m) => m.userId)) : new Map<string, LocalUserAccountSummary>();
+    const canSeeProfile = canRoleWrite(req.tenantRole);
+    const nowMs = membershipNowMs();
     const members = listed.map((m) => {
+      // The profile is picked from, never spread: the read roles get the primary contact flag and nothing else of it.
+      const { profile, ...rest } = m;
       const summary = summaries.get(m.userId);
-      return { ...m, account: summary ? accountView(summary) : null };
+      return {
+        ...rest,
+        account: summary ? accountView(summary) : null,
+        primaryContact: profile.primaryContact,
+        membership: canSeeProfile ? membershipView(profile, nowMs) : null,
+      };
     });
     res.json({ tenantId, totalCount: members.length, members, dormantDays: getAccountDormantDays() });
   } catch (err: unknown) {
@@ -334,12 +370,17 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
   }
 
   try {
-    const member = await upsertTenantMember(tenantId, {
+    // An owner-level role never carries an expiry: a promotion clears it (the upsert does that), and the change is recorded below.
+    const clearedExpiry = isOwnerLevel(role) && existingRole && !isOwnerLevel(existingRole)
+      ? (await listTenantMembers(tenantId)).find((m) => m.userId === userId)?.profile.accessExpiresOn ?? null
+      : null;
+    const upserted = await upsertTenantMember(tenantId, {
       userId,
       email: email.trim().toLowerCase(),
       name: (typeof name === 'string' && name.trim()) || email.split('@')[0],
       role,
     });
+    const { profile: _profile, ...member } = upserted;
     // A raised role may make the person subject to the second-factor requirement mid-session: look it up afresh on their next request.
     invalidateMfaRequirement(userId);
     await recordAccountEventBestEffort({
@@ -350,10 +391,20 @@ router.post('/:tenantId/members', async (req: Request, res: Response): Promise<v
       scopeTenantId: tenantId,
       details: { ...(existingRole ? { previousRole: existingRole } : {}), newRole: role, via: 'member_update' },
     });
+    if (clearedExpiry !== null) {
+      await recordAccountEventBestEffort({
+        actorKind: 'user',
+        actorUserId: req.user?.uid ?? null,
+        targetUserId: userId,
+        action: 'membership_updated',
+        scopeTenantId: tenantId,
+        details: { field: 'access_expiry', previousValue: clearedExpiry, newValue: 'none', reason: 'owner_level_role', via: 'member_update' },
+      });
+    }
     console.log(
       `[Tenants API] ${req.user?.uid} set ${userId} to ${role} in ${tenantId} (previously ${existingRole ?? 'not a member'})`
     );
-    res.status(existingRole ? 200 : 201).json({ tenantId, created: !existingRole, previousRole: existingRole, member });
+    res.status(existingRole ? 200 : 201).json({ tenantId, created: !existingRole, previousRole: existingRole, member, ...(clearedExpiry !== null ? { accessExpiryCleared: true } : {}) });
   } catch (err: unknown) {
     console.error(`[Tenants API] Failed to save member for ${tenantId}:`, errorMessage(err));
     res.status(500).json({ error: 'Failed to save tenant member' });
@@ -405,6 +456,145 @@ router.delete('/:tenantId/members/:userId', async (req: Request, res: Response):
   } catch (err: unknown) {
     console.error('[Tenants API] Failed to remove member:', errorMessage(err));
     res.status(500).json({ error: 'Failed to remove member' });
+  }
+});
+
+const MEMBER_PROFILE_KEYS = ['accessExpiresOn', 'affiliation', 'usPerson', 'primaryContact'];
+
+/** The 400 body for a member profile request that is malformed; `field` names the offending key (never its value). */
+function invalidProfileField(field: string) {
+  return { error: `Invalid ${field}`, code: 'invalid_request', field };
+}
+
+/**
+ * PATCH /api/v1/tenants/:tenantId/members/:userId   (write roles; requireWriteRole)
+ * Body (at least one key, no others): { accessExpiresOn?: 'YYYY-MM-DD' | null, affiliation?: 'EMPLOYEE' | 'CONTRACTOR' | 'ESP' | null,
+ * usPerson?: 'US_PERSON' | 'OTHER' | null, primaryContact?: boolean }  (issues #258, #259).
+ * The caller must be able to manage the member's role (canManageRole). Nobody sets their own expiry or US person flag (403 self). The US
+ * person flag and the primary contact are for the owner level (403 owner_required). An owner-level member never carries an expiry (409
+ * owner_cannot_expire). A date must be today (UTC) or later and at most MAX_EXPIRY_DAYS ahead (400 expiry_in_past, expiry_too_far).
+ * Answers { tenantId, userId, primaryContact, membership, changed }; one membership_updated account event per changed field. The US person
+ * value is never recorded in an event and nothing here logs a name, an email or a value.
+ */
+router.patch('/:tenantId/members/:userId', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const userId = String(req.params.userId);
+
+  if (!USER_ID_PATTERN.test(userId)) {
+    res.status(400).json({ error: 'Invalid userId', code: 'invalid_request', field: 'userId' });
+    return;
+  }
+
+  const body = req.body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    res.status(400).json(invalidProfileField('body'));
+    return;
+  }
+  const keys = Object.keys(body);
+  const unknownKey = keys.find((k) => !MEMBER_PROFILE_KEYS.includes(k));
+  if (unknownKey !== undefined) {
+    res.status(400).json(invalidProfileField('body'));
+    return;
+  }
+  if (keys.length === 0) {
+    res.status(400).json(invalidProfileField('body'));
+    return;
+  }
+  const b = body as Record<string, unknown>;
+  const patch: MemberProfilePatch = {};
+  const nowMs = membershipNowMs();
+  if ('accessExpiresOn' in b) {
+    if (b.accessExpiresOn === null) patch.accessExpiresOn = null;
+    else if (typeof b.accessExpiresOn === 'string') {
+      const problem = checkNewExpiry(b.accessExpiresOn, nowMs);
+      if (problem === 'invalid_request') {
+        res.status(400).json(invalidProfileField('accessExpiresOn'));
+        return;
+      }
+      if (problem) {
+        res.status(400).json({ error: problem === 'expiry_in_past' ? 'The access expiry date is in the past' : 'The access expiry date is too far ahead', code: problem, field: 'accessExpiresOn' });
+        return;
+      }
+      patch.accessExpiresOn = b.accessExpiresOn;
+    } else {
+      res.status(400).json(invalidProfileField('accessExpiresOn'));
+      return;
+    }
+  }
+  if ('affiliation' in b) {
+    if (b.affiliation !== null && !isAffiliation(b.affiliation)) {
+      res.status(400).json(invalidProfileField('affiliation'));
+      return;
+    }
+    patch.affiliation = b.affiliation as Affiliation | null;
+  }
+  if ('usPerson' in b) {
+    if (b.usPerson !== null && !isUsPerson(b.usPerson)) {
+      res.status(400).json(invalidProfileField('usPerson'));
+      return;
+    }
+    patch.usPerson = b.usPerson as UsPerson | null;
+  }
+  if ('primaryContact' in b) {
+    if (typeof b.primaryContact !== 'boolean') {
+      res.status(400).json(invalidProfileField('primaryContact'));
+      return;
+    }
+    patch.primaryContact = b.primaryContact;
+  }
+
+  try {
+    const targetRole = await getTenantRole(userId, tenantId);
+    if (!targetRole) {
+      res.status(404).json({ error: 'Member not found', code: 'member_not_found' });
+      return;
+    }
+    if (!canManageRole(req.tenantRole, targetRole)) {
+      res.status(403).json(roleNotGrantableBody(req.tenantRole, targetRole));
+      return;
+    }
+    if (userId === req.user?.uid && ('accessExpiresOn' in patch || 'usPerson' in patch)) {
+      res.status(403).json({ error: 'Forbidden: you cannot change your own access expiry or US person status', code: 'self' });
+      return;
+    }
+    if (('usPerson' in patch || 'primaryContact' in patch) && !ensureOwnerRole(req, res)) return;
+    if (typeof patch.accessExpiresOn === 'string' && isOwnerLevel(targetRole)) {
+      res.status(409).json({ error: 'An owner-level member cannot have an access expiry date', code: 'owner_cannot_expire' });
+      return;
+    }
+
+    const result = await updateTenantMemberProfile(tenantId, userId, patch, req.user!.uid);
+    if (!result) {
+      res.status(404).json({ error: 'Member not found', code: 'member_not_found' });
+      return;
+    }
+    const { before, after } = result;
+    const changes: Array<{ field: string; previous: string; next: string }> = [];
+    if (before.accessExpiresOn !== after.accessExpiresOn) changes.push({ field: 'access_expiry', previous: before.accessExpiresOn ?? 'none', next: after.accessExpiresOn ?? 'none' });
+    if (before.affiliation !== after.affiliation) changes.push({ field: 'affiliation', previous: before.affiliation ?? 'none', next: after.affiliation ?? 'none' });
+    if (before.usPerson !== after.usPerson) changes.push({ field: 'us_person', previous: '', next: '' });
+    if (before.primaryContact !== after.primaryContact) changes.push({ field: 'primary_contact', previous: String(before.primaryContact), next: String(after.primaryContact) });
+    for (const c of changes) {
+      await recordAccountEventBestEffort({
+        actorKind: 'user',
+        actorUserId: req.user?.uid ?? null,
+        targetUserId: userId,
+        action: 'membership_updated',
+        scopeTenantId: tenantId,
+        // The US person flag is personal data and the log is readable across tenants: only the fact that it changed is recorded.
+        details: c.field === 'us_person' ? { field: c.field, via: 'member_update' } : { field: c.field, previousValue: c.previous, newValue: c.next, via: 'member_update' },
+      });
+    }
+    console.log(`[Tenants API] ${req.user?.uid} updated the membership of ${userId} in ${tenantId}: ${changes.map((c) => c.field).join(', ') || 'no change'}`);
+    res.json({ tenantId, userId, primaryContact: after.primaryContact, membership: membershipView(after, nowMs), changed: changes.map((c) => c.field) });
+  } catch (err: unknown) {
+    if (err instanceof PrimaryContactConflictError) {
+      res.status(409).json({ error: 'Another member was just named the primary contact. Reload and try again.', code: 'primary_contact_conflict' });
+      return;
+    }
+    console.error(`[Tenants API] Failed to update the membership of ${userId} in ${tenantId}:`, errorMessage(err));
+    res.status(500).json({ error: 'Failed to update the member' });
   }
 });
 
