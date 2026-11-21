@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { DISCOVERY_POLICIES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql } from '../server/schema';
+import { DISCOVERY_POLICIES, RLS_PROGRAM_TABLES, RLS_TENANT_TABLES, TABLES_SQL, buildRlsSql, buildSchemaSql } from '../server/schema';
 import { validateAssetInput } from '../server/assets';
 import {
   VM_CONFIG_RESULTS,
@@ -292,6 +292,44 @@ assert(!vmBlock.includes('program_id'), 'the VM block does not mention program_i
 assert(!TABLES_SQL.includes('undefined'), 'no unresolved interpolation in TABLES_SQL');
 const full = buildSchemaSql();
 assert(full.includes('vm_findings') && full.includes('rls_vm_findings_tenant_isolation'), 'buildSchemaSql() includes the VM tables and their RLS');
+
+console.log('\n--- Remediation policy and risk decisions (#268) ---');
+const REMEDIATION_TABLES = ['vm_remediation_policy', 'vm_remediation_policy_events', 'vm_finding_decisions', 'vm_finding_decision_events'];
+for (const t of REMEDIATION_TABLES) {
+  assert(TABLES_SQL.includes(`CREATE TABLE IF NOT EXISTS ${t} (`), `${t} is created idempotently`);
+  assert(RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id'), `${t} is in RLS_TENANT_TABLES on tenant_id`);
+  assert(rls.includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && policy(t).includes(`USING (${P})`) && policy(t).includes(`WITH CHECK (${P})`), `${t}: FORCE row security and a tenant policy with USING and WITH CHECK`);
+  assert(!(RLS_PROGRAM_TABLES as readonly string[]).includes(t), `${t} is a tenant table, not a program table`);
+}
+assert(RLS_TENANT_TABLES.slice(-4).map((r) => r.table).join() === REMEDIATION_TABLES.join(), 'the four tables are appended at the end of RLS_TENANT_TABLES');
+const policyBlock = block('vm_remediation_policy');
+assert(/tenant_id VARCHAR\(64\) PRIMARY KEY/.test(policyBlock), 'the policy is one row per tenant (tenant_id is the primary key)');
+assert(policyBlock.includes('vm_remediation_policy_days_check CHECK (days_critical BETWEEN 1 AND 3650 AND days_high BETWEEN 1 AND 3650 AND days_medium BETWEEN 1 AND 3650 AND days_low BETWEEN 1 AND 3650)'), 'the deadlines are checked to 1..3650 days (structural range only; the ordering is the application\'s)');
+assert(policyBlock.includes('vm_remediation_policy_warn_check CHECK (warn_only <@ ARRAY[') && policyBlock.includes('vm_remediation_policy_grace_check CHECK (grace_days BETWEEN 0 AND 365)'), 'warn-only is a subset of the severities and grace is within 0..365 (the 30-day cap is the application\'s)');
+const decisionBlock = block('vm_finding_decisions');
+assert(decisionBlock.includes('FOREIGN KEY (tenant_id, finding_id) REFERENCES vm_findings (tenant_id, id) ON DELETE CASCADE') && decisionBlock.includes('CONSTRAINT unq_vm_finding_decisions_tenant_id UNIQUE (tenant_id, id)'), 'a decision belongs to a finding of its tenant (composite key, cascade with the finding) and has a composite key itself');
+assert(same(parseEnum(decisionBlock, 'vm_finding_decisions_kind_check'), VM_HUMAN_DECISIONS), 'the decision kind is one of the human decisions');
+assert(decisionBlock.includes("char_length(justification) <= 4000") && decisionBlock.includes('expires_at > requested_at') && decisionBlock.includes('justification_sha256 CHAR(64) NOT NULL'), 'the justification is bounded, a digest is stored and a decision must expire after it is requested');
+const eventBlock = block('vm_finding_decision_events');
+assert(eventBlock.includes("action IN ('approved', 'rejected', 'withdrawn', 'revoked')") && !/justification/.test(eventBlock), 'a decision event names an action and an actor, never the justification');
+assert(
+  TABLES_SQL.includes("CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_finding_decision_resolution ON vm_finding_decision_events (tenant_id, decision_id) WHERE action IN ('approved', 'rejected', 'withdrawn')") &&
+    TABLES_SQL.includes("CREATE UNIQUE INDEX IF NOT EXISTS unq_vm_finding_decision_revoked ON vm_finding_decision_events (tenant_id, decision_id) WHERE action = 'revoked'"),
+  'a request is resolved once and an approval revoked once (partial unique indexes)',
+);
+const guardAt = TABLES_SQL.indexOf('CREATE OR REPLACE FUNCTION vm_append_only_guard()');
+assert(guardAt > 0 && TABLES_SQL.slice(guardAt, guardAt + 300).includes("ERRCODE = '42501'"), 'the append-only guard raises 42501');
+for (const t of ['vm_remediation_policy_events', 'vm_finding_decisions', 'vm_finding_decision_events']) {
+  const drop1 = TABLES_SQL.indexOf(`DROP TRIGGER IF EXISTS trg_${t}_guard ON ${t};`);
+  const make1 = TABLES_SQL.indexOf(`CREATE TRIGGER trg_${t}_guard BEFORE UPDATE ON ${t}`);
+  const drop2 = TABLES_SQL.indexOf(`DROP TRIGGER IF EXISTS trg_${t}_no_truncate ON ${t};`);
+  const make2 = TABLES_SQL.indexOf(`CREATE TRIGGER trg_${t}_no_truncate BEFORE TRUNCATE ON ${t}`);
+  assert(drop1 > guardAt && make1 > drop1 && drop2 > make1 && make2 > drop2, `${t}: UPDATE and TRUNCATE are refused by the guard (each trigger dropped before it is created)`);
+  assert(!new RegExp(`BEFORE (UPDATE OR )?DELETE ON ${t}`).test(TABLES_SQL), `${t}: DELETE stays allowed (a finding deleted with its asset cascades to its decisions)`);
+}
+assert(!/trg_vm_remediation_policy_guard/.test(TABLES_SQL), 'the policy row itself is updatable (only its history is append-only)');
+const addedAfter = TABLES_SQL.slice(TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS vm_remediation_policy ('));
+assert(!/ALTER TABLE (?!vm_remediation_policy|vm_finding_decision)\w+ (ADD|DROP)/.test(addedAfter) && !/DROP CONSTRAINT/.test(addedAfter), 'the #268 block changes no existing table and no existing CHECK (no one-way upgrade)');
 
 console.log('\n--- AGENT_REPORT asset origin ---');
 const ok = validateAssetInput({ hostName: 'vm-h1', cmmcAssetCategory: 'CUI_ASSET', sourceOrigin: 'AGENT_REPORT' }, false);

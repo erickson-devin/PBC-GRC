@@ -3,12 +3,14 @@ import { Radar, X } from 'lucide-react';
 import type { EnclaveAsset } from '../../types/telemetry';
 import { OBSERVED_COPY } from '../../data/telemetry/observedInventoryView';
 import type { FindingStatusFilter } from '../../data/telemetry/vmFindingsView';
+import type { VmFinding } from '../../types/vm';
 import { useObservedInventory } from '../../hooks/useObservedInventory';
 import { useSoftwareItems } from '../../hooks/useSoftwareItems';
 import { useVmFindings } from '../../hooks/useVmFindings';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ObservedInventoryPanel } from './ObservedInventoryPanel';
 import { ObservedSoftwareList } from './ObservedSoftwareList';
+import { VmFindingDecisionDialog } from './VmFindingDecisionDialog';
 import { VmFindingsList } from './VmFindingsList';
 
 interface AssetScannerDataDialogProps {
@@ -27,6 +29,7 @@ export const AssetScannerDataDialog: React.FC<AssetScannerDataDialogProps> = ({ 
   const inventory = useObservedInventory(tenantId, asset.id, true);
   const [findingStatus, setFindingStatus] = useState<FindingStatusFilter>('OPEN');
   const findings = useVmFindings(tenantId, asset.id, findingStatus, true);
+  const [decisionFor, setDecisionFor] = useState<VmFinding | null>(null);
 
   return (
     <DialogOverlay onClose={onClose} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
@@ -53,6 +56,7 @@ export const AssetScannerDataDialog: React.FC<AssetScannerDataDialogProps> = ({ 
             onStatusFilterChange={setFindingStatus}
             onRetry={findings.reload}
             scannerReported={inventory.status === 'ready' ? inventory.hosts.length > 0 : null}
+            onOpenDecisions={setDecisionFor}
           />
         )}
 
@@ -70,6 +74,16 @@ export const AssetScannerDataDialog: React.FC<AssetScannerDataDialogProps> = ({ 
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 transition-colors text-xs">Close</button>
         </div>
       </div>
+
+      {decisionFor && (
+        <VmFindingDecisionDialog
+          target={{ findingId: decisionFor.id, vulnId: decisionFor.vulnId, assetName: asset.hostName, severity: decisionFor.severity, findingStatus: decisionFor.status, tier: decisionFor.remediation ?? null }}
+          onClose={(changed) => {
+            setDecisionFor(null);
+            if (changed) findings.reload();
+          }}
+        />
+      )}
     </DialogOverlay>
   );
 };

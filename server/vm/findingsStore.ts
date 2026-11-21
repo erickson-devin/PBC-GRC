@@ -4,7 +4,9 @@ import { getDbMode, nextStamp, pool, queryWithProgram, type ProgramScope } from 
 import { listAssets } from '../assets';
 import { listSources, noteSourceNormalized, updateRun } from './store';
 import type { ApplyRunResult, LinkedPoamItem, OpenAutoPoamItem, PoamCandidate, PoamDraft, SightingDraft } from './storeTypes';
-import { planPoamCompletions, VM_WORKER_ACTOR, type OtherSourceReport } from './transitions';
+import { planPoamCompletions, slaDueAt, VM_WORKER_ACTOR, type OtherSourceReport, type VmSlaConfig } from './transitions';
+import { computeRemediationTier } from '../../src/data/vmRemediation';
+import type { VmEffectiveDecision, VmRemediationPolicy } from '../../src/data/vmRemediation';
 import { matchesExpected, notesDigest, StaleWriteError } from '../controlAssessments';
 import { planVmPoamStatus, vmPoamFindingOpenInEpisode } from '../../src/data/vmPoamEdit';
 import { canonicalMilestones, milestoneCounts, newMilestoneId, normalizeStoredMilestones, PoamMilestoneError, resolveMilestones, sameMilestones } from '../../src/data/poamMilestones';
@@ -604,7 +606,18 @@ export async function insertPoamItems(tenantId: string, drafts: PoamDraft[], cli
   return inserted;
 }
 
+/**
+ * What the tier of a finding needs besides the finding (#268): the tenant's policy and a way to read the effective risk decisions of findings.
+ * The decision reader is injected by ./remediationStore (which imports this module), so there is no import cycle.
+ */
+export interface VmTierRules {
+  policy: VmRemediationPolicy;
+  decisionsFor: (findingIds: string[], client: pg.PoolClient | null) => Promise<ReadonlyMap<string, VmEffectiveDecision>>;
+}
+
 export interface PoamViewOptions {
+  /** With the rules, each row's finding carries its `remediation` tier and the overdue-without-item count counts gaps only. */
+  rules?: VmTierRules;
   /** Only OPEN and IN_PROGRESS items. */
   openOnly: boolean;
   limit: number;
@@ -723,11 +736,12 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
     const items = sorted.slice(opts.offset, opts.offset + opts.limit).map(({ p, f }) =>
       poamRowOf(p, f ? { ...f } : null, f ? (names.get(f.assetId) ?? null) : null, f ? Boolean(memoryVulns.get(f.vulnId)?.kev) : false),
     );
+    if (opts.rules) await attachRemediation(items, opts.rules, nowMs, null);
     let overdueWithoutItemCount = 0;
     let upcomingAll: VmFinding[] = [];
     if (opts.includeFindingWindow) {
       const open = [...memoryFindings.values()].filter((f) => f.tenantId === scope.tenantId && f.status === 'OPEN' && f.slaDueAt !== null);
-      overdueWithoutItemCount = await countOverdueWithoutItem(scope, nowIso);
+      overdueWithoutItemCount = await countOverdueWithoutItem(scope, nowIso, undefined, opts.rules);
       upcomingAll = open
         .filter((f) => Date.parse(f.slaDueAt as string) >= nowMs)
         .sort((a, b) => (a.slaDueAt as string) < (b.slaDueAt as string) ? -1 : (a.slaDueAt as string) > (b.slaDueAt as string) ? 1 : SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -752,6 +766,7 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
       [scope.tenantId, scope.programId, opts.limit, opts.offset],
     );
     const items = itemRows.rows.map(poamRowFromJoined);
+    if (opts.rules) await attachRemediation(items, opts.rules, nowMs, c);
     const counts = await c.query(
       `SELECT COUNT(*)::int AS total, (COUNT(*) FILTER (WHERE status IN ('OPEN', 'IN_PROGRESS')))::int AS open
          FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2`,
@@ -761,7 +776,7 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
     let upcoming: VmUpcomingFinding[] = [];
     let upcomingTotal = 0;
     if (opts.includeFindingWindow) {
-      overdueWithoutItemCount = await countOverdueWithoutItem(scope, nowIso, c);
+      overdueWithoutItemCount = await countOverdueWithoutItem(scope, nowIso, c, opts.rules);
       const total = await c.query("SELECT COUNT(*)::int AS n FROM vm_findings f WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at >= $2::timestamptz", [scope.tenantId, nowIso]);
       upcomingTotal = Number(total.rows[0]?.n ?? 0);
       if (opts.upcomingLimit > 0) {
@@ -792,32 +807,59 @@ export async function loadVmPoamView(scope: ProgramScope, nowIso: string, opts: 
 /**
  * How many OPEN findings are past their SLA deadline and have no POA&M item of their current episode in the program (any item
  * status counts as covering it). The same figure loadVmPoamView returns for the target program. Pass the transaction's client to read
- * inside it; without one a tenant transaction in the program's context is opened (PostgreSQL).
+ * inside it; without one a tenant transaction in the program's context is opened (PostgreSQL). With the tier `rules` (#268) only the gaps
+ * count (the findings the worker would draft an item for): warnings and accepted findings are not "missing" an item.
  */
-export async function countOverdueWithoutItem(scope: ProgramScope, nowIso: string, client?: pg.PoolClient | null): Promise<number> {
+export async function countOverdueWithoutItem(scope: ProgramScope, nowIso: string, client?: pg.PoolClient | null, rules?: VmTierRules): Promise<number> {
+  const nowMs = Date.parse(nowIso);
   if (isMemory()) {
-    const nowMs = Date.parse(nowIso);
     const mine = [...memoryPoam.values()].filter((p) => p.tenantId === scope.tenantId && p.programId === scope.programId);
-    return [...memoryFindings.values()].filter(
+    const lacking = [...memoryFindings.values()].filter(
       (f) =>
         f.tenantId === scope.tenantId && f.status === 'OPEN' && f.slaDueAt !== null && Date.parse(f.slaDueAt) < nowMs &&
         !mine.some((p) => p.findingId === f.id && itemCoversEpisode(p, f)),
-    ).length;
+    );
+    if (!rules) return lacking.length;
+    const decisions = await rules.decisionsFor(lacking.map((f) => f.id), null);
+    return lacking.filter((f) => tierOf(f, Boolean(memoryVulns.get(f.vulnId)?.kev), rules.policy, decisions.get(f.id) ?? null, nowMs).tier === 'GAP').length;
   }
   const count = async (c: pg.PoolClient): Promise<number> => {
-    const overdue = await c.query(
-      `SELECT COUNT(*)::int AS n FROM vm_findings f
-        WHERE f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at < $2::timestamptz
+    const where = `f.tenant_id = $1 AND f.status = 'OPEN' AND f.sla_due_at < $2::timestamptz
           AND NOT EXISTS (
             SELECT 1 FROM vm_poam_items p
              WHERE p.tenant_id = f.tenant_id AND p.finding_id = f.id AND p.program_id = $3
-               AND (p.finding_first_seen_at = f.first_seen_at OR (p.finding_first_seen_at IS NULL AND p.created_at >= f.first_seen_at)))`,
+               AND (p.finding_first_seen_at = f.first_seen_at OR (p.finding_first_seen_at IS NULL AND p.created_at >= f.first_seen_at)))`;
+    if (!rules) {
+      const overdue = await c.query(`SELECT COUNT(*)::int AS n FROM vm_findings f WHERE ${where}`, [scope.tenantId, nowIso, scope.programId]);
+      return Number(overdue.rows[0]?.n ?? 0);
+    }
+    const found = await c.query(
+      `SELECT f.*, COALESCE(v.kev, FALSE) AS kev FROM vm_findings f LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id WHERE ${where}`,
       [scope.tenantId, nowIso, scope.programId],
     );
-    return Number(overdue.rows[0]?.n ?? 0);
+    const decisions = await rules.decisionsFor(found.rows.map((r) => r.id as string), c);
+    return found.rows.filter((r) => {
+      const f = rowToFinding(r);
+      return tierOf(f, Boolean(r.kev), rules.policy, decisions.get(f.id) ?? null, nowMs).tier === 'GAP';
+    }).length;
   };
   if (client) return count(client);
   return withVmTenantTx(scope.tenantId, (c) => count(need(c)), scope.programId);
+}
+
+/** The tier of a finding under the policy; `kev` is whether its vulnerability is on the known-exploited list. */
+export const tierOf = (f: Pick<VmFinding, 'status' | 'severity' | 'slaDueAt'>, kev: boolean, policy: VmRemediationPolicy, decision: VmEffectiveDecision | null, nowMs: number) =>
+  computeRemediationTier({ status: f.status, severity: f.severity, slaDueAt: f.slaDueAt, kev }, policy, decision, nowMs);
+
+/** Sets `finding.remediation` on the rows that have a finding, from the finding's own fields. */
+export async function attachRemediation(rows: VmPoamRow[], rules: VmTierRules, nowMs: number, client: pg.PoolClient | null): Promise<void> {
+  const ids = rows.flatMap((r) => (r.finding ? [r.finding.id] : []));
+  if (ids.length === 0) return;
+  const decisions = await rules.decisionsFor([...new Set(ids)], client);
+  for (const r of rows) {
+    const f = r.finding;
+    if (f) f.remediation = tierOf(f, f.kev, rules.policy, decisions.get(f.id) ?? null, nowMs);
+  }
 }
 
 /**
@@ -1310,4 +1352,91 @@ export async function listFindings(tenantId: string, f: FindingFilter): Promise<
     );
     return rows.map(rowToFinding);
   });
+}
+
+// ------------------------------------------------------------------------------------------------ remediation policy (#268)
+
+/**
+ * Recomputes sla_due_at of every OPEN finding of the tenant from its first_seen_at, severity, KEV flag and the given deadlines (the same
+ * formula a sighting uses), and returns how many changed. RESOLVED findings keep their date. Call it inside the transaction that saves the policy.
+ */
+export async function recomputeOpenSlaDueAt(tenantId: string, cfg: VmSlaConfig, client: pg.PoolClient | null): Promise<number> {
+  if (isMemory()) {
+    let changed = 0;
+    for (const f of memoryFindings.values()) {
+      if (f.tenantId !== tenantId || f.status !== 'OPEN') continue;
+      const next = slaDueAt(f.firstSeenAt, f.severity, Boolean(memoryVulns.get(f.vulnId)?.kev), cfg);
+      if (f.slaDueAt === null || Date.parse(f.slaDueAt) !== Date.parse(next)) {
+        f.slaDueAt = next;
+        changed++;
+      }
+    }
+    return changed;
+  }
+  const c = need(client);
+  const found = await c.query(
+    `SELECT f.id, f.severity, f.first_seen_at, f.sla_due_at, COALESCE(v.kev, FALSE) AS kev
+       FROM vm_findings f LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id
+      WHERE f.tenant_id = $1 AND f.status = 'OPEN'
+        FOR UPDATE OF f`,
+    [tenantId],
+  );
+  const changes: Array<{ id: string; due: string }> = [];
+  for (const r of found.rows) {
+    const next = slaDueAt(iso(r.first_seen_at) as string, r.severity as VmSeverity, Boolean(r.kev), cfg);
+    if (r.sla_due_at === null || r.sla_due_at === undefined || Date.parse(iso(r.sla_due_at) as string) !== Date.parse(next)) changes.push({ id: r.id as string, due: next });
+  }
+  for (const part of chunks(changes)) {
+    await c.query(
+      `UPDATE vm_findings AS f SET sla_due_at = u.due
+         FROM unnest($2::text[], $3::timestamptz[]) AS u(id, due)
+        WHERE f.tenant_id = $1 AND f.id = u.id`,
+      [tenantId, part.map((x) => x.id), part.map((x) => x.due)],
+    );
+  }
+  return changes.length;
+}
+
+/** One finding of the tenant, locked FOR UPDATE (so a decision request and the worker serialize), with its KEV flag; null when unknown. */
+export async function getFindingForUpdate(tenantId: string, id: string, client: pg.PoolClient | null): Promise<{ finding: VmFinding; kev: boolean } | null> {
+  if (isMemory()) {
+    const f = memoryFindings.get(id);
+    return f && f.tenantId === tenantId ? { finding: { ...f }, kev: Boolean(memoryVulns.get(f.vulnId)?.kev) } : null;
+  }
+  const { rows } = await need(client).query(
+    `SELECT f.*, COALESCE(v.kev, FALSE) AS kev FROM vm_findings f LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id WHERE f.tenant_id = $1 AND f.id = $2 FOR UPDATE OF f`,
+    [tenantId, id],
+  );
+  return rows[0] ? { finding: rowToFinding(rows[0]), kev: Boolean(rows[0].kev) } : null;
+}
+
+/** The given findings of the tenant (any status). Used for the package fingerprint of a decision. */
+export async function loadFindingsByIds(tenantId: string, ids: string[], client: pg.PoolClient | null): Promise<VmFinding[]> {
+  if (ids.length === 0) return [];
+  if (isMemory()) {
+    const wanted = new Set(ids);
+    return [...memoryFindings.values()].filter((f) => f.tenantId === tenantId && wanted.has(f.id)).map((f) => ({ ...f }));
+  }
+  const { rows } = await need(client).query('SELECT * FROM vm_findings WHERE tenant_id = $1 AND id = ANY($2::text[])', [tenantId, ids]);
+  return rows.map(rowToFinding);
+}
+
+/** Which of the given vulnerability ids are on the known-exploited list, in one tenant transaction (the read routes have no open client). */
+export async function loadKevFlags(tenantId: string, vulnIds: string[]): Promise<Set<string>> {
+  if (vulnIds.length === 0) return new Set();
+  return withVmTenantTx(tenantId, (c) => loadKevVulnIds([...new Set(vulnIds)], c));
+}
+
+/** Every finding of the tenant that is not RESOLVED, with its KEV flag: what the tier summary tallies. */
+export async function listTierFindings(tenantId: string, client: pg.PoolClient | null): Promise<Array<{ finding: VmFinding; kev: boolean }>> {
+  if (isMemory()) {
+    return [...memoryFindings.values()]
+      .filter((f) => f.tenantId === tenantId && f.status !== 'RESOLVED')
+      .map((f) => ({ finding: { ...f }, kev: Boolean(memoryVulns.get(f.vulnId)?.kev) }));
+  }
+  const { rows } = await need(client).query(
+    `SELECT f.*, COALESCE(v.kev, FALSE) AS kev FROM vm_findings f LEFT JOIN vm_vulns v ON v.vuln_id = f.vuln_id WHERE f.tenant_id = $1 AND f.status <> 'RESOLVED'`,
+    [tenantId],
+  );
+  return rows.map((r) => ({ finding: rowToFinding(r), kev: Boolean(r.kev) }));
 }

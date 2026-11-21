@@ -33,7 +33,8 @@ import { replaceHostInventory, type HostInventoryDraft } from './inventoryStore'
 import { VM_SHUTDOWN_MESSAGE } from '../shutdown';
 import { validateIngestPayload } from './ingestSchema';
 import { getRun, listSources, listUnfinishedRuns, updateRun } from './store';
-import { applyRun, getVmSlaConfig, isPoamAutocreateEnabled, planPoamItems, staleRunsToRecover, VM_WORKER_ACTOR, type ReportedHost } from './transitions';
+import { loadEffectiveDecisions, loadRemediationPolicy } from './remediationStore';
+import { applyRun, isPoamAutocreateEnabled, planPoamItems, staleRunsToRecover, VM_WORKER_ACTOR, type ReportedHost } from './transitions';
 
 /**
  * Normalizes received runs (docs/VULNERABILITY_MANAGEMENT.md, section 6): read the stored payload, verify it, match its hosts to
@@ -241,6 +242,8 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
       const emptyBefore = await loadEmptyPreviousReports(tenantId, run.sourceId, reportedAssetIds, run.id, run.receivedAt, client);
       const vulnIds = [...new Set(reported.flatMap((r) => r.host.findings.map((f) => f.vulnId)))];
       const kev = await loadKevVulnIds(vulnIds, client);
+      // The tenant's remediation policy (#268): its deadlines set the due dates, and it decides which overdue findings get a POA&M item.
+      const policy = await loadRemediationPolicy(tenantId, client);
 
       const result = applyRun({
         tenantId,
@@ -251,7 +254,7 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         otherSourceReports,
         emptyBefore,
         kev,
-        sla: getVmSlaConfig(),
+        sla: policy.slaDays,
         newId: () => crypto.randomUUID(),
       });
 
@@ -290,7 +293,9 @@ async function processRun(tenantId: string, runId: string): Promise<void> {
         poamCompleted = await completeResolvedPoamItems(tenantId, run.id, now, client, programId);
         if (isPoamAutocreateEnabled()) {
           const { candidates: overdue, linked } = await listPoamCandidates(tenantId, now, client, programId);
-          const drafts = planPoamItems(overdue, linked, now);
+          // Only a gap gets a draft: a warning (warn-only severity, grace period) or a finding with an approved risk decision does not. Drafts that already exist stay.
+          const decisions = await loadEffectiveDecisions(tenantId, overdue.map((o) => o.finding.id), now, client);
+          const drafts = planPoamItems(overdue, linked, now, { policy, decisions });
           poam = await insertPoamItems(tenantId, drafts, client, programId);
         }
         // Last: it switches the transaction's program setting and restores it to the target.

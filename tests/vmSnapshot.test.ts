@@ -25,6 +25,7 @@ import {
   type SnapshotInput,
   type SnapshotReport,
 } from '../server/vm/snapshot';
+import { VM_KEV_RULE_TEXT, type VmEffectiveDecision, type VmRemediationPolicy } from '../src/data/vmRemediation';
 
 /**
  * Pure checks (no server, no database, no clock): the snapshot evaluation rules, the Markdown report, the notes block and the
@@ -55,6 +56,8 @@ const WINDOW_START = '2026-10-11T12:00:00.000Z';
 const SEEN = '2026-10-18T06:00:00.000Z';
 const MIN = 60_000;
 const SNAP_ID = 'vmsnap_1760788800000_abcde';
+/** The default remediation policy: env deadlines, MEDIUM and LOW warn-only, no grace period (#268). */
+const DEF: VmRemediationPolicy = { slaDays: { CRITICAL: 15, HIGH: 30, MEDIUM: 90, LOW: 180 }, warnOnly: ['MEDIUM', 'LOW'], graceDays: 0 };
 
 // lastNormalizedAt defaults to the effective lastRunAt, so a fixture that only sets lastRunAt keeps its meaning (S01-S31).
 const source = (id: string, label: string, over: Partial<Source> = {}): Source => {
@@ -115,6 +118,9 @@ function f0(): SnapshotInput {
     findings: [],
     kevVulnIds: [],
     poamItems: [],
+    policy: DEF,
+    decisions: {},
+    pendingDecisionCount: 0,
   };
 }
 const withInput = (over: Partial<SnapshotInput>): SnapshotInput => ({ ...f0(), ...over });
@@ -163,13 +169,13 @@ console.log('\n=== Snapshot evaluation ===');
   assert(
     r.criteria.sourcesWithinInterval.reason === 'All 1 enabled source(s) reported within their expected interval.' &&
       r.criteria.coverage.reason === '4 of 4 in-scope assets (1.00) reported in the last 168 h; threshold 0.95.' &&
-      r.criteria.noOverdueCriticalOrKev.reason === 'No OPEN CRITICAL or KEV finding is past its SLA deadline.' &&
+      r.criteria.noRemediationGap.reason === 'No vulnerability is past its remediation deadline at a gap severity (Critical, High or known exploited).' &&
       r.criteria.met === true,
     'S01 all sources fresh, full coverage -> criteria met: reasons and met',
     r.criteria,
   );
   assert(
-    r.version === 1 && r.snapshotId === SNAP_ID && r.tenantId === 't1' && r.generatedAt === NOW &&
+    r.version === 2 && r.snapshotId === SNAP_ID && r.tenantId === 't1' && r.generatedAt === NOW &&
       eq(r.window, { start: WINDOW_START, end: NOW, hours: 168 }) && eq(r.thresholds, { coverage: 0.95 }),
     'S01 report header: version, ids, window, thresholds',
     { v: r.version, w: r.window },
@@ -395,18 +401,28 @@ console.log('\n=== Snapshot evaluation ===');
   const r = compute({ findings: [finding('f1', { severity: 'CRITICAL', slaDueAt: '2026-10-17T00:00:00.000Z' })] });
   assert(
     r.findings.overdueOpen === 1 && r.findings.overdueCriticalOrKev === 1 && r.findings.openWithinSla === 0 && r.findings.openSlaCompliance === 0 &&
-      r.criteria.noOverdueCriticalOrKev.reason === '1 OPEN CRITICAL or KEV finding(s) past their SLA deadline.' &&
-      r.criteria.noOverdueCriticalOrKev.met === false,
+      r.criteria.noRemediationGap.reason === '1 remediation gap(s): Critical 1, High 0, known exploited 0.' &&
+      r.criteria.noRemediationGap.met === false,
     'S18 overdue CRITICAL -> criterion 3 not met',
-    { f: r.findings, c: r.criteria.noOverdueCriticalOrKev },
+    { f: r.findings, c: r.criteria.noRemediationGap },
   );
 }
 {
   const r = compute({ findings: [finding('f1', { severity: 'HIGH', slaDueAt: '2026-10-17T00:00:00.000Z' })] });
   assert(
-    r.findings.overdueOpen === 1 && r.findings.overdueCriticalOrKev === 0 && r.criteria.noOverdueCriticalOrKev.met === true && r.criteria.met === true,
-    'S19 overdue HIGH is reported but does not fail criterion 3',
-    r.findings,
+    r.findings.overdueOpen === 1 && r.findings.overdueCriticalOrKev === 0 && r.remediation.gaps.total === 1 && r.remediation.gaps.high === 1 &&
+      r.criteria.noRemediationGap.met === false && r.criteria.met === false,
+    'S19 overdue HIGH is a remediation gap: criterion 3 not met',
+    { f: r.findings, g: r.remediation.gaps },
+  );
+}
+{
+  const r = compute({ findings: [finding('f1', { severity: 'MEDIUM', slaDueAt: '2026-10-17T00:00:00.000Z' })] });
+  assert(
+    r.remediation.warnings.total === 1 && r.remediation.warnings.bySeverity.MEDIUM === 1 && r.remediation.gaps.total === 0 &&
+      r.criteria.noRemediationGap.met === true && r.criteria.met === true && r.poam.overdueWithoutPoam === 0,
+    'S19b overdue MEDIUM is a warning, not a gap: criterion 3 met',
+    r.remediation,
   );
 }
 {
@@ -414,7 +430,54 @@ console.log('\n=== Snapshot evaluation ===');
     findings: [finding('f1', { vulnId: 'CVE-K', severity: 'MEDIUM', slaDueAt: '2026-10-17T00:00:00.000Z' })],
     kevVulnIds: ['CVE-K'],
   });
-  assert(r.findings.overdueCriticalOrKev === 1 && r.criteria.noOverdueCriticalOrKev.met === false,'S20 overdue KEV of any severity fails criterion 3', r.findings);
+  assert(
+    r.findings.overdueCriticalOrKev === 1 && r.remediation.gaps.kev === 1 && r.remediation.gaps.total === 1 && r.criteria.noRemediationGap.met === false &&
+      r.criteria.noRemediationGap.reason === '1 remediation gap(s): Critical 0, High 0, known exploited 1.',
+    'S20 overdue KEV of any severity is a gap: criterion 3 not met',
+    r.remediation,
+  );
+}
+{
+  const gap = [finding('f1', { severity: 'CRITICAL', slaDueAt: '2026-10-17T00:00:00.000Z' })];
+  const sug = (r: SnapshotReport, id: string): string | undefined => r.suggestions.find((s) => s.controlId === id)?.suggestion;
+  const g = compute({ findings: gap });
+  assert(
+    eq(g.suggestions.map((s) => s.controlId), ['RA.L2-3.11.2', 'RA.L2-3.11.3', 'SI.L1-3.14.1']) && sug(g, 'RA.L2-3.11.2') === 'MET' &&
+      sug(g, 'RA.L2-3.11.3') === 'NOT_MET' && sug(g, 'SI.L1-3.14.1') === 'NOT_MET',
+    'S-SUG1 a gap suggests NOT_MET for 3.11.3 and 3.14.1 (3.11.2 follows sources and coverage)',
+    g.suggestions,
+  );
+  const cov = compute({ assets: manyAssets(19, 18) });
+  assert(
+    sug(cov, 'RA.L2-3.11.2') === 'NOT_MET' && sug(cov, 'RA.L2-3.11.3') === 'REVIEW' && sug(cov, 'SI.L1-3.14.1') === 'REVIEW',
+    'S-SUG2 no gap but coverage below threshold: REVIEW, and 3.11.2 NOT_MET',
+    cov.suggestions,
+  );
+  const ok = compute();
+  assert(ok.suggestions.length === 3 && ok.suggestions.every((s) => s.suggestion === 'MET'), 'S-SUG3 everything met: all MET', ok.suggestions);
+  const warnOnly = compute({ findings: [finding('f1', { severity: 'LOW', slaDueAt: '2026-10-17T00:00:00.000Z' })], pendingDecisionCount: 3 });
+  assert(warnOnly.suggestions.every((s) => s.suggestion === 'MET') && warnOnly.remediation.pendingDecisions === 3, 'S-SUG4 warnings and pending decisions never change a suggestion', warnOnly.suggestions);
+}
+{
+  const dec: VmEffectiveDecision = { decisionId: 'd1', kind: 'RISK_ACCEPTED', expiresAt: '2026-10-25T00:00:00.000Z', approvedAt: '2026-10-01T00:00:00.000Z' };
+  const r = compute({
+    findings: [finding('f1', { severity: 'CRITICAL', slaDueAt: '2026-10-17T00:00:00.000Z' })],
+    decisions: { f1: dec },
+  });
+  assert(
+    r.remediation.accepted.riskAccepted === 1 && r.remediation.accepted.expiringWithin30Days === 1 && r.remediation.gaps.total === 0 &&
+      r.findings.riskAccepted === 1 && r.criteria.noRemediationGap.met === true && r.poam.overdueWithoutPoam === 0,
+    'S-DEC an overdue CRITICAL with an effective decision is accepted, not a gap',
+    r.remediation,
+  );
+  const expired = compute({
+    findings: [finding('f1', { severity: 'CRITICAL', slaDueAt: '2026-10-17T00:00:00.000Z' })],
+    decisions: { f1: { ...dec, expiresAt: NOW } },
+  });
+  assert(expired.remediation.gaps.total === 1 && expired.remediation.accepted.riskAccepted === 0, 'S-DEC a decision expiring exactly now no longer applies', expired.remediation);
+  const r2 = compute({ policy: { ...DEF, warnOnly: [], graceDays: 1 }, findings: [finding('f1', { severity: 'LOW', slaDueAt: '2026-10-17T00:00:00.000Z' })] });
+  assert(r2.remediation.gaps.total === 1 && r2.remediation.policy.graceDays === 1 && eq(r2.remediation.policy.warnOnly, []), 'S-DEC the report carries a copy of the policy; the policy drives the tier', r2.remediation);
+  assert(r.remediation.kevRule === VM_KEV_RULE_TEXT && r.remediation.policy !== DEF && eq(r.remediation.policy, DEF), 'S-DEC the report carries the KEV rule text and a copy of the policy');
 }
 {
   const r = compute({
@@ -486,7 +549,7 @@ console.log('\n=== Snapshot evaluation ===');
   const r = computeSnapshot(input);
   assert(
     r.findings.openTotal === 0 && r.findings.overdueCriticalOrKev === 0 && r.findings.openOnDecommissioned === 1 &&
-      r.criteria.noOverdueCriticalOrKev.met === true,
+      r.criteria.noRemediationGap.met === true,
     'S25 findings on decommissioned assets are excluded and counted apart',
     r.findings,
   );
@@ -518,7 +581,7 @@ console.log('\n=== Snapshot evaluation ===');
   const flags = (r: SnapshotReport): boolean[] => [
     r.criteria.sourcesWithinInterval.met,
     r.criteria.coverage.met,
-    r.criteria.noOverdueCriticalOrKev.met,
+    r.criteria.noRemediationGap.met,
     r.criteria.met,
   ];
   assert(
@@ -698,6 +761,20 @@ console.log('\n=== Markdown report ===');
   assert(md.includes('| Last run at | Last normalized at | Age |'), 'M05 markdown source table has the last normalized column', md.split('\n').filter((l) => l.startsWith('| Source')));
 }
 
+{
+  const md = renderSnapshotMarkdown(compute({ findings: [finding('f1', { severity: 'MEDIUM', slaDueAt: '2026-10-17T00:00:00.000Z' })] }));
+  assert(
+    md.includes('## Remediation policy\n') && md.includes('## Remediation gaps\n') && md.includes('## Warnings (not gaps)\n') && md.includes('## Risk decisions\n') &&
+      md.includes('Remediation deadlines (days after first sight): Critical 15, High 30, Medium 90, Low 180') &&
+      md.includes('Warn-only severities (overdue is a warning, not a gap): Medium, Low') &&
+      md.includes('- Warnings: 1 (Critical 0, High 0, Medium 1, Low 0, Unknown 0)') &&
+      md.includes('- No remediation gap: met.') && !md.includes('No overdue CRITICAL or KEV') &&
+      md.includes(VM_KEV_RULE_TEXT.replace(/[\\|<>[\]`*_#]/g, (c) => `\\${c}`)),
+    'S-MD markdown carries the policy, gaps, warnings and risk decision sections',
+    md.split('\n').filter((l) => l.startsWith('## ')),
+  );
+}
+
 console.log('\n=== Notes block ===');
 const b1 = `${VM_NOTES_BEGIN}\nfirst\n${VM_NOTES_END}`;
 const b2 = `${VM_NOTES_BEGIN}\nsecond\n${VM_NOTES_END}`;
@@ -732,12 +809,20 @@ assert(
   'B07 CRLF notes',
 );
 {
-  const block = renderNotesBlock(computeSnapshot(f0()), ['ev_vmsnap_1_aaaaa', 'ev_vmsnap_1_bbbbb']);
+  const block = renderNotesBlock(computeSnapshot(f0()), ['ev_vmsnap_1_aaaaa', 'ev_vmsnap_1_bbbbb'], 'RA.L2-3.11.3');
   assert(
     block ===
-      '<!-- vm-snapshot:begin -->\n[VM snapshot 2026-10-18] criteria MET: yes | sources within interval: 1/1 | coverage 1.00 (4/4) of 0.95 | overdue CRITICAL/KEV: 0 | evidence: ev_vmsnap_1_aaaaa, ev_vmsnap_1_bbbbb\n<!-- vm-snapshot:end -->',
+      '<!-- vm-snapshot:begin -->\n[VM snapshot 2026-10-18] criteria MET: yes | sources within interval: 1/1 | coverage 1.00 (4/4) of 0.95 | remediation gaps: 0 | warnings: 0 | suggested: MET | evidence: ev_vmsnap_1_aaaaa, ev_vmsnap_1_bbbbb\n<!-- vm-snapshot:end -->',
     'B08 block line for F0',
     block,
+  );
+  // a control with no suggestion (CA.L2-3.12.3) or no control id gets no "suggested" segment
+  const noSuggestion = renderNotesBlock(computeSnapshot(f0()), ['e1'], 'CA.L2-3.12.3');
+  assert(
+    noSuggestion.includes('| remediation gaps: 0 | warnings: 0 | evidence: e1\n') && !noSuggestion.includes('suggested') &&
+      renderNotesBlock(computeSnapshot(f0()), ['e1']) === noSuggestion,
+    'B08b block line without a suggestion for the control',
+    noSuggestion,
   );
 }
 {
@@ -745,12 +830,12 @@ assert(
   input.sources.push(source('s2', 'wazuh-b', { lastRunAt: '2026-10-14T12:00:00.000Z' }));
   input.assets = manyAssets(19, 18);
   input.findings = [finding('f1', { severity: 'CRITICAL', slaDueAt: '2026-10-17T00:00:00.000Z' })];
-  const block = renderNotesBlock(computeSnapshot(input), ['e1']);
+  const block = renderNotesBlock(computeSnapshot(input), ['e1'], 'SI.L1-3.14.1');
   const noSources = renderNotesBlock(compute({ sources: [] }), []);
   const noAssets = renderNotesBlock(compute({ assets: [] }), []);
   assert(
     block.includes(
-      'criteria MET: no | sources within interval: 1/2 (wazuh-b stale 3d) | coverage 0.94 (18/19) of 0.95 | overdue CRITICAL/KEV: 1',
+      'criteria MET: no | sources within interval: 1/2 (wazuh-b stale 3d) | coverage 0.94 (18/19) of 0.95 | remediation gaps: 1 | warnings: 0 | suggested: NOT_MET',
     ) &&
       noSources.includes('sources within interval: 0/0') &&
       noAssets.includes('coverage n/a (0/0) of 0.95'),

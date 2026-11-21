@@ -2,11 +2,30 @@ import { Router, Request, Response } from 'express';
 import { VmTokenError, createVmToken, listVmTokens, revokeVmTokenOutcome } from '../vm/tokens';
 import { recordAccountEventBestEffort } from '../auth/accountEvents';
 import { getRun, listRuns, listSources, resetRunForReprocess } from '../vm/store';
-import { VmPoamEditError, getVmPoamRow, listFindings, listVmPoamItemEvents, loadVmPoamView, updateVmPoamItem } from '../vm/findingsStore';
+import { VmPoamEditError, attachRemediation, getVmPoamRow, listFindings, listVmPoamItemEvents, loadFindingsByIds, loadVmPoamView, updateVmPoamItem, withVmTenantTx } from '../vm/findingsStore';
+import {
+  VmDecisionError,
+  getDefaultRemediationPolicy,
+  listDecisionStates,
+  listPolicyEvents,
+  loadStoredPolicy,
+  loadTierRules,
+  nameDecisionAssets,
+  requestDecision,
+  resolveDecision,
+  saveRemediationPolicy,
+  summarizeRemediation,
+  withRemediation,
+} from '../vm/remediationStore';
+import type { DecisionActor, DecisionListFilter, DecisionView, VmDecisionErrorCode } from '../vm/remediationStore';
+import { VM_KEV_RULE_TEXT, VM_POLICY_LIMITS, validateDecisionRequest, validateRemediationPolicy } from '../../src/data/vmRemediation';
+import { canRoleWrite, isOwnerLevel } from '../../src/utils/roles';
+import type { TenantRole } from '../../src/types/tenant';
+import type { VmDecision, VmPolicySaveResult, VmRemediationPolicyResponse, VmRemediationSummary } from '../../src/types/vmRemediation';
 import { StaleWriteError } from '../controlAssessments';
 import { parseVmPoamPatch } from '../../src/data/vmPoamEdit';
 import { PoamMilestoneError } from '../../src/data/poamMilestones';
-import { VM_POAM_CONTROL_ID, getVmSlaConfig, isPoamAutocreateEnabled } from '../vm/transitions';
+import { VM_POAM_CONTROL_ID, isPoamAutocreateEnabled } from '../vm/transitions';
 import { getConfigScan, listConfigResults, listConfigScans, loadLatestConfigResults, summarizeConfigScansByAsset } from '../vm/configStore';
 import { computeConfigSuggestions } from '../vm/configSuggestions';
 import { aggregateObservedSoftware, getObservedHosts, listObservedHostsForAssets, listObservedSoftware } from '../vm/inventoryStore';
@@ -243,7 +262,7 @@ router.get('/findings', async (req: Request, res: Response): Promise<void> => {
       status: status as VmFindingStatus | undefined,
       limit,
     });
-    res.json({ tenantId: req.tenantId, totalCount: findings.length, findings });
+    res.json({ tenantId: req.tenantId, totalCount: findings.length, findings: await withRemediation(req.tenantId!, findings, new Date().toISOString()) });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to list the findings');
   }
@@ -299,7 +318,9 @@ router.get('/poam', async (req: Request, res: Response): Promise<void> => {
     const target = await resolveVmTargetProgram(tenantId);
     const isVmTarget = target?.program.id === program.id;
     const generatedAt = new Date().toISOString();
+    const rules = await loadTierRules(tenantId, generatedAt);
     const view = await loadVmPoamView({ tenantId, programId: program.id }, generatedAt, {
+      rules,
       openOnly: status !== 'all',
       limit,
       offset,
@@ -315,7 +336,8 @@ router.get('/poam', async (req: Request, res: Response): Promise<void> => {
         autocreateEnabled: isPoamAutocreateEnabled(),
         vmTargetProgramId: target?.program.id ?? null,
         isVmTarget,
-        slaDays: getVmSlaConfig(),
+        slaDays: rules.policy.slaDays,
+        policy: rules.policy,
       },
       ...view,
     };
@@ -357,6 +379,8 @@ router.get('/poam/:itemId', async (req: Request, res: Response): Promise<void> =
       res.status(404).json({ error: 'POA&M item not found' });
       return;
     }
+    const generatedAt = new Date().toISOString();
+    await attachRemediation([item], await loadTierRules(tenantId, generatedAt), Date.parse(generatedAt), null);
     res.json({ item });
   } catch (err: unknown) {
     sendError(res, err, 'Failed to read the POA&M item');
@@ -395,6 +419,8 @@ router.patch('/poam/:itemId', async (req: Request, res: Response): Promise<void>
       return;
     }
     if (result.changed) console.log('[VM API] ' + user.uid + ' updated POA&M item ' + itemId + ' in ' + tenantId);
+    const generatedAt = new Date().toISOString();
+    await attachRemediation([result.item], await loadTierRules(tenantId, generatedAt), Date.parse(generatedAt), null);
     res.json(result);
   } catch (err: unknown) {
     if (err instanceof StaleWriteError) {
@@ -750,5 +776,293 @@ router.get('/snapshot/latest', async (req: Request, res: Response): Promise<void
     sendError(res, err, 'Failed to read the snapshot');
   }
 });
+
+// ------------------------------------------------------------------------------------------------ remediation policy and risk decisions (#268)
+
+/** Every error of the remediation routes: { error, reason: '<code>' } (plus the field named by a validation error, never a value). */
+function refuse(res: Response, status: number, reason: string, error: string, extra: Record<string, unknown> = {}): void {
+  res.status(status).json({ error, reason, ...extra });
+}
+
+function failRemediation(res: Response, err: unknown, fallback: string): void {
+  console.error('[VM API]', fallback, errorMessage(err));
+  refuse(res, 500, 'server_error', fallback);
+}
+
+/** Owner level (Tenant Owner, MSP Admin): sends 403 owner_required and returns false otherwise. */
+function ownerOnly(req: Request, res: Response): boolean {
+  if (isOwnerLevel(req.tenantRole)) return true;
+  refuse(res, 403, 'owner_required', 'Forbidden: this needs owner-level access (Tenant Owner, MSP Admin)', { role: req.tenantRole ?? null });
+  return false;
+}
+
+/** GET .../vm/remediation-policy (every role): the policy in force, where it comes from, the environment defaults and the fixed known-exploited rule. */
+router.get('/remediation-policy', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const stored = await loadStoredPolicy(req.tenantId!);
+    const body: VmRemediationPolicyResponse = {
+      policy: stored.policy,
+      source: stored.source,
+      defaults: getDefaultRemediationPolicy(),
+      updatedAt: stored.updatedAt,
+      updatedBy: stored.updatedBy,
+      kevRule: VM_KEV_RULE_TEXT,
+      limits: { ...VM_POLICY_LIMITS },
+    };
+    res.json(body);
+  } catch (err: unknown) {
+    failRemediation(res, err, 'Failed to read the remediation policy');
+  }
+});
+
+/**
+ * PUT .../vm/remediation-policy (owner level, on top of requireWriteRole). Body { expectedUpdatedAt: string | null, slaDays, warnOnly, graceDays }.
+ * 200 { policy, updatedAt, changed, impact: { openRecomputed, gap, warning } }: a change recomputes the due dates of the open findings in the same
+ * transaction and records one event; a save that changes nothing is changed:false with no event. 400 invalid_policy (with `field` and `rule`, never the value),
+ * 403 owner_required, 409 stale_write (with `current`). The log line carries ids only.
+ */
+router.put('/remediation-policy', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res) || !ownerOnly(req, res)) return;
+  const tenantId = req.tenantId!;
+  const body: unknown = req.body;
+  const { expectedUpdatedAt, ...rest } = (typeof body === 'object' && body !== null && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  if (expectedUpdatedAt === undefined || (expectedUpdatedAt !== null && (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))))) {
+    refuse(res, 400, 'invalid_policy', 'Invalid expectedUpdatedAt', { field: 'expectedUpdatedAt', rule: 'type' });
+    return;
+  }
+  const parsed = validateRemediationPolicy(rest);
+  if (!parsed.ok) {
+    refuse(res, 400, 'invalid_policy', 'Invalid ' + parsed.field, { field: parsed.field, rule: parsed.rule });
+    return;
+  }
+  const user = req.user!;
+  try {
+    const result = await saveRemediationPolicy(
+      tenantId,
+      parsed.policy,
+      expectedUpdatedAt as string | null,
+      { actor: user.name || user.email || user.uid || 'Compliance Assessor', userId: user.uid ?? null, role: req.tenantRole ?? null },
+      new Date().toISOString(),
+    );
+    if (result.changed) console.log('[VM API] ' + user.uid + ' saved the remediation policy in ' + tenantId);
+    const out: VmPolicySaveResult = { policy: result.policy, updatedAt: result.updatedAt, changed: result.changed, impact: result.impact };
+    res.json(out);
+  } catch (err: unknown) {
+    if (err instanceof StaleWriteError) {
+      refuse(res, 409, 'stale_write', 'The remediation policy was saved by someone else after you loaded it.', { current: err.current });
+      return;
+    }
+    failRemediation(res, err, 'Failed to save the remediation policy');
+  }
+});
+
+/** GET .../vm/remediation-policy/events?limit=: the policy's history, newest first (default 50, at most 100). Every role. { events }. */
+router.get('/remediation-policy/events', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const limit = limitParam(req.query.limit, 50, 100);
+  if (limit === null) {
+    refuse(res, 400, 'invalid_limit', 'Invalid limit: between 1 and 100');
+    return;
+  }
+  try {
+    res.json({ events: await listPolicyEvents(req.tenantId!, limit) });
+  } catch (err: unknown) {
+    failRemediation(res, err, 'Failed to list the remediation policy history');
+  }
+});
+
+/**
+ * GET .../vm/remediation/summary (every role): how many of the tenant's findings are on track, warnings, gaps or accepted under its policy, the breakdown of
+ * the gaps and warnings, the decisions waiting for approval and the ones expiring within 30 days. Counts and ids only.
+ */
+router.get('/remediation/summary', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  try {
+    const generatedAt = new Date().toISOString();
+    const s = await summarizeRemediation(req.tenantId!, generatedAt);
+    const warningBySeverity: VmRemediationSummary['warningBySeverity'] = {};
+    // UNKNOWN is held to the Medium deadline, so it is reported with Medium
+    const bySev: Record<'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW', number> = {
+      CRITICAL: s.tally.warningBySeverity.CRITICAL,
+      HIGH: s.tally.warningBySeverity.HIGH,
+      MEDIUM: s.tally.warningBySeverity.MEDIUM + s.tally.warningBySeverity.UNKNOWN,
+      LOW: s.tally.warningBySeverity.LOW,
+    };
+    for (const k of ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const) if (bySev[k] > 0) warningBySeverity[k] = bySev[k];
+    const body: VmRemediationSummary = {
+      generatedAt,
+      policy: s.policy,
+      counts: { onTrack: s.tally.onTrack, warning: s.tally.warning, gap: s.tally.gap, accepted: s.tally.accepted },
+      warningBySeverity,
+      gapCritical: s.tally.gapCritical,
+      gapHigh: s.tally.gapHigh,
+      gapKev: s.tally.gapKev,
+      pendingDecisions: s.pendingDecisions,
+      expiringSoon: s.expiringSoon.map(({ view }) => ({
+        decisionId: view.decision.id,
+        findingId: view.decision.findingId,
+        vulnId: view.decision.vulnId,
+        assetId: view.decision.assetId,
+        assetName: view.assetName,
+        kind: view.decision.kind,
+        expiresAt: view.decision.expiresAt,
+      })),
+    };
+    res.json(body);
+  } catch (err: unknown) {
+    failRemediation(res, err, 'Failed to summarise the remediation status');
+  }
+});
+
+/** Who reads a justification: the write roles and the Assessor. A Viewer gets null and its length. */
+const readsJustification = (role: TenantRole | null | undefined): boolean => role === 'ASSESSOR' || canRoleWrite(role);
+
+function decisionJson(view: DecisionView, req: Request): VmDecision {
+  const d = view.decision;
+  return {
+    id: d.id,
+    kind: d.kind,
+    state: view.state,
+    justification: readsJustification(req.tenantRole) ? d.justification : null,
+    justificationLength: [...d.justification].length,
+    justificationSha256: d.justificationSha256,
+    requestedBy: d.requestedBy,
+    requestedAt: d.requestedAt,
+    requestedByMe: Boolean(req.user?.uid) && d.requestedByUserId === req.user?.uid,
+    expiresAt: d.expiresAt,
+    approvedBy: view.approvedBy,
+    approvedAt: view.approvedAt,
+    events: view.events.map((e) => ({ action: e.action, actor: e.actor, actorRole: e.actorRole, createdAt: e.createdAt })),
+    findingId: d.findingId,
+    vulnId: d.vulnId,
+    assetId: d.assetId,
+    assetName: view.assetName,
+  };
+}
+
+const decisionActor = (req: Request): DecisionActor => ({
+  name: req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor',
+  userId: req.user!.uid,
+  role: req.tenantRole ?? null,
+});
+
+const DECISION_ERRORS: Record<VmDecisionErrorCode, [number, string]> = {
+  not_found: [404, 'Not found'],
+  finding_not_open: [409, 'The finding is not open, so no decision can be requested'],
+  decision_pending: [409, 'A request for this finding is already waiting for approval'],
+  decision_not_pending: [409, 'The request was already approved, rejected or withdrawn'],
+  decision_expired: [409, 'The request reached its expiry date before it was resolved'],
+  decision_not_active: [409, 'The decision is not in force'],
+  self_approval_forbidden: [403, 'Forbidden: the person who requested a decision cannot approve it'],
+  owner_required: [403, 'Forbidden: this needs owner-level access (Tenant Owner, MSP Admin)'],
+  not_requester: [403, 'Forbidden: only the person who requested it can withdraw a request'],
+};
+
+/** Sends a decision refusal ({ error, reason }) and returns true; false for any other error. */
+function sendDecisionError(res: Response, err: unknown): boolean {
+  if (!(err instanceof VmDecisionError)) return false;
+  const [status, message] = DECISION_ERRORS[err.code];
+  refuse(res, status, err.code, message);
+  return true;
+}
+
+/**
+ * POST .../vm/findings/:findingId/decisions (write roles, by requireWriteRole). Body { kind: RISK_ACCEPTED | FALSE_POSITIVE, justification, expiresAt: 'YYYY-MM-DD' }.
+ * 201 { decision } in state PENDING: nothing about the finding changes until another owner-level member approves it. 400 invalid_decision (field, code:
+ * required, too_long, range, kind), 404 not_found (unknown, malformed or other-tenant id), 409 decision_pending, 409 finding_not_open.
+ * The justification is stored in the decision row only: never logged, never in an event.
+ */
+router.post('/findings/:findingId/decisions', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const findingId = String(req.params.findingId);
+  if (!TOKEN_ID_PATTERN.test(findingId)) {
+    refuse(res, 404, 'not_found', 'Finding not found');
+    return;
+  }
+  const nowMs = Date.now();
+  const parsed = validateDecisionRequest(req.body, nowMs);
+  if (!parsed.ok) {
+    refuse(res, 400, 'invalid_decision', 'Invalid ' + parsed.field, { field: parsed.field, code: parsed.code });
+    return;
+  }
+  try {
+    const view = await requestDecision(tenantId, findingId, parsed.value, decisionActor(req), new Date(nowMs).toISOString());
+    await nameDecisionAssets(tenantId, [view]);
+    console.log('[VM API] ' + req.user?.uid + ' requested decision ' + view.decision.id + ' in ' + tenantId);
+    res.status(201).json({ decision: decisionJson(view, req) });
+  } catch (err: unknown) {
+    if (!sendDecisionError(res, err)) failRemediation(res, err, 'Failed to request the decision');
+  }
+});
+
+/**
+ * GET .../vm/findings/:findingId/decisions (every role): the finding's decisions, newest first, each with its state and events. The justification text
+ * goes to the write roles and the Assessor; a Viewer gets null and `justificationLength`. 404 not_found for an unknown finding.
+ */
+router.get('/findings/:findingId/decisions', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const tenantId = req.tenantId!;
+  const findingId = String(req.params.findingId);
+  if (!TOKEN_ID_PATTERN.test(findingId)) {
+    refuse(res, 404, 'not_found', 'Finding not found');
+    return;
+  }
+  try {
+    const known = await withVmTenantTx(tenantId, (c) => loadFindingsByIds(tenantId, [findingId], c));
+    if (known.length === 0) {
+      refuse(res, 404, 'not_found', 'Finding not found');
+      return;
+    }
+    const views = await listDecisionStates(tenantId, new Date().toISOString(), { findingId });
+    res.json({ decisions: views.map((v) => decisionJson(v, req)) });
+  } catch (err: unknown) {
+    failRemediation(res, err, 'Failed to list the decisions');
+  }
+});
+
+/** GET .../vm/decisions?state=pending|active|expiring|all (every role; default all): the tenant's decisions, newest request first, at most 500. */
+router.get('/decisions', async (req: Request, res: Response): Promise<void> => {
+  if (!ensureActiveTenant(req, res)) return;
+  const state = req.query.state === undefined ? 'all' : req.query.state;
+  if (typeof state !== 'string' || !['pending', 'active', 'expiring', 'all'].includes(state)) {
+    refuse(res, 400, 'invalid_state', 'Invalid state: pending, active, expiring or all');
+    return;
+  }
+  try {
+    const views = await listDecisionStates(req.tenantId!, new Date().toISOString(), { state: state as DecisionListFilter, limit: 500 });
+    res.json({ decisions: views.map((v) => decisionJson(v, req)) });
+  } catch (err: unknown) {
+    failRemediation(res, err, 'Failed to list the decisions');
+  }
+});
+
+/**
+ * POST .../vm/decisions/:id/approve | reject | withdraw | revoke (write roles by requireWriteRole, then): approve needs owner-level access and a person
+ * other than the requester (403 self_approval_forbidden; there is no exception for a single owner); reject and revoke need owner-level access (403
+ * owner_required); withdraw is the requester's alone (403 not_requester). 200 { decision }. 404 not_found; 409 decision_not_pending, decision_expired
+ * (a request past its expiry) or decision_not_active (revoke needs a decision in force). Approving never changes a POA&M item or a control.
+ */
+for (const action of ['approve', 'reject', 'withdraw', 'revoke'] as const) {
+  const done = { approve: 'approved', reject: 'rejected', withdraw: 'withdrew', revoke: 'revoked' }[action];
+  router.post('/decisions/:id/' + action, async (req: Request, res: Response): Promise<void> => {
+    if (!ensureActiveTenant(req, res)) return;
+    const tenantId = req.tenantId!;
+    const id = String(req.params.id);
+    if (!TOKEN_ID_PATTERN.test(id)) {
+      refuse(res, 404, 'not_found', 'Decision not found');
+      return;
+    }
+    try {
+      const view = await resolveDecision(tenantId, id, action, decisionActor(req), new Date().toISOString());
+      await nameDecisionAssets(tenantId, [view]);
+      console.log('[VM API] ' + req.user?.uid + ' ' + done + ' decision ' + id + ' in ' + tenantId);
+      res.json({ decision: decisionJson(view, req) });
+    } catch (err: unknown) {
+      if (!sendDecisionError(res, err)) failRemediation(res, err, 'Failed to ' + action + ' the decision');
+    }
+  });
+}
 
 export default router;

@@ -440,6 +440,7 @@ if (app) {
   assert(env.ACCOUNT_EVENT_RETENTION_DAYS === '${ACCOUNT_EVENT_RETENTION_DAYS:-}', 'app environment: ACCOUNT_EVENT_RETENTION_DAYS: ${ACCOUNT_EVENT_RETENTION_DAYS:-} (empty means the default, 1095)', env.ACCOUNT_EVENT_RETENTION_DAYS);
   assert(env.ACCOUNT_DORMANT_DAYS === '${ACCOUNT_DORMANT_DAYS:-}', 'app environment: ACCOUNT_DORMANT_DAYS: ${ACCOUNT_DORMANT_DAYS:-} (empty means the default, 90)', env.ACCOUNT_DORMANT_DAYS);
   assert(env.REQUIRE_TLS === '${REQUIRE_TLS:-}', 'app environment: REQUIRE_TLS: ${REQUIRE_TLS:-} (empty means off)', env.REQUIRE_TLS);
+  assert(env.VM_WARN_ONLY_SEVERITIES === '${VM_WARN_ONLY_SEVERITIES:-}' && env.VM_GRACE_DAYS === '${VM_GRACE_DAYS:-}' && env.VM_SLA_DAYS_LOW === '${VM_SLA_DAYS_LOW:-}', 'app environment: VM_WARN_ONLY_SEVERITIES and VM_GRACE_DAYS are passed through like the VM_SLA_DAYS_* lines (empty means the default, #268)', [env.VM_WARN_ONLY_SEVERITIES, env.VM_GRACE_DAYS]);
   assert(!('GOOGLE_APPLICATION_CREDENTIALS' in env) && Object.keys(env).every((k) => !/^(GOOGLE_|GCP_|GCS_|FIREBASE_)/i.test(k)), 'app environment has no cloud-provider variables', Object.keys(env));
 }
 assert(services.every((s) => s.lines.some((l) => /^ {4}logging:\s*$/.test(l)) && /max-size/.test(s.lines.join('\n'))), 'every service rotates its container logs (logging with max-size)', services.filter((s) => !s.lines.some((l) => /^ {4}logging:\s*$/.test(l))).map((s) => s.name));
@@ -578,6 +579,7 @@ assert(!/VITE_FIREBASE|VITE_GCP|VITE_GCS/i.test(envExample), '.env.example has n
 assert(/^# MFA_REQUIRED=/m.test(envExample), '.env.example documents MFA_REQUIRED');
 assert(/^# MFA_ENCRYPTION_KEY=/m.test(envExample), '.env.example documents MFA_ENCRYPTION_KEY');
 assert(/^# REQUIRE_TLS=/m.test(envExample), '.env.example documents REQUIRE_TLS (#166)');
+assert(/^# VM_WARN_ONLY_SEVERITIES=/m.test(envExample) && /^# VM_GRACE_DAYS=/m.test(envExample), '.env.example documents VM_WARN_ONLY_SEVERITIES and VM_GRACE_DAYS (#268)');
 
 console.log('\n--- Non-root container and evidence directory (#146) ---');
 assert(onPremDoc.includes('chown -R 1000:1000'), 'docs/ON_PREM_DATABASE.md tells the operator to chown the evidence directory to uid 1000');

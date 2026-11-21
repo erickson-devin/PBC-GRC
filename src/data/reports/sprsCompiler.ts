@@ -18,6 +18,7 @@ import { NOT_RECORDED, recordedRole } from './documentDefaults';
 import { csvCell } from './csv';
 import { cmmcDisplayId } from '../cmmcGuide/displayId';
 import { composeImplementationStatement } from '../cmmcGuide/sspStatement';
+import { appendRemediationPolicyParagraph } from '../vmRemediation';
 import type { AssessmentObjective } from '../../types/assessment';
 
 export const SPRS_MAX_SCORE = 110;
@@ -249,7 +250,12 @@ export function generateEmassControlMatrixCsv(
     if (status === 'MET') emassStatus = 'Implemented';
     else if (status === 'IN_PROGRESS') emassStatus = 'Planned / In Progress';
 
-    const narrative = composeImplementationStatement(ctrl.id, state?.implementationNotes, objectives, metadata.framework).text || ctrl.plainEnglishSummary || 'Pending assessor evaluation.';
+    const narrative = appendRemediationPolicyParagraph(
+      composeImplementationStatement(ctrl.id, state?.implementationNotes, objectives, metadata.framework).text || ctrl.plainEnglishSummary || 'Pending assessor evaluation.',
+      ctrl.id,
+      metadata.framework,
+      metadata.vmRemediationPolicy,
+    );
     const role = recordedRole(state?.responsibleRole);
     const evalDate = state?.lastUpdated ? state.lastUpdated.split('T')[0] : metadata.assessmentDate || new Date().toISOString().split('T')[0];
 

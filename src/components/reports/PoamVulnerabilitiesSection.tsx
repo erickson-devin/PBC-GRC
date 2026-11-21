@@ -23,6 +23,7 @@ import {
   vmWeaknessIds,
   type VmPoamLoad,
 } from '../../data/reports/vmPoamView';
+import { vmPoamPolicyNote } from '../../data/telemetry/vmRemediationView';
 import { vmPoamItemLabel, vmPoamSavedText, vmPoamStatusMarker } from '../../data/reports/vmPoamItemForm';
 import type { VmPoamItemApi } from '../../hooks/useVmPoam';
 import { SEVERITY_BADGE, SEVERITY_LABEL, fixText, moreText, packageLabel } from '../../data/telemetry/vmFindingsView';
@@ -379,6 +380,7 @@ const PoamVulnerabilitiesReady: React.FC<ReadyProps> = ({
                             const closed = !isOpenVmPoamStatus(row.status);
                             const wid = ids.get(row.id) ?? null;
                             const marker = vmPoamStatusMarker(row);
+                            const policyNote = vmPoamPolicyNote(row);
                             return (
                               <tr key={row.id} className={`hover:bg-slate-850/50${closed ? ' bg-slate-950/40' : ''}`}>
                                 <th scope="row" className="p-3 font-mono font-bold text-amber-300 whitespace-nowrap text-left">
@@ -410,6 +412,7 @@ const PoamVulnerabilitiesReady: React.FC<ReadyProps> = ({
                                   {vmPastTargetDate(row, data.generatedAt) && (
                                     <p className="mt-1 text-amber-300 flex items-center gap-1"><AlertTriangle className="w-3 h-3" aria-hidden="true" />Past target date</p>
                                   )}
+                                  {policyNote && <p className="mt-1 text-slate-400 flex items-start gap-1"><Info className="w-3 h-3 mt-0.5 shrink-0" aria-hidden="true" />{policyNote}</p>}
                                   <p className="mt-1 text-slate-400 lg:hidden break-words">Owner: {row.owner.trim() || 'Not recorded'}</p>
                                 </td>
                                 {itemApi && (

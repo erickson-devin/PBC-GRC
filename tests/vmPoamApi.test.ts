@@ -19,6 +19,9 @@ import type { VmPoamRow } from '../src/types/vm';
 const BASE = 'http://127.0.0.1:8080/api/v1';
 const HTTPS = { 'X-Forwarded-Proto': 'https' };
 const DAY = 86_400_000;
+// Legacy remediation policy (#268): no warn-only severity, so the overdue LOW still gets a POA&M draft, as the cases below expect.
+// The tiered behaviour (warn-only, grace, decisions) is pinned in vmRemediationApi.test.ts.
+process.env.VM_WARN_ONLY_SEVERITIES = 'none';
 
 // Everything written to the console from here on is kept, so that the log-hygiene case can read it back; the assertions print through the originals.
 const rawLog = console.log.bind(console);

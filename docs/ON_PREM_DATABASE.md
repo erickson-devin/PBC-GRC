@@ -483,6 +483,37 @@ afterwards, and it is all intended.
 
 One environment variable is added: `ACCOUNT_DORMANT_DAYS` (empty means the default, 90).
 
+* **Vulnerability remediation policy and risk decisions (issue #268).** This release adds four tables: `vm_remediation_policy` (one row per
+  organization: the deadline in days for each severity, the warn-only severities, a grace period), `vm_remediation_policy_events` (its history: the old
+  and new numbers, who, how many due dates changed), `vm_finding_decisions` (a request to accept a risk or mark a finding as a false positive, with its
+  justification, which can be CUI) and `vm_finding_decision_events` (who approved, rejected, withdrew or revoked it). All four follow the tenant
+  row-level-security pattern and the three history tables are append-only (updates are refused; the database role needs nothing new). Nothing existing is
+  changed or rewritten: no table, no CHECK and no list of an earlier release is altered. The first save of a policy recomputes the due dates of the
+  organization's open findings in one transaction; resolved findings keep theirs.
+* **What changes on the day you upgrade, before anyone saves a policy.** An organization with no saved policy uses the defaults the environment gives
+  (`VM_SLA_DAYS_*`, `VM_WARN_ONLY_SEVERITIES`, `VM_GRACE_DAYS`), and the default has **Medium and Low as warn-only**:
+  * **Overdue Medium and Low findings no longer get an automatic POA&M draft.** They are warnings on the new Vulnerability Remediation screen. Set
+    `VM_WARN_ONLY_SEVERITIES=none` before the upgrade to keep drafting an item for every overdue finding, as before.
+  * **POA&M items that already exist stay exactly as they are**, including the drafts of overdue Medium and Low findings from earlier runs: nothing is
+    closed, deleted or edited by the upgrade, and the POA&M list shows that the current policy no longer requires such an item.
+  * **An overdue High finding now fails the snapshot criterion.** The snapshot's third criterion was "no overdue Critical or known exploited finding"; it
+    is now `noRemediationGap` ("no remediation gap"), and a High is a gap once overdue. The first snapshot after the upgrade (the report is version 2)
+    can therefore read "not met" where the last one read "met". Its suggestion for `RA.L2-3.11.3` and `SI.L1-3.14.1` follows the same rule (a suggestion
+    only: no control status is changed). The control notes block now ends `remediation gaps: n | warnings: m | suggested: ...` where it used to say
+    `overdue CRITICAL/KEV: n`; text a person wrote outside the block is untouched.
+  * An organization that never opens the new screen keeps working: the defaults above apply until an owner-level member (Tenant Owner, MSP Admin) saves a
+    policy there.
+* **Risk decisions need two people.** A decision is requested by a write role, and only another owner-level member (never the requester, even in an
+  organization with a single owner) can approve it. Approving one never changes a POA&M item or a control status.
+* **An older image still starts and runs** on the upgraded database: it ignores the four tables. It goes back to the environment deadlines, drafts a POA&M
+  item for every overdue finding (warn-only and accepted ones included), and its snapshot goes back to the old criterion. It never deletes a row of these
+  tables. After upgrading again the policy and the decisions are intact; due dates it wrote are corrected at the next scan of each finding or the next save
+  of the policy, and the drafts it created stay. **Nothing in this change is one-way.**
+* **The policy and the decisions live on the server only.** An organization stored only in the browser has neither.
+
+Two environment variables are added: `VM_WARN_ONLY_SEVERITIES` (empty means the default, `MEDIUM,LOW`; `none` means no severity is warn-only) and
+`VM_GRACE_DAYS` (empty means 0). They are only the defaults of an organization that has not saved a policy; `docker-compose.yml` passes both through.
+
 What makes an upgrade safe is the release routine around it:
 
 1. **Back up first.** Create the backup folder once, then before every deploy, and on a schedule in between (nightly is the

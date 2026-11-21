@@ -1,5 +1,6 @@
 import { VM_FINDING_STATUSES, VM_SEVERITIES } from '../../types/vm';
 import type { VmAffectedPackage, VmFinding, VmFindingStatus, VmSeverity } from '../../types/vm';
+import { parseTierResult } from './vmRemediationView';
 
 /**
  * The vulnerability findings the scanners report for one asset (GET .../vm/findings), read defensively from the API, and the rules the
@@ -101,6 +102,8 @@ function parseFinding(raw: unknown): VmFinding | null {
     decidedBy: strOrNull(raw.decidedBy),
     decidedByUserId: strOrNull(raw.decidedByUserId),
     decidedAt: strOrNull(raw.decidedAt),
+    kev: raw.kev === true,
+    remediation: parseTierResult(raw.remediation),
   };
 }
 

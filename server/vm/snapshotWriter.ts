@@ -9,6 +9,7 @@ import { memoryEventsCheckpoint, writeControlAssessment, type ControlChangeActor
 import { getProgram, resolveVmTargetProgram } from '../programs';
 import { localStorageRoot, readTenantFile, isLocalStorageConfigured, removeTenantFile, writeTenantFile } from '../evidence/storage';
 import { listRunsSince, listSources } from './store';
+import { loadRemediationPolicy, loadTenantEffectiveDecisions } from './remediationStore';
 import { loadSnapshotFindings, withVmTenantTx } from './findingsStore';
 import {
   VM_SNAPSHOT_ACTOR,
@@ -48,6 +49,13 @@ async function vulnerabilitySources(tenantId: string) {
   return (await listSources(tenantId)).filter((s) => !VM_CONFIG_ONLY_SOURCE_KINDS.includes(s.kind));
 }
 
+/** The tenant's remediation policy (#268) and its effective risk decisions by finding id, as of `nowIso`. */
+async function snapshotRemediationRules(tenantId: string, nowIso: string): Promise<Pick<SnapshotInput, 'policy' | 'decisions' | 'pendingDecisionCount'>> {
+  const policy = await loadRemediationPolicy(tenantId);
+  const { decisions, pending } = await loadTenantEffectiveDecisions(tenantId, nowIso);
+  return { policy, decisions: Object.fromEntries(decisions), pendingDecisionCount: pending };
+}
+
 export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnapshotConfig, snapshotId: string, programId?: string): Promise<SnapshotInput> {
   const windowStart = new Date(now.getTime() - cfg.snapshotIntervalHours * 3_600_000).toISOString();
   // Configuration-only sources (SCAP) report no vulnerabilities: they are not part of the vulnerability snapshot.
@@ -77,6 +85,7 @@ export async function loadSnapshotInput(tenantId: string, now: Date, cfg: VmSnap
     findings,
     kevVulnIds,
     poamItems: poam,
+    ...(await snapshotRemediationRules(tenantId, now.toISOString())),
   };
 }
 
@@ -251,7 +260,7 @@ export async function applySnapshotNotes(
       controlId,
       (cur) => ({
         status: null,
-        notes: replaceDelimitedBlock(cur?.notes ?? '', renderNotesBlock(report, evidenceByControl[controlId])),
+        notes: replaceDelimitedBlock(cur?.notes ?? '', renderNotesBlock(report, evidenceByControl[controlId], controlId)),
         role: null,
         updatedBy: VM_SNAPSHOT_ACTOR,
       }),

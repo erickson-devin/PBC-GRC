@@ -890,7 +890,7 @@ console.log('\n--- Tools and Services register (inventory_*, program_tools and f
     );
   }
   assert(
-    JSON.stringify(RLS_PROGRAM_TABLES.slice(-7)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-10).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
+    JSON.stringify(RLS_PROGRAM_TABLES.slice(-7)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-14, -4).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
     'INV-D7: the new tables are appended at the end of both row-security lists, in creation order'
   );
 }
