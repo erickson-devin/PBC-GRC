@@ -301,7 +301,7 @@ for (const t of REMEDIATION_TABLES) {
   assert(rls.includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && policy(t).includes(`USING (${P})`) && policy(t).includes(`WITH CHECK (${P})`), `${t}: FORCE row security and a tenant policy with USING and WITH CHECK`);
   assert(!(RLS_PROGRAM_TABLES as readonly string[]).includes(t), `${t} is a tenant table, not a program table`);
 }
-assert(RLS_TENANT_TABLES.slice(-9, -5).map((r) => r.table).join() === REMEDIATION_TABLES.join(), 'the four tables are appended after the inventory tables in RLS_TENANT_TABLES (only the five document register tables come after them)');
+assert(RLS_TENANT_TABLES.slice(-12, -8).map((r) => r.table).join() === REMEDIATION_TABLES.join(), 'the four tables are appended after the inventory tables in RLS_TENANT_TABLES (only the five document register tables and the three teams and assignments tables come after them)');
 const policyBlock = block('vm_remediation_policy');
 assert(/tenant_id VARCHAR\(64\) PRIMARY KEY/.test(policyBlock), 'the policy is one row per tenant (tenant_id is the primary key)');
 assert(policyBlock.includes('vm_remediation_policy_days_check CHECK (days_critical BETWEEN 1 AND 3650 AND days_high BETWEEN 1 AND 3650 AND days_medium BETWEEN 1 AND 3650 AND days_low BETWEEN 1 AND 3650)'), 'the deadlines are checked to 1..3650 days (structural range only; the ordering is the application\'s)');

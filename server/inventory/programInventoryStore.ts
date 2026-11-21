@@ -643,6 +643,23 @@ export async function unlinkVendorDocument(scope: ProgramScope, vendorId: string
 
 // ------------------------------------------------------------------------------------------------ history
 
+/**
+ * Records one event of another module in the program's inventory history (the SPRS goal, assignments): ids, flags, counts and enum values only in
+ * `detail`, never a name or a note. Memory: pushed to the shared list. PostgreSQL: its own transaction under the program's row policies; a writer that is
+ * already in a transaction with both settings uses recordProgramInventoryEventTx instead, so the event commits with the change.
+ */
+export async function recordProgramInventoryEvent(scope: ProgramScope, action: string, entityId: string | null, who: InventoryActor, detail: Record<string, unknown>): Promise<void> {
+  if (!hasScope(scope)) return;
+  if (isMemory()) {
+    pushEvent(scope, action, entityId, who, detail);
+    return;
+  }
+  await inProgramTx(scope, (q) => insertEventTx(q, scope, action, entityId, who, detail));
+}
+
+/** The same event inside the caller's transaction (PostgreSQL; the tenant and the program settings must already be set). */
+export const recordProgramInventoryEventTx = insertEventTx;
+
 /** The program's inventory history, newest first (at most `limit`, 1 to 200, 100 by default). */
 export async function listProgramInventoryEvents(scope: ProgramScope, limit?: number): Promise<ProgramInventoryEvent[]> {
   const n = Math.max(1, Math.min(200, Math.floor(Number.isFinite(limit) ? (limit as number) : 100)));

@@ -20,6 +20,7 @@ import {
   FileUp,
   ListChecks,
   LibraryBig,
+  UserCheck,
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
@@ -115,6 +116,7 @@ export const Sidebar: React.FC = () => {
           label: 'Compliance Dashboard',
           icon: LayoutDashboard,
         },
+        ...(currentTenant.serverBacked ? [{ id: 'responsibilities' as const, label: 'My Responsibilities', icon: UserCheck }] : []),
         {
           id: 'matrix',
           label: `Control Matrix (${totalControls})`,

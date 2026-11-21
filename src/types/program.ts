@@ -31,6 +31,8 @@ export interface Program {
   isMyDefault?: boolean;
   /** The enclave technology stack of this program. null: the tenant's profile applies. */
   stackProfile: EnclaveStackProfile | null;
+  /** CMMC Level 2 only: the SPRS score the organization is aiming for (-203 to 110). Absent or null: no goal set (the dashboard shows 110). */
+  sprsGoal?: number | null;
   archived: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -72,4 +74,6 @@ export interface ProgramUpdate {
   expectedScoping?: Partial<OverlayFilters>;
   /** The program's enclave stack profile; null clears it (the tenant's profile applies again). */
   stackProfile?: EnclaveStackProfile | null;
+  /** CMMC Level 2 only: a whole number from -203 to 110; null clears the goal. The server answers 400 invalid_sprs_goal otherwise. */
+  sprsGoal?: number | null;
 }

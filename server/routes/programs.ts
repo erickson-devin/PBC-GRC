@@ -53,6 +53,7 @@ const STATUS_BY_CODE: Record<ProgramErrorCode, number> = {
   invalid_scoping: 400,
   invalid_vm_target: 400,
   invalid_stack_profile: 400,
+  invalid_sprs_goal: 400,
   invalid_asset_ids: 400,
   unknown_assets: 400,
   program_is_vm_target: 409,
@@ -151,7 +152,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * PUT /api/v1/tenants/:tenantId/programs/:id
- * Body: any of { name, description, systemBoundarySummary, scoping, expectedScoping, stackProfile }. stackProfile is the program's own enclave stack profile (a validated object, or null to fall back to the tenant's; 400 invalid_stack_profile). frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
+ * Body: any of { name, description, systemBoundarySummary, scoping, expectedScoping, stackProfile, sprsGoal }. sprsGoal is the SPRS score a CMMC Level 2 program aims for (a whole number from -203 to 110, or null for the default 110; any other value, or a program that is not CMMC Level 2, is a 400 invalid_sprs_goal). stackProfile is the program's own enclave stack profile (a validated object, or null to fall back to the tenant's; 400 invalid_stack_profile). frameworkId, baseline and privacyBaseline are immutable: sending a different value is a 400.
  * expectedScoping is the overlays the client last saw: when the stored ones differ the answer is 409 scoping_conflict and nothing is written.
  */
 router.put('/:id', async (req: Request, res: Response): Promise<void> => {
@@ -184,6 +185,7 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
     patch.expectedScoping = b.expectedScoping;
   }
   if (b.stackProfile !== undefined) patch.stackProfile = b.stackProfile;
+  if (b.sprsGoal !== undefined) patch.sprsGoal = b.sprsGoal;
   const who = req.user?.name || req.user?.email || req.user?.uid || 'Compliance Assessor';
   try {
     const program = await updateProgram(tenantId, idOf(req), patch, { actor: who, userId: req.user?.uid ?? null });

@@ -19,6 +19,8 @@ interface SspSectionReviewProps {
   notice: string | null;
   onSignOff: () => void;
   onRetry: () => void;
+  /** The assigned reviewer and the advisory check (#253), shown under the coverage line when reviews are supported. */
+  reviewer?: React.ReactNode;
 }
 
 /**
@@ -38,6 +40,7 @@ export const SspSectionReview: React.FC<SspSectionReviewProps> = ({
   notice,
   onSignOff,
   onRetry,
+  reviewer,
 }) => {
   const baseId = useId();
   const hId = `${baseId}-heading`;
@@ -50,6 +53,7 @@ export const SspSectionReview: React.FC<SspSectionReviewProps> = ({
     <section aria-labelledby={hId} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
       <h4 id={hId} className="text-sm font-bold text-white">Section review</h4>
       <p className="text-[11px] text-slate-400">{SSP_BUILDER_TEXT.reviewCovers}</p>
+      {supported && reviewer}
       {!supported ? (
         <p className="text-xs text-slate-400">{SSP_BUILDER_TEXT.reviewUnsupported}</p>
       ) : status === 'loading' ? (

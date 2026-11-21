@@ -68,6 +68,9 @@ import { activateOnKey } from '../../utils/a11y';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { ConfirmDeleteEvidenceDialog } from '../common/ConfirmDeleteEvidenceDialog';
+import { AssignControl } from '../assignments/AssignControl';
+import { useAssignControlProps } from '../assignments/useAssignControlProps';
+import { ASSIGNMENT_TEXT } from '../../data/assignments/assignmentsUiView';
 const CONTROL_STATUS_OPTIONS: { id: ControlStatus; active: string }[] = [
   { id: 'NOT_STARTED', active: 'bg-slate-800 text-white border-slate-600' },
   { id: 'IN_PROGRESS', active: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
@@ -234,6 +237,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     if (!isPolicyControl || !currentTenant || !familyPrefix) return '';
     return generateFamilyPolicyDocument(stackTenant, familyPrefix, familyTitle, activeFramework, cryptoModules);
   }, [isPolicyControl, currentTenant, stackTenant, familyPrefix, familyTitle, activeFramework, recompileCount, cryptoModules]);
+
+  // Who owns this control (#253): a label only, for server-backed organizations
+  const ownerProps = useAssignControlProps('control', control?.id ?? '', 'owner', control ? cmmcDisplayId(control.id, activeFramework) : '');
 
   // Guard return ONLY AFTER all useState, useContext, useMemo, and useEffect hooks have been unconditionally initialized
   if (!activeId || !control) return null;
@@ -526,6 +532,9 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
           <div>
             <DialogTitle as="h2" className="text-xl font-bold text-white tracking-tight">{control.title}</DialogTitle>
             <p className="text-xs text-slate-400 mt-0.5">{control.plainEnglishSummary}</p>
+            {currentTenant.serverBacked
+              ? <div className="mt-2"><AssignControl {...ownerProps} showHint /></div>
+              : <p className="mt-2 text-[11px] text-slate-400">{ASSIGNMENT_TEXT.browserOnly}</p>}
           </div>
 
           {/* Workflow Status Selector */}

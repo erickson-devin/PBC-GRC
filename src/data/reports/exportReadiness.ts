@@ -1,4 +1,7 @@
+import type { SSPMetadata } from '../../types/cmmc';
+import type { Program } from '../../types/program';
 import type { ReportDocumentType, ReportMetadata } from '../../types/report';
+import type { Tenant } from '../../types/tenant';
 import type { SspProfile } from '../../types/sspProfile';
 import type { SspInventoryCompletenessInput } from '../inventory/sspInventory';
 import type { SspDocumentsCompletenessInput } from '../documents/sspDocuments';
@@ -85,4 +88,31 @@ export function getExportGaps(docType: ReportDocumentType, meta: Partial<ReportM
     if (empty(field)) gaps.push({ field, label: LABELS[field] ?? String(field), advisory: true });
   }
   return gaps;
+}
+
+/**
+ * The values the export form starts with: the saved SSP value, then the tenant, then the program (the same fallback chain the SSP completeness input
+ * uses). The one definition, so the journey bar and the export modal read the same prefill. `assessmentDate` is left to the caller (it needs the clock).
+ */
+export function exportFormDefaults(a: {
+  meta: Partial<SSPMetadata>;
+  tenant: Pick<Tenant, 'systemName' | 'name' | 'cageCode' | 'samStatus' | 'systemOwner' | 'systemBoundaryScope'>;
+  program: Pick<Program, 'boundarySummary'> | null;
+  framework: string;
+}): Partial<ReportMetadata> {
+  const { meta, tenant, program, framework } = a;
+  return {
+    systemName: meta.systemName || tenant.systemName || '',
+    organizationName: meta.organizationName || tenant.name || '',
+    cageCode: meta.cageCode || tenant.cageCode || '',
+    samStatus: meta.samStatus || tenant.samStatus || '',
+    systemOwner: meta.systemOwner || tenant.systemOwner || '',
+    primaryAssessor: meta.authorName || '',
+    boundaryDescription: meta.systemBoundaryScope || program?.boundarySummary || tenant.systemBoundaryScope || '',
+    systemEnvironment: meta.systemEnvironment || '',
+    cloudServiceProviders: meta.cloudServiceProviders || '',
+    serviceCommitments: meta.serviceCommitments || '',
+    version: meta.version || '1.0.0',
+    framework: framework as ReportMetadata['framework'],
+  };
 }

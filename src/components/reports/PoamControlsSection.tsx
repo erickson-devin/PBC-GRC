@@ -30,6 +30,7 @@ import { milestoneProgressText } from '../../data/reports/poamMilestoneForm';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { ControlPoamDialog } from './ControlPoamDialog';
 import { CHIP_OFF, CHIP_ON, PoamGroupPanel, SMALL_BUTTON } from './PoamGroupPanel';
+import { usePendingFocus, PENDING_FOCUS_MISSED } from '../../hooks/usePendingFocus';
 
 export interface PoamControlsSectionProps {
   entries: readonly POAMEntry[];
@@ -87,6 +88,15 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
   const editColumn = poamLoad !== null && poamLoad.status !== 'unsupported' && poamLoad.status !== 'no_program' && poamLoad.status !== 'idle';
   const recorded = useMemo(() => (poamLoad?.status === 'ready' ? controlPoamMap(poamLoad.entries) : {}), [poamLoad]);
   const today = todayIso();
+  // A global search result for a control's POA&M entry: open its dialog once the recorded fields are loaded (it says so when the entry is not listed)
+  const { missed: pendingMissed } = usePendingFocus('poam_control', entries.length > 0 && poamLoad?.status !== 'loading' && poamLoad?.status !== 'idle', (id) => {
+    if (!controlPoam || poamLoad?.status !== 'ready') return false;
+    const entry = entries.find((e) => e.controlId === id);
+    if (!entry) return false;
+    const groupCode = groups.find((g) => g.entries.some((e) => e.controlId === id))?.code ?? controls.find((c) => c.id === id)?.domain ?? '';
+    setOpenEntry({ entry, groupCode });
+    return true;
+  });
 
   const toggleStatus = (key: PoamStatusKey) => {
     const next = new Set(effective);
@@ -181,6 +191,7 @@ export const PoamControlsSection: React.FC<PoamControlsSectionProps> = ({ entrie
       </h3>
       <p className="text-xs text-slate-400">{POAM_COPY.controlsIntro}</p>
       <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
+      {pendingMissed && <p role="status" className="text-xs text-amber-300">{PENDING_FOCUS_MISSED}</p>}
       {notice?.kind === 'loading' && (
         <p role="status" className={`${NOTE_CLASS} flex items-center gap-2`}>
           <Loader2 className="w-3.5 h-3.5 animate-spin motion-reduce:animate-none shrink-0" aria-hidden="true" />

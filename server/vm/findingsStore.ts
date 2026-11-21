@@ -1266,6 +1266,27 @@ async function countPoam(scope: ProgramScope, openOnly: boolean): Promise<number
   return Number(res.rows[0]?.n ?? 0);
 }
 
+/**
+ * The open (OPEN or IN_PROGRESS) POA&M items of the program as dates only, for the program summary (#252): how many are open, how many carry a scheduled
+ * completion, the latest of those dates and how many are before `today` (YYYY-MM-DD). One aggregate, so it is not capped like the paged list. No text.
+ */
+export async function summarizeOpenVmPoamDates(scope: ProgramScope, today: string): Promise<{ open: number; dated: number; latest: string | null; overdue: number }> {
+  if (isMemory()) {
+    const open = [...memoryPoam.values()].filter((p) => p.tenantId === scope.tenantId && p.programId === scope.programId && isOpenPoam(p.status));
+    const dates = open.map((p) => p.scheduledCompletion).filter((d): d is string => typeof d === 'string' && d !== '');
+    return { open: open.length, dated: dates.length, latest: dates.reduce<string | null>((max, d) => (max === null || d > max ? d : max), null), overdue: dates.filter((d) => d < today).length };
+  }
+  const res = await queryWithProgram(
+    scope,
+    `SELECT COUNT(*)::int AS open, COUNT(scheduled_completion)::int AS dated, MAX(scheduled_completion) AS latest,
+            COUNT(*) FILTER (WHERE scheduled_completion < $3::date)::int AS overdue
+       FROM vm_poam_items WHERE tenant_id = $1 AND program_id = $2 AND status IN ('OPEN', 'IN_PROGRESS')`,
+    [scope.tenantId, scope.programId, today],
+  );
+  const r = res.rows[0] ?? {};
+  return { open: Number(r.open ?? 0), dated: Number(r.dated ?? 0), latest: dateOnly(r.latest), overdue: Number(r.overdue ?? 0) };
+}
+
 // ------------------------------------------------------------------------------------------------ runs and listing
 
 /** Marks the run NORMALIZED inside the run's own transaction, so the status never gets ahead of the data it describes. */

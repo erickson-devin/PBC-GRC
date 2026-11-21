@@ -57,6 +57,7 @@ import { hardwareMatches, hardwareSummary } from '../../data/telemetry/hardwareD
 import { assetEditPatch } from '../../data/telemetry/observedInventoryView';
 import { osProfileSelectValue } from '../../data/telemetry/osProfile';
 import { AssetScannerDataDialog } from './AssetScannerDataDialog';
+import { usePendingFocus, findByDataId, scrollAndFocus, PENDING_FOCUS_MISSED } from '../../hooks/usePendingFocus';
 
 const RETRY_CLASS = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700';
 
@@ -67,6 +68,13 @@ export const AssetInventoryManager: React.FC = () => {
   const { assets, summary, loading, error: loadError, reload, backend, canEdit } = useEnclaveAssets();
   const serverBacked = Boolean(currentTenant.serverBacked);
   const tenantId = currentTenant.id;
+  // A global search result for an asset: scroll to its row and focus it (it says so when the filters hide it)
+  const { missed: pendingMissed, highlightId, clearHighlight } = usePendingFocus('asset', !loading, (id) => {
+    const el = findByDataId('asset-id', id);
+    if (!el) return false;
+    scrollAndFocus(el);
+    return true;
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedOs, setSelectedOs] = useState<string>('ALL');
@@ -680,6 +688,7 @@ export const AssetInventoryManager: React.FC = () => {
       })()}
 
       {/* ─── Inventory Asset Table ─── */}
+      {pendingMissed && <p role="status" className="text-xs text-amber-300">{PENDING_FOCUS_MISSED}</p>}
       <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
         <table aria-busy={busy || (serverBacked && (scanState.status === 'idle' || scanState.status === 'loading')) || undefined} className="w-full text-left text-xs border-collapse">
           <thead>
@@ -715,7 +724,10 @@ export const AssetInventoryManager: React.FC = () => {
                 return (
                   <tr
                     key={asset.id}
-                    className="hover:bg-slate-800/40 transition-colors"
+                    data-asset-id={asset.id}
+                    tabIndex={-1}
+                    onBlur={highlightId === asset.id ? clearHighlight : undefined}
+                    className={`hover:bg-slate-800/40 transition-colors focus:outline-none${highlightId === asset.id ? ' ring-2 ring-inset ring-cyan-400' : ''}`}
                   >
                     {/* Hostname & Origin Badge */}
                     <td className="py-3 px-3">

@@ -25,6 +25,7 @@ import { ApiClient } from './services/apiClient';
 import { TeamSettingsModal } from './components/settings/TeamSettingsModal';
 import { StigAutomationModal } from './components/stigs/StigAutomationModal';
 import { ArtifactExportModal } from './components/reports/ArtifactExportModal';
+import { ProgramJourneyBar } from './components/journey/ProgramJourneyBar';
 import { AuditTrailViewer } from './components/audit/AuditTrailViewer';
 import { AssetInventoryManager } from './components/telemetry/AssetInventoryManager';
 import { SoftwareInventoryPanel } from './components/telemetry/SoftwareInventoryPanel';
@@ -36,6 +37,7 @@ import { PolicyLibraryView } from './views/PolicyLibraryView';
 import { DocumentsPage } from './components/documents/DocumentsPage';
 import { SspImportView } from './components/sspImport/SspImportView';
 import { ProgramsPage } from './components/programs/ProgramsPage';
+import { ResponsibilitiesView } from './components/assignments/ResponsibilitiesView';
 import { FirstProgramPrompt } from './components/programs/FirstProgramPrompt';
 import { NoProgramNotice } from './components/programs/NoProgramNotice';
 import { PROGRAM_SCOPED_TABS, programGate } from './data/programDefaultChoice';
@@ -286,6 +288,7 @@ const AppContent: React.FC = () => {
 
               {/* Dynamic Tab Content Area */}
               <main id="app-main" tabIndex={-1} className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto min-w-0 focus:outline-none">
+                {!programBlocked && <ProgramJourneyBar />}
                 {programBlocked ? <NoProgramNotice /> : (
                 <>
                 {activeTab === 'dashboard' && <ComplianceOverview />}
@@ -322,6 +325,7 @@ const AppContent: React.FC = () => {
                 {activeTab === 'guidance' && <AssessmentGuidanceView />}
                 {activeTab === 'settings' && <EnclaveSettings />}
                 {activeTab === 'programs' && <ProgramsPage />}
+                {activeTab === 'responsibilities' && <ResponsibilitiesView />}
                 </>
                 )}
               </main>

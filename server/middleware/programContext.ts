@@ -27,7 +27,15 @@ export async function optionalProgramContext(req: Request, res: Response, next: 
   await resolveProgram(req, res, next, false);
 }
 
-async function resolveProgram(req: Request, res: Response, next: NextFunction, required: boolean): Promise<void> {
+/**
+ * Like programContext, for a route that only READS although it is not a GET (the global search takes its query in a POST body, so it never lands in a
+ * URL or an access log): the archived-program refusal of non-GET methods is skipped. It must never be mounted on a route that writes.
+ */
+export async function programReadContext(req: Request, res: Response, next: NextFunction): Promise<void> {
+  await resolveProgram(req, res, next, true, true);
+}
+
+async function resolveProgram(req: Request, res: Response, next: NextFunction, required: boolean, readOnly = false): Promise<void> {
   const tenantId = req.tenantId;
   if (!tenantId) {
     res.status(401).json({ error: 'Unauthorized: no tenant context' });
@@ -56,7 +64,7 @@ async function resolveProgram(req: Request, res: Response, next: NextFunction, r
       res.status(404).json({ error: 'Program not found', code: 'program_not_found' });
       return;
     }
-    if (program.archivedAt && !READ_ONLY_METHODS.has(req.method)) {
+    if (program.archivedAt && !readOnly && !READ_ONLY_METHODS.has(req.method)) {
       res.status(409).json({ error: 'This program is archived: it can be read but not changed', code: 'program_archived' });
       return;
     }

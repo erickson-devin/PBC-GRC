@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { useAssessment } from '../../context/AssessmentContext';
+import { usePendingFocus, findByDataId, scrollAndFocus, PENDING_FOCUS_MISSED } from '../../hooks/usePendingFocus';
 import { useToolRegister } from '../../hooks/useToolRegister';
 import { useVendorRegister } from '../../hooks/useVendorRegister';
 import { useProgramInventory } from '../../hooks/useProgramInventory';
@@ -181,6 +182,13 @@ export const ToolRegisterPanel: React.FC = () => {
   const inBoundary = (id: string): boolean => !inv.declared || inv.toolIds.has(id);
   const today = localDateIso(new Date());
   const editorsReady = canEdit && reg.status === 'ready';
+  // A global search result for a tool: scroll to its row and focus it (it says so when the filters hide it)
+  const { missed: pendingMissed, highlightId, clearHighlight } = usePendingFocus('tool', reg.status === 'ready' || reg.status === 'error', (id) => {
+    const el = findByDataId('tool-id', id);
+    if (!el) return false;
+    scrollAndFocus(el);
+    return true;
+  });
   const limitReached = reg.tools.length >= reg.limit;
   const attention = attentionLine(reg.tools);
   const attentionActive = attentionOnly && attention !== null;
@@ -820,6 +828,7 @@ export const ToolRegisterPanel: React.FC = () => {
               )}
 
               <p className="text-xs text-slate-400" aria-live="polite">{reg.status === 'loading' ? '' : registerCountCaption(shown.length, reg.tools.length)}</p>
+              {pendingMissed && <p role="status" className="text-xs text-amber-300">{PENDING_FOCUS_MISSED}</p>}
 
               <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
                 <table aria-busy={reg.status === 'loading' || busy || undefined} className="table w-full min-w-[64rem] text-left text-xs border-collapse">
@@ -869,7 +878,7 @@ export const ToolRegisterPanel: React.FC = () => {
                     ) : (
                       shown.map((t) => (
                         <React.Fragment key={t.id}>
-                          <tr className="hover:bg-slate-800/40 transition-colors">{columns.map((col) => renderCell(col, t))}</tr>
+                          <tr data-tool-id={t.id} tabIndex={-1} onBlur={highlightId === t.id ? clearHighlight : undefined} className={`hover:bg-slate-800/40 transition-colors focus:outline-none${highlightId === t.id ? ' ring-2 ring-inset ring-cyan-400' : ''}`}>{columns.map((col) => renderCell(col, t))}</tr>
                           {pendingBoundary?.anchor === t.id && confirmRow(t.id, boundaryConfirm(pendingBoundary))}
                           {pendingDelete?.id === t.id &&
                             confirmRow(

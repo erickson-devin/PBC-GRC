@@ -240,7 +240,7 @@ async function apiTests() {
   console.log('\n--- The old allow-list names are gone ---');
   assert(!fs.existsSync(path.join(process.cwd(), 'src/data/programs.ts')) && fs.existsSync(path.join(process.cwd(), 'src/data/tenantFrameworkPolicy.ts')), 'R4: src/data/programs.ts moved to src/data/tenantFrameworkPolicy.ts');
   const skip = new Set([path.join('src', 'data', 'frameworks'), path.join('src', 'data', 'stigs'), path.join('server', 'ssp')]);
-  const oldName = /\bgetTenantProgram\b|\bTenantProgram\b|ensureControlInProgram|\bprogramSummary\b|\bprogramOf\b|data\/programs['"]/;
+  const oldName = /\bgetTenantProgram\b|\bTenantProgram\b|ensureControlInProgram|\bprogramSummary\b(?!['"])|\bprogramOf\b|data\/programs['"]/;
   const stale: string[] = [];
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {

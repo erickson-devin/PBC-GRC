@@ -74,6 +74,9 @@ function parseProgram(raw: unknown): Program | null {
   };
   const createdAt = raw.createdAt ?? raw.created_at;
   const updatedAt = raw.updatedAt ?? raw.updated_at;
+  const goal = 'sprsGoal' in raw ? raw.sprsGoal : raw.sprs_goal;
+  if (typeof goal === 'number' && Number.isInteger(goal) && goal >= -203 && goal <= 110) program.sprsGoal = goal;
+  else if (goal === null) program.sprsGoal = null;
   if (typeof createdAt === 'string') program.createdAt = createdAt;
   if (typeof updatedAt === 'string') program.updatedAt = updatedAt;
   return program;

@@ -31,6 +31,7 @@ import type { VmAffectedPackage, VmPoamResponse, VmPoamRow, VmSeverity } from '.
 import { PoamGroupPanel, SMALL_BUTTON } from './PoamGroupPanel';
 import { VmPoamItemDialog } from './VmPoamItemDialog';
 import { VmPoamStatusBadge } from './VmPoamStatusBadge';
+import { usePendingFocus, PENDING_FOCUS_MISSED } from '../../hooks/usePendingFocus';
 
 export interface PoamVulnerabilitiesSectionProps {
   load: VmPoamLoad;
@@ -178,6 +179,14 @@ const PoamVulnerabilitiesReady: React.FC<ReadyProps> = ({
   const groups = useMemo(() => groupVmPoamByAsset(filtered), [filtered]);
   const initial = useMemo(() => initialExpanded(groups.map((g) => g.key)), [groups]);
   const searching = poamQueryTerms(query).length > 0;
+  // A global search result for a vulnerability item: open its dialog when it is among the loaded rows (it says so when it is not)
+  const { missed: pendingMissed } = usePendingFocus('poam_vm', Boolean(itemApi), (id) => {
+    const row = data.items.find((r) => r.id === id);
+    if (!row || !itemApi) return false;
+    const groupKey = groupVmPoamByAsset(data.items).find((g) => g.items.some((r) => r.id === id))?.key ?? '';
+    setOpenItem({ row, weaknessId: ids.get(row.id) ?? null, groupKey });
+    return true;
+  });
 
   const changeQuery = (value: string) => {
     setQuery(value);
@@ -259,6 +268,7 @@ const PoamVulnerabilitiesReady: React.FC<ReadyProps> = ({
         </p>
       ))}
       <p role="status" aria-live="polite" className="sr-only">{announcement}</p>
+      {pendingMissed && <p role="status" className="text-xs text-amber-300">{PENDING_FOCUS_MISSED}</p>}
       {refreshFailed && (
         <div className="space-y-2">
           <ErrorNotice message={VM_POAM_COPY.refreshFailed} />
